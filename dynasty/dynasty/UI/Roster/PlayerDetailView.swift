@@ -128,6 +128,19 @@ struct PlayerDetailView: View {
     /// THIS player's save, never "whichever career sorted first".
     private var careers: [Career] { careersUnscoped.filter { $0.id == scopeCareerID } }
 
+    /// TRACK B — true while this man is a rookie from the draft the user just
+    /// ran and the calendar has not reached training camp. Read off the save
+    /// itself rather than the environment: this screen is pushed from six
+    /// places, and the profile is exactly where a curious user would go looking
+    /// for the number the roster row is withholding.
+    ///
+    /// Presentation only. The depth chart, the auto-set, the sim and the
+    /// development pass all keep reading his real ratings throughout.
+    private var isRookieFogged: Bool {
+        guard let career = careers.first else { return false }
+        return RookieFog.isFogged(player, season: career.currentSeason, phase: career.currentPhase)
+    }
+
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
 
@@ -196,9 +209,16 @@ struct PlayerDetailView: View {
 
                     // Right column: attributes + personality + scheme
                     List {
-                        physicalAttributesGrid
-                        mentalAttributesGrid
-                        positionAttributesGridSection
+                        // TRACK B: a rookie who has not reported to camp has no
+                        // exact numbers to show — the whole attribute stack is
+                        // replaced by the scouting report until he does.
+                        if isRookieFogged {
+                            preCampScoutingReportSection
+                        } else {
+                            physicalAttributesGrid
+                            mentalAttributesGrid
+                            positionAttributesGridSection
+                        }
                         personalitySection
                         schemeFitSection
                     }
@@ -215,13 +235,20 @@ struct PlayerDetailView: View {
                     compactDevelopmentRow
                     seasonStatsSummarySection
                     careerStatsHistorySection
-                    tradeValueSection
+                    // Trade value is a direct read-through of the hidden OVR.
+                    if !isRookieFogged {
+                        tradeValueSection
+                    }
                     actionButtonsSection
                     versatilitySection
                     injuryHistorySection
-                    physicalAttributesGrid
-                    mentalAttributesGrid
-                    positionAttributesGridSection
+                    if isRookieFogged {
+                        preCampScoutingReportSection
+                    } else {
+                        physicalAttributesGrid
+                        mentalAttributesGrid
+                        positionAttributesGridSection
+                    }
                     personalitySection
                     schemeFitSection
                 }
@@ -235,13 +262,20 @@ struct PlayerDetailView: View {
                     compactDevelopmentRow
                     seasonStatsSummarySection
                     careerStatsHistorySection
-                    tradeValueSection
+                    // Trade value is a direct read-through of the hidden OVR.
+                    if !isRookieFogged {
+                        tradeValueSection
+                    }
                     actionButtonsSection
                     versatilitySection
                     injuryHistorySection
-                    physicalSection
-                    mentalSection
-                    positionAttributesSection
+                    if isRookieFogged {
+                        preCampScoutingReportSection
+                    } else {
+                        physicalSection
+                        mentalSection
+                        positionAttributesSection
+                    }
                     personalitySection
                     schemeFitSection
                 }
@@ -316,16 +350,35 @@ struct PlayerDetailView: View {
                     VStack(spacing: 4) {
                         ZStack(alignment: .topTrailing) {
                             Circle()
-                                .strokeBorder(Color.forRating(player.overall), lineWidth: 3)
+                                .strokeBorder(
+                                    isRookieFogged
+                                        ? RookieFog.source(for: player).tint
+                                        : Color.forRating(player.overall),
+                                    lineWidth: 3
+                                )
                                 .frame(width: 64, height: 64)
                             VStack(spacing: 0) {
-                                Text("\(player.overall)")
-                                    .font(.title2.monospacedDigit())
-                                    .fontWeight(.bold)
-                                    .foregroundStyle(Color.forRating(player.overall))
-                                Text("OVR")
-                                    .font(.system(size: 9, weight: .medium))
-                                    .foregroundStyle(Color.textTertiary)
+                                if isRookieFogged {
+                                    // The band his scouts filed, not a number
+                                    // nobody in the building has earned yet.
+                                    Text(RookieFog.bandText(for: player))
+                                        .font(.headline.weight(.heavy))
+                                        .foregroundStyle(RookieFog.source(for: player).tint)
+                                        .lineLimit(1)
+                                        .minimumScaleFactor(0.6)
+                                        .padding(.horizontal, 4)
+                                    Text("GRADE")
+                                        .font(.system(size: 9, weight: .medium))
+                                        .foregroundStyle(Color.textTertiary)
+                                } else {
+                                    Text("\(player.overall)")
+                                        .font(.title2.monospacedDigit())
+                                        .fontWeight(.bold)
+                                        .foregroundStyle(Color.forRating(player.overall))
+                                    Text("OVR")
+                                        .font(.system(size: 9, weight: .medium))
+                                        .foregroundStyle(Color.textTertiary)
+                                }
                             }
                             .frame(width: 64, height: 64)
 
@@ -340,7 +393,9 @@ struct PlayerDetailView: View {
                                 .offset(x: 4, y: -4)
                         }
                         // League ranking (#33) — promoted to a clear gold pill for at-a-glance prestige.
-                        if let rankInfo = leagueRanking {
+                        // Withheld while the rookie is fogged: "#3 QB" is the
+                        // hidden number read back out through the league sort.
+                        if let rankInfo = leagueRanking, !isRookieFogged {
                             Text(rankInfo)
                                 .font(.system(size: 11, weight: .bold))
                                 .foregroundStyle(Color.backgroundPrimary)
@@ -611,7 +666,15 @@ struct PlayerDetailView: View {
             }
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 6) {
-                compactInfoPill(label: "OVR", value: "\(player.overall)", color: Color.forRating(player.overall))
+                if isRookieFogged {
+                    compactInfoPill(
+                        label: "Grade",
+                        value: RookieFog.bandText(for: player),
+                        color: RookieFog.source(for: player).tint
+                    )
+                } else {
+                    compactInfoPill(label: "OVR", value: "\(player.overall)", color: Color.forRating(player.overall))
+                }
                 compactInfoPill(label: "Morale", value: moraleDisplayLabel, color: moraleColor)
                 // Motivation sits beside morale on purpose: morale is how he
                 // feels about the building, motivation is what he does about it
@@ -1739,6 +1802,67 @@ struct PlayerDetailView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Pre-Camp Scouting Report (TRACK B)
+
+    /// What stands in for the three attribute sections while a rookie is still
+    /// fogged. Deliberately small: the band his scouts filed, the staff's first
+    /// projection if a camp has already written one, and a plain statement of
+    /// when the real evaluation arrives — so the empty space reads as a rule of
+    /// the game rather than as missing data.
+    private var preCampScoutingReportSection: some View {
+        Section(header: SectionHeaderText(title: "Scouting Report")) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 12) {
+                    VStack(spacing: 2) {
+                        Text(RookieFog.bandText(for: player))
+                            .font(.title3.monospaced().weight(.heavy))
+                            .foregroundStyle(RookieFog.source(for: player).tint)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.6)
+                        Text(RookieFog.source(for: player).label.uppercased())
+                            .font(.system(size: 9, weight: .heavy))
+                            .tracking(0.5)
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                    .frame(width: 84)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Full evaluation at training camp")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Color.textPrimary)
+                        Text(RookieFog.source(for: player) == .scouts
+                             ? "This is the grade band our scouts filed on him before the draft. Exact ratings come off the practice field, not the college tape."
+                             : "Nobody in this building filed on him — this is the media's read on his draft slot. Exact ratings come off the practice field.")
+                            .font(.caption)
+                            .foregroundStyle(Color.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 0)
+                }
+
+                if let label = assessedPotentialLabel {
+                    HStack(spacing: 6) {
+                        Image(systemName: "binoculars.fill")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color.accentGold)
+                        Text("Coach's Projection")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Color.textSecondary)
+                        Spacer()
+                        Text(label.displayName)
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(potentialLabelColor(label))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(potentialLabelColor(label).opacity(0.15)))
+                    }
+                }
+            }
+            .padding(.vertical, 4)
+        }
+        .listRowBackground(Color.backgroundSecondary)
     }
 
     // MARK: - Physical Section

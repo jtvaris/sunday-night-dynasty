@@ -47,6 +47,32 @@ struct PlayerRowView: View {
     /// Team salary cap in thousands — used to calculate cap% per player.
     var teamSalaryCap: Int = 265_000
 
+    /// TRACK B — season + phase, injected once by `CareerShellView`. A rookie
+    /// who has not yet reported to training camp shows his scouting BAND where
+    /// his OVR would be; everyone else, and every context that never got the
+    /// context (previews, stand-alone lists), reads exactly as before.
+    @Environment(\.rookieFog) private var rookieFog
+
+    /// True while this player's exact ratings are still fogged.
+    private var isFogged: Bool { rookieFog.isFogged(player) }
+
+    /// The OVR cell, in whichever of the six analysis modes asked for it.
+    /// Display only — sorting, the depth chart and every engine keep reading
+    /// `player.overall` itself.
+    @ViewBuilder
+    private func ovrCell(font: Font) -> some View {
+        if isFogged {
+            RookieBandChip(player: player, font: .caption2.monospaced().weight(.heavy))
+                .frame(width: Column.ovr, alignment: .center)
+        } else {
+            Text("\(player.overall)")
+                .font(font)
+                .fontWeight(.bold)
+                .foregroundStyle(Color.forRating(player.overall))
+                .frame(width: Column.ovr, alignment: .center)
+        }
+    }
+
     var body: some View {
         HStack(spacing: 6) {
             // Always show: Position badge + Depth + Avatar + Name
@@ -140,11 +166,7 @@ struct PlayerRowView: View {
                 .foregroundStyle(Color.textSecondary)
                 .frame(width: Column.age, alignment: .center)
 
-            Text("\(player.overall)")
-                .font(.caption.monospacedDigit())
-                .fontWeight(.bold)
-                .foregroundStyle(Color.forRating(player.overall))
-                .frame(width: Column.ovr, alignment: .center)
+            ovrCell(font: .caption.monospacedDigit())
 
             colorCodedMiniAttribute(value: player.learning, label: "LRN")
                 .frame(width: 34, alignment: .center)
@@ -184,11 +206,7 @@ struct PlayerRowView: View {
             formColumn
 
             // OVR (large, color-coded)
-            Text("\(player.overall)")
-                .font(.callout.monospacedDigit())
-                .fontWeight(.bold)
-                .foregroundStyle(Color.forRating(player.overall))
-                .frame(width: Column.ovr, alignment: .center)
+            ovrCell(font: .callout.monospacedDigit())
 
             // Development potential indicator
             Text(shortPotentialLabel)
@@ -288,11 +306,7 @@ struct PlayerRowView: View {
                 .frame(width: 40, alignment: .center)
 
             // OVR for context
-            Text("\(player.overall)")
-                .font(.caption.monospacedDigit())
-                .fontWeight(.bold)
-                .foregroundStyle(Color.forRating(player.overall))
-                .frame(width: Column.ovr, alignment: .center)
+            ovrCell(font: .caption.monospacedDigit())
         }
     }
 
@@ -328,11 +342,7 @@ struct PlayerRowView: View {
                 .frame(width: Column.age, alignment: .center)
 
             // OVR
-            Text("\(player.overall)")
-                .font(.caption.monospacedDigit())
-                .fontWeight(.bold)
-                .foregroundStyle(Color.forRating(player.overall))
-                .frame(width: Column.ovr, alignment: .center)
+            ovrCell(font: .caption.monospacedDigit())
 
             // Potential (hidden value shown as fuzzy label)
             Text(potentialLabel)
@@ -377,11 +387,7 @@ struct PlayerRowView: View {
                 .frame(width: 28, alignment: .center)
 
             // OVR
-            Text("\(player.overall)")
-                .font(.caption.monospacedDigit())
-                .fontWeight(.bold)
-                .foregroundStyle(Color.forRating(player.overall))
-                .frame(width: Column.ovr, alignment: .center)
+            ovrCell(font: .caption.monospacedDigit())
         }
     }
 
@@ -431,11 +437,7 @@ struct PlayerRowView: View {
             }
 
             // OVR
-            Text("\(player.overall)")
-                .font(.caption.monospacedDigit())
-                .fontWeight(.bold)
-                .foregroundStyle(Color.forRating(player.overall))
-                .frame(width: Column.ovr, alignment: .center)
+            ovrCell(font: .caption.monospacedDigit())
         }
     }
 
@@ -464,11 +466,7 @@ struct PlayerRowView: View {
                 .frame(width: 52, alignment: .leading)
 
             // OVR
-            Text("\(player.overall)")
-                .font(.caption.monospacedDigit())
-                .fontWeight(.bold)
-                .foregroundStyle(Color.forRating(player.overall))
-                .frame(width: Column.ovr, alignment: .center)
+            ovrCell(font: .caption.monospacedDigit())
 
             // Age
             Text("\(player.age)")
@@ -914,7 +912,9 @@ struct PlayerRowView: View {
             player.fullName,
             player.position.rawValue,
             depthLabel,
-            "overall \(player.overall)",
+            isFogged
+                ? RookieFog.accessibilityText(for: player)
+                : "overall \(player.overall)",
             "age \(player.age)",
             formattedSalary,
             "\(player.contractYearsRemaining) year\(player.contractYearsRemaining == 1 ? "" : "s") remaining",

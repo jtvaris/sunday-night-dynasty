@@ -3407,6 +3407,54 @@ enum WeekAdvancer {
             ))
         }
 
+        // --- TRACK B: the rookie class reports to camp ---
+        //
+        // ADDITIVE. Nothing above changes: the rookies became real `Player`
+        // rows at the pick, and every engine has been reading their real
+        // ratings since. Crossing INTO training camp is simply the moment the
+        // user is allowed to see them (`RookieFog`), so this arms the
+        // once-per-season reveal `CareerShellView` presents and files the press
+        // grade with the news feed and the mailbox.
+        if nextPhase == .trainingCamp,
+           currentPhase != .trainingCamp,
+           let playerTeamID = career.teamID,
+           let playerTeam = teamsByID[playerTeamID] {
+            let cid = career.id
+            let draftYear = career.currentSeason
+            let gradeDescriptor = FetchDescriptor<DraftPickGrade>(
+                predicate: #Predicate<DraftPickGrade> {
+                    $0.careerID == cid && $0.draftYear == draftYear && $0.teamID == playerTeamID
+                }
+            )
+            let pickGrades = (try? modelContext.fetch(gradeDescriptor)) ?? []
+
+            if let summary = RookieClassReveal.build(
+                season: draftYear,
+                teamID: playerTeamID,
+                teamName: playerTeam.fullName,
+                teamAbbreviation: playerTeam.abbreviation,
+                players: allPlayers,
+                grades: pickGrades
+            ) {
+                RookieClassReveal.arm(careerID: cid, season: draftYear)
+                lastNewsItems.append(NewsGenerator.rookieClassGraded(
+                    teamName: summary.teamName,
+                    teamID: playerTeamID,
+                    classGrade: summary.classGrade,
+                    verdict: summary.verdict,
+                    season: draftYear
+                ))
+                lastInboxMessages.append(NewsGenerator.rookieClassInboxMessage(
+                    teamName: summary.teamName,
+                    classGrade: summary.classGrade,
+                    verdict: summary.verdict,
+                    bestPickLine: summary.bestPickLine,
+                    biggestReachLine: summary.biggestReachLine,
+                    season: draftYear
+                ))
+            }
+        }
+
         // --- Generate inbox messages for the new phase ---
         if let playerTeamID = career.teamID,
            let playerTeam = teamsByID[playerTeamID] {

@@ -498,6 +498,82 @@ enum NewsGenerator {
             sentiment: .neutral
         )
     }
+
+    // MARK: - Rookie Class Press (TRACK B)
+
+    /// The one headline the draft class earns when the rookies report to camp
+    /// and the fog comes off them (`RookieClassRevealView`).
+    ///
+    /// Deliberately primitive parameters: the summary itself is assembled by
+    /// `RookieClassReveal.build`, and both this item and the letter below quote
+    /// the SAME verdict paragraph so the news screen, the inbox and the modal
+    /// can never tell three different stories about the same draft.
+    static func rookieClassGraded(
+        teamName: String,
+        teamID: UUID,
+        classGrade: String,
+        verdict: String,
+        season: Int
+    ) -> NewsItem {
+        NewsItem(
+            headline: "Press grades: \(teamName)'s draft class earns \(classGrade)",
+            body: verdict,
+            category: .draft,
+            week: 0,
+            season: season,
+            relatedTeamID: teamID,
+            sentiment: rookieClassSentiment(classGrade)
+        )
+    }
+
+    /// The scouting department's own note on the same class — mirrors the
+    /// `InboxEngine` phase-message pattern (sender, dated label, a destination
+    /// the user can act on) without living in the phase switch, because it only
+    /// exists in the seasons the club actually drafted somebody.
+    static func rookieClassInboxMessage(
+        teamName: String,
+        classGrade: String,
+        verdict: String,
+        bestPickLine: String?,
+        biggestReachLine: String?,
+        season: Int
+    ) -> InboxMessage {
+        var lines: [String] = [
+            "Coach,",
+            "",
+            "The rookies are in the building and our first full evaluation is on your desk — real numbers now, not the spring's ranges.",
+            "",
+            "The press has us at \(classGrade) for the class. \(verdict)",
+        ]
+        if let bestPickLine {
+            lines.append("")
+            lines.append("Best-reviewed selection: \(bestPickLine).")
+        }
+        if let biggestReachLine {
+            lines.append("Most questioned selection: \(biggestReachLine).")
+        }
+        lines.append("")
+        lines.append("Scouting Department")
+
+        return InboxMessage(
+            sender: .scout(name: "Director of Scouting"),
+            subject: "Rookie Class Report — \(teamName)",
+            body: lines.joined(separator: "\n"),
+            date: "Offseason - Training Camp, Season \(String(season))",
+            category: .scoutingReport,
+            attachments: [
+                MessageAttachment(title: "View Roster", destination: .roster)
+            ]
+        )
+    }
+
+    private static func rookieClassSentiment(_ classGrade: String) -> NewsSentiment {
+        if classGrade.hasPrefix("A") { return .positive }
+        if classGrade.hasPrefix("D") || classGrade.hasPrefix("F") { return .negative }
+        if classGrade == "C-" { return .negative }
+        return .neutral
+    }
+
 }
 
 // MARK: - Trade News Factory (Wave 2 — `docs/TRADE_OVERHAUL_PLAN.md`)
@@ -978,4 +1054,5 @@ enum MilestoneNewsFactory {
             body: "Voters have started saying the word out loud about \(club)\(player.position.rawValue). \(summary) — at \(player.age), with the career still going, \(player.lastName) has built a case that no longer needs a qualifier."
         )
     }
+
 }

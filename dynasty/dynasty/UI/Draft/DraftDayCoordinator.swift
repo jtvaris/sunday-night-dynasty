@@ -1047,6 +1047,20 @@ final class DraftDayCoordinator: ObservableObject {
             offensiveScheme: draftingSchemes?.offense,
             defensiveScheme: draftingSchemes?.defense
         )
+        // TRACK B — stamp the pre-camp fog band on the user's own picks.
+        //
+        // The prospect row is about to leave the board (and the class is thrown
+        // away at the next cycle), so the ONLY moment his scouted band can be
+        // carried onto the player is right here. Stored only when the user's
+        // building actually filed on him: everyone else — AI selections,
+        // auto-picks on unscouted men — keeps the empty string and reads as the
+        // media consensus for his round (`RookieFog.consensusBand`).
+        if pick.currentTeamID == userTeamID {
+            let read = ProspectFog.read(prospect)
+            if case .scouts = read.source, read.band != nil {
+                player.preCampScoutBand = read.text
+            }
+        }
         player.careerID = career.id
         modelContext.insert(player)
         // He is in the league now — take him off every future prospect pool.

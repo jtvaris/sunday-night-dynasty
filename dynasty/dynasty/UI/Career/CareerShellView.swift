@@ -71,6 +71,11 @@ struct CareerShellView: View {
     /// over-limit roster. Presented as an alert, cleared on dismissal.
     @State private var pendingRosterLimit: WeekAdvancer.RosterLimitViolation?
 
+    /// TRACK B — the draft class the fog is about to come off, assembled when
+    /// the calendar crosses into training camp (`WeekAdvancer` arms the
+    /// once-per-season flag; this presents it). `nil` at every other moment.
+    @State private var pendingRookieReveal: RookieClassReveal.Summary?
+
     /// Rival claims on the players the user just cut, collected at the
     /// cutdown → regular-season boundary. Drives `WaiverClaimsBanner`, which
     /// shipped in the binary with zero call sites — the claims themselves have
@@ -171,11 +176,26 @@ struct CareerShellView: View {
         } message: {
             Text("Your progress is saved automatically.")
         }
+        // TRACK B: every roster surface under this shell reads the fog context
+        // from the environment instead of having a `Career` threaded into it.
+        // Applied OUTSIDE the presentation modifiers above on purpose — sheets
+        // and full-screen covers inherit the environment of their ancestors, so
+        // a rookie stays fogged inside the calendar sidebar and the player
+        // sheets too.
+        .environment(
+            \.rookieFog,
+            RookieFogContext(season: career.currentSeason, phase: career.currentPhase)
+        )
         .task {
             loadShellData()
             // R31: a fired career only shows the final summary screen.
             if career.isGameOver {
                 showFiredScreen = true
+            }
+            // TRACK B: a reveal armed by an advance the user quit out of before
+            // dismissing is still owed to him — present it on the next open.
+            if !career.isGameOver {
+                _ = presentRookieRevealIfArmed()
             }
         }
         .onChange(of: navigationPath) { _, _ in
@@ -257,6 +277,19 @@ struct CareerShellView: View {
         }
         .sheet(isPresented: $pendingVoluntaryWorkout) {
             VoluntaryWorkoutPrompt(career: career)
+        }
+        // TRACK B: "Rookies Report to Camp" — once per season, at the camp
+        // boundary. Dismissal consumes the flag and hands the modal slot on to
+        // the voluntary-workout prompt, which `performShellAdvance` deliberately
+        // skipped so the two never race for the same presentation.
+        .fullScreenCover(item: $pendingRookieReveal) { summary in
+            RookieClassRevealView(summary: summary) {
+                RookieClassReveal.clear(careerID: career.id)
+                pendingRookieReveal = nil
+                if career.currentPhase == .otas || career.currentPhase == .trainingCamp {
+                    pendingVoluntaryWorkout = true
+                }
+            }
         }
         // R31: end-of-season owner review (bonus / warning verdicts).
         .sheet(item: $pendingOwnerReview, onDismiss: {
@@ -530,11 +563,18 @@ struct CareerShellView: View {
             presentRoundResultsIfReady()
         }
 
+        // TRACK B: the rookie class reports. Presented BEFORE the workout
+        // prompt, and when it takes the screen the prompt is deferred to its
+        // dismissal — two modals asking for the same slot in the same runloop
+        // means one of them silently never appears.
+        let revealPresented = presentRookieRevealIfArmed()
+
         // Camp Phase 1 wire-up: surface the per-week voluntary workout prompt
         // whenever the player has just stepped into an OTAs or Training Camp
         // week. The prompt itself persists the chosen workout flavor; engine
         // application is handled by VoluntaryWorkoutEngine on next tick.
-        if career.currentPhase == .otas || career.currentPhase == .trainingCamp {
+        if !revealPresented,
+           career.currentPhase == .otas || career.currentPhase == .trainingCamp {
             pendingVoluntaryWorkout = true
         }
 
@@ -545,6 +585,55 @@ struct CareerShellView: View {
         if career.currentPhase == .otas && pendingHoldout == nil {
             detectAndShowHoldout()
         }
+    }
+
+    // MARK: - Rookie Class Reveal (TRACK B)
+
+    /// Presents "Rookies Report to Camp" when `WeekAdvancer` armed it for this
+    /// season and the club actually drafted somebody.
+    ///
+    /// - Returns: `true` when the modal was staged, so the caller can hold back
+    ///   any other presentation for this runloop.
+    @discardableResult
+    private func presentRookieRevealIfArmed() -> Bool {
+        guard pendingRookieReveal == nil,
+              RookieClassReveal.pendingSeason(careerID: career.id) == career.currentSeason else {
+            return false
+        }
+        guard let summary = buildRookieClassSummary() else {
+            // Armed but nothing to show (every pick traded away) — consume the
+            // flag rather than re-checking it on every advance for a year.
+            RookieClassReveal.clear(careerID: career.id)
+            return false
+        }
+        pendingRookieReveal = summary
+        return true
+    }
+
+    /// The class itself, read off the rows that already exist: this season's
+    /// rookies on the user's roster plus the press grades the draft room
+    /// persisted for them.
+    private func buildRookieClassSummary() -> RookieClassReveal.Summary? {
+        guard let teamID = career.teamID, let playerTeam = team ?? allTeamsByID[teamID] else {
+            return nil
+        }
+        let cid = career.id
+        let season = career.currentSeason
+        let gradeDescriptor = FetchDescriptor<DraftPickGrade>(
+            predicate: #Predicate<DraftPickGrade> {
+                $0.careerID == cid && $0.draftYear == season && $0.teamID == teamID
+            }
+        )
+        let grades = (try? modelContext.fetch(gradeDescriptor)) ?? []
+
+        return RookieClassReveal.build(
+            season: season,
+            teamID: teamID,
+            teamName: playerTeam.fullName,
+            teamAbbreviation: playerTeam.abbreviation,
+            players: teamRoster,
+            grades: grades
+        )
     }
 
     // MARK: - Waiver Claims

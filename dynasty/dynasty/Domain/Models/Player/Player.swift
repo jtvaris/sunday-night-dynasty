@@ -250,6 +250,25 @@ final class Player {
     /// The draft round (1-7) derived from the overall pick number at draft time.
     var draftRound: Int? = nil
 
+    /// TRACK B — the grade BAND the user's own scouts had on this man on draft
+    /// night, e.g. `"B+"` or `"B-/A-"` (`GradeRange.displayText`, the exact
+    /// vocabulary `ProspectFog` renders in the draft room).
+    ///
+    /// Written once by `DraftDayCoordinator.completePick`, and only for picks
+    /// made by the USER's club whose prospect his building had actually filed a
+    /// report on. Everyone else — AI selections, auto-picks on unscouted men,
+    /// UDFAs, legacy rows — keeps the empty string and reads as the MEDIA
+    /// consensus band derived from `draftRound` at display time (`RookieFog`).
+    ///
+    /// This is presentation state, never an input to any engine: a rookie's
+    /// real ratings exist from the moment he is drafted and the depth chart,
+    /// the sim and the development pass all keep using them. The band is what
+    /// the user is allowed to SEE until the rookie reports to training camp.
+    ///
+    /// Stored property with an inline default, never an `init` parameter →
+    /// safe SwiftData lightweight migration.
+    var preCampScoutBand: String = ""
+
     /// Coaching staff's verbal assessment of this player's development ceiling.
     /// Stored as PotentialLabel.rawValue. Accuracy depends on coach quality and time with team.
     var assessedPotential: String?
