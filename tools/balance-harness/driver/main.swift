@@ -1787,7 +1787,7 @@ func scenarioBlowoutProbe(_ f: [String: String]) {
 // Parameterized round-5 scenarios consume `--flag value` args instead of a
 // scenario-name list. They dispatch BEFORE the name-list path so every existing
 // scenario keeps working exactly as before.
-if let first = args.first, first == "fullgame" || first == "positionsweep" || first == "blowoutprobe" || first == "draftclass" || first == "career" || first == "leaguegen" {
+if let first = args.first, first == "fullgame" || first == "positionsweep" || first == "blowoutprobe" || first == "draftclass" || first == "career" || first == "leaguegen" || first == "perception" {
     let flags = parseFlags(Array(args.dropFirst()))
     printHeader()
     print("")
@@ -1796,6 +1796,7 @@ if let first = args.first, first == "fullgame" || first == "positionsweep" || fi
     else if first == "draftclass" { scenarioDraftClass(flags) }
     else if first == "career" { scenarioCareer(flags) }
     else if first == "leaguegen" { scenarioLeagueGen(flags) }
+    else if first == "perception" { scenarioPerception(flags) }
     else { scenarioPositionSweep(flags) }
     print("\nDONE.")
     exit(0)

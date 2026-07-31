@@ -63,10 +63,6 @@ final class CollegeProspect {
     var medicalConcerns: [String]?
     var redFlags: [String]?
 
-    // MARK: Hometown (written by the synced `DraftClassBuilder` via HometownGenerator)
-    var hometownState: String?
-    var hometownCity: String?
-
     // MARK: Projection
     var draftProjection: Int?
 

@@ -110,25 +110,58 @@ enum DraftEngine {
     /// AI selects the best prospect for a given team based on roster needs
     /// and prospect quality.
     ///
+    /// The board this scores is the club's OWN, not the truth: every
+    /// `trueOverall` / `truePotential` goes through `AIDraftPerception`, whose
+    /// per-`(team, prospect)` error is deterministic, persona-shaped and
+    /// fat-tailed. That is what makes 32 AI boards disagree, puts real busts in
+    /// the top 10 and real steals in round 5, and leaves room for the user's
+    /// scouting department to beat the market. See `AIDraftPerception` for the
+    /// model and for the list of things deliberately left un-fogged (the user's
+    /// picks, every trade valuation, the public `draftProjection`).
+    ///
     /// - Parameters:
     ///   - team: The team making the pick.
     ///   - availableProspects: Prospects still on the board.
     ///   - teamRoster: Current players on the team's roster.
+    ///   - perceptionEnabled: `false` scores the TRUE board — the pre-fog
+    ///     behaviour, kept as the control arm for the `perception` balance
+    ///     scenario. No shipping call site passes it.
     /// - Returns: The prospect the AI selects.
     static func aiMakePick(
         team: Team,
         availableProspects: [CollegeProspect],
-        teamRoster: [Player]
+        teamRoster: [Player],
+        perceptionEnabled: Bool = true
     ) -> CollegeProspect {
         guard !availableProspects.isEmpty else {
             fatalError("aiMakePick called with no available prospects")
         }
 
         let needs = evaluateTeamNeeds(roster: teamRoster)
+        // One lens per pick, not per prospect — the archetype draw is the same
+        // for all 300 names on the board.
+        let lens = perceptionEnabled ? AIDraftPerception.lens(forTeam: team.id) : nil
 
-        // Score each prospect: combination of true overall talent and positional need.
+        // Score each prospect: combination of PERCEIVED talent and positional need.
         let scored = availableProspects.map { prospect -> (CollegeProspect, Double) in
-            var score = Double(prospect.trueOverall)
+            let perceivedOverall: Double
+            let perceivedPotential: Double
+            if let lens {
+                let read = AIDraftPerception.read(
+                    teamID: team.id,
+                    prospectID: prospect.id,
+                    trueOverall: prospect.trueOverall,
+                    truePotential: prospect.truePotential,
+                    lens: lens
+                )
+                perceivedOverall = read.overall
+                perceivedPotential = read.potential
+            } else {
+                perceivedOverall = Double(prospect.trueOverall)
+                perceivedPotential = Double(prospect.truePotential)
+            }
+
+            var score = perceivedOverall
 
             // Boost score for positions the team needs.
             let needMultiplier = needs[prospect.position] ?? 1.0
@@ -140,7 +173,7 @@ enum DraftEngine {
             }
 
             // Factor in potential (prospects with higher ceilings are more attractive).
-            score += Double(prospect.truePotential) * 0.15
+            score += perceivedPotential * 0.15
 
             // Slight bonus for prospects projected to go in this range (consensus value).
             if let projection = prospect.draftProjection, projection > 0 {

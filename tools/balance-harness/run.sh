@@ -12,11 +12,12 @@
 #   ./run.sh draftclass --classes 200          # draft-class generator validation
 #   ./run.sh career                            # player-development validation
 #   ./run.sh leaguegen [--leagues 400]         # RANDOM-league t=0 quality pyramid
+#   ./run.sh perception [--drafts 12]          # AI draft-fog diagnostic (no gate)
 #
 # Per-play scenarios: percall depth keyed-pa regression pass-talent run-talent
 #            familiarity stacking spam heat-* composure-lev mental-regression macro.
 # Parameterized scenarios (flag args, run on their own — not via `all`):
-#            fullgame, positionsweep, draftclass, career, leaguegen.
+#            fullgame, positionsweep, draftclass, career, leaguegen, perception.
 #            (see README.md for the full CLI + band targets.)
 #
 # This is REPO TOOLING — it does NOT build the iOS app. It compiles only the

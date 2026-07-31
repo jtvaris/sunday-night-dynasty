@@ -262,8 +262,9 @@ with margin for that.
 | `draftclass` | **draft-class overhaul** — N classes through the shipped `DraftClassBuilder` + combine; full distribution report + the 31 plan-§7 invariants as hard asserts | every §7.1–§7.10 invariant; **exits 1** on any violation |
 | `career` | **development overhaul** — 20 independent 32-team leagues run end-to-end through the shipped development stack; hit rates by round, elite shares, trajectory mix, aging curves, R and motivation distributions, career lengths, **and the §8 league quality pyramid** | every `PLAYER_DEVELOPMENT_OVERHAUL_PLAN.md` §6 item + `DEVELOPMENT_NFL_REFERENCE.md` §8 (6.9a-g); **exits 1** on any violation |
 | `leaguegen` | **P1 quality-pyramid wave** — the RANDOM league's t=0 intake: 400 × 53-man rosters straight out of `LeagueGenerator`'s rating path, reported as the §8 quality pyramid, plus a **pin against the Python mirror** in `tools/league-data/make_templates.py` | §8 bands on the intake distribution, depth-tier ordering, the rating floor, `veteranPotential` headroom ≤ 4, and Swift-vs-mirror agreement; **exits 1** on any violation |
+| `perception` | **AI draft fog (Track C)** — 32 personas draft N boards twice off the same rosters, once through `AIDraftPerception` and once on the true board (`--perceptionEnabled false`), through the shipped `DraftEngine.aiMakePick` | DIAGNOSTIC ONLY, always exits 0: R1 reaches / steals / true-BPA slide and mean \|perceived − true\| by GM persona |
 
-The last five are **parameterized** — they take `--flag value` args instead of a
+The last six are **parameterized** — they take `--flag value` args instead of a
 scenario-name list (see "Round-5 full-game campaign" and "Draft-class validation"
 below), so they are invoked on their own, not via `all`.
 
@@ -371,6 +372,8 @@ harness career    [--teams 32] [--burnin 8] [--classes 10] [--window 12]
                   [--board 0.30] [--verbose]
 
 harness leaguegen [--leagues 400]
+
+harness perception [--drafts 12] [--size 350] [--seed N]
 ```
 
 **`leaguegen` exists to keep two independent implementations of one calibration
