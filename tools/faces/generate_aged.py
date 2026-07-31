@@ -45,7 +45,8 @@ OUT = os.path.join(ROOT, "out", "AgedFaces")
 PREFIX = "aged_"
 
 # The age clause each band was painted with -> the clause its variant is painted
-# with, plus the band tag the variant's bucket carries.
+# with, the band tag the variant's bucket carries, and whether the hairstyle
+# token should be grayed (see HAIR_AGE).
 #
 # Keyed by the EXACT fragment `generate_faces.build_spec` composed, so a rewrite
 # is a substring replacement with no parsing and no guessing. A source prompt
@@ -57,36 +58,74 @@ PREFIX = "aged_"
 # to 45), while a coach's depends on where he started, because a 45-year-old
 # coordinator crossing 62 and a 58-year-old head coach crossing 62 are ten years
 # apart in the source picture.
+#
+# PROMPT VERSION 2. v1 put the gray in the AGE clause ("mostly gray hair",
+# "silver gray hair"). That clause sits before the hairstyle token
+# `build_spec` appended, and in FLUX it beat it: a "buzz cut" source came back
+# with a full silver mane, a "bald head" source grew hair, and — because a
+# silver mane is a white-coded feature in the model's prior — dark-skinned
+# subjects came back several shades lighter. Three failure modes, one cause.
+# v2 states no hair volume at all in the age clause and grays the SOURCE's own
+# hairstyle token in place instead, so the style survives the decade.
 AGE_REWRITES = {
     ("player", "male", "20-24"): (
         "in his early twenties",
         "in his mid thirties, gray flecks at the temples, weathered veteran face",
-        "34-40"),
+        "34-40", False),
     ("player", "male", "25-29"): (
         "in his late twenties",
         "in his mid thirties, gray flecks at the temples, weathered veteran face",
-        "34-40"),
+        "34-40", False),
     ("player", "male", "30-36"): (
         "in his early thirties",
         "in his late thirties, gray at the temples, weathered veteran face, lined forehead",
-        "34-40"),
+        "34-40", False),
     ("coach", "male", "38-50"): (
         "in his mid forties",
-        "in his early sixties, mostly gray hair, weathered lined face",
-        "62-72"),
+        "in his early sixties, weathered lined face",
+        "62-72", True),
     ("coach", "male", "50-68"): (
         "in his late fifties, some gray hair",
-        "in his late sixties, silver gray hair, weathered face with deep lines",
-        "62-75"),
+        "in his late sixties, weathered face with deep lines",
+        "62-75", True),
     ("coach", "female", "38-50"): (
         "in her mid forties",
-        "in her early sixties, mostly gray hair, weathered lined face",
-        "62-72"),
+        "in her early sixties, weathered lined face",
+        "62-72", True),
     ("coach", "female", "50-68"): (
         "in her late fifties, some gray hair",
-        "in her late sixties, silver gray hair, weathered face with deep lines",
-        "62-75"),
+        "in her late sixties, weathered face with deep lines",
+        "62-75", True),
 }
+
+# Hairstyle token -> its grayed form. Keys are verbatim `generate_faces.HAIR` /
+# `HAIR_F` entries; the value keeps the CUT and changes only its color (plus the
+# one recession cue a sixty-year-old earns), because the cut is the single
+# strongest "same man" cue a text-to-image model carries across two renders.
+# `bald head` deliberately stays bald.
+HAIR_AGE = {
+    "short cropped hair": "short cropped gray hair",
+    "buzz cut": "gray buzz cut",
+    "short dreadlocks": "short gray dreadlocks",
+    "medium afro": "medium gray afro",
+    "bald head": "bald head, short gray fringe above the ears",
+    "short curly hair": "short curly gray hair",
+    "short straight hair": "short straight gray hair, thinning",
+    "fade haircut": "gray fade haircut",
+    "shoulder-length straight hair": "shoulder-length straight gray hair",
+    "curly shoulder-length hair": "curly shoulder-length gray hair",
+    "long braids": "long gray braids",
+    "natural afro": "natural gray afro",
+    "hair in a tight bun": "gray hair in a tight bun",
+    "short pixie cut": "short gray pixie cut",
+    "long straight hair tied back": "long gray hair tied back",
+    "medium wavy hair": "medium wavy gray hair",
+}
+# Longest first: several keys are substrings of nothing here today, but a future
+# HAIR entry that overlaps an existing one must not be half-replaced.
+HAIR_AGE_ORDER = sorted(HAIR_AGE, key=len, reverse=True)
+
+PROMPT_VERSION = 2
 
 
 def aged_id(source_id):
@@ -105,12 +144,20 @@ def rewrite(entry):
     rule = AGE_REWRITES.get(key)
     if rule is None:
         return None
-    old, new, band = rule
+    old, new, band, gray_hair = rule
     prompt = entry.get("prompt", "")
     if old not in prompt:
         return None
+    prompt = prompt.replace(old, new, 1)
+    if gray_hair:
+        # Best-effort: a source whose hairstyle token we do not recognise still
+        # ages (the face clause did its work), it just keeps its hair color.
+        for token in HAIR_AGE_ORDER:
+            if token in prompt:
+                prompt = prompt.replace(token, HAIR_AGE[token], 1)
+                break
     aged_bucket = {**bucket, "gender": bucket.get("gender", "male"), "ageBand": band}
-    return aged_id(entry["id"]), aged_bucket, prompt.replace(old, new, 1), entry["seed"]
+    return aged_id(entry["id"]), aged_bucket, prompt, entry["seed"]
 
 
 # ---------------------------------------------------------------------------
@@ -166,10 +213,10 @@ def package(manifest):
     own out/ dir and its own manifest so neither can overwrite the other."""
     os.makedirs(OUT, exist_ok=True)
     culled = set(json.load(open(CULLED))) if os.path.exists(CULLED) else set()
-    out_faces = []
-    for f in manifest["faces"]:
+
+    def convert(f):
         if f["id"] in culled:
-            continue
+            return None
         src = os.path.join(ROOT, f["file"])
         dst = os.path.join(OUT, f["id"] + ".heic")
         if not os.path.exists(dst):
@@ -177,9 +224,14 @@ def package(manifest):
                                 "-z", "384", "384", src, "--out", dst], capture_output=True)
             if r.returncode != 0 or not os.path.exists(dst):
                 print(f"SKIP {f['id']}: sips failed", file=sys.stderr)
-                continue
-        out_faces.append({"id": f["id"], "file": f"Faces/{f['id']}.heic",
-                          "bucket": f["bucket"], "source": f["source"]})
+                return None
+        return {"id": f["id"], "file": f"Faces/{f['id']}.heic",
+                "bucket": f["bucket"], "source": f["source"]}
+
+    # One `sips` process per image, 8 at a time: the full pass is 3 700 spawns and
+    # serially that is a coffee break for no reason.
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        out_faces = [r for r in pool.map(convert, manifest["faces"]) if r]
     path = os.path.join(ROOT, "out", "aged_faces_manifest.json")
     json.dump({"version": 1, "faces": out_faces}, open(path, "w"), indent=1)
     print(f"packaged {len(out_faces)} aged faces -> {OUT}")
@@ -222,6 +274,8 @@ def main():
     ap.add_argument("--seed", type=int, default=20260730)
     ap.add_argument("--workers", type=int, default=6)
     ap.add_argument("--package", action="store_true", help="package what already exists and exit")
+    ap.add_argument("--reconcile", action="store_true",
+                    help="adopt raw_aged/*.png that exist but are not in the manifest, and exit")
     ap.add_argument("--dry-run", action="store_true", help="print the plan, generate nothing")
     args = ap.parse_args()
 
@@ -232,6 +286,45 @@ def main():
         package(manifest)
         review_html(manifest)
         return 0
+
+    if args.reconcile:
+        # The manifest is written once, when a run finishes. A sweep that is
+        # killed mid-flight (the harness times long jobs out; the 6/min throttle
+        # below $5 of Replicate credit makes a full pass take hours) therefore
+        # leaves hundreds of PAID images on disk that no manifest lists — and the
+        # next run cannot tell them from ids it never painted, because resume
+        # keys on the manifest. Adopting them is pure bookkeeping: the entry is a
+        # deterministic function of (source manifest, rewrite table), which is
+        # exactly what `work` would have recorded.
+        source = json.load(open(SOURCE_MANIFEST))
+        have = {f["id"] for f in manifest["faces"]}
+        adopted = 0
+        for entry in source["faces"]:
+            spec = rewrite(entry)
+            if spec is None or spec[0] in have:
+                continue
+            fid, bucket, prompt, seed = spec
+            if not os.path.exists(os.path.join(RAW, fid + ".png")):
+                continue
+            manifest["faces"].append({"id": fid, "file": f"raw_aged/{fid}.png",
+                                      "bucket": bucket, "seed": seed,
+                                      "backend": "replicate", "prompt": prompt,
+                                      "source": entry["id"],
+                                      "promptVersion": PROMPT_VERSION})
+            adopted += 1
+        manifest["faces"].sort(key=lambda f: f["id"])
+        json.dump(manifest, open(MANIFEST, "w"), indent=1)
+        print(f"reconciled {adopted} on-disk variants; manifest now {len(manifest['faces'])}")
+        return 0
+
+    # A manifest carrying images painted by an older prompt table would resume
+    # into a MIXED pool — half the coaches aged one way, half another — and
+    # nothing downstream could tell them apart. Refuse rather than blend.
+    stale = [f for f in manifest["faces"] if f.get("promptVersion", 1) != PROMPT_VERSION]
+    if stale:
+        sys.exit(f"{MANIFEST} holds {len(stale)} variant(s) from prompt version "
+                 f"{stale[0].get('promptVersion', 1)} (current: {PROMPT_VERSION}). "
+                 "Archive raw_aged/ + aged_manifest.json and start clean.")
 
     source = json.load(open(SOURCE_MANIFEST))
     chosen = select(source["faces"], args.role, args.limit, args.seed)
@@ -260,10 +353,19 @@ def main():
         fid, bucket, prompt, seed = spec
         path = os.path.join(RAW, fid + ".png")
         if not os.path.exists(path):
-            try:
-                data = gen(prompt, seed)
-            except Exception as exc:                      # noqa: BLE001
-                print(f"  FAIL {fid}: {type(exc).__name__} {exc}", file=sys.stderr)
+            # gf.fetch already retries the download; this second ring covers the
+            # rarer "prediction returned no output at all" case, which needs a
+            # fresh (paid) prediction. Two tries, then leave the id for the next
+            # resume rather than hammering a backend that is having a bad minute.
+            data = None
+            for attempt in range(2):
+                try:
+                    data = gen(prompt, seed)
+                    break
+                except Exception as exc:                  # noqa: BLE001
+                    print(f"  {'FAIL' if attempt else 'retry'} {fid}: "
+                          f"{type(exc).__name__} {exc}", file=sys.stderr)
+            if data is None:
                 return None
             # Same contract as generate_faces.py: an entry lands in the manifest
             # only after its bytes exist on disk, so a crashed run resumes
@@ -275,7 +377,7 @@ def main():
                 print(f"  {done[0]}/{len(todo)}")
         return {"id": fid, "file": f"raw_aged/{fid}.png", "bucket": bucket,
                 "seed": seed, "backend": backend_name, "prompt": prompt,
-                "source": entry["id"]}
+                "source": entry["id"], "promptVersion": PROMPT_VERSION}
 
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         results = [r for r in pool.map(work, todo) if r]

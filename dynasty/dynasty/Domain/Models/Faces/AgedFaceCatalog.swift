@@ -51,10 +51,13 @@ struct AgedFacesManifest: Codable {
 /// **nil for every lookup**, which renders exactly what the app rendered before
 /// this layer existed — the un-aged portrait.
 ///
-/// That is the shipping state today: `tools/faces/generate_aged.py` has produced
-/// a 47-face coach pilot but the images are staged in `tools/faces/out/AgedFaces/`
-/// rather than bundled, pending the identity-coherence call in
-/// `docs/FACE_AGE_VARIANTS.md`. Nothing about this file assumes they landed.
+/// The full pass has since shipped — one variant for every id in the pool,
+/// packaged into `Resources/Faces/` alongside the main pool — but nothing in
+/// this file assumes it: a build made from a tree without those HEICs, or with
+/// a partial manifest, renders un-aged portraits and nothing else changes.
+/// `FaceBundleAudit` prints `agedImages=`/`coverage=` so a partial pass is
+/// visible rather than merely quiet. See `docs/FACE_AGE_VARIANTS.md` for the
+/// technique and its measured identity ceiling.
 ///
 /// ## Threading
 ///

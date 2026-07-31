@@ -22,7 +22,8 @@ Backends & credentials (first available wins unless --backend given):
 Outputs: raw/<id>.png + manifest.json (id, bucket, prompt, seed, backend).
 No fabricated entries: an image lands in the manifest only after it decodes.
 """
-import argparse, base64, hashlib, json, os, random, sys, threading, time, urllib.request
+import argparse, base64, hashlib, json, os, random, sys, threading, time
+import urllib.error, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -137,18 +138,88 @@ def http_json(url, payload, headers, timeout=180):
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read())
 
-def fetch(url, timeout=180):
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
+def fetch(url, timeout=180, attempts=4):
+    # A delivery URL handed back by `Prefer: wait` is not always readable the
+    # instant the prediction returns — replicate.delivery answers 404 for a
+    # second or two on a fraction of them (~19% of one 48-image batch). The
+    # prediction is already paid for at that point, so retrying the DOWNLOAD is
+    # free and re-rolling the image is not: back off here before giving up.
+    for i in range(attempts):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": UA})
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return r.read()
+        except Exception:                                 # noqa: BLE001
+            if i == attempts - 1:
+                raise
+            time.sleep(1.5 * (i + 1))
+
+def http_get_json(url, headers, timeout=60):
+    req = urllib.request.Request(url, headers={"User-Agent": UA, **headers})
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read()
+        return json.loads(r.read())
 
 def gen_replicate(prompt, seed):
     tok = os.environ["REPLICATE_API_TOKEN"]
-    out = http_json("https://api.replicate.com/v1/models/black-forest-labs/flux-schnell/predictions",
-                    {"input": {"prompt": prompt, "seed": seed, "aspect_ratio": "1:1",
-                               "output_format": "png", "disable_safety_checker": False}},
-                    {"Authorization": f"Bearer {tok}", "Prefer": "wait"})
+    auth = {"Authorization": f"Bearer {tok}"}
+    payload = {"input": {"prompt": prompt, "seed": seed, "aspect_ratio": "1:1",
+                         "output_format": "png", "disable_safety_checker": False}}
+    # The create endpoint 404s intermittently under sustained parallel load —
+    # roughly one call in six during a 700-image sweep, and a 404 means nothing
+    # was created, so re-POSTing cannot double-charge.
+    #
+    # 429 is a different animal and needs a different wait. Replicate throttles
+    # prediction creates to 6/min with a burst of 1 once the account drops below
+    # $5 of credit, and the body says so in as many words — a 1.5 s backoff
+    # cannot outlast that, so every worker burns its attempts, the id fails, and
+    # the sweep still hammers the endpoint. `Retry-After` is exact (9 s in
+    # practice); honour it rather than guessing, and give 429 its own generous
+    # attempt budget. With the throttle on, `--workers 2` is as fast as
+    # `--workers 12` and far quieter.
+    out = None
+    last = None
+    for i in range(20):
+        try:
+            out = http_json("https://api.replicate.com/v1/models/black-forest-labs/"
+                            "flux-schnell/predictions", payload,
+                            {**auth, "Prefer": "wait"})
+            break
+        except urllib.error.HTTPError as exc:
+            last = exc
+            if exc.code == 429:
+                try:
+                    delay = float(exc.headers.get("Retry-After") or 0)
+                except ValueError:
+                    delay = 0
+                time.sleep(min(90.0, max(2.0, delay) + random.random()))
+            else:
+                if i >= 3:
+                    raise
+                time.sleep(1.5 * (i + 1))
+        except Exception as exc:                          # noqa: BLE001
+            last = exc
+            if i >= 3:
+                raise
+            time.sleep(1.5 * (i + 1))
+    if out is None:
+        raise last if last else RuntimeError("replicate create failed")
     urls = out.get("output") or []
+    # `Prefer: wait` is a courtesy, not a guarantee: it returns `processing` with
+    # no output on a fraction of calls. The prediction is already paid for and
+    # nearly always finishes a second later, so POLL it — re-rolling here bought
+    # a second image at full price and threw the first one away.
+    if not urls:
+        poll = (out.get("urls") or {}).get("get")
+        deadline = time.time() + 120
+        while poll and time.time() < deadline:
+            time.sleep(2)
+            out = http_get_json(poll, auth)
+            status = out.get("status")
+            if status == "succeeded":
+                urls = out.get("output") or []
+                break
+            if status in ("failed", "canceled"):
+                break
     if not urls: raise RuntimeError(f"replicate empty output: {out.get('error')}")
     return fetch(urls[0] if isinstance(urls, list) else urls)
 

@@ -43,6 +43,15 @@ import Foundation
 // meaning exactly what they meant before. Extras HEICs with NO extras manifest
 // still FAIL as orphans — that is the same "images that can never be shown"
 // defect, one pool over.
+//
+// The AGED variants (`aged_face_*`, listed by `aged_faces_manifest.json`) are a
+// third pool in the same folder and are handled the same way, with one check the
+// other two do not need: an aged entry is only reachable through its SOURCE id
+// (`PersonFaceView` asks `AgedFaceCatalog.resolve` with a main-pool id), so an
+// aged variant whose source is not in the main catalog is dead weight even
+// though its HEIC is present and its manifest claims it. That is counted as
+// `danglingSource` and fails, because it means the two manifests were packaged
+// from different generations of the pool.
 @MainActor
 enum FaceBundleAudit {
 
@@ -86,6 +95,20 @@ enum FaceBundleAudit {
         /// Where `extra_faces_manifest.json` resolved: "absent", "bundle-root" or
         /// "Faces/".
         var extrasManifestLocation = "absent"
+        /// Ids in the aged manifest (`aged_face_*`), 0 when it is absent.
+        var agedCatalogCount = 0
+        /// Of `agedCatalogCount`, how many resolve to a bundled HEIC.
+        var agedImagesResolved = 0
+        /// Where `aged_faces_manifest.json` resolved: "absent", "bundle-root" or
+        /// "Faces/".
+        var agedManifestLocation = "absent"
+        /// Aged entries whose `source` id is not in the main catalog — variants
+        /// nothing can ever ask for.
+        var agedDanglingSource = 0
+        /// Main-pool ids that have an aged variant, as a share of the pool. This
+        /// is the number that says how much of a long save is covered: a person
+        /// past the threshold whose face has no variant keeps his young portrait.
+        var agedCoverage: Double = 0
         var failures: [String] = []
 
         var isPass: Bool { failures.isEmpty }
@@ -161,6 +184,41 @@ enum FaceBundleAudit {
             )
         }
 
+        // --- Aged variants (aged_face_*), resolved the same way ------------
+        if let agedURL = AgedFaceCatalog.manifestURL() {
+            let parent = agedURL.deletingLastPathComponent().lastPathComponent
+            result.agedManifestLocation = parent == FaceGeneratorConstants.facesFolder
+                ? "\(FaceGeneratorConstants.facesFolder)/"
+                : "bundle-root"
+        }
+        let agedEntries = AgedFaceCatalog.shared.entries
+        result.agedCatalogCount = agedEntries.count
+        let poolIDs = Set(library.entries.map(\.id))
+        for entry in agedEntries {
+            if !poolIDs.contains(entry.source) { result.agedDanglingSource += 1 }
+            guard let url = FaceImageCache.bundleURL(for: entry.id) else { continue }
+            result.agedImagesResolved += 1
+            claimed.insert(url.lastPathComponent)
+        }
+        if result.catalogCount > 0 {
+            let covered = agedEntries.reduce(into: Set<String>()) { $0.insert($1.source) }
+                .intersection(poolIDs).count
+            result.agedCoverage = Double(covered) / Double(result.catalogCount)
+        }
+        if result.agedManifestLocation != "absent", result.agedCatalogCount == 0 {
+            result.failures.append(
+                "aged_faces_manifest.json IS bundled (\(result.agedManifestLocation)) but the "
+                + "aged catalog is EMPTY — the file did not decode, or lists no faces"
+            )
+        }
+        if result.agedDanglingSource > 0 {
+            result.failures.append(
+                "\(result.agedDanglingSource) aged variant(s) name a source id the main catalog "
+                + "does not have — aged_faces_manifest.json was packaged against a different pool "
+                + "than faces_manifest.json, and those variants can never be rendered"
+            )
+        }
+
         // --- Cross-check: what is physically there vs. what the catalog knows
         let bundled = physicalHEICs()
         result.heicsInBundle = bundled.count
@@ -170,12 +228,23 @@ enum FaceBundleAudit {
             let examples = orphans.sorted().prefix(3).joined(separator: ", ")
             // Which manifest to go and look at: an `avatar_*`/`owner_*` orphan means
             // the extras HEICs were copied without `extra_faces_manifest.json`.
-            let extrasOrphans = orphans.filter { ExtrasCatalog.isExtraID($0) }.count
-            let culprit = extrasOrphans == orphans.count
-                ? "extra_faces_manifest.json is missing or stale"
-                : (extrasOrphans > 0
-                    ? "stale faces_manifest.json, plus \(extrasOrphans) extras with no extras manifest"
-                    : "stale faces_manifest.json")
+            // Prefix order matters: `aged_face_00042.heic` starts with `aged_`,
+            // and nothing else does, so it is tested first and never counted as
+            // a main-pool orphan.
+            let agedOrphans = orphans.filter { AgedFaceCatalog.isAgedID($0) }.count
+            let extrasOrphans = orphans.filter {
+                !AgedFaceCatalog.isAgedID($0) && ExtrasCatalog.isExtraID($0)
+            }.count
+            let poolOrphans = orphans.count - agedOrphans - extrasOrphans
+            var culprits: [String] = []
+            if poolOrphans > 0 { culprits.append("stale faces_manifest.json (\(poolOrphans))") }
+            if extrasOrphans > 0 {
+                culprits.append("extra_faces_manifest.json missing or stale (\(extrasOrphans))")
+            }
+            if agedOrphans > 0 {
+                culprits.append("aged_faces_manifest.json missing or stale (\(agedOrphans))")
+            }
+            let culprit = culprits.joined(separator: "; ")
             result.failures.append(
                 "\(orphans.count) bundled .heic files are not in any catalog (\(culprit) — "
                 + "these images can never be shown): \(examples)"
@@ -222,6 +291,17 @@ enum FaceBundleAudit {
         print("FACEBUNDLE: extrasManifest=\(result.extrasManifestLocation) "
               + "extrasImages=\(result.extrasImagesResolved)/\(result.extrasCatalogCount) "
               + "(avatar_* user personas + owner_* executives)")
+        // Same reasoning one pool further: the aged variants are counted by
+        // `heicsInBundle` and by nothing else above. `coverage` is the share of
+        // the main pool that has a variant at all — the rest keep their young
+        // portrait past the threshold, which is a partial run, not a defect.
+        print(String(
+            format: "FACEBUNDLE: agedManifest=%@ agedImages=%d/%d coverage=%.1f%% of pool "
+            + "dangling=%d (aged_face_* variants, player %d+ / coach %d+)",
+            result.agedManifestLocation, result.agedImagesResolved, result.agedCatalogCount,
+            100 * result.agedCoverage, result.agedDanglingSource,
+            AgedFaceCatalog.playerAgeThreshold, AgedFaceCatalog.coachAgeThreshold
+        ))
         if result.imagesResolved == 0 {
             print("FACEBUNDLE: no face images in this build — every portrait renders the "
                   + "placeholder silhouette. This is the DESIGNED pre-shipment state.")
