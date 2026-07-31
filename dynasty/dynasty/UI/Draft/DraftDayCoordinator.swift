@@ -1469,7 +1469,10 @@ final class DraftDayCoordinator: ObservableObject {
     }
 
     private func scoutGradeLabel(for prospect: CollegeProspect) -> String {
-        switch prospect.trueOverall {
+        // Stamped on completed picks (ticker + DraftPick.scoutGrade). Buckets the
+        // SCOUTED number so the fog holds even post-pick — an unscouted steal
+        // shouldn't reveal its true tier the moment another club drafts him.
+        switch prospect.scoutedOverall ?? prospect.trueOverall {
         case 90...:   return "A+"
         case 84..<90: return "A"
         case 78..<84: return "B+"
