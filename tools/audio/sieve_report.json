@@ -1,0 +1,17 @@
+{
+  "extract_root": "/Users/jtvaris/workspace/jtvaris/IOS/Dynasty/tools/audio/extracted",
+  "total_audio_files": 1135,
+  "counts": {
+    "crowd_cheer": 14,
+    "crowd_boo": 2,
+    "crowd_gasp": 11,
+    "crowd_bed": 28,
+    "chant": 3,
+    "impact_tackle": 49,
+    "kick": 2,
+    "throw_whoosh": 30,
+    "catch": 3,
+    "whistle": 13,
+    "shouts": 28
+  }
+}
