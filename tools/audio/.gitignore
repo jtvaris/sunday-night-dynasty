@@ -1,4 +1,9 @@
+__pycache__/
+# Raw 47 s Stable Audio returns (~620 MB). Pure intermediate — every take is
+# reproducible from the seed/prompt in its JSON sidecar and gen/manifest.json.
+approved/
+extracted/
+gen_raw/
+gen/
 raw_bundles/
 staging/
-extracted/
-__pycache__/

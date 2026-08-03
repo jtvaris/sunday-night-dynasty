@@ -108,24 +108,143 @@ unusual terms, record the exception in the table below.
 
 ## Shipped files
 
-Nothing has been shipped yet. Selection happens after the user reviews
-`review_audio.html`; staged candidates in `staging/` are **not** shipped assets,
-and nothing has been copied into `dynasty/dynasty/Resources/`.
+**Still nothing in `dynasty/dynasty/Resources/`.** Stage 2 masters candidates
+into `approved/` and `gen/` only; the copy into the app bundle happens after
+the user picks takes from `review_audio_v2.html`. Update this section in the
+same commit that adds the assets.
 
-| Shipped path | Category | Original filename | Source library | Bundle | Notes |
-|---|---|---|---|---|---|
-| _(none yet)_ | | | | | |
+| Shipped path | Category | Source | Licence |
+|---|---|---|---|
+| _(none yet)_ | | | |
 
 ---
 
-## Bespoke audio (non-bundle)
+## Approved & mastered (round 1)
 
-Categories the Sonniss archive genuinely cannot serve — these need to be created.
-Record the tool and the prompt/session so provenance is reconstructible.
+These are the seven files the user approved from `review_audio.html`. All are
+Sonniss GDC bundle content, so the umbrella licence above applies verbatim:
+**royalty-free commercial use, no attribution required, no reselling as sound**
+**packs, no AI-training use.**
 
-| Category | Why bespoke | Shipped path | Tool | Date |
-|---|---|---|---|---|
-| `kick` | Only 2 keyword hits in the whole archive and both are *motorcycle kick-starts*. No ball-kick/punt recording exists in any Sonniss year. | _(pending)_ | | |
-| `catch` | 3 hits, all apparel foley (bracelet, leather jacket). No ball-into-hands/glove catch. | _(pending)_ | | |
-| `crowd_boo` | Only 2 usable files archive-wide; likely needs more variations. | _(pending)_ | | |
-| `chant` | Only 3 files, none football-specific (protest / basketball crowd). | _(pending)_ | | |
+Mastering applied (`process_approved.py`): 5.1 sources folded to stereo with an
+explicit ITU-R BS.775 pan matrix, EBU R128 two-pass loudnorm to **-18 LUFS /**
+**-1.5 dBTP**, 48 kHz stereo, full duration preserved. Each ships as 16-bit PCM
+wav (the format `AudioDirector` already loads) with a 24-bit `.master.wav`
+archive and an `.m4a` review preview alongside.
+
+> **5.1 channel-order note.** The two Rose Bowl files are tagged
+> `_5.1 LCRLsRsLf`, i.e. **L C R Ls Rs LFE** — *not* ffmpeg's default
+> `FL FR FC LFE BL BR`. A plain `-ac 2` would fold the centre channel into the
+> right speaker and treat left-surround as LFE. Verified before trusting the
+> filename: channel 5 measures ~-54 dB RMS against ~-25 dB on the others, which
+> is unmistakably the LFE. The pan matrix in `process_approved.py` is correct;
+> do not 'simplify' it back to `-ac 2`.
+
+| Mastered file | Category | Source library | Bundle | Source | LUFS in → out | True peak |
+|---|---|---|---|---|---|---|
+| `approved/crowd_bed/crowd_bed_talking.wav` | `crowd_bed` | Sonic Bat - Soccer Stadium Ambience | Sonniss GDC 2020 part 11of14 | 2ch / 96 kHz / 128.0s | -41.3 → -18.0 LUFS | -1.5 dBTP |
+| `approved/crowd_boo/crowd_boo_stadium.wav` | `crowd_boo` | Sonic Bat - Soccer Stadium Ambience | Sonniss GDC 2020 part 11of14 | 2ch / 96 kHz / 25.2s | -24.6 → -18.0 LUFS | -1.5 dBTP |
+| `approved/crowd_chant/crowd_chant_stadium.wav` | `crowd_chant` | Sonic Bat - Soccer Stadium Ambience | Sonniss GDC 2020 part 11of14 | 2ch / 96 kHz / 67.0s | -26.2 → -18.0 LUFS | -1.5 dBTP |
+| `approved/crowd_cheer/crowd_cheer_forum_swell.wav` | `crowd_cheer` | 2496SoundEffects - Surround At The Show 1 5.1 | Sonniss GDC 2019 part 7of8 | 2ch / 96 kHz / 6.3s | -21.7 → -18.0 LUFS | -3.2 dBTP |
+| `approved/crowd_cheer/crowd_cheer_rosebowl_encore.wav` | `crowd_cheer` | 2496SoundEffects - Surround At The Show 1 5.1 | Sonniss GDC 2019 part 7of8 | 6ch / 96 kHz / 160.1s | -23.7 → -18.0 LUFS | -1.5 dBTP |
+| `approved/crowd_cheer/crowd_cheer_rosebowl_surge.wav` | `crowd_cheer` | 2496SoundEffects - Surround At The Show 1 5.1 | Sonniss GDC 2019 part 7of8 | 6ch / 96 kHz / 10.9s | -18.3 → -18.0 LUFS | -6.5 dBTP |
+| `approved/crowd_gasp/crowd_gasp_reaction.wav` | `crowd_gasp` | Articulated Sounds - Bali Ubud Village Ambiences | Sonniss GDC 2020 part 1of14 | 2ch / 96 kHz / 12.3s | -22.8 → -18.9 LUFS | -1.5 dBTP |
+
+Original filenames (for tracing back into `extracted/`):
+
+- `crowd_bed_talking` ← `SBssa_Crowd Talking 010.wav`
+- `crowd_boo_stadium` ← `SBssa_Crowd Booing 002.wav`
+- `crowd_chant_stadium` ← `SBssa_Crowd Chanting 019.wav`
+- `crowd_cheer_forum_swell` ← `Crowd Cheering Interior Short Swell 2, The Forum Stadium, Applause _STEREO.wav`
+- `crowd_cheer_rosebowl_encore` ← `Crowd Cheering Exterior, Close Cheers, Encore Call, Rose Bowl Stadium, Applause _5.1 LCRLsRsLf.wav`
+- `crowd_cheer_rosebowl_surge` ← `Crowd Cheering Exterior, Big Surge, Rose Bowl Stadium, Applause _5.1 LCRLsRsLf.wav`
+- `crowd_gasp_reaction` ← `CROWD Reaction, Small Applause 03, 20 People, Bali, Indonesia.wav`
+
+---
+
+## Generated SFX
+
+Everything the Sonniss archive could not serve was generated from scratch with
+a text-to-audio model. **No bundle audio was used as input**, which keeps us
+clear of the Sonniss no-AI-training clause quoted above.
+
+| Field | Value |
+|---|---|
+| Model | `stackadoc/stable-audio-open-1.0` (Replicate) |
+| Version pinned | `9aff84a639f96d0f7e6081cdea002d15133d0043727f849c40abdd166b7c75a8` |
+| Upstream weights | `stabilityai/stable-audio-open-1.0` (Hugging Face) |
+| Licence | **Stability AI Community License** |
+| Licence text | https://stability.ai/community-license-agreement |
+| Hardware / rate | Nvidia L40S, $0.000975 / sec |
+| Takes generated | 77 (73 kept for review, rest are pilots) |
+| Total GPU time | 413.1 s |
+| Total cost | ~$0.40 |
+| Date | 2026-08-03 |
+
+### ⚠ Licence caveat — the $1M annual-revenue cap
+
+The Stability AI Community License permits **commercial use, royalty-free,
+only while you or your affiliates generate under USD $1,000,000 in annual
+revenue** (any revenue, not just revenue derived from the model). Verbatim:
+
+> *If at any time You or Your Affiliate(s), either individually or in
+> aggregate, generate more than USD $1,000,000 in annual revenue (or the
+> equivalent thereof in Your local currency), regardless of whether that
+> revenue is generated directly or indirectly from the Stability AI Materials
+> or Derivative Works, any licenses granted to You under this Agreement shall
+> terminate as of such date.*
+
+**→ If Sunday Night Dynasty (or Brew Crow as a whole) ever crosses $1M annual
+revenue, an Enterprise licence must be obtained from Stability AI, or these
+generated files must be replaced.** Register at https://stability.ai/license.
+This is a live obligation, not a one-off check — re-read it at each funding or
+revenue milestone.
+
+**Also recorded, because it is a genuine trap:** the Replicate wrapper repo
+`github.com/stackadoc/cog-stable-audio` still ships a `LICENSE_MODEL` file
+containing the *older* **Stability AI NON-COMMERCIAL Research Community**
+**License** (dated 2024-06-05), under which shipping these sounds in a paid
+game would **not** be permitted. That file is a stale snapshot of the terms at
+the model's launch. Stability subsequently relicensed the upstream weights:
+`stabilityai/stable-audio-open-1.0` on Hugging Face declares
+`license_name: stable-audio-community` (model card last modified 2025-06-19),
+and the same applies to `stable-audio-open-small`. **We rely on the upstream
+Community License, not the wrapper repo's stale file.** If this is ever
+challenged, the evidence is the Hugging Face model-card metadata.
+
+Model outputs themselves are not claimed by Stability — the licence covers the
+Materials and Derivative Works, and explicitly excludes model output from the
+definition of a Derivative Work. Shipping the generated `.wav` files inside the
+game is distribution of *output*, not of the model.
+
+### Generated categories
+
+Prompts, seeds and per-take loudness live in `gen/manifest.json`; the raw
+47 s model returns plus a JSON sidecar per take are in `gen_raw/` so any take
+is reproducible from its seed. Nothing here is shipped until the user picks
+takes from `review_audio_v2.html`.
+
+| Category | Takes | Why generated rather than sourced |
+|---|---|---|
+| `catch` | 12 | 3 hits, all apparel foley (bracelet, leather jacket). No ball-into-hands catch. |
+| `crowd_boo_extra` | 4 | Only 2 usable boo files archive-wide — not enough variation for a season. |
+| `crowd_chant_extra` | 4 | Only 3 chant files, none football-specific (protest / basketball). |
+| `crowd_gasp_extra` | 4 | The one approved gasp is a 20-person village reaction, far too small for a stadium. |
+| `kick_place` | 12 | Same gap as `kick_punt` — no placekick/tee impact exists in the archive. |
+| `kick_punt` | 6 | Only 2 keyword hits archive-wide, both motorcycle kick-starts. No ball-kick recording in any Sonniss year. |
+| `shouts` | 9 | Male-voice hits were announcer VO or animal grunts; no snap-cadence or lineman effort. |
+| `tackle_impact` | 8 | Archive impacts are all melee/weapon or vehicle; no pad-on-pad body collision. |
+| `throw_whoosh` | 6 | Generic whooshes exist but none read as a short QB release; cheaper to generate than to sift. |
+| `whistle` | 8 | Archive whistles are train/kettle/sports-hall; no clean isolated referee pea whistle. |
+
+Two categories needed a prompt-iteration wave (takes suffixed `_v2`), driven by
+measured spectral analysis rather than guesswork (`analyze_gen.py`):
+
+- **`kick_place`** — round 1 returned a median spectral centroid of 4.5-6.2 kHz:
+  thin, clicky, no ball behind it (one take was effectively DC). Re-prompted to
+  lead with low-end body and a *heavy* ball; round 2 landed 143-2145 Hz.
+- **`catch`** — round 1 was weak and sparse (-26 to -31 LUFS after normalisation).
+  Re-prompted for a *loud, hard* slap; round 2 landed -18 to -20 LUFS.
+- **`shouts`** grunts were also re-prompted deeper (3.3 kHz → ~2.1 kHz centroid).
+
+Both waves are kept in the review page so the user can A/B them.
