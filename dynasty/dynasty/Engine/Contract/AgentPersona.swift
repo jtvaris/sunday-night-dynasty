@@ -212,16 +212,23 @@ enum AgentVoice: String, CaseIterable {
     }
 }
 
-// MARK: - Agent Dialogue (Contact Agent wave)
+// MARK: - Agent Dialogue (Contact Agent wave; library split #86)
 
-/// Everything an agent SAYS.
+/// Everything an agent SAYS — the assembly half.
 ///
-/// Line pools only — no evaluation lives here. The chat layer hands this type a
-/// tone (what the demand model decided) plus a `Context` of already-formatted
-/// strings, and gets back one line in the right voice. That split is the point:
-/// the engine never writes UI copy and the copy never invents a number, so a
-/// counter reads "We're thinking $54M a year" with the *same* $54M the engine
-/// put on the offer card underneath it.
+/// No evaluation lives here. The chat layer hands this type a tone (what the
+/// demand model decided), an ``AgentDesire`` (what the CLIENT is after) and a
+/// `Context` of already-formatted strings, and gets back one line in the right
+/// voice. That split is the point: the engine never writes UI copy and the copy
+/// never invents a number, so a counter reads "We're thinking $54M a year" with
+/// the *same* $54M the engine put on the offer card underneath it.
+///
+/// **The lines themselves live in `AgentDialogueLibrary`.** They moved out when
+/// the desire axis went in and the pools went from ~90 sentences to ~470: a file
+/// that owns the persona model, the voice model and half a thousand lines of
+/// copy is a file nobody edits twice. What is left here is the assembler — which
+/// pools a site is made of, in which order, and through which
+/// ``DialogueSelector``.
 enum AgentDialogue {
 
     /// Pre-formatted strings a line may interpolate. The chat layer fills this
@@ -233,6 +240,15 @@ enum AgentDialogue {
         var playerFull: String
         /// "WR"
         var position: String
+        /// The club, as a NOUN PHRASE — "the Ravens", or "this club" when the
+        /// conversation has no team to name (a true free agent).
+        ///
+        /// A noun phrase rather than a bare nickname on purpose: the fallback
+        /// has to read as English in the same sentence the real value does, so
+        /// every line that uses it says "with \(ctx.team)" and never
+        /// "a \(ctx.team) man" — which would come out as "a this club man" the
+        /// moment the player has no team row.
+        var team: String
         /// The ask, per year — "$54.0M".
         var askPerYear: String
         /// Total value of the ask — "$216.0M".
@@ -252,6 +268,7 @@ enum AgentDialogue {
             playerFirst: String = "",
             playerFull: String = "",
             position: String = "",
+            team: String = "this club",
             askPerYear: String = "",
             askTotal: String = "",
             askYears: Int = 0,
@@ -264,6 +281,7 @@ enum AgentDialogue {
             self.playerFirst = playerFirst
             self.playerFull = playerFull
             self.position = position
+            self.team = team
             self.askPerYear = askPerYear
             self.askTotal = askTotal
             self.askYears = askYears
@@ -275,465 +293,203 @@ enum AgentDialogue {
         }
     }
 
-    // MARK: Opener
+    // MARK: - Assembly
+    //
+    // Every function below is a THIN assembler: it picks parts out of
+    // `AgentDialogueLibrary` through a `DialogueSelector` and joins them with a
+    // space. No branching on money, no grading, no eligibility — the tone and
+    // the desire are both handed in, already decided.
 
-    /// The first thing the agent says when the GM picks up the phone — stance
-    /// in character, plus a hint at what it will take.
-    static func opener(voice: AgentVoice, isExtension: Bool, ctx: Context) -> String {
-        let stance: [String]
-        switch voice {
-        case .shark:
-            stance = isExtension
-                ? ["Let's not waste each other's afternoon. \(ctx.playerFirst) is the best \(ctx.position) you have and he gets paid like it.",
-                   "You called, so you already know the number is going to hurt. \(ctx.playerFirst) is not signing a discount.",
-                   "I'll be direct. \(ctx.playerFirst) has a market, and your building is one bidder in it."]
-                : ["\(ctx.playerFirst) has three teams on the phone today. You're the fourth. Make it worth answering.",
-                   "Let's be quick about this. Free agency is a seller's market and my client is the product.",
-                   "I'll tell you what I told everyone else: the number is the number."]
-        case .professional:
-            stance = isExtension
-                ? ["Thanks for reaching out. \(ctx.playerFirst) is happy here — we'd like to get an extension done before this becomes a story.",
-                   "Good to hear from you. We've done our homework on the market, and we think there's a deal here.",
-                   "Appreciate the call. \(ctx.playerFirst) wants clarity, and so do we. Let's work."]
-                : ["Thanks for the interest. \(ctx.playerFirst) is taking every meeting, and yours is a real one.",
-                   "Good to talk. We're evaluating fit and money in that order — but the money still has to be right.",
-                   "Appreciate you calling early. That counts for something with us."]
-        case .friendly:
-            stance = isExtension
-                ? ["Hey — great to hear from you. \(ctx.playerFirst) loves it in that building. Let's find a number that keeps him there.",
-                   "Glad you called. His wife has the kids in school there. Nobody wants to move. Let's make this easy.",
-                   "You know how much he thinks of your locker room. Let's do this the friendly way."]
-                : ["Hey! \(ctx.playerFirst) had a great visit. He liked the place, he liked the people.",
-                   "Thanks for calling. He's excited about the fit — we just need the deal to make sense.",
-                   "Great to talk to you. He's got options, but he keeps coming back to your name."]
-        case .oldSchool:
-            stance = isExtension
-                ? ["I've been doing this a long time, and \(ctx.playerFirst) is the kind of man you keep. Let's keep him.",
-                   "In my day you paid your own before somebody else did. That's still the advice I give.",
-                   "\(ctx.playerFirst) has bled for that building. We're not here to squeeze you — we're here to be right."]
-                : ["I'll say what I always say: money matters, but so does where a man plays out his best years.",
-                   "He's had a career worth respecting. Whoever signs him ought to act like it.",
-                   "Let's talk plainly. What's the shape of the deal you have in mind?"]
-        }
-        return "\(stance.randomElement()!) \(expectationHint(voice: voice, ctx: ctx))"
+    /// The first thing the agent says when the GM picks up the phone: hello,
+    /// what his client is actually after, and the number it will take.
+    static func opener(
+        voice: AgentVoice,
+        desire: AgentDesire,
+        isExtension: Bool,
+        ctx: Context,
+        sel: DialogueSelector
+    ) -> String {
+        let greeting = sel.pick(
+            .openGreeting, key: isExtension ? "ext" : "fa",
+            from: AgentDialogueLibrary.openGreeting(voice: voice, isExtension: isExtension)
+        )
+        return [greeting, desireAndNumber(voice: voice, desire: desire, ctx: ctx, sel: sel)]
+            .joined(separator: " ")
     }
 
-    /// The "here's what it takes" half of the opener — always names the number.
-    static func expectationHint(voice: AgentVoice, ctx: Context) -> String {
-        switch voice {
-        case .shark:
-            return "We're at \(ctx.askPerYear) a year over \(ctx.askYears). \(ctx.askTotal) total. Don't come back under it."
-        case .professional:
-            return "Our number is \(ctx.askPerYear) a year across \(ctx.askYears) years — \(ctx.askTotal). That's where the comparables sit."
-        case .friendly:
-            return "We're thinking \(ctx.askPerYear) a year for \(ctx.askYears). \(ctx.askTotal) all in. Reasonable, right?"
-        case .oldSchool:
-            return "\(ctx.askPerYear) a year, \(ctx.askYears) years, \(ctx.askTotal) on the whole thing. Fair number, fairly arrived at."
-        }
+    /// The same opener said a second time, after a refusing client changed his
+    /// mind. Deliberately shares the desire and number pools with ``opener`` —
+    /// a reopen IS an opening, and what the man wants did not change while the
+    /// door was shut.
+    static func reopener(
+        voice: AgentVoice,
+        desire: AgentDesire,
+        ctx: Context,
+        sel: DialogueSelector
+    ) -> String {
+        let greeting = sel.pick(
+            .reopenGreeting,
+            from: AgentDialogueLibrary.reopenGreeting(voice: voice, ctx: ctx)
+        )
+        return [greeting, desireAndNumber(voice: voice, desire: desire, ctx: ctx, sel: sel)]
+            .joined(separator: " ")
+    }
+
+    private static func desireAndNumber(
+        voice: AgentVoice, desire: AgentDesire, ctx: Context, sel: DialogueSelector
+    ) -> String {
+        let want = sel.pick(
+            .openDesire, key: desire.rawValue,
+            from: AgentDialogueLibrary.openDesire(voice: voice, desire: desire, ctx: ctx)
+        )
+        let hint = sel.pick(
+            .openHint, from: AgentDialogueLibrary.openHint(voice: voice, ctx: ctx)
+        )
+        return [want, hint].joined(separator: " ")
+    }
+
+    /// What a client who just won a prove-it bet opens with. No desire weave:
+    /// the bet IS the thing he wants said, and the line already says it.
+    static func provenBetLine(voice: AgentVoice, ctx: Context, sel: DialogueSelector) -> String {
+        sel.pick(.provenBet, from: AgentDialogueLibrary.provenBet(voice: voice, ctx: ctx))
     }
 
     // MARK: Refusal
 
-    /// The client will not come to the table — said in the chat, in character,
-    /// with the reason showing.
-    static func refusalLine(voice: AgentVoice, reason: AgentRefusalReason, ctx: Context) -> String {
-        let core = "My client has no interest in negotiating with this team right now."
-        let flavor: [String]
-        switch reason {
-        case .benched:
-            flavor = [
-                "He hasn't taken a meaningful snap all year. You want to talk money — start by playing him.",
-                "You put him in a baseball cap on Sundays. There's nothing to discuss until that changes.",
-                "Contract talk with a man you won't start? That conversation is going to be short."
-            ]
-        case .losingCulture:
-            flavor = [
-                "He's watched that building lose for long enough. He's not signing up for more of it.",
-                "Win a few games and call me back. He's done buying promises.",
-                "There's nothing wrong with the money. There's something wrong with the record."
-            ]
-        case .wantsOut:
-            flavor = [
-                "Frankly, he wants out. I'd be doing him a disservice to sit down with you.",
-                "He's made his decision about that locker room, and it isn't going to change over a number.",
-                "He's asked me to find him a new address, not a new contract."
-            ]
-        case .ridingIntoRetirement:
-            flavor = [
-                "He's at the end of the road and he'd like to choose how it ends. Not over the phone with you.",
-                "At his age this is the last contract of a life. He's not rushing it, and neither am I.",
-                "He's weighing whether there's a next season at all. Give the man his winter."
-            ]
-        case .ringChasing:
-            // The never-sign line has to close the door on MONEY specifically,
-            // or the user reads it as a hard negotiation and keeps bidding.
-            flavor = [
-                "And before you ask — it isn't the money. He's given that building his best years and watched it lose them. He wants to play in January.",
-                "There's no number here. He's not signing five more years of this. Win something and we'll talk.",
-                "You could offer him every dollar you have. He'd still be watching the playoffs on television, and he knows it."
-            ]
-        }
-        let sign: String
-        switch voice {
-        case .shark:        sign = "Don't call back this week."
-        case .professional: sign = "I'll let you know if that changes."
-        case .friendly:     sign = "Nothing personal — you know I'd tell you if there was room."
-        case .oldSchool:    sign = "I've told you straight, which is more than most would."
-        }
-        return "\(core) \(flavor.randomElement()!) \(sign)"
+    /// The client will not come to the table — in character, with the reason
+    /// showing. Three parts: the refusal, why, and how this agent signs off.
+    static func refusalLine(
+        voice: AgentVoice,
+        reason: AgentRefusalReason,
+        ctx: Context,
+        sel: DialogueSelector
+    ) -> String {
+        let core = sel.pick(.refuseCore, from: AgentDialogueLibrary.refuseCore(voice: voice, ctx: ctx))
+        let flavor = sel.pick(
+            .refuseFlavor, key: reason.rawValue,
+            from: AgentDialogueLibrary.refuseFlavor(voice: voice, reason: reason, ctx: ctx)
+        )
+        let sign = sel.pick(.refuseSign, from: AgentDialogueLibrary.refuseSign(voice: voice))
+        return [core, flavor, sign].joined(separator: " ")
     }
 
     // MARK: Pestering
 
     /// **The answer to an offer tabled at a man who already said no.**
     ///
-    /// One line per escalation tier rather than a random pool, on purpose: the
-    /// whole point of pestering is that it gets WORSE, and a pool would let the
-    /// third attempt read softer than the first. `attempt` is 1-based.
-    ///
-    /// Tier 3 deliberately says out loud what the model is doing to the price —
-    /// the ask has been ratcheting 6 % a round this whole time, and an agent who
-    /// never mentions it is a mechanic the user cannot learn.
+    /// Escalates by tier and never softens — the pools are per-tier for exactly
+    /// that reason. `attempt` is 1-based.
     static func pesteringLine(
         voice: AgentVoice,
         reason: AgentRefusalReason,
         attempt: Int,
-        ctx: Context
+        ctx: Context,
+        sel: DialogueSelector
     ) -> String {
-        // The never-sign stance gets its own first answer. On the fourth of the
-        // reasons a man can decline, "not interested" is a negotiating position
-        // the user is right to test; on THIS one it is a fact about the standings
-        // that no offer touches, and the line has to say so before the user
-        // spends an offseason bidding against a wall.
         if attempt <= 1, reason.neverSignsAtAnyPrice {
-            switch voice {
-            case .shark:
-                return "You didn't hear me. There is no number. Put a blank cheque on that table and he'd still be watching January from his couch."
-            case .professional:
-                return "I have to stop you. I understand the instinct, but money genuinely is not the variable here — the standings are. I can't take this to him."
-            case .friendly:
-                return "Oh, friend. That's a lot of money and it isn't the thing. He wants to play in January. That's all he's asked me for."
-            case .oldSchool:
-                return "You're answering a question he didn't ask. He wants to win something before he's done. You can't write that on a contract."
-            }
+            return sel.pick(.pester, key: "never",
+                            from: AgentDialogueLibrary.neverSigns(voice: voice, ctx: ctx))
         }
-
-        switch max(1, attempt) {
-        case 1:
-            switch voice {
-            case .shark:
-                return "I told you — my client isn't interested. Don't waste our time."
-            case .professional:
-                return "I appreciate the effort, but I was clear: this isn't a money conversation. I won't be taking that to him."
-            case .friendly:
-                return "Ah, come on now. I said no, and I meant it kindly. Put the pen down."
-            case .oldSchool:
-                return "I gave you a straight answer. A straight answer deserves to be heard the first time."
-            }
-        case 2:
-            switch voice {
-            case .shark:
-                return "Are you listening, or just talking? Same answer. \(ctx.playerFirst) is not interested, and every call makes this more expensive."
-            case .professional:
-                return "This is the second offer I've had to decline on the same grounds. I'd rather not do it a third time."
-            case .friendly:
-                return "You're a stubborn one. I like you, but he's not moving — and he's hearing about these calls."
-            case .oldSchool:
-                return "Twice now. In my day a man took no for an answer and kept his dignity."
-            }
-        default:
-            switch voice {
-            case .shark:
-                return "Enough. \(ctx.playerFirst) knows exactly how many times you've called and exactly what you've offered, and neither one has helped. If we ever DO talk, the number starts higher than it did today."
-            case .professional:
-                return "I have to be blunt. This is now doing damage — to the relationship, and to the price. My client hears about every one of these."
-            case .friendly:
-                return "I'm going to be honest with you because I like you: he's insulted now. Not by the money. By the not-listening."
-            case .oldSchool:
-                return "You've asked the same question four different ways and got the same answer four times. It costs a man something to keep being told no in his own building."
-            }
-        }
-    }
-
-    /// What a client who just won a prove-it bet opens with. The one line in
-    /// this file that exists to make a MECHANIC legible: the user signed him
-    /// short and cheap last winter and is about to find out what that bought.
-    static func provenBetLine(voice: AgentVoice, ctx: Context) -> String {
-        switch voice {
-        case .shark:
-            return "Last year you wanted him on a one-year deal. He took it, he bet on himself, and he won. \(ctx.askPerYear) a year. That's not an opening number."
-        case .professional:
-            return "We agreed a short deal so the market could price him properly. It has. \(ctx.askPerYear) a year over \(ctx.askYears) — the season speaks for itself."
-        case .friendly:
-            return "Remember what I said last winter? He'd play his way back. Well — he did. \(ctx.askPerYear) a year, and I think you knew that was coming."
-        case .oldSchool:
-            return "He bet on himself when nobody else would, and the man was right. \(ctx.askPerYear) a year. I'd have asked for more."
-        }
+        let tier = max(1, min(3, attempt))
+        return sel.pick(.pester, key: "t\(tier)",
+                        from: AgentDialogueLibrary.pestering(voice: voice, tier: tier, ctx: ctx))
     }
 
     // MARK: Counters
 
-    /// A counter-offer, spoken. The number the engine put on the counter card is
-    /// in the sentence — `ctx.askPerYear` is that counter, not the opener.
-    static func counterLine(voice: AgentVoice, tone: AgentToneKey, ctx: Context) -> String {
-        switch tone {
-        case .insulted:
-            return insultedLine(voice: voice, ctx: ctx)
-        case .hardline:
-            return hardlineLine(voice: voice, ctx: ctx)
-        case .eager:
-            return eagerLine(voice: voice, ctx: ctx)
-        case .professional, .refusing:
-            return professionalLine(voice: voice, ctx: ctx)
-        }
-    }
-
-    private static func insultedLine(voice: AgentVoice, ctx: Context) -> String {
-        let msgs: [String]
-        switch voice {
-        case .shark:
-            msgs = [
-                "That offer is an insult — my client is worth twice that. \(ctx.offerPerYear) a year? We're at \(ctx.askPerYear), and after that we're not coming down again.",
-                "\(ctx.offerPerYear). You said that out loud. \(ctx.askPerYear) a year, and my patience just got shorter.",
-                "Do not do that again. \(ctx.askPerYear) a year over \(ctx.askYears) — that's the number, and it hardens every time you lowball me."
-            ]
-        case .professional:
-            msgs = [
-                "I'll be honest, \(ctx.offerPerYear) isn't in the neighborhood of the market. We're at \(ctx.askPerYear) a year and I'd rather not move off it again.",
-                "That number would be the worst deal at his position in the league. \(ctx.askPerYear) over \(ctx.askYears) years. Let's be serious.",
-                "I can't take \(ctx.offerPerYear) back to him without losing his trust. \(ctx.askPerYear) a year."
-            ]
-        case .friendly:
-            msgs = [
-                "Come on — \(ctx.offerPerYear)? He'd be hurt if I even read that to him. \(ctx.askPerYear) a year, and I'm holding there now.",
-                "That one stings. I want this done, but not at \(ctx.offerPerYear). We're at \(ctx.askPerYear).",
-                "You're going to make me the bad guy in his kitchen. \(ctx.askPerYear) a year over \(ctx.askYears)."
-            ]
-        case .oldSchool:
-            msgs = [
-                "Son, that offer is an insult — he's worth twice that. \(ctx.askPerYear) a year, and I'm not softening it after that.",
-                "I've been at this table thirty years and I don't forget a number like \(ctx.offerPerYear). \(ctx.askPerYear) a year.",
-                "That's how you lose a good man for nothing. \(ctx.askPerYear) over \(ctx.askYears) years. The ask goes up, not down, from here."
-            ]
-        }
-        return msgs.randomElement()!
-    }
-
-    private static func hardlineLine(voice: AgentVoice, ctx: Context) -> String {
-        let msgs: [String]
-        switch voice {
-        case .shark:
-            msgs = [
-                "We're thinking \(ctx.askPerYear) a year. That's what elite \(ctx.position)s make. I'm not selling him for less.",
-                "\(ctx.askPerYear) over \(ctx.askYears). Your \(ctx.offerPerYear) is a starting point, not a deal.",
-                "The number is \(ctx.askPerYear) a year. I've got other calls today."
-            ]
-        case .professional:
-            msgs = [
-                "We're at \(ctx.askPerYear) a year across \(ctx.askYears) years. Your \(ctx.offerPerYear) is short of every comparable I have.",
-                "\(ctx.askPerYear) annually. I've moved once already — there's a floor under this.",
-                "Here's the revision: \(ctx.askPerYear) a year. I'd like to close, but not from where you are."
-            ]
-        case .friendly:
-            msgs = [
-                "I want to get this done, I really do — but it has to start with a \(ctx.askPerYear).",
-                "You're at \(ctx.offerPerYear), we're at \(ctx.askPerYear). That's a real gap and I can't wish it away.",
-                "\(ctx.askPerYear) a year. Meet me and we'll all be at his signing dinner."
-            ]
-        case .oldSchool:
-            msgs = [
-                "\(ctx.askPerYear) a year. I've priced men like him for thirty years and that's what he is.",
-                "You're at \(ctx.offerPerYear). I've been at \(ctx.askPerYear) since the first phone call. One of us is moving.",
-                "The number stays \(ctx.askPerYear). Loyalty is not a discount coupon."
-            ]
-        }
-        return msgs.randomElement()!
-    }
-
-    private static func professionalLine(voice: AgentVoice, ctx: Context) -> String {
-        let msgs: [String]
-        switch voice {
-        case .shark:
-            msgs = [
-                "Better. \(ctx.askPerYear) a year and we're shaking hands today.",
-                "Progress. Get to \(ctx.askPerYear) over \(ctx.askYears) and I stop taking other calls.",
-                "You moved, so I'll move. \(ctx.askPerYear) a year."
-            ]
-        case .professional:
-            msgs = [
-                "That's constructive. We've come down to \(ctx.askPerYear) a year over \(ctx.askYears) — that should work for both sides.",
-                "Appreciate the movement. Revised ask: \(ctx.askPerYear) annually. I think that's the deal.",
-                "We're close. \(ctx.askPerYear) a year, \(ctx.askTotal) total. Take a look."
-            ]
-        case .friendly:
-            msgs = [
-                "Now we're talking. \(ctx.askPerYear) a year and I'll call him right now.",
-                "Look at us. \(ctx.askPerYear) over \(ctx.askYears) — say yes and I'll stop bothering you.",
-                "That's a real offer, thank you. Get me to \(ctx.askPerYear) and it's done."
-            ]
-        case .oldSchool:
-            msgs = [
-                "Sensible. \(ctx.askPerYear) a year and we shake on it like men.",
-                "That's how it's supposed to go. \(ctx.askPerYear) over \(ctx.askYears) and I'll stop talking.",
-                "Good faith deserves good faith. \(ctx.askPerYear) a year closes this."
-            ]
-        }
-        return msgs.randomElement()!
-    }
-
-    private static func eagerLine(voice: AgentVoice, ctx: Context) -> String {
-        let msgs: [String]
-        switch voice {
-        case .shark:
-            msgs = [
-                "Fine. \(ctx.askPerYear) a year and I'll have him in the building tomorrow.",
-                "One more step. \(ctx.askPerYear) and this is over.",
-                "\(ctx.askPerYear). Say the word."
-            ]
-        case .professional:
-            msgs = [
-                "We're one number apart — \(ctx.askPerYear) a year and I'll recommend he sign it.",
-                "This is the last revision from my side: \(ctx.askPerYear) annually.",
-                "\(ctx.askPerYear) a year. I'd take that to him with a recommendation."
-            ]
-        case .friendly:
-            msgs = [
-                "\(ctx.askPerYear) and I'm ordering the cake. Come on.",
-                "So close. \(ctx.askPerYear) a year — he'll say yes before I finish the sentence.",
-                "Meet me at \(ctx.askPerYear) and we're done, my friend."
-            ]
-        case .oldSchool:
-            msgs = [
-                "\(ctx.askPerYear). That's a handshake number and you know it.",
-                "One more inch. \(ctx.askPerYear) a year and I'll tell him it's a good deal.",
-                "\(ctx.askPerYear). Let's finish it before somebody says something clever."
-            ]
-        }
-        return msgs.randomElement()!
+    /// A counter-offer, spoken: what his client wants, and the number that wants
+    /// it. `ctx.askPerYear` is the engine's counter for THIS round, not the
+    /// opener, so the sentence and the card underneath it agree.
+    ///
+    /// The insulted frame puts the number first — an insult is a reaction to a
+    /// figure, and burying it behind a sentence about the client's ambitions
+    /// reads as a non-sequitur.
+    static func counterLine(
+        voice: AgentVoice,
+        desire: AgentDesire,
+        tone: AgentToneKey,
+        ctx: Context,
+        sel: DialogueSelector
+    ) -> String {
+        let body = sel.pick(
+            .counterBody, key: desire.rawValue,
+            from: AgentDialogueLibrary.counterBody(voice: voice, desire: desire, ctx: ctx)
+        )
+        let number = sel.pick(
+            .counterNumber, key: tone.rawValue,
+            from: AgentDialogueLibrary.counterNumber(voice: voice, tone: tone, ctx: ctx)
+        )
+        return tone == .insulted
+            ? [number, body].joined(separator: " ")
+            : [body, number].joined(separator: " ")
     }
 
     // MARK: Years pushback
 
     /// The agent will not sign his man to a deal longer than his body has left.
-    static func yearsPushbackLine(voice: AgentVoice, age: Int, requestedYears: Int, maxYears: Int, ctx: Context) -> String {
-        switch voice {
-        case .shark:
-            return "\(requestedYears) years at \(age)? No. \(maxYears) is the ceiling — here's the revised ask at \(ctx.askPerYear) a year."
-        case .professional:
-            return "At \(age), \(ctx.playerFirst) isn't signing a \(requestedYears)-year commitment. \(maxYears) years max, \(ctx.askPerYear) annually."
-        case .friendly:
-            return "\(requestedYears) years? He'd be limping through the last two. Let's say \(maxYears), at \(ctx.askPerYear) a year."
-        case .oldSchool:
-            return "I've seen what year \(requestedYears) does to a \(age)-year-old. \(maxYears) years, \(ctx.askPerYear) a year. That's honest."
-        }
+    static func yearsPushbackLine(
+        voice: AgentVoice,
+        age: Int,
+        requestedYears: Int,
+        maxYears: Int,
+        ctx: Context,
+        sel: DialogueSelector
+    ) -> String {
+        sel.pick(.yearsPushback, from: AgentDialogueLibrary.yearsPushback(
+            voice: voice, age: age, requestedYears: requestedYears,
+            maxYears: maxYears, ctx: ctx
+        ))
     }
 
     // MARK: Close
 
     /// Acceptance, in the tone of the JOURNEY — the deal being good is not the
-    /// same as the negotiation having been good.
-    static func acceptLine(voice: AgentVoice, tone: AgentToneKey, ctx: Context) -> String {
-        switch tone {
-        case .eager:
-            let msgs: [String]
-            switch voice {
-            case .shark:
-                msgs = ["Now that's how you do business. \(ctx.signedTotal) over \(ctx.signedYears) — he'll be there in the morning.",
-                        "Painless. \(ctx.signedPerYear) a year, done. Pleasure."]
-            case .professional:
-                msgs = ["Great to get this done — can't wait for next season. \(ctx.signedPerYear) a year, \(ctx.signedTotal) total.",
-                        "Clean process, fair number. \(ctx.playerFirst) signs at \(ctx.signedPerYear) a year and we're all better for it."]
-            case .friendly:
-                msgs = ["Oh, he's going to be thrilled! \(ctx.signedPerYear) a year — I'm calling him right now.",
-                        "That's what I'm talking about. \(ctx.signedTotal) over \(ctx.signedYears). Can't wait for next season."]
-            case .oldSchool:
-                msgs = ["That's a deal both sides can be proud of. \(ctx.signedPerYear) a year. He'll earn every dollar.",
-                        "Done properly, and quickly. \(ctx.signedTotal) over \(ctx.signedYears) years. Good doing business."]
-            }
-            return msgs.randomElement()!
-
-        case .professional:
-            let msgs: [String]
-            switch voice {
-            case .shark:
-                msgs = ["We'll take it. \(ctx.signedPerYear) a year. He signs today.",
-                        "That works. \(ctx.signedTotal) over \(ctx.signedYears). Send the paper."]
-            case .professional:
-                msgs = ["That's a deal. \(ctx.signedPerYear) a year, \(ctx.signedTotal) total. I'll get it signed.",
-                        "Agreed. Fair outcome for both sides at \(ctx.signedPerYear) annually."]
-            case .friendly:
-                msgs = ["Good, good — \(ctx.signedPerYear) a year. He'll be happy with that.",
-                        "Deal. \(ctx.signedTotal) over \(ctx.signedYears). Thanks for working with me."]
-            case .oldSchool:
-                msgs = ["Agreed. \(ctx.signedPerYear) a year. That's a contract, not a favour.",
-                        "We have a deal at \(ctx.signedTotal). Shake on it."]
-            }
-            return msgs.randomElement()!
-
-        default:
-            // Hardline / insulted journey — he signs, but he remembers.
-            let msgs: [String]
-            switch voice {
-            case .shark:
-                msgs = ["...fine. We'll go with this. \(ctx.signedPerYear) a year. He'll remember how hard you made it.",
-                        "\(ctx.rounds) rounds for \(ctx.signedPerYear). He signs. That's all I'll say about it."]
-            case .professional:
-                msgs = ["...fine. We'll go with this. \(ctx.signedPerYear) a year, \(ctx.signedTotal) total. It's not where we wanted to land.",
-                        "He'll sign it. For the record, we came down further than you did."]
-            case .friendly:
-                msgs = ["Alright. He'll take it. I won't pretend he's dancing about it at \(ctx.signedPerYear).",
-                        "\(ctx.signedTotal) over \(ctx.signedYears). He'll do it for the room, not for the number."]
-            case .oldSchool:
-                msgs = ["He'll sign. Grudgingly. \(ctx.signedPerYear) a year, after \(ctx.rounds) rounds of this.",
-                        "Fine. \(ctx.signedTotal). I've seen teams treat good men better."]
-            }
-            return msgs.randomElement()!
-        }
+    /// same as the negotiation having been good — and in terms of what the man
+    /// was after, so the signature says whether he got it.
+    static func acceptLine(
+        voice: AgentVoice,
+        desire: AgentDesire,
+        tone: AgentToneKey,
+        ctx: Context,
+        sel: DialogueSelector
+    ) -> String {
+        let isGrudging = !(tone == .eager || tone == .professional)
+        let number = sel.pick(
+            .acceptNumber, key: isGrudging ? "grudge" : tone.rawValue,
+            from: AgentDialogueLibrary.acceptNumber(voice: voice, tone: tone, ctx: ctx)
+        )
+        let body = sel.pick(
+            .acceptBody, key: "\(desire.rawValue).\(isGrudging)",
+            from: AgentDialogueLibrary.acceptBody(
+                voice: voice, desire: desire, isGrudging: isGrudging, ctx: ctx
+            )
+        )
+        return [number, body].joined(separator: " ")
     }
 
-    /// The note a begrudging close leaves on the player.
-    static func lingeringNote(ctx: Context) -> String {
-        let msgs = [
-            "Signed below his ask — he still thinks he's owed more.",
-            "Took the deal, but the negotiation left a mark.",
-            "Wants more. Signed anyway, and hasn't forgotten it."
-        ]
-        return msgs.randomElement()!
+    /// The note a begrudging close leaves on the player — named in terms of what
+    /// he wanted, because that is the thing the roster row has to keep teaching.
+    static func lingeringNote(desire: AgentDesire, ctx: Context, sel: DialogueSelector) -> String {
+        sel.pick(.lingering, key: desire.rawValue,
+                 from: AgentDialogueLibrary.lingering(desire: desire, ctx: ctx))
     }
 
     // MARK: Endings
 
-    static func walkAwayLine(voice: AgentVoice, ctx: Context) -> String {
-        switch voice {
-        case .shark:
-            return "We're done. \(ctx.playerFirst) will find his money somewhere with a spine."
-        case .professional:
-            return "I don't think we're going to bridge this. \(ctx.playerFirst) will explore his options. No hard feelings."
-        case .friendly:
-            return "Ah, that's a shame. Truly. \(ctx.playerFirst) is going to look around."
-        case .oldSchool:
-            return "We've gone round enough. \(ctx.playerFirst) will take his chances elsewhere."
-        }
+    static func walkAwayLine(
+        voice: AgentVoice, ctx: Context, sel: DialogueSelector
+    ) -> String {
+        sel.pick(.walkAway, from: AgentDialogueLibrary.walkAway(voice: voice, ctx: ctx))
     }
 
-    static func brokenOffLine(voice: AgentVoice, ctx: Context) -> String {
-        switch voice {
-        case .shark:
-            return "That's it. Don't call again this offseason — \(ctx.playerFirst) is done talking to you."
-        case .professional:
-            return "I'm ending this. We won't be revisiting it before the new league year."
-        case .friendly:
-            return "I can't keep taking these to him. We're going quiet until next offseason."
-        case .oldSchool:
-            return "You just told that man what you think of him. My phone's off until next year."
-        }
+    static func brokenOffLine(voice: AgentVoice, ctx: Context, sel: DialogueSelector) -> String {
+        sel.pick(.brokenOff, from: AgentDialogueLibrary.brokenOff(voice: voice, ctx: ctx))
     }
 
-    /// What the front office says when it opens with an offer.
-    static func gmOfferLine(round: Int, playerFirst: String) -> String {
-        round <= 1
-            ? "Here's where we are on \(playerFirst)."
-            : "We've moved. Take another look."
+    /// What the front office says when it puts an offer on the table.
+    static func gmOfferLine(round: Int, playerFirst: String, sel: DialogueSelector) -> String {
+        sel.pick(.gmOffer, key: round <= 1 ? "open" : "again",
+                 from: AgentDialogueLibrary.gmOffer(round: round, playerFirst: playerFirst))
     }
 }
 

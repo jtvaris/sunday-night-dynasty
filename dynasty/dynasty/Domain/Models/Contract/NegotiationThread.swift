@@ -402,6 +402,20 @@ struct NegotiationThread: Codable, Identifiable {
     /// agent's answer escalates on this count, and it is what the morale write
     /// is metered by. Optional so transcripts written before this field decode.
     var pesterCount: Int?
+    /// **No-immediate-repeat memory for the dialogue layer** (#86): the last
+    /// variant index chosen at each line site, keyed by
+    /// `DialogueSelector`'s site key.
+    ///
+    /// Small and additive on purpose. The line pools are picked by a seeded
+    /// draw on `(threadID, round, site)` — deterministic, so a transcript
+    /// replays identically — but a seeded draw over a four-line pool still hands
+    /// out the same sentence twice in a row about a quarter of the time, and a
+    /// four-round negotiation is exactly where the user would notice. This is
+    /// the one bit of state that makes "and don't say that one again" possible;
+    /// everything else about the choice is derived.
+    ///
+    /// Optional so transcripts written before this field existed still decode.
+    var lastLineIndex: [String: Int]?
     var messages: [NegotiationThreadMessage]
     /// The agent's standing counter — what "Accept" accepts.
     var pendingAgentOffer: NegotiationOfferSnapshot?
@@ -442,6 +456,7 @@ struct NegotiationThread: Codable, Identifiable {
         round: Int = 0,
         insultCount: Int = 0,
         pesterCount: Int = 0,
+        lastLineIndex: [String: Int]? = nil,
         messages: [NegotiationThreadMessage] = [],
         pendingAgentOffer: NegotiationOfferSnapshot? = nil,
         openingAsk: NegotiationOfferSnapshot? = nil,
@@ -461,6 +476,7 @@ struct NegotiationThread: Codable, Identifiable {
         self.round = round
         self.insultCount = insultCount
         self.pesterCount = pesterCount
+        self.lastLineIndex = lastLineIndex
         self.messages = messages
         self.pendingAgentOffer = pendingAgentOffer
         self.openingAsk = openingAsk
