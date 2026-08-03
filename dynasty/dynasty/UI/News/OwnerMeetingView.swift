@@ -208,7 +208,7 @@ struct OwnerMeetingView: View {
                             .foregroundStyle(goal.isAchieved ? Color.accentGold : Color.textSecondary)
                     }
                     Text(goal.priority == .primary ? "PRIMARY" : (goal.priority == .secondary ? "SECONDARY" : "BONUS"))
-                        .font(.system(size: 8, weight: .black))
+                        .font(.system(size: DSType.Size.micro, weight: .black))
                         .foregroundStyle(goal.priority == .primary ? Color.accentGold : Color.textTertiary)
                 }
             }
@@ -449,10 +449,10 @@ struct OwnerMeetingView: View {
             }
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 4)
+                    RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                         .fill(Color.backgroundTertiary)
                         .frame(height: 8)
-                    RoundedRectangle(cornerRadius: 4)
+                    RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                         .fill(jobSecurityColor(security.level))
                         .frame(width: geo.size.width * Double(security.score) / 100.0, height: 8)
                 }

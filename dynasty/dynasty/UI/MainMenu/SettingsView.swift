@@ -570,7 +570,7 @@ private struct ChangelogSheet: View {
                             ForEach(entry.bullets, id: \.self) { line in
                                 HStack(alignment: .top, spacing: 8) {
                                     Image(systemName: "circle.fill")
-                                        .font(.system(size: 5))
+                                        .font(.system(size: 5))  // ds-lint:allow(font) decorative list bullet glyph, not text
                                         .foregroundStyle(Color.accentGold)
                                         .padding(.top, 7)
                                     Text(line)

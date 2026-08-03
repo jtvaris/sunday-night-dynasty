@@ -491,7 +491,7 @@ struct MockDraftView: View {
                 .minimumScaleFactor(0.8)
             HStack(spacing: 3) {
                 Image(systemName: "chart.bar.fill")
-                    .font(.system(size: 8))
+                    .font(.system(size: DSType.Size.micro))
                     .foregroundStyle(confidenceColor(for: entry.confidence))
                 Text("\(entry.confidence)% confidence")
                     .font(.system(size: 9, weight: .medium).monospacedDigit())
@@ -577,7 +577,7 @@ struct MockDraftView: View {
                             .foregroundStyle(Color.textPrimary)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
-                            .background(positionColor(for: prospect), in: RoundedRectangle(cornerRadius: 4))
+                            .background(positionColor(for: prospect), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
 
                         Text(prospect.college)
                             .font(.caption)
@@ -669,7 +669,7 @@ struct MockDraftView: View {
 
                 if !pick.teamNeeds.isEmpty {
                     Text(pick.teamNeeds.prefix(2).map(\.rawValue).joined(separator: ", "))
-                        .font(.system(size: 8, weight: .medium))
+                        .font(.system(size: DSType.Size.micro, weight: .medium))
                         .foregroundStyle(Color.textTertiary)
                         .lineLimit(1)
                 }
@@ -690,7 +690,7 @@ struct MockDraftView: View {
 
                         if isUserPick {
                             Text("YOUR PICK")
-                                .font(.system(size: 8, weight: .heavy))
+                                .font(.system(size: DSType.Size.micro, weight: .heavy))
                                 .foregroundStyle(Color.backgroundPrimary)
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 2)
@@ -837,7 +837,7 @@ struct MockDraftView: View {
                         .foregroundStyle(Color.textPrimary)
                     if target.mark != .none {
                         Text(target.mark.shortLabel)
-                            .font(.system(size: 8, weight: .heavy))
+                            .font(.system(size: DSType.Size.micro, weight: .heavy))
                             .foregroundStyle(target.mark.color)
                     }
                 }
@@ -983,7 +983,7 @@ struct MockDraftView: View {
                         .foregroundStyle(Color.textPrimary)
                     if !hint.feasible {
                         Text("short")
-                            .font(.system(size: 8, weight: .heavy))
+                            .font(.system(size: DSType.Size.micro, weight: .heavy))
                             .foregroundStyle(Color.backgroundPrimary)
                             .padding(.horizontal, 4)
                             .padding(.vertical, 1)
@@ -1285,10 +1285,10 @@ struct MockDraftView: View {
     }
 
     /// Color for confidence percentage: 85%+ green, 70-84% gold, <70% orange/red.
+    /// Unified onto `Color.forRating(scale: .percent)` — mock-draft confidence
+    /// is a 0–100 gauge, and its bottom band had no red at all.
     private func confidenceColor(for confidence: Int) -> Color {
-        if confidence >= 85 { return .success }
-        if confidence >= 70 { return .accentBlue }
-        return .warning
+        Color.forRating(confidence, scale: .percent)
     }
 
     private func mediaCommentColor(_ comment: String) -> Color {

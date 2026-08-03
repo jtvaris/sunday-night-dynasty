@@ -188,10 +188,21 @@ enum DSLayout {
 
 // MARK: - Corner Radius Tokens
 //
-// Two scales: 8 for inline pills/buttons/chips, 12 for cards. Anything
-// else should be a deliberate exception.
+// Three steps: `tight` for elements small enough that 8 would round them into a
+// blob, `inline` for pills/buttons/chips, and `card` for containers. Anything
+// else is a deliberate exception — `tools/lint/design_tokens.py` counts the
+// off-scale literals.
+//
+// There is deliberately no `pill` step. A "fully rounded" token was declared in
+// the first pass of task #70 and never landed on a single call site, because the
+// literals it was meant to absorb (16 / 18 / 20 on chips of varying height) are
+// NOT all fake pills — converting them is a visual change per site, not a
+// codemod. Use `Capsule()`, which says the same thing without a magic number.
 
 enum DSCornerRadius {
+    /// 4 — micro elements: meter caps, swatches, 14–26 pt badge boxes. At this
+    /// size `inline` (8) eats the whole corner and the rectangle reads round.
+    static let tight: CGFloat = 4
     /// 8 — buttons, pills, chips, small inline rectangles
     static let inline: CGFloat = 8
     /// 12 — cards, sheets, containers

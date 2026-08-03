@@ -293,7 +293,13 @@ struct PracticeSquadView: View {
             player,
             to: team,
             allPlayers: allPlayers,
-            capMode: career.capMode
+            capMode: career.capMode,
+            // In-season corresponding move — priced on the game checks still to
+            // come, same rule as every other release screen (#26 / #68).
+            leagueYearRemaining: CapManagementEngine.leagueYearRemaining(
+                phase: career.currentPhase,
+                week: career.currentWeek
+            )
         ) else {
             banner = "No room — free up cap space first."
             return

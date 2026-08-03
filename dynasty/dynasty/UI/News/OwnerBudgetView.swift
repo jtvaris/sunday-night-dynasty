@@ -203,9 +203,9 @@ struct OwnerBudgetView: View {
             // Usage bar: committed share of the allocation
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 4)
+                    RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                         .fill(Color.backgroundTertiary)
-                    RoundedRectangle(cornerRadius: 4)
+                    RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                         .fill(remaining >= 0 ? color : Color.danger)
                         .frame(width: geo.size.width * min(1.0, Double(committed) / max(1.0, Double(allocation.wrappedValue))))
                 }

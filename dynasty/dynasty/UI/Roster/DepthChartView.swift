@@ -809,7 +809,7 @@ struct DepthChartView: View {
     private func fatigueMeter(value: Int) -> some View {
         VStack(spacing: 1) {
             Image(systemName: "bolt.fill")
-                .font(.system(size: 7))
+                .font(.system(size: DSType.Size.micro))
                 .foregroundStyle(fatigueColor(value))
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
@@ -840,7 +840,7 @@ struct DepthChartView: View {
             .foregroundStyle(Color.backgroundPrimary)
             .frame(minWidth: 28, minHeight: 20)
             .padding(.horizontal, 4)
-            .background(sideColor(slot.side), in: RoundedRectangle(cornerRadius: 4))
+            .background(sideColor(slot.side), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
     }
 
     // MARK: - Helpers
@@ -1130,7 +1130,7 @@ private struct ComparisonSheet: View {
                 if candidate.ovrDelta != 0 && !isCurrent {
                     HStack(spacing: 2) {
                         Image(systemName: candidate.ovrDelta > 0 ? "arrow.up" : "arrow.down")
-                            .font(.system(size: 8, weight: .bold))
+                            .font(.system(size: DSType.Size.micro, weight: .bold))
                         Text("\(abs(candidate.ovrDelta))")
                             .font(.system(size: 10, weight: .bold).monospacedDigit())
                     }

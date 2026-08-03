@@ -190,7 +190,7 @@ struct DraftOrderView: View {
                         if pick.originalTeamID != pick.currentTeamID,
                            let origAbbr = abbreviationLookup[pick.originalTeamID] {
                             Text("via \(origAbbr)")
-                                .font(.system(size: 7, weight: .bold))
+                                .font(.system(size: DSType.Size.micro, weight: .bold))
                                 .foregroundStyle(Color.accentBlue)
                         }
                     }
@@ -272,7 +272,7 @@ struct DraftOrderView: View {
 
                     if isUserPick {
                         Text("YOUR PICK")
-                            .font(.system(size: 7, weight: .heavy))
+                            .font(.system(size: DSType.Size.micro, weight: .heavy))
                             .foregroundStyle(Color.backgroundPrimary)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 2)
@@ -292,7 +292,7 @@ struct DraftOrderView: View {
                     if isTraded, let origAbbr = originalTeam?.abbreviation, let currentAbbr = team?.abbreviation {
                         HStack(spacing: 3) {
                             Image(systemName: "arrow.left.arrow.right")
-                                .font(.system(size: 8))
+                                .font(.system(size: DSType.Size.micro))
                                 .foregroundStyle(Color.accentBlue)
                             Text("Originally: \(origAbbr) \u{2192} \(currentAbbr)")
                                 .font(.system(size: 9, weight: .semibold))
@@ -304,7 +304,7 @@ struct DraftOrderView: View {
                     if pick.isComplete, let playerName = pick.playerName, let pos = pick.playerPosition {
                         HStack(spacing: 3) {
                             Text(pos)
-                                .font(.system(size: 8, weight: .bold))
+                                .font(.system(size: DSType.Size.micro, weight: .bold))
                                 .foregroundStyle(Color.textPrimary)
                                 .padding(.horizontal, 3)
                                 .padding(.vertical, 1)

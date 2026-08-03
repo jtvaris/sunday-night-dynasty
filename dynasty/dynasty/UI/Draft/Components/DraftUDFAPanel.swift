@@ -88,7 +88,7 @@ struct DraftUDFAPanel: View {
                             .padding(.horizontal, 6).padding(.vertical, 2)
                             .background(Color.backgroundTertiary)
                             .foregroundStyle(result.isGem ? Color.draftStealGold : Color.textPrimary)
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                            .clipShape(RoundedRectangle(cornerRadius: DSCornerRadius.tight))
                     }
                     .padding(DSSpacing.xs)
                     .cardBackground()
@@ -153,7 +153,7 @@ struct DraftUDFAPanel: View {
                     }
                     if need >= 0.5 {
                         Text("NEED")
-                            .font(.system(size: 8, weight: .heavy))
+                            .font(.system(size: DSType.Size.micro, weight: .heavy))
                             .foregroundStyle(Color.draftStealGold)
                     }
                 }

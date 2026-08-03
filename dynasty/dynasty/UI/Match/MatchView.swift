@@ -776,7 +776,7 @@ private struct PlayFeedRow: View {
                 .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(accentColor)
                 .frame(width: 28, height: 20)
-                .background(accentColor.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
+                .background(accentColor.opacity(0.15), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
 
             VStack(alignment: .leading, spacing: 4) {
                 // Down & distance header

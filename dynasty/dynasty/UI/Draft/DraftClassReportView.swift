@@ -253,7 +253,7 @@ struct DraftClassReportView: View {
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
                             .background(
-                                RoundedRectangle(cornerRadius: 4)
+                                RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                                     .fill(Color.backgroundTertiary)
                             )
                     }

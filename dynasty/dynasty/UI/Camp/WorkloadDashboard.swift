@@ -122,7 +122,7 @@ struct WorkloadDashboard: View {
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
                         .background(
-                            RoundedRectangle(cornerRadius: 4)
+                            RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                                 .fill(Color.backgroundTertiary)
                         )
                     VStack(alignment: .leading) {

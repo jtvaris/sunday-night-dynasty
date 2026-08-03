@@ -152,6 +152,27 @@ struct ContractNegotiationView: View {
     /// verdict, rendered as a chip. The chat never derives a stance of its own.
     private var stance: NegotiationStance? { liveDemand.stance }
 
+    // **What this client is actually negotiating for** (#86) — the axis every
+    // high-traffic line in the chat is written on — is deliberately NOT a
+    // property here. `AgentDesire.primary` is called at each message site with
+    // the demand THAT site is speaking about (the opening demand, the round's
+    // graded demand, the demand the deal closed against), and it decodes
+    // `Player.injuryHistory` from JSON, which is cheap once per message and
+    // wasteful once per SwiftUI body pass.
+    //
+    // It is also not shown as a chip anywhere, on purpose: the user is meant to
+    // work out what a man wants from how his agent talks, and a label over the
+    // conversation would answer the question the conversation is asking.
+
+    /// The line picker for one exchange.
+    ///
+    /// Seeded on the thread, the round and the site, so the same conversation
+    /// says the same words on every re-open — and carrying the thread's
+    /// `lastLineIndex` so it never says the same one twice running.
+    private func selector(for thread: NegotiationThread, round: Int) -> DialogueSelector {
+        DialogueSelector(threadID: thread.id, round: round, lastIndex: thread.lastLineIndex)
+    }
+
     // MARK: - Economy Inputs
     //
     // Everything below is read from the world and handed to the engine. The
@@ -1243,6 +1264,7 @@ struct ContractNegotiationView: View {
             insultCount: existing.insultCount ?? 0
         )
         let ask = opening.openingOffer
+        let sel = selector(for: live, round: live.round)
 
         live.status = .open
         live.refusalReasonRaw = nil
@@ -1255,14 +1277,14 @@ struct ContractNegotiationView: View {
         ))
         live.append(NegotiationThreadMessage(
             sender: .agent,
-            text: openerText(demand: opening, ask: ask),
+            text: openerText(demand: opening, ask: ask, sel: sel, isReopen: true),
             offer: NegotiationOfferSnapshot(ask),
             round: live.round,
             tone: opening.personaTone
         ))
 
         primeComposer(from: ask)
-        commit(live)
+        commit(live, sel: sel)
     }
 
     /// Season, week, team and the user's standing — everything the demand model
@@ -1332,6 +1354,7 @@ struct ContractNegotiationView: View {
             typeRaw: negotiationType == .extend ? "extend" : "freeAgent",
             season: season
         )
+        let sel = selector(for: newThread, round: 0)
 
         // 1. A hardliner who was lowballed earlier this offseason. The freeze-out
         //    is a REFUSAL like any other now — he says it himself instead of the
@@ -1339,12 +1362,12 @@ struct ContractNegotiationView: View {
         if NegotiationLockRegistry.isLocked(player.id) {
             newThread.append(NegotiationThreadMessage(
                 sender: .agent,
-                text: AgentDialogue.brokenOffLine(voice: agentVoice, ctx: baseContext()),
+                text: AgentDialogue.brokenOffLine(voice: agentVoice, ctx: baseContext(), sel: sel),
                 round: 0,
                 tone: .refusing
             ))
             newThread.status = .brokenOff
-            commit(newThread)
+            commit(newThread, sel: sel)
             return
         }
 
@@ -1369,7 +1392,9 @@ struct ContractNegotiationView: View {
         if opening.demand.isRefusing, let reason = opening.demand.refusalReason {
             newThread.append(NegotiationThreadMessage(
                 sender: .agent,
-                text: AgentDialogue.refusalLine(voice: agentVoice, reason: reason, ctx: baseContext()),
+                text: AgentDialogue.refusalLine(
+                    voice: agentVoice, reason: reason, ctx: baseContext(), sel: sel
+                ),
                 round: 0,
                 tone: .refusing
             ))
@@ -1384,7 +1409,7 @@ struct ContractNegotiationView: View {
             // `TradeRequestRegistry` for why a request must never move a player
             // on its own.
             if reason == .ringChasing { fileTradeRequest() }
-            commit(newThread)
+            commit(newThread, sel: sel)
             return
         }
 
@@ -1395,7 +1420,7 @@ struct ContractNegotiationView: View {
         newThread.pendingAgentOffer = NegotiationOfferSnapshot(ask)
         newThread.append(NegotiationThreadMessage(
             sender: .agent,
-            text: openerText(demand: opening.demand, ask: ask),
+            text: openerText(demand: opening.demand, ask: ask, sel: sel),
             offer: NegotiationOfferSnapshot(ask),
             round: 0,
             // The engine's own opening frame, not a second copy of the rule.
@@ -1403,21 +1428,37 @@ struct ContractNegotiationView: View {
         ))
 
         primeComposer(from: ask)
-        commit(newThread)
+        commit(newThread, sel: sel)
     }
 
-    /// The agent's opening line. One branch: a client who won a prove-it bet
-    /// opens by saying so, because the user WROTE that bet last winter and the
-    /// mechanic is worthless if he cannot see it pay out.
-    private func openerText(demand: ContractDemand, ask: NegotiationOffer) -> String {
+    /// The agent's opening line: hello, what his client is after, and the number
+    /// it takes.
+    ///
+    /// Two branches. A client who won a prove-it bet opens by saying so, because
+    /// the user WROTE that bet last winter and the mechanic is worthless if he
+    /// cannot see it pay out. A client whose refusal has just lifted opens with
+    /// the reopener, which is the same desire and the same number said by a man
+    /// who was saying no last month.
+    private func openerText(
+        demand: ContractDemand,
+        ask: NegotiationOffer,
+        sel: DialogueSelector,
+        isReopen: Bool = false
+    ) -> String {
         let ctx = context(ask: ask)
-        if demand.stance == .provenBet {
-            return AgentDialogue.provenBetLine(voice: agentVoice, ctx: ctx)
+        if demand.stance == .provenBet, !isReopen {
+            return AgentDialogue.provenBetLine(voice: agentVoice, ctx: ctx, sel: sel)
+        }
+        let want = AgentDesire.primary(player: player, demand: demand)
+        if isReopen {
+            return AgentDialogue.reopener(voice: agentVoice, desire: want, ctx: ctx, sel: sel)
         }
         return AgentDialogue.opener(
             voice: agentVoice,
+            desire: want,
             isExtension: negotiationType == .extend,
-            ctx: ctx
+            ctx: ctx,
+            sel: sel
         )
     }
 
@@ -1518,10 +1559,11 @@ struct ContractNegotiationView: View {
 
         live.round += 1
         let round = live.round
+        let sel = selector(for: live, round: round)
 
         live.append(NegotiationThreadMessage(
             sender: .you,
-            text: AgentDialogue.gmOfferLine(round: round, playerFirst: player.firstName),
+            text: AgentDialogue.gmOfferLine(round: round, playerFirst: player.firstName, sel: sel),
             offer: NegotiationOfferSnapshot(gmOffer),
             round: round
         ))
@@ -1544,14 +1586,21 @@ struct ContractNegotiationView: View {
         // a count that is always zero.
         live.insultCount = result.insultCount
 
+        // What the CLIENT wants, graded off the demand this round produced —
+        // every line below weaves it, so the user can read the man out of the
+        // way his agent argues.
+        let want = AgentDesire.primary(player: player, demand: result.demand)
+
         switch result.outcome {
         case .dealReached(let finalOffer):
-            close(&live, with: finalOffer, round: round, demand: result.demand)
+            close(&live, with: finalOffer, round: round, demand: result.demand, sel: sel)
 
         case .negotiationsBrokenOff:
             live.append(NegotiationThreadMessage(
                 sender: .agent,
-                text: AgentDialogue.brokenOffLine(voice: agentVoice, ctx: context(ask: agentAsk, gmOffer: gmOffer)),
+                text: AgentDialogue.brokenOffLine(
+                    voice: agentVoice, ctx: context(ask: agentAsk, gmOffer: gmOffer), sel: sel
+                ),
                 round: round,
                 tone: .insulted
             ))
@@ -1567,7 +1616,10 @@ struct ContractNegotiationView: View {
         case .playerWalked:
             live.append(NegotiationThreadMessage(
                 sender: .agent,
-                text: AgentDialogue.walkAwayLine(voice: agentVoice, ctx: context(ask: agentAsk, gmOffer: gmOffer)),
+                text: AgentDialogue.walkAwayLine(
+                    voice: agentVoice,
+                    ctx: context(ask: agentAsk, gmOffer: gmOffer), sel: sel
+                ),
                 round: round,
                 tone: .hardline
             ))
@@ -1592,10 +1644,13 @@ struct ContractNegotiationView: View {
                         age: player.age,
                         requestedYears: gmOffer.years,
                         maxYears: ContractNegotiationEngine.maxContractYears(forAge: player.age),
-                        ctx: ctx
+                        ctx: ctx,
+                        sel: sel
                     )
                 }
-                return AgentDialogue.counterLine(voice: agentVoice, tone: tone, ctx: ctx)
+                return AgentDialogue.counterLine(
+                    voice: agentVoice, desire: want, tone: tone, ctx: ctx, sel: sel
+                )
             }()
 
             live.append(NegotiationThreadMessage(
@@ -1609,7 +1664,7 @@ struct ContractNegotiationView: View {
             absorbAgentIncentives(counter.incentives)
         }
 
-        commit(live)
+        commit(live, sel: sel)
     }
 
     // MARK: - Pestering
@@ -1635,10 +1690,11 @@ struct ContractNegotiationView: View {
         live.pesterCount = attempt
         live.round += 1
         let round = live.round
+        let sel = selector(for: live, round: round)
 
         live.append(NegotiationThreadMessage(
             sender: .you,
-            text: AgentDialogue.gmOfferLine(round: round, playerFirst: player.firstName),
+            text: AgentDialogue.gmOfferLine(round: round, playerFirst: player.firstName, sel: sel),
             offer: NegotiationOfferSnapshot(gmOffer),
             round: round
         ))
@@ -1667,7 +1723,8 @@ struct ContractNegotiationView: View {
                 voice: agentVoice,
                 reason: reason,
                 attempt: attempt,
-                ctx: context(ask: gmOffer, gmOffer: gmOffer, rounds: round)
+                ctx: context(ask: gmOffer, gmOffer: gmOffer, rounds: round),
+                sel: sel
             ),
             round: round,
             tone: .refusing
@@ -1686,13 +1743,14 @@ struct ContractNegotiationView: View {
             ))
         }
 
-        commit(live)
+        commit(live, sel: sel)
     }
 
     private func acceptAgentOffer() {
         guard var live = thread, live.isOpen, let snapshot = live.pendingAgentOffer else { return }
         guard !exceedsCap(snapshot.offer) else { return }
         let round = live.round
+        let sel = selector(for: live, round: round)
 
         live.append(NegotiationThreadMessage(
             sender: .you,
@@ -1704,8 +1762,9 @@ struct ContractNegotiationView: View {
         // lives there never fires — which is why the GM's negotiating
         // reputation could only ever get worse: every insult was recorded and
         // the most natural way to close a deal was not.
-        close(&live, with: snapshot.offer, round: round, demand: liveDemand, recordToLedger: true)
-        commit(live)
+        close(&live, with: snapshot.offer, round: round, demand: liveDemand,
+              sel: sel, recordToLedger: true)
+        commit(live, sel: sel)
     }
 
     private func walkAway() {
@@ -1735,6 +1794,7 @@ struct ContractNegotiationView: View {
         with offer: NegotiationOffer,
         round: Int,
         demand: ContractDemand,
+        sel: DialogueSelector,
         recordToLedger: Bool = false
     ) {
         // ECONOMY owns the verdict; this file only decides how it is said and
@@ -1748,10 +1808,13 @@ struct ContractNegotiationView: View {
         )
         if recordToLedger { NegotiationLedger.recordSigning(tone: tone) }
         let ctx = context(ask: offer, signed: offer, rounds: round)
+        let want = AgentDesire.primary(player: player, demand: demand)
 
         live.append(NegotiationThreadMessage(
             sender: .agent,
-            text: AgentDialogue.acceptLine(voice: agentVoice, tone: tone, ctx: ctx),
+            text: AgentDialogue.acceptLine(
+                voice: agentVoice, desire: want, tone: tone, ctx: ctx, sel: sel
+            ),
             round: round,
             tone: tone
         ))
@@ -1791,7 +1854,7 @@ struct ContractNegotiationView: View {
 
         if !live.moraleApplied {
             live.moraleApplied = true
-            live.lingeringNote = applyCloseEffects(tone: tone, ctx: ctx)
+            live.lingeringNote = applyCloseEffects(tone: tone, desire: want, ctx: ctx, sel: sel)
         }
 
         onDealCompleted?(offer)
@@ -1802,7 +1865,12 @@ struct ContractNegotiationView: View {
     ///
     /// Returns the lingering note a begrudging close leaves behind, if any.
     @discardableResult
-    private func applyCloseEffects(tone: AgentToneKey, ctx: AgentDialogue.Context) -> String? {
+    private func applyCloseEffects(
+        tone: AgentToneKey,
+        desire: AgentDesire,
+        ctx: AgentDialogue.Context,
+        sel: DialogueSelector
+    ) -> String? {
         var note: String?
         switch tone {
         case .eager:
@@ -1817,7 +1885,7 @@ struct ContractNegotiationView: View {
         default:
             // Ground down below his ask. He signs, and he remembers.
             player.morale = max(1, min(100, player.morale - 4))
-            note = AgentDialogue.lingeringNote(ctx: ctx)
+            note = AgentDialogue.lingeringNote(desire: desire, ctx: ctx, sel: sel)
         }
         try? modelContext.save()
         return note
@@ -1844,7 +1912,10 @@ struct ContractNegotiationView: View {
         AgentDialogue.Context(
             playerFirst: player.firstName,
             playerFull: player.fullName,
-            position: player.position.rawValue
+            position: player.position.rawValue,
+            // A noun phrase, so the free-agent fallback reads as English in the
+            // same sentence the real club does — see `Context.team`.
+            team: team.map { "the \($0.name)" } ?? "this club"
         )
     }
 
@@ -1885,7 +1956,13 @@ struct ContractNegotiationView: View {
     /// Writes the thread to state AND to the save. Every mutation goes through
     /// here — a transcript that only exists in `@State` is the bug this wave
     /// was opened to fix.
-    private func commit(_ updated: NegotiationThread) {
+    ///
+    /// - Parameter sel: the picker that chose this exchange's lines, if any. Its
+    ///   memory rides onto the thread here rather than at each call site, so a
+    ///   new dialogue site cannot forget to persist its own no-repeat state.
+    private func commit(_ updated: NegotiationThread, sel: DialogueSelector? = nil) {
+        var updated = updated
+        if let sel { updated.lastLineIndex = sel.lastIndex }
         thread = updated
         scrollTarget = updated.messages.last?.id
         if let careerID = player.careerID {

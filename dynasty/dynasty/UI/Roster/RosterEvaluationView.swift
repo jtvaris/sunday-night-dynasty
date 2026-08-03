@@ -433,14 +433,14 @@ struct RosterEvaluationView: View {
                             .foregroundStyle(Color.textSecondary)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 2)
-                            .background(Color.textTertiary.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
+                            .background(Color.textTertiary.opacity(0.15), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
                             .frame(minWidth: 60, alignment: .trailing)
                         Text("You")
                             .font(.caption.weight(.bold))
                             .foregroundStyle(Color.accentGold)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 2)
-                            .background(Color.accentGold.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+                            .background(Color.accentGold.opacity(0.12), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
                             .frame(minWidth: 60, alignment: .trailing)
                     }
                 }
@@ -620,7 +620,7 @@ struct RosterEvaluationView: View {
 
     private func needBadge(label: String, color: Color, small: Bool = false) -> some View {
         Text(label)
-            .font(small ? .system(size: 8, weight: .bold) : .caption2.weight(.bold))
+            .font(small ? .system(size: DSType.Size.micro, weight: .bold) : .caption2.weight(.bold))
             .foregroundStyle(color)
             .padding(.horizontal, small ? 4 : 6)
             .padding(.vertical, small ? 1 : 2)
@@ -696,7 +696,7 @@ struct RosterEvaluationView: View {
                 .foregroundStyle(Color.textPrimary)
                 .frame(width: 34)
                 .padding(.vertical, 4)
-                .background(positionSideColor(decision.player.position), in: RoundedRectangle(cornerRadius: 4))
+                .background(positionSideColor(decision.player.position), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
@@ -1053,7 +1053,7 @@ struct RosterEvaluationView: View {
                         .foregroundStyle(Color.textPrimary)
                         .frame(width: 30)
                         .padding(.vertical, 2)
-                        .background(positionSideColor(player.position), in: RoundedRectangle(cornerRadius: 4))
+                        .background(positionSideColor(player.position), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
                     Text(player.fullName)
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(Color.textPrimary)
@@ -1222,7 +1222,7 @@ struct RosterEvaluationView: View {
                 .foregroundStyle(Color.textPrimary)
                 .frame(width: 34)
                 .padding(.vertical, 3)
-                .background(positionSideColor(player.position), in: RoundedRectangle(cornerRadius: 4))
+                .background(positionSideColor(player.position), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
 
             Text(player.fullName)
                 .font(.subheadline)
@@ -1653,7 +1653,7 @@ struct RosterEvaluationView: View {
                 .font(.system(size: 11, weight: .heavy))
                 .foregroundStyle(Color.textPrimary)
                 .frame(width: 30, height: 22)
-                .background(Color.accentBlue.opacity(0.85), in: RoundedRectangle(cornerRadius: 4))
+                .background(Color.accentBlue.opacity(0.85), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
 
             // Starter badge
             if isStarter {
@@ -1695,7 +1695,7 @@ struct RosterEvaluationView: View {
                     .font(.system(size: 16, weight: .bold).monospacedDigit())
                     .foregroundStyle(Color.textPrimary)
                 Text("AGE")
-                    .font(.system(size: 8, weight: .semibold))
+                    .font(.system(size: DSType.Size.micro, weight: .semibold))
                     .foregroundStyle(Color.textTertiary)
                     .tracking(0.5)
             }
@@ -1707,7 +1707,7 @@ struct RosterEvaluationView: View {
                     .font(.system(size: 16, weight: .bold).monospacedDigit())
                     .foregroundStyle(isExpiring ? Color.danger : Color.textPrimary)
                 Text(isExpiring ? "EXP" : "YRS")
-                    .font(.system(size: 8, weight: .semibold))
+                    .font(.system(size: DSType.Size.micro, weight: .semibold))
                     .foregroundStyle(isExpiring ? Color.danger : Color.textTertiary)
                     .tracking(0.5)
             }

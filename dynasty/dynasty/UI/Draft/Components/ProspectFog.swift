@@ -594,7 +594,7 @@ struct ProspectIQCell: View {
                 .minimumScaleFactor(0.7)
             if showsSourceLabel {
                 Text(sourceTag(read.source))
-                    .font(.system(size: 7, weight: .medium))
+                    .font(.system(size: DSType.Size.micro, weight: .medium))
                     .foregroundStyle(Color.textTertiary)
             }
         }

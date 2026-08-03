@@ -552,7 +552,7 @@ struct NewCareerView: View {
                         Text("What is this?")
                             .font(.caption.weight(.semibold))
                         Image(systemName: showSetupExplainer ? "chevron.up" : "chevron.down")
-                            .font(.system(size: 8, weight: .bold))
+                            .font(.system(size: DSType.Size.micro, weight: .bold))
                     }
                     .foregroundStyle(Color.accentBlue)
                 }
@@ -911,7 +911,7 @@ private struct CareerSetupCard: View {
                         .foregroundStyle(Color.textPrimary)
 
                     Text(setup.badge)
-                        .font(.system(size: 8, weight: .heavy))
+                        .font(.system(size: DSType.Size.micro, weight: .heavy))
                         .tracking(0.8)
                         .foregroundStyle(isSelected ? Color.backgroundPrimary : Color.textSecondary)
                         .padding(.horizontal, 5)
@@ -992,7 +992,7 @@ private struct LeagueSourceCard: View {
                         .foregroundStyle(Color.textPrimary)
 
                     Text(source.badge)
-                        .font(.system(size: 8, weight: .heavy))
+                        .font(.system(size: DSType.Size.micro, weight: .heavy))
                         .tracking(0.8)
                         .foregroundStyle(isSelected ? Color.backgroundPrimary : Color.textSecondary)
                         .padding(.horizontal, 5)
@@ -1078,7 +1078,7 @@ private struct CoachingStyleCard: View {
                     // #107: Beginner guidance tag
                     if isRecommended {
                         Text("Recommended")
-                            .font(.system(size: 8, weight: .bold))
+                            .font(.system(size: DSType.Size.micro, weight: .bold))
                             .foregroundStyle(Color.backgroundPrimary)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)

@@ -3989,6 +3989,22 @@ enum PlaySimulator {
     // (no RNG draw). Threads the SHARED PlaySimulator path, so it shows on both the
     // coached (LiveGameEngine) and simmed (Game/DriveSimulator) games. The legacy
     // `schemeYardAdjustment` / `directFamiliarity` yard channel (B3) is left intact.
+    //
+    // **Task #66 note on "the seeded mean 70".** That number was the old flat
+    // `LeagueGenerator` draw (55...85), and it described the league on day one
+    // only: the DEVELOPMENT stack ran to a steady state of 53.9, i.e. under the
+    // bust pivot, so a save that got past its first few seasons had every club in
+    // the busting regime forever and the mechanic stopped being a difference
+    // between rooms. #66 fixed the equilibrium (intake + early-career learn rate;
+    // see `DraftEngine.rookieFamiliarityFloor`), which now measures 60.5 on
+    // `tools/balance-harness`'s `career` scenario, and made the generator's seed
+    // tenure-aware so t=0 starts at the same place instead of decaying into it.
+    // The two pivots below are UNCHANGED and were deliberately left alone: they
+    // are statements about football, and it was the equilibrium that was wrong.
+    // Squad familiarity still reads below the 70 completion pivot for most rooms
+    // — a small, intended, league-wide execution dock — while the 55 bust pivot
+    // now separates veteran-heavy lineups (yp3+ average 61-75) from young ones
+    // (yp0 averages 44) instead of catching everybody.
 
     // B1 — completion shift. `famCurve` is 0 at the pivot (70) → parity; a
     // well-drilled squad earns a small execution bonus, a raw one is docked
@@ -4003,10 +4019,11 @@ enum PlaySimulator {
     private static let famCoachPlayerWeight = 0.7
     private static let famCoachExpertWeight = 0.3
 
-    // B2 — blown-assignment bust. Pivot 55 < the seeded mean 70 → a neutral squad
-    // NEVER busts (parity); a raw squad coughs up the occasional forced negative
-    // play. Weighted to the ball-carrier's OWN familiarity (the guy running the
-    // route / carrying the ball busts it — fixes team-mean dilution).
+    // B2 — blown-assignment bust. Pivot 55 < the league's familiarity equilibrium
+    // (60.5, measured — task #66) → a neutral squad NEVER busts (parity); a raw
+    // squad coughs up the occasional forced negative play. Weighted to the
+    // ball-carrier's OWN familiarity (the guy running the route / carrying the
+    // ball busts it — fixes team-mean dilution).
     private static let famBustPivot       = 55.0
     private static let famBustSlope       = 0.0013  // fam33 → ~2.9%, fam20 → ~4.6% — compressed from 0.0027 (round-5 P1)
     private static let famBustCap         = 0.05     // symmetric hard cap on BOTH bust sides, halved from 0.10 (round-5 P1)

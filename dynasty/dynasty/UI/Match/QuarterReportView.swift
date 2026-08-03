@@ -171,7 +171,7 @@ struct QuarterPlayersPanel: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                     Text("#\(player.displayNumber)")
-                        .font(.system(size: 8.5, weight: .bold).monospacedDigit())
+                        .font(.system(size: DSType.Size.micro, weight: .bold).monospacedDigit())
                         .foregroundStyle(Color.textTertiary)
                     trendArrow(trend)
                     formIcon(streak)
@@ -180,11 +180,11 @@ struct QuarterPlayersPanel: View {
                 }
                 HStack(spacing: 4) {
                     Text("\(snaps) SNP")
-                        .font(.system(size: 8.5, weight: .black).monospacedDigit())
+                        .font(.system(size: DSType.Size.micro, weight: .black).monospacedDigit())
                         .foregroundStyle(Color.textTertiary)
                     if !statLine.isEmpty {
                         Text("· \(statLine)")
-                            .font(.system(size: 8.5, weight: .semibold).monospacedDigit())
+                            .font(.system(size: DSType.Size.micro, weight: .semibold).monospacedDigit())
                             .foregroundStyle(Color.textSecondary)
                             .lineLimit(1)
                             .minimumScaleFactor(0.75)
@@ -237,9 +237,9 @@ struct QuarterPlayersPanel: View {
         } label: {
             HStack(spacing: 3) {
                 Image(systemName: "arrow.triangle.2.circlepath")
-                    .font(.system(size: 8, weight: .black))
+                    .font(.system(size: DSType.Size.micro, weight: .black))
                 Text("SUB? → \(bench.shortName)")
-                    .font(.system(size: 8.5, weight: .black))
+                    .font(.system(size: DSType.Size.micro, weight: .black))
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
             }
@@ -256,10 +256,13 @@ struct QuarterPlayersPanel: View {
     private func chip(text: String, icon: String, tint: Color) -> some View {
         HStack(spacing: 3) {
             Image(systemName: icon)
-                .font(.system(size: 8, weight: .black))
+                .font(.system(size: DSType.Size.micro, weight: .black))
             Text(text)
-                .font(.system(size: 8.5, weight: .black))
+                .font(.system(size: DSType.Size.micro, weight: .black))
                 .lineLimit(1)
+                // Same 8.5 → 10 pt bump as the rookie capsule, same trailing
+                // position in a crowded row — give it somewhere to give.
+                .minimumScaleFactor(0.75)
         }
         .foregroundStyle(tint)
         .padding(.horizontal, 7)
@@ -298,8 +301,18 @@ struct QuarterPlayersPanel: View {
                     case .struggling: return ("R · BEHIND", .danger)
                     }
                 }()
+                // Width safety: this capsule went 7.5 → 10 pt with the legibility
+                // floor, i.e. ~+20 pt of hard width in a row that already carries
+                // shortName + number + trend + form + temperament. Without a
+                // shrink budget of its own the ONLY elastic element in the row is
+                // `shortName`, so a long name plus "R · EXCEEDING" pushed the name
+                // to its 0.7 floor and then overflowed. Lower layout priority
+                // makes the badge yield before the name does.
                 Text(label)
-                    .font(.system(size: 7.5, weight: .black))
+                    .font(.system(size: DSType.Size.micro, weight: .black))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .layoutPriority(-1)
                     .foregroundStyle(tint)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
@@ -307,7 +320,7 @@ struct QuarterPlayersPanel: View {
                     .accessibilityLabel(Text("Rookie, \(watch.expectationLabel), \(label)"))
             } else {
                 Text("R")
-                    .font(.system(size: 7.5, weight: .black))
+                    .font(.system(size: DSType.Size.micro, weight: .black))
                     .foregroundStyle(Color.textTertiary)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
@@ -328,7 +341,7 @@ struct QuarterPlayersPanel: View {
             } label: {
                 HStack(spacing: 5) {
                     Image(systemName: expanded.wrappedValue ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 8, weight: .black))
+                        .font(.system(size: DSType.Size.micro, weight: .black))
                     Text("BENCH (\(bench.count))")
                         .font(.system(size: 9, weight: .black))
                         .tracking(1.0)
@@ -363,7 +376,7 @@ struct QuarterPlayersPanel: View {
         let snaps = engine.snapCount(player.id)
         return HStack(spacing: 6) {
             Text(player.position.rawValue)
-                .font(.system(size: 8.5, weight: .black))
+                .font(.system(size: DSType.Size.micro, weight: .black))
                 .foregroundStyle(Color.textTertiary)
                 .frame(width: 24, alignment: .leading)
             Text(player.shortName)
@@ -375,7 +388,7 @@ struct QuarterPlayersPanel: View {
             temperamentBadge(player)
             if snaps > 0 {
                 Text("\(snaps) SNP")
-                    .font(.system(size: 8, weight: .black).monospacedDigit())
+                    .font(.system(size: DSType.Size.micro, weight: .black).monospacedDigit())
                     .foregroundStyle(Color.textTertiary)
             }
             Spacer(minLength: 3)
@@ -411,13 +424,10 @@ struct QuarterPlayersPanel: View {
     }
 
     /// Day-grade color bands — same thresholds as the Coach's Board.
+    /// Unified onto `Color.forRating(scale: .percent)` — see the twin in
+    /// `CoachesBoardView`.
     private func gradeColor(_ grade: Int) -> Color {
-        switch grade {
-        case 80...:   return .accentGold
-        case 70..<80: return .success
-        case 55..<70: return .textSecondary
-        default:      return .danger
-        }
+        Color.forRating(grade, scale: .percent)
     }
 
     private func trendArrow(_ trend: Int) -> some View {
@@ -452,17 +462,17 @@ struct QuarterPlayersPanel: View {
         switch player.mentalTemperament {
         case .egoDriven:
             Image(systemName: "crown.fill")
-                .font(.system(size: 8, weight: .bold))
+                .font(.system(size: DSType.Size.micro, weight: .bold))
                 .foregroundStyle(Color.accentGold)
                 .accessibilityLabel(Text("Ego-driven"))
         case .streaky:
             Image(systemName: "bolt.fill")
-                .font(.system(size: 8, weight: .bold))
+                .font(.system(size: DSType.Size.micro, weight: .bold))
                 .foregroundStyle(Color.warning)
                 .accessibilityLabel(Text("Streaky temperament"))
         case .unflappable:
             Image(systemName: "checkmark.seal.fill")
-                .font(.system(size: 8, weight: .bold))
+                .font(.system(size: DSType.Size.micro, weight: .bold))
                 .foregroundStyle(Color.accentBlue)
                 .accessibilityLabel(Text("Unflappable"))
         case .neutral:

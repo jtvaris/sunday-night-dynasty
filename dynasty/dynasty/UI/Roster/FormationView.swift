@@ -350,12 +350,12 @@ struct FormationView: View {
                 // Yard number labels
                 HStack {
                     Text(yardLabels[i])
-                        .font(.system(size: 8, weight: .medium).monospacedDigit())
+                        .font(.system(size: 8, weight: .medium).monospacedDigit())  // ds-lint:allow(font) field texture: yard numeral painted on the mini-field, scales with the drawn field not the type ladder
                         .foregroundStyle(Color.white.opacity(0.18))
                         .padding(.leading, 10)
                     Spacer()
                     Text(yardLabels[i])
-                        .font(.system(size: 8, weight: .medium).monospacedDigit())
+                        .font(.system(size: 8, weight: .medium).monospacedDigit())  // ds-lint:allow(font) field texture: yard numeral painted on the mini-field, scales with the drawn field not the type ladder
                         .foregroundStyle(Color.white.opacity(0.18))
                         .padding(.trailing, 10)
                 }
@@ -364,21 +364,21 @@ struct FormationView: View {
 
             // End zone indicators
             VStack {
-                RoundedRectangle(cornerRadius: 4)
+                RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                     .fill(Color.white.opacity(0.04))
                     .frame(height: height / CGFloat(yardLineCount + 1))
                     .overlay(
                         Text("END ZONE")
-                            .font(.system(size: 7, weight: .bold))
+                            .font(.system(size: 7, weight: .bold))  // ds-lint:allow(font) field texture: END ZONE lettering at 12% opacity, sized to the end-zone band
                             .foregroundStyle(Color.white.opacity(0.12))
                     )
                 Spacer()
-                RoundedRectangle(cornerRadius: 4)
+                RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                     .fill(Color.white.opacity(0.04))
                     .frame(height: height / CGFloat(yardLineCount + 1))
                     .overlay(
                         Text("END ZONE")
-                            .font(.system(size: 7, weight: .bold))
+                            .font(.system(size: 7, weight: .bold))  // ds-lint:allow(font) field texture: END ZONE lettering at 12% opacity, sized to the end-zone band
                             .foregroundStyle(Color.white.opacity(0.12))
                     )
             }
@@ -410,16 +410,16 @@ struct FormationView: View {
                             .frame(width: 22, alignment: .leading)
                         // Starter grade / Depth grade (#235)
                         Text("S:")
-                            .font(.system(size: 7, weight: .medium))
+                            .font(.system(size: DSType.Size.micro, weight: .medium))
                             .foregroundStyle(Color.textTertiary)
                         Text(group.starterGrade)
                             .font(.system(size: 10, weight: .heavy))
                             .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(group.starterGrade))
                         Text("/")
-                            .font(.system(size: 8))
+                            .font(.system(size: DSType.Size.micro))
                             .foregroundStyle(Color.textTertiary)
                         Text("D:")
-                            .font(.system(size: 7, weight: .medium))
+                            .font(.system(size: DSType.Size.micro, weight: .medium))
                             .foregroundStyle(Color.textTertiary)
                         Text(group.depthGrade)
                             .font(.system(size: 10, weight: .heavy))
@@ -428,7 +428,7 @@ struct FormationView: View {
                     }
                     // Depth info (#47): e.g. "2/2 filled"
                     Text("\(group.filled)/\(group.needed) filled")
-                        .font(.system(size: 8, weight: .medium))
+                        .font(.system(size: DSType.Size.micro, weight: .medium))
                         .foregroundStyle(group.filled >= group.needed ? Color.textTertiary : Color.warning)
                 }
             }
@@ -694,7 +694,7 @@ struct FormationEmptySlot: View {
                 .foregroundStyle(Color.warning.opacity(0.8))
 
             Text("EMPTY")
-                .font(.system(size: 8, weight: .bold))
+                .font(.system(size: DSType.Size.micro, weight: .bold))
                 .foregroundStyle(Color.warning.opacity(0.6))
         }
         .padding(.horizontal, 10)
@@ -777,7 +777,7 @@ struct FormationPlayerCard: View {
         .overlay(alignment: .bottomTrailing) {
             if backupCount > 0 {
                 Text("+\(backupCount)")
-                    .font(.system(size: 8, weight: .medium))
+                    .font(.system(size: DSType.Size.micro, weight: .medium))
                     .foregroundStyle(Color.textTertiary)
                     .padding(.horizontal, 3)
                     .padding(.vertical, 1)

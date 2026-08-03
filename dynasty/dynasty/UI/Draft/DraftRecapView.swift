@@ -231,7 +231,7 @@ struct DraftRecapView: View {
                     .font(.caption2.weight(.bold))
                     .foregroundStyle(Color.textSecondary)
                     .frame(width: 34, height: 20)
-                    .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 4))
+                    .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
             }
 
             if let grade = pick.mediaGrade ?? pick.scoutGrade, !grade.isEmpty {

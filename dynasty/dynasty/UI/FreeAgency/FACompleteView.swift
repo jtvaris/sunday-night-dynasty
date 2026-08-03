@@ -386,7 +386,7 @@ struct FACompleteView: View {
                             .foregroundStyle(Color.textPrimary)
                             .frame(width: 30)
                             .padding(.vertical, 3)
-                            .background(Color.accentBlue, in: RoundedRectangle(cornerRadius: 4))
+                            .background(Color.accentBlue, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
 
                         Text(signing.name)
                             .font(.subheadline.weight(.semibold))
@@ -406,7 +406,7 @@ struct FACompleteView: View {
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(valueTagColor(signing.valueTag).opacity(0.15),
-                                        in: RoundedRectangle(cornerRadius: 4))
+                                        in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
                     }
 
                     // Contract details
@@ -456,7 +456,7 @@ struct FACompleteView: View {
                         .foregroundStyle(Color.textPrimary)
                         .frame(width: 30)
                         .padding(.vertical, 3)
-                        .background(Color.danger.opacity(0.6), in: RoundedRectangle(cornerRadius: 4))
+                        .background(Color.danger.opacity(0.6), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
 
                     Text(player.name)
                         .font(.subheadline)
@@ -474,7 +474,7 @@ struct FACompleteView: View {
                         .foregroundStyle(Color.textTertiary)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 4))
+                        .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
@@ -502,7 +502,7 @@ struct FACompleteView: View {
                         .foregroundStyle(Color.textPrimary)
                         .frame(width: 30)
                         .padding(.vertical, 3)
-                        .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 4))
+                        .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
 
                     Text(signing.playerName)
                         .font(.subheadline)
@@ -579,7 +579,7 @@ struct FACompleteView: View {
             ForEach(Array(compPickEstimate.enumerated()), id: \.offset) { _, pick in
                 HStack(spacing: 8) {
                     Image(systemName: "circle.fill")
-                        .font(.system(size: 5))
+                        .font(.system(size: 5))  // ds-lint:allow(font) decorative list bullet glyph, not text
                         .foregroundStyle(Color.accentGold)
                     Text(pick)
                         .font(.caption)

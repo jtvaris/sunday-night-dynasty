@@ -918,7 +918,7 @@ struct RosterView: View {
                     .minimumScaleFactor(0.8)
                 if sortOrder == sort {
                     Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 8, weight: .bold))
+                        .font(.system(size: DSType.Size.micro, weight: .bold))
                 }
             }
             .frame(width: width, alignment: .center)
@@ -1076,7 +1076,7 @@ struct RosterView: View {
                             .foregroundStyle(Color.backgroundPrimary)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
-                            .background(Self.positionSideColor(player.position), in: RoundedRectangle(cornerRadius: 4))
+                            .background(Self.positionSideColor(player.position), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
                         VStack(alignment: .leading, spacing: 2) {
                             Text(player.fullName)
                                 .font(.subheadline.weight(.bold))
@@ -1115,7 +1115,7 @@ struct RosterView: View {
                                         .foregroundStyle(Color.backgroundPrimary)
                                         .padding(.horizontal, 8)
                                         .padding(.vertical, 4)
-                                        .background(Self.positionSideColor(entry.player.position), in: RoundedRectangle(cornerRadius: 4))
+                                        .background(Self.positionSideColor(entry.player.position), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
 
                                     // Name
                                     VStack(alignment: .leading, spacing: 2) {
@@ -1148,7 +1148,7 @@ struct RosterView: View {
                                             .foregroundStyle(Color.forRating(entry.effectiveOVR))
                                         if !entry.isNatural {
                                             Text("eff. OVR")
-                                                .font(.system(size: 8))
+                                                .font(.system(size: DSType.Size.micro))
                                                 .foregroundStyle(Color.textTertiary)
                                         }
                                     }
@@ -1651,7 +1651,7 @@ struct PositionGroupHeader: View {
 
             if isWeakest {
                 Text("Biggest Need")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.system(size: DSType.Size.micro, weight: .bold))
                     .foregroundStyle(Color.danger)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
@@ -1700,7 +1700,7 @@ struct PositionGroupHeader: View {
                 .foregroundStyle(Color.textSecondary)
                 .padding(.horizontal, 5)
                 .padding(.vertical, 2)
-                .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 4))
+                .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
 
             // Starter / total count
             Text("\(starterCount)/\(players.count)")
@@ -1708,12 +1708,12 @@ struct PositionGroupHeader: View {
                 .foregroundStyle(Color.textTertiary)
                 .padding(.horizontal, 4)
                 .padding(.vertical, 2)
-                .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 4))
+                .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
 
             // Expiring contracts
             if expiringCount > 0 {
                 Text("\(expiringCount) exp")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.system(size: DSType.Size.micro, weight: .bold))
                     .foregroundStyle(Color.warning)
                     .padding(.horizontal, 4)
                     .padding(.vertical, 1)

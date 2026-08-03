@@ -484,7 +484,7 @@ private struct NextGamePill: View {
                     .foregroundStyle(Color.textTertiary)
                 if isCurrentWeek {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 8, weight: .bold))
+                        .font(.system(size: DSType.Size.micro, weight: .bold))
                         .foregroundStyle(Color.accentGold)
                 }
                 Spacer()

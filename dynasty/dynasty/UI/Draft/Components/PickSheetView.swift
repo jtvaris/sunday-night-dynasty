@@ -682,7 +682,7 @@ struct PickSheetView: View {
             .padding(.horizontal, 8).padding(.vertical, 3)
             .foregroundStyle(Color.textPrimary)
             .background(gradeColor(grade))
-            .clipShape(RoundedRectangle(cornerRadius: 4))
+            .clipShape(RoundedRectangle(cornerRadius: DSCornerRadius.tight))
     }
 
     private func gradeColor(_ grade: PickGrade) -> Color {

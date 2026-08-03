@@ -85,11 +85,11 @@ struct CoachRelationshipView: View {
 
                     GeometryReader { geo in
                         ZStack(alignment: .leading) {
-                            RoundedRectangle(cornerRadius: 4)
+                            RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                                 .fill(Color.backgroundTertiary)
                                 .frame(height: 8)
 
-                            RoundedRectangle(cornerRadius: 4)
+                            RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                                 .fill(harmonyColor)
                                 .frame(
                                     width: geo.size.width * CGFloat(relationship.harmony) / 100.0,

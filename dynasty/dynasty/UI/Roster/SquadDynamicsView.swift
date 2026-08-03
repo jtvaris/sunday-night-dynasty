@@ -627,10 +627,10 @@ struct SquadDynamicsView: View {
             // Mini motivation bar
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 4)
+                    RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                         .fill(Color.backgroundTertiary)
                         .frame(height: 6)
-                    RoundedRectangle(cornerRadius: 4)
+                    RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                         .fill(motivationColor(group.motivation))
                         .frame(
                             width: geo.size.width * CGFloat(group.count) / CGFloat(totalPlayers),
@@ -1097,21 +1097,15 @@ struct SquadDynamicsView: View {
             .padding(.vertical, 6)
     }
 
+    /// Unified onto `Color.forRating(scale: .percent)` — see the twin in
+    /// `LockerRoomView`, which banded the same score differently.
     private func chemistryColor(_ value: Int) -> Color {
-        switch value {
-        case 75...100: return Color.success
-        case 55..<75:  return Color.accentGold
-        case 40..<55:  return Color.warning
-        default:       return Color.danger
-        }
+        Color.forRating(value, scale: .percent)
     }
 
+    /// Unified onto `Color.forRating(scale: .percent)`.
     private func moraleColor(_ value: Int) -> Color {
-        switch value {
-        case 75...100: return Color.success
-        case 45..<75:  return Color.warning
-        default:       return Color.danger
-        }
+        Color.forRating(value, scale: .percent)
     }
 
     private func initials(_ name: String) -> String {

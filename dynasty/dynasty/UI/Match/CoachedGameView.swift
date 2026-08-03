@@ -1918,7 +1918,7 @@ struct CoachedGameView: View {
                             // answer must be findable at a glance.
                             if isSignaturePlay(option) {
                                 Image(systemName: "star.fill")
-                                    .font(.system(size: 8, weight: .black))
+                                    .font(.system(size: DSType.Size.micro, weight: .black))
                                     .foregroundStyle(Color.accentGold)
                             }
                             Text(option.rawValue)
@@ -2003,7 +2003,7 @@ struct CoachedGameView: View {
                             .fixedSize(horizontal: false, vertical: true)
                         HStack(spacing: 4) {
                             Image(systemName: "hand.point.right.fill")
-                                .font(.system(size: 8))
+                                .font(.system(size: DSType.Size.micro))
                             Text("\(String(localized: "Coach's pick")): \(callName)")
                                 .font(.system(size: 10, weight: .bold))
                         }
@@ -2053,9 +2053,9 @@ struct CoachedGameView: View {
     private func coordinatorChip(_ role: String, icon: String, accent: Color) -> some View {
         HStack(spacing: 2) {
             Image(systemName: icon)
-                .font(.system(size: 7.5, weight: .black))
+                .font(.system(size: DSType.Size.micro, weight: .black))
             Text(verbatim: role)
-                .font(.system(size: 8, weight: .black))
+                .font(.system(size: DSType.Size.micro, weight: .black))
                 .tracking(0.3)
         }
         .foregroundStyle(accent)
@@ -2094,7 +2094,7 @@ struct CoachedGameView: View {
                 .truncationMode(.tail)
             if stale {
                 Text("EARLIER")
-                    .font(.system(size: 8, weight: .black))
+                    .font(.system(size: DSType.Size.micro, weight: .black))
                     .tracking(0.6)
                     .foregroundStyle(Color.textTertiary)
             }
@@ -2135,7 +2135,7 @@ struct CoachedGameView: View {
     ) -> some View {
         HStack(spacing: 3) {
             Text(confidenceLabel(c))
-                .font(.system(size: 8, weight: .black))
+                .font(.system(size: DSType.Size.micro, weight: .black))
                 .foregroundStyle(Color.textTertiary)
                 .tracking(0.6)
             ForEach(0..<3, id: \.self) { i in

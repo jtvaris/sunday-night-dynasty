@@ -76,7 +76,7 @@ struct ContractExtensionSheet: View {
                         .foregroundStyle(Color.textPrimary)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
-                        .background(positionSideColor, in: RoundedRectangle(cornerRadius: 4))
+                        .background(positionSideColor, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
                     Text("Age \(player.age)")
                         .font(.subheadline)
                         .foregroundStyle(Color.textSecondary)

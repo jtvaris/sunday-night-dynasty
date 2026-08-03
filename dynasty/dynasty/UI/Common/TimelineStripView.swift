@@ -122,7 +122,7 @@ struct TimelineStripView: View {
             .overlay(alignment: .top) {
                 if isCurrent {
                     Text("NOW")
-                        .font(.system(size: 7, weight: .black))
+                        .font(.system(size: DSType.Size.micro, weight: .black))
                         .foregroundStyle(Color.backgroundPrimary)
                         .padding(.horizontal, 3)
                         .padding(.vertical, 1)
@@ -142,7 +142,7 @@ struct TimelineStripView: View {
 
             // Date range
             Text(phaseDateRange(phase))
-                .font(.system(size: 8))
+                .font(.system(size: DSType.Size.micro))
                 .foregroundStyle(isCurrent ? Color.accentGold.opacity(0.8) : Color.textSecondary.opacity(0.35))
                 .lineLimit(1)
                 .fixedSize()

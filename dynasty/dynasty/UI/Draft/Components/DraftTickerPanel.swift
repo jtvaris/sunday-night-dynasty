@@ -107,9 +107,9 @@ struct DraftTickerPanel: View {
         .padding(.vertical, 3)
         .background(color.opacity(0.30))
         .foregroundStyle(color)
-        .clipShape(RoundedRectangle(cornerRadius: 4))
+        .clipShape(RoundedRectangle(cornerRadius: DSCornerRadius.tight))
         .overlay(
-            RoundedRectangle(cornerRadius: 4)
+            RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                 .strokeBorder(color.opacity(0.6), lineWidth: 1)
         )
     }

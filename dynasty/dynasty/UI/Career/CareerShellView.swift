@@ -202,6 +202,12 @@ struct CareerShellView: View {
             MusicDirector.shared.setBaseContext(.menu)
         }
         .task {
+            // Task #67: repair the position-battle rows the calendar-year stamp
+            // left behind — duplicates from a detection pass that re-ran every
+            // camp week, and unresolved rows stamped with a season this save is
+            // no longer in. A no-op once the save is clean, so it is safe to run
+            // on every open rather than needing a schema-version gate.
+            PositionBattleTracker.cleanupLegacyBattles(career: career, modelContext: modelContext)
             loadShellData()
             // R31: a fired career only shows the final summary screen.
             if career.isGameOver {

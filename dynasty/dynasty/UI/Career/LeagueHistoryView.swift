@@ -167,7 +167,7 @@ struct LeagueHistoryView: View {
                             .font(.caption.weight(.bold).monospacedDigit())
                             .foregroundStyle(Color.forRating(Int(archive.avgOverall.rounded())))
                         Text("OVR")
-                            .font(.system(size: 8, weight: .semibold))
+                            .font(.system(size: DSType.Size.micro, weight: .semibold))
                             .foregroundStyle(Color.textTertiary)
                     }
                 }
@@ -420,7 +420,7 @@ struct LeagueHistoryView: View {
                     .font(.subheadline.weight(.bold))
                     .foregroundStyle(Color.forRating(entry.peakOverall))
                 Text("PEAK")
-                    .font(.system(size: 8, weight: .semibold))
+                    .font(.system(size: DSType.Size.micro, weight: .semibold))
                     .foregroundStyle(Color.textTertiary)
             }
         }
@@ -483,7 +483,7 @@ struct LeagueHistoryView: View {
 
     private func badge(_ text: String, color: Color) -> some View {
         Text(text)
-            .font(.system(size: 8, weight: .bold))
+            .font(.system(size: DSType.Size.micro, weight: .bold))
             .tracking(0.5)
             .foregroundStyle(color)
             .padding(.horizontal, 6)

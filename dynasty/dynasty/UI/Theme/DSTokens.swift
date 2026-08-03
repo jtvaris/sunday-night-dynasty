@@ -84,6 +84,61 @@ extension Color {
 // realized by putting the clock at the top of the scale rather than the score.
 
 enum DSType {
+
+    // MARK: App-Wide Size Ladder
+    //
+    // The `Font` presets below dress the *broadcast HUD*: they carry a weight
+    // baked in, which is exactly right for a surface with eight roles and no
+    // exceptions. The rest of the app cannot use them — a roster cell needs
+    // `.monospacedDigit()`, a badge needs `.heavy`, a stat needs `.black`, and
+    // baking one weight per step would force a preset per (size × weight) pair.
+    //
+    // So the ladder is published twice: as the finished `Font` presets for the
+    // HUD, and as bare point sizes here for everything else. A call site keeps
+    // its own weight and design and only borrows the step:
+    //
+    //     .font(.system(size: DSType.Size.micro, weight: .heavy))
+    //
+    // The steps are *derived*, not invented — an audit of every
+    // `.system(size:)` literal in the app found 38 distinct sizes, and these
+    // ten are the ones that actually carry the hierarchy (each is among the
+    // most-used values at its tier). Anything off this ladder is design debt;
+    // `tools/lint/design_tokens.py` counts it and reports the delta.
+    //
+    // `micro` is a floor as much as a step. The same audit found 1357 literals
+    // under 12 pt, including a long tail at 5–8 pt — sizes at which a badge is
+    // a smudge rather than a word. Nothing informational should go below it.
+    //
+    // Known gap: `label` (13), `action` (14), `body` (15), `title` (20),
+    // `score` (30) and `clock` (34) predate this ladder and stay pinned to
+    // their shipped values — the HUD was tuned by eye and re-basing it is a
+    // visual change, not a token change. They are the one sanctioned exception.
+
+    enum Size {
+        /// 10 — the legibility floor: dense table cells, badge and chip
+        /// captions, the "OVR"/"AGE" sub-labels under a stat. Never go under
+        /// this for text a player is expected to read.
+        static let micro: CGFloat = 10
+        /// 11 — captions, secondary meta, column headers.
+        static let caption: CGFloat = 11
+        /// 12 — footnotes, supporting lines under a title.
+        static let footnote: CGFloat = 12
+        /// 14 — body copy and the default for list-row primary text.
+        static let body: CGFloat = 14
+        /// 16 — callouts, card titles, emphasised values.
+        static let callout: CGFloat = 16
+        /// 18 — sub-section titles.
+        static let title3: CGFloat = 18
+        /// 22 — section titles, sheet headers.
+        static let title2: CGFloat = 22
+        /// 28 — screen titles, the big number on a summary tile.
+        static let title1: CGFloat = 28
+        /// 36 — display figures: final scores, headline stats.
+        static let display: CGFloat = 36
+        /// 48 — hero numerals on a full-bleed moment (draft pick, result card).
+        static let hero: CGFloat = 48
+    }
+
     /// 9 pt black — tracked micro-labels: stakes/weather badges, overlines.
     static let overline = Font.system(size: 9, weight: .black)
     /// 11 pt semibold — captions, secondary meta.

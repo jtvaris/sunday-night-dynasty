@@ -836,7 +836,7 @@ private struct CombineReportSheet: View {
                                             .font(.caption.weight(.bold))
                                             .foregroundStyle(Color.textPrimary)
                                             .frame(width: 32, height: 22)
-                                            .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 4))
+                                            .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
 
                                         VStack(alignment: .leading, spacing: 3) {
                                             Text(mention.prospectName)
@@ -1403,7 +1403,7 @@ struct ProDayListView: View {
                                     ForEach(summary.keyFindings, id: \.self) { finding in
                                         HStack(spacing: 4) {
                                             Image(systemName: "star.fill")
-                                                .font(.system(size: 8))
+                                                .font(.system(size: DSType.Size.micro))
                                                 .foregroundStyle(Color.accentGold)
                                             Text(finding)
                                                 .font(.caption2)
@@ -1571,7 +1571,7 @@ struct ProDayListView: View {
                         .lineLimit(1)
                     if isStarred(prospect) {
                         Image(systemName: "star.fill")
-                            .font(.system(size: 8))
+                            .font(.system(size: DSType.Size.micro))
                             .foregroundStyle(Color.accentGold)
                     }
                 }
@@ -1588,7 +1588,7 @@ struct ProDayListView: View {
                     }
                     if isNeedPosition(prospect) {
                         Text("NEED")
-                            .font(.system(size: 8, weight: .black))
+                            .font(.system(size: DSType.Size.micro, weight: .black))
                             .foregroundStyle(Color.danger)
                     }
                 }
@@ -1802,14 +1802,14 @@ struct ProDayListView: View {
                         .foregroundStyle(Color.danger)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
-                        .background(Color.danger.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+                        .background(Color.danger.opacity(0.12), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
                 } else {
                     Text("\(scout.maxProDays - scout.proDaysAttended) LEFT")
                         .font(.system(size: 9, weight: .black))
                         .foregroundStyle(Color.success)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
-                        .background(Color.success.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+                        .background(Color.success.opacity(0.12), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
                 }
             }
 
@@ -1846,10 +1846,10 @@ struct ProDayListView: View {
         .frame(width: 40, height: 4)
     }
 
+    /// Unified onto `Color.forRating` — see the twin below, which banded scout
+    /// accuracy at 80/70 while this one used 75/55.
     private func accuracyColor(_ value: Int) -> Color {
-        if value >= 75 { return .success }
-        if value >= 55 { return .accentGold }
-        return .danger
+        Color.forRating(value)
     }
 
     private func specialtyIcon(for scout: Scout) -> String {
@@ -2021,7 +2021,7 @@ struct ProDayListView: View {
                             if info.starredCount > 0 {
                                 HStack(spacing: 2) {
                                     Image(systemName: "star.fill")
-                                        .font(.system(size: 8))
+                                        .font(.system(size: DSType.Size.micro))
                                         .foregroundStyle(Color.accentGold)
                                     Text("\(info.starredCount) starred")
                                         .font(.system(size: 10, weight: .medium))
@@ -2031,7 +2031,7 @@ struct ProDayListView: View {
                             if info.topCount > 0 {
                                 HStack(spacing: 2) {
                                     Image(systemName: "trophy.fill")
-                                        .font(.system(size: 8))
+                                        .font(.system(size: DSType.Size.micro))
                                         .foregroundStyle(Color.success)
                                     Text("\(info.topCount) top-50")
                                         .font(.system(size: 10, weight: .medium))
@@ -2041,7 +2041,7 @@ struct ProDayListView: View {
                             if info.needCount > 0 {
                                 HStack(spacing: 2) {
                                     Text("NEED")
-                                        .font(.system(size: 8, weight: .black))
+                                        .font(.system(size: DSType.Size.micro, weight: .black))
                                         .foregroundStyle(Color.danger)
                                     Text("\(info.needCount)")
                                         .font(.system(size: 10, weight: .medium))
@@ -2102,7 +2102,7 @@ struct ProDayListView: View {
             }
             if info.topCount > 0 {
                 Text("TOP")
-                    .font(.system(size: 8, weight: .black))
+                    .font(.system(size: DSType.Size.micro, weight: .black))
                     .foregroundStyle(Color.success)
                     .padding(.horizontal, 4)
                     .padding(.vertical, 1)
@@ -2110,7 +2110,7 @@ struct ProDayListView: View {
             }
             if info.needCount > 0 {
                 Text("NEED")
-                    .font(.system(size: 8, weight: .black))
+                    .font(.system(size: DSType.Size.micro, weight: .black))
                     .foregroundStyle(Color.danger)
                     .padding(.horizontal, 4)
                     .padding(.vertical, 1)
@@ -2151,7 +2151,7 @@ struct ProDayListView: View {
                         .lineLimit(1)
                     if isStarred(prospect) {
                         Image(systemName: "star.fill")
-                            .font(.system(size: 8))
+                            .font(.system(size: DSType.Size.micro))
                             .foregroundStyle(Color.accentGold)
                     }
                 }
@@ -2177,7 +2177,7 @@ struct ProDayListView: View {
             HStack(spacing: 4) {
                 if isNeedPosition(prospect) {
                     Text("NEED")
-                        .font(.system(size: 7, weight: .black))
+                        .font(.system(size: DSType.Size.micro, weight: .black))
                         .foregroundStyle(Color.danger)
                         .padding(.horizontal, 3)
                         .padding(.vertical, 1)
@@ -2185,7 +2185,7 @@ struct ProDayListView: View {
                 }
                 if isTopProspect(prospect) {
                     Text("TOP")
-                        .font(.system(size: 7, weight: .black))
+                        .font(.system(size: DSType.Size.micro, weight: .black))
                         .foregroundStyle(Color.success)
                         .padding(.horizontal, 3)
                         .padding(.vertical, 1)
@@ -2402,10 +2402,9 @@ private struct ProDaySendScoutSheet: View {
         return prospects.contains { $0.position == spec }
     }
 
+    /// Unified onto `Color.forRating` — see the twin above.
     private func accuracyColor(_ value: Int) -> Color {
-        if value >= 80 { return .success }
-        if value >= 70 { return .accentGold }
-        return .danger
+        Color.forRating(value)
     }
 
     var body: some View {
@@ -2479,7 +2478,7 @@ private struct ProDaySendScoutSheet: View {
                                                 .foregroundStyle(Color.danger)
                                                 .padding(.horizontal, 6)
                                                 .padding(.vertical, 3)
-                                                .background(Color.danger.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+                                                .background(Color.danger.opacity(0.12), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
                                         }
                                     }
                                 }
@@ -2729,7 +2728,7 @@ struct NextYearClassPreview: View {
                 .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(Color.textPrimary)
                 .frame(width: 32, height: 22)
-                .background(positionColor(prospect.position), in: RoundedRectangle(cornerRadius: 4))
+                .background(positionColor(prospect.position), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(prospect.fullName)

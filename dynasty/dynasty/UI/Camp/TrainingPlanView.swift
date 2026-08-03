@@ -227,7 +227,7 @@ struct TrainingPlanView: View {
                 .font(.caption2.weight(.bold))
                 .frame(width: 32, height: 22)
                 .background(
-                    RoundedRectangle(cornerRadius: 4)
+                    RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                         .fill(Color.backgroundTertiary)
                 )
                 .foregroundStyle(Color.textSecondary)

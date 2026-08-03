@@ -222,7 +222,7 @@ struct PlayerRowView: View {
                     .monospacedDigit()
                     .foregroundStyle(Color.textSecondary)
                 Text(capPercentLabel)
-                    .font(.system(size: 7, weight: .medium))
+                    .font(.system(size: DSType.Size.micro, weight: .medium))
                     .monospacedDigit()
                     .foregroundStyle(capPercentColor)
             }
@@ -288,7 +288,7 @@ struct PlayerRowView: View {
                     .monospacedDigit()
                     .foregroundStyle(Color.accentGold)
                 Text("cap")
-                    .font(.system(size: 8))
+                    .font(.system(size: DSType.Size.micro))
                     .foregroundStyle(Color.textTertiary)
             }
             .frame(width: 52, alignment: .trailing)
@@ -322,7 +322,7 @@ struct PlayerRowView: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
             Text(caption)
-                .font(.system(size: 8))
+                .font(.system(size: DSType.Size.micro))
                 .foregroundStyle(Color.textTertiary)
         }
         .frame(width: width, alignment: .trailing)
@@ -531,19 +531,18 @@ struct PlayerRowView: View {
                 .font(.system(size: 10, weight: .bold).monospacedDigit())
                 .foregroundStyle(analysisAttributeColor(for: value))
             Text(label)
-                .font(.system(size: 7, weight: .medium))
+                .font(.system(size: DSType.Size.micro, weight: .medium))
                 .foregroundStyle(Color.textTertiary)
         }
     }
 
     /// Color coding for attribute columns: 90+ gold, 80+ green, 70+ blue, below 70 orange/red.
+    /// Unified onto `Color.forRating`. The bespoke ladder here had no poor
+    /// tier — every attribute under 70 painted the same yellow, so a 42 SPD and
+    /// a 68 SPD were indistinguishable in the analysis columns. It also used
+    /// gold for 90+, which is the app's *accent*, not its elite-rating colour.
     private func analysisAttributeColor(for value: Int) -> Color {
-        switch value {
-        case 90...:   return .accentGold
-        case 80..<90: return .success
-        case 70..<80: return .accentBlue
-        default:      return .warning
-        }
+        Color.forRating(value)
     }
 
     // MARK: - Subviews
@@ -569,10 +568,10 @@ struct PlayerRowView: View {
             .fontWeight(.bold)
             .foregroundStyle(Color.textPrimary)
             .frame(width: 36, height: 24)
-            .background(positionColor, in: RoundedRectangle(cornerRadius: 4))
+            .background(positionColor, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
             .overlay(
                 onPositionBadgeTap != nil
-                    ? RoundedRectangle(cornerRadius: 4)
+                    ? RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                         .strokeBorder(Color.textTertiary.opacity(0.5), lineWidth: 1)
                     : nil
             )
@@ -623,7 +622,7 @@ struct PlayerRowView: View {
     /// radius, fill weight and border — and the reserve tint is legible.
     private var depthChip: some View {
         Text(depthBadgeShortText)
-            .font(.system(size: 8, weight: .heavy))
+            .font(.system(size: DSType.Size.micro, weight: .heavy))
             .frame(width: 14, height: 14)
             .depthChipStyle(isStarter: isStarterRole, tint: depthColor)
     }

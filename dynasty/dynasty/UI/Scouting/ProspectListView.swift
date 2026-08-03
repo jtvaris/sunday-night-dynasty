@@ -1133,7 +1133,7 @@ struct ProspectRowView: View {
             .fontWeight(.bold)
             .foregroundStyle(Color.textPrimary)
             .frame(width: 36, height: 24)
-            .background(positionColor, in: RoundedRectangle(cornerRadius: 4))
+            .background(positionColor, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
     }
 
     private var overallBadge: some View {
@@ -1257,7 +1257,7 @@ struct ProspectRowView: View {
             .foregroundStyle(.white)
             .padding(.horizontal, 5)
             .padding(.vertical, 2)
-            .background(bgColor.opacity(0.85), in: RoundedRectangle(cornerRadius: 4))
+            .background(bgColor.opacity(0.85), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
         } else {
             Text("--")
                 .font(.system(size: 9))
@@ -1603,7 +1603,7 @@ struct ProspectCompareSheet: View {
                 .foregroundStyle(Color.textPrimary)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 3)
-                .background(positionColor(for: prospect), in: RoundedRectangle(cornerRadius: 4))
+                .background(positionColor(for: prospect), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
             Text(prospect.fullName)
                 .font(.subheadline.weight(.bold))
                 .foregroundStyle(Color.textPrimary)

@@ -578,13 +578,13 @@ struct LockerRoomView: View {
             GeometryReader { geo in
                 HStack(spacing: 2) {
                     let total = max(players.count, 1)
-                    RoundedRectangle(cornerRadius: 4)
+                    RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                         .fill(Color.success)
                         .frame(width: geo.size.width * CGFloat(highMorale) / CGFloat(total))
-                    RoundedRectangle(cornerRadius: 4)
+                    RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                         .fill(Color.warning)
                         .frame(width: geo.size.width * CGFloat(medMorale) / CGFloat(total))
-                    RoundedRectangle(cornerRadius: 4)
+                    RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                         .fill(Color.danger)
                         .frame(width: geo.size.width * CGFloat(lowMorale) / CGFloat(total))
                 }
@@ -1005,22 +1005,18 @@ struct LockerRoomView: View {
 
     // MARK: - Helpers
 
+    /// Unified onto `Color.forRating(scale: .percent)`. This ladder and
+    /// `SquadDynamicsView.chemistryColor` described the same 0–100 score with
+    /// different band edges — 60 chemistry read blue here and gold there.
     private func chemistryColor(_ value: Int) -> Color {
-        switch value {
-        case 90...100: return Color.accentGold
-        case 75..<90:  return Color.success
-        case 55..<75:  return Color.accentBlue
-        case 40..<55:  return Color.warning
-        default:       return Color.danger
-        }
+        Color.forRating(value, scale: .percent)
     }
 
+    /// Unified onto `Color.forRating(scale: .percent)` — a three-band ladder
+    /// could not separate "sulking" from "fine", and 74 morale read the same
+    /// alarm yellow as 46.
     private func moraleColor(_ value: Int) -> Color {
-        switch value {
-        case 75...100: return Color.success
-        case 45..<75:  return Color.warning
-        default:       return Color.danger
-        }
+        Color.forRating(value, scale: .percent)
     }
 
     private func loadData() {

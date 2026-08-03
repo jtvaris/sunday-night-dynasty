@@ -246,7 +246,7 @@ struct PositionVersatilityView: View {
                             .frame(width: 26, height: 20)
                             .overlay(
                                 Text(rating.shortLabel)
-                                    .font(.system(size: 8, weight: .bold))
+                                    .font(.system(size: DSType.Size.micro, weight: .bold))
                                     .foregroundStyle(rating.textColor)
                             )
                         Text(rating.label)
@@ -366,7 +366,7 @@ struct PositionVersatilityView: View {
                                     .foregroundStyle(rating.color)
                                 if isTraining {
                                     Text("TRAINING")
-                                        .font(.system(size: 8, weight: .black))
+                                        .font(.system(size: DSType.Size.micro, weight: .black))
                                         .foregroundStyle(Color.accentGold)
                                         .padding(.horizontal, 4)
                                         .padding(.vertical, 1)
@@ -591,10 +591,11 @@ struct PositionVersatilityView: View {
         }
     }
 
+    /// Unified onto `Color.forRating(scale: .percent)`. `schemeFamiliarityColor`
+    /// in this same file already used the shared ladder, so one familiarity
+    /// number was painted two ways depending on which row you looked at.
     private func unlockColor(familiarity: Int) -> Color {
-        if familiarity > 70 { return .success }
-        if familiarity >= 40 { return .accentBlue }
-        return .warning
+        Color.forRating(familiarity, scale: .percent)
     }
 
     // MARK: - Matrix Card

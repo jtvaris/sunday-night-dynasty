@@ -583,10 +583,10 @@ struct CapOverviewView: View {
 
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 4)
+                        RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                             .fill(Color.backgroundTertiary)
                             .frame(height: 10)
-                        RoundedRectangle(cornerRadius: 4)
+                        RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                             .fill(barColor)
                             .frame(width: geo.size.width * min(fraction, 1.0), height: 10)
                     }
@@ -728,7 +728,7 @@ struct CapOverviewView: View {
                     .foregroundStyle(Color.accentBlue)
                 if let badge {
                     Text(badge)
-                        .font(.system(size: 8, weight: .bold))
+                        .font(.system(size: DSType.Size.micro, weight: .bold))
                         .foregroundStyle(Color.accentBlue)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
@@ -753,7 +753,7 @@ struct CapOverviewView: View {
                 .foregroundStyle(Color.textPrimary)
                 .frame(width: 34)
                 .padding(.vertical, 4)
-                .background(positionColor(player.position), in: RoundedRectangle(cornerRadius: 4))
+                .background(positionColor(player.position), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
 
             // Name
             Text(player.fullName)

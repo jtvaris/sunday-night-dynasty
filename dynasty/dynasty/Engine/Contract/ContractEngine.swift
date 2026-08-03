@@ -16,11 +16,13 @@ enum ContractEngine {
     }
 
     /// Cut a player in simple mode. Frees cap space and removes team assignment.
+    ///
+    /// The arithmetic lives in `CapManagementEngine.applyRelease` — the single
+    /// release authority (task #68). This used to hand back the FULL salary and
+    /// book no dead money at all, which is why in-season releases were free and
+    /// the Dead Money card could never see a cut.
     static func cutPlayerSimple(player: Player, team: Team) {
-        team.currentCapUsage -= player.annualSalary
-        player.teamID = nil
-        player.contractYearsRemaining = 0
-        player.annualSalary = 0
+        CapManagementEngine.applyRelease(player: player, team: team, capMode: .simple)
     }
 
     // MARK: - Sandbox Mode
@@ -67,12 +69,7 @@ enum ContractEngine {
     /// Cut a player using the path that matches the active cap mode.
     /// Sandbox skips dead cap entirely; simple mode frees cap space.
     static func cutPlayer(player: Player, team: Team, capMode: CapMode) {
-        switch capMode {
-        case .simple, .realistic:
-            cutPlayerSimple(player: player, team: team)
-        case .sandbox:
-            cutPlayerSandbox(player: player)
-        }
+        CapManagementEngine.applyRelease(player: player, team: team, capMode: capMode)
     }
 
     /// Estimate the annual market value (in thousands) a player would command

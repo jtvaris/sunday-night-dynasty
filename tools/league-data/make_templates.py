@@ -388,7 +388,14 @@ def veteran_potential(rng: random.Random, overall: int, age: int, pos: str,
                       depth_index: int = 2) -> int:
     """LeagueGenerator.veteranPotential — P1 wave: age-anchored to the GROWTH
     years and gated on the player's own trajectory (his depth tier), so a
-    generated veteran no longer arrives with free catch-up headroom."""
+    generated veteran no longer arrives with free catch-up headroom.
+
+    Task #69 measured what the OTHER end of the pipeline produces at the same
+    ages — 12 points of headroom against this rule's 2 — and then measured what
+    happens when the generator matches it: the four-season smoke's 80+ share
+    went 19.8-21 % to 26.1 %. The disagreement is real and recorded on the Swift
+    side; closing it is a development-side calibration, not a change here. Keep
+    this mirror in lockstep with `LeagueGenerator.veteranPotential`."""
     peak_lo, peak_hi = PEAK_AGE[pos]
     if age > peak_hi:
         return min(99, overall + rng.randint(0, 2))

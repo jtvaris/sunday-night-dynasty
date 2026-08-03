@@ -83,7 +83,7 @@ struct BiddingRoomSheet: View {
                     .padding(.horizontal, 6).padding(.vertical, 2)
                     .background(Color.draftSolidNeutral)
                     .foregroundStyle(Color.textPrimary)
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .clipShape(RoundedRectangle(cornerRadius: DSCornerRadius.tight))
                 Text("Market: \(formatMoney(marketValue))/yr")
                     .font(.caption)
                     .foregroundStyle(Color.textSecondary)

@@ -582,7 +582,7 @@ struct GamePlanView: View {
                 ForEach(recommendation.reasons, id: \.self) { reason in
                     HStack(alignment: .top, spacing: 5) {
                         Image(systemName: "arrow.turn.down.right")
-                            .font(.system(size: 8, weight: .bold))
+                            .font(.system(size: DSType.Size.micro, weight: .bold))
                             .foregroundStyle(Color.eliteGreen.opacity(0.8))
                             .padding(.top, 3)
                         Text(reason)
@@ -596,7 +596,7 @@ struct GamePlanView: View {
                 if !isActive && !recommendation.changedSliders.isEmpty {
                     HStack(spacing: 4) {
                         Text("MOVES")
-                            .font(.system(size: 8, weight: .bold))
+                            .font(.system(size: DSType.Size.micro, weight: .bold))
                             .tracking(0.6)
                             .foregroundStyle(Color.textTertiary)
                         ForEach(PlanSlider.allCases.filter { recommendation.changedSliders.contains($0) }, id: \.self) { slider in
@@ -990,7 +990,7 @@ struct GamePlanView: View {
             if readout.isEgoStar {
                 HStack(spacing: 4) {
                     Image(systemName: "hand.raised.fill")
-                        .font(.system(size: 8, weight: .bold))
+                        .font(.system(size: DSType.Size.micro, weight: .bold))
                     Text("Get him the ball early")
                         .font(.caption2.weight(.semibold))
                 }
@@ -1015,7 +1015,7 @@ struct GamePlanView: View {
         }
         return HStack(spacing: 3) {
             Image(systemName: icon)
-                .font(.system(size: 8, weight: .bold))
+                .font(.system(size: DSType.Size.micro, weight: .bold))
             Text(label)
                 .font(.system(size: 9, weight: .bold))
         }
@@ -1144,7 +1144,7 @@ struct GamePlanView: View {
                     .foregroundStyle(Color.textPrimary)
                 if isHighlighted {
                     Text("ADJUSTED")
-                        .font(.system(size: 8, weight: .bold))
+                        .font(.system(size: DSType.Size.micro, weight: .bold))
                         .tracking(0.6)
                         .foregroundStyle(Color.eliteGreen)
                         .padding(.horizontal, 5)

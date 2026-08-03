@@ -778,7 +778,7 @@ private struct HighlightRow: View {
                 .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(accentColor)
                 .frame(width: 28, height: 20)
-                .background(accentColor.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
+                .background(accentColor.opacity(0.15), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
 
             // Description
             Text(play.description)

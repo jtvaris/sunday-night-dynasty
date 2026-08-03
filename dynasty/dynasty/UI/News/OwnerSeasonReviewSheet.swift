@@ -421,13 +421,11 @@ struct OwnerSeasonReviewSheet: View {
         }
     }
 
+    /// Unified onto `Color.forRating(scale: .percent)`. The old mid-band
+    /// returned `.textPrimary`, which is not a status colour at all — a 60/100
+    /// job-security score read as plain white body text, i.e. as "no signal".
     private func jobSecurityColor(_ score: Int) -> Color {
-        switch score {
-        case 75...:   return .success
-        case 55..<75: return .textPrimary
-        case 40..<55: return .warning
-        default:      return .danger
-        }
+        Color.forRating(score, scale: .percent)
     }
 
     private func playoffColor(_ text: String) -> Color {

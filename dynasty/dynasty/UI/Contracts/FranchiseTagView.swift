@@ -553,7 +553,7 @@ struct FranchiseTagView: View {
             .foregroundStyle(Color.textPrimary)
             .frame(width: 34)
             .padding(.vertical, 4)
-            .background(positionSideColor(position), in: RoundedRectangle(cornerRadius: 4))
+            .background(positionSideColor(position), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
     }
 
     private func positionSideColor(_ position: Position) -> Color {

@@ -414,13 +414,23 @@ enum PracticeSquadEngine {
     /// "poaching" a rival's both sign him to the 53 at the active minimum.
     /// There is no squad-to-squad move, by rule and here.
     ///
+    /// - Parameter leagueYearRemaining: The share of the league year still
+    ///   unpaid, from `CapManagementEngine.leagueYearRemaining(phase:week:)`.
+    ///   This is an IN-SEASON transaction — the whole mechanic only runs during
+    ///   the regular season — so the corresponding release must be priced under
+    ///   the same #26 midseason rule the four user-facing cut screens use, not
+    ///   under the full-year default. Leaving it at 1.0 made this the one
+    ///   release path in the game that handed a club back base salary it had
+    ///   already spent, and it did so at Week 17 as readily as at Week 1.
+    ///
     /// - Returns: `false` when the club has no room it is willing to make.
     @discardableResult
     static func signToActiveRoster(
         _ player: Player,
         to team: Team,
         allPlayers: [Player],
-        capMode: CapMode
+        capMode: CapMode,
+        leagueYearRemaining: Double = 1.0
     ) -> Bool {
         guard player.isOnPracticeSquad else { return false }
 
@@ -441,14 +451,32 @@ enum PracticeSquadEngine {
         // failing the test after the cut would leave the club a man short with
         // nothing signed.
         if capMode != .sandbox {
-            let projected = team.availableCap + (release?.annualSalary ?? 0)
+            // The corresponding move frees `capSavings`, NOT the whole salary:
+            // the released man's bonus acceleration stays on the books (#68).
+            // Same `leagueYearRemaining` the execution below books, so preview
+            // and ledger cannot disagree.
+            let freed = release.map {
+                CapManagementEngine.releaseCapSplit(
+                    player: $0,
+                    contract: nil,
+                    capMode: capMode,
+                    leagueYearRemaining: leagueYearRemaining
+                ).capSavings
+            } ?? 0
+            let projected = team.availableCap + freed
             guard projected >= poachSalary else { return false }
         }
 
         if let release {
-            ContractEngine.cutPlayer(player: release, team: team, capMode: capMode)
-            release.cutByTeamID = team.id
-            release.cutAt = .now
+            // `applyRelease` directly rather than `ContractEngine.cutPlayer`,
+            // which has no way to carry the midseason share — and it already
+            // stamps `cutByTeamID` / `cutAt`.
+            CapManagementEngine.applyRelease(
+                player: release,
+                team: team,
+                capMode: capMode,
+                leagueYearRemaining: leagueYearRemaining
+            )
         }
 
         player.practiceSquadTeamID = nil
@@ -517,6 +545,12 @@ enum PracticeSquadEngine {
         var outcome = WeeklyOutcome()
         _ = reconcile(allPlayers: allPlayers)
 
+        // Every release this pass books is an in-season corresponding move, so
+        // it is priced on the game checks still to come (#26 / #68).
+        let leagueYearRemaining = CapManagementEngine.leagueYearRemaining(
+            phase: career.currentPhase,
+            week: career.currentWeek
+        )
         let teamsByID = Dictionary(teams.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         outcome.developed = applyPracticeReps(allPlayers: allPlayers)
 
@@ -524,7 +558,8 @@ enum PracticeSquadEngine {
         outcome.userLosses = resolvePendingPoaches(
             career: career,
             teamsByID: teamsByID,
-            allPlayers: allPlayers
+            allPlayers: allPlayers,
+            leagueYearRemaining: leagueYearRemaining
         )
         outcome.poaches.append(contentsOf: outcome.userLosses)
 
@@ -569,7 +604,8 @@ enum PracticeSquadEngine {
                 target,
                 to: suitor,
                 allPlayers: allPlayers,
-                capMode: career.capMode
+                capMode: career.capMode,
+                leagueYearRemaining: leagueYearRemaining
             ) else { continue }
 
             outcome.poaches.append(result(
@@ -587,7 +623,8 @@ enum PracticeSquadEngine {
     private static func resolvePendingPoaches(
         career: Career,
         teamsByID: [UUID: Team],
-        allPlayers: [Player]
+        allPlayers: [Player],
+        leagueYearRemaining: Double
     ) -> [PoachResult] {
         guard !pendingUserPoaches.isEmpty else { return [] }
 
@@ -615,7 +652,8 @@ enum PracticeSquadEngine {
                 target,
                 to: suitor,
                 allPlayers: allPlayers,
-                capMode: career.capMode
+                capMode: career.capMode,
+                leagueYearRemaining: leagueYearRemaining
             ) else { continue }
 
             landed.append(result(player: target, from: loserTeam, to: suitor))

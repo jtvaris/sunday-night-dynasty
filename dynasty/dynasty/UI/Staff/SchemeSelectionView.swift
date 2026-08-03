@@ -214,7 +214,7 @@ struct SchemeSelectionView: View {
                             .font(.system(size: 14, weight: .bold).monospacedDigit())
                             .foregroundStyle(expertiseColor)
                         Text("Expertise")
-                            .font(.system(size: 8, weight: .medium))
+                            .font(.system(size: DSType.Size.micro, weight: .medium))
                             .foregroundStyle(Color.textTertiary)
                     }
                 }
@@ -310,7 +310,7 @@ struct SchemeSelectionView: View {
                             .font(.system(size: 14, weight: .bold).monospacedDigit())
                             .foregroundStyle(expertiseColor)
                         Text("Expertise")
-                            .font(.system(size: 8, weight: .medium))
+                            .font(.system(size: DSType.Size.micro, weight: .medium))
                             .foregroundStyle(Color.textTertiary)
                     }
                 }
@@ -414,7 +414,7 @@ struct SchemeSelectionView: View {
         let color = metricColor(percent)
         return HStack(spacing: 6) {
             Image(systemName: icon)
-                .font(.system(size: 8))
+                .font(.system(size: DSType.Size.micro))
                 .foregroundStyle(color)
                 .frame(width: 12)
             Text(label)
@@ -462,7 +462,7 @@ struct SchemeSelectionView: View {
         }()
         HStack(spacing: 3) {
             Image(systemName: "person.2.fill")
-                .font(.system(size: 8))
+                .font(.system(size: DSType.Size.micro))
             Text(count == 0 ? "0 coaches" : "\(count)")
                 .font(.system(size: 9, weight: .bold).monospacedDigit())
         }
@@ -512,11 +512,10 @@ struct SchemeSelectionView: View {
         return .danger
     }
 
+    /// Unified onto `Color.forRating(scale: .percent)` so coach expertise reads
+    /// on the same ladder as every other 0–100 number in the app.
     private func schemeExpertiseColor(_ value: Int) -> Color {
-        if value >= 80 { return Color.accentGold }
-        if value >= 60 { return Color.success }
-        if value >= 40 { return Color.accentBlue }
-        return Color.danger
+        Color.forRating(value, scale: .percent)
     }
 
     // MARK: - Scheme Descriptions

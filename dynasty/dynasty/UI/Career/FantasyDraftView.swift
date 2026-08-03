@@ -433,7 +433,7 @@ struct FantasyDraftView: View {
                     .font(.system(size: 16, weight: .black).monospacedDigit())
                     .foregroundStyle(Color.forRating(entry.overall))
                 Text("OVR")
-                    .font(.system(size: 7, weight: .bold))
+                    .font(.system(size: DSType.Size.micro, weight: .bold))
                     .foregroundStyle(Color.textTertiary)
             }
             .frame(width: 36)

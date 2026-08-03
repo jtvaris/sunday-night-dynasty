@@ -1417,7 +1417,7 @@ struct ProspectDetailView: View {
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.7)
                             Text(labels[key] ?? key)
-                                .font(.system(size: 8, weight: .medium))
+                                .font(.system(size: DSType.Size.micro, weight: .medium))
                                 .foregroundStyle(Color.textTertiary)
                                 .lineLimit(1)
                         }
@@ -1492,12 +1492,11 @@ struct ProspectDetailView: View {
         return "F"
     }
 
+    /// Unified onto `Color.forRating` — Football IQ is a 0–99 attribute like
+    /// any other. (The old ladder's last two branches both returned `.danger`,
+    /// so the 55 edge was dead code.)
     private func footballIQDetailColor(_ iq: Int) -> Color {
-        if iq >= 85 { return .accentGold }
-        if iq >= 75 { return .success }
-        if iq >= 65 { return .warning }
-        if iq >= 55 { return .danger }
-        return .danger
+        Color.forRating(iq)
     }
 
     /// Estimate bust risk percentage. Mirrors the formula in
@@ -2463,7 +2462,7 @@ private struct CombineMeasurableRow: View {
                                 .foregroundStyle(percentileColor(pct))
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
-                                .background(percentileColor(pct).opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
+                                .background(percentileColor(pct).opacity(0.15), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
                         }
                     }
                 } else {

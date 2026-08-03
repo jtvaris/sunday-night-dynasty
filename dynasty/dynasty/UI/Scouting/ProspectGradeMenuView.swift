@@ -91,10 +91,10 @@ struct ProspectMarkChip: View {
         if mark != .none {
             HStack(spacing: 2) {
                 Text(mark.shortLabel)
-                    .font(.system(size: 7, weight: .heavy))
+                    .font(.system(size: DSType.Size.micro, weight: .heavy))
                 if showsNote {
                     Image(systemName: "note.text")
-                        .font(.system(size: 6))
+                        .font(.system(size: DSType.Size.micro))
                 }
             }
             .foregroundStyle(Color.backgroundPrimary)
@@ -366,7 +366,7 @@ struct UserGradeBadge: View {
         HStack(spacing: 3) {
             if let grade = store.grade(for: prospectID) {
                 Text("My: \(grade.shortLabel)")
-                    .font(.system(size: 7, weight: .bold))
+                    .font(.system(size: DSType.Size.micro, weight: .bold))
                     .foregroundStyle(Color.backgroundPrimary)
                     .padding(.horizontal, 4)
                     .padding(.vertical, 1)
@@ -448,9 +448,9 @@ struct LetterGradeLegend: View {
                 .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(.white)
                 .frame(width: 22, height: 22)
-                .background(color, in: RoundedRectangle(cornerRadius: 4))
+                .background(color, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
             Text(tierLabel(letter))
-                .font(.system(size: 8, weight: .medium))
+                .font(.system(size: DSType.Size.micro, weight: .medium))
                 .foregroundStyle(Color.textTertiary)
         }
     }

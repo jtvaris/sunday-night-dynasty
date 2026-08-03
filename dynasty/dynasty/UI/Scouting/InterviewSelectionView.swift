@@ -574,25 +574,25 @@ struct InterviewSelectionView: View {
                             // #20: Scouted status
                             if prospect.scoutReportCount > 0 {
                                 Text(prospect.scoutConfidenceDots)
-                                    .font(.system(size: 7))
+                                    .font(.system(size: DSType.Size.micro))
                                     .foregroundStyle(prospect.scoutReportCount >= 3 ? Color.success : Color.textTertiary)
                             }
 
                             // #21: Combine summary inline
                             if let forty = prospect.fortyTime {
                                 Text(String(format: "%.2f", forty))
-                                    .font(.system(size: 7, weight: .semibold).monospacedDigit())
+                                    .font(.system(size: DSType.Size.micro, weight: .semibold).monospacedDigit())
                                     .foregroundStyle(Color.textTertiary)
                             }
                             if let vert = prospect.verticalJump {
                                 Text("\(String(format: "%.0f", vert))\"")
-                                    .font(.system(size: 7, weight: .semibold).monospacedDigit())
+                                    .font(.system(size: DSType.Size.micro, weight: .semibold).monospacedDigit())
                                     .foregroundStyle(Color.textTertiary)
                             }
 
                             if prospect.interviewCompleted {
                                 Image(systemName: "checkmark.circle.fill")
-                                    .font(.system(size: 7))
+                                    .font(.system(size: DSType.Size.micro))
                                     .foregroundStyle(Color.success)
                             }
                         }
@@ -633,7 +633,7 @@ struct InterviewSelectionView: View {
                             }
                         }()
                         Text(risk == .boomOrBust ? "B/B" : risk == .highCeiling ? "Ceil" : "Safe")
-                            .font(.system(size: 8, weight: .bold))
+                            .font(.system(size: DSType.Size.micro, weight: .bold))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 4)
                             .padding(.vertical, 2)
@@ -648,7 +648,7 @@ struct InterviewSelectionView: View {
                         // #12: NEED badge - larger
                         if isNeed {
                             Text("NEED")
-                                .font(.system(size: 8, weight: .heavy))
+                                .font(.system(size: DSType.Size.micro, weight: .heavy))
                                 .foregroundStyle(.white)
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 2)
@@ -658,7 +658,7 @@ struct InterviewSelectionView: View {
                         // #12: Scheme fit with clear label
                         if let fit = schemeFitLabel(for: prospect) {
                             Text("Fit: \(fit)")
-                                .font(.system(size: 8, weight: .heavy))
+                                .font(.system(size: DSType.Size.micro, weight: .heavy))
                                 .foregroundStyle(schemeFitColor(fit))
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 2)
@@ -673,7 +673,7 @@ struct InterviewSelectionView: View {
             .contentShape(Rectangle())
             // #13: Visual differentiation - border for must-interview
             .overlay(
-                RoundedRectangle(cornerRadius: 4)
+                RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                     .strokeBorder(Color.accentGold.opacity(priority == .must ? 0.4 : 0), lineWidth: 1)
             )
             .opacity(priority == .optional && !isSelected ? 0.7 : 1.0)
@@ -1248,7 +1248,7 @@ struct InterviewReportView: View {
                         .font(.system(size: 22, weight: .heavy))
                         .foregroundStyle(interviewGradeColor(result.interviewGrade))
                     Text("Grade")
-                        .font(.system(size: 8, weight: .semibold))
+                        .font(.system(size: DSType.Size.micro, weight: .semibold))
                         .foregroundStyle(Color.textTertiary)
                 }
                 .frame(width: 40)
@@ -1286,7 +1286,7 @@ struct InterviewReportView: View {
                     }
                     // Task 11: Football IQ impact explanation
                     Text("Affects scheme learning speed")
-                        .font(.system(size: 8, weight: .medium))
+                        .font(.system(size: DSType.Size.micro, weight: .medium))
                         .foregroundStyle(Color.textTertiary)
                 }
             }
@@ -1402,7 +1402,7 @@ struct InterviewReportView: View {
                         .font(.system(size: 11, weight: .semibold).monospacedDigit())
                         .foregroundStyle(Color.textSecondary)
                     Image(systemName: "arrow.right")
-                        .font(.system(size: 8))
+                        .font(.system(size: DSType.Size.micro))
                         .foregroundStyle(Color.textTertiary)
                     Text("\(postRiskPct)% after interview")
                         .font(.system(size: 11, weight: .bold).monospacedDigit())

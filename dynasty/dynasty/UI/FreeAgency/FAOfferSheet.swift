@@ -81,7 +81,7 @@ struct FAOfferSheet: View {
                     .foregroundStyle(Color.textPrimary)
                     .frame(width: 34)
                     .padding(.vertical, 4)
-                    .background(positionSideColor, in: RoundedRectangle(cornerRadius: 4))
+                    .background(positionSideColor, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(player.fullName)
@@ -207,9 +207,9 @@ struct FAOfferSheet: View {
                 if hostedVisit {
                     HStack(spacing: 3) {
                         Image(systemName: "checkmark.seal.fill")
-                            .font(.system(size: 8))
+                            .font(.system(size: DSType.Size.micro))
                         Text("VISIT BOOST")
-                            .font(.system(size: 8, weight: .black))
+                            .font(.system(size: DSType.Size.micro, weight: .black))
                     }
                     .foregroundStyle(Color.success)
                 }
@@ -264,7 +264,7 @@ struct FAOfferSheet: View {
             }
             .frame(height: 5)
             Text(note)
-                .font(.system(size: 8))
+                .font(.system(size: DSType.Size.micro))
                 .foregroundStyle(Color.textTertiary)
                 .frame(width: 110, alignment: .trailing)
                 .lineLimit(2)
@@ -312,9 +312,9 @@ struct FAOfferSheet: View {
             // Live cap usage bar
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 4)
+                    RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                         .fill(Color.backgroundTertiary)
-                    RoundedRectangle(cornerRadius: 4)
+                    RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                         .fill(barColor)
                         .frame(width: geo.size.width * usagePct)
                 }

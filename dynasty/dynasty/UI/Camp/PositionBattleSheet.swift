@@ -54,7 +54,7 @@ struct PositionBattleSheet: View {
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
                     .background(
-                        RoundedRectangle(cornerRadius: 4)
+                        RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                             .fill(Color.accentGold)
                     )
                     .foregroundStyle(Color.backgroundPrimary)

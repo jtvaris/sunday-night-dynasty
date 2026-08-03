@@ -293,7 +293,7 @@ struct RoundResultsView: View {
         if movement > 0 {
             HStack(spacing: 2) {
                 Image(systemName: "arrowtriangle.up.fill")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.system(size: DSType.Size.micro, weight: .bold))
                 Text("\(movement)")
                     .font(.caption2.weight(.bold))
                     .monospacedDigit()
@@ -303,7 +303,7 @@ struct RoundResultsView: View {
         } else if movement < 0 {
             HStack(spacing: 2) {
                 Image(systemName: "arrowtriangle.down.fill")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.system(size: DSType.Size.micro, weight: .bold))
                 Text("\(-movement)")
                     .font(.caption2.weight(.bold))
                     .monospacedDigit()

@@ -209,6 +209,21 @@ final class UserProspectGradeStore: ObservableObject {
         objectWillChange.send()
     }
 
+    // MARK: - External invalidation
+
+    /// Republishes after someone else rewrote the three keys underneath the
+    /// store — today only `CareerScopedDefaults.pruneProspectUserData`, which
+    /// drops the dead prospect ids at the season rollover. Nothing is cached
+    /// here (every accessor re-reads `UserDefaults`), so this is purely the
+    /// "re-read now" signal a view would otherwise never get.
+    static func notifyPruned() {
+        if Thread.isMainThread {
+            shared.objectWillChange.send()
+        } else {
+            DispatchQueue.main.async { shared.objectWillChange.send() }
+        }
+    }
+
     // MARK: - Filtering Helpers
 
     func isFirstRoundPlus(_ prospectID: UUID) -> Bool {

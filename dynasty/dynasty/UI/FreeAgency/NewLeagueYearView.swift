@@ -132,7 +132,7 @@ struct NewLeagueYearView: View {
                             .foregroundStyle(Color.textPrimary)
                             .frame(width: 34)
                             .padding(.vertical, 3)
-                            .background(Color.accentBlue, in: RoundedRectangle(cornerRadius: 4))
+                            .background(Color.accentBlue, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
 
                         Text(fa.name)
                             .font(.subheadline)

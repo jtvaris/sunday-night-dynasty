@@ -199,7 +199,7 @@ struct InjuryReportView: View {
                     if repeatCount >= 2 {
                         HStack(spacing: 2) {
                             Image(systemName: "arrow.triangle.2.circlepath")
-                                .font(.system(size: 8, weight: .bold))
+                                .font(.system(size: DSType.Size.micro, weight: .bold))
                             Text("x\(repeatCount)")
                                 .font(.system(size: 9, weight: .bold).monospacedDigit())
                         }
@@ -213,7 +213,7 @@ struct InjuryReportView: View {
                 if let rehab = player.rehabStatus {
                     HStack(spacing: 3) {
                         Image(systemName: rehab.icon)
-                            .font(.system(size: 8))
+                            .font(.system(size: DSType.Size.micro))
                         Text(rehab.displayName)
                             .font(.system(size: 9, weight: .semibold))
                     }

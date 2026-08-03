@@ -406,7 +406,7 @@ struct ScoutTableRow: View {
                         Text(scout.focusPosition?.rawValue ?? "All Pos.")
                             .font(.caption.weight(.semibold))
                         Image(systemName: "chevron.down")
-                            .font(.system(size: 8, weight: .bold))
+                            .font(.system(size: DSType.Size.micro, weight: .bold))
                     }
                     .foregroundStyle(Color.accentGold)
                     .padding(.horizontal, 8)
@@ -434,7 +434,7 @@ struct ScoutTableRow: View {
                         Text(scout.focusAttribute?.label ?? "General")
                             .font(.caption.weight(.semibold))
                         Image(systemName: "chevron.down")
-                            .font(.system(size: 8, weight: .bold))
+                            .font(.system(size: DSType.Size.micro, weight: .bold))
                     }
                     .foregroundStyle(Color.accentBlue)
                     .padding(.horizontal, 8)
@@ -464,7 +464,7 @@ struct ScoutTableRow: View {
                         Text(scout.assignmentPool?.label ?? "Region")
                             .font(.caption.weight(.semibold))
                         Image(systemName: "chevron.down")
-                            .font(.system(size: 8, weight: .bold))
+                            .font(.system(size: DSType.Size.micro, weight: .bold))
                     }
                     .foregroundStyle(Color.success)
                     .padding(.horizontal, 8)
@@ -498,7 +498,7 @@ struct ScoutTableRow: View {
                 .font(.caption.weight(.semibold).monospacedDigit())
                 .foregroundStyle(Color.forRating(value))
             Text(qual.text)
-                .font(.system(size: 8))
+                .font(.system(size: DSType.Size.micro))
                 .foregroundStyle(qual.color.opacity(0.8))
         }
     }
@@ -640,7 +640,7 @@ struct ScoutRowView: View {
                 .foregroundStyle(scout.scoutRole.isChief ? Color.accentGold : Color.textPrimary)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 3)
-                .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 4))
+                .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(scout.fullName)

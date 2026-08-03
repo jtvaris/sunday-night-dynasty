@@ -194,7 +194,7 @@ struct InboxView: View {
 
                         if message.actionRequired {
                             Text("ACTION")
-                                .font(.system(size: 8, weight: .heavy))
+                                .font(.system(size: DSType.Size.micro, weight: .heavy))
                                 .foregroundStyle(.white)
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 1)

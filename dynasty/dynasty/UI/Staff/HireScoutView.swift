@@ -239,7 +239,7 @@ private struct ScoutCandidateRow: View {
                         // Top 3 badge
                         if isTop3 {
                             Text("TOP")
-                                .font(.system(size: 7, weight: .black))
+                                .font(.system(size: DSType.Size.micro, weight: .black))
                                 .foregroundStyle(Color.backgroundPrimary)
                                 .padding(.horizontal, 4)
                                 .padding(.vertical, 1)
@@ -266,7 +266,7 @@ private struct ScoutCandidateRow: View {
                         .font(.system(size: 11, weight: .bold, design: .monospaced))
                         .foregroundStyle(Color.forRating(candidate.accuracy))
                     Text("Acc")
-                        .font(.system(size: 8))
+                        .font(.system(size: DSType.Size.micro))
                         .foregroundStyle(Color.textTertiary)
                 }
                 .frame(width: 36)
@@ -277,7 +277,7 @@ private struct ScoutCandidateRow: View {
                         .font(.system(size: 11, weight: .bold, design: .monospaced))
                         .foregroundStyle(Color.forRating(candidate.potentialRead))
                     Text("Pot")
-                        .font(.system(size: 8))
+                        .font(.system(size: DSType.Size.micro))
                         .foregroundStyle(Color.textTertiary)
                 }
                 .frame(width: 36)
@@ -288,7 +288,7 @@ private struct ScoutCandidateRow: View {
                         .font(.system(size: 11, weight: .bold, design: .monospaced))
                         .foregroundStyle(Color.forRating(candidate.personalityRead))
                     Text("Pers")
-                        .font(.system(size: 8))
+                        .font(.system(size: DSType.Size.micro))
                         .foregroundStyle(Color.textTertiary)
                 }
                 .frame(width: 36)
@@ -301,7 +301,7 @@ private struct ScoutCandidateRow: View {
 
                 // Value badge
                 Text(valueLabel.label)
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.system(size: DSType.Size.micro, weight: .bold))
                     .foregroundStyle(valueLabel.color)
                     .frame(width: 36)
 

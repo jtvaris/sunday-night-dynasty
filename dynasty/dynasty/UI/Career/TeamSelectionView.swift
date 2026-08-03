@@ -906,7 +906,7 @@ private struct CompactTeamRow: View {
                         .font(.system(size: 11))
                         .foregroundStyle(Color.textSecondary)
                     Text("\u{2022}")
-                        .font(.system(size: 8))
+                        .font(.system(size: DSType.Size.micro))
                         .foregroundStyle(Color.textTertiary)
                     Text(preview.startingQBName)
                         .font(.system(size: 10, weight: .medium))
@@ -935,7 +935,7 @@ private struct CompactTeamRow: View {
             VStack(spacing: 2) {
                 HStack(spacing: 3) {
                     Text("CAP")
-                        .font(.system(size: 7, weight: .bold))
+                        .font(.system(size: DSType.Size.micro, weight: .bold))
                         .foregroundStyle(Color.textTertiary)
                     Text("$\(preview.estimatedCapSpace)M")
                         .font(.system(size: 11, weight: .bold).monospacedDigit())
@@ -943,7 +943,7 @@ private struct CompactTeamRow: View {
                 }
                 HStack(spacing: 3) {
                     Text("STF")
-                        .font(.system(size: 7, weight: .bold))
+                        .font(.system(size: DSType.Size.micro, weight: .bold))
                         .foregroundStyle(Color.textTertiary)
                     Text("$\(preview.coachingBudget)M")
                         .font(.system(size: 10, weight: .semibold).monospacedDigit())
@@ -1086,7 +1086,7 @@ private struct TeamGridCard: View {
             HStack(spacing: 2) {
                 ForEach(1...5, id: \.self) { star in
                     Image(systemName: star <= preview.difficulty ? "star.fill" : "star")
-                        .font(.system(size: 8))
+                        .font(.system(size: DSType.Size.micro))
                         .foregroundStyle(star <= preview.difficulty ? Color.warning : Color.textTertiary)
                 }
             }
@@ -1540,7 +1540,7 @@ private struct TeamDetailSheet: View {
                                 .font(.system(size: 14, weight: .bold).monospacedDigit())
                                 .foregroundStyle(Color.forRating(rivalPreview.estimatedOVR))
                             Text("OVR")
-                                .font(.system(size: 8, weight: .bold))
+                                .font(.system(size: DSType.Size.micro, weight: .bold))
                                 .foregroundStyle(Color.textTertiary)
                         }
 

@@ -48,10 +48,10 @@ struct ProspectPrepChips: View {
     private func chip(icon: String, filled: Bool, tint: Color, badge: String?) -> some View {
         HStack(spacing: 1) {
             Image(systemName: icon)
-                .font(.system(size: 7))
+                .font(.system(size: DSType.Size.micro))
             if let badge {
                 Text(badge)
-                    .font(.system(size: 7, weight: .heavy).monospacedDigit())
+                    .font(.system(size: DSType.Size.micro, weight: .heavy).monospacedDigit())
             }
         }
         .foregroundStyle(filled ? tint : Color.textTertiary.opacity(0.35))
@@ -321,7 +321,7 @@ struct DraftPrepCard: View {
                             .font(.caption.weight(.heavy))
                             .foregroundStyle(Color.textPrimary)
                         Text(phaseHeadline.uppercased())
-                            .font(.system(size: 8, weight: .heavy))
+                            .font(.system(size: DSType.Size.micro, weight: .heavy))
                             .foregroundStyle(Color.accentGold)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
@@ -442,11 +442,11 @@ struct DraftPrepCard: View {
                     .foregroundStyle(tint)
             }
             Text(label)
-                .font(.system(size: 8, weight: .medium))
+                .font(.system(size: DSType.Size.micro, weight: .medium))
                 .foregroundStyle(Color.textSecondary)
                 .lineLimit(1)
             Text(detail)
-                .font(.system(size: 8))
+                .font(.system(size: DSType.Size.micro))
                 .foregroundStyle(Color.textTertiary)
                 .lineLimit(1)
         }
@@ -465,7 +465,7 @@ struct DraftPrepCard: View {
         let items = snapshot.attention
         VStack(alignment: .leading, spacing: 4) {
             Text(items.isEmpty ? "NOTHING OUTSTANDING" : "NEEDS ATTENTION")
-                .font(.system(size: 8, weight: .heavy))
+                .font(.system(size: DSType.Size.micro, weight: .heavy))
                 .foregroundStyle(Color.textTertiary)
 
             if items.isEmpty {
@@ -533,7 +533,7 @@ struct DraftPrepCard: View {
                 ProspectPrepChips(prospect: prospect, compact: true)
             }
             Image(systemName: "chevron.right")
-                .font(.system(size: 8, weight: .bold))
+                .font(.system(size: DSType.Size.micro, weight: .bold))
                 .foregroundStyle(Color.textTertiary)
         }
         .padding(.horizontal, 8)

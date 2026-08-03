@@ -2648,7 +2648,7 @@ struct BigBoardRowView: View {
             .fontWeight(.bold)
             .foregroundStyle(Color.textPrimary)
             .frame(width: 36, height: 24)
-            .background(positionColor, in: RoundedRectangle(cornerRadius: 4))
+            .background(positionColor, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
     }
 
     private var boardOverallBadge: some View {
@@ -2787,7 +2787,7 @@ struct BigBoardRowView: View {
             .foregroundStyle(.white)
             .padding(.horizontal, 5)
             .padding(.vertical, 2)
-            .background(bgColor.opacity(0.85), in: RoundedRectangle(cornerRadius: 4))
+            .background(bgColor.opacity(0.85), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
         } else {
             Text("--")
                 .font(.system(size: 9))

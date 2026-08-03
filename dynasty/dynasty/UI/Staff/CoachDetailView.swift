@@ -307,15 +307,12 @@ struct CoachDetailView: View {
         }
     }
 
+    /// Unified onto `Color.forRating`. The bespoke six-band ladder reached
+    /// outside the palette entirely — `.green`, `.orange` and `.red` are stock
+    /// SwiftUI system colours, not the app's `success` / `warning` / `danger`,
+    /// so a coach card was the one place in the app painting iOS-blue-era hues.
     private func developerScoreColor(_ score: Int) -> Color {
-        switch score {
-        case 85...:   return Color.accentGold
-        case 72..<85: return .green
-        case 58..<72: return Color.accentBlue
-        case 45..<58: return Color.textSecondary
-        case 32..<45: return .orange
-        default:      return .red
-        }
+        Color.forRating(score)
     }
 
     /// Color for the fuzzy potential label.
@@ -364,7 +361,7 @@ struct CoachDetailView: View {
                                         .foregroundStyle(Color.backgroundPrimary)
                                         .padding(.horizontal, 8)
                                         .padding(.vertical, 4)
-                                        .background(Color.accentGold, in: RoundedRectangle(cornerRadius: 4))
+                                        .background(Color.accentGold, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
 
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(targetRole.displayName)

@@ -1726,7 +1726,7 @@ struct CoachingStaffView: View {
 
                 HStack(spacing: 4) {
                     Image(systemName: "person.2.fill")
-                        .font(.system(size: 8))
+                        .font(.system(size: DSType.Size.micro))
                     Text(count == 0 ? "No staff knows this" : "\(count) coach\(count == 1 ? "" : "es") know this")
                         .font(.system(size: 9, weight: .medium))
                 }
@@ -1826,7 +1826,7 @@ struct CoachingStaffView: View {
 
                 HStack(spacing: 4) {
                     Image(systemName: "person.2.fill")
-                        .font(.system(size: 8))
+                        .font(.system(size: DSType.Size.micro))
                     Text(count == 0 ? "No staff knows this" : "\(count) coach\(count == 1 ? "" : "es") know this")
                         .font(.system(size: 9, weight: .medium))
                 }
@@ -2075,7 +2075,7 @@ struct CoachingStaffView: View {
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(
-                            RoundedRectangle(cornerRadius: 4)
+                            RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                                 .fill(avgColor.opacity(0.15))
                         )
                 }
@@ -2129,10 +2129,11 @@ struct CoachingStaffView: View {
 
     // MARK: - Scheme Fit Helpers
 
+    /// Unified onto `Color.forRating(scale: .percent)` — this is exactly the
+    /// case `RatingScale` was introduced for: a 62 % scheme fit painted gold
+    /// here while a 62 OVR painted yellow one screen over.
     private func schemeFitColor(_ percent: Int) -> Color {
-        if percent >= 80 { return Color.success }
-        if percent >= 60 { return Color.accentGold }
-        return Color.danger
+        Color.forRating(percent, scale: .percent)
     }
 
     private func schemeFitLabel(_ percent: Int) -> String {
@@ -2259,7 +2260,7 @@ struct CoachingStaffView: View {
                                     .foregroundStyle(Color.backgroundPrimary)
                                     .padding(.horizontal, 6)
                                     .padding(.vertical, 3)
-                                    .background(coach.role.badgeColor, in: RoundedRectangle(cornerRadius: 4))
+                                    .background(coach.role.badgeColor, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
                                     .frame(width: 36)
 
                                 Text(coach.fullName)
@@ -2681,7 +2682,7 @@ struct CoachingStaffView: View {
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(Color.textPrimary)
                     Text(autoHireAllocations[vacancy.id].map { "~$\(formatBudget($0))M" } ?? "")
-                        .font(.system(size: 8).monospacedDigit())
+                        .font(.system(size: DSType.Size.micro).monospacedDigit())
                         .foregroundStyle(Color.textTertiary)
                 }
             }
@@ -2905,9 +2906,9 @@ struct CoachingStaffView: View {
             // Progress bar (coaches)
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 4)
+                    RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                         .fill(Color.backgroundTertiary)
-                    RoundedRectangle(cornerRadius: 4)
+                    RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                         .fill(remainingBudget >= 0 ? Color.accentGold : Color.danger)
                         .frame(width: geo.size.width * min(1.0, Double(totalCoachSalaryUsed) / max(1.0, Double(coachingBudget))))
                 }
@@ -2934,9 +2935,9 @@ struct CoachingStaffView: View {
             }
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 4)
+                    RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                         .fill(Color.backgroundTertiary)
-                    RoundedRectangle(cornerRadius: 4)
+                    RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                         .fill(remainingScoutBudget >= 0 ? Color.accentBlue : Color.danger)
                         .frame(width: geo.size.width * min(1.0, Double(totalScoutSalaryUsed) / max(1.0, Double(scoutingBudget))))
                 }
@@ -2963,9 +2964,9 @@ struct CoachingStaffView: View {
             }
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 4)
+                    RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                         .fill(Color.backgroundTertiary)
-                    RoundedRectangle(cornerRadius: 4)
+                    RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                         .fill(remainingMedicalBudget >= 0 ? Color.success : Color.danger)
                         .frame(width: geo.size.width * min(1.0, Double(totalMedicalSalaryUsed) / max(1.0, Double(medicalBudget))))
                 }
@@ -3144,7 +3145,7 @@ struct CoachingStaffView: View {
 
                 if coach.isInAdjustmentPeriod {
                     Text("Adjusting")
-                        .font(.system(size: 7, weight: .bold))
+                        .font(.system(size: DSType.Size.micro, weight: .bold))
                         .foregroundStyle(.orange)
                         .padding(.horizontal, 4)
                         .padding(.vertical, 1)
@@ -3393,7 +3394,7 @@ struct CoachingStaffView: View {
                         if let impact = hiringImpactDescription(for: role) {
                             HStack(spacing: 4) {
                                 Image(systemName: "chart.line.uptrend.xyaxis")
-                                    .font(.system(size: 8))
+                                    .font(.system(size: DSType.Size.micro))
                                 Text(impact)
                                     .font(.system(size: 10, weight: .semibold))
                             }
@@ -3424,7 +3425,7 @@ struct CoachingStaffView: View {
                 .foregroundStyle(Color.backgroundPrimary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                .background(scout.scoutRole.isChief ? Color.accentGold : Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 4))
+                .background(scout.scoutRole.isChief ? Color.accentGold : Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
                 .frame(width: 44)
 
             // Name + meta
@@ -3510,7 +3511,7 @@ struct CoachingStaffView: View {
                 // #53: Hiring impact
                 HStack(spacing: 4) {
                     Image(systemName: "chart.line.uptrend.xyaxis")
-                        .font(.system(size: 8))
+                        .font(.system(size: DSType.Size.micro))
                     Text(scoutHiringImpact(for: role))
                         .font(.system(size: 10, weight: .semibold))
                 }
@@ -3665,7 +3666,7 @@ private struct HeadCoachCardView: View {
                 .foregroundStyle(Color.accentBlue)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
-                .background(Color.accentBlue.opacity(0.1), in: RoundedRectangle(cornerRadius: 4))
+                .background(Color.accentBlue.opacity(0.1), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
             }
         }
         .padding(.vertical, 6)
@@ -3731,7 +3732,7 @@ private struct CoachRowWithDescriptionView: View {
                     .foregroundStyle(Color.backgroundPrimary)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(coach.role.badgeColor, in: RoundedRectangle(cornerRadius: 4))
+                    .background(coach.role.badgeColor, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
                     .frame(width: 44)
 
                 PersonFaceView(coach: coach, size: .small)
@@ -3823,7 +3824,7 @@ private struct CoachRowView: View {
                 .foregroundStyle(Color.backgroundPrimary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                .background(coach.role.badgeColor, in: RoundedRectangle(cornerRadius: 4))
+                .background(coach.role.badgeColor, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
                 .frame(width: 44)
 
             PersonFaceView(coach: coach, size: .small)

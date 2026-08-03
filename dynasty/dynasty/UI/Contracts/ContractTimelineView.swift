@@ -129,11 +129,11 @@ struct ContractTimelineView: View {
 
         return GeometryReader { geo in
             ZStack(alignment: .bottom) {
-                RoundedRectangle(cornerRadius: 4)
+                RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                     .fill(Color.backgroundTertiary)
                     .frame(width: geo.size.width * 0.6)
 
-                RoundedRectangle(cornerRadius: 4)
+                RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                     .fill(barColor)
                     .frame(width: geo.size.width * 0.6, height: geo.size.height * fraction)
             }

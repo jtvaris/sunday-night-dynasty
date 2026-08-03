@@ -414,7 +414,7 @@ struct FreeAgencyView: View {
                     .foregroundStyle(Color.textPrimary)
                     .frame(width: 34)
                     .padding(.vertical, 4)
-                    .background(positionColor(player.position), in: RoundedRectangle(cornerRadius: 4))
+                    .background(positionColor(player.position), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
 
                 // Name + details
                 VStack(alignment: .leading, spacing: 2) {
@@ -551,7 +551,7 @@ struct FreeAgencyView: View {
             if let rumor = rumorText(for: player, info: freeAgentData[player.id]) {
                 HStack(spacing: 4) {
                     Image(systemName: rumor.icon)
-                        .font(.system(size: 8))
+                        .font(.system(size: DSType.Size.micro))
                     Text(rumor.text)
                         .font(.system(size: 9).italic())
                     Spacer()
@@ -761,7 +761,7 @@ struct FreeAgencyView: View {
             .foregroundStyle(color)
             .padding(.horizontal, 5)
             .padding(.vertical, 2)
-            .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+            .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
     }
 
     // MARK: - Rumor System (Task 2)

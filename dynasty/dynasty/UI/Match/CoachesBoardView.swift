@@ -326,7 +326,7 @@ struct CoachesBoardView: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                 Text("#\(player.displayNumber) \(player.position.rawValue)")
-                    .font(.system(size: 8.5, weight: .black).monospacedDigit())
+                    .font(.system(size: DSType.Size.micro, weight: .black).monospacedDigit())
                     .foregroundStyle(Color.textTertiary)
             }
             .padding(.vertical, 7)
@@ -378,7 +378,7 @@ struct CoachesBoardView: View {
 
     private func statusBadge(icon: String, tint: Color) -> some View {
         Image(systemName: icon)
-            .font(.system(size: 8, weight: .black))
+            .font(.system(size: DSType.Size.micro, weight: .black))
             .foregroundStyle(Color.backgroundPrimary)
             .frame(width: 16, height: 16)
             .background(tint, in: Circle())
@@ -430,13 +430,11 @@ struct CoachesBoardView: View {
     }
 
     /// Day-grade color bands: gold 80+, green 70–79, grey 55–69, red < 55.
+    /// Unified onto `Color.forRating(scale: .percent)`. Byte-identical twin of
+    /// `QuarterReportView.gradeColor`; both now read the shared ladder, so a
+    /// live player grade and that player's OVR agree about what 72 means.
     private func gradeColor(_ grade: Int) -> Color {
-        switch grade {
-        case 80...:   return .accentGold
-        case 70..<80: return .success
-        case 55..<70: return .textSecondary
-        default:      return .danger
-        }
+        Color.forRating(grade, scale: .percent)
     }
 
     // MARK: - Detail Panel (right)

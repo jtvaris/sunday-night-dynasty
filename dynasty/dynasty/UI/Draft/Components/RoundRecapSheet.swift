@@ -181,7 +181,7 @@ struct RoundRecapSheet: View {
                 .padding(.horizontal, 8).padding(.vertical, 3)
                 .background(Color.draftStealGold.opacity(0.25))
                 .foregroundStyle(Color.draftStealGold)
-                .clipShape(RoundedRectangle(cornerRadius: 4))
+                .clipShape(RoundedRectangle(cornerRadius: DSCornerRadius.tight))
         }
         .padding(DSSpacing.sm)
         .frame(maxWidth: .infinity)
@@ -196,7 +196,7 @@ struct RoundRecapSheet: View {
             .padding(.horizontal, 8).padding(.vertical, 3)
             .foregroundStyle(Color.textPrimary)
             .background(gradeColor(grade))
-            .clipShape(RoundedRectangle(cornerRadius: 4))
+            .clipShape(RoundedRectangle(cornerRadius: DSCornerRadius.tight))
     }
 
     private func gradeColor(_ grade: PickGrade) -> Color {

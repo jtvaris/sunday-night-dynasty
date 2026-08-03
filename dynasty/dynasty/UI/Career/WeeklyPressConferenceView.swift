@@ -380,7 +380,7 @@ struct WeeklyPressConferenceView: View {
                     Text(isExpanded ? "Hide headline" : "Preview headline")
                         .font(.system(size: 10, weight: .semibold))
                     Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 8, weight: .bold))
+                        .font(.system(size: DSType.Size.micro, weight: .bold))
                 }
                 .foregroundStyle(Color.textTertiary)
                 .padding(.horizontal, 8)

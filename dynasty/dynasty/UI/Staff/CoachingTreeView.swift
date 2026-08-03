@@ -93,11 +93,11 @@ struct CoachingTreeView: View {
                 // Legacy bar
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 4)
+                        RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                             .fill(Color.backgroundTertiary)
                             .frame(height: 8)
 
-                        RoundedRectangle(cornerRadius: 4)
+                        RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                             .fill(legacyScoreColor)
                             .frame(
                                 width: geo.size.width * CGFloat(tree.legacyScore) / 100.0,

@@ -452,7 +452,7 @@ struct FAWeeklyView: View {
                                         .frame(width: 16, height: 16)
                                 )
                             Text(phaseInfo(for: round).label)
-                                .font(.system(size: 8).weight(isCurrent ? .bold : .regular))
+                                .font(.system(size: DSType.Size.micro).weight(isCurrent ? .bold : .regular))
                                 .foregroundStyle(isCurrent ? Color.accentGold :
                                                  isPast ? Color.textSecondary :
                                                  Color.textTertiary)
@@ -473,7 +473,7 @@ struct FAWeeklyView: View {
                     // R23: facility visit budget for this FA period
                     HStack(spacing: 3) {
                         Image(systemName: "building.2")
-                            .font(.system(size: 8))
+                            .font(.system(size: DSType.Size.micro))
                         Text("Visits left: \(visitsRemaining)/\(Self.faVisitLimit)")
                             .font(.caption2.monospacedDigit())
                     }
@@ -546,7 +546,7 @@ struct FAWeeklyView: View {
                     .lineLimit(1)
                 if update.isBiddingWar {
                     Text("BIDDING WAR")
-                        .font(.system(size: 7, weight: .black))
+                        .font(.system(size: DSType.Size.micro, weight: .black))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 4)
                         .padding(.vertical, 1)
@@ -579,7 +579,7 @@ struct FAWeeklyView: View {
                     }
                 }()
                 Image(systemName: leaningIcon(update.playerLeaning))
-                    .font(.system(size: 8))
+                    .font(.system(size: DSType.Size.micro))
                     .foregroundStyle(leaningColor)
                 Text(update.playerLeaning.rawValue)
                     .font(.system(size: 9, weight: .medium))
@@ -733,7 +733,7 @@ struct FAWeeklyView: View {
                         .foregroundStyle(Color.textPrimary)
                         .frame(width: 30)
                         .padding(.vertical, 3)
-                        .background(positionSideColor(fa.player.position), in: RoundedRectangle(cornerRadius: 4))
+                        .background(positionSideColor(fa.player.position), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
 
                     // Player info
                     VStack(alignment: .leading, spacing: 2) {
@@ -744,7 +744,7 @@ struct FAWeeklyView: View {
                                 .lineLimit(1)
                             if hasOffer {
                                 Text("OFFER PENDING")
-                                    .font(.system(size: 8, weight: .bold))
+                                    .font(.system(size: DSType.Size.micro, weight: .bold))
                                     .foregroundStyle(Color.accentGold)
                                     .padding(.horizontal, 4)
                                     .padding(.vertical, 1)
@@ -788,7 +788,7 @@ struct FAWeeklyView: View {
                     if let rumor = rumorText(for: fa) {
                         HStack(spacing: 3) {
                             Image(systemName: rumor.icon)
-                                .font(.system(size: 8))
+                                .font(.system(size: DSType.Size.micro))
                             Text(rumor.text)
                                 .font(.system(size: 9).italic())
                         }
@@ -822,9 +822,9 @@ struct FAWeeklyView: View {
         if visitedPlayerIDs.contains(fa.player.id) {
             HStack(spacing: 3) {
                 Image(systemName: "checkmark.seal.fill")
-                    .font(.system(size: 8))
+                    .font(.system(size: DSType.Size.micro))
                 Text("VISITED")
-                    .font(.system(size: 8, weight: .black))
+                    .font(.system(size: DSType.Size.micro, weight: .black))
             }
             .foregroundStyle(Color.success)
             .padding(.horizontal, 6)
@@ -836,7 +836,7 @@ struct FAWeeklyView: View {
             } label: {
                 HStack(spacing: 3) {
                     Image(systemName: "building.2")
-                        .font(.system(size: 8))
+                        .font(.system(size: DSType.Size.micro))
                     Text("Host Visit")
                         .font(.system(size: 9, weight: .bold))
                 }
@@ -872,7 +872,7 @@ struct FAWeeklyView: View {
             )
             HStack(spacing: 3) {
                 Image(systemName: breakdown.tier.icon)
-                    .font(.system(size: 8))
+                    .font(.system(size: DSType.Size.micro))
                 Text("Interest: \(breakdown.tier.rawValue)")
                     .font(.system(size: 9, weight: .bold))
             }
@@ -911,7 +911,7 @@ struct FAWeeklyView: View {
             .foregroundStyle(color)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
-            .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+            .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
     }
 
     // MARK: - Rumor System
@@ -978,7 +978,7 @@ struct FAWeeklyView: View {
         return AnyView(
             HStack(spacing: 3) {
                 Image(systemName: "flame.fill")
-                    .font(.system(size: 8))
+                    .font(.system(size: DSType.Size.micro))
                 Text(text)
                     .font(.system(size: 9))
             }
@@ -1249,9 +1249,9 @@ struct FAWeeklyView: View {
 
         return HStack(spacing: 2) {
             Image(systemName: icon)
-                .font(.system(size: 7))
+                .font(.system(size: DSType.Size.micro))
             Text(label)
-                .font(.system(size: 8, weight: .bold))
+                .font(.system(size: DSType.Size.micro, weight: .bold))
         }
         .foregroundStyle(Color.accentGold.opacity(0.8))
         .padding(.horizontal, 4)

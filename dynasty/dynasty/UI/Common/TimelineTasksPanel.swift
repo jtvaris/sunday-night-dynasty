@@ -252,7 +252,7 @@ struct TimelineTasksPanel: View {
                         .frame(width: 18, height: 18)
                         .overlay(
                             Image(systemName: Self.phaseIcon(career.currentPhase))
-                                .font(.system(size: 8, weight: .bold))
+                                .font(.system(size: DSType.Size.micro, weight: .bold))
                                 .foregroundStyle(Color.backgroundPrimary)
                         )
 
@@ -347,14 +347,14 @@ struct TimelineTasksPanel: View {
 
                     if locked {
                         Text("Locked")
-                            .font(.system(size: 8, weight: .heavy))
+                            .font(.system(size: DSType.Size.micro, weight: .heavy))
                             .foregroundStyle(Color.textTertiary)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
                             .background(Capsule().fill(Color.backgroundTertiary))
                     } else if isRequired && task.status != .done {
                         Text("Required")
-                            .font(.system(size: 8, weight: .heavy))
+                            .font(.system(size: DSType.Size.micro, weight: .heavy))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)

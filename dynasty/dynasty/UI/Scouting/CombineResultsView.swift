@@ -464,7 +464,7 @@ struct CombineResultsView: View {
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(isRiser ? Color.success : Color.danger)
                 Image(systemName: isRiser ? "arrow.up" : "arrow.down")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.system(size: DSType.Size.micro, weight: .bold))
                     .foregroundStyle(isRiser ? Color.success : Color.danger)
                 // Old (pre-combine) grade below — dimmed
                 Text(prospect.preCombineGrade ?? "--")
@@ -525,7 +525,7 @@ struct CombineResultsView: View {
 
                 if sortColumn == column {
                     Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 8, weight: .bold))
+                        .font(.system(size: DSType.Size.micro, weight: .bold))
                         .foregroundStyle(Color.accentGold)
                 }
             }
@@ -593,7 +593,7 @@ struct CombineResultsView: View {
 
                 if teamNeeds.contains(prospect.position) {
                     Text("NEED")
-                        .font(.system(size: 7, weight: .heavy))
+                        .font(.system(size: DSType.Size.micro, weight: .heavy))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 4)
                         .padding(.vertical, 1)
@@ -605,7 +605,7 @@ struct CombineResultsView: View {
                 // the badge alone already answers "is this a bug or a decision".
                 if let badge = ScoutingEngine.combineParticipation(for: prospect).badge {
                     Text(badge)
-                        .font(.system(size: 7, weight: .heavy))
+                        .font(.system(size: DSType.Size.micro, weight: .heavy))
                         .foregroundStyle(Color.backgroundPrimary)
                         .padding(.horizontal, 4)
                         .padding(.vertical, 1)
@@ -717,7 +717,7 @@ struct CombineResultsView: View {
             if let pct = percentile {
                 let tier = tierLabel(for: pct)
                 Text(tier.text)
-                    .font(.system(size: 8, weight: .semibold))
+                    .font(.system(size: DSType.Size.micro, weight: .semibold))
                     .foregroundStyle(tier.color)
             }
         }

@@ -840,10 +840,10 @@ private struct TeamOverviewStep: View {
                                 ? Double(team.currentCapUsage) / Double(team.salaryCap)
                                 : 0
                             ZStack(alignment: .leading) {
-                                RoundedRectangle(cornerRadius: 4)
+                                RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                                     .fill(Color.backgroundTertiary)
                                     .frame(height: 8)
-                                RoundedRectangle(cornerRadius: 4)
+                                RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                                     .fill(usedFraction > 0.9 ? Color.danger : Color.accentGold)
                                     .frame(width: geo.size.width * min(usedFraction, 1.0), height: 8)
                             }
@@ -1031,7 +1031,7 @@ private struct YourRoadmapStep: View {
 
                                 if isCurrent {
                                     Text("CURRENT")
-                                        .font(.system(size: 7, weight: .black))
+                                        .font(.system(size: DSType.Size.micro, weight: .black))
                                         .foregroundStyle(Color.backgroundPrimary)
                                         .padding(.horizontal, 4)
                                         .padding(.vertical, 1)
@@ -1041,7 +1041,7 @@ private struct YourRoadmapStep: View {
                                 // #140: Mandatory vs optional badge
                                 if !isCurrent {
                                     Text(entry.isMandatory ? "REQUIRED" : "OPTIONAL")
-                                        .font(.system(size: 7, weight: .bold))
+                                        .font(.system(size: DSType.Size.micro, weight: .bold))
                                         .foregroundStyle(entry.isMandatory ? Color.textSecondary : Color.textTertiary)
                                         .padding(.horizontal, 4)
                                         .padding(.vertical, 1)
@@ -1052,7 +1052,7 @@ private struct YourRoadmapStep: View {
                                 }
 
                                 Text(entry.duration)
-                                    .font(.system(size: 8, weight: .semibold))
+                                    .font(.system(size: DSType.Size.micro, weight: .semibold))
                                     .foregroundStyle(Color.textTertiary)
                             }
 

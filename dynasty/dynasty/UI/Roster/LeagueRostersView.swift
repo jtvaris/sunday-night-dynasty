@@ -202,7 +202,7 @@ struct LeagueRostersView: View {
                         .lineLimit(1)
                     if isUserTeam {
                         Text("YOUR TEAM")
-                            .font(.system(size: 8, weight: .heavy))
+                            .font(.system(size: DSType.Size.micro, weight: .heavy))
                             .foregroundStyle(Color.backgroundPrimary)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
@@ -233,7 +233,7 @@ struct LeagueRostersView: View {
                     .font(.callout.weight(.bold).monospacedDigit())
                     .foregroundStyle(Color.forRating(strength))
                 Text("OVR")
-                    .font(.system(size: 8, weight: .semibold))
+                    .font(.system(size: DSType.Size.micro, weight: .semibold))
                     .foregroundStyle(Color.textTertiary)
             }
             .frame(width: 36)
@@ -635,7 +635,7 @@ extension LeagueRostersView {
                 .font(.system(size: 11, weight: .semibold))
             if let systemImage {
                 Image(systemName: systemImage)
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.system(size: DSType.Size.micro, weight: .bold))
             }
         }
         .foregroundStyle(isActive ? Color.backgroundPrimary : Color.textSecondary)
@@ -684,7 +684,7 @@ extension LeagueRostersView {
                     .font(.callout.weight(.bold).monospacedDigit())
                     .foregroundStyle(Color.forRating(player.overall))
                 Text("OVR")
-                    .font(.system(size: 8, weight: .semibold))
+                    .font(.system(size: DSType.Size.micro, weight: .semibold))
                     .foregroundStyle(Color.textTertiary)
             }
             .frame(width: 34)

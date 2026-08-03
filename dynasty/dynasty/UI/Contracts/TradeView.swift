@@ -255,7 +255,7 @@ struct TradeView: View {
                         .foregroundStyle(Color.backgroundPrimary)
                         .padding(.horizontal, 7)
                         .padding(.vertical, 3)
-                        .background(Color.accentGold, in: RoundedRectangle(cornerRadius: 4))
+                        .background(Color.accentGold, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
                     if let identity {
                         Text(identity.name)
                             .font(.caption.weight(.semibold))
@@ -281,7 +281,7 @@ struct TradeView: View {
 
                 HStack(spacing: 6) {
                     Image(systemName: "clock.fill")
-                        .font(.system(size: 8))
+                        .font(.system(size: DSType.Size.micro))
                     Text(TradeWindowRules.expiryNote(
                         phase: career.currentPhase, week: career.currentWeek
                     ))
@@ -478,15 +478,15 @@ struct TradeView: View {
 
             GeometryReader { geo in
                 HStack(spacing: 2) {
-                    RoundedRectangle(cornerRadius: 4)
+                    RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                         .fill(Color.accentBlue)
                         .frame(width: geo.size.width * sendFraction)
-                    RoundedRectangle(cornerRadius: 4)
+                    RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                         .fill(Color.accentGold)
                         .frame(maxWidth: .infinity)
                 }
                 .frame(height: 10)
-                .clipShape(RoundedRectangle(cornerRadius: 4))
+                .clipShape(RoundedRectangle(cornerRadius: DSCornerRadius.tight))
             }
             .frame(height: 10)
 

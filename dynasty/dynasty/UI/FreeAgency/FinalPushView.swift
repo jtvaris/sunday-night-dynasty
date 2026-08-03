@@ -217,7 +217,7 @@ struct FinalPushView: View {
                     .foregroundStyle(Color.warning)
                 Spacer()
                 Text("LEAGUE SOURCES")
-                    .font(.system(size: 8, weight: .black))
+                    .font(.system(size: DSType.Size.micro, weight: .black))
                     .foregroundStyle(Color.textTertiary)
             }
             .padding(.horizontal, 16)
@@ -257,7 +257,7 @@ struct FinalPushView: View {
                     .lineLimit(1)
                 if rumor.isOwnPlayer {
                     Text("YOURS")
-                        .font(.system(size: 7, weight: .black))
+                        .font(.system(size: DSType.Size.micro, weight: .black))
                         .foregroundStyle(Color.backgroundPrimary)
                         .padding(.horizontal, 4)
                         .padding(.vertical, 1)
@@ -279,7 +279,7 @@ struct FinalPushView: View {
                 } else {
                     HStack(spacing: 3) {
                         Image(systemName: "eye.fill")
-                            .font(.system(size: 7))
+                            .font(.system(size: DSType.Size.micro))
                         Text("\(rumor.suitorAbbrs.joined(separator: ", ")) circling")
                             .font(.system(size: 9, weight: .medium))
                     }
@@ -342,7 +342,7 @@ struct FinalPushView: View {
                     .foregroundStyle(Color.textPrimary)
                     .frame(width: 34)
                     .padding(.vertical, 4)
-                    .background(positionSideColor(player.position), in: RoundedRectangle(cornerRadius: 4))
+                    .background(positionSideColor(player.position), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(player.fullName)
@@ -370,7 +370,7 @@ struct FinalPushView: View {
                     .font(.caption.weight(.semibold).monospacedDigit())
                     .foregroundStyle(Color.accentBlue)
                 Text("MKT")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.system(size: DSType.Size.micro, weight: .bold))
                     .foregroundStyle(Color.accentBlue.opacity(0.7))
             }
             .padding(.horizontal, 16)
@@ -999,7 +999,7 @@ struct FinalPushView: View {
         }()
         return HStack(spacing: 4) {
             Image(systemName: persona.symbolName)
-                .font(.system(size: 8))
+                .font(.system(size: DSType.Size.micro))
             Text("Agent: \(AgentPersona.agentName(for: player.id))")
                 .font(.system(size: 9, weight: .semibold))
             Text(persona.styleLabel)
@@ -1101,7 +1101,7 @@ struct FinalPushView: View {
 
         return HStack(spacing: 3) {
             Image(systemName: icon)
-                .font(.system(size: 8))
+                .font(.system(size: DSType.Size.micro))
             Text(label)
                 .font(.system(size: 9, weight: .bold))
         }

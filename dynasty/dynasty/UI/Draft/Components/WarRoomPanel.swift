@@ -95,7 +95,7 @@ struct WarRoomPanel: View {
                         .padding(.horizontal, 6).padding(.vertical, 3)
                         .background(needsOnly ? Color.draftStealGold.opacity(0.3) : Color.backgroundTertiary)
                         .foregroundStyle(needsOnly ? Color.draftStealGold : Color.textSecondary)
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                        .clipShape(RoundedRectangle(cornerRadius: DSCornerRadius.tight))
                 }
                 .buttonStyle(.plain)
             }
@@ -184,12 +184,12 @@ struct WarRoomPanel: View {
                     ProductionMicroLabel(tier: prospect.collegeProductionTier)
                     if let mark = DraftIntel.mark(for: prospect) {
                         Text(mark.shortLabel)
-                            .font(.system(size: 8, weight: .heavy))
+                            .font(.system(size: DSType.Size.micro, weight: .heavy))
                             .foregroundStyle(mark.color)
                     }
                     if isSleeper(prospect) {
                         Text("SLEEPER")
-                            .font(.system(size: 8, weight: .heavy))
+                            .font(.system(size: DSType.Size.micro, weight: .heavy))
                             .foregroundStyle(Color.success)
                     }
                 }
