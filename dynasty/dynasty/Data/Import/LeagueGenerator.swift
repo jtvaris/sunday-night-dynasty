@@ -97,40 +97,6 @@ enum LeagueGenerator {
     /// the file instead (`LeagueTemplate.Identity.ownerGender`).
     private static let ownerFemaleShare: Double = 0.12
 
-    /// The legacy illustrated owner-avatar ids.
-    ///
-    /// **Nothing renders these any more.** The hand-drawn `owner_m*`/`owner_f*`
-    /// art and the view that drew it are gone; every owner surface shows the AI
-    /// executive photograph (`Owner.faceID`, `ExtrasCatalog`) or the owner's
-    /// initials. The list survives here for exactly two reasons:
-    ///
-    /// 1. `Owner.avatarID` is a non-optional stored property on a SwiftData
-    ///    model, so it still has to be given a value.
-    /// 2. The draw below **consumes one random value** from the seeded generator.
-    ///    Removing it would shift every subsequent draw — patience, spending,
-    ///    meddling, prefersWinNow — and silently change all 32 owners in every
-    ///    seeded template import.
-    ///
-    /// Moved out of the deleted `OwnerAvatarImageView.swift` verbatim, order
-    /// included, so the stream is bit-identical to before.
-    private static let legacyOwnerAvatarIDs: [String] = [
-        "owner_m1", "owner_m2", "owner_m3", "owner_m4", "owner_m5",
-        "owner_m6", "owner_m7", "owner_m8", "owner_m9", "owner_m10", "owner_m11",
-        "owner_f1", "owner_f2", "owner_f3",
-    ]
-
-    /// The legacy avatar ids of one gender.
-    ///
-    /// The draw used to run over the whole 14-id list, which handed roughly one
-    /// owner in five a portrait of the wrong sex — invisible while every owner
-    /// was male-named, a plain defect now that some are not. Falls back to the
-    /// full list if a rename ever empties a prefix, because this feeds a
-    /// force-unwrapped `randomElement`.
-    private static func ownerAvatarIDs(female: Bool) -> [String] {
-        let prefix = female ? "owner_f" : "owner_m"
-        let matching = legacyOwnerAvatarIDs.filter { $0.hasPrefix(prefix) }
-        return matching.isEmpty ? legacyOwnerAvatarIDs : matching
-    }
 
     private static let coachFirstNames: [String] = [
         "Cade", "Cassius", "Cedric", "Cortez", "Damir",
@@ -577,7 +543,13 @@ enum LeagueGenerator {
         let first = (isFemale ? ownerFemaleFirstNames : ownerFirstNames)
             .randomElement(using: &rng)!
         let last = ownerLastNames.randomElement(using: &rng)!
-        let avatarID = ownerAvatarIDs(female: isFemale).randomElement(using: &rng)!
+        // Burned draw — the retired cartoon-avatar pick. `randomElement` over a
+        // non-power-of-two collection consumes a VARIABLE number of RNG words
+        // (rejection sampling), so this must reproduce the exact bounds the old
+        // list had (11 male ids / 3 female ids) to keep every subsequent draw —
+        // patience, spending, meddling, prefersWinNow — bit-identical for a
+        // given seed. Do not "simplify" to a single rng.next().
+        _ = Int.random(in: 0..<(isFemale ? 3 : 11), using: &rng)
         // Derived from the owner's own UUID and gender, so it consumes NO random
         // value — a seeded template import keeps drawing exactly the numbers it
         // drew before this portrait existed, and the avatar/patience/spending
@@ -605,7 +577,7 @@ enum LeagueGenerator {
         return Owner(
             id: ownerID,
             name: "\(first) \(last)",
-            avatarID: avatarID,
+            avatarID: "",   // retired cartoon id — field kept only for schema stability
             patience: Int.random(in: 2...9, using: &rng),
             spendingWillingness: spending,
             meddling: Int.random(in: 5...80, using: &rng),
