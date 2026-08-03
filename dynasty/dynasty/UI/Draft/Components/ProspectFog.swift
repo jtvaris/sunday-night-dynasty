@@ -215,6 +215,155 @@ enum ProspectFog {
         }
     }
 
+    // MARK: - Football IQ
+
+    /// Where a rendered Football IQ came from.
+    ///
+    /// The board used to have no column for this at all: an interview wrote
+    /// `CollegeProspect.interviewFootballIQ` and the number then lived on one
+    /// tab of one detail screen, so a user who had spent his sixty combine
+    /// slots could not sort, filter or even *see* what he had bought. The read
+    /// has two legitimate sources and they are deliberately styled apart.
+    enum IQSource {
+        /// Your own people put him in a room and ran the whiteboard. An exact
+        /// number, because that is what a meeting produces.
+        case interview
+        /// Nobody has met him — this is the scouting department reading tape,
+        /// so it is a band off the `AWR` / `LRN` grades and nothing sharper.
+        case scouts
+        /// No tape, no meeting.
+        case none
+
+        var tint: Color {
+            switch self {
+            case .interview: return Color.accentBlue
+            case .scouts:    return Color.accentGold
+            case .none:      return Color.textTertiary
+            }
+        }
+
+        var label: String {
+            switch self {
+            case .interview: return "Interview"
+            case .scouts:    return "Scouts"
+            case .none:      return "No intel"
+            }
+        }
+    }
+
+    /// What the user is allowed to know about one prospect's football IQ.
+    struct IQRead {
+        /// The interview's exact figure. `nil` until somebody has met him.
+        let value: Int?
+        /// The scouts' band. Present for both sources — an interviewed prospect
+        /// still gets a band so a column can render a letter if it wants one.
+        let band: GradeRange?
+        let source: IQSource
+
+        /// "84" once you have met him, "B/B+" while it is only tape, "—" when
+        /// nobody has done either.
+        var text: String {
+            if let value { return "\(value)" }
+            return band?.displayText ?? "\u{2014}"
+        }
+
+        /// Fog-safe sort key (higher = better). An un-met, un-scouted prospect
+        /// sorts to the bottom rather than to the middle.
+        var rank: Int {
+            if let value { return value }
+            guard let band else { return 0 }
+            return ProspectFog.approximateValue(of: band.midGrade)
+        }
+
+        var isRevealed: Bool { value != nil }
+
+        var accessibilityText: String {
+            switch source {
+            case .interview:
+                return "Football IQ \(value.map(String.init) ?? "unknown"), from your interview"
+            case .scouts:
+                guard let band else { return "no football IQ read" }
+                if band.isSingleGrade {
+                    return "Football IQ graded \(band.low.rawValue) by your scouts"
+                }
+                return "Football IQ graded between \(band.low.rawValue) and \(band.high.rawValue) by your scouts"
+            case .none:
+                return "no football IQ read \u{2014} interview him to find out"
+            }
+        }
+    }
+
+    /// The football-IQ read the open save is entitled to for `prospect`.
+    ///
+    /// An interview outranks tape: the number it produced already carries the
+    /// interviewer's own noise (`ScoutingEngine.conductInterview`), so widening
+    /// it here would double-count the same uncertainty.
+    static func footballIQ(_ prospect: CollegeProspect) -> IQRead {
+        if let iq = prospect.interviewFootballIQ {
+            return IQRead(
+                value: iq,
+                band: GradeRange(grade: LetterGrade.from(numericValue: iq)),
+                source: .interview
+            )
+        }
+        if let band = tapeMentalBand(for: prospect) {
+            return IQRead(value: nil, band: band, source: .scouts)
+        }
+        return IQRead(value: nil, band: nil, source: .none)
+    }
+
+    /// Convenience for sort closures.
+    static func iqRank(_ prospect: CollegeProspect) -> Int { footballIQ(prospect).rank }
+
+    /// The tape half of football IQ: game awareness (`AWR`) blended with how
+    /// fast he absorbs a playbook (`LRN`) — the same two attributes the
+    /// interview itself is built from, so the band and the number the interview
+    /// later returns describe one quantity rather than two.
+    private static func tapeMentalBand(for prospect: CollegeProspect) -> GradeRange? {
+        let grades = prospect.scoutedMentalGrades
+        switch (grades?["AWR"], grades?["LRN"]) {
+        case let (awareness?, learning?):
+            return GradeRange(
+                low: grade(nearestRank: (awareness.low.rank + learning.low.rank) / 2),
+                high: grade(nearestRank: (awareness.high.rank + learning.high.rank + 1) / 2),
+                reportCount: Swift.min(awareness.reportCount, learning.reportCount)
+            )
+        case let (awareness?, nil):
+            return awareness
+        case let (nil, learning?):
+            return learning
+        default:
+            return nil
+        }
+    }
+
+    /// Representative 40–99 value for a letter grade — the inverse of
+    /// `LetterGrade.from(numericValue:)`, taken at each band's midpoint. Only
+    /// used to put grades and interview numbers on ONE sort scale; it is never
+    /// rendered, because printing "77" for a "B" would claim a precision the
+    /// grade does not have.
+    static func approximateValue(of grade: LetterGrade) -> Int {
+        switch grade {
+        case .aPlus:  return 97
+        case .a:      return 92
+        case .aMinus: return 87
+        case .bPlus:  return 82
+        case .b:      return 77
+        case .bMinus: return 72
+        case .cPlus:  return 67
+        case .c:      return 62
+        case .cMinus: return 57
+        case .dPlus:  return 52
+        case .d:      return 47
+        case .f:      return 40
+        }
+    }
+
+    /// The letter grade whose rank is closest to `rank`.
+    static func grade(nearestRank rank: Int) -> LetterGrade {
+        LetterGrade.allCases.min(by: { abs($0.rank - rank) < abs($1.rank - rank) }) ?? .c
+    }
+
     // MARK: - Band construction
 
     /// The confidence stars used to sit beside the grade as their own widget
@@ -284,5 +433,46 @@ struct ProspectGradeBand: View {
             .minimumScaleFactor(0.7)
             .frame(width: width, alignment: alignment)
             .accessibilityLabel(read.accessibilityText)
+    }
+}
+
+// MARK: - Football IQ cell
+
+/// The football-IQ read as it appears in a table column: the interview's number
+/// in blue, the scouts' letter band in gold, an em-dash when neither exists.
+///
+/// The sub-label names the source in four characters so the column is legible
+/// without a legend — the whole point of the cell is that the user can see, at
+/// a glance down the board, which of his sixty interview slots he has spent.
+struct ProspectIQCell: View {
+    let prospect: CollegeProspect
+    var width: CGFloat = 40
+    /// Hides the "MEET"/"TAPE" sub-label for tight rows.
+    var showsSourceLabel: Bool = true
+
+    var body: some View {
+        let read = ProspectFog.footballIQ(prospect)
+        VStack(spacing: 0) {
+            Text(read.text)
+                .font(.system(size: read.isRevealed ? 11 : 9, weight: .bold).monospacedDigit())
+                .foregroundStyle(read.source.tint)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            if showsSourceLabel {
+                Text(sourceTag(read.source))
+                    .font(.system(size: 7, weight: .medium))
+                    .foregroundStyle(Color.textTertiary)
+            }
+        }
+        .frame(width: width, alignment: .center)
+        .accessibilityLabel(read.accessibilityText)
+    }
+
+    private func sourceTag(_ source: ProspectFog.IQSource) -> String {
+        switch source {
+        case .interview: return "MEET"
+        case .scouts:    return "TAPE"
+        case .none:      return ""
+        }
     }
 }

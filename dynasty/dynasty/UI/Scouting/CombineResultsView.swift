@@ -19,8 +19,11 @@ struct CombineResultsView: View {
     /// `false` when the scouting budget cannot cover `tripCost`.
     var canAffordTrip: Bool = true
 
+    /// Shared with the Big Board and the Prospects list — the chips live in
+    /// `ScoutingHubView` now, so a filter survives a tab switch.
+    @Binding var positionFilter: ProspectPositionFilter
+
     @Environment(\.modelContext) private var modelContext
-    @State private var positionFilter: ProspectPositionFilter = .all
     @State private var sortColumn: CombineColumn = .rank
     @State private var sortAscending: Bool = true
     @State private var mediaPopoverProspectID: UUID?
@@ -317,13 +320,8 @@ struct CombineResultsView: View {
             if let onSendScouts {
                 sendScoutsCTA(action: onSendScouts)
             }
-
-            Picker("Position", selection: $positionFilter) {
-                ForEach(ProspectPositionFilter.allCases) { filter in
-                    Text(filter.label).tag(filter)
-                }
-            }
-            .pickerStyle(.segmented)
+            // Position filtering moved to the hub's shared chip bar so one tap
+            // filters the board, the prospect list and this table together.
         }
     }
 
@@ -1102,7 +1100,8 @@ struct PercentilePools {
                     combineInvite: true,
                     draftProjection: 1
                 ),
-            ]
+            ],
+            positionFilter: .constant(.all)
         )
     }
 }

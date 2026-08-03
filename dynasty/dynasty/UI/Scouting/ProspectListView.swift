@@ -31,9 +31,11 @@ struct ProspectListView: View {
     let career: Career
     let prospects: [CollegeProspect]
     var scoutsSentToCombine: Bool = false
+    /// Shared with the Big Board and the Combine table — the chips live in
+    /// `ScoutingHubView` now, so a filter survives a tab switch.
+    @Binding var positionFilter: ProspectPositionFilter
 
     @Environment(\.modelContext) private var modelContext
-    @State private var positionFilter: ProspectPositionFilter = .all
     @State private var sortOrder: ProspectSort = .draftProjection
     @State private var attributeTab: ProspectAttributeTab = .overview
     @State private var coaches: [Coach] = []
@@ -71,6 +73,15 @@ struct ProspectListView: View {
                 let a = $0.scoutedOverall ?? -1
                 let b = $1.scoutedOverall ?? -1
                 return a > b
+            }
+        case .footballIQ:
+            // Interview number and scouts' tape band on one fog-safe scale;
+            // un-met, un-scouted prospects sink to the bottom.
+            return filtered.sorted {
+                let a = ProspectFog.iqRank($0)
+                let b = ProspectFog.iqRank($1)
+                if a != b { return a > b }
+                return ($0.scoutedOverall ?? 0) > ($1.scoutedOverall ?? 0)
             }
         case .position:
             return filtered.sorted {
@@ -184,7 +195,7 @@ struct ProspectListView: View {
                     needAndPicksBar
                 }
 
-                positionFilterChips
+                // Position chips live in the hub's shared bar above the tabs.
                 analysisModePicker
 
                 if cachedDisplayed.isEmpty {
@@ -414,6 +425,16 @@ struct ProspectListView: View {
                 positionHeaders
             }
 
+            // Always-visible: Football IQ
+            HStack(spacing: 2) {
+                Text("IQ")
+                InfoTooltipButton(
+                    text: "Football IQ. A blue number is your own interview's read \u{2014} exact, because you sat in the room. A gold letter band is the scouting department reading tape (awareness + learning), and a dash means nobody has done either.",
+                    size: 9
+                )
+            }
+            .frame(width: 40, alignment: .center)
+
             // Always-visible: OVR (with tooltip explaining the dual grade format)
             HStack(spacing: 2) {
                 Text("OVR")
@@ -561,39 +582,6 @@ struct ProspectListView: View {
         )
         .padding(.horizontal, 16)
         .padding(.vertical, 6)
-        .background(Color.backgroundPrimary)
-    }
-
-    // MARK: - Position Filter Chips
-
-    // MARK: - Position Filter Chips (#3 - smaller capsule pills)
-
-    private var positionFilterChips: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 5) {
-                ForEach(ProspectPositionFilter.allCases) { filter in
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            positionFilter = filter
-                        }
-                    } label: {
-                        Text(filter.label)
-                            .font(.system(size: 11, weight: positionFilter == filter ? .bold : .medium))
-                            .foregroundStyle(positionFilter == filter ? Color.backgroundPrimary : Color.textSecondary)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(
-                                positionFilter == filter ? Color.accentBlue : Color.backgroundTertiary,
-                                in: Capsule()
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityAddTraits(positionFilter == filter ? .isSelected : [])
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 6)
-        }
         .background(Color.backgroundPrimary)
     }
 
@@ -746,12 +734,8 @@ struct ProspectRowView: View {
 
                 // Compact sub-info
                 HStack(spacing: 4) {
-                    // #5: Scouting report count
-                    if prospect.scoutReportCount > 0 {
-                        Text(prospect.scoutConfidenceDots)
-                            .font(.system(size: 7))
-                            .foregroundStyle(prospect.scoutReportCount >= 3 ? Color.success : prospect.scoutReportCount >= 2 ? Color.accentBlue : Color.textTertiary)
-                    }
+                    // Prep state: reports filed / room taken / numbers measured.
+                    ProspectPrepChips(prospect: prospect)
                     // R27: "scouted by X" attribution + confidence of the latest report
                     if let scoutedBy = prospect.latestScoutName {
                         Text("by \(shortScoutName(scoutedBy))\(latestConfidenceSuffix)")
@@ -766,11 +750,6 @@ struct ProspectRowView: View {
                             .padding(.horizontal, 3)
                             .padding(.vertical, 1)
                             .background(Color.accentGold, in: RoundedRectangle(cornerRadius: 2))
-                    }
-                    if prospect.interviewCompleted {
-                        Image(systemName: "bubble.left.and.bubble.right.fill")
-                            .font(.system(size: 7))
-                            .foregroundStyle(Color.accentBlue)
                     }
                     if let mention = prospect.combineMediaMention, !mention.isEmpty {
                         Image(systemName: "newspaper.fill")
@@ -806,6 +785,9 @@ struct ProspectRowView: View {
             case .position:
                 positionColumns
             }
+
+            // Always-visible: Football IQ (fogged until somebody meets him)
+            ProspectIQCell(prospect: prospect, width: 40)
 
             // Always-visible: OVR
             overallBadge
@@ -894,10 +876,18 @@ struct ProspectRowView: View {
 
     // MARK: - Mental Columns
 
+    /// An interview writes mental grade bands without ever touching
+    /// `scoutedOverall`, so gating this block on "is scouted" alone would blank
+    /// out the one column set the user's sixty combine slots actually bought.
+    /// Missing individual keys still render "?" inside the block.
+    private var hasMentalRead: Bool {
+        isScouted || !(prospect.scoutedMentalGrades ?? [:]).isEmpty
+    }
+
     private var mentalColumns: some View {
         // 8 columns (LRN + CMP added) — widths shrink 32 → 26 so the row fits.
         Group {
-            if isScouted {
+            if hasMentalRead {
                 gradeRangeMiniAttribute(key: "AWR", label: "AWR", grades: prospect.scoutedMentalGrades)
                     .frame(width: 26, alignment: .center)
                 gradeRangeMiniAttribute(key: "DEC", label: "DEC", grades: prospect.scoutedMentalGrades)
@@ -1314,7 +1304,7 @@ enum ProspectPositionFilter: String, CaseIterable, Identifiable {
 }
 
 enum ProspectSort: String, CaseIterable, Identifiable {
-    case draftProjection, scoutedOverall, position, name
+    case draftProjection, scoutedOverall, footballIQ, position, name
 
     var id: String { rawValue }
 
@@ -1322,6 +1312,7 @@ enum ProspectSort: String, CaseIterable, Identifiable {
         switch self {
         case .draftProjection: return "Draft Projection"
         case .scoutedOverall:  return "Scouted Overall"
+        case .footballIQ:      return "Football IQ"
         case .position:        return "Position"
         case .name:            return "Name"
         }
@@ -1331,6 +1322,7 @@ enum ProspectSort: String, CaseIterable, Identifiable {
         switch self {
         case .draftProjection: return "list.number"
         case .scoutedOverall:  return "star.fill"
+        case .footballIQ:      return "brain.head.profile"
         case .position:        return "rectangle.3.group"
         case .name:            return "textformat"
         }
@@ -1622,7 +1614,8 @@ struct ProspectCompareSheet: View {
                     truePersonality: PlayerPersonality(archetype: .quietProfessional, motivation: .winning),
                     draftProjection: 9
                 ),
-            ]
+            ],
+            positionFilter: .constant(.all)
         )
     }
 }

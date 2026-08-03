@@ -13,9 +13,15 @@ struct BigBoardView: View {
     /// Number of scouts currently on staff — drives the empty state's copy
     /// (0 scouts is a different problem from 8 scouts and an unscouted class).
     var scoutCount: Int = 0
+    /// Owned by `ScoutingHubView` so one tap on the hub's position chips filters
+    /// the Big Board, the Prospects list and the Combine table together, and
+    /// switching tabs keeps the filter. The board used to carry its own copy in
+    /// a `.principal` toolbar item, which the hub's large navigation title hid —
+    /// so the chips the user could see (the Prospects tab's) drove a different
+    /// piece of state than the board he was looking at.
+    @Binding var positionFilter: ProspectPositionFilter
 
     @Environment(\.modelContext) private var modelContext
-    @State private var positionFilter: ProspectPositionFilter = .all
     @State private var flagFilter: ProspectFlagFilter = .all
     @State private var boardOrder: [UUID] = []
     @State private var attributeTab: ProspectAttributeTab = .overview
@@ -288,6 +294,16 @@ struct BigBoardView: View {
                 let prodA = $0.collegeProductionTier.sortRank
                 let prodB = $1.collegeProductionTier.sortRank
                 if prodA != prodB { return prodA < prodB }
+                return ($0.scoutedOverall ?? 0) > ($1.scoutedOverall ?? 0)
+            }
+        case .footballIQ:
+            // Fog-safe: `IQRead.rank` puts the interview's number and the
+            // scouts' tape band on one scale and floors "no intel" at zero, so
+            // the sort cannot leak a mind the user has not read.
+            return filtered.sorted {
+                let iqA = ProspectFog.iqRank($0)
+                let iqB = ProspectFog.iqRank($1)
+                if iqA != iqB { return iqA > iqB }
                 return ($0.scoutedOverall ?? 0) > ($1.scoutedOverall ?? 0)
             }
         }
@@ -671,8 +687,8 @@ struct BigBoardView: View {
             prospectNoteSheet(prospect: prospect)
         }
         .toolbar {
-            ToolbarItem(placement: .principal) {
-                positionPicker
+            ToolbarItem(placement: .topBarTrailing) {
+                boardFilterControls
             }
             // #9: Sort menu
             ToolbarItem(placement: .topBarTrailing) {
@@ -827,6 +843,17 @@ struct BigBoardView: View {
             case .position:
                 bigBoardPositionHeaders
             }
+
+            // Always-visible: Football IQ. Interviews used to write a number
+            // nobody could sort or scan; this is that number's column.
+            HStack(spacing: 2) {
+                Text("IQ")
+                InfoTooltipButton(
+                    text: "Football IQ. A blue number is your own interview's read \u{2014} exact, because you sat in the room. A gold letter band is the scouting department reading tape (awareness + learning), and a dash means nobody has done either. Interview a prospect to turn the band into a number.",
+                    size: 9
+                )
+            }
+            .frame(width: 40, alignment: .center)
 
             // Always-visible: OVR (with tooltip explaining dual grade format)
             HStack(spacing: 2) {
@@ -1445,30 +1472,11 @@ struct BigBoardView: View {
 
     // MARK: - Toolbar
 
-    private var positionPicker: some View {
+    /// Board-only filters. The position chips used to live here too, in a
+    /// `.principal` toolbar item that the hub's large title suppressed — they
+    /// now sit in the hub's own bar, shared with the other tabs.
+    private var boardFilterControls: some View {
         HStack(spacing: 12) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(ProspectPositionFilter.allCases) { filter in
-                        let isSelected = positionFilter == filter
-                        Button {
-                            positionFilter = filter
-                        } label: {
-                            Text(filter.label)
-                                .font(.caption.weight(isSelected ? .heavy : .medium))
-                                .foregroundStyle(isSelected ? Color.backgroundPrimary : Color.textSecondary)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .background(
-                                    Capsule()
-                                        .fill(isSelected ? Color.accentBlue : Color.backgroundTertiary)
-                                )
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-            }
-
             // Flag filter. This was a `.pickerStyle(.menu)` Picker squeezed into
             // a 44 pt frame: the selected value wrapped mid-word and rendered as
             // a cryptic blue "A‖" glyph with no label at all. Now it is an
@@ -1970,12 +1978,12 @@ struct BigBoardRowView: View {
                     // Flag indicator (inline)
                     boardFlagIcon
 
-                    // #5: Scouting report count
-                    if prospect.scoutReportCount > 0 {
-                        Text(prospect.scoutConfidenceDots)
-                            .font(.system(size: 7))
-                            .foregroundStyle(prospect.scoutReportCount >= 3 ? Color.success : prospect.scoutReportCount >= 2 ? Color.accentBlue : Color.textTertiary)
-                    }
+                    // Prep state: reports filed / room taken / numbers measured.
+                    // Three fixed slots, dimmed when empty — the icons used to
+                    // appear only when the work HAD been done, which made the
+                    // holes in the board invisible, and the holes are the whole
+                    // question the user is scanning for.
+                    ProspectPrepChips(prospect: prospect)
 
                     // CMB badge with color coding (#7)
                     if prospect.combineInvite {
@@ -1985,11 +1993,6 @@ struct BigBoardRowView: View {
                             .padding(.horizontal, 3)
                             .padding(.vertical, 1)
                             .background(combinePerformanceColor, in: RoundedRectangle(cornerRadius: 2))
-                    }
-                    if prospect.interviewCompleted {
-                        Image(systemName: "bubble.left.and.bubble.right.fill")
-                            .font(.system(size: 7))
-                            .foregroundStyle(Color.accentBlue)
                     }
                     if let mention = prospect.combineMediaMention, !mention.isEmpty {
                         Image(systemName: "newspaper.fill")
@@ -2021,6 +2024,9 @@ struct BigBoardRowView: View {
             case .position:
                 boardPositionColumns
             }
+
+            // Always-visible: Football IQ (fogged until somebody meets him)
+            ProspectIQCell(prospect: prospect, width: 40)
 
             // Always-visible: OVR
             boardOverallBadge
@@ -2100,10 +2106,16 @@ struct BigBoardRowView: View {
 
     // MARK: - Mental Columns
 
+    /// An interview writes mental grade bands without touching `scoutedOverall`,
+    /// so this block follows the grades rather than the overall read.
+    private var hasMentalRead: Bool {
+        isScouted || !(prospect.scoutedMentalGrades ?? [:]).isEmpty
+    }
+
     private var boardMentalColumns: some View {
         // 8 columns (LRN + CMP added) — widths shrink 32 → 26 so the row fits.
         Group {
-            if isScouted {
+            if hasMentalRead {
                 boardGradeRangeMiniAttribute(key: "AWR", label: "AWR", grades: prospect.scoutedMentalGrades)
                     .frame(width: 26, alignment: .center)
                 boardGradeRangeMiniAttribute(key: "DEC", label: "DEC", grades: prospect.scoutedMentalGrades)
@@ -2481,7 +2493,7 @@ struct BigBoardRowView: View {
 // MARK: - #9: Big Board Sort Enum
 
 enum BigBoardSort: String, CaseIterable, Identifiable {
-    case boardRank, overall, position, tier, schemeFit, risk, production
+    case boardRank, overall, position, tier, schemeFit, risk, production, footballIQ
 
     var id: String { rawValue }
 
@@ -2494,6 +2506,7 @@ enum BigBoardSort: String, CaseIterable, Identifiable {
         case .schemeFit:  return String(localized: "Scheme Fit")
         case .risk:       return String(localized: "Risk Level")
         case .production: return String(localized: "College Production")
+        case .footballIQ: return String(localized: "Football IQ")
         }
     }
 
@@ -2506,6 +2519,7 @@ enum BigBoardSort: String, CaseIterable, Identifiable {
         case .schemeFit:  return "checkmark.circle"
         case .risk:       return "bolt.fill"
         case .production: return "chart.bar.xaxis"
+        case .footballIQ: return "brain.head.profile"
         }
     }
 }
@@ -2613,7 +2627,8 @@ enum DraftRoundHelper {
                     scoutedOverall: 91, scoutGrade: "A+", draftProjection: 2
                 ),
             ],
-            teamRoster: []
+            teamRoster: [],
+            positionFilter: .constant(.all)
         )
     }
 }

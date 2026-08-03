@@ -718,18 +718,40 @@ struct ProspectDetailView: View {
 
     // MARK: - Interview Results Section (Task 16: Full interview results in prospect detail)
 
+    /// Who ran the meeting and when, e.g. "HC Mike Dawson · Combine · 2027".
+    /// Silent on a legacy interview taken before attribution was recorded —
+    /// inventing a name would be worse than leaving the line off.
+    private var interviewAttributionLine: String? {
+        let who = prospect.interviewedByName
+        let when = prospect.interviewedOnLabel
+        switch (who, when) {
+        case let (who?, when?): return "\(who) \u{00B7} \(when)"
+        case let (who?, nil):   return who
+        case let (nil, when?):  return when
+        default:                return nil
+        }
+    }
+
     @ViewBuilder
     private var interviewResultsSection: some View {
         Section {
             // Header with interview grade
             HStack {
-                HStack(spacing: 6) {
-                    Image(systemName: "bubble.left.and.bubble.right.fill")
-                        .font(.subheadline)
-                        .foregroundStyle(Color.accentBlue)
-                    Text("Interview Results")
-                        .font(.headline.weight(.bold))
-                        .foregroundStyle(Color.textPrimary)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "bubble.left.and.bubble.right.fill")
+                            .font(.subheadline)
+                            .foregroundStyle(Color.accentBlue)
+                        Text("Interview")
+                            .font(.headline.weight(.bold))
+                            .foregroundStyle(Color.textPrimary)
+                    }
+                    if let attribution = interviewAttributionLine {
+                        Text(attribution)
+                            .font(.caption2)
+                            .foregroundStyle(Color.textTertiary)
+                            .lineLimit(1)
+                    }
                 }
                 Spacer()
                 if let iq = prospect.interviewFootballIQ {
@@ -815,38 +837,12 @@ struct ProspectDetailView: View {
                         .font(.caption2)
                         .foregroundStyle(Color.textTertiary)
 
-                    // Scouted Learning (LRN) grade — the playbook-absorption
-                    // half of Football IQ, graded separately by the scouts.
-                    if let learningGrade = prospect.scoutedMentalGrades?["LRN"] {
-                        HStack {
-                            Text("Learning")
-                                .font(.subheadline)
-                                .foregroundStyle(Color.textSecondary)
-                            Spacer()
-                            Text(learningGrade.displayText)
-                                .font(.body.weight(.heavy))
-                                .foregroundStyle(detailGradeColor(learningGrade.midGrade))
-                        }
-                    }
-
-                    // Scouted Competitiveness (CMP) — the interview room's read
-                    // on how he answers adversity (plan §2.1/§2.10). Drives the
-                    // pro-level motivation state machine, so it belongs beside
-                    // the football-IQ line the interview already surfaces.
-                    if let competitivenessGrade = prospect.scoutedMentalGrades?["CMP"] {
-                        HStack {
-                            Text("Competitiveness")
-                                .font(.subheadline)
-                                .foregroundStyle(Color.textSecondary)
-                            Spacer()
-                            Text(competitivenessGrade.displayText)
-                                .font(.body.weight(.heavy))
-                                .foregroundStyle(detailGradeColor(competitivenessGrade.midGrade))
-                        }
-                        Text("How he answers a bad season — and how immune he is to a payday")
-                            .font(.caption2)
-                            .foregroundStyle(Color.textTertiary)
-                    }
+                    // The mental block the room bought. An interview writes
+                    // AWR / LRN / CMP / LDR / WRK bands onto the prospect
+                    // (`ScoutingEngine.revealMentalGradesFromInterview`), and
+                    // before this row existed the only visible trace of sixty
+                    // spent slots was the single number above.
+                    interviewRevealedGradeRow
 
                     // Football IQ impact (Task 11)
                     if iq >= 85 {
@@ -969,6 +965,58 @@ struct ProspectDetailView: View {
             }
         }
         .listRowBackground(Color.backgroundSecondary)
+    }
+
+    /// The five mental attributes an interview is entitled to read, rendered as
+    /// one compact band row. Keys and order match
+    /// `ScoutingEngine.interviewRevealedMentalKeys`.
+    @ViewBuilder
+    private var interviewRevealedGradeRow: some View {
+        let labels: [String: String] = [
+            "AWR": "Awareness",
+            "LRN": "Learning",
+            "CMP": "Compete",
+            "LDR": "Leadership",
+            "WRK": "Work Ethic"
+        ]
+        let available = ScoutingEngine.interviewRevealedMentalKeys.compactMap { key -> (String, GradeRange)? in
+            guard let grade = prospect.scoutedMentalGrades?[key] else { return nil }
+            return (key, grade)
+        }
+        if !available.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("From the room")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(Color.textTertiary)
+                    .textCase(.uppercase)
+                HStack(spacing: 10) {
+                    ForEach(available, id: \.0) { key, grade in
+                        VStack(spacing: 2) {
+                            Text(grade.displayText)
+                                .font(.system(size: grade.isSingleGrade ? 15 : 12, weight: .heavy))
+                                .foregroundStyle(detailGradeColor(grade.midGrade))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
+                            Text(labels[key] ?? key)
+                                .font(.system(size: 8, weight: .medium))
+                                .foregroundStyle(Color.textTertiary)
+                                .lineLimit(1)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(detailGradeColor(grade.midGrade).opacity(0.10))
+                        )
+                    }
+                }
+                Text("A wider band means the interviewer was not sure. Compete drives how he answers a bad season; Learning drives how fast he picks up the playbook.")
+                    .font(.caption2)
+                    .foregroundStyle(Color.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.top, 2)
+        }
     }
 
     private func interviewFlagRow(color: Color, text: String) -> some View {
@@ -1748,21 +1796,43 @@ struct ProspectDetailView: View {
     private func performInterview() {
         // Use best scout's personalityRead or HC's motivation as interviewer quality
         let interviewerQuality: Int
+        let interviewerName: String
         if let bestScout = scouts.max(by: { $0.personalityRead < $1.personalityRead }) {
             interviewerQuality = bestScout.personalityRead
+            interviewerName = "Scout \(bestScout.fullName)"
         } else if let hc = coaches.first(where: { $0.role == .headCoach }) {
             interviewerQuality = hc.motivation
+            interviewerName = "HC \(hc.fullName)"
         } else {
             interviewerQuality = 50
+            interviewerName = "Scouting Staff"
         }
 
         let result = ScoutingEngine.conductInterview(
             prospect: prospect,
-            interviewerQuality: interviewerQuality
+            interviewerQuality: interviewerQuality,
+            interviewerName: interviewerName,
+            occasionLabel: interviewOccasionLabel
         )
         interviewResult = result
         career.interviewsUsed += 1
+        // The interview writes revealed mental grade bands onto the prospect,
+        // which lives in the in-memory draft class — flush it or the meeting is
+        // forgotten on relaunch.
+        WeekAdvancer.persistDraftClass(WeekAdvancer.currentDraftClass, to: modelContext)
         try? modelContext.save()
+    }
+
+    /// "Combine · 2027" — what the interview section prints under the header.
+    private var interviewOccasionLabel: String {
+        let phase: String
+        switch career.currentPhase {
+        case .combine:  phase = "Combine"
+        case .proDays:  phase = "Pro Days"
+        case .draft:    phase = "Draft Week"
+        default:        phase = "Pre-Draft"
+        }
+        return "\(phase) \u{00B7} " + String(career.currentSeason)
     }
 
     private func performWorkout() {

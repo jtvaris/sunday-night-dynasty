@@ -197,8 +197,15 @@ struct InterviewSelectionView: View {
                 Image(systemName: "sparkles")
                     .font(.system(size: 9))
                     .foregroundStyle(Color.accentGold)
-                Text("Reveals: Personality, Football IQ, Character traits")
+                Text("Reveals: Football IQ (exact) \u{00B7} Awareness, Learning, Compete, Leadership, Work Ethic grades \u{00B7} personality & character")
                     .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(Color.textTertiary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let name = interviewerRoomName {
+                Text("Interviews run by \(name)")
+                    .font(.system(size: 9))
                     .foregroundStyle(Color.textTertiary)
             }
 
@@ -718,50 +725,91 @@ struct InterviewSelectionView: View {
 
     // MARK: - Interview Logic
 
+    // MARK: - Interviewer
+
+    /// The man who actually runs the room, and how good he is at it.
+    ///
+    /// The head coach takes the meeting when there is one; otherwise the best
+    /// available coordinator. Quality is his `scoutingAbility` blended with
+    /// `motivation` — reading a twenty-two-year-old across a table is half
+    /// evaluation and half getting him to talk.
+    /// `nil` while the staff list has not loaded, so the header does not flash
+    /// a placeholder name.
+    private var interviewerRoomName: String? {
+        coaches.isEmpty ? nil : interviewer.name
+    }
+
+    private var interviewer: (name: String, quality: Int) {
+        let ranked: [CoachRole] = [.headCoach, .offensiveCoordinator, .defensiveCoordinator]
+        let coach = ranked.compactMap { role in coaches.first(where: { $0.role == role }) }.first
+            ?? coaches.first
+        guard let coach else { return (name: "Scouting Staff", quality: 50) }
+        let quality = max(1, min(99, (coach.scoutingAbility * 2 + coach.motivation) / 3))
+        return (name: "\(roleAbbreviation(coach.role)) \(coach.fullName)", quality: quality)
+    }
+
+    private func roleAbbreviation(_ role: CoachRole) -> String {
+        switch role {
+        case .headCoach:            return "HC"
+        case .offensiveCoordinator: return "OC"
+        case .defensiveCoordinator: return "DC"
+        default:                    return "Coach"
+        }
+    }
+
+    /// "Combine · 2027" — phase plus season, so a report read back in April
+    /// still says when the room happened.
+    private var occasionLabel: String {
+        let phase = career.currentPhase == .proDays ? "Pro Days" : "Combine"
+        return "\(phase) \u{00B7} " + String(career.currentSeason)
+    }
+
     private func conductInterviews() {
         var results: [InterviewResult] = []
+        let room = interviewer
 
         for prospectID in selectedProspectIDs {
             guard let prospect = prospects.first(where: { $0.id == prospectID }) else { continue }
 
-            // Reveal personality
-            let personality = prospect.truePersonality.archetype
+            // One interview engine, one set of rules. This view used to run its
+            // own football-IQ formula — floors and ceilings keyed off the draft
+            // projection, so a projected first rounder could not interview below
+            // 70 and the room told the user nothing he did not already know from
+            // the media board. `ScoutingEngine.conductInterview` reads the two
+            // attributes that actually describe football IQ (awareness +
+            // learning), applies interviewer-quality noise, and — the part that
+            // makes the slot worth spending — writes the revealed AWR / LRN /
+            // CMP / LDR / WRK grade bands onto the prospect so the Big Board's
+            // Mental tab and the new IQ column light up.
+            let outcome = ScoutingEngine.conductInterview(
+                prospect: prospect,
+                interviewerQuality: room.quality,
+                interviewerName: room.name,
+                occasionLabel: occasionLabel
+            )
 
-            // Generate football IQ scaled by draft projection tier
-            let baseMentalIQ = (prospect.trueMental.awareness + prospect.trueMental.decisionMaking) / 2
-            let projRound = prospect.draftProjection ?? 5
-            let iqFloor: Int
-            let iqCeiling: Int
-            switch projRound {
-            case 1:      iqFloor = 70; iqCeiling = 95
-            case 2...3:  iqFloor = 60; iqCeiling = 85
-            case 4...5:  iqFloor = 50; iqCeiling = 78
-            default:     iqFloor = 45; iqCeiling = 75
-            }
-            let scaledIQ = iqFloor + Int(Double(baseMentalIQ - 40) / 59.0 * Double(iqCeiling - iqFloor))
-            let iq = max(iqFloor, min(iqCeiling, scaledIQ + Int.random(in: -5...5)))
-
-            // Generate character notes
-            let notes = generateCharacterNotes(prospect: prospect, personality: personality)
-
-            // Update prospect model
-            prospect.interviewCompleted = true
-            prospect.scoutedPersonality = personality
-            prospect.interviewFootballIQ = iq
-            prospect.interviewCharacterNotes = notes
-            prospect.interviewNotes = "Personality: \(personality.displayName). Football IQ: \(iq). \(notes.joined(separator: " "))"
+            // Flavour notes stay this view's job — the engine returns terse
+            // character tags, this writes the prose the report screen shows.
+            let notes = generateCharacterNotes(prospect: prospect, personality: outcome.personality)
+            let merged = notes + outcome.characterNotes.filter { !notes.contains($0) }
+            prospect.interviewCharacterNotes = merged
+            prospect.interviewNotes = "Personality: \(outcome.personality.displayName). Football IQ: \(outcome.footballIQ). \(merged.joined(separator: " "))"
 
             results.append(InterviewResult(
                 prospect: prospect,
-                personality: personality,
-                footballIQ: iq,
-                notes: notes
+                personality: outcome.personality,
+                footballIQ: outcome.footballIQ,
+                notes: merged
             ))
         }
 
         // Update career
         career.interviewsUsed += selectedProspectIDs.count
 
+        // The revealed grade bands live on the draft class, which is held in
+        // `WeekAdvancer` rather than fetched — push them through so the board
+        // survives a relaunch instead of forgetting every meeting.
+        WeekAdvancer.persistDraftClass(WeekAdvancer.currentDraftClass, to: modelContext)
         try? modelContext.save()
 
         selectedProspectIDs.removeAll()

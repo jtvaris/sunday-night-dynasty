@@ -20,7 +20,28 @@ struct ScoutingHubView: View {
     @CareerScopedStorage("combineTripSpend") private var combineTripSpend: Int = 0
     @State private var isLoading: Bool = true
 
+    /// One position filter for the whole hub.
+    ///
+    /// Each prospect screen used to own a private copy: the Prospects tab drew
+    /// visible chips, the Big Board hid its own set in a `.principal` toolbar
+    /// item that the large navigation title suppressed, and the Combine table
+    /// had a third as a segmented picker. Tapping "QB" therefore filtered
+    /// whichever screen happened to own the control you could see, and the
+    /// filter evaporated on every tab switch. Now the chips live here and the
+    /// three tables read this binding.
+    @State private var positionFilter: ProspectPositionFilter = .all
+
     private let maxScouts = 8
+
+    /// Tabs the shared position chips apply to. The others (scouts, mock draft,
+    /// draft order, pro days, next year) are not position-filtered lists, and a
+    /// chip row above them would be a control that does nothing.
+    private var positionFilterAppliesToCurrentTab: Bool {
+        switch selectedTab {
+        case .bigBoard, .prospects, .combine: return true
+        default:                              return false
+        }
+    }
 
     var body: some View {
         ZStack {
@@ -43,6 +64,19 @@ struct ScoutingHubView: View {
                     .padding(.top, 12)
                     .padding(.bottom, 8)
 
+                DraftPrepCard(
+                    career: career,
+                    prospects: prospects,
+                    teamRoster: teamPlayers,
+                    scouts: scouts,
+                    scoutsSentToCombine: scoutsSentToCombine,
+                    scoutingBudgetRemaining: remainingScoutingBudget,
+                    onSelectTab: { selectedTab = $0 },
+                    onFilterPosition: { positionFilter = $0 }
+                )
+                .padding(.horizontal, 20)
+                .padding(.bottom, 8)
+
                 if career.currentPhase == .combine && selectedTab != .scouts {
                     sendScoutsToCombineButton
                         .padding(.horizontal, 20)
@@ -51,7 +85,13 @@ struct ScoutingHubView: View {
 
                 tabPicker
                     .padding(.horizontal, 20)
-                    .padding(.bottom, 12)
+                    .padding(.bottom, positionFilterAppliesToCurrentTab ? 6 : 12)
+
+                if positionFilterAppliesToCurrentTab {
+                    positionFilterChips
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 10)
+                }
 
                 Divider()
                     .overlay(Color.surfaceBorder)
@@ -468,6 +508,51 @@ struct ScoutingHubView: View {
         )
     }
 
+    // MARK: - Position Filter Chips (shared by Big Board / Prospects / Combine)
+
+    private var positionFilterChips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 5) {
+                ForEach(ProspectPositionFilter.allCases) { filter in
+                    let isSelected = positionFilter == filter
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            positionFilter = filter
+                        }
+                    } label: {
+                        Text(filter.label)
+                            .font(.system(size: 12, weight: isSelected ? .heavy : .medium))
+                            .foregroundStyle(isSelected ? Color.backgroundPrimary : Color.textSecondary)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(
+                                isSelected ? Color.accentBlue : Color.backgroundTertiary,
+                                in: Capsule()
+                            )
+                            .overlay(
+                                Capsule().strokeBorder(
+                                    isSelected ? Color.clear : Color.surfaceBorder,
+                                    lineWidth: 1
+                                )
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(filter == .all
+                                        ? "Show all positions"
+                                        : "Filter to \(filter.label)")
+                    .accessibilityAddTraits(isSelected ? .isSelected : [])
+                }
+            }
+        }
+        .mask(
+            HStack(spacing: 0) {
+                Color.white
+                LinearGradient(colors: [.white, .clear], startPoint: .leading, endPoint: .trailing)
+                    .frame(width: 20)
+            }
+        )
+    }
+
     // MARK: - Tab Content
 
     @ViewBuilder
@@ -487,7 +572,12 @@ struct ScoutingHubView: View {
                 onSendToCombine: { sendScoutsToCombine() }
             )
         case .prospects:
-            ProspectListView(career: career, prospects: prospects, scoutsSentToCombine: scoutsSentToCombine)
+            ProspectListView(
+                career: career,
+                prospects: prospects,
+                scoutsSentToCombine: scoutsSentToCombine,
+                positionFilter: $positionFilter
+            )
         case .bigBoard:
             BigBoardView(
                 career: career,
@@ -496,7 +586,8 @@ struct ScoutingHubView: View {
                 scoutsSentToCombine: scoutsSentToCombine,
                 // Empty-state CTAs need a way back into the hub's other tabs.
                 onSwitchTab: { selectedTab = $0 },
-                scoutCount: scouts.count
+                scoutCount: scouts.count,
+                positionFilter: $positionFilter
             )
         case .combine:
             CombineResultsView(
@@ -510,7 +601,8 @@ struct ScoutingHubView: View {
                 onSendScouts: (career.currentPhase == .combine && !scoutsSentToCombine)
                     ? { sendScoutsToCombine() }
                     : nil,
-                canAffordTrip: canAffordCombineTrip
+                canAffordTrip: canAffordCombineTrip,
+                positionFilter: $positionFilter
             )
         case .interviews:
             InterviewSelectionView(career: career)
@@ -1464,10 +1556,13 @@ struct ProDayListView: View {
         var localClass = WeekAdvancer.currentDraftClass
         guard let idx = localClass.firstIndex(where: { $0.id == prospect.id }) else { return }
 
+        let leadScout = scouts.max(by: { $0.accuracy < $1.accuracy })
         let result = ScoutingEngine.conductTop30Visit(
             prospect: &localClass[idx],
             visitingTeamID: teamID,
-            interviewerQuality: avgScoutAccuracy
+            interviewerQuality: avgScoutAccuracy,
+            interviewerName: leadScout.map { "Scout \($0.fullName)" } ?? "Scouting Staff",
+            occasionLabel: "Top-30 Visit \u{00B7} " + String(career.currentSeason)
         )
 
         career.top30VisitsUsed += 1

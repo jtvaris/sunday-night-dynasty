@@ -1335,14 +1335,87 @@ enum ScoutingEngine {
 
     // MARK: - Enhanced Interview System
 
+    /// Attributes an interview is entitled to reveal.
+    ///
+    /// A meeting is a whiteboard, a playbook install and forty minutes of
+    /// questions — it reads how a man thinks, learns, competes, leads and
+    /// prepares. It does NOT read decision-making under a live rush or
+    /// coachability across a season; those need tape, and they stay the
+    /// scouting department's job. Keys match `generateMentalGrades`.
+    static let interviewRevealedMentalKeys = ["AWR", "LRN", "CMP", "LDR", "WRK"]
+
+    /// Writes the mental grade block an interview earns onto the prospect.
+    ///
+    /// Before this existed an interview stored `interviewFootballIQ` and
+    /// nothing else, so the Big Board's Mental tab still read "?" across the
+    /// row for a prospect the user had personally sat down with — the sixty
+    /// combine slots bought a sentence on one detail screen and no data.
+    ///
+    /// Additive and idempotent-safe: an existing band is *narrowed* through
+    /// `GradeRange.incorporate` (the same progressive-confidence path a second
+    /// scouting report takes), never replaced, so an interview can no more make
+    /// the user certain of a wrong number than a report can.
+    ///
+    /// - Parameters:
+    ///   - prospect: mutated in place.
+    ///   - interviewerQuality: 1-99. Drives band width — a sharp interviewer
+    ///     comes out of the room with a single grade, a poor one with a spread.
+    static func revealMentalGradesFromInterview(
+        prospect: CollegeProspect,
+        interviewerQuality: Int
+    ) {
+        // Band half-width in grade steps: 99 quality → 0 (a single grade),
+        // 50 → 1, 25 → 2. Mirrors `generateMentalGrades`' noise ladder.
+        let halfWidth = Swift.max(0, 3 - Swift.max(0, interviewerQuality) / 33)
+        // Observation noise: the interviewer can be wrong about the centre too.
+        let noiseSteps = Swift.max(0, 3 - Swift.max(0, interviewerQuality) / 30)
+
+        func observed(_ value: Int) -> LetterGrade {
+            let truth = LetterGrade.from(numericValue: value)
+            guard noiseSteps > 0 else { return truth }
+            return truth.shifted(by: Int.random(in: -noiseSteps...noiseSteps))
+        }
+
+        let mental = prospect.trueMental
+        let sources: [String: Int] = [
+            "AWR": mental.awareness,
+            "LRN": prospect.trueLearning,
+            "CMP": prospect.trueCompetitiveness,
+            "LDR": mental.leadership,
+            "WRK": mental.workEthic
+        ]
+
+        var existing = prospect.scoutedMentalGrades ?? [:]
+        for key in interviewRevealedMentalKeys {
+            guard let value = sources[key] else { continue }
+            let grade = observed(value)
+            if var range = existing[key] {
+                range.incorporate(newGrade: grade)
+                existing[key] = range
+            } else {
+                existing[key] = GradeRange(
+                    low: grade.shifted(by: -halfWidth),
+                    high: grade.shifted(by: halfWidth),
+                    reportCount: 1
+                )
+            }
+        }
+        prospect.scoutedMentalGrades = existing
+    }
+
     /// Conduct an interview with a prospect at the combine. Reveals personality, footballIQ, and character notes.
     /// - Parameters:
     ///   - prospect: The prospect to interview (mutated in place).
     ///   - interviewerQuality: HC or scout playCalling/motivation attribute (1-99).
+    ///   - interviewerName: Who ran the meeting, stored for the detail screen's
+    ///     attribution line. Defaulted so existing call sites keep compiling.
+    ///   - occasionLabel: When/where it happened ("Combine \u{00B7} 2027").
     /// - Returns: Tuple of revealed personality, footballIQ, and character notes.
     static func conductInterview(
         prospect: CollegeProspect,
-        interviewerQuality: Int
+        interviewerQuality: Int,
+        interviewerName: String? = nil,
+        occasionLabel: String? = nil
     ) -> (personality: PersonalityArchetype, footballIQ: Int, characterNotes: [String]) {
         // 1. Reveal personality with noise based on interviewer quality
         let personalityRoll = Int.random(in: 1...100)
@@ -1404,6 +1477,12 @@ enum ScoutingEngine {
         prospect.interviewFootballIQ = footballIQ
         prospect.interviewCharacterNotes = characterNotes
         prospect.interviewNotes = characterNotes.joined(separator: ". ") + "."
+        if let interviewerName { prospect.interviewedByName = interviewerName }
+        if let occasionLabel { prospect.interviewedOnLabel = occasionLabel }
+
+        // 5. The room's real payload: the mental attribute block. Without this
+        // the interview wrote one hidden integer and the board learned nothing.
+        revealMentalGradesFromInterview(prospect: prospect, interviewerQuality: interviewerQuality)
 
         return (personality: revealedPersonality, footballIQ: footballIQ, characterNotes: characterNotes)
     }
@@ -3074,7 +3153,9 @@ enum ScoutingEngine {
     static func conductTop30Visit(
         prospect: inout CollegeProspect,
         visitingTeamID: UUID,
-        interviewerQuality: Int
+        interviewerQuality: Int,
+        interviewerName: String? = nil,
+        occasionLabel: String? = nil
     ) -> Top30VisitResult {
         // 1. Mark as visited by this team (idempotent).
         if !prospect.top30VisitedByTeams.contains(visitingTeamID) {
@@ -3082,10 +3163,16 @@ enum ScoutingEngine {
         }
 
         // 2. Deep interview — reuse the existing interview engine.
-        let interview = conductInterview(prospect: prospect, interviewerQuality: interviewerQuality)
+        let interview = conductInterview(
+            prospect: prospect,
+            interviewerQuality: interviewerQuality,
+            interviewerName: interviewerName,
+            occasionLabel: occasionLabel ?? "Top-30 Visit"
+        )
         // conductInterview already mutates interviewCompleted, scoutedPersonality,
-        // interviewFootballIQ, interviewCharacterNotes, interviewNotes. We pass
-        // a copy via the non-inout overload, then re-apply onto the inout binding.
+        // interviewFootballIQ, interviewCharacterNotes, interviewNotes and the
+        // revealed mental grade block. We pass a copy via the non-inout overload,
+        // then re-apply onto the inout binding.
         prospect.interviewCompleted = true
         prospect.scoutedPersonality = interview.personality
         prospect.interviewFootballIQ = interview.footballIQ

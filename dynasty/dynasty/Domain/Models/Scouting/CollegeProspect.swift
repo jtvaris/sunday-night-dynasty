@@ -74,6 +74,18 @@ final class CollegeProspect {
     var interviewFootballIQ: Int?
     var interviewCharacterNotes: [String]?
 
+    /// Who ran the meeting ("HC Mike Dawson", "Chief Scout R. Collins").
+    /// The interview section used to render its findings with no attribution at
+    /// all, which made a good read and a bad read look identical — the whole
+    /// point of a low-quality interviewer is that you should discount him.
+    /// Optional stored property with a nil default, never in `init` → safe
+    /// lightweight migration (see the generator-v2 block below).
+    var interviewedByName: String? = nil
+
+    /// When it happened, in prose ("Combine \u{00B7} 2027"). `nil` on an
+    /// interview conducted before attribution was recorded.
+    var interviewedOnLabel: String? = nil
+
     // MARK: - Evaluation Status
 
     var combineInvite: Bool
