@@ -481,7 +481,10 @@ struct CoachedGameView: View {
         }
         .statusBarHidden()
         .onAppear(perform: startGame)
-        .onDisappear { AudioDirector.shared.endMatch() }
+        .onDisappear {
+            AudioDirector.shared.endMatch()
+            CrowdReactor.shared.matchDidEnd()
+        }
         .onReceive(playClockTicker) { _ in tickPlayClock() }
         .onChange(of: shown.timeRemaining) { _, remaining in
             // FIX-1: fire the two-minute-warning chip when the clock *visibly*
@@ -3240,8 +3243,11 @@ struct CoachedGameView: View {
         revealHUD()
 
         // R34 audio: preload every SFX voice before the first snap and bring
-        // the stadium bed up under the opening kickoff.
+        // the stadium bed up under the opening kickoff. The reaction layer
+        // arms with it — it takes the HOME crowd's side all game, whichever
+        // bench the coach is standing on.
         AudioDirector.shared.startMatch(initialIntensity: crowdIntensity())
+        CrowdReactor.shared.matchDidStart()
 
         // Scrimmage framing: the persisted Coach/Broadcast choice (billboard
         // numbers hide in the coach shot). No refocus yet — the opening
@@ -3344,6 +3350,7 @@ struct CoachedGameView: View {
         // Halftime: pause the flow on the report card before the second-half
         // kickoff. Dismissing it re-enters proceed() and runs the kick.
         if engine.halftimePending {
+            AudioDirector.shared.play(.whistle)   // the horn's pea whistle: period over
             withAnimation(.easeInOut(duration: 0.3)) { showHalftime = true }
             return
         }
@@ -3351,6 +3358,7 @@ struct CoachedGameView: View {
         // decision flags). Dismissing re-enters proceed(). With the Settings
         // toggle off the flag just clears and the flow plays on.
         if engine.quarterBreakPending {
+            AudioDirector.shared.play(.whistle)   // end of the period
             if quarterReportsEnabled {
                 withAnimation(.easeInOut(duration: 0.3)) { showQuarterReport = true }
                 return
@@ -3515,7 +3523,9 @@ struct CoachedGameView: View {
                 revealHUD()
                 if event.isReturnTouchdown {
                     AudioDirector.shared.play(.tdHorn)
-                    AudioDirector.shared.play(.crowdSwell)
+                    // The returning team is the one that did NOT kick.
+                    CrowdReactor.shared.kickoffReturnTouchdown(
+                        returningTeamIsHome: !event.kickingTeamIsHome)
                 } else {
                     AudioDirector.shared.play(.whistle)
                 }
@@ -3693,6 +3703,18 @@ struct CoachedGameView: View {
                                           bodyTypesHome: presnapBuilds.home, bodyTypesAway: presnapBuilds.away,
                                           holdStance: true)
 
+        // The count. Only on a real scrimmage snap (a kicking unit does not
+        // bark a cadence) and only some of the time — AudioDirector rolls the
+        // dice so a game does not turn into one voice on a loop. It starts
+        // here, in the 1.15 s pre-snap window, and bleeds a beat past the
+        // snap the way a live cadence does.
+        switch play.playType {
+        case .run, .pass, .twoPointConversion:
+            AudioDirector.shared.playCadence()
+        default:
+            break
+        }
+
         // Markers stay on THIS play's line/1st-down through the animation.
         let playLosZ = PlayChoreographer.losZ(yardLine: losYard, offenseIsHome: offenseIsHome)
         let playDir: Float = offenseIsHome ? 1 : -1
@@ -3785,19 +3807,21 @@ struct CoachedGameView: View {
         // down/distance/possession right here as the ball-carrier is tackled.
         revealHUD(situation: engine.pendingKickoff == nil && engine.pendingConversion == nil)
 
-        // R34 audio: the result stings — horn on six, whistle otherwise,
-        // and the crowd swells for scores and takeaways. The bed then
-        // re-levels to the new situation (red zone, crunch time).
+        // R34 audio: the result stings — horn on six, whistle otherwise.
+        // The crowd's own answer (cheer / boo / gasp / chant) is decided by
+        // CrowdReactor from the HOME side of the ball; `possessionBefore` is
+        // the engine's `homeHasPossession` as it stood at the snap. The bed
+        // then re-levels to the new situation (red zone, crunch time).
         if play.pointsScored >= 6 {
             AudioDirector.shared.play(.tdHorn)
-            AudioDirector.shared.play(.crowdSwell)
         } else {
             AudioDirector.shared.play(.whistle)
-            if play.outcome == .fieldGoalGood || play.outcome == .twoPointGood
-                || play.isTurnover {
-                AudioDirector.shared.play(.crowdSwell)
-            }
         }
+        CrowdReactor.shared.playResolved(
+            play,
+            offenseWasHome: possessionBefore,
+            homePlayerInjured: engine.lastPlayInjuries.contains { $0.isHomeTeam }
+        )
         AudioDirector.shared.setCrowdIntensity(crowdIntensity())
 
         // The back judge sells the result: touchdown arms for scores, the

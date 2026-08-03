@@ -3403,10 +3403,14 @@ class FootballFieldScene: SCNScene {
     private func playStepAudio(_ step: PlayStep) {
         if let cue = step.sound { AudioDirector.shared.play(cue) }
         // Contact: one thud per contact beat (gang tackles share it); a big
-        // hit hits harder and pulls the crowd up with the camera bump.
+        // hit hits harder, drags a grunt out of the man on the ground and
+        // pulls the crowd up with the camera bump. Node indices 0-10 are the
+        // home eleven and 11-21 the visitors, which is all the reaction layer
+        // needs to know whose fans just winced.
         if !step.bigHits.isEmpty {
             AudioDirector.shared.play(.hitBig)
-            AudioDirector.shared.play(.crowdSwell)
+            AudioDirector.shared.play(.grunt)
+            CrowdReactor.shared.bigHit(victimIsHome: step.bigHits.contains { $0 < 11 })
         } else if !step.falls.isEmpty || !step.wraps.isEmpty || !step.diveFalls.isEmpty {
             AudioDirector.shared.play(.hitLight)
         }
@@ -3414,7 +3418,24 @@ class FootballFieldScene: SCNScene {
         case .snap:
             AudioDirector.shared.play(.snap)
             pendingCatchNodes = []
-        case .arc:
+        case .arc(_, let apex, _, let from):
+            // A thrown ball names its passer; a kick's arc leaves the ground
+            // with `from == nil` and gets its boot from the step's own cue.
+            // The whoosh has to wait out the throwing motion (see the
+            // matching `launchDelay` in `execute`) or it fires while the arm
+            // is still going back.
+            if from != nil {
+                let delay = apex > 2.0 ? Self.throwWindup : 0
+                let generation = playGeneration
+                if delay > 0 {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                        guard let self, self.playGeneration == generation else { return }
+                        AudioDirector.shared.play(.throwWhoosh)
+                    }
+                } else {
+                    AudioDirector.shared.play(.throwWhoosh)
+                }
+            }
             pendingCatchNodes = Set(step.reaches)
         case .carry(let nodeIndex), .carryChest(let nodeIndex):
             if pendingCatchNodes.contains(nodeIndex) {

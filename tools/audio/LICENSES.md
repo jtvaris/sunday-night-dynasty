@@ -106,16 +106,84 @@ unusual terms, record the exception in the table below.
 
 ---
 
-## Shipped files
+## SHIPPED — `dynasty/dynasty/Resources/Audio/`
 
-**Still nothing in `dynasty/dynasty/Resources/`.** Stage 2 masters candidates
-into `approved/` and `gen/` only; the copy into the app bundle happens after
-the user picks takes from `review_audio_v2.html`. Update this section in the
-same commit that adds the assets.
+**Status: SHIPPED.** These are the exact files inside the app bundle. Every one
+is rendered by `tools/audio/ship_audio.py`, which is the only thing allowed to
+write this folder — delete a file and re-run the script to get it back
+bit-identical. The `Window from source` column is the trim the script applies,
+so any entry can be traced back to the mastered source in `approved/` or `gen/`
+and from there to its Sonniss original or its generation seed.
 
-| Shipped path | Category | Source | Licence |
-|---|---|---|---|
-| _(none yet)_ | | | |
+Two licence families are in play, both already analysed in full below:
+
+- **Sonniss GDC bundle** — royalty-free commercial use, no attribution
+  required, no reselling as sound packs, no AI-training use. See
+  *License summary* above.
+- **Stability AI Community License** (Stable Audio Open 1.0) — free for
+  commercial use under 1 M USD annual revenue; model **output** is explicitly
+  not a Derivative Work. See *Generated SFX* below, including the note about
+  the wrapper repo's stale non-commercial `LICENSE_MODEL` file.
+- **Original work** — three procedural cues from
+  `tools/asset-pipeline/generate_audio.sh` (ffmpeg sine/noise chains) that the
+  recorded set had no replacement for. `snap` and `td_horn` are still
+  triggered; `crowd_loop` is the bed fallback in `AudioDirector.preload()`.
+
+### Format policy
+
+16-bit PCM WAV at 48 kHz throughout (the three procedural leftovers stay at
+their original 44.1 kHz — `AVAudioPlayer` makes no format assumption, see
+`AudioDirector.assetURL` / `preload`). Channel count is chosen per role against
+the 25 MB budget: **one-shot SFX mono** (point-source transients, stereo buys
+nothing on a 0.3 s thud), **crowd reactions stereo** (the width is the whole
+reason for using real stadium captures), **crowd bed mono** (biggest file by
+far, plays at 15–60 % of master under everything, where centre placement is
+inaudible — trading its width is what keeps the reactions stereo).
+
+### Retired in this pass
+
+`catch_pop.wav`, `hit_big.wav`, `hit_light.wav`, `kick_thump.wav`,
+`whistle.wav` and `crowd_swell.wav` were procedural placeholders fully
+superseded by recorded takes. `ship_audio.py` deletes them on every run.
+
+| Shipped file | Dur | Ch | KB | Window from source | Source | Licence |
+|---|---:|---:|---:|---|---|---|
+| `sfx_catch_1.wav` | 0.35s | 1 | 33 | 0.00–0.35s | Stable Audio Open 1.0, seed `20316989` (`catch_take2_v2`) | Stability AI Community |
+| `sfx_catch_2.wav` | 0.40s | 1 | 38 | 0.00–0.40s | Stable Audio Open 1.0, seed `20371669` (`catch_take3`) | Stability AI Community |
+| `sfx_catch_3.wav` | 0.30s | 1 | 28 | 0.00–0.30s | Stable Audio Open 1.0, seed `20379588` (`catch_take4`) | Stability AI Community |
+| `sfx_catch_4.wav` | 0.35s | 1 | 33 | 0.00–0.35s | Stable Audio Open 1.0, seed `20395426` (`catch_take6`) | Stability AI Community |
+| `sfx_kick_place_1.wav` | 0.45s | 1 | 42 | 0.00–0.45s | Stable Audio Open 1.0, seed `20316236` (`kick_place_take2`) | Stability AI Community |
+| `sfx_kick_place_2.wav` | 0.40s | 1 | 38 | 0.00–0.40s | Stable Audio Open 1.0, seed `20324155` (`kick_place_take3`) | Stability AI Community |
+| `sfx_kick_place_3.wav` | 0.45s | 1 | 42 | 0.00–0.45s | Stable Audio Open 1.0, seed `20347912` (`kick_place_take6`) | Stability AI Community |
+| `sfx_kick_punt_1.wav` | 0.45s | 1 | 42 | 0.00–0.45s | Stable Audio Open 1.0, seed `20260803` (`kick_punt_take1`) | Stability AI Community |
+| `sfx_kick_punt_2.wav` | 0.35s | 1 | 33 | 0.00–0.35s | Stable Audio Open 1.0, seed `20276641` (`kick_punt_take3`) | Stability AI Community |
+| `sfx_throw_1.wav` | 0.40s | 1 | 38 | 0.00–0.40s | Stable Audio Open 1.0, seed `20427102` (`throw_whoosh_take4`) | Stability AI Community |
+| `sfx_throw_2.wav` | 0.30s | 1 | 28 | 0.00–0.30s | Stable Audio Open 1.0, seed `20442940` (`throw_whoosh_take6`) | Stability AI Community |
+| `sfx_tackle_1.wav` | 0.45s | 1 | 42 | 0.00–0.45s | Stable Audio Open 1.0, seed `20450859` (`tackle_impact_take1`) | Stability AI Community |
+| `sfx_tackle_2.wav` | 0.60s | 1 | 56 | 0.00–0.60s | Stable Audio Open 1.0, seed `20466697` (`tackle_impact_take3`) | Stability AI Community |
+| `sfx_whistle_1.wav` | 0.95s | 1 | 89 | 0.00–0.95s | Stable Audio Open 1.0, seed `20545887` (`whistle_take5`) | Stability AI Community |
+| `sfx_cadence_1.wav` | 3.05s | 1 | 286 | 0.00–3.05s | Stable Audio Open 1.0, seed `20577563` (`shouts_cadence1`) | Stability AI Community |
+| `sfx_grunt_1.wav` | 0.40s | 1 | 38 | 0.00–0.40s | Stable Audio Open 1.0, seed `20601320` (`shouts_grunt1`) | Stability AI Community |
+| `sfx_grunt_2.wav` | 0.30s | 1 | 28 | 0.00–0.30s | Stable Audio Open 1.0, seed `20617158` (`shouts_grunt3`) | Stability AI Community |
+| `crowd_cheer_1.wav` | 5.60s | 2 | 1050 | 0.00–5.60s | Sonniss GDC 2019 p7of8 — 2496SoundEffects - Surround At The Show 1 — `Crowd Cheering Interior Short Swell 2, The Forum Stadium, Applause _STEREO.wav` | Sonniss GDC bundle |
+| `crowd_cheer_2.wav` | 7.10s | 2 | 1332 | 0.45–7.55s | Sonniss GDC 2019 p7of8 — 2496SoundEffects - Surround At The Show 1 — `Crowd Cheering Exterior, Big Surge, Rose Bowl Stadium, Applause _5.1.wav` | Sonniss GDC bundle |
+| `crowd_cheer_3.wav` | 5.80s | 2 | 1088 | 154.20–160.00s | Sonniss GDC 2019 p7of8 — 2496SoundEffects - Surround At The Show 1 — `Crowd Cheering Exterior, Close Cheers, Encore Call, Rose Bowl Stadium, Applause _5.1.wav` | Sonniss GDC bundle |
+| `crowd_boo_1.wav` | 6.20s | 2 | 1163 | 11.60–17.80s | Sonniss GDC 2020 p11of14 — Sonic Bat - Soccer Stadium Ambience — `SBssa_Crowd Booing 002.wav` | Sonniss GDC bundle |
+| `crowd_boo_2.wav` | 5.50s | 2 | 1031 | 1.20–6.70s | Stable Audio Open 1.0, seed `20625077` (`crowd_boo_extra_take1`) | Stability AI Community |
+| `crowd_boo_3.wav` | 5.70s | 2 | 1069 | 0.30–6.00s | Stable Audio Open 1.0, seed `20632996` (`crowd_boo_extra_take2`) | Stability AI Community |
+| `crowd_boo_4.wav` | 5.80s | 2 | 1088 | 0.70–6.50s | Stable Audio Open 1.0, seed `20640915` (`crowd_boo_extra_take3`) | Stability AI Community |
+| `crowd_gasp_1.wav` | 4.20s | 2 | 788 | 0.20–4.40s | Sonniss GDC 2020 p1of14 — Articulated Sounds - Bali Ubud Village Ambiences — `CROWD Reaction, Small Applause 03, 20 People, Bali, Indonesia.wav` | Sonniss GDC bundle |
+| `crowd_gasp_2.wav` | 2.80s | 2 | 525 | 0.25–3.05s | Stable Audio Open 1.0, seed `20656753` (`crowd_gasp_extra_take1`) | Stability AI Community |
+| `crowd_gasp_3.wav` | 3.80s | 2 | 713 | 0.40–4.20s | Stable Audio Open 1.0, seed `20680510` (`crowd_gasp_extra_take4`) | Stability AI Community |
+| `crowd_chant_1.wav` | 8.00s | 2 | 1500 | 8.00–16.00s | Sonniss GDC 2020 p11of14 — Sonic Bat - Soccer Stadium Ambience — `SBssa_Crowd Chanting 019.wav` | Sonniss GDC bundle |
+| `crowd_chant_2.wav` | 5.20s | 2 | 975 | 1.80–7.00s | Stable Audio Open 1.0, seed `20696348` (`crowd_chant_extra_take2`) | Stability AI Community |
+| `crowd_chant_3.wav` | 5.00s | 2 | 938 | 1.20–6.20s | Stable Audio Open 1.0, seed `20704267` (`crowd_chant_extra_take3`) | Stability AI Community |
+| `crowd_bed_talking.wav` | 80.00s | 1 | 7500 | 32.00–112.00s + 3s loop x-fade | Sonniss GDC 2020 p11of14 — Sonic Bat - Soccer Stadium Ambience — `SBssa_Crowd Talking 010.wav` | Sonniss GDC bundle |
+| `crowd_loop.wav` | 8.00s | 1 | 689 | — (unchanged) | Procedural — `tools/asset-pipeline/generate_audio.sh` (ffmpeg sine/noise) | Original work |
+| `snap.wav` | 0.12s | 1 | 10 | — (unchanged) | Procedural — `tools/asset-pipeline/generate_audio.sh` (ffmpeg sine/noise) | Original work |
+| `td_horn.wav` | 1.38s | 1 | 119 | — (unchanged) | Procedural — `tools/asset-pipeline/generate_audio.sh` (ffmpeg sine/noise) | Original work |
+
+**Total shipped audio: 21.98 MB** across 34 files (budget 25 MB).
 
 ---
 
@@ -221,8 +289,9 @@ game is distribution of *output*, not of the model.
 
 Prompts, seeds and per-take loudness live in `gen/manifest.json`; the raw
 47 s model returns plus a JSON sidecar per take are in `gen_raw/` so any take
-is reproducible from its seed. Nothing here is shipped until the user picks
-takes from `review_audio_v2.html`.
+is reproducible from its seed. The user picked 24 of these from
+`review_audio_v2.html` (`selections_round2.tsv`); the ones that actually ship,
+and the seed behind each, are listed in **SHIPPED** above.
 
 | Category | Takes | Why generated rather than sourced |
 |---|---|---|

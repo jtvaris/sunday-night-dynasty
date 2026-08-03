@@ -2774,7 +2774,7 @@ struct PlayChoreographer {
             catchStyles: [returner: .overShoulder],
             blockStyles: styles,
             startDelays: bootDelays,
-            sound: .kickThump
+            sound: .kickPunt
         ))
         // Catch and the short return: one juke feint off the catch while the
         // gunners close; the trailing release wave keeps coming but arrives
@@ -2832,7 +2832,7 @@ struct PlayChoreographer {
                 moves: lineSurgeMoves(c, p: 0.8, d: 0.5),
                 ballMove: .arc(to: SCNVector3(clampX(targetX), targetY, postZ), apex: 8, duration: 1.6, from: nil),
                 duration: 1.7,
-                sound: .kickThump
+                sound: .kickPlace
             ),
             Step(moves: [], ballMove: nil, duration: 0.45),
         ]
@@ -2930,7 +2930,7 @@ struct PlayChoreographer {
             duration: hang,
             reaches: [returner],
             kicker: kBase,   // the kickoff specialist swings through the tee
-            sound: .kickThump
+            sound: .kickPlace
         ))
 
         if isTouchback {
