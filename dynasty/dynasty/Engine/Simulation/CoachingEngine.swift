@@ -331,7 +331,18 @@ enum CoachingEngine {
     /// 0.60 and a first-year player at ~0.54 — the level at which the measured
     /// quality pyramid matches the one the harness was calibrated on.
     /// Measured, not argued: see the `career` scenario's SCHEME FIT block.
-    static let schemeFitNeutral = 0.59
+    ///
+    /// **0.590 → 0.594 by task #66, to HOLD that level, not to move it.** This is
+    /// the LEVEL knob; `schemeFitFamiliarityPivot` is the knob that zeroes the
+    /// playbook term's mean. Re-anchoring the pivot on the new familiarity
+    /// equilibrium (52 → 60) removed a +0.0035 offset the old, stale pivot had
+    /// been quietly handing the whole league, which would have dropped the
+    /// measured fit mean from 0.596 to 0.592 and deflated the potential ratchet
+    /// with it. Absorbing that residual here is what keeps the P1 pyramid
+    /// calibration — and every §6.9 band it is asserted against — exactly where
+    /// it was measured. Verified: fit mean 0.596 before the wave; 0.596 / 0.598 /
+    /// 0.599 / 0.599 over four runs after, against a run-to-run sd of ~0.002.
+    static let schemeFitNeutral = 0.594
 
     /// How hard a TRAIT edge moves the fit. The edge is a difference of two
     /// `schemeFit` scores and measures sd 0.097 across the league, so this gain
@@ -356,6 +367,39 @@ enum CoachingEngine {
     /// the seasons `PlayerDevelopmentEngine` lets a ceiling still matter. It
     /// belongs in the number (a room that does not know the playbook is not
     /// getting the most out of anybody) but it does not belong in charge of it.
+    ///
+    /// **Task #66 left this at 0.25 on purpose, and the sd above is now 0.036.**
+    /// That wave raised the familiarity mean by lifting its LOW tail (intake
+    /// mean 33 → 44, early-career learn rate up), so the league went from mean
+    /// 53.9 / sd 16.0 to mean 60.5 / sd 14.4 and this half's contribution fell
+    /// 0.040 → 0.036. Restoring the declared 0.040 is one multiplication away
+    /// (0.28 · 14.4 / 100), and it was measured and rejected: the gain does not
+    /// move the playbook half in isolation, it moves the TOTAL fit spread, and
+    /// the note on `schemeFitTraitGain` directly above says what a wider fit
+    /// spread does — it pushes both pyramid tails out. Measured over four
+    /// `career` runs each, the §8 sub-65 share came out 24.55 % at 0.25 against
+    /// 24.81 % at 0.28.
+    ///
+    /// **What that measurement does and does not settle.** When it was taken,
+    /// `career` 6.9d's upper edge was 25, so 0.28 read as an outright gate
+    /// failure. The SAME wave then moved that edge to 26 — for its own reason,
+    /// a measured run-to-run sd of ~0.35 pp against an edge sitting 1 sd out —
+    /// and under the widened band 24.81 passes. So the honest statement is:
+    /// 0.28 is no longer REJECTED by 6.9d, it is merely WORSE on it, by 0.26 pp
+    /// in the direction the band exists to guard, on a statistic whose
+    /// between-league se the scenario now prints next to it. The gain stays at
+    /// 0.25 on that ranking plus the `schemeFitTraitGain` argument above — the
+    /// total fit spread is the thing being bought, and buying it costs depth —
+    /// and NOT on the claim that a gate forbids the alternative. If 6.9d's edge
+    /// is ever re-derived again, this decision is a ranking between two green
+    /// runs and can be revisited without re-reading the band.
+    ///
+    /// The league genuinely
+    /// has less variance in "how well rooms know their playbook" now, because
+    /// rooms genuinely know their playbook better; inflating the gain to hide
+    /// that would buy a cosmetic sd back and spend the §8 depth band for it.
+    /// The `fit spread split` line of the `career` scenario prints both halves
+    /// every run, so the number stays checkable rather than declared.
     static let schemeFitFamiliarityGain = 0.25
 
     /// The familiarity level treated as par — the ONE fitted constant here.
@@ -369,10 +413,41 @@ enum CoachingEngine {
     /// generator-seeded veterans retire, which is exactly the 0.52 → 0.39 slide
     /// task #54 exists to remove.
     ///
-    /// Deliberately just under `VersatilityDevelopmentEngine.unusedSchemeFloor`:
-    /// a player who has genuinely played a system and let it go still reads at
-    /// or above par for it.
-    static let schemeFitFamiliarityPivot = 52.0
+    /// **Moved 52 → 60 by task #66, and it moved because the equilibrium did.**
+    /// That wave lifted the league's measured familiarity steady state from 53.9
+    /// to 60.6 (`DraftEngine.rookieFamiliarityFloor` has the arithmetic), because
+    /// 53.9 sat UNDER `PlaySimulator.famBustPivot` and left every club in the
+    /// game permanently in the blown-assignment regime. This constant is defined
+    /// as that steady state, so leaving it at 52 would have quietly turned the
+    /// playbook term back into a LEVEL — every average player reading +0.02 fit
+    /// for being average — which is the exact defect #54 removed. Rounded DOWN
+    /// from the measured 60.6 to the whole point, so par is never above what a
+    /// steady-state roster actually carries.
+    ///
+    /// **Net effect on the AGGREGATE fit distribution: none** (mean 0.596 →
+    /// 0.591, sd 0.176 → 0.175), which is the point — the development
+    /// calibration downstream is untouched.
+    ///
+    /// **Net effect at a FIXED familiarity: −0.016, and that is not nothing.**
+    /// The pivot move and the compensating `schemeFitNeutral` bump cancel only
+    /// at the new equilibrium; the formula itself now reads
+    /// `0.594 − 0.25·60/100` where it read `0.590 − 0.25·52/100`, i.e. 0.016
+    /// lower for the same player. Concretely, an install-year room seeded at
+    /// `VersatilityDevelopmentEngine.installBaselineCap` (50) reads **0.569**
+    /// where it read 0.585. That is deliberate — the cap was kept at 50
+    /// precisely so an install year sits below the bust pivot and below par —
+    /// but it means the install-year and coordinator-carousel penalty got
+    /// materially harsher in the same wave, and any roster NOT sitting at
+    /// equilibrium (a save's first seasons, a rebuilding club, the season after
+    /// a staff change) carries the −0.016 until it converges. The aggregate is
+    /// stationary; individual clubs are not.
+    ///
+    /// It is no longer under `VersatilityDevelopmentEngine.unusedSchemeFloor`
+    /// (55), and that is correct rather than a regression: the floor is what a
+    /// player retains of a system his club STOPPED running, and "rusty" should
+    /// read a little below par, not at it. The old ordering was a coincidence of
+    /// the old, too-low equilibrium.
+    static let schemeFitFamiliarityPivot = 60.0
 
     /// Reporting band. Kept off the 0/1 rails so neither end of
     /// `updatePotentialRealization`'s ladder can be reached by clamping alone.

@@ -1,0 +1,51 @@
+{
+  "_comment": "Regenerate with: python3 tools/lint/design_tokens.py --update-baseline",
+  "allowed": {
+    "font": 6,
+    "radius": 0,
+    "ratingfn": 0,
+    "spacing": 0
+  },
+  "counts": {
+    "font": 675,
+    "radius": 519,
+    "ratingfn": 21,
+    "spacing": 2681
+  },
+  "font_below_floor": 486,
+  "ladders": {
+    "font": [
+      10.0,
+      11.0,
+      12.0,
+      14.0,
+      16.0,
+      18.0,
+      22.0,
+      28.0,
+      36.0,
+      48.0
+    ],
+    "radius": [
+      0.0,
+      4.0,
+      8.0,
+      12.0
+    ],
+    "spacing": [
+      0.0,
+      4.0,
+      8.0,
+      12.0,
+      16.0,
+      24.0,
+      32.0
+    ]
+  },
+  "total": {
+    "font": 1984,
+    "radius": 772,
+    "ratingfn": 21,
+    "spacing": 5261
+  }
+}

@@ -168,6 +168,13 @@ enum VersatilityDevelopmentEngine {
     /// Hard cap on `installBaseline`. Deliberately UNDER `unusedSchemeFloor`:
     /// day one of an install can never leave a player knowing a new system
     /// better than the floor he keeps under one he has actually played.
+    ///
+    /// Kept at 50 through task #66 even though the league equilibrium moved to
+    /// 60.5, and that is the point of an install year: a room that has just been
+    /// handed a new playbook is supposed to sit BELOW
+    /// `PlaySimulator.famBustPivot` (55) and bust assignments until it learns.
+    /// Before #66 the equilibrium was 53.9, so the whole league lived where an
+    /// install year is meant to put you and the penalty measured nothing.
     static let installBaselineCap = 50
 
     /// What a player already knows about a system his building has never taught
@@ -182,6 +189,24 @@ enum VersatilityDevelopmentEngine {
     /// system he just stopped running never falls below 55. That asymmetry is
     /// what made the shipped scheme-fit distribution slide season after season
     /// (task #54): every carousel year dumped another cohort onto a hard 0.
+    ///
+    /// ### Consistency with the draft-day intake (task #66)
+    ///
+    /// This function and `DraftEngine.initializeRookieFamiliarity` answer the
+    /// same question for the same man — *what does he know about a playbook
+    /// nobody in this building has taught him yet* — so they have to agree, or
+    /// the answer depends on the irrelevant question of whether he was drafted
+    /// by this club or arrived by trade / UDFA / practice-squad promotion. For a
+    /// league-typical rookie (learning 65, coachability 70, deepest system = the
+    /// 44 he was seeded with):
+    ///
+    ///     installBaseline = 12 + 0.18·65 + 0.06·70 + 0.30·44 = 41
+    ///     intake          = 20 + 0.20·readiness + 0.15·learning ≈ 44
+    ///
+    /// — 3 points apart, with the traded/undrafted man slightly lower, which is
+    /// the right sign. Before #66 raised the intake floor the two read 38 and 33:
+    /// the same rookie was better off being traded than being kept, and the
+    /// discrepancy pointed the wrong way. Whichever number moves next, move both.
     static func installBaseline(player: Player) -> Int {
         let aptitude = installBaselineFloor
             + Double(player.learning) * installBaselineLearningWeight
@@ -212,6 +237,39 @@ enum VersatilityDevelopmentEngine {
     }
 
     // MARK: - Scheme Learning
+
+    /// Extra `learnScheme` throughput a player gets in his FIRST pro season, on
+    /// top of everything else — **the RATE half of the task #66 equilibrium
+    /// fix** (`DraftEngine.rookieFamiliarityFloor` is the intake half).
+    ///
+    /// Football reason: a first- or second-year player lives in the install in a
+    /// way a nine-year veteran does not. Rookie minicamp, the extra OTA
+    /// allotment, the classroom hours a coordinator spends on the players who
+    /// have never heard the words before — none of that is optional for him and
+    /// all of it is on top of the reps the whole roster takes. By year four he
+    /// is one of the men teaching it, and the bonus is gone.
+    ///
+    /// Balance reason: the league's familiarity mean is dragged down almost
+    /// entirely by its youngest cohort (measured, `career` scenario: yp0 sat 20+
+    /// points under the veteran level). Scaling the RATE for everyone would
+    /// have lifted the whole distribution including the 90-familiarity tail that
+    /// is already capped, i.e. it would have bought the mean by flattening the
+    /// difference between a drilled room and a raw one. Targeting the cohort
+    /// that is actually low keeps the SPREAD — and therefore keeps
+    /// `CoachingEngine.rosterSchemeFit`'s playbook term discriminating.
+    static let earlyCareerLearnBonus = 0.35
+
+    /// Seasons over which `earlyCareerLearnBonus` tapers linearly to nothing.
+    /// `yearsPro` 0 → ×1.35, 1 → ×1.26, 2 → ×1.18, 3 → ×1.09, 4+ → ×1.00.
+    static let earlyCareerLearnWindow = 4
+
+    /// The taper itself. Pure function of `yearsPro`, so it is quotable from the
+    /// harness and from the equilibrium derivation without a `Player` in hand.
+    static func earlyCareerLearnMultiplier(yearsPro: Int) -> Double {
+        guard yearsPro < earlyCareerLearnWindow else { return 1.0 }
+        let remaining = Double(earlyCareerLearnWindow - max(0, yearsPro))
+        return 1.0 + earlyCareerLearnBonus * remaining / Double(earlyCareerLearnWindow)
+    }
 
     /// Develop a player's scheme familiarity.
     /// Returns the familiarity points gained this cycle.
@@ -258,6 +316,12 @@ enum VersatilityDevelopmentEngine {
         // awareness ~69.5 gave 0.993, league-typical learning ~69.5 gives 1.069
         // (+7.7 %, inside the ±10 % class-average guard).
         learningRate *= Double(player.learning) / 65.0
+
+        // Early-career install hours (task #66). Applied LAST so it multiplies
+        // the headroom term rather than being swallowed by it: the point is to
+        // let a young player close the gap to 100 faster, not to give him a flat
+        // bonus he keeps once he has already closed it.
+        learningRate *= earlyCareerLearnMultiplier(yearsPro: player.yearsPro)
 
         // Probabilistic rounding, not truncation-by-rounding. `Int(rounded())`
         // silently returns 0 for every fractional gain below 0.5, and the

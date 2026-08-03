@@ -545,10 +545,11 @@ static func learnScheme\(
 static func decayUnusedSchemes\(
 static func installBaseline\(
 static func seedActiveSchemes\(
+static func earlyCareerLearnMultiplier\(
 EOF
 keeplist_slice "$VERSATILITY_SOURCE" "$DEVANCHORS" "$DEVSLICE"
 verbatim_guard "$VERSATILITY_SOURCE" "$DEVSLICE"
-VERS_CONSTS="$(grep -E '^[[:space:]]*static let (schemeInstallIntensityBonus|unusedSchemeDecayPerOffseason|unusedSchemeFloor|installBaselineFloor|installBaselineLearningWeight|installBaselineCoachabilityWeight|installBaselineCarryOver|installBaselineCap) =' "$VERSATILITY_SOURCE")"
+VERS_CONSTS="$(grep -E '^[[:space:]]*static let (schemeInstallIntensityBonus|unusedSchemeDecayPerOffseason|unusedSchemeFloor|installBaselineFloor|installBaselineLearningWeight|installBaselineCoachabilityWeight|installBaselineCarryOver|installBaselineCap|earlyCareerLearnBonus|earlyCareerLearnWindow) =' "$VERSATILITY_SOURCE")"
 [ -n "$VERS_CONSTS" ] || die "VersatilityDevelopmentEngine scheme constants not found in the repo file."
 grep -q 'learningRate \*= Double(player.learning)' "$DEVSLICE" || die "Versatility slice lost the learning term."
 grep -q 'seedActiveSchemes' "$DEVSLICE" || die "Versatility slice lost seedActiveSchemes (task #54)."
@@ -681,9 +682,12 @@ verbatim_guard "$DRAFTENGINE_SOURCE" "$DEVSLICE"
 # measures the SHIPPED board, need model and top-4 weighted-random pick.
 grep -q 'AIDraftPerception.read(' "$DEVSLICE" || die "DraftEngine slice lost the AI perceived-value read (Track C)."
 grep -q 'let weights: \[Double\] = \[0.65, 0.20, 0.10, 0.05\]' "$DEVSLICE" || die "DraftEngine slice lost the R24 top-4 pick weights."
-DRAFTENGINE_CONSTS="$(grep -E '^[[:space:]]*(private )?static let (attributeFloor|rawnessPivot) =' "$DRAFTENGINE_SOURCE")"
+DRAFTENGINE_CONSTS="$(grep -E '^[[:space:]]*(private )?static let (attributeFloor|rawnessPivot|rookieFamiliarity[A-Za-z]*) =' "$DRAFTENGINE_SOURCE")"
 echo "$DRAFTENGINE_CONSTS" | grep -q attributeFloor || die "DraftEngine attributeFloor constant not found in the repo file."
 echo "$DRAFTENGINE_CONSTS" | grep -q rawnessPivot  || die "DraftEngine rawnessPivot constant not found in the repo file."
+for k in rookieFamiliarityFloor rookieFamiliarityReadinessWeight rookieFamiliarityLearningWeight rookieFamiliarityUDFAPenalty; do
+  echo "$DRAFTENGINE_CONSTS" | grep -q "$k" || die "DraftEngine constant $k not found in the repo file."
+done
 grep -q 'skill: .*readinessShare \*' "$DEVSLICE" || die "DraftEngine slice lost the rookie skill-scaling term."
 grep -q 'mental: .*learningShare \*' "$DEVSLICE"  || die "DraftEngine slice lost the rookie mental-scaling term."
 {
@@ -732,6 +736,7 @@ private static func randomAge\(
 private static func careerAgeSpan\(
 static func veteranPotential\(
 static func tierEarnedUpside\(
+static func activeSchemeSeed<G: RandomNumberGenerator>\(
 EOF
 keeplist_slice "$LEAGUEGEN_SOURCE" "$DEVANCHORS" "$DEVSLICE"
 verbatim_guard "$LEAGUEGEN_SOURCE" "$DEVSLICE"
@@ -742,6 +747,11 @@ done
 grep -q 'z \* (z >= 0 ? up : down)' "$DEVSLICE" || die "LeagueGenerator slice lost the split-normal talent draw."
 grep -q 'case 0:  return 66...88' "$DEVSLICE" || die "LeagueGenerator slice lost the depth-tier rating ranges."
 grep -q 'rosterBlueprint' "$DEVSLICE" || die "LeagueGenerator slice lost the 53-man rosterBlueprint."
+# Task #66's day-one familiarity curve. It decides what EVERY new save's league
+# knows about its own playbook on the morning of season 1, and until #85 nothing
+# in the repo measured it — `career` gates the DEVELOPMENT equilibrium the curve
+# was fitted to, not the curve. `leaguegen` gates the curve.
+grep -q '78.0 - 34.0 \* pow(0.78' "$DEVSLICE" || die "LeagueGenerator slice lost the activeSchemeSeed tenure curve."
 # Sole mechanical transform, applied AFTER verbatim_guard has proved every line is
 # a repo byte: drop `private` so the scenario in the neighbouring file can call
 # these. `private` in Swift is declaration-scoped, and the extract lands in its own

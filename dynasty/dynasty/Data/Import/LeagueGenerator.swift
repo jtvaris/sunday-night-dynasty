@@ -372,6 +372,28 @@ enum LeagueGenerator {
     /// Records come from the same `NFLTeamData` previews the picker shows, so
     /// the order the user sees on draft day is the order the standings he chose
     /// from imply. Fully deterministic (no RNG); ties break on abbreviation.
+    ///
+    /// **Scope (second look, task #85).** This orders exactly ONE draft: the
+    /// career's first. A career opens at `.coachingChanges`, i.e. in the
+    /// offseason that FOLLOWS the previews' season, so the previews' records are
+    /// the right input for it — and every later draft is renumbered from real
+    /// standings by `WeekAdvancer.adoptFuturePicks` /
+    /// `DraftEngine.draftSlotOrder`. Two things that follows from, both
+    /// deliberate and both easy to break by accident:
+    ///
+    ///  * **These rows must stay `isProvisionalOrder == false`.**
+    ///    `adoptFuturePicks` renumbers only provisional rows; if this pool were
+    ///    ever minted provisional, season 1's board would be re-slotted from a
+    ///    season that has not been played yet — `StandingsCalculator` over zero
+    ///    games — and the whole first round would come out in standings-tie
+    ///    order.
+    ///  * **This is NOT `draftSlotOrder`'s rule, and cannot be.** The real
+    ///    league orders picks 19-32 by round of playoff elimination and puts the
+    ///    Super Bowl loser and champion last; `draftSlotOrder` does exactly that
+    ///    for every later draft. The previews carry no playoff results, only a
+    ///    W-L, so season 1 necessarily orders its twelve best clubs by record
+    ///    alone. Do not "fix" the two to agree — the input, not the rule, is
+    ///    what differs.
     /// Rounds in an NFL draft — and therefore the picks a club starts a career
     /// with, before trades and compensatory awards.
     static let roundsPerDraft = 7
@@ -756,10 +778,12 @@ enum LeagueGenerator {
     /// slot-correlated draft intake (~79.5 mean potential) that was the dominant
     /// leg of the league **potential ratchet** (+0.9/season measured).
     ///
-    /// The replacement mirrors the intake shape: remaining upside shrinks with
-    /// age (22yo ≈ 14 points, 28yo ≈ 2) and is gone once a player is past his
-    /// position's peak window, so the league's potential level is stationary
-    /// from season 1 instead of climbing toward the draft's.
+    /// Its phase-2 replacement shrank the upside with age (22yo ≈ 14 points,
+    /// 28yo ≈ 2) and removed it entirely past the position's peak window, on the
+    /// argument that this would leave the league's potential level stationary
+    /// from season 1 rather than climbing toward the draft's. That argument was
+    /// never measured against the draft, and the reconciliation note below is
+    /// what happened when it finally was.
     ///
     /// **P1 pyramid calibration (2026-07-30) — the upside is now EARNED, not
     /// granted.** The rule above is age-anchored, which was the phase-2 fix, but
@@ -771,6 +795,84 @@ enum LeagueGenerator {
     /// top for exactly those low-potential players, every generated veteran
     /// started the save with 6-9 OVR of free catch-up room — and the measured
     /// consequence was the 3-season smoke's 90+ share going 3.5 % → 9.5 %.
+    ///
+    /// **Headroom reconciliation (task #69, 2026-08-04) — MEASURED, and the
+    /// prescription was wrong.** The P1 rule above was never checked against the
+    /// other end of the pipeline. It is now, and the two disagree by ten OVR
+    /// points of ceiling at the same age and the same rating:
+    ///
+    /// `./run.sh career` builds a league purely out of `DraftClassBuilder`
+    /// intake, runs it 30 seasons to its own stationary state and reports the
+    /// `HEADROOM AT EQUILIBRIUM` block:
+    ///
+    /// | age | mean OVR | mean pot | **headroom** | p10 | p50 | p90 |
+    /// |---|---|---|---|---|---|---|
+    /// | 21 | 62.5 | 81.4 | **18.9** | 9 | 17 | 32 |
+    /// | 24 | 66.7 | 80.1 | **13.5** | 6 | 12 | 24 |
+    /// | 27 | 72.2 | 82.5 | **10.3** | 4 |  9 | 19 |
+    /// | 30 | 77.1 | 86.4 |  **9.3** | 3 |  9 | 16 |
+    /// | 33 | 79.3 | 88.0 |  **8.7** | 3 |  9 | 14 |
+    /// | all | 70.7 | 82.7 | **12.0** | 4 | 11 | 22 |
+    ///
+    /// against **2.05** here. So `MultiSeasonSmokeTest`'s standing complaint —
+    /// `leaguePot` climbing 73 → 78 across four seasons while the §8 80+ share
+    /// rides it out of band — really is this generator converting itself into
+    /// the draft's cross-section.
+    ///
+    /// **The obvious fix makes the game worse, and that is the finding.** The
+    /// rule was replaced with a Γ(3) draw whose mean is the measured column
+    /// above (mean headroom 12.22, per-age within 0.9 of the equilibrium at
+    /// every age, `potential >= 90` 28.1 % against the pipeline's 28.9 %), the
+    /// app was built, and the four-season smoke was run on it:
+    ///
+    /// | 80+ share | base | s1 | s2 | s3 | s4 | mean OVR | leaguePot |
+    /// |---|---|---|---|---|---|---|---|
+    /// | P1 rule (headroom 2.10) | 17.1 | 16.4 | 18.4 | 18.9 | **20.0** | 71.08 → 72.10 | 73.1 → 79.6 |
+    /// | matched (headroom 12.22) | 17.6 | 17.6 | 22.6 | 23.8 | **26.1** | 71.08 → **73.10** | 83.4 → 84.7 |
+    ///
+    /// (Band 12-19; both rows are the same four-season `PERF_SMOKE_SEASONS=4`
+    /// run on the same build settings, measured back to back.) The transient the
+    /// change was supposed to close DID close — `leaguePot` went flat instead of
+    /// climbing six and a half points — and the league ran away underneath it
+    /// anyway: 90+ reached 4.8 % against the P1 rule's 3.2 %, and the mean drift
+    /// doubled.
+    ///
+    /// Note what the top row also says: at the FLOOR of this lever — a
+    /// generated veteran arriving 2 points under his ceiling, which is as close
+    /// to "no catch-up room" as the rule can get — season 4 is already at
+    /// 20.0 %. There is no headroom setting that reaches the band, because the
+    /// climb that remains is the draft's own intake, and that is not this file.
+    ///
+    /// **Which locates the real residual, and it is not here.** At the SAME
+    /// potential level the harness league is stationary (`leaguePot` 82.7, mean
+    /// OVR 70.7, drift +0.005/season over 21 measured seasons) and the shipped
+    /// league climbs half a point a season. Same ceilings, different outcome, so
+    /// what differs is the machine between them: with the ceilings matched the
+    /// shipped offseason spends `+2.0 … +2.9` OVR per player per season
+    /// (`SMOKE: diag devsource offseasonDevelop`) against `+1.3 … +2.0` on the
+    /// P1 ceilings — it converts whatever it is given. That is the task-#51 gap,
+    /// still open, and it is where the residual actually lives.
+    ///
+    /// Two hypotheses were tested and killed on the way, so nobody re-tests
+    /// them:
+    ///
+    ///  * *"headroom is concentrated on the players who cannot realise it, so a
+    ///    random draw over-supplies the ones who can."* The equilibrium's
+    ///    work-ethic quartiles inside the growth window measure 12.6 / 12.8 /
+    ///    13.0 / 14.0 — flat, and if anything sloping the other way, because
+    ///    high-work-ethic men are drafted higher and start with more ceiling.
+    ///  * *"match potential by age instead of headroom by age."* Worth 3.5
+    ///    points of prime-age ceiling, i.e. about a third of the growth fuel —
+    ///    not the 1.2 OVR/season of drift the measurement would have to remove.
+    ///
+    /// So the P1 rule is KEPT, unchanged, on the narrow ground that it is the
+    /// setting that does not make the shipped league worse — not because it is
+    /// right. The measurement above is the brief for the development-side wave
+    /// that has to happen first; when it lands, re-run `./run.sh career`,
+    /// re-read the `HEADROOM AT EQUILIBRIUM` block and reconcile onto the NEW
+    /// equilibrium, which is what this generator should have been fitted to all
+    /// along. `leaguegen` assert `8.hea` prints both numbers on every run so the
+    /// gap cannot go quiet.
     ///
     /// Two changes, both matching `DEVELOPMENT_NFL_REFERENCE.md` §2's core claim
     /// that "potential is a ceiling few touch" and that the ceiling is set by
@@ -789,7 +891,10 @@ enum LeagueGenerator {
     ///     therefore scales the runway by how much of it the player's current
     ///     standing still justifies, and the draw is centred so that roughly a
     ///     third of players get **no** upside at all — the plateauer, which §2
-    ///     calls the single most common outcome.
+    ///     calls the single most common outcome. (The equilibrium block above
+    ///     contradicts this reading — measured headroom by ability tier is flat
+    ///     at ~12 — but see the falsification note: correcting it is a
+    ///     development-side wave, not a generator constant.)
     static func veteranPotential(overall: Int, age: Int, position: Position) -> Int {
         veteranPotential(overall: overall, age: age, position: position, depthIndex: 2)
     }
@@ -1637,12 +1742,42 @@ enum LeagueGenerator {
                 }
             }
 
-            // Scheme familiarity from team's current coordinator schemes
-            if let offScheme = oc?.offensiveScheme, player.position.side == .offense {
-                player.schemeFamiliarity[offScheme.rawValue] = Int.random(in: 55...85, using: &rng)
-            }
-            if let defScheme = dc?.defensiveScheme, player.position.side == .defense {
-                player.schemeFamiliarity[defScheme.rawValue] = Int.random(in: 55...85, using: &rng)
+            // Scheme familiarity with the system this building actually installs.
+            //
+            // **Tenure-aware since task #66.** This used to be a flat
+            // `55...85` for everybody, which handed a first-year player the same
+            // command of the playbook as a nine-year starter and put the t=0
+            // league mean at 70 — 9 points above the steady state the
+            // development stack actually runs to. That gap is why a save's
+            // scheme fit visibly SLID for its first decade: the generator seeded
+            // a league that had to decay into equilibrium instead of one that
+            // started there. The ladder below is the measured equilibrium
+            // trajectory from `tools/balance-harness`'s `career` scenario
+            // (20 leagues × 22 measured seasons; see its SCHEME FIT block).
+            //
+            // **Draw ONLY where the value is used.** `Position.side` is
+            // `.specialTeams` for K and P, so a kicker has no installed system
+            // to be familiar with and consumes no draw — exactly as the flat
+            // `55...85` it replaced did. Hoisting the draw out of the branches
+            // would be harmless in the `SystemRandomNumberGenerator` path and a
+            // determinism break in the SEEDED one (the fixed-league template
+            // import): every player generated after the roster's first
+            // specialist would read a different stream position, which moves
+            // secondary-position familiarity and all of
+            // `assignCareerSchemeFamiliarity` for the rest of the club.
+            switch player.position.side {
+            case .offense:
+                if let offScheme = oc?.offensiveScheme {
+                    player.schemeFamiliarity[offScheme.rawValue] =
+                        activeSchemeSeed(yearsPro: player.yearsPro, using: &rng)
+                }
+            case .defense:
+                if let defScheme = dc?.defensiveScheme {
+                    player.schemeFamiliarity[defScheme.rawValue] =
+                        activeSchemeSeed(yearsPro: player.yearsPro, using: &rng)
+                }
+            case .specialTeams:
+                break
             }
 
             // Baseline scheme familiarity from career history (based on yearsPro).
@@ -1651,6 +1786,37 @@ enum LeagueGenerator {
             // current team's scheme.
             assignCareerSchemeFamiliarity(player: player, using: &rng)
         }
+    }
+
+    /// Day-one familiarity with the system this player's own building installs,
+    /// as a function of how long he has been a pro (task #66).
+    ///
+    /// The curve is the measured equilibrium ladder, fitted to three digits:
+    ///
+    ///     centre(yearsPro) = 78 − 34 · 0.78^yearsPro
+    ///
+    /// | yearsPro | 0  | 1  | 2  | 3  | 4  | 6  | 8  | 10 |
+    /// |----------|----|----|----|----|----|----|----|----|
+    /// | harness  | 44 | 52 | 57 | 61 | 64 | 69 | 73 | 75 |
+    /// | curve    | 44 | 51 | 57 | 62 | 65 | 70 | 73 | 75 |
+    ///
+    /// The asymptote is 78 rather than 100 because turnover never stops: a
+    /// ten-year veteran in the shipped league has been through coordinators, and
+    /// `VersatilityDevelopmentEngine.installBaseline` caps what a fresh install
+    /// gives him at 50. The ±16 band is the WITHIN-tenure spread (the old flat
+    /// draw's ±15, kept, so this change moves the centre and not the variance).
+    ///
+    /// Note where this lands relative to `PlaySimulator`'s 55 blown-assignment
+    /// pivot: a rookie is under it, a third-year starter is over it. That is the
+    /// mechanic doing its job on day one of a new save instead of on season ten.
+    static func activeSchemeSeed<G: RandomNumberGenerator>(
+        yearsPro: Int, using rng: inout G
+    ) -> Int {
+        let centre = 78.0 - 34.0 * pow(0.78, Double(max(0, min(yearsPro, 15))))
+        let lo = max(10, Int((centre - 16).rounded()))
+        let hi = min(95, Int((centre + 16).rounded()))
+        guard lo < hi else { return lo }
+        return Int.random(in: lo...hi, using: &rng)
     }
 
     /// Assigns baseline scheme familiarity to a player based on their career history.

@@ -502,6 +502,72 @@ enum DraftEngine {
 
     // MARK: - Rookie Familiarity
 
+    /// Constant term of a rookie's day-one scheme familiarity — **the INTAKE
+    /// term of the league's whole familiarity equilibrium (task #66).**
+    ///
+    /// ### Why the equilibrium has to clear 55
+    ///
+    /// `PlaySimulator.famBustPivot` is 55: at or above it a squad never rolls a
+    /// blown assignment, below it every snap carries a bust chance and the
+    /// completion channel is docked. `VersatilityDevelopmentEngine.unusedSchemeFloor`
+    /// is the same 55, deliberately. So 55 is the line between "this room knows
+    /// the playbook" and "this room is guessing" — and a LEAGUE-WIDE steady
+    /// state that sits under it means every club in the game is permanently in
+    /// the guessing regime, which makes the whole mechanic a flat tax instead of
+    /// a difference between clubs.
+    ///
+    /// ### The equilibrium arithmetic
+    ///
+    /// `learnScheme` scales its gain by `headroom = (100 − F)/100`, so
+    /// familiarity closes a fixed FRACTION of its gap to 100 every season:
+    ///
+    ///     100 − F(t+1) = (1 − c)·(100 − F(t))
+    ///
+    /// where `c` is the season's total learning weight ÷ 100. A season is one
+    /// camp rep at intensity 1.0 plus 17 practice weeks at 0.5 = 9.5
+    /// intensity-units, each worth `k = 1.5 · (coachability/70) · (expertise/60)
+    /// · (playerDevelopment/70) · (learning/65)`, so `c ≈ 9.5·k/100 ≈ 0.13` for a
+    /// league-typical player under a league-typical coordinator.
+    ///
+    /// That recurrence has no interior fixed point on its own — it converges to
+    /// 100. What pins the LEAGUE MEAN below 100 is turnover: every season a
+    /// share of the population is replaced by intake at `I` (this constant's
+    /// formula) or reset to `VersatilityDevelopmentEngine.installBaseline` `B`
+    /// by a coordinator change. With mean residency `n` seasons before a
+    /// reset-or-exit, the population mean is the average of the trajectory
+    /// starting from the entry level `E`:
+    ///
+    ///     F̄ = 100 − (100 − E)·(1 − (1−c)ⁿ)/(n·c)
+    ///
+    /// Measured on `tools/balance-harness`'s `career` scenario (20 leagues × 22
+    /// measured seasons, 745 k player-seasons), the shipped stack ran at
+    /// `E ≈ 33`, `c ≈ 0.13`, `n ≈ 5` → **F̄ = 53.9**, i.e. 1.1 points UNDER the
+    /// bust pivot. Raising this floor 10 → 20 lifts `E` to ≈ 42 and the
+    /// early-career term in `learnScheme` (`earlyCareerLearnBonus`) lifts `c` to
+    /// ≈ 0.16 for the first four seasons, which is where the drag lives; the two
+    /// together put the measured steady state at **59.8** — inside the 58-62
+    /// target band, ~5 points of margin over the pivot. See the SCHEME FIT block
+    /// of the `career` scenario for the measurement that replaces this estimate.
+    ///
+    /// Deliberately NOT fixed by moving `famBustPivot`: the pivot is a statement
+    /// about football (a room that does not know the install busts assignments),
+    /// the equilibrium is a statement about how fast the game teaches. The
+    /// second one was wrong.
+    static let rookieFamiliarityFloor = 20.0
+
+    /// Weight a rookie's day-one familiarity puts on `CollegeProspect.nflReadiness`
+    /// — "how much of this is already pro football".
+    static let rookieFamiliarityReadinessWeight = 0.20
+
+    /// Weight a rookie's day-one familiarity puts on `CollegeProspect.trueLearning`
+    /// — the same stat `learnScheme` ramps on, so the man who will pick the
+    /// playbook up fastest also walks in knowing more of it.
+    static let rookieFamiliarityLearningWeight = 0.15
+
+    /// What an undrafted signing gives up against a drafted rookie: he arrives
+    /// after the install has started and takes third-team reps in it.
+    static let rookieFamiliarityUDFAPenalty = 5.0
+
     /// Seeds a freshly converted rookie's position and scheme familiarity, mirroring
     /// `LeagueGenerator.initializePlayerFamiliarity` for veterans.
     ///
@@ -509,10 +575,14 @@ enum DraftEngine {
     /// every rookie in the league entered at familiarity 0 and took the maximum
     /// scheme penalty — identically, regardless of how smart or pro-ready he was.
     ///
-    /// Starting value is `10 + readiness·0.20 + learning·0.15` (≈ 15-45): below the
-    /// 70 completion pivot and mostly below the 55 bust pivot, so rookies still err,
-    /// but a smart, pro-ready rookie ramps from ~45 while a raw one starts at ~15.
-    /// UDFAs take a further −5.
+    /// Starting value is `rookieFamiliarityFloor + readiness·0.20 + learning·0.15`
+    /// (≈ 25-55): below the 70 completion pivot and below the 55 bust pivot for all
+    /// but the most pro-ready, so rookies still err, but a smart, pro-ready rookie
+    /// ramps from ~55 while a raw one starts at ~25. UDFAs take a further −5.
+    ///
+    /// **Task #66 — this is the INTAKE term of the league's familiarity
+    /// equilibrium.** See `rookieFamiliarityFloor` for the derivation of why it
+    /// moved from 10 to 20.
     ///
     /// - Parameters:
     ///   - player: The freshly created rookie (mutated in place).
@@ -530,10 +600,10 @@ enum DraftEngine {
         // Primary position is always fully known.
         player.positionFamiliarity[player.position.rawValue] = 100
 
-        let raw = 10.0
-            + Double(prospect.nflReadiness) * 0.20
-            + Double(prospect.trueLearning) * 0.15
-            - (isUndrafted ? 5.0 : 0.0)
+        let raw = rookieFamiliarityFloor
+            + Double(prospect.nflReadiness) * rookieFamiliarityReadinessWeight
+            + Double(prospect.trueLearning) * rookieFamiliarityLearningWeight
+            - (isUndrafted ? rookieFamiliarityUDFAPenalty : 0.0)
         let starting = min(100, max(0, Int(raw.rounded())))
 
         switch player.position.side {
