@@ -79,6 +79,12 @@ struct SettingsView: View {
     /// Master SFX/crowd volume for the live match (0…1). Read by
     /// `AudioDirector` on every cue so changes apply mid-game.
     @AppStorage("soundVolume") private var soundVolume = 0.7
+    /// Soundtrack on/off, independent of the match SFX above. Read by
+    /// `MusicDirector` on every track change and on the settings notification.
+    @AppStorage("musicEnabled") private var musicEnabled = true
+    /// Music level (0…1). Defaults lower than the SFX slider because the
+    /// score is background by design and the crowd is the star of a match.
+    @AppStorage("musicVolume") private var musicVolume = 0.5
     @AppStorage("hapticsEnabled") private var hapticsEnabled = true
 
     // Gameplay
@@ -214,6 +220,26 @@ struct SettingsView: View {
             .disabled(!soundEnabled)
             .listRowBackground(Color.backgroundSecondary)
 
+            Toggle(isOn: $musicEnabled) {
+                Label("Music", systemImage: "music.note")
+                    .foregroundStyle(Color.textPrimary)
+            }
+            .tint(Color.accentGold)
+            .listRowBackground(Color.backgroundSecondary)
+
+            HStack(spacing: 12) {
+                Image(systemName: "speaker.fill")
+                    .font(.caption)
+                    .foregroundStyle(musicEnabled ? Color.textSecondary : Color.textTertiary)
+                Slider(value: $musicVolume, in: 0...1, step: 0.05)
+                    .tint(Color.accentGold)
+                Image(systemName: "speaker.wave.3.fill")
+                    .font(.caption)
+                    .foregroundStyle(musicEnabled ? Color.textSecondary : Color.textTertiary)
+            }
+            .disabled(!musicEnabled)
+            .listRowBackground(Color.backgroundSecondary)
+
             Toggle(isOn: $hapticsEnabled) {
                 Label("Haptics", systemImage: "iphone.radiowaves.left.and.right")
                     .foregroundStyle(Color.textPrimary)
@@ -223,7 +249,7 @@ struct SettingsView: View {
         } header: {
             sectionHeader("General")
         } footer: {
-            Text("Sound covers the live-game stadium — crowd, whistles, hits, and horns. It respects the mute switch and never interrupts your own music.")
+            Text("Sound covers the live-game stadium — crowd, whistles, hits, and horns. Music is the menu and front-office score; it steps aside completely during a coached game. Both respect the mute switch and never interrupt your own music.")
                 .foregroundStyle(Color.textTertiary)
         }
     }
@@ -462,6 +488,8 @@ struct SettingsView: View {
         // Re-seed defaults so the UI reflects fresh state immediately.
         soundEnabled = true
         soundVolume = 0.7
+        musicEnabled = true
+        musicVolume = 0.5
         hapticsEnabled = true
         gameSpeedRaw = GameSpeed.normal.rawValue
         difficultyRaw = Difficulty.normal.rawValue

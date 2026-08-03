@@ -44,6 +44,16 @@ struct DraftDayView: View {
                 }
             }
         }
+        // The draft room claims the soundtrack while it is on top. The base
+        // context is already `.draft` during the draft phase, but the board is
+        // reachable outside it (reviewing a completed draft), and the ticking
+        // cues are the right score either way.
+        .onAppear {
+            MusicDirector.shared.pushOverride(.draft)
+        }
+        .onDisappear {
+            MusicDirector.shared.clearOverride(.draft)
+        }
     }
 
     @ViewBuilder

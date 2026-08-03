@@ -186,6 +186,21 @@ struct CareerShellView: View {
             \.rookieFog,
             RookieFogContext(season: career.currentSeason, phase: career.currentPhase)
         )
+        // The shell owns the BASE music context for as long as a career is
+        // open: the draft room, the playoffs and the Super Bowl each get their
+        // own score, everything else gets the front-office bed. Screens that
+        // want something different while they are on top push an override
+        // instead (see `MusicDirector`), so nothing here has to know about
+        // them. On dismiss the base goes back to the title theme.
+        .onAppear {
+            MusicDirector.shared.setBaseContext(.forPhase(career.currentPhase))
+        }
+        .onChange(of: career.currentPhase) { _, phase in
+            MusicDirector.shared.setBaseContext(.forPhase(phase))
+        }
+        .onDisappear {
+            MusicDirector.shared.setBaseContext(.menu)
+        }
         .task {
             loadShellData()
             // R31: a fired career only shows the final summary screen.
@@ -1445,12 +1460,15 @@ struct CareerShellView: View {
                 }
 
             case "Review Combine results":
-                // Locked until scouts sent
-                let scoutsSent = CareerScopedDefaults.bool("scoutsSentToCombine")
-                if !scoutsSent {
+                // Unlocked once the combine has actually been held. It used to
+                // be gated on "scouts sent", but the combine is a league event
+                // now: attending buys precision, not access, so a GM who watched
+                // it on television still has results to review — and a save that
+                // never had results at all could not clear the step either way.
+                let combineHeld = WeekAdvancer.currentDraftClass.contains { $0.fortyTime != nil }
+                if !combineHeld {
                     currentTasks[index].status = .todo
                 } else if CareerScopedDefaults.bool("combineResultsReviewed") {
-                    // User visited the Combine tab after scouts were sent
                     currentTasks[index].status = .done
                 }
 

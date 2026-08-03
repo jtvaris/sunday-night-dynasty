@@ -454,3 +454,183 @@ both. `ambient_downtempo_take1` is click-free but its last 200 ms are 7.8 dB
 **louder** than its first 200 ms — most likely a drum hit landing right on the
 boundary. It will not tick, but it may audibly "drop" in level each time it
 wraps, so it needs an ear before use.
+
+---
+
+## Music — round 2 (SHIPPED)
+
+Round 1 was the experiment; this is the soundtrack. Generated 2026-08-03 by
+`generate_music.py round2`, mastered by `post_music.py`, encoded and installed
+by `ship_music.py`. Review page: `review_music_v2.html`.
+
+**Licence position is unchanged from the round-1 section above** — same two
+models, same pinned versions, same verdicts. ACE-Step is Apache-2.0 with no
+revenue cap. Stable Audio Open is the Stability AI Community Licence and its
+**$1M annual-revenue cap now applies to shipped game content**, not just to
+experiments: seven of the 27 shipped files (the ambient loops) come from it.
+That is a live obligation — see "⚠ Licence caveat" in the Generated SFX
+section. The 20 ACE-Step files carry no such string.
+
+### What round 2 set out to do
+
+The user approved six of the ten round-1 takes by ear: both
+`orchestral_cinematic`, both `dark_hybrid`, and the downtempo + lo-fi loops.
+Round 2 therefore stopped exploring styles and deepened those two families at
+broadcast length, added the situational cues the game was missing, and filled
+each context to a depth where the rotation does not repeat inside a session.
+
+**One calibration note is load-bearing.** Round 1 ranked its candidates by
+structural proxies — late peak, wide dynamic arc, dark spectral centroid. The
+take the user liked most, `dark_hybrid_take2`, ranked **last** on that
+ordering: flattest arc in the set, brightest centroid, peak in the first
+eighth. The heuristic was not measuring what the ear was listening for, so
+round 2 does **not** prune or sort by it. It generates spread inside each
+family and leaves the judgement to a listen. The metrics are still recorded
+because they are nearly free and occasionally diagnose a real defect (a
+runaway peak, a track that never moves), but they are no longer a gate.
+
+| Model | Takes | GPU time | Cost @ $0.000975/s |
+|---|---|---|---|
+| `lucataco/ace-step` | 17 | 192.2 s | $0.187 |
+| `stackadoc/stable-audio-open-1.0` | 5 | 26.5 s | $0.026 |
+| **Total** | **22** | **218.7 s** | **≈ $0.21** |
+
+Budget was $3; round 1 spent $0.07, so the two rounds together are ≈ $0.28.
+Replicate exposes no per-prediction cost field, so this is
+`predict_time × published L40S rate` summed over the prediction IDs recorded
+in `gen_music/manifest.json`.
+
+**Output format, recorded per the brief:** ACE-Step returns **320 kbps MP3**,
+not WAV — the model offers no lossless output on this Replicate wrapper. Every
+ACE-Step file in the shipped set is therefore lossy at source, and the AAC
+ship encode is a second generation. This was accepted deliberately: the
+material is background music played under UI at −16 LUFS, the artefacts of a
+320 kbps source are not audible at that role, and the alternative was a paid
+service. Stable Audio Open returns WAV, so the seven ambient loops are lossy
+only once (at the ship encode). If a track is ever promoted to a foreground
+role, re-run its seed on a WAV-capable host first.
+
+### Round-2 takes — seed and prompt
+
+Reproducible from seed + prompt + the pinned version. `Requested` is the
+duration asked of the model; `Duration` is the mastered file after dead-air
+trim. ACE-Step's own ceiling is 240 s (schema-verified), and nothing here sits
+near it — every second costs ~20 KB of app bundle.
+
+| File | Seed | Requested | Duration | LUFS | Prompt tags |
+|---|---|---|---|---|---|
+| `cue_championship_take1` | 970502 | 110 s | 106.5 s | -16.0 | triumphant orchestral climax, full brass fanfare, soaring string melody, timpani rolls and cymbal crashes, victory celebration, confetti and lifted trophy, majestic and joyous, peaks early and holds, instrumental, no vocals, 104 BPM, C major |
+| `cue_draft_room_take1` | 970501 | 105 s | 104.8 s | -16.0 | tense underscore, ticking clock, restrained muted percussion, pizzicato strings, low sustained drone, sparse piano notes, nervous anticipation, deadline pressure, war room, minimal and taut, no big climax, instrumental, no vocals, 100 BPM, A minor |
+| `cue_draft_room_take2` | 970503 | 100 s | 99.9 s | -16.0 | tense minimal underscore, metronome tick, muted staccato strings, soft heartbeat kick, cold synth drone, rising unease, clock winding down, restrained, no melody, instrumental, no vocals, 92 BPM, E minor |
+| `cue_draft_room_take3` | 970504 | 98 s | 96.2 s | -16.0 | suspense underscore, ticking percussion, col legno strings, low piano ostinato, sparse marimba, held breath tension, decision under pressure, understated and nervous, instrumental, no vocals, 108 BPM, C sharp minor |
+| `dark_hybrid_r2_aggro` | 970404 | 156 s | 155.9 s | -16.0 | aggressive hybrid trailer music, distorted synth bass, hard hitting industrial percussion, brass braams, metallic impacts, gritty and confrontational, relentless drive, epic drop, instrumental, no vocals, 135 BPM, A minor |
+| `dark_hybrid_r2_atmos` | 970403 | 172 s | 171.2 s | -16.0 | dark ambient hybrid score, evolving synth pads, distant low drones, sparse sub bass pulse, occasional cinematic hit, spacious and atmospheric, slow drifting tension, minimal percussion, empty stadium at night, instrumental, no vocals, 76 BPM, D minor |
+| `dark_hybrid_r2_crossover` | 970405 | 160 s | 159.9 s | -16.0 | hybrid orchestral electronic crossover, sweeping legato strings over a pulsing analog synth bass, cinematic taiko and timpani, noble french horns against electronic percussion, epic and modern, tension and release, primetime dynasty, instrumental, no vocals, 118 BPM, C minor |
+| `dark_hybrid_r2_drive` | 970402 | 152 s | 151.2 s | -16.0 | hybrid orchestral electronic, fast driving synth arpeggio, tight electronic drums, propulsive sixteenth note bass pulse, staccato string stabs, urgent momentum, modern primetime sports, instrumental, no vocals, 145 BPM, G minor |
+| `dark_hybrid_r2_slow` | 970401 | 166 s | 166.0 s | -16.0 | dark hybrid cinematic, slow pulsing analog synth bass, half-time cinematic drums, deep sub bass, sparse metallic percussion, patient tension build, brooding night game, wide reverb, instrumental, no vocals, 92 BPM, F minor |
+| `gameday_build_take1` | 970701 | 150 s | 146.4 s | -16.0 | aggressive hybrid pregame build, pounding synth bass, stadium drumline over electronic drums, rising brass swell, hard impacts, adrenaline, walk out of the tunnel, builds relentlessly to kickoff, instrumental, no vocals, 128 BPM, D minor |
+| `menu_theme_r2_take1` | 970601 | 92 s | 89.6 s | -16.0 | definitive sports management main menu theme, warm legato strings, noble horn statement, soft timpani, understated drumline, confident but calm, loops comfortably under a menu, never fatiguing, broadcast prestige, instrumental, no vocals, 86 BPM, F major |
+| `orchestral_cinematic_r2_brass` | 970303 | 162 s | 160.6 s | -16.0 | epic orchestral cinematic, heroic french horn theme, trombone and tuba power chords, brass fanfare peaks, string bed underneath, timpani hits, triumphant summits and quiet valleys, stadium grandeur, instrumental, no vocals, 96 BPM, E flat major |
+| `orchestral_cinematic_r2_dark` | 970305 | 152 s | 149.9 s | -16.0 | dark orchestral cinematic, brooding low strings, ominous cellos and double bass, muted brass, sparse timpani, minor key tension, cold and serious, rivalry week, foreboding build, instrumental, no vocals, 88 BPM, B minor |
+| `orchestral_cinematic_r2_noble` | 970304 | 168 s | 164.8 s | -16.0 | noble restrained orchestral score, gentle string ensemble, solo french horn melody, soft woodwinds, sparse piano, dignified and understated, quiet confidence, never bombastic, hall of fame reverence, instrumental, no vocals, 80 BPM, A major |
+| `orchestral_cinematic_r2_percussive` | 970301 | 158 s | 157.8 s | -16.0 | epic orchestral cinematic, driving orchestral percussion, taiko drums, timpani ostinato, snare rolls, staccato low strings, brass punctuation, relentless forward momentum, percussion forward mix, championship gravitas, instrumental, no vocals, 110 BPM, C minor |
+| `orchestral_cinematic_r2_strings` | 970302 | 176 s | 173.3 s | -16.0 | cinematic string orchestra, no percussion, sustained legato violins, warm cello counter-melody, slow burn build, patient and emotional, film score, restrained opening then soaring, dynasty legacy, instrumental, no vocals, 72 BPM, D minor |
+| `playoffs_dark_take1` | 970801 | 150 s | 147.6 s | -16.0 | dark tense cinematic, tremolo strings, low brass swells, sparse war drums, cold and high stakes, one game to survive, creeping dread with a defiant peak, january football, instrumental, no vocals, 84 BPM, F sharp minor |
+
+| File | Seed | Duration | LUFS | Fold (xfade/tail-cut) | Seam | Head−tail | Prompt |
+|---|---|---|---|---|---|---|---|
+| `ambient_downtempo_r2_take2` | 980301 | 44.5 s | -16.0 | 2.0 / 0.0 s | clean (-44.9 dB) | +0.1 dB | downtempo lo-fi beat, dusty rhodes chords, soft kick and rim shot, warm tape saturation, vinyl crackle, low-key confident, steady unchanging groove, understated menu music, instrumental |
+| `ambient_downtempo_r2_take3` | 980302 | 44.5 s | -16.0 | 3.0 / 0.0 s | clean (-16.5 dB) | +0.0 dB | downtempo instrumental underscore, muted upright bass, brushed drums, dark warm keys, subtle vinyl texture, moody and patient, constant level, no build, background loop, instrumental |
+| `ambient_downtempo_r2_take4` | 980303 | 44.5 s | -16.1 | 2.0 / 0.0 s | clean (-14.4 dB) | +1.3 dB | slow downtempo underscore, mellow electric piano, soft brushed kick, deep warm bass, vinyl dust, unhurried and reflective, steady groove, background loop, instrumental |
+| `ambient_lofi_r2_take2` | 980101 | 46.0 s | -16.0 | 1.5 / 0.0 s | clean (-11.8 dB) | -0.1 dB | lo-fi ambient underscore, soft warm analog pads, gentle brushed drums, mellow electric piano, subtle sub bass, calm and spacious, steady unchanging loop, no dynamic swells, background music, instrumental |
+| `ambient_lofi_r2_take3` | 980102 | 45.0 s | -16.0 | 2.0 / 0.0 s | clean (-24.3 dB) | +1.8 dB | soft lo-fi ambient bed, hazy tape pads, very light percussion, warm muted guitar, slow and reflective, quiet offseason, steady unchanging loop, background music, instrumental |
+
+### The loop head-vs-tail fix
+
+Round 1 shipped `ambient_downtempo_take1` with a click-free wrap whose last
+200 ms were **7.8 dB louder** than its first 200 ms — it would not tick, but
+it would audibly *drop* in level on every wrap. A step-free seam is necessary
+but not sufficient.
+
+`post_music.py` now treats the crossfade point as a free parameter and
+searches it. Where you fold the tail back decides which two moments of the
+take end up adjacent, so if the default fold lands on a drum hit, another fold
+will not. The search walks a grid of (crossfade length × tail cut), keeps the
+smallest head-vs-tail delta that still has a clean seam and stays above the
+40 s floor, and **tries the round-1 fold first** — so a loop that already
+passed is left byte-identical rather than silently re-cut.
+
+Every shipped loop is now under the 3 dB rule, including the approved round-1
+downtempo bed, which was re-pointed from +7.8 dB to +2.7 dB. That file is the
+same take and the same seed; only the loop start moved.
+
+| Loop | Round | Baseline fold Δ | Chosen fold | Chosen Δ | Re-pointed |
+|---|---|---|---|---|---|
+| `ambient_broadcast_take1` | r1 | +1.0 dB | 2.0 / 0.0 s | +1.0 dB | no |
+| `ambient_cinematic_take1` | r1 | -1.4 dB | 2.0 / 0.0 s | -1.4 dB | no |
+| `ambient_downtempo_take1` | r1 | +7.8 dB | 1.0 / 1.5 s | +2.7 dB | **yes** |
+| `ambient_lofi_take1` | r1 | -2.3 dB | 2.0 / 0.0 s | -2.3 dB | no |
+| `ambient_downtempo_r2_take2` | r2 | +0.1 dB | 2.0 / 0.0 s | +0.1 dB | no |
+| `ambient_downtempo_r2_take3` | r2 | +0.4 dB | 3.0 / 0.0 s | +0.0 dB | **yes** |
+| `ambient_downtempo_r2_take4` | r2 | +1.3 dB | 2.0 / 0.0 s | +1.3 dB | no |
+| `ambient_lofi_r2_take2` | r2 | +3.2 dB | 1.5 / 0.0 s | -0.1 dB | **yes** |
+| `ambient_lofi_r2_take3` | r2 | +1.8 dB | 2.0 / 0.0 s | +1.8 dB | no |
+
+Two round-2 loops were also re-pointed, but for the *seam* rather than the
+level: their baseline fold had a measurable click, and the search found a
+clean one.
+
+### Shipped set
+
+Delivery format is **AAC-LC 160 kbps, 48 kHz stereo**, mastered to −16 LUFS /
+−1.5 dBTP like everything else. Not the 16-bit WAV the SFX ship as: the SFX
+are one-shots measured in milliseconds, whereas the music is 48 minutes long,
+and at WAV that would be ~500 MB of app download. AVAudioPlayer decodes m4a
+with hardware assist, so a long track costs no more CPU than a wav.
+
+Shipping all 28 candidates came to 62.9 MB against a 60 MB budget. Per the
+brief's rule — trim track count before quality — one track was held back
+rather than re-encoding the set lower: `orchestral_cinematic_r2_percussive`,
+from the only context (playoffs) carrying more than it was speced for. It
+stays in `gen_music/` and is the swap-in if one of the shipped playoff cues is
+rejected.
+
+27 files, 48.6 min, **59.7 MB** (AAC-LC 160 kbps, 48 kHz stereo).
+
+| Ship name | Context | Source take | Round | Model | Seed | Dur | LUFS | Size |
+|---|---|---|---|---|---|---|---|---|
+| `music_menu_theme_a.m4a` | menu | `orchestral_cinematic_take1` | r1 | ace-step | 770301 | 89 s | -16.0 | 1.80 MB |
+| `music_menu_theme_b.m4a` | menu | `orchestral_cinematic_take2` | r1 | ace-step | 770302 | 88 s | -16.1 | 1.79 MB |
+| `music_menu_theme_c.m4a` | menu | `menu_theme_r2_take1` | r2 | ace-step | 970601 | 90 s | -16.1 | 1.84 MB |
+| `music_dashboard_loop_a.m4a` | dashboard | `ambient_downtempo_take1` | r1 | stable-audio-open | 880301 | 44 s | -16.1 | 0.94 MB |
+| `music_dashboard_loop_b.m4a` | dashboard | `ambient_lofi_take1` | r1 | stable-audio-open | 880101 | 46 s | -16.0 | 0.99 MB |
+| `music_dashboard_loop_c.m4a` | dashboard | `ambient_downtempo_r2_take2` | r2 | stable-audio-open | 980301 | 45 s | -16.0 | 0.99 MB |
+| `music_dashboard_loop_d.m4a` | dashboard | `ambient_downtempo_r2_take3` | r2 | stable-audio-open | 980302 | 45 s | -16.0 | 0.92 MB |
+| `music_dashboard_loop_e.m4a` | dashboard | `ambient_lofi_r2_take2` | r2 | stable-audio-open | 980101 | 46 s | -16.0 | 0.93 MB |
+| `music_dashboard_bed_a.m4a` | dashboard | `orchestral_cinematic_r2_strings` | r2 | ace-step | 970302 | 173 s | -16.0 | 3.51 MB |
+| `music_dashboard_bed_b.m4a` | dashboard | `orchestral_cinematic_r2_noble` | r2 | ace-step | 970304 | 165 s | -16.1 | 3.38 MB |
+| `music_dashboard_bed_c.m4a` | dashboard | `dark_hybrid_r2_slow` | r2 | ace-step | 970401 | 166 s | -16.1 | 3.40 MB |
+| `music_dashboard_bed_d.m4a` | dashboard | `dark_hybrid_r2_atmos` | r2 | ace-step | 970403 | 171 s | -16.0 | 3.56 MB |
+| `music_draft_a.m4a` | draft | `cue_draft_room_take1` | r2 | ace-step | 970501 | 105 s | -16.0 | 2.14 MB |
+| `music_draft_b.m4a` | draft | `cue_draft_room_take2` | r2 | ace-step | 970503 | 100 s | -16.1 | 2.05 MB |
+| `music_draft_c.m4a` | draft | `cue_draft_room_take3` | r2 | ace-step | 970504 | 96 s | -16.0 | 1.98 MB |
+| `music_gameday_a.m4a` | gameday | `dark_hybrid_take1` | r1 | ace-step | 770201 | 90 s | -16.0 | 1.86 MB |
+| `music_gameday_b.m4a` | gameday | `dark_hybrid_take2` | r1 | ace-step | 770202 | 89 s | -16.1 | 1.80 MB |
+| `music_gameday_c.m4a` | gameday | `dark_hybrid_r2_aggro` | r2 | ace-step | 970404 | 156 s | -16.1 | 3.20 MB |
+| `music_gameday_d.m4a` | gameday | `dark_hybrid_r2_drive` | r2 | ace-step | 970402 | 151 s | -16.1 | 3.07 MB |
+| `music_gameday_e.m4a` | gameday | `gameday_build_take1` | r2 | ace-step | 970701 | 146 s | -16.1 | 2.97 MB |
+| `music_playoffs_a.m4a` | playoffs | `orchestral_cinematic_r2_dark` | r2 | ace-step | 970305 | 150 s | -16.0 | 3.04 MB |
+| `music_playoffs_b.m4a` | playoffs | `dark_hybrid_r2_crossover` | r2 | ace-step | 970405 | 160 s | -16.1 | 3.25 MB |
+| `music_playoffs_c.m4a` | playoffs | `playoffs_dark_take1` | r2 | ace-step | 970801 | 148 s | -16.0 | 3.03 MB |
+| `music_championship_a.m4a` | championship | `cue_championship_take1` | r2 | ace-step | 970502 | 106 s | -16.1 | 2.18 MB |
+| `music_championship_b.m4a` | championship | `orchestral_cinematic_r2_brass` | r2 | ace-step | 970303 | 161 s | -16.1 | 3.25 MB |
+| `music_offseason_loop_a.m4a` | offseason | `ambient_lofi_r2_take3` | r2 | stable-audio-open | 980102 | 45 s | -16.0 | 0.91 MB |
+| `music_offseason_loop_b.m4a` | offseason | `ambient_downtempo_r2_take4` | r2 | stable-audio-open | 980303 | 45 s | -16.1 | 0.90 MB |
+
+**Generated but not shipped:** `orchestral_cinematic_r2_percussive` — kept in `gen_music/` as candidates.
+
+Playback is `MusicDirector.swift` (`dynasty/dynasty/UI/Common/`): one player
+at a time, a shuffled no-repeat bag per context, a randomised silence gap
+between tracks (30-90 s on the dashboard), its own `musicEnabled` /
+`musicVolume` settings, and a hard suspend during the live coached game so the
+crowd bed and play SFX own the mix.

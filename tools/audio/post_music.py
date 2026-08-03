@@ -46,6 +46,21 @@ TARGET_I, TARGET_TP = -16.0, -1.5
 LOOP_XFADE = 2.0    # seconds folded back onto the head of an ambient loop
 TRIM_PAD = 0.05     # keep a hair either side of the detected window
 
+# Round-1 caveat, now enforced. `ambient_downtempo_take1_loop` came out
+# click-free but with its last 200 ms 7.8 dB LOUDER than its first 200 ms, so
+# it would audibly "drop" on every wrap. A step-free seam is necessary but not
+# sufficient: level continuity has to be measured too.
+#
+# The fix is a search, not a filter. The crossfade point is a free parameter —
+# where you fold the tail back decides which two moments of the take end up
+# adjacent — so if the default fold lands on a drum hit, try other folds and
+# other tail cuts until the head and tail match. Baseline is tried FIRST and
+# kept when it passes, so a loop that was already fine stays byte-identical.
+LOOP_MAX_LVL_DB = 3.0                                   # head/tail delta ceiling
+LOOP_MIN_S = 40.0                                       # brief floor for a loop
+LOOP_XFADE_GRID = (2.0, 1.5, 2.5, 3.0, 1.0, 4.0)
+LOOP_CUT_GRID = (0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0)
+
 
 def probe_dur(p: Path) -> float:
     return float(subprocess.run(
@@ -194,7 +209,7 @@ def render(src: Path, t0: float, t1: float, dst: Path, chain: str,
         raise RuntimeError(f"{dst.name}: {p.stderr[-600:]}")
 
 
-def loop_render(src: Path, dst: Path, xfade: float) -> float:
+def loop_render(src: Path, dst: Path, xfade: float, tail_cut: float = 0.0) -> float:
     """Fold the tail back onto the head so the file wraps seamlessly.
 
     Input 0 = body [xfade, end]; input 1 = the pre-roll [0, xfade]. acrossfade
@@ -205,11 +220,16 @@ def loop_render(src: Path, dst: Path, xfade: float) -> float:
     Run on the ALREADY-normalised file so the crossfade is the last thing that
     touches the samples; a loudnorm limiter acting after the blend could
     reshape the very seam we are trying to make exact.
+
+    `tail_cut` drops that many seconds off the END of the body before the fold.
+    It is the second knob in the seam search: it changes WHICH moment of the
+    take the pre-roll fades in over, without moving the loop's start point.
     """
     dur = probe_dur(src)
+    body = dur - tail_cut - xfade
     p = ac.run([
         "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-        "-ss", f"{xfade}", "-i", str(src),
+        "-ss", f"{xfade}", "-t", f"{body}", "-i", str(src),
         "-ss", "0", "-t", f"{xfade}", "-i", str(src),
         "-filter_complex",
         # qsin = equal power: keeps level through the blend instead of the
@@ -218,7 +238,56 @@ def loop_render(src: Path, dst: Path, xfade: float) -> float:
         "-map", "[a]", "-ar", "48000", "-ac", "2", "-c:a", "pcm_s24le", str(dst)])
     if p.returncode != 0:
         raise RuntimeError(f"{dst.name}: {p.stderr[-600:]}")
-    return dur - xfade
+    return body
+
+
+def best_loop(src: Path, dst: Path) -> dict:
+    """Pick the fold that wraps both click-free AND level-continuous.
+
+    Tries the round-1 baseline (2.0 s fold, no tail cut) first and stops there
+    if it already satisfies |head-vs-tail| < 3 dB — so previously-approved
+    loops are not silently re-cut. Otherwise it walks the (xfade, tail_cut)
+    grid and keeps the smallest level delta that still has a clean seam and
+    stays above the 40 s floor.
+    """
+    tmp = dst.with_suffix(".try.wav")
+    tried: list[dict] = []
+    best: dict | None = None
+    try:
+        for x in LOOP_XFADE_GRID:
+            for cut in LOOP_CUT_GRID:
+                dur = loop_render(src, tmp, x, cut)
+                if dur < LOOP_MIN_S:
+                    continue
+                s = seam(tmp)
+                cand = {"xfade_s": x, "tail_cut_s": cut, "duration": round(dur, 2),
+                        "level_match_db": s["level_match_db"],
+                        "headroom_db": s["headroom_db"], "verdict": s["verdict"]}
+                tried.append(cand)
+                clean = s["verdict"] == "clean"
+                lvl = abs(s["level_match_db"])
+                # rank: clean seams first, then smallest level mismatch
+                key = (0 if clean else 1, lvl)
+                if best is None or key < (0 if best["verdict"] == "clean" else 1,
+                                          abs(best["level_match_db"])):
+                    best = cand
+                if x == LOOP_XFADE_GRID[0] and cut == 0.0 and clean \
+                        and lvl < LOOP_MAX_LVL_DB:
+                    best = cand
+                    raise StopIteration
+    except StopIteration:
+        pass
+    finally:
+        tmp.unlink(missing_ok=True)
+
+    if best is None:
+        raise RuntimeError(f"{dst.name}: no loop window >= {LOOP_MIN_S}s")
+    dur = loop_render(src, dst, best["xfade_s"], best["tail_cut_s"])
+    baseline = next((t for t in tried
+                     if t["xfade_s"] == LOOP_XFADE and t["tail_cut_s"] == 0.0), None)
+    return {"chosen": best, "baseline": baseline, "searched": len(tried),
+            "duration": dur,
+            "repointed": bool(baseline and baseline != best)}
 
 
 def main() -> None:
@@ -254,6 +323,7 @@ def main() -> None:
 
         entry = {
             "stem": stem, "style": style, "kind": kind,
+            "round": meta.get("round", 1),
             "model": meta["model"], "version": meta["version"],
             "seed": meta["seed"], "prompt": meta["prompt"],
             "predict_time": meta.get("predict_time"),
@@ -266,13 +336,17 @@ def main() -> None:
 
         if kind == "ambient_loop":
             looped = outdir / f"{stem}_loop.wav"
-            ldur = loop_render(wav, looped, LOOP_XFADE)
+            sr = best_loop(wav, looped)
             entry["loop"] = {
                 "file": str(looped.relative_to(ROOT)),
-                "xfade_s": LOOP_XFADE,
-                "duration": round(ldur, 2),
+                "xfade_s": sr["chosen"]["xfade_s"],
+                "tail_cut_s": sr["chosen"]["tail_cut_s"],
+                "duration": round(sr["duration"], 2),
+                "windows_tried": sr["searched"],
+                "repointed": sr["repointed"],
+                "baseline": sr["baseline"],    # what the round-1 fold would give
                 "seam_before": seam(wav),      # straight trim, no fold-back
-                "seam_after": seam(looped),    # after the crossfade
+                "seam_after": seam(looped),    # after the chosen crossfade
             }
             final = looped
         else:
@@ -299,6 +373,8 @@ def main() -> None:
         print(f"  {stem:<32} {entry['duration']:6.2f}s  {entry['LUFS']!s:>6} LUFS  "
               f"{entry['dBTP']!s:>5} dBTP  trimmed {entry['trimmed_s']:.2f}s"
               + (f"  seam {entry['loop']['seam_after']['verdict']}"
+                 f" lvl {entry['loop']['seam_after']['level_match_db']:+.1f}dB"
+                 + ("  RE-POINTED" if entry["loop"]["repointed"] else "")
                  if kind == "ambient_loop" else ""))
 
     (OUT / "manifest.json").write_text(json.dumps(manifest, indent=2))

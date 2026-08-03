@@ -86,6 +86,10 @@ struct MainMenuView: View {
         .onAppear {
             // R39 (a): app start → main menu visible. Emitted once per process.
             PerfLog.measureLaunch("launch_to_menu")
+            // Title-screen score. `CareerShellView` takes the base context over
+            // while a career is open and hands it back on dismiss, so this is
+            // both the app's first music state and its fallback.
+            MusicDirector.shared.setBaseContext(.menu)
         }
         .sheet(isPresented: $showSettings) {
             SettingsView()

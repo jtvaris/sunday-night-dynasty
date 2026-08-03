@@ -19,11 +19,27 @@ INSTRUMENTAL ONLY. ACE-Step gets `lyrics="[instrumental]"` (the model's own
 instrumental marker) rather than an empty string, because an empty lyrics field
 lets it hallucinate mushy syllables over the top.
 
+ROUND 2 (2026-08-03). Round 1 answered the question: yes, the open route
+clears the bar. The user approved 6 of the 10 takes by ear — both
+orchestral_cinematic, both dark_hybrid, and the downtempo + lofi loops.
+Round 2 therefore stops exploring styles and DEEPENS the two approved theme
+families, at broadcast length (150-210 s, the model's ceiling is 240) plus two
+situational cues, and adds three more loops in the approved ambient lane.
+
+Calibration that matters: the take the user liked most (dark_hybrid_take2) is
+the one round 1's structural metrics ranked LAST — flat arc, bright centroid.
+So round 2 deliberately does NOT prune candidates by those heuristics. It
+generates spread inside each family and lets the ear decide; the metrics are
+still measured and shown, but they carry no rank.
+
 Usage:
     python3 generate_music.py pilot          # one theme, validates params
-    python3 generate_music.py themes         # the 6 ACE-Step menu themes
-    python3 generate_music.py loops          # the 4 Stable Audio Open loops
-    python3 generate_music.py all
+    python3 generate_music.py themes         # the 6 ACE-Step menu themes (r1)
+    python3 generate_music.py loops          # the 4 Stable Audio Open loops (r1)
+    python3 generate_music.py all            # round 1
+    python3 generate_music.py r2-themes      # 10 long themes + 2 cues (r2)
+    python3 generate_music.py r2-loops       # 3 ambient loops (r2)
+    python3 generate_music.py round2         # both of the above
 """
 
 from __future__ import annotations
@@ -132,6 +148,164 @@ LOOPS: list[tuple] = [
 ]
 
 
+# =========================================================================
+# ROUND 2 — depth inside the two approved families, at broadcast length.
+#
+# Entries are (style, stem, tags, seed, duration_s). `style` decides the
+# output folder and the family label on the review page; `stem` is the file
+# name. Durations sit in the 150-210 s brief (ACE-Step's own ceiling is 240)
+# except the situational cues, which are 90-120 s by design — a cue that
+# outlives the screen it plays on is worse than one that repeats.
+#
+# Durations are also a SHIP budget, not just an artistic choice: every second
+# here costs ~20 KB of app bundle at AAC 160 kbps, and the music budget is
+# 60 MB. That is why nothing sits at the 210 s ceiling.
+# =========================================================================
+
+R2_THEMES: list[tuple] = [
+    # --- orchestral_cinematic family: five different ways to be cinematic ---
+    ("orchestral_cinematic", "orchestral_cinematic_r2_percussive", T(
+        "epic orchestral cinematic", "driving orchestral percussion", "taiko drums",
+        "timpani ostinato", "snare rolls", "staccato low strings",
+        "brass punctuation", "relentless forward momentum", "percussion forward mix",
+        "championship gravitas", "instrumental", "no vocals", "110 BPM", "C minor"),
+     970301, 158),
+    ("orchestral_cinematic", "orchestral_cinematic_r2_strings", T(
+        "cinematic string orchestra", "no percussion", "sustained legato violins",
+        "warm cello counter-melody", "slow burn build", "patient and emotional",
+        "film score", "restrained opening then soaring", "dynasty legacy",
+        "instrumental", "no vocals", "72 BPM", "D minor"),
+     970302, 176),
+    ("orchestral_cinematic", "orchestral_cinematic_r2_brass", T(
+        "epic orchestral cinematic", "heroic french horn theme",
+        "trombone and tuba power chords", "brass fanfare peaks",
+        "string bed underneath", "timpani hits", "triumphant summits and quiet valleys",
+        "stadium grandeur", "instrumental", "no vocals", "96 BPM", "E flat major"),
+     970303, 162),
+    ("orchestral_cinematic", "orchestral_cinematic_r2_noble", T(
+        "noble restrained orchestral score", "gentle string ensemble",
+        "solo french horn melody", "soft woodwinds", "sparse piano",
+        "dignified and understated", "quiet confidence", "never bombastic",
+        "hall of fame reverence", "instrumental", "no vocals", "80 BPM", "A major"),
+     970304, 168),
+    ("orchestral_cinematic", "orchestral_cinematic_r2_dark", T(
+        "dark orchestral cinematic", "brooding low strings",
+        "ominous cellos and double bass", "muted brass", "sparse timpani",
+        "minor key tension", "cold and serious", "rivalry week", "foreboding build",
+        "instrumental", "no vocals", "88 BPM", "B minor"),
+     970305, 152),
+
+    # --- dark_hybrid family: pulse tempo is the main axis of variation ---
+    ("dark_hybrid", "dark_hybrid_r2_slow", T(
+        "dark hybrid cinematic", "slow pulsing analog synth bass",
+        "half-time cinematic drums", "deep sub bass", "sparse metallic percussion",
+        "patient tension build", "brooding night game", "wide reverb",
+        "instrumental", "no vocals", "92 BPM", "F minor"),
+     970401, 166),
+    ("dark_hybrid", "dark_hybrid_r2_drive", T(
+        "hybrid orchestral electronic", "fast driving synth arpeggio",
+        "tight electronic drums", "propulsive sixteenth note bass pulse",
+        "staccato string stabs", "urgent momentum", "modern primetime sports",
+        "instrumental", "no vocals", "145 BPM", "G minor"),
+     970402, 152),
+    ("dark_hybrid", "dark_hybrid_r2_atmos", T(
+        "dark ambient hybrid score", "evolving synth pads", "distant low drones",
+        "sparse sub bass pulse", "occasional cinematic hit", "spacious and atmospheric",
+        "slow drifting tension", "minimal percussion", "empty stadium at night",
+        "instrumental", "no vocals", "76 BPM", "D minor"),
+     970403, 172),
+    ("dark_hybrid", "dark_hybrid_r2_aggro", T(
+        "aggressive hybrid trailer music", "distorted synth bass",
+        "hard hitting industrial percussion", "brass braams", "metallic impacts",
+        "gritty and confrontational", "relentless drive", "epic drop",
+        "instrumental", "no vocals", "135 BPM", "A minor"),
+     970404, 156),
+    # the crossover the user asked for: approved family A over approved family B
+    ("dark_hybrid", "dark_hybrid_r2_crossover", T(
+        "hybrid orchestral electronic crossover",
+        "sweeping legato strings over a pulsing analog synth bass",
+        "cinematic taiko and timpani", "noble french horns against electronic percussion",
+        "epic and modern", "tension and release", "primetime dynasty",
+        "instrumental", "no vocals", "118 BPM", "C minor"),
+     970405, 160),
+
+    # --- situational cues (90-120 s) ---
+    ("cue_draft", "cue_draft_room_take1", T(
+        "tense underscore", "ticking clock", "restrained muted percussion",
+        "pizzicato strings", "low sustained drone", "sparse piano notes",
+        "nervous anticipation", "deadline pressure", "war room",
+        "minimal and taut", "no big climax", "instrumental", "no vocals",
+        "100 BPM", "A minor"),
+     970501, 105),
+    ("cue_championship", "cue_championship_take1", T(
+        "triumphant orchestral climax", "full brass fanfare", "soaring string melody",
+        "timpani rolls and cymbal crashes", "victory celebration",
+        "confetti and lifted trophy", "majestic and joyous",
+        "peaks early and holds", "instrumental", "no vocals", "104 BPM", "C major"),
+     970502, 110),
+
+    # --- situational-map fill: contexts that were still one-deep ---
+    ("menu_theme", "menu_theme_r2_take1", T(
+        "definitive sports management main menu theme", "warm legato strings",
+        "noble horn statement", "soft timpani", "understated drumline",
+        "confident but calm", "loops comfortably under a menu", "never fatiguing",
+        "broadcast prestige", "instrumental", "no vocals", "86 BPM", "F major"),
+     970601, 92),
+    ("cue_draft", "cue_draft_room_take2", T(
+        "tense minimal underscore", "metronome tick", "muted staccato strings",
+        "soft heartbeat kick", "cold synth drone", "rising unease",
+        "clock winding down", "restrained", "no melody", "instrumental",
+        "no vocals", "92 BPM", "E minor"),
+     970503, 100),
+    ("cue_draft", "cue_draft_room_take3", T(
+        "suspense underscore", "ticking percussion", "col legno strings",
+        "low piano ostinato", "sparse marimba", "held breath tension",
+        "decision under pressure", "understated and nervous", "instrumental",
+        "no vocals", "108 BPM", "C sharp minor"),
+     970504, 98),
+    ("dark_hybrid", "gameday_build_take1", T(
+        "aggressive hybrid pregame build", "pounding synth bass",
+        "stadium drumline over electronic drums", "rising brass swell",
+        "hard impacts", "adrenaline", "walk out of the tunnel",
+        "builds relentlessly to kickoff", "instrumental", "no vocals",
+        "128 BPM", "D minor"),
+     970701, 150),
+    ("orchestral_cinematic", "playoffs_dark_take1", T(
+        "dark tense cinematic", "tremolo strings", "low brass swells",
+        "sparse war drums", "cold and high stakes", "one game to survive",
+        "creeping dread with a defiant peak", "january football",
+        "instrumental", "no vocals", "84 BPM", "F sharp minor"),
+     970801, 150),
+]
+
+# Round-2 loops, all inside the approved downtempo / lo-fi lane. Three feed
+# the dashboard rotation, two are held for the offseason context (same lane,
+# slightly softer) so the two screens do not share an identical playlist.
+R2_LOOPS: list[tuple] = [
+    ("ambient_downtempo", "ambient_downtempo_r2_take2", T(
+        "downtempo lo-fi beat", "dusty rhodes chords", "soft kick and rim shot",
+        "warm tape saturation", "vinyl crackle", "low-key confident",
+        "steady unchanging groove", "understated menu music", "instrumental"), 980301),
+    ("ambient_downtempo", "ambient_downtempo_r2_take3", T(
+        "downtempo instrumental underscore", "muted upright bass", "brushed drums",
+        "dark warm keys", "subtle vinyl texture", "moody and patient",
+        "constant level", "no build", "background loop", "instrumental"), 980302),
+    ("ambient_lofi", "ambient_lofi_r2_take2", T(
+        "lo-fi ambient underscore", "soft warm analog pads", "gentle brushed drums",
+        "mellow electric piano", "subtle sub bass", "calm and spacious",
+        "steady unchanging loop", "no dynamic swells", "background music",
+        "instrumental"), 980101),
+    ("ambient_lofi", "ambient_lofi_r2_take3", T(
+        "soft lo-fi ambient bed", "hazy tape pads", "very light percussion",
+        "warm muted guitar", "slow and reflective", "quiet offseason",
+        "steady unchanging loop", "background music", "instrumental"), 980102),
+    ("ambient_downtempo", "ambient_downtempo_r2_take4", T(
+        "slow downtempo underscore", "mellow electric piano", "soft brushed kick",
+        "deep warm bass", "vinyl dust", "unhurried and reflective",
+        "steady groove", "background loop", "instrumental"), 980303),
+]
+
+
 # -------------------------------------------------------------------------
 
 def post(url: str, payload: dict, headers: dict, timeout: int = 300):
@@ -219,13 +393,15 @@ def _run(version: str, inp: dict, stem: str, outdir: Path, meta_extra: dict) -> 
             "predict_time": meta["predict_time"]}
 
 
-def gen_theme(style: str, take: str, tags: str, seed: int) -> dict:
+def gen_theme(style: str, take: str, tags: str, seed: int,
+              duration: int = ACE_SECS, stem: str | None = None,
+              rnd: int = 1) -> dict:
     return _run(ACE_VERSION, {
         "tags": tags,
         # The model's own instrumental marker. An EMPTY lyrics field is what
         # makes ACE-Step invent slurred pseudo-vocals, so this is load-bearing.
         "lyrics": "[instrumental]",
-        "duration": ACE_SECS,
+        "duration": duration,
         "number_of_steps": ACE_STEPS,
         "seed": seed,
         "scheduler": "euler",
@@ -233,12 +409,18 @@ def gen_theme(style: str, take: str, tags: str, seed: int) -> dict:
         "guidance_scale": 15,
         "tag_guidance_scale": 5,     # >0 so the style tags actually bind
         "lyric_guidance_scale": 0,   # nothing to guide toward — instrumental
-    }, f"{style}_{take}", RAW / style,
+    }, stem or f"{style}_{take}", RAW / style,
         {"model": ACE_MODEL, "version": ACE_VERSION, "kind": "menu_theme",
-         "style": style, "seed": seed, "prompt": tags})
+         "style": style, "seed": seed, "prompt": tags, "round": rnd,
+         "requested_duration": duration})
 
 
-def gen_loop(name: str, take: str, prompt: str, seed: int) -> dict:
+def gen_r2_theme(style: str, stem: str, tags: str, seed: int, duration: int) -> dict:
+    return gen_theme(style, "", tags, seed, duration=duration, stem=stem, rnd=2)
+
+
+def gen_loop(name: str, take: str, prompt: str, seed: int,
+             stem: str | None = None, rnd: int = 1) -> dict:
     return _run(SAO_VERSION, {
         "prompt": prompt,
         "negative_prompt": SAO_NEG,
@@ -248,9 +430,14 @@ def gen_loop(name: str, take: str, prompt: str, seed: int) -> dict:
         "steps": 100,
         "seed": seed,
         "sampler_type": "dpmpp-3m-sde",
-    }, f"{name}_{take}", RAW / name,
+    }, stem or f"{name}_{take}", RAW / name,
         {"model": SAO_MODEL, "version": SAO_VERSION, "kind": "ambient_loop",
-         "style": name, "seed": seed, "prompt": prompt})
+         "style": name, "seed": seed, "prompt": prompt, "round": rnd,
+         "requested_duration": SAO_SECS})
+
+
+def gen_r2_loop(style: str, stem: str, prompt: str, seed: int) -> dict:
+    return gen_loop(style, "", prompt, seed, stem=stem, rnd=2)
 
 
 def report(results: list[dict]) -> None:
@@ -278,6 +465,10 @@ def main() -> None:
                  for s, takes in THEMES.items() for tk, tags, seed in takes]
     if mode in ("loops", "all"):
         jobs += [(gen_loop, args) for args in LOOPS]
+    if mode in ("r2-themes", "round2"):
+        jobs += [(gen_r2_theme, args) for args in R2_THEMES]
+    if mode in ("r2-loops", "round2"):
+        jobs += [(gen_r2_loop, args) for args in R2_LOOPS]
 
     if not jobs:
         sys.exit(f"unknown mode: {mode}")
