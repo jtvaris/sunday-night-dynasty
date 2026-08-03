@@ -31,8 +31,10 @@ struct LiveBigBoardPanel: View {
             }
             // The board no longer prints a number, so it has to say whose read
             // it is showing: gold = your scouts' band, grey = the media's
-            // projected round and nothing more.
-            Text("Gold bands are your scouts. Grey bands are the media's projection — scout them to narrow it.")
+            // projected round and nothing more. The rank column is the media's
+            // consensus slot, which is why it is NOT gold — gold in this panel
+            // means "this is your building's opinion".
+            Text("#N is the media's consensus slot. Gold bands are your scouts; grey bands are the media's projection — scout them to narrow it.")
                 .font(.system(size: 9))
                 .foregroundStyle(Color.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -100,11 +102,12 @@ struct LiveBigBoardPanel: View {
     /// Room's Best Available panel uses.
     private func prospectRowContent(_ prospect: CollegeProspect) -> some View {
         let need = coordinator.teamNeedScores[prospect.position] ?? 0
+        let mark = DraftIntel.mark(for: prospect)
         return HStack(spacing: DSSpacing.xxs) {
             if let rank = coordinator.publicBoardRanks[prospect.id] {
                 Text("#\(rank)")
                     .font(.caption.monospaced().weight(.bold))
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.textSecondary)
                     .frame(width: 34, alignment: .leading)
             } else {
                 Text("—")
@@ -116,9 +119,18 @@ struct LiveBigBoardPanel: View {
                 .font(.caption2.weight(.bold))
                 .foregroundStyle(need >= 0.7 ? Color.draftStealGold : Color.textSecondary)
                 .frame(width: 26, alignment: .leading)
+            // The user's own mark, carried from the scouting board to the one
+            // screen where it decides something: a star on the men he wants,
+            // and nothing shouty on the ones he does not.
+            if let mark {
+                Image(systemName: mark.icon)
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(mark.color)
+                    .accessibilityLabel(mark.label)
+            }
             Text("\(prospect.firstName.prefix(1)). \(prospect.lastName)")
                 .font(.caption)
-                .foregroundStyle(Color.textPrimary)
+                .foregroundStyle(mark == .avoid ? Color.textTertiary : Color.textPrimary)
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -144,6 +156,9 @@ struct LiveBigBoardPanel: View {
             , alignment: .leading
         )
         .clipShape(RoundedRectangle(cornerRadius: DSCornerRadius.inline))
+        // An "avoid" is not hidden — the user still has to see who is left on
+        // the board — it just stops competing for his eye with the rest.
+        .opacity(mark == .avoid ? 0.5 : 1.0)
         .accessibilityElement(children: .combine)
     }
 }

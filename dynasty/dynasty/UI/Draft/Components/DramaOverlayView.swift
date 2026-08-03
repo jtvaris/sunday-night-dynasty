@@ -50,6 +50,8 @@ struct DramaOverlayView: View {
         case .roundTransition:      return 1.5
         case .gemMoment:            return 1.2
         case .userPickIncoming:     return 1.0
+        case .targetOnTheBoard:     return 2.2
+        case .targetSniped:         return 2.0
         case .finalPick:            return 2.0
         }
     }
@@ -64,6 +66,10 @@ struct DramaOverlayView: View {
             return "gem:\(t):\(p)"
         case .userPickIncoming(let n):
             return "incoming:\(n)"
+        case .targetOnTheBoard(let p, let pos, let n):
+            return "target:\(pos):\(p):\(n)"
+        case .targetSniped(let p, let pos, let t):
+            return "sniped:\(t):\(pos):\(p)"
         case .finalPick:
             return "final"
         }
@@ -82,6 +88,10 @@ struct DramaOverlayView: View {
             gemFlash(playerName: playerName, teamAbbrev: teamAbbrev)
         case .userPickIncoming(let picksAway):
             incomingBanner(picksAway: picksAway)
+        case .targetOnTheBoard(let playerName, let position, let picksAway):
+            targetBanner(playerName: playerName, position: position, picksAway: picksAway)
+        case .targetSniped(let playerName, let position, let teamAbbrev):
+            snipedBanner(playerName: playerName, position: position, teamAbbrev: teamAbbrev)
         case .finalPick:
             finalPickOverlay()
         }
@@ -217,6 +227,83 @@ struct DramaOverlayView: View {
             .opacity(visible ? 1 : 0)
             .padding(.top, DSSpacing.md)
             .animation(.easeInOut(duration: 0.4).repeatForever(autoreverses: true), value: visible)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    // MARK: - Marked target still on the board
+
+    /// The payoff for a board the user actually marked up: his own star, his
+    /// own words, arriving while he can still act on it. Gold on gold — the
+    /// draft room's convention for "this is yours", not the red urgency chrome
+    /// the on-the-clock pulse owns.
+    private func targetBanner(playerName: String, position: String, picksAway: Int) -> some View {
+        VStack {
+            HStack(spacing: DSSpacing.sm) {
+                Image(systemName: "star.fill")
+                    .foregroundStyle(Color.draftStealGold)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("YOUR TARGET IS STILL ON THE BOARD")
+                        .font(.subheadline.weight(.heavy))
+                        .tracking(1.2)
+                        .foregroundStyle(Color.draftStealGold)
+                    Text("\(position) \(playerName) — \(picksAway) \(picksAway == 1 ? "pick" : "picks") to yours")
+                        .font(.headline)
+                        .foregroundStyle(Color.textPrimary)
+                        .lineLimit(1)
+                }
+            }
+            .padding(.horizontal, DSSpacing.lg)
+            .padding(.vertical, DSSpacing.sm)
+            .background(
+                RoundedRectangle(cornerRadius: DSCornerRadius.card)
+                    .fill(Color.backgroundSecondary)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DSCornerRadius.card)
+                            .strokeBorder(Color.draftStealGold, lineWidth: 2)
+                    )
+            )
+            .shadow(color: Color.draftStealGold.opacity(0.5), radius: 14, x: 0, y: 4)
+            .opacity(visible ? 1 : 0)
+            .offset(y: visible ? 0 : -40)
+            .padding(.top, DSSpacing.md)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    /// …and the sting when somebody else calls his name first.
+    private func snipedBanner(playerName: String, position: String, teamAbbrev: String) -> some View {
+        VStack {
+            HStack(spacing: DSSpacing.sm) {
+                Image(systemName: "xmark.seal.fill")
+                    .foregroundStyle(Color.draftReachRed)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("TARGET GONE")
+                        .font(.subheadline.weight(.heavy))
+                        .tracking(1.2)
+                        .foregroundStyle(Color.draftReachRed)
+                    Text("\(teamAbbrev) take \(position) \(playerName) off your board")
+                        .font(.headline)
+                        .foregroundStyle(Color.textPrimary)
+                        .lineLimit(1)
+                }
+            }
+            .padding(.horizontal, DSSpacing.lg)
+            .padding(.vertical, DSSpacing.sm)
+            .background(
+                RoundedRectangle(cornerRadius: DSCornerRadius.card)
+                    .fill(Color.backgroundSecondary)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DSCornerRadius.card)
+                            .strokeBorder(Color.draftReachRed.opacity(0.8), lineWidth: 2)
+                    )
+            )
+            .shadow(color: Color.draftReachRed.opacity(0.35), radius: 12, x: 0, y: 4)
+            .opacity(visible ? 1 : 0)
+            .offset(y: visible ? 0 : -40)
+            .padding(.top, DSSpacing.md)
             Spacer()
         }
         .frame(maxWidth: .infinity)

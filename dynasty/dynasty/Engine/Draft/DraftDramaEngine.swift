@@ -23,6 +23,12 @@ enum DraftDramaEngine {
         case gemMoment(playerName: String, teamAbbrev: String)
         /// User's pick is approaching — pulse the on-the-clock chrome.
         case userPickIncoming(picksAway: Int)
+        /// A man the user marked ELITE on his own board is still sitting there
+        /// with the user's turn in sight. The one beat that makes a marked
+        /// board pay off on draft night.
+        case targetOnTheBoard(playerName: String, position: String, picksAway: Int)
+        /// …and the sting when somebody else takes him first.
+        case targetSniped(playerName: String, position: String, teamAbbrev: String)
         /// Final pick of the entire draft — Mr. Irrelevant moment.
         case finalPick
     }
@@ -36,6 +42,12 @@ enum DraftDramaEngine {
 
     /// Distance ahead of the user's pick at which the incoming-pulse fires.
     static let pickIncomingDistance: Int = 3
+
+    /// Distance at which the war room starts shouting about a marked target.
+    /// Deliberately wider than `pickIncomingDistance` so the beat lands *before*
+    /// the generic "your pick is next" pulse rather than fighting it: first
+    /// "he's still there", then "you're up".
+    static let targetWatchDistance: Int = 6
 
     // MARK: - API
 
@@ -102,6 +114,43 @@ enum DraftDramaEngine {
         }
 
         return events
+    }
+
+    // MARK: - Marked-target beats
+
+    /// "Your guy is still on the board, N picks to yours."
+    ///
+    /// Returns nil unless the user's turn is genuinely in sight — the beat is
+    /// worth nothing if it fires at pick 3 of a round the user picks last in.
+    /// The caller is responsible for firing it at most once per user turn.
+    static func targetOnTheBoardBeat(
+        playerName: String,
+        position: String,
+        picksUntilUserPick: Int
+    ) -> DramaEvent? {
+        guard picksUntilUserPick > 0, picksUntilUserPick <= targetWatchDistance else { return nil }
+        return .targetOnTheBoard(
+            playerName: playerName,
+            position: position,
+            picksAway: picksUntilUserPick
+        )
+    }
+
+    /// The sting: a club ahead of the user just took a man he had marked.
+    /// Only ever fires for a mark the user said he WANTED — losing a prospect
+    /// tagged "avoid" is not a loss.
+    static func targetSnipedBeat(
+        playerName: String,
+        position: String,
+        teamAbbrev: String,
+        isWantedTarget: Bool
+    ) -> DramaEvent? {
+        guard isWantedTarget else { return nil }
+        return .targetSniped(
+            playerName: playerName,
+            position: position,
+            teamAbbrev: teamAbbrev
+        )
     }
 
     // MARK: - Heuristics

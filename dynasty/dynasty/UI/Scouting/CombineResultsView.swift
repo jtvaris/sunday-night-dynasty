@@ -273,7 +273,10 @@ struct CombineResultsView: View {
                                         .accessibilityElement(children: .combine)
                                         .accessibilityHint("Tap to view prospect details")
                                         .contextMenu {
-                                            ProspectGradeContextMenu(prospectID: prospect.id)
+                                            ProspectGradeContextMenu(
+                                                prospect: prospect,
+                                                onChange: { try? modelContext.save() }
+                                            )
                                         }
 
                                         Divider().overlay(Color.surfaceBorder.opacity(0.5))
@@ -546,9 +549,12 @@ struct CombineResultsView: View {
         let fidelity = ProspectFog.combineFidelity(for: prospect, scoutsAttended: scoutsAttended)
         let showsPercentile = ProspectFog.showsPercentile(fidelity)
         return HStack(spacing: 0) {
-            // Star toggle using UserProspectGradeStore
-            ProspectStarButton(prospectID: prospect.id)
-                .frame(width: 44)
+            // The ONE mark, same control as the board and the prospect list.
+            ProspectMarkButton(
+                prospect: prospect,
+                onChange: { try? modelContext.save() }
+            )
+            .frame(width: 44)
 
             // Rank
             Text("\(index)")
@@ -562,6 +568,8 @@ struct CombineResultsView: View {
                     .font(.caption.weight(.medium))
                     .foregroundStyle(Color.textPrimary)
                     .lineLimit(1)
+
+                ProspectMarkChip(mark: prospect.userMark)
 
                 UserGradeBadge(prospectID: prospect.id)
 
@@ -845,16 +853,6 @@ struct CombineResultsView: View {
         case 6: return "Rd 6"
         case 7: return "Rd 7"
         default: return "UDFA"
-        }
-    }
-
-    // MARK: - Watchlist Toggle
-
-    private func toggleWatchlist(_ prospect: CollegeProspect) {
-        if prospect.prospectFlag == .none {
-            prospect.prospectFlag = .mustHave
-        } else {
-            prospect.prospectFlag = .none
         }
     }
 

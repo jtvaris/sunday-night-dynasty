@@ -22,11 +22,14 @@ struct BigBoardView: View {
     @Binding var positionFilter: ProspectPositionFilter
 
     @Environment(\.modelContext) private var modelContext
-    @State private var flagFilter: ProspectFlagFilter = .all
-    @State private var boardOrder: [UUID] = []
+    @State private var markFilter: ProspectMarkFilter = .all
     @State private var attributeTab: ProspectAttributeTab = .overview
-    @State private var showWatchlistOnly: Bool = false
+    @State private var showMarkedOnly: Bool = false
     @State private var editingAssessmentProspect: CollegeProspect?
+    @State private var editingMarkNoteProspect: CollegeProspect?
+    /// Compare tray — up to four men, reachable straight off a board row.
+    @State private var compareSelection: [CollegeProspect] = []
+    @State private var showCompareSheet: Bool = false
     @State private var coaches: [Coach] = []
     @State private var showMyBoard: Bool = false
     @State private var teamDraftPicks: [DraftPick] = []
@@ -37,7 +40,6 @@ struct BigBoardView: View {
     @State private var filterProjectedRoundMax: Int = 8
     @State private var filterRisk: ProspectRiskLevel? = nil
     @State private var showFilterMenu: Bool = false
-    @State private var filterStarredOnly: Bool = false
     @State private var filterMyGradeFirstRound: Bool = false
     @State private var showBoardComparison: Bool = false
     @ObservedObject private var userGradeStore = UserProspectGradeStore.shared
@@ -47,9 +49,15 @@ struct BigBoardView: View {
     @State private var cachedTieredBoard: [(tier: Int, prospects: [CollegeProspect])] = []
     @State private var cachedOrderedBoard: [CollegeProspect] = []
     @State private var cachedCustomOrderedBoard: [CollegeProspect] = []
+    /// My Board, split into mark-tier sections. The tier is the tier-break
+    /// primitive: a verdict written on the prospect card becomes structure here.
+    @State private var cachedMarkGroups: [(tier: ProspectMarkTier, prospects: [CollegeProspect])] = []
     /// O(1) rank lookup by prospect ID — avoids per-row firstIndex(where:) which would be O(n²) overall.
     @State private var cachedRankMap: [UUID: Int] = [:]
     @State private var cachedCustomRankMap: [UUID: Int] = [:]
+    /// Value-vs-my-grade read per prospect, computed once per refresh so a row
+    /// never re-derives it and the sort has one source.
+    @State private var cachedValueReads: [UUID: ProspectFog.ValueRead] = [:]
 
     // MARK: - Prospect Notes Storage
 
@@ -72,9 +80,12 @@ struct BigBoardView: View {
         }
     }
 
-    // MARK: - Own Assessments & Watchlist Storage
+    // MARK: - Own Assessments Storage
 
     @CareerScopedStorage("prospectOwnAssessments") private var prospectOwnAssessmentsJSON: String = "{}"
+    /// Read only to MIGRATE the legacy bookmark set onto the unified mark. The
+    /// board's own bookmark filter is gone — it was a third opinion of the same
+    /// prospect that only this screen could see.
     @CareerScopedStorage("prospectWatchlist") private var prospectWatchlistJSON: String = "[]"
     @CareerScopedStorage("prospectCustomBoard") private var prospectCustomBoardJSON: String = "[]"
     @CareerScopedStorage("rosterPriorities") private var rosterPrioritiesJSON: String = "{}"
@@ -85,7 +96,7 @@ struct BigBoardView: View {
         (try? JSONDecoder().decode([String: String].self, from: Data(prospectOwnAssessmentsJSON.utf8))) ?? [:]
     }
 
-    private var prospectWatchlist: Set<String> {
+    private var legacyWatchlistIDs: Set<String> {
         Set((try? JSONDecoder().decode([String].self, from: Data(prospectWatchlistJSON.utf8))) ?? [])
     }
 
@@ -102,35 +113,176 @@ struct BigBoardView: View {
         }
     }
 
-    private func toggleWatchlist(prospectID: UUID) {
-        var list = prospectWatchlist
-        let key = prospectID.uuidString
-        if list.contains(key) {
-            list.remove(key)
-        } else {
-            list.insert(key)
-        }
-        if let data = try? JSONEncoder().encode(Array(list)) {
-            prospectWatchlistJSON = String(data: data, encoding: .utf8) ?? "[]"
-        }
-    }
+    // MARK: - Board Order Storage
+    //
+    // ONE persisted order for the whole screen.
+    //
+    // There used to be two, and neither worked. `boardOrder` was `@State`,
+    // re-seeded from the composite score on every appearance and never written
+    // anywhere, so the tier movers and the Move Up / Move Down actions were
+    // discarded the moment the view went away. `prospectCustomBoard` WAS
+    // persisted, but nothing ever seeded it: "My Board" appended every prospect
+    // the filter returned in raw fetch order, i.e. `DraftClassBuilder`'s
+    // generation shuffle, and `moveCustomBoard` wrote the reordered list to
+    // defaults without refreshing the cached array the list actually renders —
+    // so a drag snapped straight back.
+    //
+    // Both are now the same list: `prospectCustomBoard`, seeded from the media
+    // consensus on first open, appended to as new men are scouted, and written
+    // (plus re-cached) by every mover.
 
-    private func isOnWatchlist(_ prospectID: UUID) -> Bool {
-        prospectWatchlist.contains(prospectID.uuidString)
-    }
-
-    // MARK: - Custom Board Storage
-
-    private var customBoardOrder: [UUID] {
+    private var boardOrder: [UUID] {
         let strings = (try? JSONDecoder().decode([String].self, from: Data(prospectCustomBoardJSON.utf8))) ?? []
         return strings.compactMap { UUID(uuidString: $0) }
     }
 
-    private func saveCustomBoardOrder(_ ids: [UUID]) {
+    private func saveBoardOrder(_ ids: [UUID]) {
         let strings = ids.map { $0.uuidString }
         if let data = try? JSONEncoder().encode(strings) {
             prospectCustomBoardJSON = String(data: data, encoding: .utf8) ?? "[]"
         }
+    }
+
+    /// Media-only ordering used to seed the board and to place anything the
+    /// stored order has not seen yet: the consensus rank by contract (mock pick,
+    /// then projected round), falling back to the scouts' own read.
+    private func consensusOrdered(_ list: [CollegeProspect]) -> [CollegeProspect] {
+        list.sorted { lhs, rhs in
+            let l = marketRank(for: lhs) ?? Int.max
+            let r = marketRank(for: rhs) ?? Int.max
+            if l != r { return l < r }
+            return boardCompositeScore(for: lhs) > boardCompositeScore(for: rhs)
+        }
+    }
+
+    /// Seeds the order on first open, drops last year's class, and appends newly
+    /// scouted men to the end of the stored list (in consensus order) so nothing
+    /// is left un-ranked. Writes only when something actually changed.
+    ///
+    /// The prune is what makes the stored order usable past season 1.
+    /// `prospectCustomBoard` is career-scoped but NOT season-scoped and nothing
+    /// resets it at the rollover, so without it season 2's men were appended
+    /// behind ~285 retired IDs: `recordOriginalPositions` then stamped "original
+    /// slot 286…570" on prospects whose row prints rank 1…285, and every single
+    /// row rendered a green "↑ #412" movement badge.
+    private func syncBoardOrder() {
+        let board = scoutedProspects
+        guard !board.isEmpty else { return }
+        let live = Set(prospects.map(\.id))
+        let stored = boardOrder
+        let pruned = stored.filter { live.contains($0) }
+        let known = Set(pruned)
+        let missing = consensusOrdered(board.filter { !known.contains($0.id) }).map(\.id)
+        let didPrune = pruned.count != stored.count
+        guard didPrune || !missing.isEmpty else { return }
+        // A class rollover invalidates every stored "original slot" too — they
+        // were indices into a list that no longer exists.
+        if didPrune { userGradeStore.clearOriginalPositions() }
+        saveBoardOrder(pruned + missing)
+    }
+
+    /// Throws the stored order away and rebuilds it from the media consensus.
+    private func resetBoardToConsensus() {
+        saveBoardOrder(consensusOrdered(scoutedProspects).map(\.id))
+        userGradeStore.clearOriginalPositions()
+        recordOriginalPositions()
+        refreshCachedBoard()
+    }
+
+    /// Ranks the board by what the USER has said: mark tier first, then his own
+    /// draft grade, then the consensus as the tie-break. The point of the action
+    /// is that a board full of marks and grades can be turned into an order in
+    /// one tap instead of a hundred drags.
+    private func autoRankFromMyGrades() {
+        let ranked = scoutedProspects.sorted { lhs, rhs in
+            let lm = lhs.userMark.sortRank
+            let rm = rhs.userMark.sortRank
+            if lm != rm { return lm < rm }
+            let lg = impliedBoardSlot(forGradeOf: lhs) ?? Int.max
+            let rg = impliedBoardSlot(forGradeOf: rhs) ?? Int.max
+            if lg != rg { return lg < rg }
+            let lc = marketRank(for: lhs) ?? Int.max
+            let rc = marketRank(for: rhs) ?? Int.max
+            if lc != rc { return lc < rc }
+            return boardCompositeScore(for: lhs) > boardCompositeScore(for: rhs)
+        }
+        saveBoardOrder(ranked.map(\.id))
+        userGradeStore.clearOriginalPositions()
+        recordOriginalPositions()
+        refreshCachedBoard()
+    }
+
+    /// The board slot the user's own draft grade implies, via `DraftIntel`'s
+    /// table — the same one the value delta is measured against, so a board
+    /// auto-ranked from the grades reads "IN LINE" all the way down.
+    private func impliedBoardSlot(forGradeOf prospect: CollegeProspect) -> Int? {
+        guard let grade = userGradeStore.grade(for: prospect.id),
+              let ordinal = ProspectFog.gradeOrdinal(for: grade) else { return nil }
+        return DraftIntel.impliedBoardSlot(userGradeOrdinal: ordinal)
+    }
+
+    private func recordOriginalPositions() {
+        for (index, id) in boardOrder.enumerated() {
+            userGradeStore.setOriginalPosition(for: id, position: index + 1)
+        }
+    }
+
+    /// Whether the movement badge (`↑ #34`) means anything on the current view.
+    ///
+    /// It compares the row's printed `rank` against the slot the board was
+    /// seeded at, so it is only readable when `rank` IS the board slot: the
+    /// board-rank sort, with nothing filtered out. Under any other sort, or with
+    /// a filter narrowing the list, `rank` is 1..N over a different population
+    /// while `originalPosition` is still an index into the full stored order, so
+    /// every row would claim a move it never made.
+    private var showsBoardMovement: Bool {
+        boardSortOrder == .boardRank
+            && debouncedSearchText.isEmpty
+            && positionFilter == .all
+            && markFilter == .all
+            && !showMarkedOnly
+            && filterProjectedRoundMin <= 1
+            && filterProjectedRoundMax >= 8
+            && filterRisk == nil
+            && !filterMyGradeFirstRound
+    }
+
+    /// Applies a reorder made inside one visible section (a scout tier, or a
+    /// mark group on My Board) to the single stored order.
+    ///
+    /// The section keeps the slots it already occupies in the full list and
+    /// only the occupants are rewritten, so dragging inside "Blue Chip" can
+    /// never scatter a man into round five.
+    private func reorderSection(ids sectionIDs: [UUID], from: IndexSet, to: Int) {
+        guard !sectionIDs.isEmpty else { return }
+        var section = sectionIDs
+        section.move(fromOffsets: from, toOffset: to)
+
+        var full = boardOrder
+        let member = Set(sectionIDs)
+        var slots: [Int] = []
+        for (index, id) in full.enumerated() where member.contains(id) { slots.append(index) }
+        guard slots.count == section.count else { return }
+        for (offset, slot) in slots.enumerated() { full[slot] = section[offset] }
+        saveBoardOrder(full)
+        refreshCachedBoard()
+    }
+
+    // MARK: - Market rank (pinned contract: media-only)
+
+    /// The media's consensus board slot for one prospect.
+    ///
+    /// `DraftIntel` owns it, and by contract it is built from public
+    /// information ONLY — the latest mock's pick number, then the projected
+    /// round — never `scoutedOverall`. Routed through one call site so the
+    /// board, the value chip and the seed all read the same number.
+    private func marketRank(for prospect: CollegeProspect) -> Int? {
+        DraftIntel.consensusRank(for: prospect.id)
+    }
+
+    /// The value read for a row, or `nil` when there is nothing honest to show.
+    private func valueRead(for prospect: CollegeProspect) -> ProspectFog.ValueRead? {
+        cachedValueReads[prospect.id]
     }
 
     // MARK: - User Roster Priorities
@@ -220,14 +372,12 @@ struct BigBoardView: View {
         if positionFilter != .all {
             result = result.filter { positionFilter.matches($0.position) }
         }
-        switch flagFilter {
-        case .all:      break
-        case .mustHave: result = result.filter { $0.prospectFlag == .mustHave }
-        case .sleeper:  result = result.filter { $0.prospectFlag == .sleeper }
-        case .avoid:    result = result.filter { $0.prospectFlag == .avoid }
+        // ONE mark system drives the filter: the tier the user set, nothing else.
+        if let tier = markFilter.tier {
+            result = result.filter { $0.userMark == tier }
         }
-        if showWatchlistOnly {
-            result = result.filter { isOnWatchlist($0.id) }
+        if showMarkedOnly {
+            result = result.filter(\.isMarked)
         }
         // Projected round range filter (#10)
         if filterProjectedRoundMin > 1 || filterProjectedRoundMax < 8 {
@@ -240,26 +390,58 @@ struct BigBoardView: View {
         if let riskFilter = filterRisk {
             result = result.filter { $0.riskLevel == riskFilter }
         }
-        // User grade filters
-        if filterStarredOnly {
-            result = result.filter { userGradeStore.isStarred($0.id) }
-        }
+        // User grade filters. There is no second "marked only" test here: the
+        // menu item used to drive its own `filterStarredOnly` flag against the
+        // LEGACY star store while calling itself "Marked Only", so after
+        // `migrateLegacyMarks` folded the stars into `userMarkTier` the two
+        // controls with the same name disagreed — the toolbar bookmark filtered
+        // on the mark the user can actually see and set, the menu item on a set
+        // nothing writes any more. Both now drive `showMarkedOnly` above.
         if filterMyGradeFirstRound {
             result = result.filter { userGradeStore.isFirstRoundPlus($0.id) }
         }
         return result
     }
 
-    private var orderedBoard: [CollegeProspect] {
+    /// Applies the ONE persisted board order to a filtered slice. Anything the
+    /// stored order has not seen yet (a man scouted since the last sync) falls
+    /// in behind it, in consensus order rather than fetch order.
+    private func applyBoardOrder(_ filtered: [CollegeProspect]) -> [CollegeProspect] {
+        var index: [UUID: Int] = [:]
+        for (position, id) in boardOrder.enumerated() { index[id] = position }
+        return filtered.sorted { lhs, rhs in
+            let l = index[lhs.id] ?? Int.max
+            let r = index[rhs.id] ?? Int.max
+            if l != r { return l < r }
+            let lc = marketRank(for: lhs) ?? Int.max
+            let rc = marketRank(for: rhs) ?? Int.max
+            if lc != rc { return lc < rc }
+            return boardCompositeScore(for: lhs) > boardCompositeScore(for: rhs)
+        }
+    }
+
+    /// The board's sort applied to the current filter.
+    ///
+    /// `valueReads` is passed in rather than read off `cachedValueReads`
+    /// because `refreshCachedBoard` computes both in one pass — reading a
+    /// `@State` it has just written in the same function is exactly the kind of
+    /// ordering assumption that made the old movers no-ops.
+    private func orderedBoard(valueReads: [UUID: ProspectFog.ValueRead]) -> [CollegeProspect] {
         let filtered = filteredProspects
 
         // #9: Apply sort order
         switch boardSortOrder {
         case .boardRank:
-            var orderedIDs = boardOrder.filter { id in filtered.contains { $0.id == id } }
-            let unordered = filtered.filter { !orderedIDs.contains($0.id) }.map { $0.id }
-            orderedIDs.append(contentsOf: unordered)
-            return orderedIDs.compactMap { id in filtered.first { $0.id == id } }
+            return applyBoardOrder(filtered)
+        case .valueDelta:
+            // Fog-safe: an ungraded or fully fogged prospect has no read at all
+            // and sinks to the bottom rather than sorting as "zero value".
+            return filtered.sorted { lhs, rhs in
+                let l = valueReads[lhs.id]?.delta ?? Int.min
+                let r = valueReads[rhs.id]?.delta ?? Int.min
+                if l != r { return l > r }
+                return boardCompositeScore(for: lhs) > boardCompositeScore(for: rhs)
+            }
         case .overall:
             return filtered.sorted { ($0.scoutedOverall ?? 0) > ($1.scoutedOverall ?? 0) }
         case .position:
@@ -327,14 +509,25 @@ struct BigBoardView: View {
         }
     }
 
-    /// Custom-ordered board for "My Board" mode.
+    /// "My Board" — the persisted user order, grouped by mark tier.
     private var customOrderedBoard: [CollegeProspect] {
-        let filtered = filteredProspects
-        let savedOrder = customBoardOrder
-        var ordered = savedOrder.compactMap { id in filtered.first { $0.id == id } }
-        let remaining = filtered.filter { p in !savedOrder.contains(p.id) }
-        ordered.append(contentsOf: remaining)
-        return ordered
+        applyBoardOrder(filteredProspects).sorted {
+            $0.userMark.sortRank < $1.userMark.sortRank
+        }
+    }
+
+    /// My Board split into its mark-tier sections, each preserving the stored
+    /// order inside itself. Empty tiers are dropped.
+    private var markGroupedBoard: [(tier: ProspectMarkTier, prospects: [CollegeProspect])] {
+        let ordered = applyBoardOrder(filteredProspects)
+        var grouped: [ProspectMarkTier: [CollegeProspect]] = [:]
+        for prospect in ordered { grouped[prospect.userMark, default: []].append(prospect) }
+        return ProspectMarkTier.allCases
+            .sorted { $0.sortRank < $1.sortRank }
+            .compactMap { tier in
+                guard let group = grouped[tier], !group.isEmpty else { return nil }
+                return (tier: tier, prospects: group)
+            }
     }
 
     /// Maximum number of same-position prospects allowed per tier.
@@ -343,9 +536,7 @@ struct BigBoardView: View {
     /// Prospects grouped by tier, maintaining board order within each tier.
     /// Enforces position diversity: max 4 of same position per tier.
     /// Overflow prospects are pushed to the next tier down.
-    private var tieredBoard: [(tier: Int, prospects: [CollegeProspect])] {
-        let board = orderedBoard
-
+    private func tieredBoard(from board: [CollegeProspect]) -> [(tier: Int, prospects: [CollegeProspect])] {
         // First pass: assign tiers based on composite score
         var tierAssignments: [(prospect: CollegeProspect, tier: Int)] = board.map { ($0, boardTier(for: $0)) }
 
@@ -447,11 +638,26 @@ struct BigBoardView: View {
     // MARK: - Body
 
     private func refreshCachedBoard() {
-        let ordered = orderedBoard
+        // Value reads first: the `.valueDelta` sort reads them, so they have to
+        // exist before `orderedBoard` runs.
+        var reads: [UUID: ProspectFog.ValueRead] = [:]
+        for prospect in scoutedProspects {
+            if let read = ProspectFog.valueRead(
+                for: prospect,
+                marketRank: marketRank(for: prospect),
+                myGrade: userGradeStore.grade(for: prospect.id)
+            ) {
+                reads[prospect.id] = read
+            }
+        }
+        cachedValueReads = reads
+
+        let ordered = orderedBoard(valueReads: reads)
         let custom = customOrderedBoard
         cachedOrderedBoard = ordered
         cachedCustomOrderedBoard = custom
-        cachedTieredBoard = tieredBoard
+        cachedMarkGroups = markGroupedBoard
+        cachedTieredBoard = tieredBoard(from: ordered)
         // Build O(1) rank lookup tables once per refresh.
         var rankMap: [UUID: Int] = [:]
         rankMap.reserveCapacity(ordered.count)
@@ -462,6 +668,141 @@ struct BigBoardView: View {
         customMap.reserveCapacity(custom.count)
         for (idx, p) in custom.enumerated() { customMap[p.id] = idx + 1 }
         cachedCustomRankMap = customMap
+    }
+
+    // MARK: - Board Row
+
+    /// One row, shared by the scout board and My Board — they differ only in
+    /// which rank they print, and having two copies is how the mark button and
+    /// the value chip ended up on one of them and not the other.
+    @ViewBuilder
+    private func boardRow(
+        prospect: CollegeProspect,
+        rank: Int,
+        totalCount: Int,
+        showsMovement: Bool
+    ) -> some View {
+        HStack(spacing: 0) {
+            ProspectMarkButton(
+                prospect: prospect,
+                onChange: {
+                    try? modelContext.save()
+                    refreshCachedBoard()
+                },
+                onEditNote: { editingMarkNoteProspect = prospect }
+            )
+
+            NavigationLink(destination: ProspectDetailView(career: career, prospect: prospect)) {
+                BigBoardRowView(
+                    rank: rank,
+                    totalCount: totalCount,
+                    prospect: prospect,
+                    ownGrade: prospectOwnAssessments[prospect.id.uuidString],
+                    schemeFit: schemeFitLabel(for: prospect),
+                    needLevel: needLevel(for: prospect.position),
+                    starterComparison: starterComparison(for: prospect),
+                    attributeTab: attributeTab,
+                    scoutsSentToCombine: scoutsSentToCombine,
+                    isPositionNeed: teamNeedPositions.contains(prospect.position),
+                    projectedRound: boardProjectedRound(for: prospect),
+                    isValuePick: isValuePick(prospect),
+                    valueRead: valueRead(for: prospect),
+                    originalPosition: showsMovement
+                        ? userGradeStore.getOriginalPosition(for: prospect.id)
+                        : nil,
+                    isSelectedForCompare: isSelectedForCompare(prospect),
+                    onGradeTap: { editingAssessmentProspect = prospect }
+                )
+            }
+        }
+        .listRowBackground(Color.backgroundSecondary)
+        .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 16))
+        .contextMenu {
+            tierContextMenu(for: prospect)
+        }
+    }
+
+    // MARK: - Compare tray
+
+    private func isSelectedForCompare(_ prospect: CollegeProspect) -> Bool {
+        compareSelection.contains { $0.id == prospect.id }
+    }
+
+    /// Adds or removes a man from the compare tray. Four is the cap: a fifth
+    /// column does not fit a portrait iPad, and a five-way compare is not a
+    /// decision anybody makes.
+    private func toggleCompareSelection(_ prospect: CollegeProspect) {
+        if let idx = compareSelection.firstIndex(where: { $0.id == prospect.id }) {
+            compareSelection.remove(at: idx)
+        } else {
+            if compareSelection.count >= ProspectCompareSheet.maxProspects {
+                compareSelection.removeFirst()
+            }
+            compareSelection.append(prospect)
+        }
+    }
+
+    @ViewBuilder
+    private var compareTrayBar: some View {
+        if !compareSelection.isEmpty {
+            HStack(spacing: 8) {
+                Image(systemName: "rectangle.on.rectangle.angled")
+                    .font(.caption)
+                    .foregroundStyle(Color.accentBlue)
+                Text(compareSelection.map(\.lastName).joined(separator: " \u{00B7} "))
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(Color.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                Spacer(minLength: 4)
+                Button("Clear") { compareSelection.removeAll() }
+                    .font(.caption)
+                    .foregroundStyle(Color.textSecondary)
+                Button {
+                    showCompareSheet = true
+                } label: {
+                    Text("Compare \(compareSelection.count)")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(
+                            compareSelection.count >= 2 ? Color.backgroundPrimary : Color.textTertiary
+                        )
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(
+                            compareSelection.count >= 2 ? Color.accentBlue : Color.backgroundTertiary,
+                            in: Capsule()
+                        )
+                }
+                .disabled(compareSelection.count < 2)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 6)
+            .background(Color.backgroundTertiary)
+        }
+    }
+
+    // MARK: - Mark group header (My Board)
+
+    private func markGroupHeader(tier: ProspectMarkTier, count: Int) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: tier.icon)
+                .font(.caption)
+                .foregroundStyle(tier.color)
+            Text(tier == .none ? "Unmarked" : tier.label)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(tier.color)
+                .textCase(nil)
+            Text("\(count)")
+                .font(.caption2.weight(.semibold).monospacedDigit())
+                .foregroundStyle(Color.textPrimary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color.backgroundSecondary, in: Capsule())
+            Text(tier.blurb)
+                .font(.system(size: 8))
+                .foregroundStyle(Color.textTertiary)
+                .textCase(nil)
+        }
     }
 
     var body: some View {
@@ -527,8 +868,8 @@ struct BigBoardView: View {
                             }
                             Divider()
                             // My Grade filters
-                            Button(filterStarredOnly ? "Show All (not just starred)" : "Starred Only") {
-                                filterStarredOnly.toggle()
+                            Button(showMarkedOnly ? "Show All (not just marked)" : "Marked Only") {
+                                showMarkedOnly.toggle()
                             }
                             Button(filterMyGradeFirstRound ? "Show All Grades" : "My Grade: 1st Round+") {
                                 filterMyGradeFirstRound.toggle()
@@ -539,36 +880,54 @@ struct BigBoardView: View {
                                 filterProjectedRoundMax = 8
                                 filterRisk = nil
                                 positionFilter = .all
-                                flagFilter = .all
-                                showWatchlistOnly = false
-                                filterStarredOnly = false
+                                markFilter = .all
+                                showMarkedOnly = false
                                 filterMyGradeFirstRound = false
                                 searchText = ""
                             }
                         } label: {
-                            let hasActiveFilter = filterProjectedRoundMin > 1 || filterProjectedRoundMax < 8 || filterRisk != nil || filterStarredOnly || filterMyGradeFirstRound
+                            let hasActiveFilter = filterProjectedRoundMin > 1 || filterProjectedRoundMax < 8 || filterRisk != nil || showMarkedOnly || filterMyGradeFirstRound
                             Image(systemName: hasActiveFilter ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
                                 .font(.body)
                                 .foregroundStyle(hasActiveFilter ? Color.accentBlue : Color.textSecondary)
                         }
                         .accessibilityLabel("Filter prospects")
 
-                        // Auto-rank button (#12)
-                        Button {
-                            autoRankBoard()
+                        // Board-order actions. The old single "auto-rank by
+                        // composite score" button wrote to a `@State` array
+                        // nothing persisted, so the board it produced lived
+                        // exactly as long as the screen did.
+                        Menu {
+                            Button {
+                                autoRankFromMyGrades()
+                            } label: {
+                                Label("Auto-rank From My Grades", systemImage: "person.crop.circle.badge.checkmark")
+                            }
+                            Button {
+                                autoRankBoard()
+                            } label: {
+                                Label("Auto-rank By Scout Score", systemImage: "arrow.up.arrow.down")
+                            }
+                            Divider()
+                            Button(role: .destructive) {
+                                resetBoardToConsensus()
+                            } label: {
+                                Label("Reset to Consensus", systemImage: "arrow.counterclockwise")
+                            }
                         } label: {
                             Image(systemName: "arrow.up.arrow.down.circle")
                                 .font(.body)
                                 .foregroundStyle(Color.textSecondary)
                         }
-                        .help("Auto-rank board by composite score")
-                        .accessibilityLabel("Auto-rank board by composite score")
+                        .accessibilityLabel("Board order actions")
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 6)
                     .background(Color.backgroundPrimary)
 
                     bigBoardAttributeTabPicker
+
+                    compareTrayBar
 
                     // Insets MIRROR the rows' `listRowInsets` (leading 8 /
                     // trailing 16) so each label sits over its own column.
@@ -587,87 +946,51 @@ struct BigBoardView: View {
                             boardComparisonSection
                         }
                         if showMyBoard {
-                            // Flat custom-ordered list
-                            Section {
-                                ForEach(cachedCustomOrderedBoard) { prospect in
-                                    HStack(spacing: 0) {
-                                        ProspectStarButton(prospectID: prospect.id)
-
-                                        NavigationLink(destination: ProspectDetailView(career: career, prospect: prospect)) {
-                                            BigBoardRowView(
-                                                rank: customRankFor(prospect),
-                                                totalCount: cachedCustomOrderedBoard.count,
-                                                prospect: prospect,
-                                                ownGrade: prospectOwnAssessments[prospect.id.uuidString],
-                                                isWatchlisted: isOnWatchlist(prospect.id),
-                                                schemeFit: schemeFitLabel(for: prospect),
-                                                needLevel: needLevel(for: prospect.position),
-                                                starterComparison: starterComparison(for: prospect),
-                                                attributeTab: attributeTab,
-                                                scoutsSentToCombine: scoutsSentToCombine,
-                                                isPositionNeed: teamNeedPositions.contains(prospect.position),
-                                                projectedRound: boardProjectedRound(for: prospect),
-                                                isValuePick: isValuePick(prospect),
-                                                originalPosition: userGradeStore.getOriginalPosition(for: prospect.id),
-                                                onFlagToggle: { toggleFlag(prospect) },
-                                                onWatchlistToggle: { toggleWatchlist(prospectID: prospect.id) },
-                                                onGradeTap: { editingAssessmentProspect = prospect }
-                                            )
-                                        }
+                            // My Board: the persisted order, broken on the mark
+                            // tier. A verdict written on a prospect card is
+                            // structure here two taps later.
+                            ForEach(cachedMarkGroups, id: \.tier) { group in
+                                Section {
+                                    ForEach(group.prospects) { prospect in
+                                        boardRow(
+                                            prospect: prospect,
+                                            rank: customRankFor(prospect),
+                                            totalCount: cachedCustomOrderedBoard.count,
+                                            // My Board's rank is a position inside
+                                            // a mark-tier grouping, never the board
+                                            // slot the movement badge measures.
+                                            showsMovement: false
+                                        )
                                     }
-                                    .listRowBackground(Color.backgroundSecondary)
-                                    .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 16))
-                                    .contextMenu {
-                                        tierContextMenu(for: prospect)
+                                    .onMove { from, to in
+                                        reorderSection(
+                                            ids: group.prospects.map(\.id),
+                                            from: from,
+                                            to: to
+                                        )
                                     }
+                                } header: {
+                                    markGroupHeader(tier: group.tier, count: group.prospects.count)
                                 }
-                                .onMove { from, to in
-                                    moveCustomBoard(from: from, to: to)
-                                }
-                            } header: {
-                                Label("My Board (\(cachedCustomOrderedBoard.count))", systemImage: "person.fill")
-                                    .font(.caption.weight(.bold))
-                                    .foregroundStyle(Color.textSecondary)
-                                    .textCase(nil)
                             }
                         } else {
                             // Scout tiered board
                             ForEach(cachedTieredBoard, id: \.tier) { tierGroup in
                                 Section {
                                     ForEach(tierGroup.prospects) { prospect in
-                                        HStack(spacing: 0) {
-                                            ProspectStarButton(prospectID: prospect.id)
-
-                                            NavigationLink(destination: ProspectDetailView(career: career, prospect: prospect)) {
-                                                BigBoardRowView(
-                                                    rank: rankFor(prospect),
-                                                    totalCount: cachedOrderedBoard.count,
-                                                    prospect: prospect,
-                                                    ownGrade: prospectOwnAssessments[prospect.id.uuidString],
-                                                    isWatchlisted: isOnWatchlist(prospect.id),
-                                                    schemeFit: schemeFitLabel(for: prospect),
-                                                    needLevel: needLevel(for: prospect.position),
-                                                    starterComparison: starterComparison(for: prospect),
-                                                    attributeTab: attributeTab,
-                                                    scoutsSentToCombine: scoutsSentToCombine,
-                                                    isPositionNeed: teamNeedPositions.contains(prospect.position),
-                                                    projectedRound: boardProjectedRound(for: prospect),
-                                                    isValuePick: isValuePick(prospect),
-                                                    originalPosition: userGradeStore.getOriginalPosition(for: prospect.id),
-                                                    onFlagToggle: { toggleFlag(prospect) },
-                                                    onWatchlistToggle: { toggleWatchlist(prospectID: prospect.id) },
-                                                    onGradeTap: { editingAssessmentProspect = prospect }
-                                                )
-                                            }
-                                        }
-                                        .listRowBackground(Color.backgroundSecondary)
-                                        .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 16))
-                                        .contextMenu {
-                                            tierContextMenu(for: prospect)
-                                        }
+                                        boardRow(
+                                            prospect: prospect,
+                                            rank: rankFor(prospect),
+                                            totalCount: cachedOrderedBoard.count,
+                                            showsMovement: showsBoardMovement
+                                        )
                                     }
                                     .onMove { from, to in
-                                        moveTierProspects(tier: tierGroup.tier, from: from, to: to)
+                                        reorderSection(
+                                            ids: tierGroup.prospects.map(\.id),
+                                            from: from,
+                                            to: to
+                                        )
                                     }
                                 } header: {
                                     tierHeader(tier: tierGroup.tier, count: tierGroup.prospects.count)
@@ -685,6 +1008,41 @@ struct BigBoardView: View {
         }
         .sheet(item: $editingNoteProspect) { prospect in
             prospectNoteSheet(prospect: prospect)
+        }
+        .sheet(item: $editingMarkNoteProspect) { prospect in
+            ProspectMarkNoteSheet(
+                prospectName: prospect.fullName,
+                initialNote: prospect.userMarkNote,
+                onSave: { note in
+                    // A note is a verdict too: writing one on an unmarked man
+                    // puts him on the board as a target rather than leaving the
+                    // text stranded on a prospect nothing tracks.
+                    prospect.setUserMark(prospect.isMarked ? prospect.userMark : .target, note: note)
+                    try? modelContext.save()
+                    editingMarkNoteProspect = nil
+                    refreshCachedBoard()
+                },
+                onCancel: { editingMarkNoteProspect = nil }
+            )
+        }
+        .sheet(isPresented: $showCompareSheet) {
+            if compareSelection.count >= 2 {
+                ProspectCompareSheet(
+                    career: career,
+                    prospects: compareSelection,
+                    schemeFits: Dictionary(
+                        uniqueKeysWithValues: compareSelection.compactMap { prospect in
+                            schemeFitLabel(for: prospect).map { (prospect.id, $0) }
+                        }
+                    ),
+                    starterComparisons: Dictionary(
+                        uniqueKeysWithValues: compareSelection.compactMap { prospect in
+                            starterComparison(for: prospect).map { (prospect.id, $0) }
+                        }
+                    ),
+                    onDismiss: { showCompareSheet = false }
+                )
+            }
         }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -728,15 +1086,23 @@ struct BigBoardView: View {
             }
         }
         .task {
-            if boardOrder.isEmpty {
-                boardOrder = scoutedProspects
-                    .sorted { boardCompositeScore(for: $0) > boardCompositeScore(for: $1) }
-                    .map { $0.id }
-            }
-            // Record original board positions (only sets if not already set)
-            for (index, id) in boardOrder.enumerated() {
-                userGradeStore.setOriginalPosition(for: id, position: index + 1)
-            }
+            // One mark system: fold the legacy star / flag / bookmark opinions
+            // into `userMarkTier` before anything reads it.
+            let migrated = CollegeProspect.migrateLegacyMarks(
+                in: prospects,
+                watchlistIDs: legacyWatchlistIDs
+            )
+            if migrated > 0 { try? modelContext.save() }
+
+            // Publish the media consensus board so `DraftIntel.consensusRank`
+            // answers for this class — the seed order and every value chip on
+            // this screen read it, and it is a per-session cache, not a save.
+            DraftIntel.refreshConsensusBoard(for: prospects)
+
+            // Seed the persisted board from the media consensus on first open,
+            // and take in anyone scouted since the last visit.
+            syncBoardOrder()
+            recordOriginalPositions()
             loadCoaches()
             loadDraftPicks()
             refreshCachedBoard()
@@ -752,14 +1118,13 @@ struct BigBoardView: View {
             }
         }
         .onChange(of: positionFilter) { _, _ in refreshCachedBoard() }
-        .onChange(of: flagFilter) { _, _ in refreshCachedBoard() }
+        .onChange(of: markFilter) { _, _ in refreshCachedBoard() }
         .onChange(of: boardSortOrder) { _, _ in refreshCachedBoard() }
         .onChange(of: showMyBoard) { _, _ in refreshCachedBoard() }
-        .onChange(of: showWatchlistOnly) { _, _ in refreshCachedBoard() }
+        .onChange(of: showMarkedOnly) { _, _ in refreshCachedBoard() }
         .onChange(of: filterProjectedRoundMin) { _, _ in refreshCachedBoard() }
         .onChange(of: filterProjectedRoundMax) { _, _ in refreshCachedBoard() }
         .onChange(of: filterRisk) { _, _ in refreshCachedBoard() }
-        .onChange(of: filterStarredOnly) { _, _ in refreshCachedBoard() }
         .onChange(of: filterMyGradeFirstRound) { _, _ in refreshCachedBoard() }
     }
 
@@ -854,6 +1219,18 @@ struct BigBoardView: View {
                 )
             }
             .frame(width: 40, alignment: .center)
+
+            // Always-visible: value vs the user's own grade. Blank for anyone
+            // he has not graded — the column is a read on HIS opinion, and
+            // there is no honest number to print without one.
+            HStack(spacing: 2) {
+                Text("VAL")
+                InfoTooltipButton(
+                    text: "Value versus your own grade. The market number is media consensus \u{2014} the latest mock's pick and the projected round, never your scouts' read. A green +18 means the board will let him fall eighteen picks past where you have him; an amber \u{2212}12 means taking him where you rate him is a reach. Blank until you grade him.",
+                    size: 9
+                )
+            }
+            .frame(width: 34, alignment: .center)
 
             // Always-visible: OVR (with tooltip explaining dual grade format)
             HStack(spacing: 2) {
@@ -1327,7 +1704,7 @@ struct BigBoardView: View {
         let tierIndex = min(tier - 1, Self.tierNames.count - 1)
         let tierProspects = cachedTieredBoard.first(where: { $0.tier == tier })?.prospects ?? []
         let needCount = tierProspects.filter { teamNeedPositions.contains($0.position) }.count
-        let starCount = tierProspects.filter { isOnWatchlist($0.id) }.count
+        let markedCount = tierProspects.filter(\.isMarked).count
         // Availability summary: prospects in this tier likely available at user's first pick (#1)
         let firstPick = teamDraftPicks
             .filter { !$0.isComplete }
@@ -1370,14 +1747,15 @@ struct BigBoardView: View {
                         .font(.system(size: 8, weight: .semibold))
                         .foregroundStyle(Color.warning)
                 }
-                if starCount > 0 {
+                if markedCount > 0 {
                     HStack(spacing: 1) {
                         Image(systemName: "bookmark.fill")
                             .font(.system(size: 7))
-                        Text("\(starCount)")
+                        Text("\(markedCount)")
                             .font(.system(size: 8, weight: .semibold))
                     }
                     .foregroundStyle(Color.accentGold)
+                    .accessibilityLabel("\(markedCount) marked")
                 }
                 // #1: Available at user's pick (probability rollup for tier)
                 if let pick = firstPick,
@@ -1404,8 +1782,24 @@ struct BigBoardView: View {
 
     @ViewBuilder
     private func tierContextMenu(for prospect: CollegeProspect) -> some View {
-        // User grade & star
-        ProspectGradeContextMenu(prospectID: prospect.id)
+        // The ONE mark, then the user's own draft grade.
+        ProspectGradeContextMenu(
+            prospect: prospect,
+            onChange: {
+                try? modelContext.save()
+                refreshCachedBoard()
+            },
+            onEditNote: { editingMarkNoteProspect = prospect }
+        )
+        Divider()
+        Button {
+            toggleCompareSelection(prospect)
+        } label: {
+            Label(
+                isSelectedForCompare(prospect) ? "Remove From Compare" : "Add to Compare",
+                systemImage: "rectangle.on.rectangle.angled"
+            )
+        }
         Divider()
         // Tier movement (#17)
         ForEach(1...7, id: \.self) { tier in
@@ -1433,6 +1827,8 @@ struct BigBoardView: View {
         if prospect.manualTier != nil {
             Button {
                 prospect.manualTier = nil
+                try? modelContext.save()
+                refreshCachedBoard()
             } label: {
                 Label("Reset to Auto Tier", systemImage: "arrow.counterclockwise")
             }
@@ -1448,24 +1844,21 @@ struct BigBoardView: View {
         ForEach(roundOptions, id: \.projection) { option in
             Button {
                 prospect.draftProjection = option.projection
+                try? modelContext.save()
+                refreshCachedBoard()
             } label: {
                 Label(option.label, systemImage: "number.circle")
             }
         }
         Divider()
-        Button {
-            toggleFlag(prospect)
-        } label: {
-            Label(nextFlagLabel(for: prospect), systemImage: nextFlagIcon(for: prospect))
-        }
-        Divider()
-        // #11: Notes
+        // #11: Scouting scratch note (separate from the board note the mark
+        // carries — this one is the long-form pad).
         Button {
             editingNoteProspect = prospect
         } label: {
             Label(
-                prospectNotes[prospect.id.uuidString] != nil ? "Edit Note" : "Add Note",
-                systemImage: "note.text"
+                prospectNotes[prospect.id.uuidString] != nil ? "Edit Scouting Note" : "Add Scouting Note",
+                systemImage: "square.and.pencil"
             )
         }
     }
@@ -1477,28 +1870,26 @@ struct BigBoardView: View {
     /// now sit in the hub's own bar, shared with the other tabs.
     private var boardFilterControls: some View {
         HStack(spacing: 12) {
-            // Flag filter. This was a `.pickerStyle(.menu)` Picker squeezed into
-            // a 44 pt frame: the selected value wrapped mid-word and rendered as
-            // a cryptic blue "A‖" glyph with no label at all. Now it is an
-            // explicitly labelled menu that names what it filters and what is
-            // currently selected.
+            // Mark filter — the ONE mark system. This used to be a flag filter
+            // over `prospectFlag`, one of four parallel opinions of the same
+            // prospect; the other three were unreachable from here.
             Menu {
-                Picker("Flag", selection: $flagFilter) {
-                    ForEach(ProspectFlagFilter.allCases) { filter in
+                Picker("Mark", selection: $markFilter) {
+                    ForEach(ProspectMarkFilter.allCases) { filter in
                         Label(filter.label, systemImage: filter.icon).tag(filter)
                     }
                 }
             } label: {
                 HStack(spacing: 4) {
-                    Image(systemName: flagFilter.icon)
+                    Image(systemName: markFilter.icon)
                         .font(.caption)
-                    Text(flagFilter == .all ? "All Flags" : flagFilter.label)
+                    Text(markFilter == .all ? "All Marks" : markFilter.label)
                         .font(.caption.weight(.semibold))
                         .lineLimit(1)
                     Image(systemName: "chevron.down")
                         .font(.system(size: 8, weight: .bold))
                 }
-                .foregroundStyle(flagFilter == .all ? Color.textSecondary : Color.accentGold)
+                .foregroundStyle(markFilter == .all ? Color.textSecondary : Color.accentGold)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
                 .background(
@@ -1506,15 +1897,15 @@ struct BigBoardView: View {
                 )
                 .fixedSize()
             }
-            .accessibilityLabel("Filter by flag, \(flagFilter.label)")
+            .accessibilityLabel("Filter by mark, \(markFilter.label)")
 
             Button {
-                showWatchlistOnly.toggle()
+                showMarkedOnly.toggle()
             } label: {
-                Image(systemName: showWatchlistOnly ? "bookmark.fill" : "bookmark")
-                    .foregroundStyle(showWatchlistOnly ? Color.accentGold : Color.textSecondary)
+                Image(systemName: showMarkedOnly ? "bookmark.fill" : "bookmark")
+                    .foregroundStyle(showMarkedOnly ? Color.accentGold : Color.textSecondary)
             }
-            .accessibilityLabel(showWatchlistOnly ? "Show all prospects" : "Show watchlist only")
+            .accessibilityLabel(showMarkedOnly ? "Show all prospects" : "Show marked prospects only")
         }
     }
 
@@ -1695,67 +2086,11 @@ struct BigBoardView: View {
         cachedCustomRankMap[prospect.id] ?? 0
     }
 
-    private func moveCustomBoard(from: IndexSet, to: Int) {
-        var list = cachedCustomOrderedBoard.map { $0.id }
-        list.move(fromOffsets: from, toOffset: to)
-        saveCustomBoardOrder(list)
-    }
-
-    private func toggleFlag(_ prospect: CollegeProspect) {
-        switch prospect.prospectFlag {
-        case .none:     prospect.prospectFlag = .mustHave
-        case .mustHave: prospect.prospectFlag = .sleeper
-        case .sleeper:  prospect.prospectFlag = .avoid
-        case .avoid:    prospect.prospectFlag = .none
-        }
-    }
-
-    private func nextFlagLabel(for prospect: CollegeProspect) -> String {
-        switch prospect.prospectFlag {
-        case .none:     return "Flag: Must Have"
-        case .mustHave: return "Flag: Sleeper"
-        case .sleeper:  return "Flag: Avoid"
-        case .avoid:    return "Clear Flag"
-        }
-    }
-
-    private func nextFlagIcon(for prospect: CollegeProspect) -> String {
-        switch prospect.prospectFlag {
-        case .none:     return "star.fill"
-        case .mustHave: return "eye.fill"
-        case .sleeper:  return "xmark.octagon.fill"
-        case .avoid:    return "flag.slash"
-        }
-    }
-
     /// Move prospect to a different tier using manual tier override (preserves scoutedOverall).
     private func moveProspectToTier(_ prospect: CollegeProspect, tier: Int) {
         prospect.manualTier = tier
-    }
-
-    private func moveTierProspects(tier: Int, from: IndexSet, to: Int) {
-        let tierProspects = cachedTieredBoard.first(where: { $0.tier == tier })?.prospects ?? []
-        var tierIDs = tierProspects.map { $0.id }
-        tierIDs.move(fromOffsets: from, toOffset: to)
-
-        // Rebuild full board order: replace the tier slice with the reordered IDs.
-        var fullOrder = boardOrder
-        let oldTierIDs = Set(tierProspects.map { $0.id })
-        fullOrder.removeAll { oldTierIDs.contains($0) }
-
-        // Find insertion point: after the last ID from the previous tier.
-        let previousTierIDs = cachedTieredBoard
-            .filter { $0.tier < tier }
-            .flatMap { $0.prospects.map { $0.id } }
-        let insertIndex: Int
-        if let lastPrev = previousTierIDs.last,
-           let idx = fullOrder.firstIndex(of: lastPrev) {
-            insertIndex = fullOrder.index(after: idx)
-        } else {
-            insertIndex = 0
-        }
-        fullOrder.insert(contentsOf: tierIDs, at: insertIndex)
-        boardOrder = fullOrder
+        try? modelContext.save()
+        refreshCachedBoard()
     }
 
     /// Need level: High / Med / Set based on roster depth (#4)
@@ -1785,24 +2120,26 @@ struct BigBoardView: View {
         return projRound - boardRound >= 2
     }
 
-    /// Auto-rank the board using composite score (#12)
+    /// Auto-rank the board using the scouts' composite score (#12).
     private func autoRankBoard() {
-        boardOrder = scoutedProspects
+        let ranked = scoutedProspects
             .sorted { boardCompositeScore(for: $0) > boardCompositeScore(for: $1) }
-            .map { $0.id }
-        // Clear and re-record original positions
+            .map(\.id)
+        saveBoardOrder(ranked)
         userGradeStore.clearOriginalPositions()
-        for (index, id) in boardOrder.enumerated() {
-            userGradeStore.setOriginalPosition(for: id, position: index + 1)
-        }
+        recordOriginalPositions()
+        refreshCachedBoard()
     }
 
-    /// Move a prospect up or down in the board order (#17)
+    /// Move a prospect up or down in the board order (#17).
     private func moveBoardPosition(_ prospect: CollegeProspect, direction: Int) {
-        guard let idx = boardOrder.firstIndex(of: prospect.id) else { return }
+        var order = boardOrder
+        guard let idx = order.firstIndex(of: prospect.id) else { return }
         let newIdx = idx + direction
-        guard newIdx >= 0, newIdx < boardOrder.count else { return }
-        boardOrder.swapAt(idx, newIdx)
+        guard newIdx >= 0, newIdx < order.count else { return }
+        order.swapAt(idx, newIdx)
+        saveBoardOrder(order)
+        refreshCachedBoard()
     }
 
     /// Probability prospect is available at user's first pick (#18)
@@ -1866,29 +2203,41 @@ struct BigBoardView: View {
     }
 }
 
-// MARK: - Flag Filter
+// MARK: - Mark Filter
 
-enum ProspectFlagFilter: String, CaseIterable, Identifiable {
-    case all, mustHave, sleeper, avoid
+/// Board filter over the ONE mark system. Replaces `ProspectFlagFilter`, which
+/// filtered `prospectFlag` — one of the four parallel opinions the unified
+/// mark collapsed.
+enum ProspectMarkFilter: String, CaseIterable, Identifiable {
+    case all, elite, target, depth, avoid, unmarked
 
     var id: String { rawValue }
+
+    /// The tier this filter keeps, or `nil` for "everything".
+    var tier: ProspectMarkTier? {
+        switch self {
+        case .all:      return nil
+        case .elite:    return .elite
+        case .target:   return .target
+        case .depth:    return .depth
+        case .avoid:    return .avoid
+        case .unmarked: return ProspectMarkTier.none
+        }
+    }
 
     var label: String {
         switch self {
         case .all:      return "All"
-        case .mustHave: return "Must Have"
-        case .sleeper:  return "Sleepers"
-        case .avoid:    return "Avoid"
+        case .unmarked: return "Unmarked"
+        default:        return tier?.label ?? "All"
         }
     }
 
-    /// SF Symbol shown next to the label in the (now labelled) filter menu.
     var icon: String {
         switch self {
         case .all:      return "line.3.horizontal.decrease.circle"
-        case .mustHave: return "star.fill"
-        case .sleeper:  return "moon.zzz.fill"
-        case .avoid:    return "hand.thumbsdown.fill"
+        case .unmarked: return "circle.dashed"
+        default:        return tier?.icon ?? "circle"
         }
     }
 }
@@ -1900,7 +2249,6 @@ struct BigBoardRowView: View {
     var totalCount: Int = 0
     let prospect: CollegeProspect
     var ownGrade: String? = nil
-    var isWatchlisted: Bool = false
     var schemeFit: String? = nil
     var needLevel: String = "Set"
     var starterComparison: String? = nil
@@ -1909,9 +2257,11 @@ struct BigBoardRowView: View {
     var isPositionNeed: Bool = false
     var projectedRound: Int = 7
     var isValuePick: Bool = false
+    /// Market-vs-my-grade read; `nil` when the user has not graded him or the
+    /// media has no slot for him.
+    var valueRead: ProspectFog.ValueRead? = nil
     var originalPosition: Int? = nil
-    var onFlagToggle: (() -> Void)? = nil
-    var onWatchlistToggle: (() -> Void)? = nil
+    var isSelectedForCompare: Bool = false
     var onGradeTap: (() -> Void)? = nil
 
     private var isScouted: Bool { prospect.scoutedOverall != nil }
@@ -1953,11 +2303,17 @@ struct BigBoardRowView: View {
                         .foregroundStyle(Color.textPrimary)
                         .lineLimit(1)
 
-                    // Shortlist star (#11)
-                    if isWatchlisted {
-                        Image(systemName: "star.fill")
-                            .font(.system(size: 9))
-                            .foregroundStyle(Color.accentGold)
+                    // The ONE mark, with a dog-ear when a board note exists.
+                    ProspectMarkChip(
+                        mark: prospect.userMark,
+                        showsNote: !prospect.userMarkNote.isEmpty
+                    )
+
+                    if isSelectedForCompare {
+                        Image(systemName: "checkmark.rectangle.stack.fill")
+                            .font(.system(size: 8))
+                            .foregroundStyle(Color.accentBlue)
+                            .accessibilityLabel("In compare tray")
                     }
 
                     UserGradeBadge(prospectID: prospect.id)
@@ -1975,9 +2331,6 @@ struct BigBoardRowView: View {
 
                 // Compact sub-info icons
                 HStack(spacing: 4) {
-                    // Flag indicator (inline)
-                    boardFlagIcon
-
                     // Prep state: reports filed / room taken / numbers measured.
                     // Three fixed slots, dimmed when empty — the icons used to
                     // appear only when the work HAD been done, which made the
@@ -2027,6 +2380,10 @@ struct BigBoardRowView: View {
 
             // Always-visible: Football IQ (fogged until somebody meets him)
             ProspectIQCell(prospect: prospect, width: 40)
+
+            // Always-visible: value vs the user's own grade.
+            ProspectValueChip(read: valueRead)
+                .frame(width: 34, alignment: .center)
 
             // Always-visible: OVR
             boardOverallBadge
@@ -2415,28 +2772,6 @@ struct BigBoardRowView: View {
         }
     }
 
-    // MARK: - Flag Icon (compact inline)
-
-    @ViewBuilder
-    private var boardFlagIcon: some View {
-        switch prospect.prospectFlag {
-        case .none:
-            EmptyView()
-        case .mustHave:
-            Image(systemName: "star.fill")
-                .font(.system(size: 7))
-                .foregroundStyle(Color.accentGold)
-        case .sleeper:
-            Image(systemName: "eye.fill")
-                .font(.system(size: 7))
-                .foregroundStyle(Color.accentBlue)
-        case .avoid:
-            Image(systemName: "xmark.circle.fill")
-                .font(.system(size: 7))
-                .foregroundStyle(Color.danger)
-        }
-    }
-
     // MARK: - Helpers
 
     private var rankColor: Color {
@@ -2465,8 +2800,9 @@ struct BigBoardRowView: View {
 
     private var accessibilityDescription: String {
         let overall = prospect.overallGradeDisplay
-        let flag = prospect.prospectFlag == .none ? "" : " \(prospect.prospectFlag.rawValue)"
-        return "Rank \(rank), \(prospect.fullName), \(prospect.position.rawValue), \(prospect.college), overall \(overall)\(flag)"
+        let mark = prospect.isMarked ? ", marked \(prospect.userMark.label)" : ""
+        let value = valueRead.flatMap { $0.isMeaningful ? ", \($0.label)" : nil } ?? ""
+        return "Rank \(rank), \(prospect.fullName), \(prospect.position.rawValue), \(prospect.college), overall \(overall)\(mark)\(value)"
     }
 
     /// Combine performance color based on physical attributes and drill results (#7)
@@ -2493,13 +2829,14 @@ struct BigBoardRowView: View {
 // MARK: - #9: Big Board Sort Enum
 
 enum BigBoardSort: String, CaseIterable, Identifiable {
-    case boardRank, overall, position, tier, schemeFit, risk, production, footballIQ
+    case boardRank, valueDelta, overall, position, tier, schemeFit, risk, production, footballIQ
 
     var id: String { rawValue }
 
     var label: String {
         switch self {
         case .boardRank:  return String(localized: "Board Rank")
+        case .valueDelta: return String(localized: "Value vs My Grade")
         case .overall:    return String(localized: "Overall")
         case .position:   return String(localized: "Position")
         case .tier:       return String(localized: "Tier")
@@ -2513,6 +2850,7 @@ enum BigBoardSort: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .boardRank:  return "list.number"
+        case .valueDelta: return "arrow.up.arrow.down.square"
         case .overall:    return "star.fill"
         case .position:   return "rectangle.3.group"
         case .tier:       return "chart.bar.fill"

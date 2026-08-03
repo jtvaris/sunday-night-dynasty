@@ -156,30 +156,14 @@ enum NewsGenerator {
             }
 
         case .combine:
-            items.append(NewsItem(
-                headline: "Combine workouts set to begin",
-                body: "Over 300 prospects will descend on the combine this week, looking to improve their draft stock with impressive athletic testing numbers.",
-                category: .draft,
-                week: 0,
-                season: season,
-                sentiment: .neutral
-            ))
-            items.append(NewsItem(
-                headline: "Top QB prospect dazzles in throwing drills",
-                body: "The consensus top quarterback in this year's class turned heads with his arm strength and accuracy, further solidifying his position as a potential first overall pick.",
-                category: .draft,
-                week: 0,
-                season: season,
-                sentiment: .positive
-            ))
-            items.append(NewsItem(
-                headline: "Defensive lineman runs record 40-yard dash",
-                body: "A 280-pound defensive tackle shocked scouts by running a sub-4.6 forty, the fastest ever recorded at the position during combine testing.",
-                category: .draft,
-                week: 0,
-                season: season,
-                sentiment: .positive
-            ))
+            // Nothing generic here on purpose. The combine used to ship three
+            // hardcoded headlines about prospects who did not exist — a "top QB"
+            // and a "280-pound defensive tackle" who were never on any board and
+            // could not be looked up, while the real risers, fallers and
+            // standouts `ScoutingEngine.generateCombineMedia` had just named
+            // never reached the feed at all. `combineMediaNews(mentions:…)`
+            // below emits the real ones, from the real class.
+            break
 
         case .freeAgency:
             items.append(NewsItem(
@@ -291,6 +275,177 @@ enum NewsGenerator {
         }
 
         return items
+    }
+
+    // MARK: - Draft Cycle News
+    //
+    // The pre-draft calendar is a running story about named men, not a set of
+    // generic phase banners. Everything here takes real engine output — the
+    // combine media sheet, the Senior Bowl week, the mock-draft re-reads, the
+    // spring medical attrition — and turns it into headlines the user can go
+    // and look up on the board.
+
+    /// Turns `ScoutingEngine.generateCombineMedia`'s named risers, fallers,
+    /// standouts and surprises into the actual news feed.
+    ///
+    /// The mentions are already stamped on the prospects (and rebuildable via
+    /// `ScoutingEngine.combineMediaDigest`), so these headlines always match
+    /// what the Combine screen shows — no second, contradictory set.
+    static func combineMediaNews(
+        mentions: [ScoutingEngine.CombineMediaMention],
+        inviteCount: Int,
+        season: Int,
+        limit: Int = 7
+    ) -> [NewsItem] {
+        var items: [NewsItem] = []
+
+        items.append(NewsItem(
+            headline: "Combine week wraps in Indianapolis: \(inviteCount) prospects tested",
+            body: "The league's scouting combine is complete. \(inviteCount) invitees were measured, timed and interviewed over the week, and front offices now have the athletic testing numbers to set against a season of film.",
+            category: .draft,
+            week: 0,
+            season: season,
+            sentiment: .neutral
+        ))
+
+        // Lead with the men whose stock actually moved, then the standouts.
+        let order = ["Stock Riser", "Surprise", "Stock Faller", "Standout"]
+        let sorted = mentions.sorted {
+            let a = order.firstIndex(of: $0.category) ?? order.count
+            let b = order.firstIndex(of: $1.category) ?? order.count
+            if a != b { return a < b }
+            return $0.prospectName < $1.prospectName
+        }
+
+        for mention in sorted.prefix(max(0, limit - 1)) {
+            items.append(NewsItem(
+                headline: mention.headline,
+                body: combineMentionBody(mention),
+                category: .draft,
+                week: 0,
+                season: season,
+                sentiment: combineMentionSentiment(mention.category)
+            ))
+        }
+
+        return items
+    }
+
+    /// Category → sentiment. A faller is the only bad news at the combine; a
+    /// surprise and a riser are both good news for the prospect, and a standout
+    /// is the week's headline athlete.
+    static func combineMentionSentiment(_ category: String) -> NewsSentiment {
+        switch category {
+        case "Stock Faller":            return .negative
+        case "Stock Riser", "Surprise", "Standout": return .positive
+        default:                        return .neutral
+        }
+    }
+
+    private static func combineMentionBody(_ mention: ScoutingEngine.CombineMediaMention) -> String {
+        switch mention.category {
+        case "Stock Riser":
+            return "\(mention.prospectName) (\(mention.position)) tested well above the expectations his film had set, and the boards are already moving. Clubs that had him graded as a mid-round flier are re-checking the tape this week."
+        case "Stock Faller":
+            return "\(mention.prospectName) (\(mention.position)) did not test the way his tape suggested he would. Nobody removes a player over one workout, but the athletic questions are on the record now and the medical and interview weeks matter more for him than they did on Monday."
+        case "Surprise":
+            return "Almost nobody had \(mention.prospectName) (\(mention.position)) on a short list before this week. The testing numbers changed that, and the private-workout requests have already started."
+        default:
+            return "\(mention.prospectName) (\(mention.position)) was one of the athletic stories of combine week, posting numbers that stand out even against the best testers at the position."
+        }
+    }
+
+    /// The January all-star week: 2-4 named stories out of Mobile.
+    static func seniorBowlNews(
+        result: ScoutingEngine.SeniorBowlResult,
+        season: Int
+    ) -> [NewsItem] {
+        var items: [NewsItem] = [
+            NewsItem(
+                headline: "Senior Bowl week opens with \(result.invitees) invitees",
+                body: "The senior half of this draft class is in Mobile for a week of practices in front of every front office in the league. For a lot of these players it is the first time they have lined up against somebody as good as they are, and the practice tape will matter more than the game.",
+                category: .draft,
+                week: 0,
+                season: season,
+                sentiment: .neutral
+            )
+        ]
+
+        for note in result.notes {
+            items.append(NewsItem(
+                headline: note.headline,
+                body: note.body,
+                category: .draft,
+                week: 0,
+                season: season,
+                sentiment: note.isRiser ? .positive : .negative
+            ))
+        }
+
+        return items
+    }
+
+    /// The board moving: the biggest climbers and slides of a drift moment.
+    ///
+    /// Only the men who crossed a round boundary get a headline, and only the
+    /// largest few — the point is the story, not a changelog.
+    static func projectionDriftNews(
+        moves: [ScoutingEngine.ProjectionMove],
+        season: Int,
+        limit: Int = 3
+    ) -> [NewsItem] {
+        let ranked = moves.sorted {
+            if $0.rounds != $1.rounds { return $0.rounds > $1.rounds }
+            if $0.isRise != $1.isRise { return $0.isRise }
+            return $0.to < $1.to
+        }
+
+        return ranked.prefix(limit).map { move in
+            if move.isRise {
+                return NewsItem(
+                    headline: move.to == 1
+                        ? "\(move.position) \(move.name) rockets into the round 1 conversation"
+                        : "\(move.name) climbing: \(move.college) \(move.position) now a round \(move.to) projection",
+                    body: "\(move.name) has moved from a round \(move.from) projection to round \(move.to). Analysts who had him behind two or three players at the position have started flipping that order, and the clubs picking in that range are re-working their boards around it.",
+                    category: .draft,
+                    week: 0,
+                    season: season,
+                    sentiment: .positive
+                )
+            }
+            return NewsItem(
+                headline: "\(move.college) \(move.position) \(move.name) sliding down boards to round \(move.to)",
+                body: "\(move.name) was a round \(move.from) projection and is now being talked about in round \(move.to). Somebody will get value if the slide is an overreaction — that is how the second day of a draft gets interesting.",
+                category: .draft,
+                week: 0,
+                season: season,
+                sentiment: .negative
+            )
+        }
+    }
+
+    /// Spring medical attrition: the pro-day workout that ended a man's draft.
+    static func preDraftInjuryNews(
+        setbacks: [ScoutingEngine.PreDraftSetback],
+        season: Int,
+        limit: Int = 3
+    ) -> [NewsItem] {
+        setbacks.prefix(limit).map { setback in
+            let slide: String
+            if let from = setback.projectionFrom, let to = setback.projectionTo, to > from {
+                slide = " His projection has already slipped from round \(from) to round \(to)."
+            } else {
+                slide = ""
+            }
+            return NewsItem(
+                headline: "\(setback.college) \(setback.position) \(setback.name) suffers \(setback.injury) in pre-draft workout",
+                body: "\(setback.name) went down during pre-draft work and is looking at roughly \(setback.weeksOut) weeks before he is cleared. Every club's medical staff will flag it before the draft, and the recheck in the weeks ahead decides how far he falls.\(slide)",
+                category: .injury,
+                week: 0,
+                season: season,
+                sentiment: .negative
+            )
+        }
     }
 
     // MARK: - Private Generators

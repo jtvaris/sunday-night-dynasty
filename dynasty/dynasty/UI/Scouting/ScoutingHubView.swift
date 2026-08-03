@@ -31,6 +31,13 @@ struct ScoutingHubView: View {
     /// three tables read this binding.
     @State private var positionFilter: ProspectPositionFilter = .all
 
+    /// Read only to migrate the legacy bookmark set onto the unified mark.
+    @CareerScopedStorage("prospectWatchlist") private var hubProspectWatchlistJSON: String = "[]"
+
+    private var hubLegacyWatchlistIDs: Set<String> {
+        Set((try? JSONDecoder().decode([String].self, from: Data(hubProspectWatchlistJSON.utf8))) ?? [])
+    }
+
     private let maxScouts = 8
 
     /// Tabs the shared position chips apply to. The others (scouts, mock draft,
@@ -116,6 +123,14 @@ struct ScoutingHubView: View {
         }
         .task {
             loadData()
+            // ONE mark system: fold the legacy star / flag / bookmark opinions
+            // into `userMarkTier` at the hub, so every tab below (and the
+            // combine trip's `trackedProspectIDs`) reads a migrated board.
+            let migrated = CollegeProspect.migrateLegacyMarks(
+                in: prospects,
+                watchlistIDs: hubLegacyWatchlistIDs
+            )
+            if migrated > 0 { try? modelContext.save() }
             // Honor a pending tab hint set by CareerShellView when the user
             // tapped a task that should land them on a specific tab
             // (e.g. "Review interview report" → Interviews tab).
@@ -294,9 +309,9 @@ struct ScoutingHubView: View {
         let board = UserProspectGradeStore.shared
         var ids = Set<UUID>()
         for prospect in prospects {
-            if prospect.prospectFlag != .none
-                || board.isStarred(prospect.id)
-                || board.grade(for: prospect.id) != nil {
+            // ONE mark system, plus the user's own draft grade — a man you
+            // graded is a man you are tracking even if you have not tiered him.
+            if prospect.isMarked || board.grade(for: prospect.id) != nil {
                 ids.insert(prospect.id)
             }
         }
@@ -940,7 +955,6 @@ struct ProDayListView: View {
     var onRefresh: () -> Void
 
     @Environment(\.modelContext) private var modelContext
-    @CareerScopedStorage("prospectWatchlist") private var prospectWatchlistJSON: String = "[]"
     @CareerScopedStorage("prospectCustomBoard") private var prospectCustomBoardJSON: String = "[]"
     @State private var expandedColleges: Set<String> = []
     @State private var showSendScoutSheet = false
@@ -966,10 +980,6 @@ struct ProDayListView: View {
         Set(DraftEngine.topTeamNeeds(roster: teamRoster, limit: 5))
     }
 
-    private var watchlist: Set<String> {
-        Set((try? JSONDecoder().decode([String].self, from: Data(prospectWatchlistJSON.utf8))) ?? [])
-    }
-
     private var boardOrder: [UUID] {
         let strings = (try? JSONDecoder().decode([String].self, from: Data(prospectCustomBoardJSON.utf8))) ?? []
         return strings.compactMap { UUID(uuidString: $0) }
@@ -980,8 +990,10 @@ struct ProDayListView: View {
         return idx + 1
     }
 
+    /// On the pro-day screen "starred" means "a man I want" — the two positive
+    /// tiers of the ONE mark system, not the legacy flag-or-bookmark pair.
     private func isStarred(_ prospect: CollegeProspect) -> Bool {
-        prospect.prospectFlag == .mustHave || watchlist.contains(prospect.id.uuidString)
+        prospect.userMark.isBoardPositive
     }
 
     private func isTopProspect(_ prospect: CollegeProspect) -> Bool {
@@ -1581,13 +1593,15 @@ struct ProDayListView: View {
 
     // MARK: - Focus Prospect (Task C)
 
-    /// Marks the chosen prospect as `mustHave` so the rest of the scouting flow
-    /// surfaces them as a high-priority focus.
+    /// Marks the chosen prospect `target` on the ONE mark system, so the rest
+    /// of the scouting flow — the board, the prep card, the combine trip —
+    /// surfaces him as a high-priority focus. This used to write `prospectFlag`
+    /// directly, which the star store and the board's own bookmark set never saw.
     private func focusProspect(_ prospect: CollegeProspect) {
         // Mutate the canonical draft class instance.
         var localClass = WeekAdvancer.currentDraftClass
         guard let idx = localClass.firstIndex(where: { $0.id == prospect.id }) else { return }
-        localClass[idx].prospectFlag = .mustHave
+        localClass[idx].setUserMark(.target)
 
         WeekAdvancer.currentDraftClass = localClass
         WeekAdvancer.persistDraftClass(localClass, to: modelContext)
@@ -2282,11 +2296,7 @@ private struct FocusProspectSheet: View {
                                                     .font(.caption2)
                                                     .foregroundStyle(Color.textTertiary)
                                             }
-                                            if prospect.prospectFlag == .mustHave {
-                                                Image(systemName: "star.fill")
-                                                    .font(.system(size: 9))
-                                                    .foregroundStyle(Color.accentGold)
-                                            }
+                                            ProspectMarkChip(mark: prospect.userMark)
                                         }
                                     }
 

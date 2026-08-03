@@ -219,7 +219,10 @@ struct MockDraftView: View {
                                     )
                                     .contextMenu {
                                         if let prospect {
-                                            ProspectGradeContextMenu(prospectID: prospect.id)
+                                            ProspectGradeContextMenu(
+                                                prospect: prospect,
+                                                onChange: { try? modelContext.save() }
+                                            )
                                         }
                                     }
                             }
@@ -623,10 +626,13 @@ struct MockDraftView: View {
 
     private func mockDraftRow(pick: ScoutingEngine.MockDraftPick, prospect: CollegeProspect?, isUserPick: Bool) -> some View {
         HStack(spacing: 12) {
-            // Star toggle
+            // The ONE mark, same control as the board.
             if let prospect {
-                ProspectStarButton(prospectID: prospect.id)
-                    .frame(width: 36)
+                ProspectMarkButton(
+                    prospect: prospect,
+                    onChange: { try? modelContext.save() }
+                )
+                .frame(width: 36)
             }
 
             // Pick number
@@ -666,6 +672,8 @@ struct MockDraftView: View {
                         Text(prospect.fullName)
                             .font(.body.weight(.medium))
                             .foregroundStyle(Color.textPrimary)
+
+                        ProspectMarkChip(mark: prospect.userMark)
 
                         UserGradeBadge(prospectID: prospect.id)
 

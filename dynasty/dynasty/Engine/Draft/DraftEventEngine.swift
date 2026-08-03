@@ -25,6 +25,16 @@ struct PlannedDraftEvent {
 ///
 /// Vaihe 1 surface area: pickit, round transitions, on-the-clock notifications,
 /// + bigDrop / positionRun tells. No trade offers, no reactions, no scout interrupts yet.
+///
+/// ⚠️ NOT WIRED. Nothing in the app or the tools calls `makeStream` — the live
+/// draft is driven by `DraftDayCoordinator`, which records its own beats
+/// (`recordStoryBeats`) and runs its own slide test at
+/// `DraftDayCoordinator.computePickGrade` / `advancePick`. This file is kept as
+/// the pre-built stream design for the scripted-draft mode, and it is held to
+/// the same rules as the live path (`DraftIntel.publicBoardRanks` for the board,
+/// `DraftIntel.isBigSlide` for the slide) so switching to it is a wiring change
+/// rather than a rewrite. Fixes made here do NOT change what the user sees
+/// until something calls it.
 enum DraftEventEngine {
 
     /// Generates the entire deterministic event stream for one draft.
@@ -50,6 +60,9 @@ enum DraftEventEngine {
         _ = rng.next() // burn one to avoid trivially-identical first values
 
         let teamsByID = Dictionary(uniqueKeysWithValues: teams.map { ($0.id, $0) })
+        // The public board, computed once: slide detection is a comparison
+        // against the media's slot for a man, not against his round number.
+        let boardRanks = DraftIntel.publicBoardRanks(for: prospects)
 
         var events: [PlannedDraftEvent] = []
         var sequence = 0
@@ -130,10 +143,22 @@ enum DraftEventEngine {
                 ))
                 sequence += 1
 
-                // 2d) bigDrop — if the prospect was projected materially earlier than this slot.
-                if let projection = chosen.draftProjection,
-                   projection > 0,
-                   pick.pickNumber > projection + 8 {
+                // 2d) bigDrop — he fell materially past the slot the media gave
+                //     him. The old test read `pickNumber > draftProjection + 8`,
+                //     comparing a PICK NUMBER against a ROUND (1-7): every man
+                //     projected anywhere "slid" from pick 16 onward, and the
+                //     `expectedPick` it then published was a round number
+                //     wearing a pick number's name.
+                let consensusRank = boardRanks[chosen.id]
+                if DraftIntel.isBigSlide(
+                    for: chosen,
+                    pickNumber: pick.pickNumber,
+                    consensusRank: consensusRank
+                ) {
+                    let expectedPick = DraftIntel.consensusWindow(
+                        for: chosen,
+                        consensusRank: consensusRank
+                    )?.late ?? pick.pickNumber
                     events.append(PlannedDraftEvent(
                         sequence: sequence,
                         type: .bigDrop,
@@ -143,7 +168,7 @@ enum DraftEventEngine {
                         prospectID: chosen.id,
                         metadata: .bigDrop(
                             prospectID: chosen.id,
-                            expectedPick: projection,
+                            expectedPick: expectedPick,
                             actualPick: pick.pickNumber
                         )
                     ))

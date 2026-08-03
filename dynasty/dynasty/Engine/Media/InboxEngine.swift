@@ -1203,6 +1203,181 @@ enum InboxEngine {
         )
     }
 
+    // MARK: - Draft Cycle Digests
+
+    /// The one weekly note that says what a season of regional scouting is
+    /// actually buying.
+    ///
+    /// Weeks 10-18 file 3-6 reports per scout and silently rewrite grades on the
+    /// board; before this, the only way to notice was to open the prospect list
+    /// and compare it against a memory of last week. One batched message per
+    /// week — never one per report — and nothing at all on a week that changed
+    /// nothing.
+    static func weeklyScoutingDigestMessage(
+        digest: ScoutingEngine.WeeklyScoutingDigest,
+        season: Int
+    ) -> InboxMessage {
+        var subject = "Scouting: \(digest.reportCount) new report\(digest.reportCount == 1 ? "" : "s")"
+        if digest.bandsNarrowed > 0 {
+            subject += " — \(digest.bandsNarrowed) grade band\(digest.bandsNarrowed == 1 ? "" : "s") narrowed"
+        }
+
+        var lines: [String] = [
+            "Coach,",
+            "",
+            "This week's regional work: \(digest.reportCount) report\(digest.reportCount == 1 ? "" : "s") filed on \(digest.prospectsCovered) prospect\(digest.prospectsCovered == 1 ? "" : "s")."
+        ]
+        if digest.firstLooks > 0 {
+            lines.append("- \(digest.firstLooks) name\(digest.firstLooks == 1 ? "" : "s") we had never put eyes on before.")
+        }
+        if digest.bandsNarrowed > 0 {
+            lines.append("- \(digest.bandsNarrowed) grade band\(digest.bandsNarrowed == 1 ? " narrowed" : "s narrowed") — those evaluations are firming up.")
+        }
+        if let headline = digest.headline {
+            let direction = digest.headlineIsRise ? "up" : "down"
+            lines.append("- Headline: \(headline.position) \(headline.name) moved \(direction) from \(headline.from) to \(headline.to).")
+        }
+        lines.append("")
+        lines.append("Full write-ups are on the board.")
+        lines.append("")
+        lines.append("Scouting Department")
+
+        return InboxMessage(
+            sender: .scout(name: "Director of Scouting"),
+            subject: subject,
+            body: lines.joined(separator: "\n"),
+            date: "Week \(digest.week), Season \(season)",
+            category: .scoutingReport,
+            attachments: [
+                MessageAttachment(title: "Open Big Board", destination: .bigBoard)
+            ]
+        )
+    }
+
+    /// One digest for the whole combine media sheet: who rose, who fell, who
+    /// came out of nowhere.
+    static func combineMediaDigestMessage(
+        mentions: [ScoutingEngine.CombineMediaMention],
+        dateString: String
+    ) -> InboxMessage? {
+        guard !mentions.isEmpty else { return nil }
+
+        let risers = mentions.filter { $0.category == "Stock Riser" }
+        let fallers = mentions.filter { $0.category == "Stock Faller" }
+        let standouts = mentions.filter { $0.category == "Standout" }
+        let surprises = mentions.filter { $0.category == "Surprise" }
+
+        func block(_ title: String, _ rows: [ScoutingEngine.CombineMediaMention]) -> String? {
+            guard !rows.isEmpty else { return nil }
+            let names = rows.prefix(5).map { "- \($0.position) \($0.prospectName)" }
+            return ([title] + names).joined(separator: "\n")
+        }
+
+        var sections: [String] = [
+            "Coach,",
+            "",
+            "The combine sheet is closed. Here is what the week did to our board:"
+        ]
+        if let b = block("Stock up:", risers)                  { sections.append(""); sections.append(b) }
+        if let b = block("Came out of nowhere:", surprises)    { sections.append(""); sections.append(b) }
+        if let b = block("Stock down:", fallers)               { sections.append(""); sections.append(b) }
+        if let b = block("Athletic standouts:", standouts)     { sections.append(""); sections.append(b) }
+        sections.append("")
+        sections.append("Testing is one input. The men on the 'stock down' list are where the value is if the tape still says what it said in November.")
+        sections.append("")
+        sections.append("Scouting Department")
+
+        return InboxMessage(
+            sender: .scout(name: "Director of Scouting"),
+            subject: "Combine board movement: \(risers.count) up, \(fallers.count) down",
+            body: sections.joined(separator: "\n"),
+            date: dateString,
+            category: .scoutingReport,
+            attachments: [
+                MessageAttachment(title: "Combine Results", destination: .scouting),
+                MessageAttachment(title: "Open Big Board", destination: .bigBoard)
+            ]
+        )
+    }
+
+    /// The Senior Bowl week report.
+    static func seniorBowlDigestMessage(
+        result: ScoutingEngine.SeniorBowlResult,
+        dateString: String
+    ) -> InboxMessage? {
+        guard result.reportsFiled > 0 else { return nil }
+
+        var lines: [String] = [
+            "Coach,",
+            "",
+            "Senior Bowl week is done. \(result.invitees) seniors were invited and we have written evaluations on \(result.reportsFiled) of them — the practice winners and the men who got exposed. The middle of that field did not tell us anything new.",
+            ""
+        ]
+        let risers = result.notes.filter { $0.isRiser }
+        let fallers = result.notes.filter { !$0.isRiser }
+        if !risers.isEmpty {
+            lines.append("Helped himself:")
+            lines.append(contentsOf: risers.map { "- \($0.position) \($0.name) (\($0.college))" })
+            lines.append("")
+        }
+        if !fallers.isEmpty {
+            lines.append("Rough week:")
+            lines.append(contentsOf: fallers.map { "- \($0.position) \($0.name) (\($0.college))" })
+            lines.append("")
+        }
+        lines.append("These are practice grades against real competition, not workout numbers. They travel better than a forty time.")
+        lines.append("")
+        lines.append("Scouting Department")
+
+        return InboxMessage(
+            sender: .scout(name: "Director of Scouting"),
+            subject: "Senior Bowl: \(result.reportsFiled) evaluations filed",
+            body: lines.joined(separator: "\n"),
+            date: dateString,
+            category: .scoutingReport,
+            attachments: [
+                MessageAttachment(title: "Open Big Board", destination: .bigBoard)
+            ]
+        )
+    }
+
+    /// The spring medical sheet — who got hurt between the combine and the draft.
+    static func preDraftAttritionMessage(
+        setbacks: [ScoutingEngine.PreDraftSetback],
+        dateString: String
+    ) -> InboxMessage? {
+        guard !setbacks.isEmpty else { return nil }
+
+        var lines: [String] = [
+            "Coach,",
+            "",
+            "Medical update from the pro-day circuit. \(setbacks.count) prospect\(setbacks.count == 1 ? " has" : "s have") gone down since the combine:",
+            ""
+        ]
+        for setback in setbacks.prefix(8) {
+            var row = "- \(setback.position) \(setback.name) (\(setback.college)): \(setback.injury), ~\(setback.weeksOut) weeks"
+            if let from = setback.projectionFrom, let to = setback.projectionTo, to > from {
+                row += " — round \(from) to round \(to)"
+            }
+            lines.append(row)
+        }
+        lines.append("")
+        lines.append("Every one of these is flagged on his file now. A club that trusts its medical staff can find a bargain in here; a club that guesses gets a redshirt rookie year.")
+        lines.append("")
+        lines.append("Scouting Department")
+
+        return InboxMessage(
+            sender: .scout(name: "Director of Scouting"),
+            subject: "Pre-draft medical: \(setbacks.count) prospect\(setbacks.count == 1 ? "" : "s") hurt",
+            body: lines.joined(separator: "\n"),
+            date: dateString,
+            category: .scoutingReport,
+            attachments: [
+                MessageAttachment(title: "Open Big Board", destination: .bigBoard)
+            ]
+        )
+    }
+
     // MARK: - Helpers
 
     /// Creates a human-readable date string for the given phase.

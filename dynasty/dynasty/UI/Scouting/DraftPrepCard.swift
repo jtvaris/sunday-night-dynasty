@@ -216,19 +216,28 @@ struct DraftPrepCard: View {
         //    room is actually open — nagging about an interview in October is
         //    noise, not a task.
         if interviewWindowOpen && interviewsRemaining > 0 {
-            let board = UserProspectGradeStore.shared
-            let flaggedUnmet = prospects.filter { prospect in
+            // ONE mark system: Elite and Target are the two tiers that mean "I
+            // want this man". This used to read `prospectFlag` OR the star
+            // store — two of the four parallel opinions — so a prospect marked
+            // on the third or fourth never produced a nag at all.
+            let markedUnmet = prospects.filter { prospect in
                 guard !prospect.interviewCompleted else { return false }
-                return prospect.prospectFlag == .mustHave || board.isStarred(prospect.id)
+                return prospect.userMark.isBoardPositive
             }
-            .sorted { ($0.draftProjection ?? 9) < ($1.draftProjection ?? 9) }
-            for prospect in flaggedUnmet.prefix(2) {
+            .sorted { lhs, rhs in
+                // Elite first, then by where the media has him.
+                if lhs.userMark.sortRank != rhs.userMark.sortRank {
+                    return lhs.userMark.sortRank < rhs.userMark.sortRank
+                }
+                return (lhs.draftProjection ?? 9) < (rhs.draftProjection ?? 9)
+            }
+            for prospect in markedUnmet.prefix(2) {
                 items.append(AttentionItem(
                     id: "unmet-\(prospect.id.uuidString)",
                     icon: "bubble.left.and.bubble.right",
                     tint: .accentGold,
                     title: "\(prospect.fullName) \u{00B7} \(prospect.position.rawValue)",
-                    detail: "On your board, never interviewed",
+                    detail: "Marked \(prospect.userMark.label), never interviewed",
                     target: .prospect(prospect)
                 ))
             }

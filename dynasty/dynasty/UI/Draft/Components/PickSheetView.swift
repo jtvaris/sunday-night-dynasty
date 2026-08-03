@@ -111,6 +111,13 @@ struct PickSheetView: View {
 
     // MARK: - Top Prospects List
 
+    /// The twenty names the sheet offers, in MEDIA board order.
+    ///
+    /// This list used to be ordered by `publicBoardRanks` when that map was
+    /// `scoutedOverall ?? trueOverall` — so for every prospect the user had not
+    /// scouted, the hidden rating decided where he appeared in the list he was
+    /// picking from. The order was a bigger leak than any number on the row.
+    /// Your own read is on each row (the grade band); the ORDER is the room's.
     private var topProspects: [CollegeProspect] {
         Array(
             coordinator.availableProspects
@@ -126,11 +133,12 @@ struct PickSheetView: View {
         let bbRank = coordinator.publicBoardRanks[prospect.id]
         let pickNumber = coordinator.currentPick?.pickNumber ?? 0
         let needScore = coordinator.teamNeedScores[prospect.position] ?? 0.2
-        let preview = pickGradePreview(prospect: prospect, bbRank: bbRank, pickNumber: pickNumber, needScore: needScore)
-        let showReachWarning: Bool = {
-            guard let bb = bbRank else { return false }
-            return (preview.grade == .reach || preview.grade == .bigReach) && (pickNumber - bb) >= 4
-        }()
+        let valueDelta = DraftIntel.pickValueDelta(for: prospect, pickNumber: pickNumber, consensusRank: bbRank)
+        let preview = pickGradePreview(prospect: prospect, valueDelta: valueDelta, needScore: needScore)
+        // Graded a reach even though the board says he is fair value here —
+        // i.e. the reach is coming from need, not from value.
+        let showReachWarning = (preview.grade == .reach || preview.grade == .bigReach) && valueDelta >= 4
+        let mark = DraftIntel.mark(for: prospect)
 
         return Button {
             pendingProspect = prospect
@@ -143,6 +151,17 @@ struct PickSheetView: View {
                         Text("\(prospect.firstName) \(prospect.lastName)")
                             .font(.body.weight(.semibold))
                             .foregroundStyle(Color.textPrimary)
+                        // His own mark from the scouting board, on the screen
+                        // where it finally decides something.
+                        if let mark {
+                            Label(mark.shortLabel, systemImage: mark.icon)
+                                .labelStyle(.titleAndIcon)
+                                .font(.caption2.weight(.heavy))
+                                .padding(.horizontal, 5).padding(.vertical, 2)
+                                .background(mark.color.opacity(0.22))
+                                .foregroundStyle(mark.color)
+                                .clipShape(RoundedRectangle(cornerRadius: 3))
+                        }
                         if needScore >= 0.7 {
                             Text("NEED")
                                 .font(.caption2.weight(.heavy))
@@ -175,7 +194,7 @@ struct PickSheetView: View {
                 VStack(alignment: .trailing, spacing: 4) {
                     gradeChip(preview.grade)
                     if let bb = bbRank {
-                        Text("BB #\(bb) · \(reachLabel(grade: preview.grade, bb: bb, pick: pickNumber))")
+                        Text("BB #\(bb) · \(reachLabel(grade: preview.grade, delta: valueDelta))")
                             .font(.caption2)
                             .foregroundStyle(Color.textSecondary)
                     }
@@ -216,7 +235,8 @@ struct PickSheetView: View {
         let bbRank = coordinator.publicBoardRanks[prospect.id]
         let pickNumber = coordinator.currentPick?.pickNumber ?? 0
         let needScore = coordinator.teamNeedScores[prospect.position] ?? 0.2
-        let preview = pickGradePreview(prospect: prospect, bbRank: bbRank, pickNumber: pickNumber, needScore: needScore)
+        let valueDelta = DraftIntel.pickValueDelta(for: prospect, pickNumber: pickNumber, consensusRank: bbRank)
+        let preview = pickGradePreview(prospect: prospect, valueDelta: valueDelta, needScore: needScore)
 
         return VStack(alignment: .leading, spacing: DSSpacing.xs) {
             PersonFaceView(prospect: prospect, size: .small)
@@ -381,6 +401,10 @@ struct PickSheetView: View {
         }
     }
 
+    /// One name per position, taken in MEDIA board order — the same reason
+    /// `topProspects` is: picking the "best" at a position off a board that
+    /// fell back to `trueOverall` handed the user the hidden answer for every
+    /// prospect his scouts had never seen.
     private func computeTopByPosition() -> [Position: CollegeProspect] {
         var result: [Position: CollegeProspect] = [:]
         let sorted = coordinator.availableProspects.sorted {
@@ -432,17 +456,20 @@ struct PickSheetView: View {
 
     // MARK: - Helpers
 
-    private func pickGradePreview(prospect: CollegeProspect, bbRank: Int?, pickNumber: Int, needScore: Double) -> PickGradeCalculator.Output {
-        let valueDelta = pickNumber - (bbRank ?? pickNumber)
+    /// `valueDelta` comes from `DraftIntel.pickValueDelta` — the same helper the
+    /// coordinator grades the finished pick with, so the preview chip and the
+    /// grade the pick actually receives can never disagree.
+    private func pickGradePreview(prospect: CollegeProspect, valueDelta: Int, needScore: Double) -> PickGradeCalculator.Output {
         // Same public OVR the coordinator grades the finished pick on
-        // (`DraftDayCoordinator.computePickGrade`, #33 OSA B): the scouted
-        // consensus, falling back to the hidden value only for a prospect
-        // nobody in the league has seen. Feeding `trueOverall` in here made the
-        // *preview* grade sharper than the grade the pick would actually get.
+        // (`DraftDayCoordinator.computePickGrade`): `DraftIntel
+        // .publicOVREstimate` — your scouts' number, or the media band for his
+        // projected round. The old `?? trueOverall` fallback leaked the hidden
+        // rating into the STEAL / HOF-TRACK chip for every man your own
+        // department had not filed on, which from season 2 is most of the board.
         let inputs = PickGradeCalculator.Inputs(
             valueDelta: valueDelta,
             needScore: needScore,
-            publicOVR: prospect.scoutedOverall ?? prospect.trueOverall,
+            publicOVR: DraftIntel.publicOVREstimate(for: prospect),
             schemeFit: 0.6
         )
         return PickGradeCalculator.compute(inputs)
@@ -476,8 +503,7 @@ struct PickSheetView: View {
         }
     }
 
-    private func reachLabel(grade: PickGrade, bb: Int, pick: Int) -> String {
-        let delta = pick - bb
+    private func reachLabel(grade: PickGrade, delta: Int) -> String {
         switch grade {
         case .reach, .bigReach:
             return delta >= 4 ? "VALUE +\(delta)" : "REACH \(delta)"

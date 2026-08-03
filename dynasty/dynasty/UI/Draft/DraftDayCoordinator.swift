@@ -107,6 +107,11 @@ final class DraftDayCoordinator: ObservableObject {
     /// line instead of pushing a new one on top of it.
     private var activeRunBeatID: UUID?
 
+    /// User pick numbers whose "your marked target is still there" beat has
+    /// already fired — the watch window spans several picks and the banner is
+    /// worth exactly one showing per turn.
+    private var announcedTargetPickNumbers: Set<Int> = []
+
     /// "Call about moving up" sheet state.
     @Published private(set) var isTradeUpBoardOpen = false
     @Published private(set) var tradeUpQuotes: [DraftDayTradeEngine.DraftTradeOffer] = []
@@ -335,8 +340,15 @@ final class DraftDayCoordinator: ObservableObject {
 
         // Compute public board ranks for the visible pool only — guarantees
         // contiguous 1..N rankings even when SwiftData carries leftover
-        // already-drafted prospects from previous sessions.
+        // already-drafted prospects from previous sessions. Pure: this map is
+        // the DRAFT ROOM's, and it shrinks as picks come off the board.
         self.publicBoardRanks = DraftIntel.publicBoardRanks(for: availablePool)
+
+        // The cross-screen board is a different thing and is published
+        // separately: it is the whole declared class, so a prospect card opened
+        // from the war room prints the same `market ≈ #N` as the scouting hub
+        // instead of a rank measured against a pool that is 20 picks shorter.
+        DraftIntel.refreshConsensusBoard(for: draftClass)
 
         // Team needs for the user's roster — refreshes each time the user
         // makes a pick so the picture stays current.
@@ -415,11 +427,28 @@ final class DraftDayCoordinator: ObservableObject {
 
     func skipToNextEvent() {
         clockTask?.cancel()
+        // Both stop conditions are STATE, not edges, so they have to be read
+        // relative to where this tap started — otherwise tapping "next event"
+        // immediately after a slide (or with a target banner still queued)
+        // satisfies the predicate before a single card is turned and the button
+        // does nothing. The slide test used to be true on nearly every pick
+        // (see `DraftIntel.isBigSlide`), which is exactly how that stayed
+        // hidden: a fast-forward that never forwarded looked like one that
+        // stopped at every event.
+        let startIndex = currentPickIndex
+        let dramaBaseline = pendingDrama.count
         autoAdvanceUntil { coordinator in
-            // Any "interesting" stop: own pick, big drop already recorded, end
-            coordinator.isUserOnClock ||
-            coordinator.mode == .complete ||
-            coordinator.lastPickResult?.isBigDrop == true
+            if coordinator.isUserOnClock || coordinator.mode == .complete { return true }
+            guard coordinator.currentPickIndex > startIndex else { return false }
+            if coordinator.lastPickResult?.isBigDrop == true { return true }
+            // Own board news: a marked target taken, or one still sitting there
+            // with the user's turn in sight.
+            return coordinator.pendingDrama.dropFirst(dramaBaseline).contains { event in
+                switch event {
+                case .targetSniped, .targetOnTheBoard: return true
+                default: return false
+                }
+            }
         }
     }
 
@@ -1129,10 +1158,16 @@ final class DraftDayCoordinator: ObservableObject {
             )
         }
 
-        let isBigDrop: Bool = {
-            guard let projection = prospect.draftProjection, projection > 0 else { return false }
-            return pick.pickNumber > projection + 8
-        }()
+        // A slide is measured in PICKS past the slot the media gave him. The
+        // old test read `pickNumber > draftProjection + 8`, i.e. a pick number
+        // against a ROUND number: a man projected in round 3 "slid" from pick
+        // 12 onward, so the beat fired on almost every card and carried no
+        // information at all.
+        let isBigDrop = DraftIntel.isBigSlide(
+            for: prospect,
+            pickNumber: pick.pickNumber,
+            consensusRank: publicBoardRanks[prospect.id]
+        )
 
         let result = PickResult(
             pickNumber: pick.pickNumber,
@@ -1188,7 +1223,50 @@ final class DraftDayCoordinator: ObservableObject {
         )
         pendingDrama.append(contentsOf: drama)
 
+        // The board the user marked up months ago finally pays out tonight.
+        if !isUserPick,
+           let mark = DraftIntel.mark(for: prospect),
+           let sting = DraftDramaEngine.targetSnipedBeat(
+               playerName: Self.shortName(result.playerName),
+               position: prospect.position.rawValue,
+               teamAbbrev: result.teamAbbrev,
+               isWantedTarget: mark.isBoardPositive
+           ) {
+            pendingDrama.append(sting)
+        }
+        announceMarkedTargetIfNeeded()
+
         try? modelContext.save()
+    }
+
+    /// "Your ELITE-marked target is still on the board, N picks to yours."
+    ///
+    /// Fires at most once per user turn: the watch window is six picks wide and
+    /// the banner would otherwise repeat on every card inside it. Everything
+    /// read here is the user's own mark plus the board he can already see —
+    /// nothing new is persisted.
+    private func announceMarkedTargetIfNeeded() {
+        guard userTeamID != nil, let nextPickNumber = nextUserPickNumber else { return }
+        guard !announcedTargetPickNumbers.contains(nextPickNumber) else { return }
+        let away = picksUntilUserPick
+        guard away > 0, away <= DraftDramaEngine.targetWatchDistance else { return }
+        guard let target = DraftIntel.markedTargets(in: availableProspects, tier: .elite).first,
+              let beat = DraftDramaEngine.targetOnTheBoardBeat(
+                  playerName: "\(target.firstName.prefix(1)). \(target.lastName)",
+                  position: target.position.rawValue,
+                  picksUntilUserPick: away
+              ) else { return }
+        announcedTargetPickNumbers.insert(nextPickNumber)
+        pendingDrama.append(beat)
+    }
+
+    /// Pick number of the user's next turn, or nil when he is out of picks.
+    private var nextUserPickNumber: Int? {
+        guard let teamID = userTeamID else { return nil }
+        return picks
+            .dropFirst(currentPickIndex)
+            .first { $0.currentTeamID == teamID }?
+            .pickNumber
     }
 
     private func advance() {
@@ -1446,17 +1524,29 @@ final class DraftDayCoordinator: ObservableObject {
     }
 
     private func computePickGrade(pick: DraftPick, prospect: CollegeProspect) -> GradeBundle {
-        let bbRank = publicBoardRanks[prospect.id] ?? pick.pickNumber
-        let valueDelta = pick.pickNumber - bbRank   // positive = drafted later than projected = steal
+        // Value against the PUBLIC board, at the resolution the public board
+        // actually has: a mock slot is graded to the pick, a projected round is
+        // graded to the round. Subtracting a board rank from a pick number
+        // treated "the media call him a fifth-rounder" as a slot-precise
+        // opinion, so day-three cards drew STEAL / REACH chips off ±30 slots of
+        // pure ordering noise.
+        let valueDelta = DraftIntel.pickValueDelta(
+            for: prospect,
+            pickNumber: pick.pickNumber,
+            consensusRank: publicBoardRanks[prospect.id]
+        )
 
         let roster = rosters[pick.currentTeamID] ?? []
         let teamNeeds = DraftIntel.teamNeedScores(roster: roster)
         let needScore = teamNeeds[prospect.position] ?? 0.2
 
-        // #33 OSA B: the public-facing OVR reflects the scouted consensus
-        // ("public opinion"), not the hidden true overall. Falls back to
-        // trueOverall only when the prospect is entirely unscouted.
-        let publicOVR = prospect.scoutedOverall ?? prospect.trueOverall
+        // The public-facing OVR reflects the scouted consensus ("public
+        // opinion"), never the hidden true overall — for a man nobody in your
+        // building has filed on it falls back to the MEDIA band for his
+        // projected round, not to `trueOverall`. `applyPreScoutedData` only runs
+        // in season 1, so the old fallback fed the hidden rating into the pick
+        // grade for most of the board from season 2 onward.
+        let publicOVR = DraftIntel.publicOVREstimate(for: prospect)
         // #33 OSA B: score the prospect against the drafting team's coordinator
         // schemes (OC offense / DC defense) instead of a flat 0.6 constant, so
         // pick grades now differentiate by scheme fit. Falls back to a neutral
@@ -1484,9 +1574,10 @@ final class DraftDayCoordinator: ObservableObject {
 
     private func scoutGradeLabel(for prospect: CollegeProspect) -> String {
         // Stamped on completed picks (ticker + DraftPick.scoutGrade). Buckets the
-        // SCOUTED number so the fog holds even post-pick — an unscouted steal
-        // shouldn't reveal its true tier the moment another club drafts him.
-        switch prospect.scoutedOverall ?? prospect.trueOverall {
+        // PUBLIC number so the fog holds even post-pick — an unscouted steal
+        // shouldn't reveal its true tier the moment another club drafts him,
+        // which the old `?? trueOverall` fallback did on every unscouted man.
+        switch DraftIntel.publicOVREstimate(for: prospect) {
         case 90...:   return "A+"
         case 84..<90: return "A"
         case 78..<84: return "B+"
@@ -1507,6 +1598,13 @@ final class DraftDayCoordinator: ObservableObject {
     private func recordStoryBeats(for result: PickResult, prospect: CollegeProspect, pick: DraftPick) {
         let name = Self.shortName(result.playerName)
         let boardRank = publicBoardRanks[prospect.id]
+        // Same number the grade was computed from, so the line never argues
+        // with the chip printed next to it.
+        let valueDelta = DraftIntel.pickValueDelta(
+            for: prospect,
+            pickNumber: result.pickNumber,
+            consensusRank: boardRank
+        )
 
         // 1) Value beats — the grade the pick was just given.
         switch result.grade {
@@ -1523,8 +1621,9 @@ final class DraftDayCoordinator: ObservableObject {
                 kind: .reach,
                 pickNumber: result.pickNumber,
                 headline: "\(result.teamAbbrev) reach for \(result.position.rawValue) \(name)",
-                detail: boardRank.map { "Board had him #\($0) — taken \(result.pickNumber - $0) picks early." }
-                    ?? "Nobody else had him this high."
+                detail: valueDelta < 0
+                    ? "Consensus board had him #\(boardRank ?? result.pickNumber) — taken \(-valueDelta) picks ahead of it."
+                    : "Nobody else had him this high."
             ))
         default:
             if result.isGem {
@@ -1537,8 +1636,8 @@ final class DraftDayCoordinator: ObservableObject {
             }
         }
 
-        // 2) The slide — projected rounds earlier, still sitting there.
-        if result.isBigDrop, let projection = prospect.draftProjection {
+        // 2) The slide — past the slot the media gave him, by a margin.
+        if result.isBigDrop {
             recordEvent(
                 type: .bigDrop,
                 teamID: pick.currentTeamID,
@@ -1546,11 +1645,19 @@ final class DraftDayCoordinator: ObservableObject {
                 round: pick.round,
                 prospectID: prospect.id
             )
+            let slide = DraftIntel.slideMagnitude(
+                for: prospect,
+                pickNumber: result.pickNumber,
+                consensusRank: boardRank
+            )
+            let expectation = prospect.mockDraftPickNumber.map { "The mock had him at #\(String($0))." }
+                ?? prospect.draftProjection.map { "Media had him going in Round \($0)." }
+                ?? "The room had him well ahead of this."
             appendStoryBeat(StoryBeat(
                 kind: .slide,
                 pickNumber: result.pickNumber,
                 headline: "\(name)'s slide ends at #\(result.pickNumber)",
-                detail: "Media had him going in Round \(projection). \(result.teamAbbrev) let him come to them."
+                detail: "\(expectation) He fell \(slide) picks past it — \(result.teamAbbrev) let him come to them."
             ))
         }
 

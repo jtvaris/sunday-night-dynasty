@@ -45,11 +45,20 @@ struct ProspectListView: View {
     @State private var isLoading: Bool = true
     @State private var cachedDisplayed: [CollegeProspect] = []
     @State private var cachedPositionRanks: [UUID: Int] = [:]
+    @State private var cachedValueReads: [UUID: ProspectFog.ValueRead] = [:]
 
-    // MARK: - #3: Compare 2 Prospects mode
+    /// Read only to migrate the legacy bookmark set onto the unified mark.
+    @CareerScopedStorage("prospectWatchlist") private var prospectWatchlistJSON: String = "[]"
+
+    private var legacyWatchlistIDs: Set<String> {
+        Set((try? JSONDecoder().decode([String].self, from: Data(prospectWatchlistJSON.utf8))) ?? [])
+    }
+
+    // MARK: - #3: Compare mode (up to four)
     @State private var compareMode: Bool = false
     @State private var compareSelection: [CollegeProspect] = []
     @State private var showCompareSheet: Bool = false
+    @State private var editingMarkNoteProspect: CollegeProspect?
 
     // MARK: - Filtered & Sorted Prospects
 
@@ -170,8 +179,34 @@ struct ProspectListView: View {
     }
 
     private func refreshCachedData() {
+        // Fold the legacy star / flag / bookmark opinions into the ONE mark
+        // before anything on this screen reads it.
+        let migrated = CollegeProspect.migrateLegacyMarks(
+            in: prospects,
+            watchlistIDs: legacyWatchlistIDs
+        )
+        if migrated > 0 { try? modelContext.save() }
+
+        // Publish the media consensus board so `DraftIntel.consensusRank`
+        // answers for this class (per-session cache, not a save).
+        DraftIntel.refreshConsensusBoard(for: prospects)
+
         cachedDisplayed = displayed
         cachedPositionRanks = positionRanks
+
+        // Value-vs-my-grade reads, one pass rather than per row.
+        let store = UserProspectGradeStore.shared
+        var reads: [UUID: ProspectFog.ValueRead] = [:]
+        for prospect in cachedDisplayed {
+            if let read = ProspectFog.valueRead(
+                for: prospect,
+                marketRank: DraftIntel.consensusRank(for: prospect.id),
+                myGrade: store.grade(for: prospect.id)
+            ) {
+                reads[prospect.id] = read
+            }
+        }
+        cachedValueReads = reads
     }
 
     var body: some View {
@@ -242,12 +277,20 @@ struct ProspectListView: View {
                                         schemeFit: schemeFitLabel(for: prospect),
                                         isTeamNeed: teamNeeds.contains(prospect.position),
                                         needLevel: needLevel(for: prospect.position),
-                                        starterComparison: starterComparison(for: prospect)
+                                        starterComparison: starterComparison(for: prospect),
+                                        valueRead: cachedValueReads[prospect.id]
                                     )
                                     .contentShape(Rectangle())
                                     .onTapGesture { toggleCompareSelection(for: prospect) }
                                 } else {
-                                    ProspectStarButton(prospectID: prospect.id)
+                                    ProspectMarkButton(
+                                        prospect: prospect,
+                                        onChange: {
+                                            try? modelContext.save()
+                                            refreshCachedData()
+                                        },
+                                        onEditNote: { editingMarkNoteProspect = prospect }
+                                    )
 
                                     NavigationLink(destination: ProspectDetailView(career: career, prospect: prospect)) {
                                         ProspectRowView(
@@ -258,7 +301,8 @@ struct ProspectListView: View {
                                             schemeFit: schemeFitLabel(for: prospect),
                                             isTeamNeed: teamNeeds.contains(prospect.position),
                                             needLevel: needLevel(for: prospect.position),
-                                            starterComparison: starterComparison(for: prospect)
+                                            starterComparison: starterComparison(for: prospect),
+                                            valueRead: cachedValueReads[prospect.id]
                                         )
                                     }
                                 }
@@ -270,7 +314,23 @@ struct ProspectListView: View {
                             )
                             .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 16))
                             .contextMenu {
-                                ProspectGradeContextMenu(prospectID: prospect.id)
+                                ProspectGradeContextMenu(
+                                    prospect: prospect,
+                                    onChange: {
+                                        try? modelContext.save()
+                                        refreshCachedData()
+                                    },
+                                    onEditNote: { editingMarkNoteProspect = prospect }
+                                )
+                                Divider()
+                                Button {
+                                    toggleCompareSelection(for: prospect)
+                                } label: {
+                                    Label(
+                                        isSelectedForCompare(prospect) ? "Remove From Compare" : "Add to Compare",
+                                        systemImage: "rectangle.on.rectangle.angled"
+                                    )
+                                }
                             }
                         }
                     }
@@ -296,18 +356,36 @@ struct ProspectListView: View {
             }
         }
         .sheet(isPresented: $showCompareSheet) {
-            if compareSelection.count == 2 {
+            if compareSelection.count >= 2 {
                 ProspectCompareSheet(
                     career: career,
-                    left: compareSelection[0],
-                    right: compareSelection[1],
-                    schemeFitLeft: schemeFitLabel(for: compareSelection[0]),
-                    schemeFitRight: schemeFitLabel(for: compareSelection[1]),
-                    starterComparisonLeft: starterComparison(for: compareSelection[0]),
-                    starterComparisonRight: starterComparison(for: compareSelection[1]),
+                    prospects: compareSelection,
+                    schemeFits: Dictionary(
+                        uniqueKeysWithValues: compareSelection.compactMap { prospect in
+                            schemeFitLabel(for: prospect).map { (prospect.id, $0) }
+                        }
+                    ),
+                    starterComparisons: Dictionary(
+                        uniqueKeysWithValues: compareSelection.compactMap { prospect in
+                            starterComparison(for: prospect).map { (prospect.id, $0) }
+                        }
+                    ),
                     onDismiss: { showCompareSheet = false }
                 )
             }
+        }
+        .sheet(item: $editingMarkNoteProspect) { prospect in
+            ProspectMarkNoteSheet(
+                prospectName: prospect.fullName,
+                initialNote: prospect.userMarkNote,
+                onSave: { note in
+                    prospect.setUserMark(prospect.isMarked ? prospect.userMark : .target, note: note)
+                    try? modelContext.save()
+                    editingMarkNoteProspect = nil
+                    refreshCachedData()
+                },
+                onCancel: { editingMarkNoteProspect = nil }
+            )
         }
         .task {
             loadCoachesAndRoster()
@@ -434,6 +512,16 @@ struct ProspectListView: View {
                 )
             }
             .frame(width: 40, alignment: .center)
+
+            // Always-visible: value vs the user's own grade.
+            HStack(spacing: 2) {
+                Text("VAL")
+                InfoTooltipButton(
+                    text: "Value versus your own grade. The market number is media consensus \u{2014} the latest mock's pick and the projected round, never your scouts' read. Green means he will last past where you have him; amber means taking him there is a reach. Blank until you grade him.",
+                    size: 9
+                )
+            }
+            .frame(width: 34, alignment: .center)
 
             // Always-visible: OVR (with tooltip explaining the dual grade format)
             HStack(spacing: 2) {
@@ -608,7 +696,7 @@ struct ProspectListView: View {
         if let idx = compareSelection.firstIndex(where: { $0.id == prospect.id }) {
             compareSelection.remove(at: idx)
         } else {
-            if compareSelection.count >= 2 {
+            if compareSelection.count >= ProspectCompareSheet.maxProspects {
                 // Replace oldest selection.
                 compareSelection.removeFirst()
             }
@@ -626,8 +714,8 @@ struct ProspectListView: View {
                     .font(.system(size: 11, weight: .heavy))
                     .foregroundStyle(Color.accentBlue)
                 Text(compareSelection.isEmpty
-                     ? "Tap two prospects to compare"
-                     : "Selected: \(compareSelection.map { $0.lastName }.joined(separator: " vs ")) (\(compareSelection.count)/2)")
+                     ? "Tap up to four prospects to compare"
+                     : "Selected: \(compareSelection.map { $0.lastName }.joined(separator: " vs ")) (\(compareSelection.count)/\(ProspectCompareSheet.maxProspects))")
                     .font(.system(size: 9, weight: .medium))
                     .foregroundStyle(Color.textSecondary)
                     .lineLimit(1)
@@ -648,15 +736,15 @@ struct ProspectListView: View {
             } label: {
                 Text("Compare")
                     .font(.system(size: 11, weight: .heavy))
-                    .foregroundStyle(compareSelection.count == 2 ? Color.backgroundPrimary : Color.textTertiary)
+                    .foregroundStyle(compareSelection.count >= 2 ? Color.backgroundPrimary : Color.textTertiary)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
                     .background(
-                        compareSelection.count == 2 ? Color.accentBlue : Color.backgroundTertiary,
+                        compareSelection.count >= 2 ? Color.accentBlue : Color.backgroundTertiary,
                         in: Capsule()
                     )
             }
-            .disabled(compareSelection.count != 2)
+            .disabled(compareSelection.count < 2)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 6)
@@ -707,6 +795,9 @@ struct ProspectRowView: View {
     var isTeamNeed: Bool = false
     var needLevel: String = "Set"
     var starterComparison: String? = nil
+    /// Market-vs-my-grade read; `nil` when the user has not graded him or the
+    /// media has no consensus slot for him.
+    var valueRead: ProspectFog.ValueRead? = nil
 
     private var isScouted: Bool { prospect.scoutedOverall != nil }
 
@@ -728,6 +819,12 @@ struct ProspectRowView: View {
                         .fontWeight(.semibold)
                         .foregroundStyle(Color.textPrimary)
                         .lineLimit(1)
+
+                    // The ONE mark, same badge the board shows.
+                    ProspectMarkChip(
+                        mark: prospect.userMark,
+                        showsNote: !prospect.userMarkNote.isEmpty
+                    )
 
                     UserGradeBadge(prospectID: prospect.id)
                 }
@@ -788,6 +885,10 @@ struct ProspectRowView: View {
 
             // Always-visible: Football IQ (fogged until somebody meets him)
             ProspectIQCell(prospect: prospect, width: 40)
+
+            // Always-visible: value vs the user's own grade.
+            ProspectValueChip(read: valueRead)
+                .frame(width: 34, alignment: .center)
 
             // Always-visible: OVR
             overallBadge
@@ -1329,18 +1430,44 @@ enum ProspectSort: String, CaseIterable, Identifiable {
     }
 }
 
-// MARK: - #3: Prospect Compare Sheet
+// MARK: - Prospect Compare Sheet
 
-/// Side-by-side comparison view for two prospects.
+/// Side-by-side comparison of two to four prospects.
+///
+/// ## Two things were wrong with the old sheet
+///
+/// It printed a **"Physical (True)"** section straight off
+/// `prospect.truePhysical` — speed 91, strength 78, durability 44 — for men the
+/// user had never scouted. Every other surface in the game runs its numbers
+/// through `ProspectFog`; this one handed over the generator's own attribute
+/// block, which made the compare tool the cheapest scouting in the build. It
+/// leaked the header too, printing `scoutedOverall` as a bare number where the
+/// rest of the game shows a grade band.
+///
+/// It also capped at two. A draft board is a series of "which of these three do
+/// I take" questions, and a two-way compare answers none of them.
+///
+/// Everything here now comes from the same two legitimate sources as the rest
+/// of the draft UI: the user's own scouting (grade bands, mental / position
+/// grade ranges) and public combine measurables, at the fidelity
+/// `ProspectFog.combineFidelity` allows.
 struct ProspectCompareSheet: View {
+    /// Four columns is the cap: a fifth does not fit a portrait iPad, and a
+    /// five-way compare is not a decision anybody actually makes.
+    static let maxProspects = 4
+
     let career: Career
-    let left: CollegeProspect
-    let right: CollegeProspect
-    let schemeFitLeft: String?
-    let schemeFitRight: String?
-    let starterComparisonLeft: String?
-    let starterComparisonRight: String?
+    let prospects: [CollegeProspect]
+    /// Scheme fit per prospect id, computed by the calling screen (it owns the
+    /// coordinator lookup).
+    var schemeFits: [UUID: String] = [:]
+    /// "vs Starter" line per prospect id.
+    var starterComparisons: [UUID: String] = [:]
     let onDismiss: () -> Void
+
+    private var columns: [CollegeProspect] {
+        Array(prospects.prefix(Self.maxProspects))
+    }
 
     var body: some View {
         NavigationStack {
@@ -1348,17 +1475,18 @@ struct ProspectCompareSheet: View {
                 VStack(spacing: 12) {
                     headerRow
                     compareSection(title: "Overview", rows: overviewRows)
-                    compareSection(title: "Physical (True)", rows: physicalRows)
+                    compareSection(title: "Measurables", rows: measurableRows)
                     compareSection(title: "Mental Grades", rows: mentalRows)
                     compareSection(title: "Position Skills", rows: positionRows)
                     compareSection(title: "Scouting", rows: scoutingRows)
+                    fogFootnote
                     Spacer(minLength: 24)
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
             }
             .background(Color.backgroundPrimary.ignoresSafeArea())
-            .navigationTitle("Compare")
+            .navigationTitle("Compare \(columns.count)")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -1373,13 +1501,10 @@ struct ProspectCompareSheet: View {
     // MARK: - Header
 
     private var headerRow: some View {
-        HStack(alignment: .top, spacing: 12) {
-            prospectHeaderColumn(prospect: left)
-            Image(systemName: "arrow.left.arrow.right")
-                .font(.title3)
-                .foregroundStyle(Color.accentBlue)
-                .padding(.top, 24)
-            prospectHeaderColumn(prospect: right)
+        HStack(alignment: .top, spacing: 8) {
+            ForEach(columns) { prospect in
+                prospectHeaderColumn(prospect: prospect)
+            }
         }
     }
 
@@ -1396,21 +1521,43 @@ struct ProspectCompareSheet: View {
                 .foregroundStyle(Color.textPrimary)
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
+                .minimumScaleFactor(0.75)
             Text(prospect.college)
                 .font(.caption2)
                 .foregroundStyle(Color.textSecondary)
-            HStack(spacing: 4) {
-                Text("OVR")
-                    .font(.system(size: 8, weight: .heavy))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+
+            ProspectMarkChip(mark: prospect.userMark)
+
+            // The grade the user is entitled to, not the number the engine
+            // knows: gold when it is his own scouts' read, grey when it is
+            // only the media's projected round.
+            let read = ProspectFog.read(prospect)
+            VStack(spacing: 1) {
+                Text(read.text)
+                    .font(.title3.weight(.heavy))
+                    .foregroundStyle(read.source.tint)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                Text(read.source.label.uppercased())
+                    .font(.system(size: 7, weight: .bold))
                     .foregroundStyle(Color.textTertiary)
-                Text(prospect.scoutedOverall.map { "\($0)" } ?? "?")
-                    .font(.title3.weight(.heavy).monospacedDigit())
-                    .foregroundStyle(Color.forRating(prospect.scoutedOverall ?? 0))
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(read.accessibilityText)
         }
         .frame(maxWidth: .infinity)
         .padding(8)
         .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private var fogFootnote: some View {
+        Text("Gold values are your own scouting. Grey values are public \u{2014} the media's projected round and whatever the broadcast showed at the combine. A \"?\" is work nobody in your building has done yet.")
+            .font(.caption2)
+            .foregroundStyle(Color.textTertiary)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.top, 4)
     }
 
     // MARK: - Section
@@ -1431,22 +1578,23 @@ struct ProspectCompareSheet: View {
     }
 
     private func compareRowView(row: CompareRow) -> some View {
-        HStack(spacing: 8) {
-            Text(row.leftValue)
-                .font(.caption.monospacedDigit())
-                .fontWeight(row.leftBetter ? .heavy : .medium)
-                .foregroundStyle(row.leftBetter ? Color.success : Color.textPrimary)
-                .frame(maxWidth: .infinity, alignment: .trailing)
+        HStack(spacing: 6) {
             Text(row.label)
                 .font(.system(size: 9, weight: .heavy))
                 .foregroundStyle(Color.textTertiary)
-                .frame(width: 64, alignment: .center)
-            Text(row.rightValue)
-                .font(.caption.monospacedDigit())
-                .fontWeight(row.rightBetter ? .heavy : .medium)
-                .foregroundStyle(row.rightBetter ? Color.success : Color.textPrimary)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(width: 66, alignment: .leading)
+            ForEach(Array(row.values.enumerated()), id: \.offset) { index, value in
+                Text(value)
+                    .font(.caption.monospacedDigit())
+                    .fontWeight(row.bestIndices.contains(index) ? .heavy : .medium)
+                    .foregroundStyle(row.bestIndices.contains(index) ? Color.success : Color.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .frame(maxWidth: .infinity, alignment: .center)
+            }
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(row.label): \(row.values.joined(separator: ", "))")
     }
 
     // MARK: - Rows
@@ -1454,99 +1602,168 @@ struct ProspectCompareSheet: View {
     private struct CompareRow: Identifiable {
         let id = UUID()
         let label: String
-        let leftValue: String
-        let rightValue: String
-        let leftBetter: Bool
-        let rightBetter: Bool
+        let values: [String]
+        /// Columns to highlight. Empty when the row has no "better".
+        var bestIndices: Set<Int> = []
     }
 
-    private func numericRow(label: String, lhs: Int?, rhs: Int?) -> CompareRow {
-        let l = lhs.map { "\($0)" } ?? "--"
-        let r = rhs.map { "\($0)" } ?? "--"
-        let lBetter = (lhs ?? -1) > (rhs ?? -1)
-        let rBetter = (rhs ?? -1) > (lhs ?? -1)
-        return CompareRow(label: label, leftValue: l, rightValue: r, leftBetter: lBetter, rightBetter: rBetter)
-    }
-
-    private func textRow(label: String, lhs: String, rhs: String, lhsBetter: Bool = false, rhsBetter: Bool = false) -> CompareRow {
-        CompareRow(label: label, leftValue: lhs, rightValue: rhs, leftBetter: lhsBetter, rightBetter: rhsBetter)
+    /// Builds a row from a per-prospect value plus an optional score used to
+    /// pick the winners. `nil` scores never win, so an unknown never beats a
+    /// known — the highlight can no longer leak "the one you haven't scouted
+    /// is the good one".
+    private func row(
+        _ label: String,
+        _ text: (CollegeProspect) -> String,
+        score: ((CollegeProspect) -> Int?)? = nil,
+        higherIsBetter: Bool = true
+    ) -> CompareRow {
+        let values = columns.map(text)
+        guard let score else { return CompareRow(label: label, values: values) }
+        let scores = columns.map(score)
+        let known = scores.compactMap { $0 }
+        guard known.count >= 2 else { return CompareRow(label: label, values: values) }
+        guard let best = higherIsBetter ? known.max() : known.min() else {
+            return CompareRow(label: label, values: values)
+        }
+        // A row where everybody ties has no winner to point at.
+        guard known.contains(where: { $0 != best }) else {
+            return CompareRow(label: label, values: values)
+        }
+        var winners: Set<Int> = []
+        for (index, value) in scores.enumerated() where value == best { winners.insert(index) }
+        return CompareRow(label: label, values: values, bestIndices: winners)
     }
 
     private var overviewRows: [CompareRow] {
-        let leftTier = left.collegeProductionTier
-        let rightTier = right.collegeProductionTier
-        return [
-            numericRow(label: "AGE", lhs: left.age, rhs: right.age),
-            textRow(label: "HT", lhs: heightString(left.height), rhs: heightString(right.height)),
-            numericRow(label: "WT", lhs: left.weight, rhs: right.weight),
-            textRow(label: "PROD", lhs: leftTier.displayName, rhs: rightTier.displayName,
-                    lhsBetter: leftTier.sortRank < rightTier.sortRank,
-                    rhsBetter: rightTier.sortRank < leftTier.sortRank),
-            numericRow(label: "PROJ RD", lhs: left.draftProjection, rhs: right.draftProjection),
-            textRow(label: "FIT", lhs: schemeFitLeft ?? "--", rhs: schemeFitRight ?? "--",
-                    lhsBetter: schemeFitLeft == "Good" && schemeFitRight != "Good",
-                    rhsBetter: schemeFitRight == "Good" && schemeFitLeft != "Good"),
-            textRow(label: "RISK", lhs: riskString(left.riskLevel), rhs: riskString(right.riskLevel)),
-            textRow(label: "vs STARTER", lhs: starterComparisonLeft ?? "--", rhs: starterComparisonRight ?? "--")
+        [
+            row("AGE", { "\($0.age)" }, score: { $0.age }, higherIsBetter: false),
+            row("HT", { heightString($0.height) }),
+            row("WT", { "\($0.weight)" }),
+            row("PROD",
+                { $0.collegeProductionTier.displayName },
+                score: { -$0.collegeProductionTier.sortRank }),
+            row("PROJ RD", { $0.draftProjection.map { "Rd \($0)" } ?? "\u{2014}" },
+                score: { $0.draftProjection }, higherIsBetter: false),
+            row("MY MARK", { $0.isMarked ? $0.userMark.label : "\u{2014}" },
+                score: { prospect -> Int? in
+                    guard prospect.isMarked else { return nil }
+                    return -prospect.userMark.sortRank
+                }),
+            row("FIT", { schemeFits[$0.id] ?? "\u{2014}" },
+                score: { schemeFits[$0.id].map { fit in fit == "Good" ? 2 : (fit == "Fair" ? 1 : 0) } }),
+            row("RISK", { riskString($0.riskLevel) }),
+            row("vs STARTER", { starterComparisons[$0.id] ?? "\u{2014}" })
         ]
     }
 
-    private var physicalRows: [CompareRow] {
-        let lp = left.truePhysical
-        let rp = right.truePhysical
+    /// Height, weight and the combine card — public the moment a man runs in
+    /// front of thirty-two clubs, and only then. This replaced the old
+    /// "Physical (True)" block, which read the generator's attributes directly.
+    private var measurableRows: [CompareRow] {
+        func measurable(
+            _ label: String,
+            _ text: @escaping (CollegeProspect, ProspectFog.MeasurableFidelity) -> String?,
+            score: ((CollegeProspect) -> Int?)? = nil,
+            higherIsBetter: Bool = true
+        ) -> CompareRow {
+            row(
+                label,
+                { prospect in
+                    guard ProspectFog.showsMeasurables(prospect) else { return "?" }
+                    let fidelity = ProspectFog.combineFidelity(for: prospect)
+                    return text(prospect, fidelity) ?? "\u{2014}"
+                },
+                score: score.map { scorer in
+                    { prospect in ProspectFog.showsMeasurables(prospect) ? scorer(prospect) : nil }
+                },
+                higherIsBetter: higherIsBetter
+            )
+        }
+
         return [
-            numericRow(label: "SPD", lhs: lp.speed, rhs: rp.speed),
-            numericRow(label: "STR", lhs: lp.strength, rhs: rp.strength),
-            numericRow(label: "AGI", lhs: lp.agility, rhs: rp.agility),
-            numericRow(label: "ACC", lhs: lp.acceleration, rhs: rp.acceleration),
-            numericRow(label: "STA", lhs: lp.stamina, rhs: rp.stamina),
-            numericRow(label: "DUR", lhs: lp.durability, rhs: rp.durability)
+            measurable("40 YD", { ProspectFog.fortyText($0.fortyTime, fidelity: $1) },
+                       score: { $0.fortyTime.map { Int($0 * 100) } }, higherIsBetter: false),
+            measurable("BENCH", { ProspectFog.benchText($0.benchPress, fidelity: $1) },
+                       score: { $0.benchPress }),
+            measurable("VERT", { ProspectFog.verticalText($0.verticalJump, fidelity: $1) },
+                       score: { $0.verticalJump.map { Int($0 * 10) } }),
+            measurable("BROAD", { ProspectFog.broadJumpText($0.broadJump, fidelity: $1) },
+                       score: { $0.broadJump }),
+            measurable("3-CONE", { ProspectFog.agilityText($0.coneDrill, fidelity: $1) },
+                       score: { $0.coneDrill.map { Int($0 * 100) } }, higherIsBetter: false),
+            measurable("SHUTTLE", { ProspectFog.agilityText($0.shuttleTime, fidelity: $1) },
+                       score: { $0.shuttleTime.map { Int($0 * 100) } }, higherIsBetter: false),
+            measurable("DRILL", { ProspectFog.drillGradeText($0.positionDrillGrade, fidelity: $1) },
+                       score: { $0.positionDrillGrade.flatMap { LetterGrade(rawValue: $0)?.rank } })
         ]
     }
 
     private var mentalRows: [CompareRow] {
         let keys = ["AWR", "DEC", "WRK", "CLT", "COA", "LDR", "LRN", "CMP"]
-        return keys.map { k in
-            let l = left.scoutedMentalGrades?[k]?.displayText ?? "?"
-            let r = right.scoutedMentalGrades?[k]?.displayText ?? "?"
-            let lRank = left.scoutedMentalGrades?[k]?.midGrade.rank ?? -1
-            let rRank = right.scoutedMentalGrades?[k]?.midGrade.rank ?? -1
-            return CompareRow(label: k, leftValue: l, rightValue: r,
-                              leftBetter: lRank > rRank, rightBetter: rRank > lRank)
+        var rows = keys.map { key in
+            row(
+                key,
+                { $0.scoutedMentalGrades?[key]?.displayText ?? "?" },
+                score: { $0.scoutedMentalGrades?[key]?.midGrade.rank }
+            )
         }
+        // Football IQ belongs beside the mental grades: it is the one line the
+        // interview actually buys, and comparing it is the point of spending a
+        // combine slot.
+        rows.insert(
+            row(
+                "FB IQ",
+                { ProspectFog.footballIQ($0).text },
+                score: { prospect in
+                    let read = ProspectFog.footballIQ(prospect)
+                    return read.source == .none ? nil : read.rank
+                }
+            ),
+            at: 0
+        )
+        return rows
     }
 
     private var positionRows: [CompareRow] {
-        // Only meaningful when both prospects share a position; otherwise show note.
-        guard left.position == right.position else {
-            return [CompareRow(label: "Note",
-                               leftValue: left.position.rawValue,
-                               rightValue: right.position.rawValue,
-                               leftBetter: false,
-                               rightBetter: false)]
+        // Only meaningful when every column shares a position.
+        let positions = Set(columns.map(\.position))
+        guard positions.count == 1, let first = columns.first else {
+            return [CompareRow(label: "NOTE", values: columns.map { $0.position.rawValue })]
         }
-        let keys = positionSkillKeys(for: left)
-        return keys.map { k in
-            let l = left.scoutedPositionGrades?[k]?.displayText ?? "?"
-            let r = right.scoutedPositionGrades?[k]?.displayText ?? "?"
-            let lRank = left.scoutedPositionGrades?[k]?.midGrade.rank ?? -1
-            let rRank = right.scoutedPositionGrades?[k]?.midGrade.rank ?? -1
-            return CompareRow(label: k, leftValue: l, rightValue: r,
-                              leftBetter: lRank > rRank, rightBetter: rRank > lRank)
+        return positionSkillKeys(for: first).map { key in
+            row(
+                key,
+                { $0.scoutedPositionGrades?[key]?.displayText ?? "?" },
+                score: { $0.scoutedPositionGrades?[key]?.midGrade.rank }
+            )
         }
     }
 
     private var scoutingRows: [CompareRow] {
         [
-            numericRow(label: "REPORTS", lhs: left.scoutReportCount, rhs: right.scoutReportCount),
-            textRow(label: "GRADE", lhs: left.scoutGrade ?? "--", rhs: right.scoutGrade ?? "--"),
-            textRow(label: "FLAG", lhs: left.prospectFlag.rawValue, rhs: right.prospectFlag.rawValue),
-            textRow(label: "INTERVIEW", lhs: left.interviewCompleted ? "Yes" : "No", rhs: right.interviewCompleted ? "Yes" : "No"),
-            textRow(label: "COMBINE", lhs: left.combineInvite ? "Invited" : "—", rhs: right.combineInvite ? "Invited" : "—")
+            row("REPORTS", { "\($0.scoutReportCount)" }, score: { $0.scoutReportCount }),
+            row("INTERVIEW", { $0.interviewCompleted ? "Yes" : "No" },
+                score: { $0.interviewCompleted ? 1 : 0 }),
+            row("PRO DAY", { $0.proDayCompleted ? "Yes" : "No" },
+                score: { $0.proDayCompleted ? 1 : 0 }),
+            row("COMBINE", { $0.combineInvite ? "Invited" : "\u{2014}" }),
+            row("FLAGS", { flagSummary(for: $0) })
         ]
     }
 
     // MARK: - Helpers
+
+    /// Medical / character flags at the disclosure the user has earned. Never
+    /// the contents here — the compare sheet is a scan, and the file itself
+    /// lives on the prospect card.
+    private func flagSummary(for prospect: CollegeProspect) -> String {
+        let total = (prospect.medicalConcerns?.count ?? 0) + (prospect.redFlags?.count ?? 0)
+        switch ProspectFog.flagDisclosure(for: prospect, userTeamID: career.teamID) {
+        case .hidden: return "?"
+        case .count:  return total == 0 ? "None" : "\(total) on file"
+        case .full:   return total == 0 ? "Clean" : "\(total)"
+        }
+    }
 
     private func positionSkillKeys(for prospect: CollegeProspect) -> [String] {
         switch prospect.truePositionAttributes {

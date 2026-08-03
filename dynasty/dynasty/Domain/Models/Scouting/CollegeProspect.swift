@@ -124,6 +124,33 @@ final class CollegeProspect {
 
     var prospectFlag: ProspectFlag = ProspectFlag.none
 
+    // MARK: - Unified GM Mark
+    //
+    // The board used to carry FOUR parallel opinions of the same prospect —
+    // `prospectFlag` (must-have / sleeper / avoid), the star in
+    // `UserProspectGradeStore`, the `prospectWatchlist` bookmark set, and the
+    // `UserGrade` — each with a different downstream reach: the prep card read
+    // two of them, the combine table wrote a third, the pro-day screen read a
+    // fourth. Marking a man on one screen therefore did nothing on the next.
+    //
+    // `userMarkTier` is the one verdict. Everything the user can express about
+    // where a prospect sits on HIS board goes through it, and the legacy fields
+    // are still written (see `setUserMark`) so nothing that has not been ported
+    // yet goes blind.
+    //
+    // Both are stored properties with INLINE defaults and are deliberately NOT
+    // `init` parameters — the project's lightweight-migration convention.
+
+    /// The GM's own verdict: `"elite"` / `"target"` / `"depth"` / `"avoid"`.
+    /// Empty means unmarked. Read through `userMark`, written through
+    /// `setUserMark(_:note:)` — never assigned raw, so the legacy mirrors and
+    /// the note stay in step.
+    var userMarkTier: String = ""
+
+    /// One line of the GM's own reasoning, written beside the tier on the
+    /// prospect's card. Empty when he has not written one.
+    var userMarkNote: String = ""
+
     // MARK: - Top-30 Visits
 
     /// UUIDs of teams that have used a Top-30 visit on this prospect.
@@ -261,6 +288,81 @@ final class CollegeProspect {
         case 65...68: return 5  // Late rounds / priority FA
         default:      return 6  // Draftable
         }
+    }
+
+    // MARK: - Unified mark accessors
+
+    /// The one verdict every scouting surface keys off.
+    var userMark: ProspectMarkTier {
+        ProspectMarkTier(rawValue: userMarkTier) ?? ProspectMarkTier.none
+    }
+
+    /// Whether the GM has said anything at all about this man.
+    var isMarked: Bool { userMark != ProspectMarkTier.none }
+
+    /// Sets the unified mark, and mirrors it onto the legacy systems so the
+    /// screens and engines that still read `prospectFlag` or the star store
+    /// agree with the board instead of contradicting it.
+    ///
+    /// Passing `nil` for `note` leaves an existing note alone — clearing a note
+    /// is `setUserMark(tier, note: "")`. Clearing the mark itself (`.none`)
+    /// also drops the note, because a note with no verdict is orphaned text.
+    func setUserMark(_ tier: ProspectMarkTier, note: String? = nil) {
+        userMarkTier = tier.rawValue
+        if tier == ProspectMarkTier.none {
+            userMarkNote = ""
+        } else if let note {
+            userMarkNote = String(note.prefix(200))
+        }
+
+        // Back-compat mirrors. Deliberately one-way: the unified tier is the
+        // source of truth, these are written so nothing reading them goes stale.
+        prospectFlag = tier.legacyFlag
+        let store = UserProspectGradeStore.shared
+        if store.isStarred(id) != tier.isBoardPositive {
+            store.toggleStar(for: id)
+        }
+    }
+
+    /// First-read migration of the legacy marks onto `userMarkTier`.
+    ///
+    /// Only ever fills a row that has no unified mark yet, so it cannot undo a
+    /// verdict the user has since given. Mapping (per the draft-flow contract):
+    /// an avoid flag wins over everything, a must-have flag / star / watchlist
+    /// bookmark becomes `target`, and the old "sleeper" flag — a man you are
+    /// tracking but do not rate as a target — becomes `depth`.
+    ///
+    /// Returns the number of rows changed so the caller knows whether to save.
+    @discardableResult
+    static func migrateLegacyMarks(
+        in prospects: [CollegeProspect],
+        watchlistIDs: Set<String> = []
+    ) -> Int {
+        let store = UserProspectGradeStore.shared
+        var changed = 0
+        for prospect in prospects where prospect.userMarkTier.isEmpty {
+            let migrated: ProspectMarkTier
+            switch prospect.prospectFlag {
+            case .avoid:
+                migrated = .avoid
+            case .mustHave:
+                migrated = .target
+            case .sleeper:
+                migrated = .depth
+            case .none:
+                let starred = store.isStarred(prospect.id)
+                    || watchlistIDs.contains(prospect.id.uuidString)
+                migrated = starred ? .target : ProspectMarkTier.none
+            }
+            guard migrated != ProspectMarkTier.none else { continue }
+            // Write the raw fields rather than `setUserMark`: the legacy values
+            // are the SOURCE here, so mirroring them back would be a no-op at
+            // best and a star toggle race at worst.
+            prospect.userMarkTier = migrated.rawValue
+            prospect.prospectFlag = migrated.legacyFlag
+            changed += 1
+        }
+        return changed
     }
 
     /// Interest level based on how many teams have shown interest.
@@ -676,6 +778,108 @@ final class CollegeProspect {
 
 enum ProspectFlag: String, Codable {
     case none, mustHave, sleeper, avoid
+}
+
+// MARK: - Unified GM Mark Tier
+
+/// The GM's verdict on a prospect — the single mark system every scouting
+/// screen reads and writes.
+///
+/// It is deliberately a *tier*, not a flag: the tier is the tier-break
+/// primitive the board groups on in "My Board" mode, so a verdict written on
+/// the deep-dive card is visible as structure on the board two taps later.
+/// `avoid` sorts BELOW unmarked on purpose — a man you have actively crossed
+/// off should sit under the men you simply have not looked at yet.
+enum ProspectMarkTier: String, CaseIterable, Identifiable {
+    case none   = ""
+    case elite  = "elite"
+    case target = "target"
+    case depth  = "depth"
+    case avoid  = "avoid"
+
+    var id: String { rawValue }
+
+    /// The four tiers a user can actually pick, in board order.
+    static var choices: [ProspectMarkTier] { [.elite, .target, .depth, .avoid] }
+
+    var label: String {
+        switch self {
+        case .none:   return "Unmarked"
+        case .elite:  return "Elite"
+        case .target: return "Target"
+        case .depth:  return "Depth"
+        case .avoid:  return "Avoid"
+        }
+    }
+
+    /// Row-badge form — four characters or fewer so it fits a board row.
+    var shortLabel: String {
+        switch self {
+        case .none:   return ""
+        case .elite:  return "ELITE"
+        case .target: return "TGT"
+        case .depth:  return "DPTH"
+        case .avoid:  return "AVD"
+        }
+    }
+
+    /// What picking this tier means, shown under the choice in the mark menu.
+    var blurb: String {
+        switch self {
+        case .none:   return "No verdict yet"
+        case .elite:  return "Take him wherever you pick"
+        case .target: return "Want him at the right value"
+        case .depth:  return "Late-round / roster filler"
+        case .avoid:  return "Off your board"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .none:   return "circle.dashed"
+        case .elite:  return "star.circle.fill"
+        case .target: return "target"
+        case .depth:  return "square.stack.3d.down.right.fill"
+        case .avoid:  return "nosign"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .none:   return .textTertiary
+        case .elite:  return .accentGold
+        case .target: return .success
+        case .depth:  return .accentBlue
+        case .avoid:  return .danger
+        }
+    }
+
+    /// Board grouping order. Unmarked sits above `avoid` deliberately.
+    var sortRank: Int {
+        switch self {
+        case .elite:  return 0
+        case .target: return 1
+        case .depth:  return 2
+        case .none:   return 3
+        case .avoid:  return 4
+        }
+    }
+
+    /// Elite and Target are the two tiers that mean "I want this man" — the
+    /// bar the prep card's "on your board, never interviewed" nag uses, and
+    /// what the legacy star mirrors.
+    var isBoardPositive: Bool { self == .elite || self == .target }
+
+    /// The legacy `ProspectFlag` this tier is mirrored onto.
+    var legacyFlag: ProspectFlag {
+        switch self {
+        case .none:   return .none
+        case .elite:  return .mustHave
+        case .target: return .mustHave
+        case .depth:  return .sleeper
+        case .avoid:  return .avoid
+        }
+    }
 }
 
 // MARK: - Stock Trajectory

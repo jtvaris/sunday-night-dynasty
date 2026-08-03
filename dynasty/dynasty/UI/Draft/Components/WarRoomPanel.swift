@@ -135,19 +135,29 @@ struct WarRoomPanel: View {
         return Array(filtered.prefix(10))
     }
 
-    /// SLEEPER: your scouts grade the prospect clearly higher than the public
-    /// consensus AND his stock is rising. Both signals are scouted/public —
-    /// the hidden OVR never leaks.
-    private func isSleeper(_ prospect: CollegeProspect, scoutRank: Int) -> Bool {
+    /// SLEEPER: your scouts grade the prospect clearly higher than the media
+    /// board has him, and nothing about him is trending down. Both signals are
+    /// scouted/public — the hidden OVR never leaks.
+    ///
+    /// This used to compare `publicBoardRanks` against the panel's own
+    /// scout-ranked index. Both lists were then ordered by `scoutedOverall`, so
+    /// the tag was comparing your board against a re-ordering of your board and
+    /// fired on ordering noise or not at all. The public board is the media's
+    /// now, and the comparison runs through `DraftIntel.marketVerdict` so the
+    /// grade-vs-market arithmetic lives in exactly one place.
+    private func isSleeper(_ prospect: CollegeProspect) -> Bool {
         guard let grade = prospect.effectiveOverallGrade,
               grade.midGrade.rank >= LetterGrade.bMinus.rank,
-              prospect.stockTrajectory == .rising,
-              let publicRank = coordinator.publicBoardRanks[prospect.id] else { return false }
-        return publicRank - scoutRank >= 12
+              prospect.stockTrajectory != .falling,
+              let rank = coordinator.publicBoardRanks[prospect.id] else { return false }
+        if case .sleeper = DraftIntel.marketVerdict(
+            userGradeOrdinal: grade.midGrade.rank,
+            consensusRank: rank
+        ) { return true }
+        return false
     }
 
     private func bestAvailableRow(_ prospect: CollegeProspect) -> some View {
-        let scoutRank = (scoutRankedProspects.firstIndex { $0.id == prospect.id } ?? 998) + 1
         let need = coordinator.teamNeedScores[prospect.position] ?? 0
         let trend = prospect.stockTrajectory
 
@@ -172,7 +182,12 @@ struct WarRoomPanel: View {
                         .foregroundStyle(need >= 0.7 ? Color.draftStealGold : Color.textSecondary)
                     // College production micro-label — no room for a column here.
                     ProductionMicroLabel(tier: prospect.collegeProductionTier)
-                    if isSleeper(prospect, scoutRank: scoutRank) {
+                    if let mark = DraftIntel.mark(for: prospect) {
+                        Text(mark.shortLabel)
+                            .font(.system(size: 8, weight: .heavy))
+                            .foregroundStyle(mark.color)
+                    }
+                    if isSleeper(prospect) {
                         Text("SLEEPER")
                             .font(.system(size: 8, weight: .heavy))
                             .foregroundStyle(Color.success)

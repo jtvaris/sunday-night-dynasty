@@ -42,7 +42,8 @@ struct InterviewSelectionView: View {
         Set(teamNeeds)
     }
 
-    private var watchlistIDs: Set<String> {
+    /// Read only to migrate the legacy bookmark set onto the unified mark.
+    private var legacyWatchlistIDs: Set<String> {
         Set((try? JSONDecoder().decode([String].self, from: Data(prospectWatchlistJSON.utf8))) ?? [])
     }
 
@@ -59,12 +60,11 @@ struct InterviewSelectionView: View {
             filtered = filtered.filter { teamNeedPositions.contains($0.position) }
         }
         if shortlistFilter {
-            filtered = filtered.filter {
-                $0.prospectFlag == .mustHave || watchlistIDs.contains($0.id.uuidString)
-            }
+            // ONE mark system: Elite and Target are "men I want".
+            filtered = filtered.filter { $0.userMark.isBoardPositive }
         }
         if filterStarredOnly {
-            filtered = filtered.filter { userGradeStore.isStarred($0.id) }
+            filtered = filtered.filter(\.isMarked)
         }
         if filterMyGradeFirstRound {
             filtered = filtered.filter { userGradeStore.isFirstRoundPlus($0.id) }
@@ -164,6 +164,12 @@ struct InterviewSelectionView: View {
         .task {
             loadProspects()
             loadTeamData()
+            // Fold the legacy star / flag / bookmark opinions into the ONE mark.
+            let migrated = CollegeProspect.migrateLegacyMarks(
+                in: prospects,
+                watchlistIDs: legacyWatchlistIDs
+            )
+            if migrated > 0 { try? modelContext.save() }
             isLoading = false
         }
     }
@@ -521,8 +527,11 @@ struct InterviewSelectionView: View {
         let priority = interviewPriority(for: prospect)
 
         return HStack(spacing: 0) {
-            ProspectStarButton(prospectID: prospect.id)
-                .frame(width: 36)
+            ProspectMarkButton(
+                prospect: prospect,
+                onChange: { try? modelContext.save() }
+            )
+            .frame(width: 36)
 
             Button {
                 if isSelected {
@@ -554,6 +563,8 @@ struct InterviewSelectionView: View {
                                 .font(.system(size: 13, weight: .semibold))
                                 .foregroundStyle(Color.textPrimary)
                                 .lineLimit(1)
+
+                            ProspectMarkChip(mark: prospect.userMark)
 
                             UserGradeBadge(prospectID: prospect.id)
                         }
@@ -671,7 +682,10 @@ struct InterviewSelectionView: View {
         .opacity(canSelect || isSelected ? 1.0 : 0.4)
         }
         .contextMenu {
-            ProspectGradeContextMenu(prospectID: prospect.id)
+            ProspectGradeContextMenu(
+                prospect: prospect,
+                onChange: { try? modelContext.save() }
+            )
         }
     }
 
@@ -1506,58 +1520,38 @@ struct InterviewReportView: View {
 
     private func actionButtons(_ result: InterviewResult) -> some View {
         let prospect = result.prospect
+        // The meeting just told you something about this man; this is where
+        // you record what it changed. The star and the red-flag toggle that
+        // used to sit here wrote two DIFFERENT halves of `prospectFlag`, so
+        // starring a man silently cleared the flag you had put on him.
         return HStack(spacing: 12) {
-            // Star/shortlist toggle (Task 21)
-            Button {
-                withAnimation {
-                    prospect.prospectFlag = prospect.prospectFlag == .mustHave ? .none : .mustHave
-                    try? modelContext.save()
-                }
-            } label: {
-                HStack(spacing: 3) {
-                    Image(systemName: prospect.prospectFlag == .mustHave ? "star.fill" : "star")
-                        .font(.system(size: 11))
-                    Text(prospect.prospectFlag == .mustHave ? "Starred" : "Star")
-                        .font(.system(size: 10, weight: .semibold))
-                }
-                .foregroundStyle(prospect.prospectFlag == .mustHave ? Color.accentGold : Color.textTertiary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(
-                    Capsule().fill(
-                        prospect.prospectFlag == .mustHave
-                            ? Color.accentGold.opacity(0.15)
-                            : Color.backgroundTertiary.opacity(0.5)
+            ForEach(ProspectMarkTier.choices) { tier in
+                let isSelected = prospect.userMark == tier
+                Button {
+                    withAnimation {
+                        prospect.setUserMark(isSelected ? .none : tier)
+                        try? modelContext.save()
+                    }
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: tier.icon)
+                            .font(.system(size: 11))
+                        Text(tier.label)
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .foregroundStyle(isSelected ? tier.color : Color.textTertiary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule().fill(
+                            isSelected ? tier.color.opacity(0.15) : Color.backgroundTertiary.opacity(0.5)
+                        )
                     )
-                )
-            }
-            .buttonStyle(.plain)
-
-            // Red flag toggle
-            Button {
-                withAnimation {
-                    prospect.prospectFlag = prospect.prospectFlag == .avoid ? .none : .avoid
-                    try? modelContext.save()
                 }
-            } label: {
-                HStack(spacing: 3) {
-                    Image(systemName: prospect.prospectFlag == .avoid ? "flag.fill" : "flag")
-                        .font(.system(size: 11))
-                    Text(prospect.prospectFlag == .avoid ? "Flagged" : "Red Flag")
-                        .font(.system(size: 10, weight: .semibold))
-                }
-                .foregroundStyle(prospect.prospectFlag == .avoid ? Color.danger : Color.textTertiary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(
-                    Capsule().fill(
-                        prospect.prospectFlag == .avoid
-                            ? Color.danger.opacity(0.15)
-                            : Color.backgroundTertiary.opacity(0.5)
-                    )
-                )
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(tier.label): \(tier.blurb)")
+                .accessibilityAddTraits(isSelected ? [.isSelected] : [])
             }
-            .buttonStyle(.plain)
 
             Spacer()
         }

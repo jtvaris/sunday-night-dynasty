@@ -2462,16 +2462,61 @@ enum ScoutingEngine {
 
     /// Simulates the draft declaration period: seniors auto-declare, the best
     /// underclassmen declare on a talent-weighted roll (~70, more when the class
-    /// is senior-light), ~5-10 withdraw. The declaring pool is guaranteed to
+    /// is senior-light), ~5-10 withdraw, and exactly one genuine top-of-board
+    /// underclassman pulls his name back. The declaring pool is guaranteed to
     /// exceed the draft's 224 picks by a UDFA-market cushion.
     /// Returns news items for top declarations and withdrawals.
+    ///
+    /// Idempotent, like `runSeniorBowl` and `applyPreDraftAttrition`: a class
+    /// that has already been through the declaration window is left alone. It
+    /// was the one cycle pass without a guard, and re-entering `.coachingChanges`
+    /// therefore withdrew ANOTHER 5-11 declared underclassmen and shocked a
+    /// second top-of-board name off the board every time.
+    ///
+    /// `seed` is honoured by every draw when it is non-zero (the shipped game
+    /// always passes `cycleSeed`, so a reloaded save re-runs the window
+    /// identically). `seed == 0` — the balance harness, which wants an
+    /// independent sample per generated class — falls back to the global RNG.
     static func generateDeclarations(
-        prospects: inout [CollegeProspect]
-    ) -> [(name: String, isDeclaration: Bool, headline: String)] {
-        var newsItems: [(name: String, isDeclaration: Bool, headline: String)] = []
+        prospects: inout [CollegeProspect],
+        seed: UInt64 = 0
+    ) -> [(name: String, isDeclaration: Bool, headline: String, isShock: Bool)] {
+        var newsItems: [(name: String, isDeclaration: Bool, headline: String, isShock: Bool)] = []
+
+        // Deterministic stream for the shock withdrawal below. Written as a
+        // NESTED helper on purpose, for the same reason `applyCombineDNP` is:
+        // `tools/balance-harness/sync_sources.sh` slices this file by an anchor
+        // list and captures each named member's balanced block, so a sibling
+        // `private struct SeededGenerator` would be *called* by the slice and
+        // *defined* nowhere in it, and the draftclass gate would stop compiling.
+        // SplitMix64, seeded from (careerID, season) by the caller.
+        var seedState = seed
+        func seededRoll(_ bound: Int) -> Int {
+            guard bound > 1 else { return 0 }
+            seedState &+= 0x9E37_79B9_7F4A_7C15
+            var z = seedState
+            z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+            z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+            z = z ^ (z >> 31)
+            return Int(z % UInt64(bound))
+        }
+        // Every draw in the pass, seeded when the caller gave a seed.
+        func roll(_ range: ClosedRange<Int>) -> Int {
+            guard seed != 0 else { return Int.random(in: range) }
+            return range.lowerBound + seededRoll(range.count)
+        }
 
         // Separate seniors (age 22+) and underclassmen (age < 22)
         let seniorAge = 22
+
+        // 0. Idempotency guard. Before the window runs, `isDeclaringForDraft`
+        //    carries the model default of `true` for the whole class; the pass
+        //    below is the only thing that ever sets an UNDERCLASSMAN to false.
+        //    So one undeclared underclassman means this class has already been
+        //    through the window.
+        guard !prospects.contains(where: { $0.age < seniorAge && !$0.isDeclaringForDraft }) else {
+            return []
+        }
 
         // 1. All seniors auto-declare
         for i in prospects.indices where prospects[i].age >= seniorAge {
@@ -2513,11 +2558,16 @@ enum ScoutingEngine {
         // (`./run.sh draftclass`, assert 7.11): declared pool mean ≈ 286.6
         // (286.4-286.8 across runs), min 284, max 289 — 0 classes short of the
         // 284 floor.
+        //
+        // `maxWithdrawals` is 11, not 10, because the withdrawal pass below now
+        // ends with ONE genuine top-40 underclassman pulling his name back (the
+        // annual shock). Reserving his slot here is what keeps the ≥ 284 floor
+        // exactly where assert 7.11 measured it.
         let seniorCount = prospects.count - underclassmenIndices.count
         let draftCapacity = 224
         let udfaCushion = 60
-        let maxWithdrawals = 10
-        let flavourTarget = Int.random(in: 65...75)
+        let maxWithdrawals = 11
+        let flavourTarget = roll(65...75)
         let targetDeclarations = min(
             underclassmenIndices.count,
             max(flavourTarget, draftCapacity + udfaCushion + maxWithdrawals - seniorCount)
@@ -2544,7 +2594,7 @@ enum ScoutingEngine {
             else if overall >= 68 { declareChance = 32 }
             else { declareChance = 10 }
 
-            if Int.random(in: 1...100) <= declareChance {
+            if roll(1...100) <= declareChance {
                 prospects[i].isDeclaringForDraft = true
                 declarationCount += 1
 
@@ -2554,7 +2604,8 @@ enum ScoutingEngine {
                     newsItems.append((
                         name: prospects[i].fullName,
                         isDeclaration: true,
-                        headline: "\(prospects[i].college) \(pos) \(prospects[i].fullName) declares for draft"
+                        headline: "\(prospects[i].college) \(pos) \(prospects[i].fullName) declares for draft",
+                        isShock: false
                     ))
                 }
             } else {
@@ -2571,11 +2622,26 @@ enum ScoutingEngine {
             declarationCount += 1
         }
 
-        // 3. Withdrawals: ~5-10 declared underclassmen change their mind
-        let withdrawalCount = Int.random(in: 5...10)
-        let declaredUnderclassmen = prospects.indices.filter {
+        // 3. Withdrawals: ~5-10 declared underclassmen change their mind.
+        //    The `trueOverall < 76` cap keeps this pass to the anonymous churn
+        //    it is meant to be — a fringe player who reads his grade and goes
+        //    back for another year is not a story.
+        let withdrawalCount = roll(5...10)
+        // Canonical UUID order first, then a seeded Fisher-Yates: the class
+        // arrives in whatever order SwiftData handed back, so shuffling the raw
+        // index list would pick array slots rather than men.
+        var declaredUnderclassmen = prospects.indices.filter {
             prospects[$0].age < seniorAge && prospects[$0].isDeclaringForDraft && prospects[$0].trueOverall < 76
-        }.shuffled()
+        }.sorted { prospects[$0].id.uuidString < prospects[$1].id.uuidString }
+        if seed != 0 {
+            var upper = declaredUnderclassmen.count - 1
+            while upper > 0 {
+                declaredUnderclassmen.swapAt(upper, seededRoll(upper + 1))
+                upper -= 1
+            }
+        } else {
+            declaredUnderclassmen.shuffle()
+        }
 
         for i in declaredUnderclassmen.prefix(withdrawalCount) {
             prospects[i].isDeclaringForDraft = false
@@ -2583,7 +2649,63 @@ enum ScoutingEngine {
             newsItems.append((
                 name: prospects[i].fullName,
                 isDeclaration: false,
-                headline: "Top \(pos) \(prospects[i].fullName) returns to \(prospects[i].college) for senior year"
+                headline: "Top \(pos) \(prospects[i].fullName) returns to \(prospects[i].college) for senior year",
+                isShock: false
+            ))
+        }
+
+        // 4. The shock withdrawal. Every real class loses one name off the top
+        //    of the board in January — a projected early-round man who goes back
+        //    for a title run, a degree, or on the advice of a medical recheck —
+        //    and it reshapes the round for everybody behind him. Exactly ONE per
+        //    class. Only an underclassman can do this: a senior has no
+        //    eligibility left to go back to.
+        //
+        //    Drawn off the PUBLIC board (`draftProjection`), never `trueOverall`.
+        //    The old pool was the top 40 by the hidden rating and the headline
+        //    asserted "projected first-round" whatever his real projection was,
+        //    so (a) a round-4 name could be announced as a first-rounder, which
+        //    contradicted his own board row, and (b) because a withdrawn
+        //    underclassman comes BACK in a later class, the headline was a
+        //    durable tell that this specific man is genuine top-40 talent.
+        let shockPool = Array(
+            prospects.indices
+                .filter { prospects[$0].age < seniorAge && prospects[$0].isDeclaringForDraft }
+                .sorted { a, b in
+                    let pa = prospects[a].draftProjection ?? 8
+                    let pb = prospects[b].draftProjection ?? 8
+                    if pa != pb { return pa < pb }
+                    let ma = prospects[a].mockDraftPickNumber ?? Int.max
+                    let mb = prospects[b].mockDraftPickNumber ?? Int.max
+                    if ma != mb { return ma < mb }
+                    return prospects[a].id.uuidString < prospects[b].id.uuidString
+                }
+                .prefix(40)
+        )
+        if !shockPool.isEmpty {
+            let choice = shockPool[seededRoll(shockPool.count)]
+            prospects[choice].isDeclaringForDraft = false
+            let pos = prospects[choice].position.rawValue
+            let college = prospects[choice].college
+            // Phrased from the projection his own board row shows.
+            let band: String
+            switch prospects[choice].draftProjection ?? 3 {
+            case 1:  band = "projected first-round"
+            case 2:  band = "projected second-round"
+            case 3:  band = "projected third-round"
+            default: band = "projected day-two"
+            }
+            let reasons = [
+                "returns to \(college) for one more run at a title",
+                "pulls his name out to finish his degree at \(college)",
+                "withdraws on medical advice and returns to \(college)"
+            ]
+            let reason = reasons[seededRoll(reasons.count)]
+            newsItems.append((
+                name: prospects[choice].fullName,
+                isDeclaration: false,
+                headline: "SHOCK: \(band) \(pos) \(prospects[choice].fullName) \(reason)",
+                isShock: true
             ))
         }
 
@@ -3293,6 +3415,670 @@ enum ScoutingEngine {
             result.append(p)
         }
         return result
+    }
+
+    // MARK: - The Living Draft Market
+    //
+    // Everything below models the four months between the last college snap and
+    // the draft as a MARKET rather than a static board: a January all-star week,
+    // the combine, four mock-draft re-reads and the pre-draft medical attrition
+    // that quietly rewrites the top of every real class. All of it is
+    // deterministically seeded per (careerID, season) — reload a save, advance
+    // the same phase, and the same men rise, fall and get hurt.
+
+    /// Deterministic seed for one cycle event.
+    ///
+    /// Mixes the career UUID's raw bytes (FNV-1a — never `hashValue`, whose seed
+    /// changes every launch), the season and a per-event salt, so the combine,
+    /// the Senior Bowl and the pro-day attrition each draw their own independent
+    /// stream while staying reproducible across relaunches.
+    static func cycleSeed(careerID: UUID?, season: Int, salt: UInt64) -> UInt64 {
+        var mixed: UInt64 = 0xCBF2_9CE4_8422_2325
+        if let careerID {
+            withUnsafeBytes(of: careerID.uuid) { raw in
+                for byte in raw {
+                    mixed = (mixed ^ UInt64(byte)) &* 0x0000_0100_0000_01B3
+                }
+            }
+        }
+        mixed = (mixed ^ UInt64(bitPattern: Int64(season))) &* 0x0000_0100_0000_01B3
+        mixed = (mixed ^ salt) &* 0x0000_0100_0000_01B3
+        return mixed
+    }
+
+    /// Salts for `cycleSeed` — one per cycle event, so two events in the same
+    /// season never share a stream.
+    enum CycleSalt {
+        static let seniorBowl: UInt64      = 0x5E_4109_B0_17
+        static let combineDrift: UInt64    = 0xC0_4B19_E0_D1
+        static let mockDrift: UInt64       = 0x40_C1D2_A0_F7
+        static let proDayAttrition: UInt64 = 0x94_0D47_A7_31
+        static let declarations: UInt64    = 0xDE_C1A4_E0_5D
+    }
+
+    // MARK: - Projection Drift (the zero-sum board)
+
+    /// One prospect's move on the media board.
+    struct ProjectionMove {
+        let prospectID: UUID
+        let name: String
+        let position: String
+        let college: String
+        let from: Int
+        let to: Int
+        var isRise: Bool { to < from }
+        var rounds: Int { abs(to - from) }
+    }
+
+    /// Moves `draftProjection` around the class in response to new public
+    /// information, WITHOUT changing the shape of the class.
+    ///
+    /// The model is a **paired swap**: a riser only climbs into a band by taking
+    /// the slot of a faller who was already in it, and the faller takes the
+    /// riser's old band in exchange. Two consequences, both deliberate:
+    ///
+    /// * The multiset of `draftProjection` values over the class is *exactly*
+    ///   preserved — same number of round-1 projections, same number of round-7
+    ///   projections, before and after. `draftProjection` anchors AI perception
+    ///   (`AIDraftPerception`) and the rookie-contract band fallbacks, so a
+    ///   drift model that could inflate the round-1 population would quietly
+    ///   re-tune the whole draft. This one provably cannot.
+    /// * Every move is hard-bounded by `maxShift` rounds, because a pair is only
+    ///   formed when the two men are within `maxShift` bands of each other. No
+    ///   prospect who was not himself under pressure ever moves.
+    ///
+    /// - Parameters:
+    ///   - pressure: signed per-prospect stock pressure; **positive = rising**
+    ///     (toward round 1). Built by `combinePressure` / `mockConsensusPressure`
+    ///     / the Senior Bowl.
+    ///   - maxShift: hard cap on how many rounds one prospect may move.
+    ///   - maxPairs: cap on how many riser/faller swaps this moment may make.
+    ///   - seed: deterministic per (careerID, season, event).
+    @discardableResult
+    static func applyProjectionDrift(
+        prospects: inout [CollegeProspect],
+        pressure: [UUID: Double],
+        maxShift: Int,
+        maxPairs: Int,
+        seed: UInt64
+    ) -> [ProjectionMove] {
+        guard maxShift > 0, maxPairs > 0, !pressure.isEmpty, !prospects.isEmpty else { return [] }
+
+        // Candidates are walked in index order (never dictionary order), but the
+        // jitter each one gets is derived from HIS OWN UUID rather than drawn
+        // off a stream consumed in that order. `WeekAdvancer.currentDraftClass`
+        // is restored with an unsorted `FetchDescriptor`, so array order is not
+        // stable across a relaunch: an rng walked in index order would bind each
+        // draw to an array SLOT, and the same save advanced through the same
+        // phase after a relaunch would jitter a different set of men. Deriving
+        // it per-UUID makes the pass genuinely reproducible, which is what its
+        // own header claims.
+        struct Candidate { let idx: Int; let id: UUID; let projection: Int; let pressure: Double }
+        var candidates: [Candidate] = []
+        for i in prospects.indices {
+            guard let projection = prospects[i].draftProjection, (1...7).contains(projection) else { continue }
+            guard prospects[i].isDeclaringForDraft else { continue }
+            guard let raw = pressure[prospects[i].id], raw != 0 else { continue }
+            // Tiny jitter breaks ties between identical pressures without ever
+            // flipping the sign or crossing the ±0.5 activation threshold.
+            let mixed = cycleSeed(careerID: prospects[i].id, season: 0, salt: seed)
+            let jitter = Double(mixed % 8_001) / 100_000.0 - 0.04
+            candidates.append(Candidate(
+                idx: i,
+                id: prospects[i].id,
+                projection: projection,
+                pressure: raw + jitter
+            ))
+        }
+        guard !candidates.isEmpty else { return [] }
+
+        // UUID tie-break: `sorted(by:)` is not stable, so two men on identical
+        // pressure would otherwise be ordered by the same array position the
+        // jitter was just taken off.
+        let risers = candidates.filter { $0.pressure >= 0.5 }.sorted {
+            if $0.pressure != $1.pressure { return $0.pressure > $1.pressure }
+            return $0.id.uuidString < $1.id.uuidString
+        }
+        var fallers = candidates.filter { $0.pressure <= -0.5 }.sorted {
+            if $0.pressure != $1.pressure { return $0.pressure < $1.pressure }
+            return $0.id.uuidString < $1.id.uuidString
+        }
+        guard !risers.isEmpty, !fallers.isEmpty else { return [] }
+
+        var moves: [ProjectionMove] = []
+        var pairs = 0
+
+        for riser in risers {
+            guard pairs < maxPairs else { break }
+            // A riser can only climb into a band somebody is vacating, and only
+            // if that band is within `maxShift` of where he already is.
+            guard let matchPosition = fallers.firstIndex(where: { faller in
+                faller.projection < riser.projection
+                    && riser.projection - faller.projection <= maxShift
+            }) else { continue }
+            let faller = fallers.remove(at: matchPosition)
+
+            prospects[riser.idx].draftProjection = faller.projection
+            prospects[faller.idx].draftProjection = riser.projection
+            pairs += 1
+
+            moves.append(ProjectionMove(
+                prospectID: prospects[riser.idx].id,
+                name: prospects[riser.idx].fullName,
+                position: prospects[riser.idx].position.rawValue,
+                college: prospects[riser.idx].college,
+                from: riser.projection,
+                to: faller.projection
+            ))
+            moves.append(ProjectionMove(
+                prospectID: prospects[faller.idx].id,
+                name: prospects[faller.idx].fullName,
+                position: prospects[faller.idx].position.rawValue,
+                college: prospects[faller.idx].college,
+                from: faller.projection,
+                to: riser.projection
+            ))
+        }
+
+        return moves
+    }
+
+    /// Stock pressure out of the combine: how a man tested against **his own
+    /// position group's** class-year mean percentile, not against the field.
+    ///
+    /// `combineAveragePercentile` is already position-relative, so the position
+    /// mean would normally sit near 50; taking the real per-position mean of
+    /// *this* class keeps the read honest for a class that happens to be
+    /// stacked (or thin) at a position.
+    ///
+    /// +25 percentile points over the position mean ≈ one round of pressure.
+    static func combinePressure(_ prospects: [CollegeProspect]) -> [UUID: Double] {
+        var percentileByIndex: [Int: Int] = [:]
+        var byPosition: [Position: [Int]] = [:]
+        for i in prospects.indices {
+            guard prospects[i].combineInvite, prospects[i].fortyTime != nil else { continue }
+            let pct = combineAveragePercentile(prospects[i])
+            percentileByIndex[i] = pct
+            byPosition[prospects[i].position, default: []].append(pct)
+        }
+        guard !percentileByIndex.isEmpty else { return [:] }
+
+        var meanByPosition: [Position: Double] = [:]
+        for (position, values) in byPosition where !values.isEmpty {
+            meanByPosition[position] = Double(values.reduce(0, +)) / Double(values.count)
+        }
+
+        var pressure: [UUID: Double] = [:]
+        for i in prospects.indices {
+            guard let pct = percentileByIndex[i] else { continue }
+            let mean = meanByPosition[prospects[i].position] ?? 50.0
+            let delta = (Double(pct) - mean) / 25.0
+            pressure[prospects[i].id] = max(-2.5, min(2.5, delta))
+        }
+        return pressure
+    }
+
+    /// Stock pressure out of a freshly regenerated mock draft: the market's own
+    /// re-read of a man against the round his projection still says he is.
+    ///
+    /// Deliberately weaker than the combine read — a mock is one analyst's
+    /// board, not a stopwatch — which is what makes the four mock moments a
+    /// *nudge* and the combine a shove.
+    static func mockConsensusPressure(_ prospects: [CollegeProspect]) -> [UUID: Double] {
+        // How deep the mock actually went. `generateMockDraft` builds THREE
+        // rounds (96 picks) — it filters `draftPicks` to `round 1...3` and its
+        // no-picks fallback loops `for round in 1...3`. Reading the depth off
+        // the class rather than hardcoding it keeps this honest if the mock is
+        // ever lengthened.
+        let deepestMockPick = prospects.compactMap(\.mockDraftPickNumber).filter { $0 > 0 }.max()
+        let coveredRounds = deepestMockPick.map { min(7, ($0 - 1) / 32 + 1) } ?? 3
+
+        var pressure: [UUID: Double] = [:]
+        for prospect in prospects {
+            guard let projection = prospect.draftProjection, (1...7).contains(projection) else { continue }
+            guard prospect.isDeclaringForDraft else { continue }
+            if let pick = prospect.mockDraftPickNumber, pick > 0 {
+                let impliedRound = min(7, (pick - 1) / 32 + 1)
+                pressure[prospect.id] = max(-1.2, min(1.2, Double(projection - impliedRound) * 0.7))
+            } else if projection <= coveredRounds {
+                // He was projected INSIDE the mock's coverage and the mock still
+                // did not call his name — that is the whole signal. The old test
+                // was `projection <= 5`, but a man projected round 4 or 5 is
+                // structurally incapable of appearing in a three-round mock, so
+                // every day-three prospect in the class took a flat -0.7 at all
+                // four mock moments, forever. The faller list was then a crowd
+                // of identical -0.7s separated only by jitter, i.e. by nothing.
+                //
+                // Scaled by how deep inside coverage he was: missing a 96-pick
+                // mock as a projected first-rounder is a much louder fall than
+                // missing it as a projected third-rounder, and the scale keeps
+                // the band tie-free.
+                let missDepth = Double(coveredRounds - projection + 1) / Double(coveredRounds)
+                pressure[prospect.id] = -1.2 * missDepth
+            }
+        }
+        return pressure
+    }
+
+    // MARK: - Senior Bowl (January)
+
+    /// What the Senior Bowl week produced.
+    struct SeniorBowlResult {
+        struct Note {
+            let prospectID: UUID
+            let name: String
+            let position: String
+            let college: String
+            let headline: String
+            let body: String
+            let isRiser: Bool
+        }
+        let invitees: Int
+        let reportsFiled: Int
+        let notes: [Note]
+        /// Feeds `applyProjectionDrift` — the practice week moves stock.
+        let pressure: [UUID: Double]
+    }
+
+    /// Runs the January all-star week: ~110 senior invitees, a practice-week
+    /// evaluation on all of them, filed `.seniorBowl` reports on the subset the
+    /// week actually exposed, and 2-4 named stories.
+    ///
+    /// The Senior Bowl is a televised league event like the combine, so it runs
+    /// whether or not this club sends anybody — attendance only decides *whose
+    /// name* is on the report. `ScoutingPhase.seniorBowl` already carried the
+    /// 0.55 confidence level and its slot in the phase sort order; this is the
+    /// event that finally files one.
+    ///
+    /// Idempotent: a class that already carries a `.seniorBowl` report is left
+    /// alone, so re-entering the phase cannot stack a second week onto it.
+    ///
+    /// - Returns: `nil` when the week did not run (no class, too few seniors, or
+    ///   already held).
+    static func runSeniorBowl(
+        prospects: inout [CollegeProspect],
+        scouts: [Scout],
+        seed: UInt64
+    ) -> SeniorBowlResult? {
+        guard !prospects.isEmpty else { return nil }
+        guard !prospects.contains(where: { p in
+            p.scoutingReports.contains { $0.phase == .seniorBowl }
+        }) else { return nil }
+
+        // Invite list = the best SENIORS on the PUBLIC board. Underclassmen are
+        // not eligible for the game, which is exactly why the week matters: it
+        // is the one place the senior half of the class is graded head to head.
+        let seniorAge = 22
+        let eligible = prospects.indices.filter {
+            prospects[$0].age >= seniorAge && prospects[$0].isDeclaringForDraft
+        }
+        guard eligible.count >= 40 else { return nil }
+
+        let board = eligible.sorted { a, b in
+            let pa = prospects[a].draftProjection ?? 8
+            let pb = prospects[b].draftProjection ?? 8
+            if pa != pb { return pa < pb }
+            let oa = prospects[a].scoutedOverall ?? 0
+            let ob = prospects[b].scoutedOverall ?? 0
+            if oa != ob { return oa > ob }
+            return prospects[a].id.uuidString < prospects[b].id.uuidString
+        }
+        let invited = Array(board.prefix(110))
+
+        // Practice-week score. The week rewards the things an all-star practice
+        // actually exposes — competitiveness against real bodies and how NFL-
+        // ready the technique is — more than raw talent, which is why it
+        // reorders boards at all.
+        var rng = ScoutingCycleRandom(seed: seed)
+        var scoreByIndex: [Int: Double] = [:]
+        for i in invited {
+            let p = prospects[i]
+            let base = 0.40 * Double(p.trueCompetitiveness)
+                     + 0.30 * Double(p.nflReadiness)
+                     + 0.30 * Double(p.trueOverall)
+            scoreByIndex[i] = base + Double.random(in: -14.0...14.0, using: &rng)
+        }
+        let scores = invited.compactMap { scoreByIndex[$0] }
+        let mean = scores.reduce(0, +) / Double(scores.count)
+
+        var pressure: [UUID: Double] = [:]
+        for i in invited {
+            guard let score = scoreByIndex[i] else { continue }
+            pressure[prospects[i].id] = max(-1.5, min(1.5, (score - mean) / 16.0))
+        }
+
+        // Reports land on what the week actually showed: the practice standouts
+        // and the men who were exposed. The middle of the field goes home the
+        // way it arrived.
+        let ranked = invited.sorted { (scoreByIndex[$0] ?? 0) > (scoreByIndex[$1] ?? 0) }
+        var visible = Array(ranked.prefix(18))
+        visible.append(contentsOf: ranked.suffix(8))
+
+        let broadcastEvaluator = UUID(uuidString: "5E410B0B-0000-4000-A000-000000000001")
+            ?? UUID()
+
+        // EXPLICIT BALANCE DECISION, not a side effect of the news feature.
+        //
+        // The week files 26 reports (18 practice winners + 8 exposed, ~9 % of
+        // the declared class) on every club, charged to no budget and gated on
+        // no assignment. That is deliberate — Mobile is televised and all 32
+        // clubs are in the building — but it must not be a cheap substitute for
+        // the department you actually pay for. So the reports carry ONE fixed
+        // evaluator accuracy for everybody: no per-scout accuracy, no chief
+        // bonus, no scaling with staff size. Your scouts' name goes on the
+        // report for flavour; the club with the best staff gets exactly the same
+        // read from Senior Bowl week as the club with none, and buys its edge
+        // with the weekly assignments it is charged for.
+        let eventAccuracy = 58
+        var filed = 0
+        for (n, i) in visible.enumerated() {
+            let scoutName: String
+            let scoutID: UUID
+            let accuracy = eventAccuracy
+            if scouts.isEmpty {
+                scoutID = broadcastEvaluator
+                scoutName = "Senior Bowl Practices"
+            } else {
+                let scout = scouts[n % scouts.count]
+                scoutID = scout.id
+                scoutName = scout.fullName
+            }
+
+            let p = prospects[i]
+            let maxError = max(1, 26 - accuracy * 26 / 100)
+            let ovr = min(99, max(1, p.trueOverall + Int.random(in: -maxError...maxError, using: &rng)))
+            let potError = maxError + 4
+            let pot = min(99, max(ovr, p.truePotential + Int.random(in: -potError...potError, using: &rng)))
+
+            let report = ScoutingReport(
+                prospectID: p.id,
+                scoutID: scoutID,
+                scoutName: scoutName,
+                date: "Senior Bowl",
+                phase: .seniorBowl,
+                overallGrade: ovr,
+                potentialGrade: pot,
+                strengthNotes: generateStrengthNotes(for: p, accuracy: accuracy),
+                weaknessNotes: generateWeaknessNotes(for: p, accuracy: accuracy),
+                personalityNotes: nil,
+                confidenceLevel: ScoutingPhase.seniorBowl.confidenceLevel,
+                productionNotes: "Senior Bowl week: \(n < 18 ? "graded out as a practice winner" : "struggled in one-on-ones")",
+                overallLetterGrade: LetterGrade.from(numericValue: ovr)
+            )
+            applyReport(report: report, to: prospects[i])
+            filed += 1
+        }
+
+        // 2-4 named stories: the week's winners, and the highly projected senior
+        // it went badly for.
+        var notes: [SeniorBowlResult.Note] = []
+        for i in ranked.prefix(2) where (pressure[prospects[i].id] ?? 0) >= 0.7 {
+            let p = prospects[i]
+            notes.append(SeniorBowlResult.Note(
+                prospectID: p.id,
+                name: p.fullName,
+                position: p.position.rawValue,
+                college: p.college,
+                headline: "\(p.college) \(p.position.rawValue) \(p.fullName) owns Senior Bowl week",
+                body: "\(p.fullName) was the most consistent winner of the week in Mobile, stacking reps against the best senior competition in the class. Scouts who came for somebody else left writing his name down.",
+                isRiser: true
+            ))
+        }
+        for i in ranked.reversed().prefix(6)
+        where (pressure[prospects[i].id] ?? 0) <= -0.7 && (prospects[i].draftProjection ?? 8) <= 4 {
+            guard notes.filter({ !$0.isRiser }).count < 2 else { break }
+            let p = prospects[i]
+            notes.append(SeniorBowlResult.Note(
+                prospectID: p.id,
+                name: p.fullName,
+                position: p.position.rawValue,
+                college: p.college,
+                headline: "Rough week in Mobile for \(p.college) \(p.position.rawValue) \(p.fullName)",
+                body: "\(p.fullName) arrived with a top-\(max(1, (prospects[i].draftProjection ?? 4) * 32)) projection and spent three days getting beaten in one-on-ones. Nobody drops a man off a board for one practice week, but the tape will be re-checked.",
+                isRiser: false
+            ))
+        }
+
+        return SeniorBowlResult(
+            invitees: invited.count,
+            reportsFiled: filed,
+            notes: notes,
+            pressure: pressure
+        )
+    }
+
+    // MARK: - Pre-Draft Attrition (Pro Days)
+
+    /// A prospect whose spring went wrong.
+    struct PreDraftSetback {
+        let prospectID: UUID
+        let name: String
+        let position: String
+        let college: String
+        let injury: String
+        let weeksOut: Int
+        let severity: Int
+        let concern: String
+        let projectionFrom: Int?
+        let projectionTo: Int?
+    }
+
+    /// Marker every pre-draft medical note carries, so the pass can tell its own
+    /// work from the generator's `generateRiskProfile` notes and stay idempotent.
+    static let preDraftConcernPrefix = "Pre-draft: "
+
+    /// About 2 % of the declared class gets hurt between the combine and the
+    /// draft — a torn ACL in a pro-day drill, a labrum found on a recheck, a
+    /// hamstring pulled running for a stopwatch. It is the single most reliable
+    /// thing that happens to a real draft class every spring and the board here
+    /// used to be frozen from February to April.
+    ///
+    /// Uses the `MedicalEngine` vocabulary (`InjuryType` and its own recovery
+    /// bands) so a pre-draft knee reads exactly like an in-season knee, stamps
+    /// the note into `medicalConcerns`, and knocks the man's projection down by
+    /// the severity of what he did.
+    ///
+    /// Deliberately NOT zero-sum, unlike `applyProjectionDrift`: an injury
+    /// genuinely removes value from the class rather than moving it between two
+    /// men. Bounded at ~2 % of the declared pool so the class-quality
+    /// distribution moves by at most a few prospects.
+    ///
+    /// Idempotent — a class that already carries a pre-draft concern is skipped.
+    @discardableResult
+    static func applyPreDraftAttrition(
+        prospects: inout [CollegeProspect],
+        seed: UInt64
+    ) -> [PreDraftSetback] {
+        guard !prospects.isEmpty else { return [] }
+        guard !prospects.contains(where: { p in
+            (p.medicalConcerns ?? []).contains { $0.hasPrefix(preDraftConcernPrefix) }
+        }) else { return [] }
+
+        // Canonical order BEFORE the seeded shuffle. `WeekAdvancer
+        // .currentDraftClass` is restored with an unsorted `FetchDescriptor`,
+        // so the raw index list is in whatever order the store handed back:
+        // shuffling it made the seed pick array SLOTS rather than men, and the
+        // same save advanced through pro days after a relaunch hurt a different
+        // six prospects. Sorting by UUID first makes the draw depend only on
+        // (seed, set of declared prospects), which is what this pass claims.
+        let declared = prospects.indices
+            .filter { prospects[$0].isDeclaringForDraft }
+            .sorted { prospects[$0].id.uuidString < prospects[$1].id.uuidString }
+        guard declared.count >= 50 else { return [] }
+
+        var rng = ScoutingCycleRandom(seed: seed)
+        let count = max(1, Int((Double(declared.count) * 0.02).rounded()))
+
+        // Draw without replacement from a seeded shuffle of the declared pool.
+        let pool = declared.shuffled(using: &rng)
+        var setbacks: [PreDraftSetback] = []
+
+        for idx in pool.prefix(count) {
+            let injury = InjuryType.allCases.randomElement(using: &rng) ?? .hamstring
+            // Spring injuries are the ones that happen at full speed with no
+            // game to protect: take the upper half of the medical band.
+            let band = injury.baseRecoveryWeeks
+            let floor = band.lowerBound + (band.upperBound - band.lowerBound) / 2
+            let weeksOut = Int.random(in: floor...band.upperBound, using: &rng)
+
+            let concern = "\(preDraftConcernPrefix)\(injury.rawValue) — \(weeksOut)-week recovery"
+            var concerns = prospects[idx].medicalConcerns ?? []
+            concerns.append(concern)
+            prospects[idx].medicalConcerns = concerns
+
+            // The projection knock scales with what the medical staff will find.
+            let knock: Int
+            switch injury.severity {
+            case 4:  knock = 3
+            case 3:  knock = 2
+            case 2:  knock = 1
+            default: knock = weeksOut >= 4 ? 1 : 0
+            }
+            let from = prospects[idx].draftProjection
+            if let from, knock > 0 {
+                prospects[idx].draftProjection = min(7, from + knock)
+            }
+
+            setbacks.append(PreDraftSetback(
+                prospectID: prospects[idx].id,
+                name: prospects[idx].fullName,
+                position: prospects[idx].position.rawValue,
+                college: prospects[idx].college,
+                injury: injury.rawValue,
+                weeksOut: weeksOut,
+                severity: injury.severity,
+                concern: concern,
+                projectionFrom: from,
+                projectionTo: prospects[idx].draftProjection
+            ))
+        }
+
+        // Most-serious first — the news and the inbox both lead with the worst.
+        return setbacks.sorted {
+            if $0.severity != $1.severity { return $0.severity > $1.severity }
+            return ($0.projectionFrom ?? 8) < ($1.projectionFrom ?? 8)
+        }
+    }
+
+    // MARK: - Weekly Scouting Digest
+
+    /// A snapshot of what the department knew about one prospect.
+    struct GradeSnapshot {
+        let grade: String?
+        let reportCount: Int
+        /// Width of the public grade band in letter steps; `nil` when no band
+        /// has been established yet.
+        let bandWidth: Int?
+    }
+
+    /// Captures the current read on every prospect, so the week's reports can be
+    /// diffed against it.
+    static func gradeSnapshot(_ prospects: [CollegeProspect]) -> [UUID: GradeSnapshot] {
+        var snapshot: [UUID: GradeSnapshot] = [:]
+        for prospect in prospects {
+            let width = prospect.scoutedOverallGrade.map { $0.high.rank - $0.low.rank }
+            snapshot[prospect.id] = GradeSnapshot(
+                grade: prospect.scoutGrade,
+                reportCount: prospect.scoutingReports.count,
+                bandWidth: width
+            )
+        }
+        return snapshot
+    }
+
+    /// What one week of regional scouting actually changed.
+    struct WeeklyScoutingDigest {
+        let week: Int
+        let reportCount: Int
+        let prospectsCovered: Int
+        let firstLooks: Int
+        let bandsNarrowed: Int
+        /// The biggest single grade move, if any: (name, position, old, new).
+        let headline: (name: String, position: String, from: String, to: String)?
+        let headlineIsRise: Bool
+    }
+
+    /// Diffs the post-report board against a pre-report snapshot.
+    ///
+    /// Returns `nil` for a week that changed nothing, so the caller can skip the
+    /// message entirely rather than mail an empty one.
+    static func weeklyDigest(
+        prospects: [CollegeProspect],
+        before: [UUID: GradeSnapshot],
+        week: Int
+    ) -> WeeklyScoutingDigest? {
+        var reportCount = 0
+        var covered = 0
+        var firstLooks = 0
+        var narrowed = 0
+        var bestMove: (name: String, position: String, from: String, to: String)?
+        var bestDelta = 0
+        var bestIsRise = false
+
+        for prospect in prospects {
+            guard let old = before[prospect.id] else { continue }
+            let newReports = prospect.scoutingReports.count - old.reportCount
+            guard newReports > 0 else { continue }
+            reportCount += newReports
+            covered += 1
+            if old.reportCount == 0 { firstLooks += 1 }
+
+            // "Narrowed" spans both grade systems on purpose. The GradeRange
+            // band tightens on the report paths that run `applyGradeBasedFields`
+            // (combine / pro day / workout / top-30); the weekly in-season pass
+            // firms a read up the older way, by stacking reports — which is
+            // exactly what `scoutConfidenceLabel` and the confidence dots show
+            // the user. Either counts, and a prospect we had never seen before
+            // does not (he is a `firstLook`, not a tightened read).
+            if old.reportCount > 0 {
+                let newWidth = prospect.scoutedOverallGrade.map { $0.high.rank - $0.low.rank }
+                let widthShrank = (newWidth != nil && old.bandWidth != nil && newWidth! < old.bandWidth!)
+                let confidenceTierRose = min(prospect.scoutingReports.count, 3) > min(old.reportCount, 3)
+                if widthShrank || confidenceTierRose { narrowed += 1 }
+            }
+
+            if let from = old.grade, let to = prospect.scoutGrade, from != to,
+               let fromGrade = LetterGrade(rawValue: from), let toGrade = LetterGrade(rawValue: to) {
+                let delta = abs(toGrade.rank - fromGrade.rank)
+                if delta > bestDelta {
+                    bestDelta = delta
+                    bestIsRise = toGrade.rank > fromGrade.rank
+                    bestMove = (prospect.fullName, prospect.position.rawValue, from, to)
+                }
+            }
+        }
+
+        guard reportCount > 0 else { return nil }
+        return WeeklyScoutingDigest(
+            week: week,
+            reportCount: reportCount,
+            prospectsCovered: covered,
+            firstLooks: firstLooks,
+            bandsNarrowed: narrowed,
+            headline: bestMove,
+            headlineIsRise: bestIsRise
+        )
+    }
+}
+
+// MARK: - Seeded RNG
+
+/// SplitMix64 — the deterministic stream every cycle event draws from.
+///
+/// Seeded through `ScoutingEngine.cycleSeed(careerID:season:salt:)`, never from
+/// `hashValue` (whose seed changes every launch, which would make "deterministic
+/// per career-season" true only until the next relaunch).
+private struct ScoutingCycleRandom: RandomNumberGenerator {
+    var state: UInt64
+
+    init(seed: UInt64) { state = seed }
+
+    mutating func next() -> UInt64 {
+        state &+= 0x9E37_79B9_7F4A_7C15
+        var z = state
+        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+        return z ^ (z >> 31)
     }
 }
 

@@ -353,7 +353,14 @@ enum WeekAdvancer {
         // are all filtered on it, and underclassmen who should have withdrawn
         // stay draftable for the rest of the cycle.
         if hadDeclarationTrim {
-            _ = ScoutingEngine.generateDeclarations(prospects: &regenerated)
+            _ = ScoutingEngine.generateDeclarations(
+                prospects: &regenerated,
+                seed: ScoutingEngine.cycleSeed(
+                    careerID: career.id,
+                    season: career.currentSeason,
+                    salt: ScoutingEngine.CycleSalt.declarations
+                )
+            )
         }
         // The mock is the only thing that writes `mockDraftPickNumber` /
         // `teamInterest`; a regenerated class carries neither until it is
@@ -1774,17 +1781,37 @@ enum WeekAdvancer {
         perf.lap("scheme_learning")
 
         // 8c. Generate weekly scout reports for the player's team's scouting staff
+        //
+        // The class is generated at week 9 (below), so in practice this runs
+        // weeks 10-18. Until R41 it changed grades on the board every single
+        // week with ZERO notification — a season of regional scouting was
+        // invisible unless the user happened to reopen the prospect list and
+        // compare it against a memory of last week. The digest below is the
+        // notification: ONE batched message per week, skipped entirely on a
+        // week that produced nothing.
         if let playerTeamID = career.teamID, !currentDraftClass.isEmpty {
             let scouts = fetchAllScouts(modelContext: modelContext).filter {
                 $0.teamID == playerTeamID
             }
             if !scouts.isEmpty {
+                let before = ScoutingEngine.gradeSnapshot(currentDraftClass)
                 let reports = ScoutingEngine.generateWeeklyReports(
                     scouts: scouts,
                     prospects: currentDraftClass,
                     week: week
                 )
                 ScoutingEngine.applyWeeklyReports(reports, to: &currentDraftClass)
+
+                if let digest = ScoutingEngine.weeklyDigest(
+                    prospects: currentDraftClass,
+                    before: before,
+                    week: week
+                ) {
+                    lastInboxMessages.append(InboxEngine.weeklyScoutingDigestMessage(
+                        digest: digest,
+                        season: season
+                    ))
+                }
             }
         }
 
@@ -1938,6 +1965,13 @@ enum WeekAdvancer {
                 mockDraft: currentMockDraft
             )
             mockDraftHistory["Mid-Season"] = currentMockDraft
+
+            // R41 drift moment 1 of 4. A regenerated mock is the market's own
+            // re-read of the class; nudge the projections toward it so
+            // `draftProjection` stops being a number stamped once at generation
+            // and never touched again. Zero-sum and bounded to one round — see
+            // `applyProjectionDrift`.
+            applyMockDrift(career: career, moment: 1, modelContext: modelContext)
         }
 
         // 9. At season end (week 18): record season history snapshot per player,
@@ -2877,21 +2911,49 @@ enum WeekAdvancer {
 
             // Declaration period: underclassmen declare or withdraw from draft
             if !currentDraftClass.isEmpty {
-                let declarationNews = ScoutingEngine.generateDeclarations(prospects: &currentDraftClass)
+                let declarationNews = ScoutingEngine.generateDeclarations(
+                    prospects: &currentDraftClass,
+                    seed: ScoutingEngine.cycleSeed(
+                        careerID: career.id,
+                        season: career.currentSeason,
+                        salt: ScoutingEngine.CycleSalt.declarations
+                    )
+                )
                 for item in declarationNews {
                     let sentiment: NewsSentiment = item.isDeclaration ? .neutral : .positive
-                    let category: NewsCategory = .draft
+                    let body: String
+                    if item.isDeclaration {
+                        body = "\(item.name) has officially declared for the upcoming NFL Draft, forgoing remaining college eligibility."
+                    } else if item.isShock {
+                        // R41: the annual shock. One name off the top of the
+                        // PUBLIC board comes out every January and the round
+                        // reshuffles behind him. The body says nothing the
+                        // headline has not already said about his projection —
+                        // the headline is phrased from his own `draftProjection`
+                        // and this line must not contradict it.
+                        body = "\(item.name) was one of the names at the top of this class and is not in this draft. Front offices that had spent the season building a plan around him are starting over, and the men behind him at the position just moved up."
+                    } else {
+                        body = "\(item.name) has decided to withdraw from the draft and return to college for another season."
+                    }
                     lastNewsItems.append(NewsItem(
                         headline: item.headline,
-                        body: item.isDeclaration
-                            ? "\(item.name) has officially declared for the upcoming NFL Draft, forgoing remaining college eligibility."
-                            : "\(item.name) has decided to withdraw from the draft and return to college for another season.",
-                        category: category,
+                        body: body,
+                        category: .draft,
                         week: 0,
                         season: career.currentSeason,
-                        sentiment: sentiment
+                        sentiment: item.isShock ? .negative : sentiment
                     ))
                 }
+
+                // R41 — Senior Bowl. Late January, after declarations (the
+                // invite list is the declared senior board) and a month before
+                // the combine. `ScoutingPhase.seniorBowl` has carried its 0.55
+                // confidence level and its slot in the phase sort order since
+                // the scouting system shipped; this is the event that finally
+                // files one. Like the combine it is a league event, so it runs
+                // whether or not this club sends staff — and it is idempotent,
+                // so re-entering the phase cannot hold a second week.
+                runSeniorBowlEvent(career: career, modelContext: modelContext)
             }
 
             lastInboxMessages.append(contentsOf: newMessages)
@@ -2919,6 +2981,61 @@ enum WeekAdvancer {
             // Combine results are NOT auto-generated here — they should only be
             // generated when the user presses "Send Scouts to Combine" in ScoutingHubView.
 
+            // R41 — the combine finally reaches the news feed.
+            //
+            // `generateCombineMedia` has always named real risers, fallers,
+            // standouts and surprises and stamped them on the prospects, and the
+            // feed showed three hardcoded headlines about players who did not
+            // exist instead ("the consensus top quarterback", "a 280-pound
+            // defensive tackle") — men with no name, no college and no row on
+            // any board. The digest is rebuilt from what is stored on the class,
+            // so these headlines always agree with the Combine screen.
+            //
+            // Order is load-bearing: the media read goes out, the drift moves
+            // the board on it, and the mock is then regenerated against the
+            // board as it now stands.
+            let combineMentions = ScoutingEngine.combineMediaDigest(prospects: currentDraftClass)
+            if !combineMentions.isEmpty {
+                let invitees = currentDraftClass.filter { $0.combineInvite }.count
+                lastNewsItems.append(contentsOf: NewsGenerator.combineMediaNews(
+                    mentions: combineMentions,
+                    inviteCount: invitees,
+                    season: career.currentSeason
+                ))
+                if let digest = InboxEngine.combineMediaDigestMessage(
+                    mentions: combineMentions,
+                    dateString: InboxEngine.dateLabel(
+                        week: 0, season: career.currentSeason, phase: .combine
+                    )
+                ) {
+                    lastInboxMessages.append(digest)
+                }
+            }
+
+            // The combine is the loudest information event of the cycle, so it
+            // gets the big shove (up to 2 rounds, up to 18 riser/faller pairs)
+            // where the four mock moments each get a nudge.
+            if !currentDraftClass.isEmpty {
+                let moves = ScoutingEngine.applyProjectionDrift(
+                    prospects: &currentDraftClass,
+                    pressure: ScoutingEngine.combinePressure(currentDraftClass),
+                    maxShift: 2,
+                    maxPairs: 18,
+                    seed: ScoutingEngine.cycleSeed(
+                        careerID: career.id,
+                        season: career.currentSeason,
+                        salt: ScoutingEngine.CycleSalt.combineDrift
+                    )
+                )
+                if !moves.isEmpty {
+                    lastNewsItems.append(contentsOf: NewsGenerator.projectionDriftNews(
+                        moves: moves,
+                        season: career.currentSeason
+                    ))
+                    persistDraftClass(currentDraftClass, to: modelContext)
+                }
+            }
+
             // Post-combine mock draft update
             currentMockDraft = ScoutingEngine.generateMockDraft(
                 prospects: currentDraftClass,
@@ -2936,6 +3053,9 @@ enum WeekAdvancer {
                 mockDraft: currentMockDraft
             )
             mockDraftHistory["Combine"] = currentMockDraft
+
+            // R41 drift moment 2 of 4.
+            applyMockDrift(career: career, moment: 2, modelContext: modelContext)
 
             // R30: an unanswered interview request expires here — the club
             // moved on, the coordinator stays (no hard feelings).
@@ -3051,6 +3171,10 @@ enum WeekAdvancer {
                     mockDraft: currentMockDraft
                 )
                 mockDraftHistory["Post-FA"] = currentMockDraft
+
+                // R41 drift moment 3 of 4. Free agency just changed 32 teams'
+                // needs, so the mock re-read is a real information event here.
+                applyMockDrift(career: career, moment: 3, modelContext: modelContext)
             }
 
         case .proDays:
@@ -3060,6 +3184,39 @@ enum WeekAdvancer {
                 career: career,
                 teams: teams
             )
+
+            // R41 — pre-draft attrition. About 2 % of the declared class gets
+            // hurt between the combine and the draft: a knee in a pro-day
+            // drill, a labrum found on a recheck, a hamstring pulled running
+            // for a stopwatch. It is the most reliable thing that happens to a
+            // real class every spring, and this board used to be frozen from
+            // February to April. Deterministic per (careerID, season) and
+            // idempotent — re-entering the phase cannot injure a second wave.
+            if !currentDraftClass.isEmpty {
+                let setbacks = ScoutingEngine.applyPreDraftAttrition(
+                    prospects: &currentDraftClass,
+                    seed: ScoutingEngine.cycleSeed(
+                        careerID: career.id,
+                        season: career.currentSeason,
+                        salt: ScoutingEngine.CycleSalt.proDayAttrition
+                    )
+                )
+                if !setbacks.isEmpty {
+                    lastNewsItems.append(contentsOf: NewsGenerator.preDraftInjuryNews(
+                        setbacks: setbacks,
+                        season: career.currentSeason
+                    ))
+                    if let message = InboxEngine.preDraftAttritionMessage(
+                        setbacks: setbacks,
+                        dateString: InboxEngine.dateLabel(
+                            week: 0, season: career.currentSeason, phase: .proDays
+                        )
+                    ) {
+                        lastInboxMessages.append(message)
+                    }
+                    persistDraftClass(currentDraftClass, to: modelContext)
+                }
+            }
 
         case .reviewRoster:
             // Reset roster evaluation flags for the new Review Roster phase
@@ -3649,6 +3806,116 @@ enum WeekAdvancer {
             mockDraft: currentMockDraft
         )
         mockDraftHistory["Pre-Draft"] = currentMockDraft
+
+        // R41 drift moment 4 of 4 — the last board move before the clock starts.
+        applyMockDrift(career: career, moment: 4, modelContext: modelContext)
+    }
+
+    // MARK: - Private: The Living Draft Market (R41)
+
+    /// The nudge each of the four mock-draft regenerations applies to the media
+    /// board.
+    ///
+    /// A regenerated mock is the market's own re-read of the class, so the
+    /// projections move toward it — one round at most, at most eight riser /
+    /// faller pairs, and always zero-sum (see
+    /// `ScoutingEngine.applyProjectionDrift`: a man only climbs into a band by
+    /// taking the slot of somebody leaving it, so the class-wide distribution of
+    /// `draftProjection` is exactly preserved). That property is what makes this
+    /// safe to run four times a cycle: `draftProjection` anchors AI perception
+    /// and the rookie-band fallbacks, and no amount of drift can inflate the
+    /// round-1 population.
+    ///
+    /// News is emitted only from the loudest moment (the combine's own drift,
+    /// handled at the `.combine` hook) and from moment 4, the final pre-draft
+    /// board — the middle two move quietly, which is what a mock re-read is.
+    ///
+    /// - Parameter moment: 1 = mid-season, 2 = combine, 3 = post-FA, 4 = pre-draft.
+    private static func applyMockDrift(
+        career: Career,
+        moment: Int,
+        modelContext: ModelContext
+    ) {
+        guard !currentDraftClass.isEmpty else { return }
+        let moves = ScoutingEngine.applyProjectionDrift(
+            prospects: &currentDraftClass,
+            pressure: ScoutingEngine.mockConsensusPressure(currentDraftClass),
+            maxShift: 1,
+            maxPairs: 8,
+            seed: ScoutingEngine.cycleSeed(
+                careerID: career.id,
+                season: career.currentSeason,
+                salt: ScoutingEngine.CycleSalt.mockDrift &+ UInt64(moment)
+            )
+        )
+        guard !moves.isEmpty else { return }
+        if moment == 4 {
+            lastNewsItems.append(contentsOf: NewsGenerator.projectionDriftNews(
+                moves: moves,
+                season: career.currentSeason,
+                limit: 2
+            ))
+        }
+        persistDraftClass(currentDraftClass, to: modelContext)
+    }
+
+    /// Holds the January all-star week and files what it produced.
+    ///
+    /// Called once, from the `.coachingChanges` hook right after declarations:
+    /// the invite list IS the declared senior board, and the combine is still a
+    /// month away. `ScoutingEngine.runSeniorBowl` is idempotent, so a save that
+    /// re-enters the phase does not get a second week.
+    private static func runSeniorBowlEvent(career: Career, modelContext: ModelContext) {
+        let scouts: [Scout] = {
+            guard let teamID = career.teamID else { return [] }
+            return fetchAllScouts(modelContext: modelContext).filter { $0.teamID == teamID }
+        }()
+
+        guard let result = ScoutingEngine.runSeniorBowl(
+            prospects: &currentDraftClass,
+            scouts: scouts,
+            seed: ScoutingEngine.cycleSeed(
+                careerID: career.id,
+                season: career.currentSeason,
+                salt: ScoutingEngine.CycleSalt.seniorBowl
+            )
+        ) else { return }
+
+        lastNewsItems.append(contentsOf: NewsGenerator.seniorBowlNews(
+            result: result,
+            season: career.currentSeason
+        ))
+        if let message = InboxEngine.seniorBowlDigestMessage(
+            result: result,
+            dateString: InboxEngine.dateLabel(
+                week: 0, season: career.currentSeason, phase: .coachingChanges
+            )
+        ) {
+            lastInboxMessages.append(message)
+        }
+
+        // The practice week moves stock like any other information event, and it
+        // feeds the same zero-sum board the combine drift uses.
+        let moves = ScoutingEngine.applyProjectionDrift(
+            prospects: &currentDraftClass,
+            pressure: result.pressure,
+            maxShift: 1,
+            maxPairs: 10,
+            seed: ScoutingEngine.cycleSeed(
+                careerID: career.id,
+                season: career.currentSeason,
+                salt: ScoutingEngine.CycleSalt.seniorBowl &+ 1
+            )
+        )
+        if !moves.isEmpty {
+            lastNewsItems.append(contentsOf: NewsGenerator.projectionDriftNews(
+                moves: moves,
+                season: career.currentSeason,
+                limit: 2
+            ))
+        }
+
+        persistDraftClass(currentDraftClass, to: modelContext)
     }
 
     // MARK: - Private: Future Draft Picks (plan finding S1)

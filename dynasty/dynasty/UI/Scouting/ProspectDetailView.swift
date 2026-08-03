@@ -13,6 +13,7 @@ struct ProspectDetailView: View {
     @State private var interviewResult: (personality: PersonalityArchetype, footballIQ: Int, characterNotes: [String])?
     @State private var positionRank: Int?
     @State private var teamPlayers: [Player] = []
+    @State private var showMarkNote = false
 
     // MARK: - Derived
 
@@ -40,6 +41,7 @@ struct ProspectDetailView: View {
 
             List {
                 headerSection
+                myVerdictSection
                 quickAssessmentRow
                 if isScouted { scoutingReportSection }
                 starterComparisonSection
@@ -47,6 +49,7 @@ struct ProspectDetailView: View {
                 collegeProductionSummarySection
                 positionSkillsSection
                 draftSection
+                characterFileSection
                 riskFlagsSection
                 if prospect.interviewCompleted { interviewResultsSection }
                 teamInterestRow
@@ -61,10 +64,188 @@ struct ProspectDetailView: View {
         .navigationTitle(prospect.fullName)
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
-        .task { loadScouts(); loadCoaches(); loadPositionRank(); loadTeamPlayers() }
+        .task {
+            loadScouts(); loadCoaches(); loadPositionRank(); loadTeamPlayers()
+            // The value row reads `DraftIntel.consensusRank`, a per-session
+            // cache the scouting hub warms. A card reached straight from a
+            // task list has not been through the hub, so warm it here too.
+            if DraftIntel.consensusRank(for: prospect.id) == nil {
+                DraftIntel.refreshConsensusBoard(for: WeekAdvancer.currentDraftClass)
+            }
+        }
         .sheet(isPresented: $showSendScout) {
             SendScoutSheet(prospect: prospect, scouts: scouts, scoutingPhase: currentScoutingPhase)
         }
+        .sheet(isPresented: $showMarkNote) {
+            ProspectMarkNoteSheet(
+                prospectName: prospect.fullName,
+                initialNote: prospect.userMarkNote,
+                onSave: { note in
+                    // Writing a note on an unmarked man puts him on the board
+                    // rather than stranding the text on a prospect nothing tracks.
+                    prospect.setUserMark(prospect.isMarked ? prospect.userMark : .target, note: note)
+                    try? modelContext.save()
+                    showMarkNote = false
+                },
+                onCancel: { showMarkNote = false }
+            )
+        }
+    }
+
+    // MARK: - My Verdict
+    //
+    // The deep dive used to end in a dead end: forty numbers, eight mental
+    // grades, an interview transcript — and the only thing the user could
+    // record about any of it was a single "Add to Board" star that three of the
+    // four mark systems could not see. This is where the read becomes a verdict.
+
+    @ViewBuilder
+    private var myVerdictSection: some View {
+        Section {
+            ProspectMarkPicker(prospect: prospect) {
+                try? modelContext.save()
+            }
+            .listRowBackground(Color.backgroundSecondary)
+
+            Button {
+                showMarkNote = true
+            } label: {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "note.text")
+                        .font(.caption)
+                        .foregroundStyle(Color.accentGold)
+                        .padding(.top, 2)
+                    if prospect.userMarkNote.isEmpty {
+                        Text("Add a note \u{2014} why he is where he is on your board.")
+                            .font(.subheadline)
+                            .foregroundStyle(Color.textTertiary)
+                    } else {
+                        Text(prospect.userMarkNote)
+                            .font(.subheadline)
+                            .foregroundStyle(Color.textPrimary)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+            .listRowBackground(Color.backgroundSecondary)
+
+            // What the market thinks versus what you graded him.
+            if let read = ProspectFog.valueRead(
+                for: prospect,
+                marketRank: DraftIntel.consensusRank(for: prospect.id),
+                myGrade: UserProspectGradeStore.shared.grade(for: prospect.id)
+            ) {
+                LabeledContent("Value vs My Grade") {
+                    VStack(alignment: .trailing, spacing: 1) {
+                        Text(read.label)
+                            .font(.body.weight(.bold))
+                            .foregroundStyle(read.tint)
+                        Text("market \u{2248} #\(read.marketRank) \u{00B7} you \u{2248} #\(read.impliedPick)")
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                }
+                .listRowBackground(Color.backgroundSecondary)
+            }
+        } header: {
+            Text("My Verdict")
+        }
+    }
+
+    // MARK: - Character & Medical File
+    //
+    // `DraftClassBuilder` has written `medicalConcerns` and `redFlags` into
+    // every class since the generator overhaul and NO screen has ever rendered
+    // either of them — a torn ACL and a failed drug test were data the game
+    // knew and the user could not buy at any price. They are not free, though:
+    // `ProspectFog.flagDisclosure` opens the file in three steps, so the count
+    // appears once anybody has been near him and the contents only once the
+    // work has actually been done.
+
+    @ViewBuilder
+    private var characterFileSection: some View {
+        let medical = prospect.medicalConcerns ?? []
+        let character = prospect.redFlags ?? []
+        let total = medical.count + character.count
+        let disclosure = ProspectFog.flagDisclosure(for: prospect, userTeamID: career.teamID)
+
+        if disclosure != .hidden {
+            Section("Medical & Character File") {
+                switch disclosure {
+                case .hidden:
+                    EmptyView()
+
+                case .count:
+                    if total == 0 {
+                        fileLine(
+                            icon: "checkmark.seal",
+                            tint: .textSecondary,
+                            title: "Nothing flagged so far",
+                            detail: ProspectFog.flagDisclosureHint(for: prospect)
+                        )
+                    } else {
+                        fileLine(
+                            icon: "lock.doc.fill",
+                            tint: .warning,
+                            title: "\(total) item\(total == 1 ? "" : "s") on file",
+                            detail: ProspectFog.flagDisclosureHint(for: prospect)
+                        )
+                    }
+
+                case .full:
+                    if total == 0 {
+                        fileLine(
+                            icon: "checkmark.seal.fill",
+                            tint: .success,
+                            title: "Clean file",
+                            detail: "No medical or character flags."
+                        )
+                    } else {
+                        ForEach(medical, id: \.self) { concern in
+                            fileLine(
+                                icon: "cross.case.fill",
+                                tint: .warning,
+                                title: concern,
+                                detail: "Medical"
+                            )
+                        }
+                        ForEach(character, id: \.self) { flag in
+                            fileLine(
+                                icon: "exclamationmark.triangle.fill",
+                                tint: .danger,
+                                title: flag,
+                                detail: "Character"
+                            )
+                        }
+                    }
+                }
+            }
+            .listRowBackground(Color.backgroundSecondary)
+        }
+    }
+
+    private func fileLine(icon: String, tint: Color, title: String, detail: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon)
+                .font(.caption)
+                .foregroundStyle(tint)
+                .padding(.top, 2)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(detail)
+                    .font(.caption2)
+                    .foregroundStyle(Color.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(detail): \(title)")
     }
 
     // MARK: - Header Section
@@ -1640,33 +1821,42 @@ struct ProspectDetailView: View {
 
     private var actionButtonBar: some View {
         HStack(spacing: 12) {
-            // Add to Board / toggle flag — primary CTA, full-width emphasized.
-            Button {
-                withAnimation {
-                    prospect.prospectFlag = prospect.prospectFlag == .mustHave ? .none : .mustHave
-                    try? modelContext.save()
-                }
+            // The ONE mark — primary CTA. This used to toggle `prospectFlag`
+            // between must-have and none, which the star store, the watchlist
+            // bookmark and the user grade all disagreed with.
+            Menu {
+                ProspectMarkMenu(
+                    prospect: prospect,
+                    onChange: { try? modelContext.save() },
+                    onEditNote: { showMarkNote = true }
+                )
             } label: {
+                let mark = prospect.userMark
                 Label(
-                    prospect.prospectFlag == .mustHave ? "On Board" : "Add to Board",
-                    systemImage: prospect.prospectFlag == .mustHave ? "star.fill" : "star"
+                    mark == .none ? "Mark Prospect" : mark.label,
+                    systemImage: mark == .none ? "circle.dashed" : mark.icon
                 )
                 .font(.body.weight(.bold))
-                .foregroundStyle(prospect.prospectFlag == .mustHave ? Color.accentGold : Color.textPrimary)
+                .foregroundStyle(mark == .none ? Color.textPrimary : mark.color)
                 .frame(maxWidth: .infinity)
                 .frame(height: 52)
                 .background(
                     RoundedRectangle(cornerRadius: 14)
-                        .fill(prospect.prospectFlag == .mustHave ? Color.accentGold.opacity(0.22) : Color.backgroundSecondary)
+                        .fill(mark == .none ? Color.backgroundSecondary : mark.color.opacity(0.22))
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 14)
                         .strokeBorder(
-                            prospect.prospectFlag == .mustHave ? Color.accentGold : Color.surfaceBorder,
-                            lineWidth: prospect.prospectFlag == .mustHave ? 1.5 : 1
+                            mark == .none ? Color.surfaceBorder : mark.color,
+                            lineWidth: mark == .none ? 1 : 1.5
                         )
                 )
             }
+            .accessibilityLabel(
+                prospect.isMarked
+                    ? "Your mark: \(prospect.userMark.label). Change it"
+                    : "Unmarked. Set your mark"
+            )
 
             // Interview button — only during combine phase.
             if canInterview {

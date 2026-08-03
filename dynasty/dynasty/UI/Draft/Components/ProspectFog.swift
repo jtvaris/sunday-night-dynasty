@@ -364,6 +364,140 @@ enum ProspectFog {
         LetterGrade.allCases.min(by: { abs($0.rank - rank) < abs($1.rank - rank) }) ?? .c
     }
 
+    // MARK: - Risk-flag disclosure
+
+    /// How much of a prospect's medical / character file the user may read.
+    ///
+    /// `DraftClassBuilder` has been writing `medicalConcerns` and `redFlags`
+    /// into every class since the generator overhaul, and no screen has ever
+    /// rendered either of them — a torn ACL and a failed drug test were data
+    /// the game knew and the user could not buy at any price. They are not
+    /// public information either, though: a club learns them by doing the work,
+    /// so the file opens in three steps.
+    enum FlagDisclosure {
+        /// Nobody in your building has been near him. You do not know a file
+        /// exists.
+        case hidden
+        /// Somebody has — one report, a pro day, an invite to Indianapolis.
+        /// Enough to know there IS something on file, not what it says.
+        case count
+        /// Two reports, a meeting, or a Top-30 visit: you have read the file.
+        case full
+    }
+
+    /// The disclosure level the open save is entitled to for `prospect`.
+    ///
+    /// `userTeamID` is the club whose Top-30 visits count — another team's
+    /// visit tells you nothing.
+    static func flagDisclosure(
+        for prospect: CollegeProspect,
+        userTeamID: UUID? = nil
+    ) -> FlagDisclosure {
+        let visited = userTeamID.map { prospect.top30VisitedByTeams.contains($0) } ?? false
+        if prospect.scoutingReports.count >= 2 || prospect.interviewCompleted || visited {
+            return .full
+        }
+        if !prospect.scoutingReports.isEmpty || prospect.proDayCompleted || prospect.combineInvite {
+            return .count
+        }
+        return .hidden
+    }
+
+    /// One line of prose telling the user what would open the file the rest of
+    /// the way. Only meaningful at `.count`.
+    static func flagDisclosureHint(for prospect: CollegeProspect) -> String {
+        if prospect.scoutingReports.isEmpty {
+            return "File a report, meet him, or spend a Top-30 visit to read it."
+        }
+        if prospect.scoutingReports.count == 1 {
+            return "One more report — or an interview — opens the file."
+        }
+        return "An interview or a Top-30 visit opens the file."
+    }
+
+    // MARK: - Value vs my grade
+
+    /// Where the market has a prospect versus where the user's own grade puts
+    /// him. Both halves are information the user legitimately has: the market
+    /// rank is media consensus (`DraftIntel.consensusRank`), and the other half
+    /// is the grade he wrote himself.
+    ///
+    /// The arithmetic belongs to `DraftIntel` (`valueDelta` / `marketVerdict`)
+    /// so the scouting board and the draft-night room cannot drift into two
+    /// different definitions of a steal. This is the presentation wrapper the
+    /// scouting rows render.
+    struct ValueRead {
+        /// Media consensus board slot (1 = first off the board).
+        let marketRank: Int
+        /// The board slot the user's own grade implies.
+        let impliedPick: Int
+        /// The market's reading of the gap, thresholded by board depth.
+        let verdict: DraftIntel.MarketVerdict
+
+        /// `marketRank − impliedPick`. Positive = the market will let him fall
+        /// past where you rate him; negative = you would have to reach.
+        var delta: Int { verdict.delta }
+
+        /// Whether the gap is big enough to be worth a chip at this depth.
+        var isMeaningful: Bool {
+            if case .aligned = verdict { return false }
+            return true
+        }
+
+        var isValue: Bool { delta > 0 }
+
+        /// "+18" / "−12" — the row chip.
+        var chipText: String {
+            delta > 0 ? "+\(delta)" : "\u{2212}\(abs(delta))"
+        }
+
+        /// "+18 VALUE" / "-21 MARKET" / "IN LINE" — the prose form.
+        var label: String { verdict.label }
+
+        /// One sentence for a detail row.
+        var detail: String { verdict.detail }
+
+        var tint: Color {
+            guard isMeaningful else { return .textTertiary }
+            return isValue ? .success : .warning
+        }
+    }
+
+    /// The letter-grade ordinal (A+ = 12 … F = 1) behind one of the user's own
+    /// draft grades — the input `DraftIntel.valueDelta` expects.
+    static func gradeOrdinal(for grade: UserGrade) -> Int? {
+        LetterGrade(rawValue: grade.letterGrade)?.rank
+    }
+
+    /// The value read for one prospect, or `nil` when there is nothing honest
+    /// to say — no grade of the user's own, no media rank, or a prospect so
+    /// fogged the user has no read on him at all.
+    ///
+    /// `marketRank` comes from `DraftIntel.consensusRank`, which is media-only
+    /// by contract (mock pick, then projected round — never `scoutedOverall`),
+    /// so nothing here can leak the board through the delta. The fog check is
+    /// the second half of that: a prospect nobody has filed on and the media
+    /// has not projected shows no chip at all.
+    static func valueRead(
+        for prospect: CollegeProspect,
+        marketRank: Int?,
+        myGrade: UserGrade?
+    ) -> ValueRead? {
+        guard let marketRank, marketRank > 0,
+              let myGrade,
+              let ordinal = gradeOrdinal(for: myGrade) else { return nil }
+        guard read(prospect).source != .none else { return nil }
+        let verdict = DraftIntel.marketVerdict(
+            userGradeOrdinal: ordinal,
+            consensusRank: marketRank
+        )
+        return ValueRead(
+            marketRank: marketRank,
+            impliedPick: marketRank - verdict.delta,
+            verdict: verdict
+        )
+    }
+
     // MARK: - Band construction
 
     /// The confidence stars used to sit beside the grade as their own widget
