@@ -169,8 +169,19 @@ final class AudioDirector {
         UserDefaults.standard.object(forKey: "soundEnabled") as? Bool ?? true
     }
 
+    /// The Settings "Game Sounds" slider, 0…1. This is the ONE master gain for
+    /// everything the stadium makes: every ``MatchSound`` one-shot (which is
+    /// also every cue ``CrowdReactor`` fires, since it goes through
+    /// ``play(_:gainScale:preferTake:)``) and the looping crowd bed. Nothing in
+    /// the app opens an `AVAudioPlayer` for match audio outside this file, so
+    /// there is no second path around the slider.
+    ///
+    /// `object(forKey:)` rather than `double(forKey:)`: the latter returns 0
+    /// for an absent key, which would silence a fresh install instead of
+    /// applying the default.
     private var masterVolume: Float {
-        let stored = UserDefaults.standard.object(forKey: "soundVolume") as? Double ?? 0.7
+        let stored = UserDefaults.standard.object(forKey: "soundVolume") as? Double
+            ?? AudioSettings.soundVolumeDefault
         return Float(min(max(stored, 0), 1))
     }
 

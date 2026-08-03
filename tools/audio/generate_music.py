@@ -40,6 +40,9 @@ Usage:
     python3 generate_music.py r2-themes      # 10 long themes + 2 cues (r2)
     python3 generate_music.py r2-loops       # 3 ambient loops (r2)
     python3 generate_music.py round2         # both of the above
+    python3 generate_music.py r3-menu        # 4 grand synth-lead menu themes
+    python3 generate_music.py r3-dashboard   # 5 dark downtempo dashboard beds
+    python3 generate_music.py round3         # both of the above
 """
 
 from __future__ import annotations
@@ -306,6 +309,99 @@ R2_LOOPS: list[tuple] = [
 ]
 
 
+# =========================================================================
+# ROUND 3 (2026-08-03) — the RESTYLE round. Not more depth: a change of
+# character in the two contexts the player sits in longest.
+#
+# MENU. The round-2 menu themes are film-score cinematic — strings and horns
+# doing gravitas. The user wants the other kind of sports grandeur: a slow,
+# hymn-like SYNTH LEAD carrying a simple singable melody over orchestral
+# swells, the sound of a 1981-era inspirational sports film. The style traits
+# are described directly (analog synth lead, 72-84 BPM, major key, arpeggiated
+# synth bed, slow triumphant build) rather than by naming any song or artist,
+# so the prompts describe a genre and not a work.
+#
+# DASHBOARD. The round-2 dashboard *beds* are the same 150-175 s cinematic
+# cues as the menu — too eventful for a screen someone stares at for twenty
+# minutes. Round 3 replaces them with dark ambient-leaning downtempo at
+# 60-75 BPM: sparse percussion, warm low synths, melancholic-calm, no build.
+# The five 40-46 s ambient LOOPS are unaffected and stay in the rotation.
+#
+# Durations follow the brief (menu 90-110 s, dashboard 150-200 s) and are
+# still a bundle budget: ~20 KB/s at AAC 160.
+# =========================================================================
+
+R3_MENU: list[tuple] = [
+    ("menu_grand", "menu_grand_r3_anthem", T(
+        "inspirational sports film main theme", "slow heroic tempo",
+        "iconic analog synthesizer lead melody", "simple memorable melody",
+        "lush orchestral string swells underneath", "soft timpani heartbeat",
+        "nostalgic and triumphant", "slow burn build to a soaring finish",
+        "wide reverb", "uplifting", "instrumental", "no vocals",
+        "76 BPM", "D major"),
+     990101, 96),
+    ("menu_grand", "menu_grand_r3_piano", T(
+        "grand inspirational anthem", "stately piano ostinato",
+        "warm synthesizer lead doubling the melody",
+        "swelling string orchestra", "gentle brass pad", "noble and hopeful",
+        "patient build then a triumphant peak", "vintage sports film score",
+        "instrumental", "no vocals", "80 BPM", "E flat major"),
+     990102, 104),
+    ("menu_grand", "menu_grand_r3_hymn", T(
+        "hymn-like synthesizer anthem", "slow majestic tempo",
+        "singing analog synth lead", "sustained orchestral strings",
+        "distant french horns", "soft cymbal swells", "reverent and emotional",
+        "slow motion victory montage", "nostalgic 1980s film score",
+        "instrumental", "no vocals", "72 BPM", "C major"),
+     990103, 108),
+    ("menu_grand", "menu_grand_r3_soar", T(
+        "triumphant synth and orchestra anthem",
+        "soaring lead synthesizer melody", "arpeggiated synth bed",
+        "orchestral horn swells", "rolling timpani", "rising key change",
+        "euphoric and cinematic", "builds steadily to a big major-key finish",
+        "instrumental", "no vocals", "84 BPM", "A major"),
+     990104, 100),
+]
+
+R3_DASHBOARD: list[tuple] = [
+    ("dashboard_dark", "dashboard_dark_r3_drift", T(
+        "dark ambient downtempo", "warm low analog synth bass",
+        "sparse rim clicks", "slow deep sub pulse", "distant pad wash",
+        "melancholic and calm", "no build", "constant level",
+        "front office at night", "background underscore",
+        "instrumental", "no vocals", "62 BPM", "D minor"),
+     990201, 176),
+    ("dashboard_dark", "dashboard_dark_r3_ember", T(
+        "mellow dark downtempo", "muted rhodes electric piano",
+        "soft brushed kick", "dark warm synth pads", "tape hiss texture",
+        "reflective and unhurried", "steady understated groove",
+        "no dynamic swells", "background music",
+        "instrumental", "no vocals", "68 BPM", "A minor"),
+     990202, 168),
+    ("dashboard_dark", "dashboard_dark_r3_late", T(
+        "late night downtempo underscore", "deep warm synth bass",
+        "sparse closed hi-hat", "distant felt piano notes",
+        "smoky and melancholy", "quiet and patient", "steady loop feel",
+        "understated menu music", "instrumental", "no vocals",
+        "72 BPM", "F minor"),
+     990203, 182),
+    ("dashboard_dark", "dashboard_dark_r3_hollow", T(
+        "dark ambient bed", "sustained low drone", "warm cello-like pad",
+        "almost no percussion", "occasional soft sub thud",
+        "sombre and spacious", "very slow", "no melody", "no build",
+        "empty stadium in the offseason", "instrumental", "no vocals",
+        "60 BPM", "C minor"),
+     990204, 190),
+    ("dashboard_dark", "dashboard_dark_r3_slowpulse", T(
+        "slow downtempo with a soft pulse", "muffled kick drum",
+        "granular synth pad", "warm low bass", "sparse felt piano",
+        "quiet resolve", "mellow and dark", "unchanging intensity",
+        "background underscore", "instrumental", "no vocals",
+        "75 BPM", "G minor"),
+     990205, 158),
+]
+
+
 # -------------------------------------------------------------------------
 
 def post(url: str, payload: dict, headers: dict, timeout: int = 300):
@@ -419,6 +515,10 @@ def gen_r2_theme(style: str, stem: str, tags: str, seed: int, duration: int) -> 
     return gen_theme(style, "", tags, seed, duration=duration, stem=stem, rnd=2)
 
 
+def gen_r3_theme(style: str, stem: str, tags: str, seed: int, duration: int) -> dict:
+    return gen_theme(style, "", tags, seed, duration=duration, stem=stem, rnd=3)
+
+
 def gen_loop(name: str, take: str, prompt: str, seed: int,
              stem: str | None = None, rnd: int = 1) -> dict:
     return _run(SAO_VERSION, {
@@ -469,6 +569,10 @@ def main() -> None:
         jobs += [(gen_r2_theme, args) for args in R2_THEMES]
     if mode in ("r2-loops", "round2"):
         jobs += [(gen_r2_loop, args) for args in R2_LOOPS]
+    if mode in ("r3-menu", "round3"):
+        jobs += [(gen_r3_theme, args) for args in R3_MENU]
+    if mode in ("r3-dashboard", "round3"):
+        jobs += [(gen_r3_theme, args) for args in R3_DASHBOARD]
 
     if not jobs:
         sys.exit(f"unknown mode: {mode}")

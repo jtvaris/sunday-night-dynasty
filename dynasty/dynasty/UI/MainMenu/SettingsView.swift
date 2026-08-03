@@ -76,15 +76,15 @@ struct SettingsView: View {
 
     // General
     @AppStorage("soundEnabled") private var soundEnabled = true
-    /// Master SFX/crowd volume for the live match (0…1). Read by
-    /// `AudioDirector` on every cue so changes apply mid-game.
-    @AppStorage("soundVolume") private var soundVolume = 0.7
+    /// Master game-sounds volume (0…1): every match SFX and the crowd bed.
+    /// Read by `AudioDirector` on every cue, so changes apply mid-game.
+    @AppStorage("soundVolume") private var soundVolume = AudioSettings.soundVolumeDefault
     /// Soundtrack on/off, independent of the match SFX above. Read by
     /// `MusicDirector` on every track change and on the settings notification.
     @AppStorage("musicEnabled") private var musicEnabled = true
-    /// Music level (0…1). Defaults lower than the SFX slider because the
-    /// score is background by design and the crowd is the star of a match.
-    @AppStorage("musicVolume") private var musicVolume = 0.5
+    /// Music level (0…1). Defaults lower than the game-sounds slider because
+    /// the score is background by design and the crowd is the star of a match.
+    @AppStorage("musicVolume") private var musicVolume = AudioSettings.musicVolumeDefault
     @AppStorage("hapticsEnabled") private var hapticsEnabled = true
 
     // Gameplay
@@ -200,25 +200,19 @@ struct SettingsView: View {
 
     private var generalSection: some View {
         Section {
+            // "Game Sounds", not "Sound": the row below it is a *separate*
+            // level from Music, and a toggle called "Sound" reads like a
+            // master mute for the whole app — which it is not.
             Toggle(isOn: $soundEnabled) {
-                Label("Sound", systemImage: "speaker.wave.2.fill")
+                Label("Game Sounds", systemImage: "speaker.wave.2.fill")
                     .foregroundStyle(Color.textPrimary)
             }
             .tint(Color.accentGold)
             .listRowBackground(Color.backgroundSecondary)
 
-            HStack(spacing: 12) {
-                Image(systemName: "speaker.fill")
-                    .font(.caption)
-                    .foregroundStyle(soundEnabled ? Color.textSecondary : Color.textTertiary)
-                Slider(value: $soundVolume, in: 0...1, step: 0.05)
-                    .tint(Color.accentGold)
-                Image(systemName: "speaker.wave.3.fill")
-                    .font(.caption)
-                    .foregroundStyle(soundEnabled ? Color.textSecondary : Color.textTertiary)
-            }
-            .disabled(!soundEnabled)
-            .listRowBackground(Color.backgroundSecondary)
+            volumeRow(title: "Game Sounds Volume",
+                      value: $soundVolume,
+                      enabled: soundEnabled)
 
             Toggle(isOn: $musicEnabled) {
                 Label("Music", systemImage: "music.note")
@@ -227,18 +221,9 @@ struct SettingsView: View {
             .tint(Color.accentGold)
             .listRowBackground(Color.backgroundSecondary)
 
-            HStack(spacing: 12) {
-                Image(systemName: "speaker.fill")
-                    .font(.caption)
-                    .foregroundStyle(musicEnabled ? Color.textSecondary : Color.textTertiary)
-                Slider(value: $musicVolume, in: 0...1, step: 0.05)
-                    .tint(Color.accentGold)
-                Image(systemName: "speaker.wave.3.fill")
-                    .font(.caption)
-                    .foregroundStyle(musicEnabled ? Color.textSecondary : Color.textTertiary)
-            }
-            .disabled(!musicEnabled)
-            .listRowBackground(Color.backgroundSecondary)
+            volumeRow(title: "Music Volume",
+                      value: $musicVolume,
+                      enabled: musicEnabled)
 
             Toggle(isOn: $hapticsEnabled) {
                 Label("Haptics", systemImage: "iphone.radiowaves.left.and.right")
@@ -249,9 +234,45 @@ struct SettingsView: View {
         } header: {
             sectionHeader("General")
         } footer: {
-            Text("Sound covers the live-game stadium — crowd, whistles, hits, and horns. Music is the menu and front-office score; it steps aside completely during a coached game. Both respect the mute switch and never interrupt your own music.")
+            Text("Two independent levels. Game Sounds covers the live-game stadium — crowd, whistles, hits, and horns. Music is the menu and front-office score; it steps aside completely during a coached game, so the two are never loud at the same time. Both respect the mute switch and never interrupt your own music.")
                 .foregroundStyle(Color.textTertiary)
         }
+    }
+
+    /// A named volume control: title, live percentage, and the slider.
+    ///
+    /// The percentage is not decoration. A bare slider between two speaker
+    /// glyphs gives no way to tell 30 % from 40 %, to describe a setting, or
+    /// to put it back where it was after experimenting — and these two rows
+    /// look identical to each other, so the title is what makes it obvious
+    /// which one is being dragged.
+    private func volumeRow(title: LocalizedStringKey,
+                           value: Binding<Double>,
+                           enabled: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(title)
+                    .font(.subheadline)
+                    .foregroundStyle(enabled ? Color.textSecondary : Color.textTertiary)
+                Spacer()
+                Text(value.wrappedValue, format: .percent.precision(.fractionLength(0)))
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(enabled ? Color.textSecondary : Color.textTertiary)
+            }
+            HStack(spacing: 12) {
+                Image(systemName: "speaker.fill")
+                    .font(.caption)
+                    .foregroundStyle(enabled ? Color.textSecondary : Color.textTertiary)
+                Slider(value: value, in: 0...1, step: 0.05)
+                    .tint(Color.accentGold)
+                Image(systemName: "speaker.wave.3.fill")
+                    .font(.caption)
+                    .foregroundStyle(enabled ? Color.textSecondary : Color.textTertiary)
+            }
+        }
+        .padding(.vertical, 2)
+        .disabled(!enabled)
+        .listRowBackground(Color.backgroundSecondary)
     }
 
     private var gameplaySection: some View {
@@ -487,9 +508,9 @@ struct SettingsView: View {
         }
         // Re-seed defaults so the UI reflects fresh state immediately.
         soundEnabled = true
-        soundVolume = 0.7
+        soundVolume = AudioSettings.soundVolumeDefault
         musicEnabled = true
-        musicVolume = 0.5
+        musicVolume = AudioSettings.musicVolumeDefault
         hapticsEnabled = true
         gameSpeedRaw = GameSpeed.normal.rawValue
         difficultyRaw = Difficulty.normal.rawValue

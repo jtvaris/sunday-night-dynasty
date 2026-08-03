@@ -12,9 +12,10 @@ import UIKit
 /// rotations and more repeats.
 enum MusicContext: String, CaseIterable {
 
-    /// Title screen. The two takes the player already knows plus one more.
+    /// Title screen. Two slow, grand synth-lead anthems.
     case menu
-    /// The career shell in ordinary weeks — front office background.
+    /// The career shell in ordinary weeks — front office background. Five
+    /// short ambient loops plus three dark downtempo mid-length pieces.
     case dashboard
     /// The draft room, clock ticking.
     case draft
@@ -37,9 +38,12 @@ enum MusicContext: String, CaseIterable {
     var entries: [(file: String, plays: Int)] {
         switch self {
         case .menu:
+            // Two grand synth-lead anthems (round 3). The bag alternates them,
+            // which is fine here: the title screen is the shortest-dwell
+            // context in the game, and a slow 100 s build is not something you
+            // want interrupted by a hurry to get to a third track.
             return [("music_menu_theme_a", 1),
-                    ("music_menu_theme_b", 1),
-                    ("music_menu_theme_c", 1)]
+                    ("music_menu_theme_b", 1)]
         case .dashboard:
             return [("music_dashboard_loop_a", 3),
                     ("music_dashboard_loop_b", 3),
@@ -48,8 +52,7 @@ enum MusicContext: String, CaseIterable {
                     ("music_dashboard_loop_e", 3),
                     ("music_dashboard_bed_a", 1),
                     ("music_dashboard_bed_b", 1),
-                    ("music_dashboard_bed_c", 1),
-                    ("music_dashboard_bed_d", 1)]
+                    ("music_dashboard_bed_c", 1)]
         case .draft:
             return [("music_draft_a", 1),
                     ("music_draft_b", 1),
@@ -169,8 +172,16 @@ final class MusicDirector: NSObject, AVAudioPlayerDelegate {
         UserDefaults.standard.object(forKey: "musicEnabled") as? Bool ?? true
     }
 
+    /// The Settings "Music" slider, 0…1.
+    ///
+    /// `object(forKey:)` rather than `double(forKey:)` on purpose: the latter
+    /// returns 0 for a missing key, which is indistinguishable from a player
+    /// who has deliberately slid the music to silence. The fresh-install
+    /// default lives in ``AudioSettings/musicVolumeDefault`` so the slider,
+    /// this reader and Settings' reset path cannot drift apart.
     private var musicVolume: Float {
-        let stored = UserDefaults.standard.object(forKey: "musicVolume") as? Double ?? 0.5
+        let stored = UserDefaults.standard.object(forKey: "musicVolume") as? Double
+            ?? AudioSettings.musicVolumeDefault
         return Float(min(max(stored, 0), 1))
     }
 

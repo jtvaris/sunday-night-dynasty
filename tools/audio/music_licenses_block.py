@@ -7,12 +7,15 @@ LICENSES.md stays hand-written; these tables are printed from
 gen_music/manifest.json + shipped_music.json so they cannot drift from what
 was actually generated and shipped.
 
-Usage:  python3 music_licenses_block.py > /tmp/block.md
+Usage:
+    python3 music_licenses_block.py            # round 2 (the default)
+    python3 music_licenses_block.py 3          # round 3
 """
 
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -24,26 +27,28 @@ def esc(s: str) -> str:
 
 
 def main() -> None:
+    rnd = int(sys.argv[1]) if len(sys.argv) > 1 else 2
     man = json.loads((ROOT / "gen_music" / "manifest.json").read_text())
     ship = json.loads((ROOT / "shipped_music.json").read_text())
-    by_stem = {m["stem"]: m for m in man}
 
-    r2 = [m for m in man if m.get("round") == 2]
+    r2 = [m for m in man if m.get("round") == rnd]
     ace = [m for m in r2 if m["kind"] == "menu_theme"]
     sao = [m for m in r2 if m["kind"] == "ambient_loop"]
 
     gpu_ace = sum(m.get("predict_time") or 0 for m in ace)
     gpu_sao = sum(m.get("predict_time") or 0 for m in sao)
 
-    print("#### Round-2 cost\n")
+    print(f"#### Round-{rnd} cost\n")
     print("| Model | Takes | GPU time | Cost @ $0.000975/s |")
     print("|---|---|---|---|")
     print(f"| `lucataco/ace-step` | {len(ace)} | {gpu_ace:.1f} s | ${gpu_ace*RATE:.3f} |")
-    print(f"| `stackadoc/stable-audio-open-1.0` | {len(sao)} | {gpu_sao:.1f} s | ${gpu_sao*RATE:.3f} |")
+    if sao:
+        print(f"| `stackadoc/stable-audio-open-1.0` | {len(sao)} | {gpu_sao:.1f} s "
+              f"| ${gpu_sao*RATE:.3f} |")
     tot = gpu_ace + gpu_sao
     print(f"| **Total** | **{len(r2)}** | **{tot:.1f} s** | **≈ ${tot*RATE:.2f}** |")
 
-    print("\n#### Round-2 themes — `lucataco/ace-step`\n")
+    print(f"\n#### Round-{rnd} themes — `lucataco/ace-step`\n")
     print("| File | Seed | Requested | Duration | LUFS | Prompt tags |")
     print("|---|---|---|---|---|---|")
     for m in sorted(ace, key=lambda x: x["stem"]):
@@ -53,29 +58,31 @@ def main() -> None:
         print(f"| `{m['stem']}` | {m['seed']} | {req} s | {m['duration']:.1f} s | "
               f"{m['LUFS']} | {esc(m['prompt'])} |")
 
-    print("\n#### Round-2 loops — `stackadoc/stable-audio-open-1.0`\n")
-    print("| File | Seed | Duration | LUFS | Fold (xfade/tail-cut) | Seam | Head−tail | Prompt |")
-    print("|---|---|---|---|---|---|---|---|")
-    for m in sorted(sao, key=lambda x: x["stem"]):
-        lp = m["loop"]
-        a = lp["seam_after"]
-        print(f"| `{m['stem']}` | {m['seed']} | {m['duration']:.1f} s | {m['LUFS']} | "
-              f"{lp['xfade_s']:.1f} / {lp.get('tail_cut_s', 0):.1f} s | "
-              f"{a['verdict']} ({a['headroom_db']:+.1f} dB) | "
-              f"{a['level_match_db']:+.1f} dB | {esc(m['prompt'])} |")
+    if sao:
+        print(f"\n#### Round-{rnd} loops — `stackadoc/stable-audio-open-1.0`\n")
+        print("| File | Seed | Duration | LUFS | Fold (xfade/tail-cut) | Seam "
+              "| Head−tail | Prompt |")
+        print("|---|---|---|---|---|---|---|---|")
+        for m in sorted(sao, key=lambda x: x["stem"]):
+            lp = m["loop"]
+            a = lp["seam_after"]
+            print(f"| `{m['stem']}` | {m['seed']} | {m['duration']:.1f} s | {m['LUFS']} | "
+                  f"{lp['xfade_s']:.1f} / {lp.get('tail_cut_s', 0):.1f} s | "
+                  f"{a['verdict']} ({a['headroom_db']:+.1f} dB) | "
+                  f"{a['level_match_db']:+.1f} dB | {esc(m['prompt'])} |")
 
-    print("\n#### All loops — head-vs-tail level after the round-2 fix\n")
-    print("| Loop | Round | Baseline fold Δ | Chosen fold | Chosen Δ | Re-pointed |")
-    print("|---|---|---|---|---|---|")
-    for m in sorted([x for x in man if x["kind"] == "ambient_loop"],
-                    key=lambda x: (x.get("round", 1), x["stem"])):
-        lp = m["loop"]
-        base = lp.get("baseline")
-        bd = f"{base['level_match_db']:+.1f} dB" if base else "--"
-        print(f"| `{m['stem']}` | r{m.get('round',1)} | {bd} | "
-              f"{lp['xfade_s']:.1f} / {lp.get('tail_cut_s',0):.1f} s | "
-              f"{lp['seam_after']['level_match_db']:+.1f} dB | "
-              f"{'**yes**' if lp.get('repointed') else 'no'} |")
+        print("\n#### All loops — head-vs-tail level after the round-2 fix\n")
+        print("| Loop | Round | Baseline fold Δ | Chosen fold | Chosen Δ | Re-pointed |")
+        print("|---|---|---|---|---|---|")
+        for m in sorted([x for x in man if x["kind"] == "ambient_loop"],
+                        key=lambda x: (x.get("round", 1), x["stem"])):
+            lp = m["loop"]
+            base = lp.get("baseline")
+            bd = f"{base['level_match_db']:+.1f} dB" if base else "--"
+            print(f"| `{m['stem']}` | r{m.get('round',1)} | {bd} | "
+                  f"{lp['xfade_s']:.1f} / {lp.get('tail_cut_s',0):.1f} s | "
+                  f"{lp['seam_after']['level_match_db']:+.1f} dB | "
+                  f"{'**yes**' if lp.get('repointed') else 'no'} |")
 
     print("\n#### Shipped music — `dynasty/dynasty/Resources/Audio/Music/`\n")
     total = sum(s["bytes"] for s in ship)

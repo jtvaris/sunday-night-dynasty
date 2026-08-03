@@ -17,7 +17,16 @@ Stage 2 for `generate_music.py`. Raw model output -> reviewable candidates:
 Outputs gen_music/<style>/<stem>.wav (24-bit master) + .m4a (review preview)
 and gen_music/manifest.json.
 
-Usage:  python3 post_music.py
+Usage:
+    python3 post_music.py                 # every raw take, manifest rewritten
+    python3 post_music.py r3_             # only stems containing "r3_",
+                                          # merged into the existing manifest
+
+The filter form exists because mastering is not free: the ambient-loop seam
+search renders up to 54 candidate folds per loop, so a full re-run costs
+minutes to re-derive results that are already in the manifest and are
+byte-identical (every step here is deterministic). Filtering keeps a new
+round's turnaround proportional to the new round.
 """
 
 from __future__ import annotations
@@ -28,6 +37,7 @@ import math
 import re
 import statistics
 import subprocess
+import sys
 from pathlib import Path
 
 import audio_common as ac
@@ -291,9 +301,14 @@ def best_loop(src: Path, dst: Path) -> dict:
 
 
 def main() -> None:
+    filters = [a for a in sys.argv[1:] if not a.startswith("-")]
     metas = sorted(RAW.glob("*/*.json"))
     if not metas:
         raise SystemExit("no raw takes — run generate_music.py first")
+    if filters:
+        metas = [m for m in metas if any(f in m.stem for f in filters)]
+        if not metas:
+            raise SystemExit(f"no raw takes match {filters}")
     OUT.mkdir(parents=True, exist_ok=True)
     manifest = []
 
@@ -377,8 +392,17 @@ def main() -> None:
                  + ("  RE-POINTED" if entry["loop"]["repointed"] else "")
                  if kind == "ambient_loop" else ""))
 
-    (OUT / "manifest.json").write_text(json.dumps(manifest, indent=2))
-    print(f"\nwrote {OUT/'manifest.json'}  ({len(manifest)} candidates)")
+    man_p = OUT / "manifest.json"
+    if filters and man_p.exists():
+        # Merge: keep every entry the filter did not touch, in its original
+        # order, so a partial re-run never silently shrinks the manifest that
+        # ship_music.py and music_licenses_block.py read.
+        fresh = {e["stem"]: e for e in manifest}
+        merged = [fresh.pop(e["stem"], e) for e in json.loads(man_p.read_text())]
+        merged += [e for e in manifest if e["stem"] in fresh]
+        manifest = merged
+    man_p.write_text(json.dumps(manifest, indent=2))
+    print(f"\nwrote {man_p}  ({len(manifest)} candidates)")
 
 
 if __name__ == "__main__":

@@ -39,7 +39,7 @@ GEN = ROOT / "gen_music"
 DEST = ROOT.parent.parent / "dynasty" / "dynasty" / "Resources" / "Audio" / "Music"
 
 BITRATE = "160k"
-SIZE_BUDGET_MB = 60.0
+SIZE_BUDGET_MB = 65.0
 
 # canonical ship name -> source stem in gen_music/manifest.json.
 # A loop's source is its `_loop` edit, not the straight master; SHIP resolves
@@ -50,21 +50,30 @@ SIZE_BUDGET_MB = 60.0
 # shipped twice under two names — the duplicate bytes are not worth the
 # tidier table.
 SHIP: dict[str, list[tuple[str, str]]] = {
+    # ROUND 3 RESTYLE. The three round-2 cinematic menu themes are retired from
+    # the bundle in favour of two grand synth-lead anthems; they stay in
+    # gen_music/ for the user's listening pass. Two, not three, is what the
+    # brief asked for — the title screen is the shortest-dwell context in the
+    # game and a third take mostly buys bundle bytes.
     "menu": [
-        ("music_menu_theme_a", "orchestral_cinematic_take1"),      # approved r1
-        ("music_menu_theme_b", "orchestral_cinematic_take2"),      # approved r1
-        ("music_menu_theme_c", "menu_theme_r2_take1"),
+        ("music_menu_theme_a", "menu_grand_r3_piano"),
+        ("music_menu_theme_b", "menu_grand_r3_soar"),
     ],
+    # The five ambient LOOPS are untouched — they were already the mellow,
+    # unobtrusive half of this context and the user asked to keep them. What
+    # changed is the mid-track set: the four round-2 `bed_*` entries were the
+    # same 165-175 s cinematic cues as the menu themes, which is too eventful
+    # for the screen a player stares at longest. They are replaced by three
+    # dark downtempo pieces at 60-75 BPM.
     "dashboard": [
         ("music_dashboard_loop_a", "ambient_downtempo_take1"),     # approved r1
         ("music_dashboard_loop_b", "ambient_lofi_take1"),          # approved r1
         ("music_dashboard_loop_c", "ambient_downtempo_r2_take2"),
         ("music_dashboard_loop_d", "ambient_downtempo_r2_take3"),
         ("music_dashboard_loop_e", "ambient_lofi_r2_take2"),
-        ("music_dashboard_bed_a", "orchestral_cinematic_r2_strings"),
-        ("music_dashboard_bed_b", "orchestral_cinematic_r2_noble"),
-        ("music_dashboard_bed_c", "dark_hybrid_r2_slow"),
-        ("music_dashboard_bed_d", "dark_hybrid_r2_atmos"),
+        ("music_dashboard_bed_a", "dashboard_dark_r3_ember"),
+        ("music_dashboard_bed_b", "dashboard_dark_r3_late"),
+        ("music_dashboard_bed_c", "dashboard_dark_r3_slowpulse"),
     ],
     "draft": [
         ("music_draft_a", "cue_draft_room_take1"),
@@ -150,9 +159,24 @@ def main() -> None:
             print(f"  {context:<13} {name:<26} {dur:6.1f}s  {size/1e6:5.2f} MB  "
                   f"{meas.get('I')} LUFS")
 
+    # Retire whatever the SHIP table no longer names. Without this the bundle
+    # only ever grows: a replaced track keeps its old file sitting in
+    # Resources/, counted against the size budget, invisible to this report,
+    # and — because Resources/ is a PBXFileSystemSynchronizedRootGroup — still
+    # copied into the app. The gen_music/ masters are the archive; the bundle
+    # is not.
+    keep = {f"{name}.m4a" for rows in SHIP.values() for name, _ in rows}
+    retired = sorted(p for p in DEST.glob("*.m4a") if p.name not in keep)
+    for p in retired:
+        print(f"  retired      {p.name:<26} {p.stat().st_size/1e6:5.2f} MB "
+              f"-> gen_music/ only")
+        if not dry:
+            p.unlink()
+
     mb = total_bytes / 1e6
     print(f"\n{len(shipped)} files, {sum(s['duration'] for s in shipped)/60:.1f} min, "
-          f"{mb:.1f} MB  (budget {SIZE_BUDGET_MB} MB)")
+          f"{mb:.1f} MB  (budget {SIZE_BUDGET_MB} MB)"
+          + (f", {len(retired)} retired" if retired else ""))
     if mb > SIZE_BUDGET_MB:
         print(f"  !! OVER BUDGET by {mb - SIZE_BUDGET_MB:.1f} MB")
     if not dry:

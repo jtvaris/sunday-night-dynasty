@@ -1847,7 +1847,11 @@ private struct CompareTeamsSheet: View {
     NavigationStack {
         TeamSelectionView(
             playerName: "John Doe",
-            avatarID: "coach_m1",
+            // A photographed id from the shipping pool (`UserPortrait.all`).
+            // The old `"coach_m1"` here was one of the 20 hand-drawn portraits
+            // the avatar overhaul deleted — `UserPortraitView` still *resolves*
+            // a legacy id from an old save, but nothing new should mint one.
+            avatarID: "avatar_00000",
             coachingStyle: .tactician,
             selectedRole: .gm,
             selectedCapMode: .simple

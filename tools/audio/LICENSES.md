@@ -597,6 +597,12 @@ rejected.
 
 27 files, 48.6 min, **59.7 MB** (AAC-LC 160 kbps, 48 kHz stereo).
 
+> **Superseded by round 3.** The table below is what round 2 installed and is
+> kept as the record of that pass. Seven of these files are no longer in the
+> app: the menu and dashboard-bed rows were replaced or retired by the round-3
+> restyle. For what is in the bundle **today**, see "Music — round 3
+> (SHIPPED)" at the end of this file.
+
 | Ship name | Context | Source take | Round | Model | Seed | Dur | LUFS | Size |
 |---|---|---|---|---|---|---|---|---|
 | `music_menu_theme_a.m4a` | menu | `orchestral_cinematic_take1` | r1 | ace-step | 770301 | 89 s | -16.0 | 1.80 MB |
@@ -634,3 +640,223 @@ at a time, a shuffled no-repeat bag per context, a randomised silence gap
 between tracks (30-90 s on the dashboard), its own `musicEnabled` /
 `musicVolume` settings, and a hard suspend during the live coached game so the
 crowd bed and play SFX own the mix.
+
+---
+
+## Music — round 3 (SHIPPED, current)
+
+**This section is authoritative for what is in the app bundle today.** Round 3
+is a restyle, not a depth pass: it changes the character of the two contexts a
+player sits in longest and leaves the other five exactly as round 2 left them.
+Generated 2026-08-03 by `generate_music.py round3`, mastered by
+`post_music.py r3_`, checked by `verify_music.py r3_`, installed by
+`ship_music.py`.
+
+### Licence position
+
+**Unchanged, and slightly improved.** All nine round-3 takes are
+`lucataco/ace-step` — Apache-2.0 upstream (ACE-Step/ACE-Step-v1-3.5B), no
+revenue cap, no attribution string. No Stable Audio Open material was
+generated in this round.
+
+The Stability AI Community Licence obligation therefore did not grow: it still
+attaches to exactly **7 of the 25 shipped files** — the five
+`music_dashboard_loop_*` and two `music_offseason_loop_*` ambient loops, all
+carried over untouched from rounds 1-2. The **$1M annual-revenue cap applies
+to those seven**. See "⚠ Licence caveat" in the Generated SFX section; nothing
+about it changed here except that the denominator got smaller.
+
+**Prompt policy.** The user described the menu target by reference to a
+well-known piece of film music. That reference was deliberately **not** put
+into any prompt. The prompts below name only style traits — tempo in BPM, key,
+instrumentation ("analog synthesizer lead", "orchestral string swells"), and
+affect ("nostalgic", "triumphant") — so what was asked of the model is a
+**genre**, not a work. Every prompt is reproduced verbatim in the table below;
+none contains a song title or an artist name.
+
+### What round 3 set out to do
+
+Two complaints, both about the same thing — the score not knowing its place.
+
+**Menu.** The round-2 menu themes are film-score cinematic: strings and horns
+doing gravitas. The user wanted the other kind of sports grandeur — a slow,
+hymn-like **synth lead** carrying a simple singable melody over orchestral
+swells, an early-1980s inspirational-sports-film sound. That is a different
+instrument doing a different job, not a better take of the same idea, so all
+four candidates were written to it: 72-84 BPM, major key, arpeggiated synth
+bed, slow triumphant build, 96-108 s.
+
+**Dashboard.** The round-2 dashboard "beds" were the same 165-175 s cinematic
+cues as the menu themes. On the screen a player stares at for twenty minutes
+at a stretch, a cue that builds to a brass peak is not background — it is an
+event, every time. The five 40-46 s ambient **loops** were never the problem
+and are untouched. The five new candidates are dark ambient-leaning downtempo:
+60-75 BPM, sparse percussion, warm low synths, melancholic-calm, no build,
+156-190 s.
+
+| Model | Takes | GPU time | Cost @ $0.000975/s |
+|---|---|---|---|
+| `lucataco/ace-step` | 9 | 103.1 s | $0.100 |
+| **Total** | **9** | **103.1 s** | **≈ $0.10** |
+
+Spend cap for this pass was $2. Rounds 1-3 together are ≈ $0.38. Replicate
+exposes no per-prediction cost field, so this is `predict_time × published
+L40S rate` summed over the prediction IDs in `gen_music/manifest.json`.
+
+### How the ship set was chosen
+
+`verify_music.py` (new in this round) asks two separate questions, and the
+distinction matters because nobody in this pipeline can listen to the output.
+
+**Decode sanity — a pass/fail defect check.** Does the AAC rendition decode
+end-to-end without error; is it the length the master claims; is there a
+silent hole in the middle (a model dropout); is one stereo channel dead; is
+there a DC offset or flat-topped clipping. **All nine takes passed**, with
+channel balance ≤ 1.6 dB, |DC| ≤ 0.0022, zero flat factor, and no interior
+silence. Every take mastered to exactly −16.0 LUFS with true peak between
+−1.5 and −3.7 dBTP.
+
+**Role fit — a ranking, not a gate.** Round 2 recorded a hard-won lesson: it
+ranked *style* by structural proxies (late peak, wide arc, dark centroid) and
+got it exactly backwards — the take the user liked best ranked last. Round 3
+does not repeat that. These proxies are used **only** because the round-3
+brief states its structural requirement in words that are directly
+measurable. "Nostalgic triumphant build" *is* peak position and build_db.
+"Darker, slower, a bit mellow" *is* spectral centroid and a flat arc. The
+metric is the brief restated, not a substitute for taste — and the two scores
+are deliberate inverses of each other, because the failure mode of a menu
+anthem (it never lifts) is the desired behaviour of a dashboard bed.
+
+| Take | Role | Peak pos | Build | Arc | Centroid | Score | Outcome |
+|---|---|---|---|---|---|---|---|
+| `menu_grand_r3_piano` | menu | 0.90 | +5.2 dB | 12.5 dB | 2903 Hz | **5.50** | **shipped** `music_menu_theme_a` |
+| `menu_grand_r3_soar` | menu | 0.99 | +4.3 dB | 9.7 dB | 4716 Hz | **5.35** | **shipped** `music_menu_theme_b` |
+| `menu_grand_r3_hymn` | menu | 0.50 | +0.9 dB | 8.1 dB | 618 Hz | 2.90 | candidate |
+| `menu_grand_r3_anthem` | menu | 0.36 | −0.5 dB | 9.7 dB | 1303 Hz | 2.27 | candidate |
+| `dashboard_dark_r3_ember` | dashboard | 0.47 | −0.6 dB | 14.9 dB | 899 Hz | **4.03** | **shipped** `music_dashboard_bed_a` |
+| `dashboard_dark_r3_late` | dashboard | 0.67 | +0.6 dB | 9.9 dB | 1721 Hz | **3.75** | **shipped** `music_dashboard_bed_b` |
+| `dashboard_dark_r3_slowpulse` | dashboard | 0.80 | −0.1 dB | 5.8 dB | 3599 Hz | **2.86** | **shipped** `music_dashboard_bed_c` |
+| `dashboard_dark_r3_drift` | dashboard | 0.60 | +2.7 dB | 7.4 dB | 4202 Hz | 1.16 | candidate |
+| `dashboard_dark_r3_hollow` | dashboard | 0.94 | +4.1 dB | 9.1 dB | 3905 Hz | 0.46 | candidate |
+
+Two of the two menu candidates asked for were shipped, and **three** dashboard
+beds rather than four. The brief allowed 3-4 and the fourth-placed candidate
+argued itself out: `dashboard_dark_r3_drift` scores 1.16, which is worse than
+three of the four round-2 beds it would be replacing (`_strings` 3.65,
+`_atmos` 2.88, `_slow` 2.72 on the same scale). It is bright (4202 Hz) and it
+builds (+2.7 dB) — the model did not follow the "dark, no build" prompt, and
+shipping it would have partly undone the point of the round. `_hollow` failed
+the same way harder, from the darkest prompt in the set. Both stay in
+`gen_music/` and are the swap-ins if a shipped bed is rejected by ear.
+
+### Round-3 takes — seed and prompt
+
+Reproducible from seed + prompt + the pinned version
+(`280fc4f9ee507577f880a167f639c02622421d8fecf492454320311217b688f1`). ACE-Step
+returns 320 kbps MP3, so these are lossy at source and the AAC ship encode is
+a second generation — same accepted trade-off as round 2, and the same
+remedy if a track is ever promoted to a foreground role: re-run the seed on a
+WAV-capable host.
+
+| File | Seed | Requested | Duration | LUFS | Prompt tags |
+|---|---|---|---|---|---|
+| `dashboard_dark_r3_drift` | 990201 | 176 s | 175.9 s | -16.0 | dark ambient downtempo, warm low analog synth bass, sparse rim clicks, slow deep sub pulse, distant pad wash, melancholic and calm, no build, constant level, front office at night, background underscore, instrumental, no vocals, 62 BPM, D minor |
+| `dashboard_dark_r3_ember` | 990202 | 168 s | 166.9 s | -16.0 | mellow dark downtempo, muted rhodes electric piano, soft brushed kick, dark warm synth pads, tape hiss texture, reflective and unhurried, steady understated groove, no dynamic swells, background music, instrumental, no vocals, 68 BPM, A minor |
+| `dashboard_dark_r3_hollow` | 990204 | 190 s | 187.5 s | -16.0 | dark ambient bed, sustained low drone, warm cello-like pad, almost no percussion, occasional soft sub thud, sombre and spacious, very slow, no melody, no build, empty stadium in the offseason, instrumental, no vocals, 60 BPM, C minor |
+| `dashboard_dark_r3_late` | 990203 | 182 s | 181.8 s | -16.0 | late night downtempo underscore, deep warm synth bass, sparse closed hi-hat, distant felt piano notes, smoky and melancholy, quiet and patient, steady loop feel, understated menu music, instrumental, no vocals, 72 BPM, F minor |
+| `dashboard_dark_r3_slowpulse` | 990205 | 158 s | 156.4 s | -16.0 | slow downtempo with a soft pulse, muffled kick drum, granular synth pad, warm low bass, sparse felt piano, quiet resolve, mellow and dark, unchanging intensity, background underscore, instrumental, no vocals, 75 BPM, G minor |
+| `menu_grand_r3_anthem` | 990101 | 96 s | 94.3 s | -16.0 | inspirational sports film main theme, slow heroic tempo, iconic analog synthesizer lead melody, simple memorable melody, lush orchestral string swells underneath, soft timpani heartbeat, nostalgic and triumphant, slow burn build to a soaring finish, wide reverb, uplifting, instrumental, no vocals, 76 BPM, D major |
+| `menu_grand_r3_hymn` | 990103 | 108 s | 106.5 s | -16.0 | hymn-like synthesizer anthem, slow majestic tempo, singing analog synth lead, sustained orchestral strings, distant french horns, soft cymbal swells, reverent and emotional, slow motion victory montage, nostalgic 1980s film score, instrumental, no vocals, 72 BPM, C major |
+| `menu_grand_r3_piano` | 990102 | 104 s | 103.7 s | -16.0 | grand inspirational anthem, stately piano ostinato, warm synthesizer lead doubling the melody, swelling string orchestra, gentle brass pad, noble and hopeful, patient build then a triumphant peak, vintage sports film score, instrumental, no vocals, 80 BPM, E flat major |
+| `menu_grand_r3_soar` | 990104 | 100 s | 99.0 s | -16.0 | triumphant synth and orchestra anthem, soaring lead synthesizer melody, arpeggiated synth bed, orchestral horn swells, rolling timpani, rising key change, euphoric and cinematic, builds steadily to a big major-key finish, instrumental, no vocals, 84 BPM, A major |
+
+### Replaced and retired
+
+Nothing was deleted. Every track named here is still in `gen_music/` with its
+seed, prompt and 24-bit master, and every one of them can be put back by
+editing one line of `SHIP` in `ship_music.py`. What changed is which files
+`ship_music.py` writes into the app — and `ship_music.py` now **prunes** the
+destination folder, because a bundle that only ever grows is how a replaced
+track keeps shipping invisibly.
+
+| Was | Source take | Now |
+|---|---|---|
+| `music_menu_theme_a` | `orchestral_cinematic_take1` (r1) | replaced by `menu_grand_r3_piano` |
+| `music_menu_theme_b` | `orchestral_cinematic_take2` (r1) | replaced by `menu_grand_r3_soar` |
+| `music_menu_theme_c` | `menu_theme_r2_take1` | **retired** — menu is a two-track playlist now |
+| `music_dashboard_bed_a` | `orchestral_cinematic_r2_strings` | replaced by `dashboard_dark_r3_ember` |
+| `music_dashboard_bed_b` | `orchestral_cinematic_r2_noble` | replaced by `dashboard_dark_r3_late` |
+| `music_dashboard_bed_c` | `dark_hybrid_r2_slow` | replaced by `dashboard_dark_r3_slowpulse` |
+| `music_dashboard_bed_d` | `dark_hybrid_r2_atmos` | **retired** — dashboard mid-track set is three now |
+
+The five `music_dashboard_loop_*` and both `music_offseason_loop_*` ambient
+loops are byte-identical to round 2, as are draft, gameday, playoffs and
+championship. Six round-1/2 takes are consequently unshipped and available for
+reuse: `orchestral_cinematic_take1`, `orchestral_cinematic_take2`,
+`menu_theme_r2_take1`, `orchestral_cinematic_r2_strings`,
+`orchestral_cinematic_r2_noble`, `dark_hybrid_r2_slow`, `dark_hybrid_r2_atmos`
+— several of them strong cinematic pieces that lost their slot on role fit,
+not on quality, and are the obvious source if a new context ever needs a bed.
+
+### Shipped set — current
+
+Delivery format is **AAC-LC 160 kbps, 48 kHz stereo**, mastered to −16 LUFS /
+−1.5 dBTP. Budget for this pass was 65 MB.
+
+**25 files, 44.7 min, 54.8 MB** — 4.9 MB smaller than round 2's 59.7 MB
+despite the new material, because two slots were retired rather than refilled.
+
+| Ship name | Context | Source take | Round | Model | Seed | Dur | LUFS | Size |
+|---|---|---|---|---|---|---|---|---|
+| `music_menu_theme_a.m4a` | menu | `menu_grand_r3_piano` | r3 | ace-step | 990102 | 104 s | -16.1 | 2.10 MB |
+| `music_menu_theme_b.m4a` | menu | `menu_grand_r3_soar` | r3 | ace-step | 990104 | 99 s | -16.1 | 2.02 MB |
+| `music_dashboard_loop_a.m4a` | dashboard | `ambient_downtempo_take1` | r1 | stable-audio-open | 880301 | 44 s | -16.1 | 0.94 MB |
+| `music_dashboard_loop_b.m4a` | dashboard | `ambient_lofi_take1` | r1 | stable-audio-open | 880101 | 46 s | -16.0 | 0.99 MB |
+| `music_dashboard_loop_c.m4a` | dashboard | `ambient_downtempo_r2_take2` | r2 | stable-audio-open | 980301 | 45 s | -16.0 | 0.99 MB |
+| `music_dashboard_loop_d.m4a` | dashboard | `ambient_downtempo_r2_take3` | r2 | stable-audio-open | 980302 | 45 s | -16.0 | 0.92 MB |
+| `music_dashboard_loop_e.m4a` | dashboard | `ambient_lofi_r2_take2` | r2 | stable-audio-open | 980101 | 46 s | -16.0 | 0.93 MB |
+| `music_dashboard_bed_a.m4a` | dashboard | `dashboard_dark_r3_ember` | r3 | ace-step | 990202 | 167 s | -16.0 | 3.38 MB |
+| `music_dashboard_bed_b.m4a` | dashboard | `dashboard_dark_r3_late` | r3 | ace-step | 990203 | 182 s | -16.0 | 3.74 MB |
+| `music_dashboard_bed_c.m4a` | dashboard | `dashboard_dark_r3_slowpulse` | r3 | ace-step | 990205 | 156 s | -16.1 | 3.19 MB |
+| `music_draft_a.m4a` | draft | `cue_draft_room_take1` | r2 | ace-step | 970501 | 105 s | -16.0 | 2.14 MB |
+| `music_draft_b.m4a` | draft | `cue_draft_room_take2` | r2 | ace-step | 970503 | 100 s | -16.1 | 2.05 MB |
+| `music_draft_c.m4a` | draft | `cue_draft_room_take3` | r2 | ace-step | 970504 | 96 s | -16.0 | 1.98 MB |
+| `music_gameday_a.m4a` | gameday | `dark_hybrid_take1` | r1 | ace-step | 770201 | 90 s | -16.0 | 1.86 MB |
+| `music_gameday_b.m4a` | gameday | `dark_hybrid_take2` | r1 | ace-step | 770202 | 89 s | -16.1 | 1.80 MB |
+| `music_gameday_c.m4a` | gameday | `dark_hybrid_r2_aggro` | r2 | ace-step | 970404 | 156 s | -16.1 | 3.20 MB |
+| `music_gameday_d.m4a` | gameday | `dark_hybrid_r2_drive` | r2 | ace-step | 970402 | 151 s | -16.1 | 3.07 MB |
+| `music_gameday_e.m4a` | gameday | `gameday_build_take1` | r2 | ace-step | 970701 | 146 s | -16.1 | 2.97 MB |
+| `music_playoffs_a.m4a` | playoffs | `orchestral_cinematic_r2_dark` | r2 | ace-step | 970305 | 150 s | -16.0 | 3.04 MB |
+| `music_playoffs_b.m4a` | playoffs | `dark_hybrid_r2_crossover` | r2 | ace-step | 970405 | 160 s | -16.1 | 3.25 MB |
+| `music_playoffs_c.m4a` | playoffs | `playoffs_dark_take1` | r2 | ace-step | 970801 | 148 s | -16.0 | 3.03 MB |
+| `music_championship_a.m4a` | championship | `cue_championship_take1` | r2 | ace-step | 970502 | 106 s | -16.1 | 2.18 MB |
+| `music_championship_b.m4a` | championship | `orchestral_cinematic_r2_brass` | r2 | ace-step | 970303 | 161 s | -16.1 | 3.25 MB |
+| `music_offseason_loop_a.m4a` | offseason | `ambient_lofi_r2_take3` | r2 | stable-audio-open | 980102 | 45 s | -16.0 | 0.91 MB |
+| `music_offseason_loop_b.m4a` | offseason | `ambient_downtempo_r2_take4` | r2 | stable-audio-open | 980303 | 45 s | -16.1 | 0.90 MB |
+
+**Generated but not shipped (round 3):** `dashboard_dark_r3_drift`,
+`dashboard_dark_r3_hollow`, `menu_grand_r3_anthem`, `menu_grand_r3_hymn` —
+kept in `gen_music/` as candidates.
+
+### Playback and levels
+
+`MusicDirector.swift` (`dynasty/dynasty/UI/Common/`) is unchanged in
+behaviour: one player at a time, a shuffled no-repeat bag per context, a
+randomised silence gap between tracks (30-90 s on the dashboard, 8-20 s on the
+menu), and a hard suspend during the live coached game so the crowd bed and
+play SFX own the mix. Only the two playlist tables moved — menu is now two
+entries, dashboard is five loops plus three beds. Per-context `levelTrim` and
+`gapRange` are untouched.
+
+The **fresh-install volume defaults were lowered** in the same pass, at the
+user's request, and now live in one place — `AudioSettings.swift`, read by the
+Settings sliders, both directors, and the reset path:
+
+| Setting | Key | Was | Now |
+|---|---|---|---|
+| Music volume | `musicVolume` | 0.50 | **0.35** |
+| Game sounds volume | `soundVolume` | 0.70 | **0.60** |
+
+Existing installs are unaffected — both directors read through
+`UserDefaults.object(forKey:)` and only fall back to the default when the key
+has never been written, so a saved value always wins.
