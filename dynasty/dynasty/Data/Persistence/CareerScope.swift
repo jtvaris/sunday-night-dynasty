@@ -490,11 +490,30 @@ enum CareerScopedDefaults {
         "userProspectStars",
         "originalBoardPositions",
         "personalWorkoutsUsed",
+        // `WeekAdvancer.sendDraftCycleHeartbeat` — "<season>-<phase>" keys the
+        // scouting department's cycle letter has already been mailed for. The
+        // in-memory set is a process static and a relaunch therefore re-sent
+        // every letter for the phase being re-entered.
+        "draftCycleHeartbeatsSent",
+        // `RookieClassReveal.flagBase` — the season whose "Rookies Report to
+        // Camp" cover is still owed. Career state, and it was missing from this
+        // list: the flag is written with a career-scoped key but was never in
+        // the purge set, so it outlived the save that armed it and a brand new
+        // career could open on the previous one's reveal.
+        "rookieClassRevealPendingSeason",
         "scoutingPendingTab",
         "negotiationLockedPlayerIDs",
         // TODO §5.5 — `ContractIncentiveRegistry.defaultsKey`. Listed so a
         // deleted save purges its incentive packages with everything else.
         "contractIncentivePackages",
+        // `NegotiationThreadStore.defaultsKey` — the Contact Agent transcripts.
+        // Listed for the same reason: a deleted save must take its contract
+        // conversations with it.
+        "contractNegotiationThreads",
+        // `NegotiationLedger.defaultsKey` — the GM's negotiating reputation
+        // (lowball insults, broken-off talks, clean signings). Career state, so
+        // a deleted save must not hand its hardball reputation to the next one.
+        "negotiationHistoryLedger",
     ]
 
     /// Every read of a key above goes through `CareerScopedDefaults.scopedKey`

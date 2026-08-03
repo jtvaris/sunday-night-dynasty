@@ -1,4 +1,40 @@
 import SwiftUI
+import SwiftData
+
+// MARK: - Contract Negotiation (Contact Agent wave)
+//
+// A contract talk is a CONVERSATION, so this screen is a chat and nothing else.
+//
+// What changed and why:
+//
+// 1. ONE entry, everywhere. `ContactAgentEntry` is the only door in, and it
+//    never reveals willingness — a hidden "Extend Contract" button used to tell
+//    the user the answer before he asked the question. Everyone can be called.
+//
+// 2. The agent speaks first, in character. A client who will not talk says so
+//    HERE, with a reason ("My client has no interest in negotiating with this
+//    team right now — he hasn't taken a meaningful snap all year"), instead of
+//    the flat system banner the freeze-out used to print. The thread stays
+//    readable, and next league year opens a clean one.
+//
+// 3. Counters carry their number in the sentence. The offer composer is still
+//    structured — years, salary, bonus, guarantees, clauses — but every reply
+//    renders as speech, and the money in the speech is the money on the card
+//    below it, because both come from the same engine offer.
+//
+// 4. Nothing auto-exits. Signing appends the agent's closing line, then an
+//    inline signed card, and leaves a Done button. The user decides when the
+//    conversation is over — the old sheet dismissed itself on the frame the
+//    deal closed, so the line the agent said at the handshake was never read.
+//
+// 5. The tone of the close is written to the man. A smooth close at his number
+//    is a small morale lift and a nudge toward `.driven`; a grinding close well
+//    under his ask costs a few points of morale and leaves a "wants more" note
+//    that the roster keeps showing.
+//
+// OWNERSHIP: this file writes copy and persists the transcript. Every number in
+// it comes out of `ContractNegotiationEngine` — the opening demand, the
+// counters, the accept/walk/break-off verdicts. Nothing here prices a contract.
 
 struct ContractNegotiationView: View {
 
@@ -8,18 +44,22 @@ struct ContractNegotiationView: View {
     var onDealCompleted: ((NegotiationOffer) -> Void)?
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
 
     // MARK: - State
 
-    @State private var messages: [NegotiationMessage] = []
-    @State private var currentOffer: NegotiationOffer = NegotiationOffer(
-        years: 2, annualSalary: 5000, signingBonus: 0, guaranteedPercent: 30, noTradeClause: false
-    )
-    @State private var latestAgentOffer: NegotiationOffer?
-    @State private var outcome: NegotiationOutcome = .pending
-    @State private var roundNumber: Int = 0
+    /// The persisted conversation. `nil` only before the first load pass.
+    @State private var thread: NegotiationThread?
+    @State private var season: Int = 0
+    @State private var currentWeek: Int = 0
+    @State private var team: Team?
+    @State private var career: Career?
+    /// `DraftReputation.ownerTrust` — a separate row, so it is fetched
+    /// separately and defaults to the neutral 70 the row is created with.
+    @State private var ownerTrust: Int = 70
     @State private var scrollTarget: UUID?
     @State private var showYearlyBreakdown = false
+    @State private var didLoad = false
 
     // Offer builder state
     @State private var offerYears: Int = 2
@@ -54,10 +94,12 @@ struct ContractNegotiationView: View {
                 chatArea
                 if isNegotiationActive {
                     offerBuilder
+                } else {
+                    closingBar
                 }
             }
         }
-        .navigationTitle("Contract Negotiation")
+        .navigationTitle("Contact Agent")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbar {
@@ -66,21 +108,128 @@ struct ContractNegotiationView: View {
                     .foregroundStyle(Color.textSecondary)
             }
         }
-        .onAppear { startNegotiation() }
+        .task { loadIfNeeded() }
     }
 
-    private var isNegotiationActive: Bool {
-        if case .pending = outcome { return true }
-        return false
-    }
+    private var isNegotiationActive: Bool { thread?.isOpen ?? false }
 
-    // MARK: - Agent Persona (R22)
+    // MARK: - Agent Identity
 
     /// Deterministic agent persona for this player (derived from player.id).
     private var agentPersona: AgentPersona { AgentPersona.forPlayer(id: player.id) }
 
     /// Deterministic agent name for this player.
     private var agentName: String { AgentPersona.agentName(for: player.id) }
+
+    /// The character the persona speaks in.
+    private var agentVoice: AgentVoice { agentPersona.voice(for: player.id) }
+
+    /// Rounds the agent has left before his patience runs out. Presentation of
+    /// the engine's own `ContractDemand.maxRounds` — a lowball that draws the
+    /// insulted line burns one of these, which is what "the ask hardens" looks
+    /// like from the GM's chair.
+    private var roundsRemaining: Int {
+        max(0, liveDemand.maxRounds - (thread?.round ?? 0))
+    }
+
+    // MARK: - Economy Inputs
+    //
+    // Everything below is read from the world and handed to the engine. The
+    // chat computes no money: it supplies the league's cap, the club's season
+    // and the user's standing, and the demand model prices the man.
+
+    /// The league's ACTUAL cap. Defaulting to 265 000 — which is what every
+    /// call from this screen used to do — meant that by season 10 the agent
+    /// quoted season-1 money while the free-agency screen and the AI market
+    /// quoted the real number.
+    private var salaryCap: Int { team?.salaryCap ?? 265_000 }
+
+    private var capMode: CapMode { career?.capMode ?? .simple }
+
+    /// What the league knows about this front office. Previously never
+    /// constructed at all, so `gmAdjustment` was identically zero on every
+    /// shipped negotiation and the whole five-line breakdown — plus the
+    /// `NegotiationLedger` feeding it — was write-only.
+    private var gmStanding: GMStanding {
+        guard let career else { return .neutral }
+        return GMStanding.from(career: career, ownerTrust: ownerTrust)
+    }
+
+    /// The club and the season, as the demand model reads them.
+    private var negotiationSituation: NegotiationSituation {
+        let wins = team?.wins ?? 0
+        let losses = team?.losses ?? 0
+        let played = wins + losses
+        // "Contender" is the club's own record, not a prediction: two-thirds of
+        // a season's games won, once there is enough of a season to say so.
+        let isContender = played >= 6 && Double(wins) / Double(max(1, played)) >= 0.65
+        return ContractNegotiationEngine.situation(
+            for: player,
+            season: season,
+            teamWins: wins,
+            teamLosses: losses,
+            weeksPlayed: currentWeek,
+            isContender: isContender
+        )
+    }
+
+    /// The agent's standing demand, priced for THIS club in THIS season with
+    /// the lowballs this thread has already absorbed.
+    private var liveDemand: ContractDemand {
+        ContractNegotiationEngine.demand(
+            player: player,
+            negotiationType: negotiationType,
+            salaryCap: salaryCap,
+            situation: negotiationSituation,
+            standing: gmStanding,
+            insultCount: thread?.insultCount ?? 0
+        )
+    }
+
+    // MARK: - Cap Gate
+
+    /// The offer as the composer currently has it.
+    private var builderOffer: NegotiationOffer {
+        NegotiationOffer(
+            years: offerYears,
+            annualSalary: offerSalary,
+            signingBonus: offerBonus,
+            guaranteedPercent: offerGuaranteed,
+            noTradeClause: false,
+            incentives: activeIncentives
+        )
+    }
+
+    /// What signing THIS deal would cost the club against the cap, net of what
+    /// it is already carrying for the man. An extension replaces a salary that
+    /// is already on the books; a free agent is a new charge in full.
+    private func capCharge(for offer: NegotiationOffer) -> Int {
+        negotiationType == .extend
+            ? offer.annualCapHit - player.annualSalary
+            : offer.annualCapHit
+    }
+
+    /// Whether the club can actually fit a deal. **This is the cap gate the
+    /// chat never had** — `teamCapSpace` used to be threaded through four call
+    /// sites into an engine parameter whose body ignored it, so a club with
+    /// $2M of room could sign a $75M/yr quarterback in the composer.
+    private func exceedsCap(_ offer: NegotiationOffer) -> Bool {
+        guard capMode != .sandbox else { return false }
+        return capCharge(for: offer) > teamCapSpace
+    }
+
+    private var builderExceedsCap: Bool { exceedsCap(builderOffer) }
+
+    private var pendingOfferExceedsCap: Bool {
+        guard let snapshot = thread?.pendingAgentOffer else { return false }
+        return exceedsCap(snapshot.offer)
+    }
+
+    /// The bonus ceiling. Unbounded before, and because only `annualSalary` was
+    /// ever written to the player, a $500K salary with a $200M bonus read as a
+    /// $50.5M/yr offer to the agent and as the veteran minimum to the league.
+    /// Half the deal's value is the outer edge of a real signing bonus.
+    private var maxBonus: Int { max(bonusStep, offerSalary * max(1, offerYears)) }
 
     // MARK: - Player Header
 
@@ -109,7 +258,7 @@ struct ContractNegotiationView: View {
                             .foregroundStyle(Color.textSecondary)
                     }
                 }
-                // R22: agent identity + negotiation style
+                // Agent identity: who he is, how he bargains, how he talks.
                 HStack(spacing: 6) {
                     Image(systemName: agentPersona.symbolName)
                         .font(.system(size: 10))
@@ -123,10 +272,22 @@ struct ContractNegotiationView: View {
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(personaColor.opacity(0.12), in: Capsule())
+                    Text(agentVoice.label)
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(Color.textTertiary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.backgroundTertiary, in: Capsule())
                 }
-                Text(agentPersona.styleDescription)
-                    .font(.caption2)
-                    .foregroundStyle(Color.textTertiary)
+                if isNegotiationActive {
+                    Text("\(agentPersona.styleDescription)  ·  \(roundsRemaining) round\(roundsRemaining == 1 ? "" : "s") of patience left")
+                        .font(.caption2)
+                        .foregroundStyle(roundsRemaining <= 1 ? Color.warning : Color.textTertiary)
+                } else {
+                    Text(agentPersona.styleDescription)
+                        .font(.caption2)
+                        .foregroundStyle(Color.textTertiary)
+                }
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 4) {
@@ -153,7 +314,7 @@ struct ContractNegotiationView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 12) {
-                    ForEach(messages) { message in
+                    ForEach(thread?.messages ?? []) { message in
                         chatBubble(for: message)
                             .id(message.id)
                     }
@@ -173,30 +334,42 @@ struct ContractNegotiationView: View {
     // MARK: - Chat Bubble
 
     @ViewBuilder
-    private func chatBubble(for message: NegotiationMessage) -> some View {
-        switch message.sender {
-        case .agent:
-            agentBubble(message)
-        case .gm:
-            gmBubble(message)
-        case .system:
-            systemBubble(message)
+    private func chatBubble(for message: NegotiationThreadMessage) -> some View {
+        if message.isSignedCard {
+            signedCard(message)
+        } else {
+            switch message.sender {
+            case .agent:  agentBubble(message)
+            case .you:    gmBubble(message)
+            case .system: systemBubble(message)
+            }
         }
     }
 
-    private func agentBubble(_ message: NegotiationMessage) -> some View {
+    private func agentBubble(_ message: NegotiationThreadMessage) -> some View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 6) {
-                Text(agentName)
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(Color.textTertiary)
+                HStack(spacing: 6) {
+                    Text(thread?.agentName ?? agentName)
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(Color.textTertiary)
+                    if let tone = message.tone, let chip = toneChip(tone) {
+                        Text(chip.label)
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(chip.color)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(chip.color.opacity(0.14), in: Capsule())
+                    }
+                }
 
                 Text(message.text)
                     .font(.subheadline)
                     .foregroundStyle(Color.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
 
-                if let offer = message.offer {
-                    offerCard(offer, isAgent: true)
+                if let snapshot = message.offer {
+                    offerCard(snapshot.offer, isAgent: true)
                 }
             }
             .padding(12)
@@ -205,7 +378,10 @@ struct ContractNegotiationView: View {
                     .fill(Color.backgroundSecondary)
                     .overlay(
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+                            .strokeBorder(
+                                message.tone == .insulted ? Color.danger.opacity(0.45) : Color.surfaceBorder,
+                                lineWidth: 1
+                            )
                     )
             )
             .frame(maxWidth: 500, alignment: .leading)
@@ -214,7 +390,7 @@ struct ContractNegotiationView: View {
         }
     }
 
-    private func gmBubble(_ message: NegotiationMessage) -> some View {
+    private func gmBubble(_ message: NegotiationThreadMessage) -> some View {
         HStack(alignment: .top) {
             Spacer(minLength: 60)
 
@@ -227,9 +403,10 @@ struct ContractNegotiationView: View {
                     .font(.subheadline)
                     .foregroundStyle(Color.textPrimary)
                     .multilineTextAlignment(.trailing)
+                    .fixedSize(horizontal: false, vertical: true)
 
-                if let offer = message.offer {
-                    offerCard(offer, isAgent: false)
+                if let snapshot = message.offer {
+                    offerCard(snapshot.offer, isAgent: false)
                 }
             }
             .padding(12)
@@ -245,7 +422,7 @@ struct ContractNegotiationView: View {
         }
     }
 
-    private func systemBubble(_ message: NegotiationMessage) -> some View {
+    private func systemBubble(_ message: NegotiationThreadMessage) -> some View {
         Text(message.text)
             .font(.caption.weight(.medium))
             .foregroundStyle(Color.textTertiary)
@@ -253,6 +430,53 @@ struct ContractNegotiationView: View {
             .padding(.vertical, 8)
             .frame(maxWidth: .infinity)
             .multilineTextAlignment(.center)
+    }
+
+    /// The receipt, rendered INSIDE the thread rather than as a screen the sheet
+    /// jumps to — the conversation is the record, so the signature belongs in it.
+    private func signedCard(_ message: NegotiationThreadMessage) -> some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Color.success)
+                Text("Contract Signed")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(Color.success)
+            }
+
+            Text(message.text)
+                .font(.caption)
+                .foregroundStyle(Color.textSecondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let snapshot = message.offer {
+                offerCard(snapshot.offer, isAgent: false)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: 500)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.success.opacity(0.10))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(Color.success.opacity(0.35), lineWidth: 1)
+                )
+        )
+        .frame(maxWidth: .infinity)
+    }
+
+    /// The badge on an agent line that names the tone it was said in. Only the
+    /// two tones a GM needs to READ are chipped — the rest is in the wording.
+    private func toneChip(_ tone: AgentToneKey) -> (label: String, color: Color)? {
+        switch tone {
+        case .insulted: return ("Ask hardened", .danger)
+        case .refusing: return ("Refusing", .warning)
+        case .eager:    return ("Ready to sign", .success)
+        default:        return nil
+        }
     }
 
     // MARK: - Offer Card (inside bubble)
@@ -314,6 +538,64 @@ struct ContractNegotiationView: View {
         }
     }
 
+    // MARK: - Closing Bar
+
+    /// What replaces the composer once the conversation is over. Deliberately a
+    /// button and not an automatic dismiss: whether the talk ended in a
+    /// signature, a walk-out or a door closed in your face, the last thing the
+    /// agent said is worth reading before the screen goes away.
+    private var closingBar: some View {
+        VStack(spacing: 10) {
+            Rectangle()
+                .fill(Color.surfaceBorder)
+                .frame(height: 1)
+
+            if let note = thread?.lingeringNote {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.bubble.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.warning)
+                    Text(note)
+                        .font(.caption)
+                        .foregroundStyle(Color.textSecondary)
+                    Spacer()
+                }
+                .padding(.horizontal, 4)
+            }
+
+            if let status = thread?.status, status == .refused || status == .brokenOff {
+                HStack(spacing: 6) {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.textTertiary)
+                    Text("You can reach out again next league year.")
+                        .font(.caption)
+                        .foregroundStyle(Color.textTertiary)
+                    Spacer()
+                }
+                .padding(.horizontal, 4)
+            }
+
+            Button {
+                dismiss()
+            } label: {
+                Text("Done")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(Color.backgroundPrimary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(Color.accentGold)
+                    )
+            }
+            .accessibilityHint("Closes the conversation. The thread stays saved.")
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(Color.backgroundSecondary)
+    }
+
     // MARK: - Offer Builder
 
     private var offerBuilder: some View {
@@ -353,8 +635,9 @@ struct ContractNegotiationView: View {
                     .disabled(offerBonus <= 0)
                 } plus: {
                     stepperButton(systemImage: "plus") {
-                        offerBonus += bonusStep
+                        offerBonus = min(maxBonus, offerBonus + bonusStep)
                     }
+                    .disabled(offerBonus >= maxBonus)
                 }
 
                 // Guaranteed %
@@ -415,17 +698,33 @@ struct ContractNegotiationView: View {
     }
 
     private var capPreview: some View {
-        let capHit = offerYears > 0 ? offerSalary + offerBonus / offerYears : offerSalary
-        let totalValue = offerSalary * offerYears + offerBonus
+        let offer = builderOffer
+        let charge = capCharge(for: offer)
 
-        return HStack {
-            Text("Cap Hit: \(formatMillions(capHit))/yr")
-                .font(.caption.weight(.semibold).monospacedDigit())
-                .foregroundStyle(Color.accentGold)
-            Spacer()
-            Text("Total: \(formatMillions(totalValue))")
-                .font(.caption.weight(.semibold).monospacedDigit())
-                .foregroundStyle(Color.textSecondary)
+        return VStack(spacing: 4) {
+            HStack {
+                Text("Cap Hit: \(formatMillions(offer.annualCapHit))/yr")
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(Color.accentGold)
+                Spacer()
+                Text("Total: \(formatMillions(offer.totalValue))")
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(Color.textSecondary)
+            }
+
+            if capMode != .sandbox {
+                HStack(spacing: 6) {
+                    Image(systemName: builderExceedsCap ? "exclamationmark.triangle.fill" : "checkmark.circle")
+                        .font(.system(size: 10))
+                        .foregroundStyle(builderExceedsCap ? Color.danger : Color.textTertiary)
+                    Text(builderExceedsCap
+                         ? "Over the cap by \(formatMillions(charge - teamCapSpace)) — free up room before you offer this."
+                         : "Charges \(formatMillions(max(0, charge))) of your \(formatMillions(teamCapSpace)) in room.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(builderExceedsCap ? Color.danger : Color.textTertiary)
+                    Spacer()
+                }
+            }
         }
         .padding(.horizontal, 4)
     }
@@ -647,14 +946,14 @@ struct ContractNegotiationView: View {
             .accessibilityHint(showYearlyBreakdown ? "Collapse yearly breakdown" : "Expand yearly breakdown")
 
             if showYearlyBreakdown {
-                let currentOffer = NegotiationOffer(
+                let previewOffer = NegotiationOffer(
                     years: offerYears,
                     annualSalary: offerSalary,
                     signingBonus: offerBonus,
                     guaranteedPercent: offerGuaranteed,
                     noTradeClause: false
                 )
-                let breakdown = currentOffer.yearlyBreakdown(playerAge: player.age)
+                let breakdown = previewOffer.yearlyBreakdown(playerAge: player.age)
 
                 VStack(spacing: 0) {
                     // Header row
@@ -734,19 +1033,23 @@ struct ContractNegotiationView: View {
             Button {
                 submitCounterOffer()
             } label: {
-                Text("Counter Offer")
+                Text("Send Offer")
                     .font(.subheadline.weight(.bold))
                     .foregroundStyle(Color.backgroundPrimary)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 12)
                     .background(
                         RoundedRectangle(cornerRadius: 10)
-                            .fill(Color.accentGold)
+                            .fill(builderExceedsCap ? Color.textTertiary : Color.accentGold)
                     )
             }
+            .disabled(builderExceedsCap)
+            .accessibilityHint(builderExceedsCap
+                               ? "Disabled: the offer exceeds your available cap space."
+                               : "Sends this package to the agent.")
 
             // Accept (only when agent has made an offer)
-            if latestAgentOffer != nil {
+            if thread?.pendingAgentOffer != nil {
                 Button {
                     acceptAgentOffer()
                 } label: {
@@ -757,9 +1060,13 @@ struct ContractNegotiationView: View {
                         .padding(.vertical, 12)
                         .background(
                             RoundedRectangle(cornerRadius: 10)
-                                .fill(Color.success)
+                                .fill(pendingOfferExceedsCap ? Color.textTertiary : Color.success)
                         )
                 }
+                .disabled(pendingOfferExceedsCap)
+                .accessibilityHint(pendingOfferExceedsCap
+                                   ? "Disabled: the agent's number exceeds your available cap space."
+                                   : "Signs the agent's standing offer.")
             }
 
             // Walk away
@@ -779,206 +1086,463 @@ struct ContractNegotiationView: View {
         }
     }
 
-    // MARK: - Actions
+    // MARK: - Load
 
-    private func startNegotiation() {
-        // R22: a hardliner who was lowballed earlier this offseason refuses
-        // to come back to the table.
+    private func loadIfNeeded() {
+        guard !didLoad else { return }
+        didLoad = true
+
+        loadContext()
+
+        // An existing conversation from THIS league year is resumed verbatim —
+        // EXCEPT a refusal the man has since changed his mind about. A stance is
+        // a mood, and freezing the verdict in the transcript meant a player
+        // whose morale climbed from 44 to 70 in week 8 still read "Not talking"
+        // for the rest of the season, with no lever he could pull.
+        if let existing = NegotiationThreadStore.liveThread(for: player, season: season) {
+            let stanceLifted = existing.status == .refused
+                && !NegotiationLockRegistry.isLocked(player.id)
+                && !liveDemand.isRefusing
+            if !stanceLifted {
+                thread = existing
+                restoreBuilder(from: existing)
+                scrollTarget = existing.messages.last?.id
+                return
+            }
+        }
+
+        openNewThread()
+    }
+
+    /// Season, week, team and the user's standing — everything the demand model
+    /// reads about the world, fetched once.
+    private func loadContext() {
+        guard let careerID = player.careerID else { return }
+        if let found = (try? modelContext.fetch(FetchDescriptor<Career>()))?
+            .first(where: { $0.id == careerID }) {
+            career = found
+            season = found.currentSeason
+            currentWeek = found.currentWeek
+        }
+        if let teamID = player.teamID {
+            team = (try? modelContext.fetch(FetchDescriptor<Team>()))?
+                .first(where: { $0.id == teamID && $0.careerID == careerID })
+        }
+        // Owner trust lives on its own row; the most recent one wins, and its
+        // absence means the owner has never reacted to anything — which must
+        // cost nothing, hence `GMStanding`'s neutral 70.
+        if let reputation = (try? modelContext.fetch(FetchDescriptor<DraftReputation>()))?
+            .filter({ $0.careerID == careerID })
+            .max(by: { $0.seasonYear < $1.seasonYear }) {
+            ownerTrust = reputation.ownerTrust
+        }
+    }
+
+    private func openNewThread() {
+        var newThread = NegotiationThread(
+            playerID: player.id,
+            playerName: player.fullName,
+            agentName: agentName,
+            persona: agentPersona,
+            typeRaw: negotiationType == .extend ? "extend" : "freeAgent",
+            season: season
+        )
+
+        // 1. A hardliner who was lowballed earlier this offseason. The freeze-out
+        //    is a REFUSAL like any other now — he says it himself instead of the
+        //    screen printing a banner at the user.
         if NegotiationLockRegistry.isLocked(player.id) {
-            let sysMsg = NegotiationMessage(
-                sender: .system,
-                text: "\(agentName) is not returning your calls. \(player.fullName)'s camp cut off negotiations for the rest of the offseason.",
-                offer: nil
-            )
-            messages.append(sysMsg)
-            outcome = .negotiationsBrokenOff
-            scrollTarget = sysMsg.id
+            newThread.append(NegotiationThreadMessage(
+                sender: .agent,
+                text: AgentDialogue.brokenOffLine(voice: agentVoice, ctx: baseContext()),
+                round: 0,
+                tone: .refusing
+            ))
+            newThread.status = .brokenOff
+            commit(newThread)
             return
         }
 
-        let result = ContractNegotiationEngine.generateOpeningDemand(
+        // 2. A client with no interest in this building right now.
+        //
+        //    The verdict comes from `ContractNegotiationEngine.refusalVerdict`
+        //    via the demand model, NOT from `AgentRefusalReason.evaluate`
+        //    directly. Calling the stance model straight was what made the
+        //    engine's own second door — a mercenary who will not sign up to lose
+        //    for a front office he does not rate — unreachable, and with it the
+        //    "a bad GM gets more refusals" half of the feature. The demand model
+        //    also owns the extension-only rule (a free agent taking meetings is
+        //    by definition at the table).
+        let opening = ContractNegotiationEngine.generateOpeningDemand(
             player: player,
             negotiationType: negotiationType,
-            teamCapSpace: teamCapSpace
+            salaryCap: salaryCap,
+            situation: negotiationSituation,
+            standing: gmStanding
         )
 
-        let agentMessage = NegotiationMessage(
+        if opening.demand.isRefusing, let reason = opening.demand.refusalReason {
+            newThread.append(NegotiationThreadMessage(
+                sender: .agent,
+                text: AgentDialogue.refusalLine(voice: agentVoice, reason: reason, ctx: baseContext()),
+                round: 0,
+                tone: .refusing
+            ))
+            newThread.status = .refused
+            newThread.refusalReasonRaw = reason.rawValue
+            commit(newThread)
+            return
+        }
+
+        // 3. He'll talk. The engine prices the ask; the agent says it out loud.
+        let ask = opening.offer
+
+        newThread.openingAsk = NegotiationOfferSnapshot(ask)
+        newThread.pendingAgentOffer = NegotiationOfferSnapshot(ask)
+        newThread.append(NegotiationThreadMessage(
             sender: .agent,
-            text: result.message,
-            offer: result.offer
-        )
-        messages.append(agentMessage)
-        latestAgentOffer = result.offer
-        scrollTarget = agentMessage.id
+            text: AgentDialogue.opener(
+                voice: agentVoice,
+                isExtension: negotiationType == .extend,
+                ctx: context(ask: ask)
+            ),
+            offer: NegotiationOfferSnapshot(ask),
+            round: 0,
+            // The engine's own opening frame, not a second copy of the rule.
+            tone: opening.demand.personaTone
+        ))
 
-        // Pre-fill GM offer slightly below agent's ask
-        let agentOffer = result.offer
-        offerYears = agentOffer.years
-        offerSalary = roundToStep(Int(Double(agentOffer.annualSalary) * 0.85))
-        offerBonus = roundToStep(Int(Double(agentOffer.signingBonus) * 0.75))
-        offerGuaranteed = max(0, agentOffer.guaranteedPercent - 10)
+        // Pre-fill the composer slightly below the ask.
+        offerYears = ask.years
+        offerSalary = roundToStep(Int(Double(ask.annualSalary) * 0.85))
+        offerBonus = roundToStep(Int(Double(ask.signingBonus) * 0.75))
+        offerGuaranteed = max(0, ask.guaranteedPercent - 10)
 
         // §5.5: the clause menu is priced off the agent's ASK, not off the
         // pre-filled lowball, so the bonuses stay stable while the GM works the
-        // salary dial. Every clause starts switched OFF — incentives are a move
-        // the GM chooses to make.
+        // salary dial. Every clause starts switched OFF.
         incentiveMenu = ContractEngine.suggestedIncentives(
             player: player,
-            annualSalaryK: agentOffer.annualSalary
+            annualSalaryK: ask.annualSalary
         )
         enabledIncentiveIDs = []
+
+        commit(newThread)
     }
 
+    /// Puts the composer back where a resumed conversation left it.
+    private func restoreBuilder(from existing: NegotiationThread) {
+        let reference = existing.pendingAgentOffer ?? existing.openingAsk
+        guard let reference else { return }
+        offerYears = reference.years
+        offerSalary = roundToStep(Int(Double(reference.annualSalary) * 0.9))
+        offerBonus = roundToStep(Int(Double(reference.signingBonus) * 0.8))
+        offerGuaranteed = max(0, reference.guaranteedPercent - 5)
+
+        if let ask = existing.openingAsk {
+            incentiveMenu = ContractEngine.suggestedIncentives(
+                player: player,
+                annualSalaryK: ask.annualSalary
+            )
+        }
+        enabledIncentiveIDs = []
+        absorbAgentIncentives(reference.incentives)
+    }
+
+    // MARK: - Actions
+
     private func submitCounterOffer() {
-        roundNumber += 1
+        guard var live = thread, live.isOpen, let askSnapshot = live.pendingAgentOffer else { return }
+        let agentAsk = askSnapshot.offer
 
-        let gmOffer = NegotiationOffer(
-            years: offerYears,
-            annualSalary: offerSalary,
-            signingBonus: offerBonus,
-            guaranteedPercent: offerGuaranteed,
-            noTradeClause: false,
-            incentives: activeIncentives
-        )
+        let gmOffer = builderOffer
+        // The cap gate. The button is disabled here too, so this is the belt to
+        // that braces — but a negotiation is the one screen where "the club
+        // cannot fit this" has to be unconditional.
+        guard !exceedsCap(gmOffer) else { return }
 
-        // Add GM message
-        let gmMessage = NegotiationMessage(
-            sender: .gm,
-            text: roundNumber == 1
-                ? "Here's our opening offer for \(player.firstName)."
-                : "We've adjusted the numbers. Take a look.",
-            offer: gmOffer
-        )
-        messages.append(gmMessage)
-        scrollTarget = gmMessage.id
+        live.round += 1
+        let round = live.round
 
-        guard let agentAsk = latestAgentOffer else { return }
+        live.append(NegotiationThreadMessage(
+            sender: .you,
+            text: AgentDialogue.gmOfferLine(round: round, playerFirst: player.firstName),
+            offer: NegotiationOfferSnapshot(gmOffer),
+            round: round
+        ))
 
-        // Evaluate
+        // The engine decides — the verdict, the counter AND the tone it is
+        // spoken in. Everything below only chooses the words.
         let result = ContractNegotiationEngine.evaluateCounterOffer(
             gmOffer: gmOffer,
             player: player,
             previousAgentOffer: agentAsk,
-            roundNumber: roundNumber,
-            negotiationType: negotiationType
+            roundNumber: round,
+            negotiationType: negotiationType,
+            salaryCap: salaryCap,
+            situation: negotiationSituation,
+            standing: gmStanding,
+            insultCount: live.insultCount ?? 0
         )
+        // Persisted so the patience cost of a lowball survives the round: the
+        // demand is a pure function, so a count that lives only in this call is
+        // a count that is always zero.
+        live.insultCount = result.insultCount
 
-        // Add agent response after a brief delay for readability
-        let agentMessage = NegotiationMessage(
-            sender: .agent,
-            text: result.message,
-            offer: result.counterOffer
-        )
-        messages.append(agentMessage)
+        switch result.outcome {
+        case .dealReached(let finalOffer):
+            close(&live, with: finalOffer, round: round, demand: result.demand)
 
-        if let counter = result.counterOffer {
-            latestAgentOffer = counter
-            // §5.5: an agent who wrote his own clauses gets them shown in the
-            // builder — otherwise "Accept" would sign terms the GM never saw.
+        case .negotiationsBrokenOff:
+            live.append(NegotiationThreadMessage(
+                sender: .agent,
+                text: AgentDialogue.brokenOffLine(voice: agentVoice, ctx: context(ask: agentAsk, gmOffer: gmOffer)),
+                round: round,
+                tone: .insulted
+            ))
+            live.status = .brokenOff
+            live.pendingAgentOffer = nil
+            NegotiationLockRegistry.lock(player.id)
+            live.append(NegotiationThreadMessage(
+                sender: .system,
+                text: "\(live.agentName) has cut off contract talks for \(player.fullName) until next league year.",
+                round: round
+            ))
+
+        case .playerWalked:
+            live.append(NegotiationThreadMessage(
+                sender: .agent,
+                text: AgentDialogue.walkAwayLine(voice: agentVoice, ctx: context(ask: agentAsk, gmOffer: gmOffer)),
+                round: round,
+                tone: .hardline
+            ))
+            live.status = .playerWalked
+            live.pendingAgentOffer = nil
+
+        case .pending, .walkedAway:
+            guard let counter = result.counterOffer else {
+                // The engine kept talks open without a counter — nothing to say
+                // that the transcript does not already show.
+                break
+            }
+            // The engine's verdict, not a second opinion computed here.
+            let tone = result.tone
+            let ctx = context(ask: counter, gmOffer: gmOffer, rounds: round)
+            let text: String = {
+                // The one case the engine answers with structure rather than
+                // money: the deal is too long for the man's body.
+                if result.isYearsPushback {
+                    return AgentDialogue.yearsPushbackLine(
+                        voice: agentVoice,
+                        age: player.age,
+                        requestedYears: gmOffer.years,
+                        maxYears: ContractNegotiationEngine.maxContractYears(forAge: player.age),
+                        ctx: ctx
+                    )
+                }
+                return AgentDialogue.counterLine(voice: agentVoice, tone: tone, ctx: ctx)
+            }()
+
+            live.append(NegotiationThreadMessage(
+                sender: .agent,
+                text: text,
+                offer: NegotiationOfferSnapshot(counter),
+                round: round,
+                tone: tone
+            ))
+            live.pendingAgentOffer = NegotiationOfferSnapshot(counter)
             absorbAgentIncentives(counter.incentives)
         }
 
-        outcome = result.outcome
-        scrollTarget = agentMessage.id
-
-        // Handle terminal states
-        switch result.outcome {
-        case .dealReached(let finalOffer):
-            let sysMsg = NegotiationMessage(
-                sender: .system,
-                text: dealSummary(finalOffer),
-                offer: nil
-            )
-            messages.append(sysMsg)
-            scrollTarget = sysMsg.id
-            commitIncentives(finalOffer)
-            onDealCompleted?(finalOffer)
-
-        case .playerWalked:
-            let sysMsg = NegotiationMessage(
-                sender: .system,
-                text: "\(player.fullName)'s agent has ended negotiations.",
-                offer: nil
-            )
-            messages.append(sysMsg)
-            scrollTarget = sysMsg.id
-
-        case .negotiationsBrokenOff:
-            // R22: persist the freeze-out for the rest of the offseason.
-            NegotiationLockRegistry.lock(player.id)
-            let sysMsg = NegotiationMessage(
-                sender: .system,
-                text: "\(agentName) has cut off all contract talks for \(player.fullName) until next offseason.",
-                offer: nil
-            )
-            messages.append(sysMsg)
-            scrollTarget = sysMsg.id
-
-        default:
-            break
-        }
+        commit(live)
     }
 
     private func acceptAgentOffer() {
-        guard let agentOffer = latestAgentOffer else { return }
+        guard var live = thread, live.isOpen, let snapshot = live.pendingAgentOffer else { return }
+        guard !exceedsCap(snapshot.offer) else { return }
+        let round = live.round
 
-        let gmMsg = NegotiationMessage(
-            sender: .gm,
-            text: "We accept your terms. Let's get this done.",
-            offer: agentOffer
-        )
-        messages.append(gmMsg)
-
-        let sysMsg = NegotiationMessage(
-            sender: .system,
-            text: dealSummary(agentOffer),
-            offer: nil
-        )
-        messages.append(sysMsg)
-
-        outcome = .dealReached(agentOffer)
-        scrollTarget = sysMsg.id
-        commitIncentives(agentOffer)
-        onDealCompleted?(agentOffer)
+        live.append(NegotiationThreadMessage(
+            sender: .you,
+            text: "We accept your terms. Let's get it signed.",
+            offer: snapshot,
+            round: round
+        ))
+        // This path does NOT go through `respond`, so the ledger write that
+        // lives there never fires — which is why the GM's negotiating
+        // reputation could only ever get worse: every insult was recorded and
+        // the most natural way to close a deal was not.
+        close(&live, with: snapshot.offer, round: round, demand: liveDemand, recordToLedger: true)
+        commit(live)
     }
 
-    /// Closing line — names the incentive ceiling when the deal has one, so the
+    private func walkAway() {
+        guard var live = thread, live.isOpen else { return }
+        live.append(NegotiationThreadMessage(
+            sender: .you,
+            text: "We're going to pass. Thank you for your time.",
+            round: live.round
+        ))
+        live.append(NegotiationThreadMessage(
+            sender: .system,
+            text: "You ended talks with \(player.fullName)'s camp.",
+            round: live.round
+        ))
+        live.status = .walkedAway
+        live.pendingAgentOffer = nil
+        commit(live)
+    }
+
+    // MARK: - Close
+
+    /// Signs the deal: the agent's closing line in the tone of the JOURNEY, the
+    /// inline receipt, the clause commit, the host's contract write, and the
+    /// morale/motivation consequence. No dismiss — that is the user's call.
+    private func close(
+        _ live: inout NegotiationThread,
+        with offer: NegotiationOffer,
+        round: Int,
+        demand: ContractDemand,
+        recordToLedger: Bool = false
+    ) {
+        // ECONOMY owns the verdict; this file only decides how it is said and
+        // what it does to the man.
+        let openerPerYear = live.openingAsk.map { $0.offer.annualCapHit } ?? offer.annualCapHit
+        let tone = ContractNegotiationEngine.closeTone(
+            signedPerYear: offer.annualCapHit,
+            openingAskPerYear: openerPerYear,
+            rounds: round,
+            demand: demand
+        )
+        if recordToLedger { NegotiationLedger.recordSigning(tone: tone) }
+        let ctx = context(ask: offer, signed: offer, rounds: round)
+
+        live.append(NegotiationThreadMessage(
+            sender: .agent,
+            text: AgentDialogue.acceptLine(voice: agentVoice, tone: tone, ctx: ctx),
+            round: round,
+            tone: tone
+        ))
+        live.append(NegotiationThreadMessage(
+            sender: .system,
+            text: signedSummary(offer),
+            offer: NegotiationOfferSnapshot(offer),
+            round: round,
+            isSignedCard: true
+        ))
+
+        live.status = .signed
+        live.closeToneRaw = tone.rawValue
+        live.pendingAgentOffer = nil
+
+        // §5.5: the clauses ride onto the player here rather than in
+        // `onDealCompleted` — four screens present this view and each applies
+        // the money its own way, so a clause that only survived on some of those
+        // paths would be worse than no clause at all.
+        ContractIncentiveRegistry.set(offer.incentives, for: player)
+
+        if !live.moraleApplied {
+            live.moraleApplied = true
+            live.lingeringNote = applyCloseEffects(tone: tone, ctx: ctx)
+        }
+
+        onDealCompleted?(offer)
+    }
+
+    /// Tone -> morale/motivation. Modest by design: a negotiation moves a man's
+    /// head, it does not rebuild him.
+    ///
+    /// Returns the lingering note a begrudging close leaves behind, if any.
+    @discardableResult
+    private func applyCloseEffects(tone: AgentToneKey, ctx: AgentDialogue.Context) -> String? {
+        var note: String?
+        switch tone {
+        case .eager:
+            // Got his number, got it fast. Small lift, and he shows up with
+            // something to prove rather than a cheque to cash.
+            player.morale = max(1, min(100, player.morale + 5))
+            if player.motivationState != .driven {
+                player.motivationState = .driven
+            }
+        case .professional:
+            player.morale = max(1, min(100, player.morale + 2))
+        default:
+            // Ground down below his ask. He signs, and he remembers.
+            player.morale = max(1, min(100, player.morale - 4))
+            note = AgentDialogue.lingeringNote(ctx: ctx)
+        }
+        try? modelContext.save()
+        return note
+    }
+
+    // MARK: - Tone
+    //
+    // There is nothing here on purpose. Every tone in this screen —
+    // the opener's, each counter's and the close's — is
+    // `ContractNegotiationEngine`'s verdict, read off `ContractDemand`,
+    // `ChatVerdict.tone` and `closeTone(signedPerYear:…)` respectively.
+    //
+    // The three functions that used to live here re-derived it from
+    // `NegotiationOffer.totalValue` while the engine graded `annualCapHit`, and
+    // the two metrics disagreed in both directions: a shorter, richer package
+    // rendered as a red "Ask hardened" bubble on an offer the engine called
+    // professional, and a longer, thinner one rendered green on a hardline
+    // counter. The close was worse — it charged 4 points of morale and left a
+    // grudge note for deals the engine graded delighted.
+
+    // MARK: - Dialogue Context
+
+    private func baseContext() -> AgentDialogue.Context {
+        AgentDialogue.Context(
+            playerFirst: player.firstName,
+            playerFull: player.fullName,
+            position: player.position.rawValue
+        )
+    }
+
+    /// Fills the line-pool context from offers the ENGINE produced, so the money
+    /// in the sentence and the money on the card underneath are the same money.
+    private func context(
+        ask: NegotiationOffer,
+        gmOffer: NegotiationOffer? = nil,
+        signed: NegotiationOffer? = nil,
+        rounds: Int = 0
+    ) -> AgentDialogue.Context {
+        var ctx = baseContext()
+        ctx.askPerYear = formatMillions(ask.annualSalary)
+        ctx.askTotal = formatMillions(ask.totalValue)
+        ctx.askYears = ask.years
+        if let gmOffer {
+            ctx.offerPerYear = formatMillions(gmOffer.annualSalary)
+        }
+        if let signed {
+            ctx.signedPerYear = formatMillions(signed.annualSalary)
+            ctx.signedTotal = formatMillions(signed.totalValue)
+            ctx.signedYears = signed.years
+        }
+        ctx.rounds = rounds
+        return ctx
+    }
+
+    /// The receipt copy — names the clause ceiling when the deal has one, so the
     /// GM never signs clauses without seeing what they can cost.
-    private func dealSummary(_ offer: NegotiationOffer) -> String {
-        let base = "Deal reached! \(player.fullName) signed for \(formatMillions(offer.totalValue)) over \(offer.years) years."
+    private func signedSummary(_ offer: NegotiationOffer) -> String {
+        let base = "\(player.fullName) — \(offer.years) year\(offer.years == 1 ? "" : "s"), \(formatMillions(offer.totalValue)) total, \(offer.guaranteedPercent)% guaranteed."
         guard !offer.incentives.isEmpty else { return base }
         return base + " \(offer.incentives.count) performance clause\(offer.incentives.count == 1 ? "" : "s") take it to \(formatMillions(offer.maxValue)) if he hits them all."
     }
 
-    /// Writes the signed clauses onto the player (TODO §5.5).
-    ///
-    /// Deliberately NOT left to `onDealCompleted`: the four screens that present
-    /// this view each apply the money their own way, and a clause that only
-    /// survived on some of those paths would be worse than no clause at all.
-    /// Always called — an empty package clears whatever the old deal carried.
-    private func commitIncentives(_ offer: NegotiationOffer) {
-        ContractIncentiveRegistry.set(offer.incentives, for: player)
-    }
+    // MARK: - Persistence
 
-    private func walkAway() {
-        let gmMsg = NegotiationMessage(
-            sender: .gm,
-            text: "We're going to pass. Thank you for your time.",
-            offer: nil
-        )
-        messages.append(gmMsg)
-
-        let sysMsg = NegotiationMessage(
-            sender: .system,
-            text: "You ended negotiations with \(player.fullName)'s agent.",
-            offer: nil
-        )
-        messages.append(sysMsg)
-
-        outcome = .walkedAway
-        scrollTarget = sysMsg.id
-
-        // Don't auto-dismiss — let the user read the messages and close manually
+    /// Writes the thread to state AND to the save. Every mutation goes through
+    /// here — a transcript that only exists in `@State` is the bug this wave
+    /// was opened to fix.
+    private func commit(_ updated: NegotiationThread) {
+        thread = updated
+        scrollTarget = updated.messages.last?.id
+        if let careerID = player.careerID {
+            NegotiationThreadStore.upsert(updated, careerID: careerID)
+        }
     }
 
     // MARK: - Helpers
@@ -991,7 +1555,7 @@ struct ContractNegotiationView: View {
         }
     }
 
-    /// R22: persona accent color for the agent chip.
+    /// Persona accent color for the agent chip.
     private var personaColor: Color {
         switch agentPersona {
         case .hardliner:   return .danger
@@ -1022,38 +1586,5 @@ struct ContractNegotiationView: View {
             return String(format: "$%.1fM", millions)
         }
         return "$\(thousands)K"
-    }
-}
-
-// MARK: - Preview
-
-#Preview {
-    NavigationStack {
-        ContractNegotiationView(
-            player: Player(
-                firstName: "Justin",
-                lastName: "Jefferson",
-                position: .WR,
-                age: 25,
-                yearsPro: 4,
-                physical: PhysicalAttributes(
-                    speed: 92, acceleration: 90, strength: 65,
-                    agility: 88, stamina: 82, durability: 80
-                ),
-                mental: MentalAttributes(
-                    awareness: 88, decisionMaking: 85, clutch: 82,
-                    workEthic: 90, coachability: 85, leadership: 78
-                ),
-                positionAttributes: .wideReceiver(WRAttributes(
-                    routeRunning: 94, catching: 92, release: 88,
-                    spectacularCatch: 85
-                )),
-                personality: PlayerPersonality(archetype: .fieryCompetitor, motivation: .money),
-                contractYearsRemaining: 1,
-                annualSalary: 18000
-            ),
-            negotiationType: .extend,
-            teamCapSpace: 45_000
-        )
     }
 }

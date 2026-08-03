@@ -29,6 +29,10 @@ struct CapOverviewView: View {
 
     @State private var contractSort: ContractSort = .capHit
 
+    /// The player whose agent is on the phone. Non-nil while the Contact Agent
+    /// thread is open.
+    @State private var negotiationPlayer: Player?
+
     // MARK: - Contract Sort
 
     /// How the contract ledger is ordered. The list is the screen's working
@@ -93,6 +97,38 @@ struct CapOverviewView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .task { loadData() }
+        .fullScreenCover(item: $negotiationPlayer) { player in
+            // ContractNegotiationView supplies its own "Close" toolbar item, so
+            // the wrapper must NOT add a second one.
+            NavigationStack {
+                ContractNegotiationView(
+                    player: player,
+                    negotiationType: .extend,
+                    teamCapSpace: max(0, team?.availableCap ?? 0),
+                    onDealCompleted: { offer in
+                        // Extension: ADD new years to the existing contract.
+                        // Through the engine, which is what moves
+                        // `team.currentCapUsage` — without it a signing made on
+                        // THIS screen left the cap bar untouched and pushed the
+                        // derived dead-money residual negative, so the card
+                        // right below flipped to "Ledger variance".
+                        ContractEngine.applyNegotiatedDeal(
+                            player: player,
+                            team: team,
+                            offer: offer,
+                            application: .extendExisting,
+                            capMode: career.capMode,
+                            existingContract: contractsByPlayer[player.id],
+                            modelContext: modelContext
+                        )
+                        try? modelContext.save()
+                        loadData()
+                        // No dismiss — the thread shows the signed card and the
+                        // user closes it with Done.
+                    }
+                )
+            }
+        }
     }
 
     // MARK: - Cap Summary Card
@@ -617,12 +653,20 @@ struct CapOverviewView: View {
             } else {
                 VStack(spacing: 0) {
                     ForEach(Array(ordered.enumerated()), id: \.element.id) { index, player in
-                        NavigationLink {
-                            PlayerDetailView(player: player)
-                        } label: {
-                            contractRow(player: player, team: team)
+                        // The row still navigates to the profile; the agent
+                        // button sits OUTSIDE the link so a tap on it opens the
+                        // conversation instead of the player card.
+                        HStack(spacing: 8) {
+                            NavigationLink {
+                                PlayerDetailView(player: player)
+                            } label: {
+                                contractRow(player: player, team: team)
+                            }
+                            .buttonStyle(.plain)
+
+                            contactAgentButton(for: player)
+                                .padding(.trailing, 20)
                         }
-                        .buttonStyle(.plain)
 
                         if index < ordered.count - 1 {
                             Divider()
@@ -666,6 +710,36 @@ struct CapOverviewView: View {
         }
         .frame(maxWidth: .infinity)
         .cardBackground()
+    }
+
+    // MARK: - Contact Agent Entry
+
+    /// The uniform door into a contract conversation, compact enough for a
+    /// ledger row. Same rule as everywhere else: it appears on every contract
+    /// and gives away nothing about whether that camp will talk.
+    private func contactAgentButton(for player: Player) -> some View {
+        let badge = ContactAgentEntry.badge(for: player, season: career.currentSeason)
+        return Button {
+            negotiationPlayer = player
+        } label: {
+            VStack(spacing: 2) {
+                Image(systemName: ContactAgentEntry.icon)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.accentBlue)
+                if let badge {
+                    Text(badge)
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(Color.accentBlue)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
+            }
+            .frame(width: 60)
+            .padding(.vertical, 8)
+            .background(Color.accentBlue.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Contact \(player.fullName)'s agent")
     }
 
     private func contractRow(player: Player, team: Team) -> some View {

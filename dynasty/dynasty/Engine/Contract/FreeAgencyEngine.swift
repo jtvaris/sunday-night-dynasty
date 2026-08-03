@@ -11,6 +11,12 @@ enum FreeAgencyEngine {
         let player: Player
         /// Desired annual salary in thousands.
         let askingPrice: Int
+        /// The number below which his agent stops negotiating
+        /// (`ContractDemand.floorAmount`). An AI signing that ignored this was
+        /// the other half of "the AI and the user are on different markets":
+        /// clubs settled at `ask × random(0.85…1.0)` with no floor under it at
+        /// all, while the user could not get below the agent's floor.
+        let floorPrice: Int
         /// Preferred contract length in years.
         let desiredYears: Int
         /// How many teams are interested (1-10 scale). Higher means bidding war.
@@ -112,31 +118,33 @@ enum FreeAgencyEngine {
 
     // MARK: - Market Generation
 
-    /// Deterministic projected asking price for a (soon-to-be) free agent:
-    /// market value scaled by the player's motivation. Shared by the live FA
-    /// market and the legal-tampering rumor mill (R23) so pre-market previews
-    /// quote exactly what the market will ask.
+    /// Deterministic projected asking price for a (soon-to-be) free agent.
+    ///
+    /// **One demand model, not two.** This used to be a second, independent
+    /// price function — market value times a five-case motivation multiplier
+    /// (`money 1.20 / fame 1.10 / stats 1.05 / winning 0.90 / loyalty 0.85`)
+    /// that both duplicated and contradicted the motivation term inside
+    /// `ContractNegotiationEngine.situationBreakdown`, and that knew nothing of
+    /// archetype, morale, `motivationState`, leverage, the tag, a holdout, the
+    /// GM's standing or an agent's opening theatre. The user negotiated against
+    /// `ContractDemand`; every AI GM in the league negotiated against this. Two
+    /// markets, one league.
+    ///
+    /// It is now the demand model's own opening ask, so the number the tampering
+    /// rumor mill leaks, the number the AI market bids against and the number
+    /// the user hears on the phone are the same number.
     static func projectedAskingPrice(player: Player, salaryCap: Int = 265_000) -> Int {
-        let baseValue = ContractEngine.estimateMarketValue(player: player, salaryCap: salaryCap)
+        agentDemand(player: player, salaryCap: salaryCap).askAmount
+    }
 
-        // Motivation-based salary modifier
-        let motivationMultiplier: Double = {
-            switch player.personality.motivation {
-            case .money:
-                return 1.2   // Wants top dollar
-            case .winning:
-                return 0.9   // Will take a discount for a contender
-            case .stats:
-                return 1.05  // Wants a system where they'll produce
-            case .loyalty:
-                return 0.85  // Discount to stay with current team
-            case .fame:
-                return 1.1   // Big market premium
-            }
-        }()
-
-        let minimum = max(Int(0.0028 * Double(salaryCap)), 750)
-        return max(Int(Double(baseValue) * motivationMultiplier), minimum)
+    /// The full demand behind ``projectedAskingPrice`` — ask AND floor, which is
+    /// what a settlement needs.
+    static func agentDemand(player: Player, salaryCap: Int = 265_000) -> ContractDemand {
+        ContractNegotiationEngine.demand(
+            player: player,
+            negotiationType: .freeAgent,
+            salaryCap: salaryCap
+        )
     }
 
     /// Build the free-agent market from all players whose contracts have expired.
@@ -153,7 +161,8 @@ enum FreeAgencyEngine {
                     && !$0.isOnPracticeSquad
             }
             .map { player in
-                let askingPrice = projectedAskingPrice(player: player, salaryCap: salaryCap)
+                let demand = agentDemand(player: player, salaryCap: salaryCap)
+                let askingPrice = demand.askAmount
 
                 // Desired years: younger players want longer deals, older want shorter
                 let desiredYears: Int = {
@@ -183,6 +192,7 @@ enum FreeAgencyEngine {
                 return FreeAgent(
                     player: player,
                     askingPrice: askingPrice,
+                    floorPrice: demand.floorAmount,
                     desiredYears: desiredYears,
                     marketInterest: interest
                 )
@@ -878,9 +888,15 @@ enum FreeAgencyEngine {
                 weight: { appealByTeam[$0.id] ?? 1.0 }
             ) else { continue }
 
-            // AI always signs at a slight discount (negotiation)
+            // The AI GM negotiates against the SAME demand model the user does:
+            // he lands somewhere between the agent's floor and his opening ask,
+            // never below the floor. The old `ask × random(0.85…1.0)` had no
+            // floor under it at all, which is how an AI club could buy a man for
+            // less than the user's agent would ever have taken.
             let minimum = max(Int(0.0028 * Double(winningTeam.salaryCap)), 750)
-            let agreedSalary = max(Int(Double(agent.askingPrice) * Double.random(in: 0.85...1.0)), minimum)
+            let floor = min(agent.floorPrice, agent.askingPrice)
+            let settlement = Double(floor) + Double(agent.askingPrice - floor) * Double.random(in: 0...1)
+            let agreedSalary = max(Int(settlement), minimum)
             let agreedYears = agent.desiredYears
 
             // Task #27 diagnostic: record the flow before the signing lands.

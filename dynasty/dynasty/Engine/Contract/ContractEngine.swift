@@ -122,14 +122,82 @@ enum ContractEngine {
     /// contract demands, his trade value and his holdout threshold. Expressing the
     /// ladder as interpolated anchor points instead of independent tier formulas
     /// makes that class of bug unrepresentable.
+    ///
+    /// ## The top-tail recalibration (market-realism wave)
+    ///
+    /// The P1 ladder above was **percentile-preserving**, which is exactly what
+    /// that wave needed and exactly why the top of the market stayed wrong: it
+    /// carried forward a curve whose elite end was set before the modern QB
+    /// market existed. Measured in the shipped game, the league's five best
+    /// quarterbacks were paid **$33.4M–$45.6M** — 12.6-17.2 % of a $265M cap —
+    /// against a real league where the top of the position sits at 18-22 % and
+    /// the very top has passed $60M. A management game whose franchise
+    /// quarterback is a rounding error against the cap has no cap decision in it.
+    ///
+    /// The fix moves ONLY the tail, and pays for it out of the upper middle:
+    ///
+    /// | OVR | old | new | Δ | what he is |
+    /// |---|---|---|---|---|
+    /// | ≤74 | — | — | **0.0 %** | the mass: depth, rotation, the starter line |
+    /// | 80 | 5.046 | 4.750 | −5.9 % | good starter — the offset comes from here |
+    /// | 84 | 6.277 | 6.236 | −0.7 % | crossover: the trim has run out |
+    /// | 88 | 7.600 | 8.070 | +6.2 % | fringe All-Pro |
+    /// | 92 | 9.200 | 10.950 | +19.0 % | the best player at his position |
+    /// | 96 | 10.800 | 13.900 | +28.7 % | generational |
+    ///
+    /// **Aggregate spend is held flat on purpose** — it is the input the #53 /
+    /// #27 economy calibration was solved against, and a market whose *level*
+    /// moves invalidates the cap-room, FA-clearing and holdout thresholds
+    /// together. Integrating the ladder over the league's own rating
+    /// distribution: **−0.02 %** against `LeagueGenerator.targetQualityPyramid`
+    /// (mean 71.0, sd 8.88, the league a save starts with) and **+0.56 %**
+    /// against the career harness's 30-season equilibrium league (mean 70.7,
+    /// measured histogram). Both are inside the run-to-run noise of the harness
+    /// gates they protect.
+    ///
+    /// **Convexity fix (adversarial review).** The top anchor shipped at 13.60,
+    /// which made the 92→96 segment slope 0.6625 against 0.7200 for 87→92 — the
+    /// one place the ladder bent the wrong way, and it bent it at exactly the
+    /// band this wave existed to fix. A rating point cost 8 % LESS at the very
+    /// top than just below it, so "the last five points cost more than the
+    /// previous five" was a claim the numbers did not support. 13.90 restores it
+    /// (slope 0.7375 > 0.7200) and costs **+0.04 %** of league-wide market value
+    /// — a quarter of one basis point of the aggregate the wave is holding flat,
+    /// because 96+ is under half a percent of the league.
+    ///
+    /// **Why the offset is taken at 76-82 and nowhere else.** The 90+ band is
+    /// 1.5 % of the league, so raising it a quarter costs only ~5 % of league
+    /// market value — but that is still real money and it has to come from
+    /// somewhere. Below OVR 74 is untouchable: those are minimum-salary and
+    /// near-minimum deals whose *absolute* level the FA market's clearing
+    /// behaviour depends on. The 76-82 shoulder is where the money is (it is the
+    /// fattest part of the paid population) and where a 3-6 % trim is invisible
+    /// in a single contract while being large enough to fund the tail. It also
+    /// steepens the curve in the direction the real market has moved: the gap
+    /// between a good starter and a great one has widened every CBA.
+    ///
+    /// At QB (× 2.2 × `leagueAffordabilityScale`) the tail now reads
+    /// 88 → 13.3 %, 90 → 15.7 %, 92 → 18.1 %, 94 → 20.5 %, 96 → 22.9 % of cap.
+    /// A 99 extrapolates to 16.11 (26.6 % at QB) — a rating no generated league
+    /// has ever produced, and the 18.0 ceiling below it is once again a pure
+    /// runaway guard rather than a number the top of the table actually hits.
     static func marketBasePercent(overall: Int) -> Double {
-        // (OVR, % of cap). Strictly increasing in both coordinates.
+        // (OVR, % of cap). Strictly increasing in both coordinates, and
+        // CONVEX — each segment's slope is steeper than the one before it, so
+        // "the last five rating points cost more than the previous five" is a
+        // property of the table rather than a coincidence of its numbers.
+        //
+        // Slopes, in order: 0.0600 / 0.2200 / 0.2583 / 0.3714 / 0.7200 / 0.7375.
+        // Any edit to an anchor MUST keep that sequence increasing — see the
+        // convexity note above for what it cost when 96 sat at 13.60.
         let anchors: [(ovr: Double, pct: Double)] = [
             (54, 0.40),   // depth / special teams — bottom ~2 % of the league below this
             (64, 1.00),   // rotational contributor
             (74, 3.20),   // starter-quality (DEVELOPMENT_NFL_REFERENCE §8's 75+ line)
-            (87, 7.20),   // top ~4 % — the second contract that resets a market
-            (94, 10.00),  // true elite: ~3 players league-wide (× QB 2.2 → 22 % of cap)
+            (80, 4.75),   // good starter — the shoulder the tail raise is funded from
+            (87, 7.35),   // top ~4 % — the second contract that resets a market
+            (92, 10.95),  // best-at-his-position (× QB 2.2 → 18 % of cap)
+            (96, 13.90),  // generational: ~1 player a decade (× QB 2.2 → 23 % of cap)
         ]
         let o = Double(overall)
         // Fringe / practice-squad floor.
@@ -137,11 +205,13 @@ enum ContractEngine {
         for (lo, hi) in zip(anchors, anchors.dropFirst()) where o <= hi.ovr {
             return lo.pct + (hi.pct - lo.pct) * (o - lo.ovr) / (hi.ovr - lo.ovr)
         }
-        // Above the top anchor, continue its slope, capped so a 99 stays sane.
+        // Above the top anchor, continue its slope. The ceiling is a guard on an
+        // unbounded extrapolation, NOT a price: it must sit above what a 99
+        // reaches, or the table silently stops being convex at the very top.
         let top = anchors[anchors.count - 1]
         let prev = anchors[anchors.count - 2]
         let slope = (top.pct - prev.pct) / (top.ovr - prev.ovr)
-        return Swift.min(12.5, top.pct + slope * (o - top.ovr))
+        return Swift.min(18.0, top.pct + slope * (o - top.ovr))
     }
 
     /// League affordability scalar — what makes the price ladder above a price
@@ -190,6 +260,29 @@ enum ContractEngine {
         let basePercent = marketBasePercent(overall: overall)
 
         // Position multiplier calibrated to real NFL 2026 pay scales.
+        //
+        // AUDITED and deliberately LEFT ALONE by the market-realism wave. Two
+        // reasons, and the second is the load-bearing one:
+        //
+        // 1. As *ratios to the quarterback* — which is all a multiplier vector
+        //    means — it already reproduces the modern market: QB 1.00,
+        //    WR 0.59 (real ~0.58), EDGE 0.57 (~0.67), OT 0.48 (~0.47),
+        //    CB 0.43 (~0.50), MLB 0.36 (~0.35), S 0.34 (~0.35), TE 0.32 (~0.32),
+        //    K/P 0.11 (~0.10). The two genuine gaps are EDGE and CB.
+        // 2. A multiplier is NOT a top-end lever. It scales a position's whole
+        //    population, so it sets that position's SHARE OF PAYROLL — QB is
+        //    3/53 of a roster × 2.2/0.96 ≈ 13 % of the cap, which is exactly
+        //    right and is the reason 2.2 must not move. Closing the EDGE and CB
+        //    gaps costs ~1.9 % of league-wide market value; funding that out of
+        //    the rating ladder would mean a 13 % cut at OVR 80, i.e. moving the
+        //    mass the aggregate-spend constraint exists to protect.
+        //
+        // So the elite dollar targets are reached through `marketBasePercent`'s
+        // tail instead, and they land: at OVR 94-96 and a $284.9M cap this pays
+        // EDGE $33.5M / WR $34.8M (band $30-40M) and CB $25.4M / OT $28.1M
+        // (band $25-30M). CB is the one position that only reaches its band at
+        // the very top of the rating range; raising CB 0.95 → ~1.07 is the
+        // follow-up, and it needs its own aggregate offset, not this wave's.
         let positionMultiplier: Double = {
             switch position {
             case .QB:
@@ -298,20 +391,42 @@ enum ContractEngine {
         }
     }
 
-    /// Calculates a realistic signing bonus for a contract.
-    /// - Big contracts (>= $10M/yr): 40-60% of first year salary
-    /// - Medium contracts ($3-10M/yr): 20-40% of first year salary
-    /// - Small contracts (< $3M/yr): 10-20% of first year salary
+    /// The signing-bonus band for a salary level, as a `(low, span)` pair.
+    ///
+    /// Split out of ``realisticSigningBonus`` so the same three bands can be
+    /// drawn from a **stable** draw as well as a random one. See
+    /// ``signingBonus(annualSalary:draw:)`` for why that matters.
+    /// - Big contracts (>= $10M/yr): 40-60 % of first year salary
+    /// - Medium contracts ($3-10M/yr): 20-40 %
+    /// - Small contracts (< $3M/yr): 10-20 %
+    static func signingBonusBand(annualSalary: Int) -> (low: Double, span: Double) {
+        if annualSalary >= 10_000 { return (0.40, 0.20) }
+        if annualSalary >= 3_000  { return (0.20, 0.20) }
+        return (0.10, 0.10)
+    }
+
+    /// A signing bonus from a caller-supplied 0…1 draw.
+    ///
+    /// **Why this exists.** `ContractDemand` is documented as deterministic —
+    /// the ask must not move between two openings of the same conversation —
+    /// but its opening offer used to build its bonus from
+    /// ``realisticSigningBonus``, i.e. from `Double.random`. Since the agent
+    /// grades every offer against `annualCapHit` (salary + bonus/years), the
+    /// number the whole negotiation turns on was re-rolled ±2.3 % on every call
+    /// that was not reading a persisted snapshot. Feeding a UUID-seeded draw in
+    /// makes the ask deterministic all the way down.
+    static func signingBonus(annualSalary: Int, draw: Double) -> Int {
+        let band = signingBonusBand(annualSalary: annualSalary)
+        let clamped = Swift.min(1.0, Swift.max(0.0, draw))
+        return Int(Double(annualSalary) * (band.low + band.span * clamped))
+    }
+
+    /// Calculates a realistic signing bonus for a contract — the RANDOM draw,
+    /// for the AI paths that write a contract once and never re-price it.
+    /// Anything that must quote the same number twice uses
+    /// ``signingBonus(annualSalary:draw:)`` instead.
     static func realisticSigningBonus(annualSalary: Int) -> Int {
-        let bonusPercent: Double
-        if annualSalary >= 10_000 {
-            bonusPercent = Double.random(in: 0.40...0.60)
-        } else if annualSalary >= 3_000 {
-            bonusPercent = Double.random(in: 0.20...0.40)
-        } else {
-            bonusPercent = Double.random(in: 0.10...0.20)
-        }
-        return Int(Double(annualSalary) * bonusPercent)
+        signingBonus(annualSalary: annualSalary, draw: Double.random(in: 0...1))
     }
 
     /// Calculates realistic guaranteed money for a contract.
@@ -334,13 +449,22 @@ enum ContractEngine {
     /// Build a complete realistic contract with escalating or front-loaded structure.
     /// - Young players (age < 28): escalating salary structure
     /// - Veteran players (age >= 28): front-loaded salary structure
+    ///
+    /// `signingBonus` and `guaranteedMoney` are `nil` for the AI market, which
+    /// has no negotiated structure to carry and draws its own. **A deal that
+    /// came out of a negotiation must pass both**: the bonus, the guarantee and
+    /// the no-trade clause the agent demanded and the GM agreed to are terms of
+    /// the contract, and re-drawing them here silently threw away the half of
+    /// the deal that was not the salary.
     static func buildRealisticContract(
         playerID: UUID,
         teamID: UUID,
         annualSalary: Int,
         years: Int,
         playerAge: Int,
-        noTrade: Bool = false
+        noTrade: Bool = false,
+        signingBonus negotiatedBonus: Int? = nil,
+        guaranteedMoney negotiatedGuarantee: Int? = nil
     ) -> Contract {
         let baseSalaries: [Int]
         if playerAge < 28 {
@@ -348,8 +472,9 @@ enum ContractEngine {
         } else {
             baseSalaries = frontLoadedBaseSalaries(annualSalary: annualSalary, years: years)
         }
-        let signingBonus = realisticSigningBonus(annualSalary: annualSalary)
-        let guaranteed = realisticGuaranteedMoney(baseSalaries: baseSalaries, signingBonus: signingBonus)
+        let signingBonus = negotiatedBonus ?? realisticSigningBonus(annualSalary: annualSalary)
+        let guaranteed = negotiatedGuarantee
+            ?? realisticGuaranteedMoney(baseSalaries: baseSalaries, signingBonus: signingBonus)
 
         return Contract(
             playerID: playerID,
@@ -361,6 +486,133 @@ enum ContractEngine {
             guaranteedMoney: guaranteed,
             noTradeClause: noTrade
         )
+    }
+
+    // MARK: - Negotiated Deal Execution
+
+    /// What a signed negotiation does to the deal that was already there.
+    enum DealApplication {
+        /// Adds the new years on top of the existing contract (an extension).
+        case extendExisting
+        /// Replaces the contract outright (a re-sign of an expiring deal).
+        case replaceContract
+    }
+
+    /// **The one place a negotiated contract is booked.**
+    ///
+    /// Four screens can close a `ContractNegotiationView` thread — player
+    /// detail, the cap screen, the franchise-tag screen and Final Push — and
+    /// before this each of them wrote its own two lines:
+    ///
+    /// ```swift
+    /// player.contractYearsRemaining += offer.years
+    /// player.annualSalary = offer.annualSalary
+    /// ```
+    ///
+    /// Three consequences, all of them live bugs:
+    ///
+    /// 1. **`team.currentCapUsage` was never touched.** Sign a 96 OVR
+    ///    quarterback at $55M/yr and the club's available cap did not move, so
+    ///    it could then sign the rest of the league. On the cap screen the
+    ///    derived dead-money residual (`currentCapUsage − Σ capHit`) went
+    ///    NEGATIVE as a direct result of the signing and the card flipped to
+    ///    "Ledger variance".
+    /// 2. **The signing bonus was free money.** The agent grades
+    ///    `annualCapHit` = salary + bonus/years, but only `annualSalary` was
+    ///    ever written — so $500K salary plus a $200M bonus read as a $50.5M/yr
+    ///    offer to the agent and as the veteran minimum to the league.
+    /// 3. **A `Contract` row, where one existed, kept the OLD numbers**, so on
+    ///    the one screen that reads contracts in preference to `annualSalary`
+    ///    the raise never appeared at all.
+    ///
+    /// So: the charge is `annualCapHit`, the ledger is moved by the DIFFERENCE
+    /// between the new charge and the one the club was already carrying, and the
+    /// detailed contract is rewritten in place with the structure that was
+    /// actually negotiated. `player.annualSalary` carries the full per-year cap
+    /// number because that is what every other system in the game
+    /// (`HoldoutEngine`, `TradeValueEngine`, the cap bars) reads it as.
+    ///
+    /// - Parameter existingContract: the player's detailed contract when the
+    ///   caller already has it. Passing `nil` makes the function look one up
+    ///   through `modelContext`; passing `nil` with no context means the deal is
+    ///   booked on `annualSalary` alone, which is the simple-mode shape.
+    @discardableResult
+    static func applyNegotiatedDeal(
+        player: Player,
+        team: Team?,
+        offer: NegotiationOffer,
+        application: DealApplication,
+        capMode: CapMode,
+        existingContract: Contract? = nil,
+        modelContext: ModelContext? = nil
+    ) -> Int {
+        let playerID = player.id
+        let contract: Contract? = existingContract ?? {
+            guard capMode == .realistic, let modelContext else { return nil }
+            let descriptor = FetchDescriptor<Contract>(
+                predicate: #Predicate<Contract> { $0.playerID == playerID }
+            )
+            return try? modelContext.fetch(descriptor).first
+        }()
+
+        // What the club is carrying for this man RIGHT NOW, read with exactly
+        // the precedence the cap screen reads it with, so the two can never
+        // disagree about what a signing changed.
+        let previousCharge = contract?.capHit ?? player.annualSalary
+
+        let years: Int = {
+            switch application {
+            case .extendExisting: return max(0, player.contractYearsRemaining) + offer.years
+            case .replaceContract: return offer.years
+            }
+        }()
+
+        player.contractYearsRemaining = years
+        player.annualSalary = offer.annualCapHit
+
+        // Rewrite the detailed contract in place (realistic mode only — the
+        // other two modes have no `Contract` row to keep in step).
+        var newCharge = player.annualSalary
+        if capMode == .realistic, let team {
+            let baseSalaries = player.age < 28
+                ? escalatingBaseSalaries(annualSalary: offer.annualSalary, years: years)
+                : frontLoadedBaseSalaries(annualSalary: offer.annualSalary, years: years)
+            // The NEGOTIATED structure, not a fresh random draw: the bonus, the
+            // guarantee and the no-trade clause were terms both sides agreed to.
+            let guaranteed = offer.guaranteedMoney
+
+            if let contract {
+                contract.teamID = team.id
+                contract.totalYears = years
+                contract.currentYear = 0
+                contract.baseSalary = baseSalaries
+                contract.signingBonus = offer.signingBonus
+                contract.guaranteedMoney = guaranteed
+                contract.noTradeClause = offer.noTradeClause
+                newCharge = contract.capHit
+            } else if let modelContext {
+                let created = Contract(
+                    playerID: player.id,
+                    teamID: team.id,
+                    totalYears: years,
+                    currentYear: 0,
+                    baseSalary: baseSalaries,
+                    signingBonus: offer.signingBonus,
+                    guaranteedMoney: guaranteed,
+                    noTradeClause: offer.noTradeClause
+                )
+                created.careerID = player.careerID ?? team.careerID
+                modelContext.insert(created)
+                newCharge = created.capHit
+            }
+        }
+
+        // Sandbox deliberately keeps no ledger — see `signPlayerSandbox`.
+        if capMode != .sandbox, let team {
+            team.currentCapUsage += newCharge - previousCharge
+        }
+
+        return newCharge
     }
 
     /// Restructure a contract by converting this year's base salary into

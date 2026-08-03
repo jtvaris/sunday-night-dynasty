@@ -15,6 +15,10 @@ struct FranchiseTagView: View {
     @State private var allPlayers: [Player] = []
     @State private var showSkipConfirmation = false
 
+    /// The player whose agent is on the phone. Non-nil while the Contact Agent
+    /// thread is open.
+    @State private var negotiationPlayer: Player?
+
     var body: some View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
@@ -56,6 +60,35 @@ struct FranchiseTagView: View {
             }
         } message: {
             Text("Are you sure? You won't be able to franchise tag any player this offseason.")
+        }
+        .fullScreenCover(item: $negotiationPlayer) { player in
+            // ContractNegotiationView supplies its own "Close" toolbar item, so
+            // the wrapper must NOT add a second one.
+            NavigationStack {
+                ContractNegotiationView(
+                    player: player,
+                    negotiationType: .extend,
+                    teamCapSpace: max(0, team?.availableCap ?? 0),
+                    onDealCompleted: { offer in
+                        // Re-sign: the expiring deal is REPLACED, not extended.
+                        // Through the engine so the club's cap ledger, the
+                        // negotiated signing bonus and the detailed contract all
+                        // move with the salary.
+                        ContractEngine.applyNegotiatedDeal(
+                            player: player,
+                            team: team,
+                            offer: offer,
+                            application: .replaceContract,
+                            capMode: career.capMode,
+                            modelContext: modelContext
+                        )
+                        try? modelContext.save()
+                        loadData()
+                        // No dismiss — the thread shows the signed card and the
+                        // user closes it with Done.
+                    }
+                )
+            }
         }
     }
 
@@ -288,9 +321,46 @@ struct FranchiseTagView: View {
                 }
             }
             .padding(.leading, 46)
+
+            // The alternative to the tag is a conversation, so it belongs on the
+            // same row as the tag. Identical wording and behaviour to every other
+            // Contact Agent button in the app — it never says whether this camp
+            // will actually talk.
+            contactAgentButton(for: player)
+                .padding(.leading, 46)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
+    }
+
+    // MARK: - Contact Agent Entry
+
+    private func contactAgentButton(for player: Player) -> some View {
+        let badge = ContactAgentEntry.badge(for: player, season: career.currentSeason)
+        return Button {
+            negotiationPlayer = player
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: ContactAgentEntry.icon)
+                    .font(.system(size: 11, weight: .semibold))
+                Text(ContactAgentEntry.title)
+                    .font(.caption.weight(.semibold))
+                if let badge {
+                    Text(badge)
+                        .font(.system(size: 9, weight: .bold))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.accentBlue.opacity(0.18), in: Capsule())
+                }
+            }
+            .foregroundStyle(Color.accentBlue)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Color.accentBlue.opacity(0.12), in: Capsule())
+            .overlay(Capsule().strokeBorder(Color.accentBlue.opacity(0.35), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Contact \(player.fullName)'s agent")
     }
 
     // MARK: - Smart Recommendations

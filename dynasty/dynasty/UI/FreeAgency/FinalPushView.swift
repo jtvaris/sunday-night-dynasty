@@ -28,6 +28,38 @@ struct FinalPushView: View {
     /// R23 — legal-tampering rumors for the top upcoming FAs (league-wide).
     @State private var tamperingRumors: [TamperingRumorEngine.TamperingRumor] = []
 
+    /// The player whose agent is on the phone. Non-nil while the Contact Agent
+    /// thread is open.
+    @State private var negotiationPlayer: Player?
+
+    /// `DraftReputation.ownerTrust` — one of the five inputs to the GM factor.
+    @State private var ownerTrust: Int = 70
+
+    // MARK: - Economy Inputs
+    //
+    // Quick Offer and Contact Agent are two doors into ONE demand model, so
+    // both have to hand it the same world.
+
+    private var gmStanding: GMStanding {
+        GMStanding.from(career: career, ownerTrust: ownerTrust)
+    }
+
+    /// The club and the season the demand model reads. Final Push runs after
+    /// the season, so the record is the one just completed.
+    private func reSignSituation(for player: Player) -> NegotiationSituation {
+        let wins = team?.wins ?? 0
+        let losses = team?.losses ?? 0
+        let played = wins + losses
+        return ContractNegotiationEngine.situation(
+            for: player,
+            season: career.currentSeason,
+            teamWins: wins,
+            teamLosses: losses,
+            weeksPlayed: max(played, career.currentWeek),
+            isContender: played >= 6 && Double(wins) / Double(max(1, played)) >= 0.65
+        )
+    }
+
     struct PlayerDecisionState {
         enum Status {
             case pending
@@ -43,6 +75,14 @@ struct FinalPushView: View {
         var offerYears: Int = 2
         /// R22: how many offers the GM has submitted (agents have finite patience).
         var offerRounds: Int = 0
+        /// The agent's STANDING number in this quick-offer conversation. Every
+        /// grade is measured against it rather than against raw market value —
+        /// that is what makes this button and the Contact Agent button next to
+        /// it negotiate against the same price.
+        var standingAsk: NegotiationOfferSnapshot?
+        /// Lowballs absorbed, so the insult ratchet and the patience cost work
+        /// here exactly as they do in the chat.
+        var insultCount: Int = 0
     }
 
     var body: some View {
@@ -88,6 +128,41 @@ struct FinalPushView: View {
             Text(undecided > 0
                  ? "\(undecided) undecided player\(undecided == 1 ? "" : "s") will hit the open market."
                  : "All decisions made. Proceed to advance contracts.")
+        }
+        .fullScreenCover(item: $negotiationPlayer) { player in
+            // ContractNegotiationView supplies its own "Close" toolbar item, so
+            // the wrapper must NOT add a second one.
+            NavigationStack {
+                ContractNegotiationView(
+                    player: player,
+                    negotiationType: .extend,
+                    teamCapSpace: max(0, team?.availableCap ?? 0),
+                    onDealCompleted: { offer in
+                        guard let team else { return }
+                        // The same execution path the Quick Offer flow uses, so
+                        // a deal struck in the chat lands on the cap and the
+                        // roster identically — and, unlike `signFreeAgent`,
+                        // this one has room for the structure that was actually
+                        // negotiated (bonus, guarantee, no-trade clause) instead
+                        // of drawing a fresh random bonus and hardcoding
+                        // `noTrade: false`.
+                        ContractEngine.applyNegotiatedDeal(
+                            player: player,
+                            team: team,
+                            offer: offer,
+                            application: .replaceContract,
+                            capMode: career.capMode,
+                            modelContext: modelContext
+                        )
+                        try? modelContext.save()
+                        FASigningTracker.trackSigning(player.id)
+                        generateStorylinesForSigning(player: player, team: team)
+                        decisions[player.id, default: PlayerDecisionState()].status = .reSignedAccepted
+                        // No dismiss — the thread shows the signed card and the
+                        // user closes it with Done.
+                    }
+                )
+            }
         }
     }
 
@@ -244,7 +319,10 @@ struct FinalPushView: View {
 
     private func expiringPlayerCard(player: Player, team: Team) -> some View {
         let state = decisions[player.id] ?? PlayerDecisionState()
-        let marketValue = ContractEngine.estimateMarketValue(player: player)
+        // The league's ACTUAL cap, not the 265 000 default. Two screens quoting
+        // two different market values for the same man — and diverging further
+        // every year the cap compounds — is the bug this argument closes.
+        let marketValue = ContractEngine.estimateMarketValue(player: player, salaryCap: team.salaryCap)
         let faAlternatives = ContractEngine.previewFreeAgents(
             allPlayers: allPlayers,
             allTeams: allTeams,
@@ -373,67 +451,61 @@ struct FinalPushView: View {
 
     @ViewBuilder
     private func pendingActions(player: Player, marketValue: Int) -> some View {
-        if NegotiationLockRegistry.isLocked(player.id) {
-            // R22: a hardliner agent froze talks earlier this offseason.
-            HStack(spacing: 8) {
-                Image(systemName: "phone.down.fill")
-                    .foregroundStyle(Color.danger)
-                Text("\(AgentPersona.agentName(for: player.id)) isn't returning your calls this offseason.")
+        // R22: a hardliner agent who was insulted earlier this offseason still
+        // refuses to do business — but the ROW does not announce it, in ANY
+        // form. Before this wave it printed "isn't returning your calls" right
+        // here; then it merely hid the gold Quick Offer button on exactly the
+        // frozen rows, which is the same leak one control over. Every row now
+        // carries the identical pair of buttons and the agent says it himself,
+        // in character, when you contact him — or when you submit the offer.
+        HStack(spacing: 12) {
+            Button {
+                negotiationPlayer = player
+            } label: {
+                Label(ContactAgentEntry.title, systemImage: ContactAgentEntry.icon)
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(Color.danger)
-                Spacer()
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Color.accentBlue)
+
+            Button {
+                var state = PlayerDecisionState()
+                state.status = .offering(salary: marketValue, years: 2)
+                state.offerSalary = marketValue
+                state.offerYears = 2
+                decisions[player.id] = state
+            } label: {
+                Label("Quick Offer", systemImage: "signature")
+                    .font(.caption.weight(.semibold))
+            }
+            .buttonStyle(.bordered)
+            .tint(Color.accentGold)
+
+            // R22: franchise tag straight from the re-sign flow (1 per offseason).
+            if !hasUsedFranchiseTag {
                 Button {
-                    decisions[player.id]?.status = .letWalk
-                    applyLetWalkPenaltyIfNeeded(player: player)
+                    applyFranchiseTag(to: player)
                 } label: {
-                    Label("Let Walk", systemImage: "figure.walk.departure")
+                    Label("Tag (\(formatMillions(franchiseTagValue(for: player.position))))", systemImage: "tag")
                         .font(.caption.weight(.semibold))
                 }
                 .buttonStyle(.bordered)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-        } else {
-            HStack(spacing: 12) {
-                Button {
-                    var state = PlayerDecisionState()
-                    state.status = .offering(salary: marketValue, years: 2)
-                    state.offerSalary = marketValue
-                    state.offerYears = 2
-                    decisions[player.id] = state
-                } label: {
-                    Label("Make Offer", systemImage: "signature")
-                        .font(.caption.weight(.semibold))
-                }
-                .buttonStyle(.borderedProminent)
                 .tint(Color.accentGold)
-
-                // R22: franchise tag straight from the re-sign flow (1 per offseason).
-                if !hasUsedFranchiseTag {
-                    Button {
-                        applyFranchiseTag(to: player)
-                    } label: {
-                        Label("Tag (\(formatMillions(franchiseTagValue(for: player.position))))", systemImage: "tag")
-                            .font(.caption.weight(.semibold))
-                    }
-                    .buttonStyle(.bordered)
-                    .tint(Color.accentGold)
-                }
-
-                Button {
-                    var state = PlayerDecisionState()
-                    state.status = .letWalk
-                    decisions[player.id] = state
-                    applyLetWalkPenaltyIfNeeded(player: player)
-                } label: {
-                    Label("Let Walk", systemImage: "figure.walk.departure")
-                        .font(.caption.weight(.semibold))
-                }
-                .buttonStyle(.bordered)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+
+            Button {
+                var state = PlayerDecisionState()
+                state.status = .letWalk
+                decisions[player.id] = state
+                applyLetWalkPenaltyIfNeeded(player: player)
+            } label: {
+                Label("Let Walk", systemImage: "figure.walk.departure")
+                    .font(.caption.weight(.semibold))
+            }
+            .buttonStyle(.bordered)
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
     }
 
     private func offeringView(player: Player, salary: Int, years: Int, marketValue: Int) -> some View {
@@ -487,20 +559,26 @@ struct FinalPushView: View {
                     let currentSalary = decisions[player.id]?.offerSalary ?? salary
                     let currentYears = decisions[player.id]?.offerYears ?? years
                     decisions[player.id]?.offerRounds += 1
-                    let response = Self.evaluateReSignOffer(
+                    let outcome = Self.evaluateReSignOffer(
                         player: player,
                         offeredSalary: currentSalary,
                         offeredYears: currentYears,
-                        marketValue: marketValue,
-                        teamWins: career.totalWins,
-                        teamReputation: career.reputation,
-                        roundNumber: decisions[player.id]?.offerRounds ?? 1
+                        salaryCap: team?.salaryCap ?? 265_000,
+                        situation: reSignSituation(for: player),
+                        standing: gmStanding,
+                        standingAsk: decisions[player.id]?.standingAsk?.offer,
+                        roundNumber: decisions[player.id]?.offerRounds ?? 1,
+                        insultCount: decisions[player.id]?.insultCount ?? 0
                     )
-                    if case .brokenOff = response {
+                    if case .brokenOff = outcome.response {
                         // R22: hardliner freeze-out persists for the offseason.
                         NegotiationLockRegistry.lock(player.id)
                     }
-                    decisions[player.id]?.status = .responded(response: response)
+                    decisions[player.id]?.insultCount = outcome.insultCount
+                    if let counter = outcome.standingAsk {
+                        decisions[player.id]?.standingAsk = NegotiationOfferSnapshot(counter)
+                    }
+                    decisions[player.id]?.status = .responded(response: outcome.response)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Color.accentGold)
@@ -533,13 +611,11 @@ struct FinalPushView: View {
                         if let team {
                             let salary = decisions[player.id]?.offerSalary ?? marketValue
                             let years = decisions[player.id]?.offerYears ?? 2
-                            FreeAgencyEngine.signFreeAgent(
+                            finalizeReSign(
                                 player: player,
                                 team: team,
-                                years: years,
                                 salary: salary,
-                                capMode: career.capMode,
-                                modelContext: modelContext
+                                years: years
                             )
                             FASigningTracker.trackSigning(player.id)
                             generateStorylinesForSigning(player: player, team: team)
@@ -567,13 +643,11 @@ struct FinalPushView: View {
                 HStack(spacing: 12) {
                     Button("Accept Counter") {
                         if let team {
-                            FreeAgencyEngine.signFreeAgent(
+                            finalizeReSign(
                                 player: player,
                                 team: team,
-                                years: counterYears,
                                 salary: counterSalary,
-                                capMode: career.capMode,
-                                modelContext: modelContext
+                                years: counterYears
                             )
                             FASigningTracker.trackSigning(player.id)
                             generateStorylinesForSigning(player: player, team: team)
@@ -690,74 +764,151 @@ struct FinalPushView: View {
 
     // MARK: - Re-Sign Evaluation Logic
 
+    /// One graded quick offer, plus the conversation state that has to survive
+    /// to the next one.
+    struct ReSignOutcome {
+        let response: ReSignResponse
+        /// The agent's number after this round — what the NEXT offer is graded
+        /// against.
+        let standingAsk: NegotiationOffer?
+        let insultCount: Int
+    }
+
+    /// **Quick Offer, graded by the demand model.**
+    ///
+    /// This used to be a third, independent price function living in a View:
+    /// a threshold of `0.80 − 0.12 loyalty − motivationMod − archetypeMod +
+    /// persona.reSignThresholdShift` applied to `offeredSalary / marketValue`.
+    /// It knew nothing of the agent's floor, the insult ratchet, patience, the
+    /// GM's standing, the tag, a holdout, or the theatre in an opening ask — and
+    /// it disagreed violently with the button beside it. A cooperative,
+    /// loyalty-motivated team leader accepted at **0.40 of market** through
+    /// Quick Offer while the Contact Agent thread on the same row would not sign
+    /// him below ~0.73. Two buttons, one player, 1.8× apart.
+    ///
+    /// It also had no concept of refusal, so a player whose agent "won't take
+    /// the call" signed through the control next to the one that said so.
+    ///
+    /// Everything numeric now comes from `ContractNegotiationEngine`; this
+    /// function only translates the engine's verdict into the four states this
+    /// screen renders.
     static func evaluateReSignOffer(
         player: Player,
         offeredSalary: Int,
         offeredYears: Int,
-        marketValue: Int,
-        teamWins: Int,
-        teamReputation: Int,
-        roundNumber: Int = 1
-    ) -> ReSignResponse {
-        guard marketValue > 0 else { return .accepted }
-        let ratio = Double(offeredSalary) / Double(marketValue)
-
-        // R22: the agent persona shifts the bar and caps patience.
-        let persona = AgentPersona.forPlayer(id: player.id)
-
-        // R22: an insulting lowball to a hardliner kills talks for the offseason.
-        if persona.breaksOffForSeason && ratio < 0.60 {
-            return .brokenOff(
-                reason: "That offer is an insult. \(player.firstName) is done talking to this front office until next year."
+        salaryCap: Int,
+        situation: NegotiationSituation,
+        standing: GMStanding,
+        standingAsk: NegotiationOffer?,
+        roundNumber: Int = 1,
+        insultCount: Int = 0
+    ) -> ReSignOutcome {
+        // The freeze-out is a first-class outcome here too, not a hidden button.
+        if NegotiationLockRegistry.isLocked(player.id) {
+            return ReSignOutcome(
+                response: .brokenOff(
+                    reason: "\(AgentPersona.agentName(for: player.id)) isn't taking calls about \(player.firstName) until next league year."
+                ),
+                standingAsk: standingAsk,
+                insultCount: insultCount
             )
         }
 
-        // R22: agents have finite patience — past their limit they walk.
-        if roundNumber > persona.maxRounds {
-            return .rejected(
-                reason: "We've gone back and forth enough. \(player.firstName) will test the open market."
+        let demand = ContractNegotiationEngine.demand(
+            player: player,
+            negotiationType: .extend,
+            salaryCap: salaryCap,
+            situation: situation,
+            standing: standing,
+            insultCount: insultCount
+        )
+
+        if demand.isRefusing {
+            return ReSignOutcome(
+                response: .rejected(reason: refusalReason(player: player, reason: demand.refusalReason)),
+                standingAsk: standingAsk,
+                insultCount: insultCount
             )
         }
 
-        // Own team loyalty bonus
-        let loyaltyBonus = 0.12
+        let ask = standingAsk ?? demand.openingOffer
+        let gmOffer = NegotiationOffer(
+            years: offeredYears,
+            annualSalary: offeredSalary,
+            signingBonus: 0,
+            guaranteedPercent: ask.guaranteedPercent,
+            noTradeClause: false
+        )
 
-        // Motivation modifiers
-        let motivationMod: Double = {
-            switch player.personality.motivation {
-            case .loyalty:  return 0.15
-            case .money:    return -0.05
-            case .winning:  return teamWins >= 10 ? 0.10 : -0.05
-            case .fame:     return 0.0
-            case .stats:    return 0.03
-            }
-        }()
+        let result = ContractNegotiationEngine.respond(
+            gmOffer: gmOffer,
+            player: player,
+            demand: demand,
+            previousAgentOffer: ask,
+            roundNumber: roundNumber
+        )
 
-        // Archetype modifiers
-        let archetypeMod: Double = {
-            switch player.personality.archetype {
-            case .teamLeader, .mentor:      return 0.08
-            case .quietProfessional:        return 0.05
-            case .loneWolf, .dramaQueen:    return -0.05
-            default:                        return 0.0
-            }
-        }()
+        let persona = demand.persona
 
-        // R22: hardliner needs more, deal-maker/loyalist a bit less.
-        let threshold = 0.80 - loyaltyBonus - motivationMod - archetypeMod
-            + persona.reSignThresholdShift
+        switch result.outcome {
+        case .dealReached:
+            return ReSignOutcome(response: .accepted, standingAsk: ask, insultCount: result.demand.insultCount)
 
-        if ratio >= threshold {
-            return .accepted
-        } else if ratio >= threshold - 0.15 {
-            let counterSalary = Int(Double(marketValue) * (threshold + 0.05))
-            return .countered(
-                salary: counterSalary,
-                years: offeredYears,
-                reason: counterReason(player: player, persona: persona)
+        case .negotiationsBrokenOff:
+            return ReSignOutcome(
+                response: .brokenOff(
+                    reason: "That offer is an insult. \(player.firstName) is done talking to this front office until next year."
+                ),
+                standingAsk: ask,
+                insultCount: result.demand.insultCount
             )
-        } else {
-            return .rejected(reason: rejectReason(player: player, offeredSalary: offeredSalary, marketValue: marketValue))
+
+        case .playerWalked:
+            return ReSignOutcome(
+                response: .rejected(
+                    reason: rejectReason(player: player, askPerYear: ask.annualCapHit)
+                ),
+                standingAsk: ask,
+                insultCount: result.demand.insultCount
+            )
+
+        case .pending, .walkedAway:
+            guard let counter = result.counterOffer else {
+                return ReSignOutcome(
+                    response: .rejected(
+                        reason: rejectReason(player: player, askPerYear: ask.annualCapHit)
+                    ),
+                    standingAsk: ask,
+                    insultCount: result.demand.insultCount
+                )
+            }
+            return ReSignOutcome(
+                response: .countered(
+                    salary: counter.annualCapHit,
+                    years: counter.years,
+                    reason: result.isYearsPushback
+                        ? "At \(player.age), \(player.firstName) won't sign a \(offeredYears)-year deal"
+                        : counterReason(player: player, persona: persona)
+                ),
+                standingAsk: counter,
+                insultCount: result.demand.insultCount
+            )
+        }
+    }
+
+    /// The refusal, in this screen's shorter voice. The wording is the chat
+    /// layer's; the verdict behind it is the engine's.
+    private static func refusalReason(player: Player, reason: AgentRefusalReason?) -> String {
+        guard let reason else { return "\(player.firstName)'s camp isn't negotiating right now" }
+        switch reason {
+        case .benched:
+            return "He hasn't taken a meaningful snap all year \u{2014} his camp won't discuss an extension"
+        case .losingCulture:
+            return "He has no interest in signing up for another rebuild"
+        case .wantsOut:
+            return "\(player.firstName) has already decided he wants out"
+        case .ridingIntoRetirement:
+            return "He's weighing retirement and won't commit to a new deal"
         }
     }
 
@@ -779,16 +930,19 @@ struct FinalPushView: View {
         }
     }
 
-    private static func rejectReason(player: Player, offeredSalary: Int, marketValue: Int) -> String {
+    /// `askPerYear` is the AGENT'S standing number, which is what he actually
+    /// walked away from — quoting raw market value here would name a price
+    /// neither side was arguing about.
+    private static func rejectReason(player: Player, askPerYear: Int) -> String {
         switch player.personality.motivation {
         case .money:
-            return "Wants to test the free agent market \u{2014} asking price is \(formatMillionsStatic(marketValue))"
+            return "Wants to test the free agent market \u{2014} asking price is \(formatMillionsStatic(askPerYear))"
         case .winning:
             return "Looking for a championship contender"
         case .stats:
             return "Wants a bigger role elsewhere"
         case .loyalty:
-            return "Feels undervalued \u{2014} expected at least \(formatMillionsStatic(Int(Double(marketValue) * 0.9)))"
+            return "Feels undervalued \u{2014} expected at least \(formatMillionsStatic(Int(Double(askPerYear) * 0.9)))"
         case .fame:
             return "Seeking a big-market team for more exposure"
         }
@@ -855,13 +1009,41 @@ struct FinalPushView: View {
             capMode: career.capMode
         )
         try? modelContext.save()
-        CareerScopedDefaults.set(true, "franchiseTagVisited")
+        // Deliberately does NOT set `franchiseTagVisited`. That flag means "the
+        // user has been through the tag screen in THIS Review Roster phase" and
+        // it is only cleared when Review Roster is left — so setting it here, a
+        // phase later in free agency, silently pre-ticked next cycle's
+        // "Franchise Tag Decisions" task before the user had seen it. The tag
+        // itself is the evidence the task checks for anyway.
         var state = decisions[player.id] ?? PlayerDecisionState()
         state.status = .tagged(salary: player.annualSalary)
         decisions[player.id] = state
     }
 
     // MARK: - Helpers
+
+    /// Books a Quick Offer re-sign. `signFreeAgent` is the wrong tool for a man
+    /// who is ALREADY on the roster: it charges the club the full new cap hit
+    /// without crediting the salary the club was already carrying, and in
+    /// realistic mode it inserts a second `Contract` row alongside the live one.
+    private func finalizeReSign(player: Player, team: Team, salary: Int, years: Int) {
+        let offer = NegotiationOffer(
+            years: years,
+            annualSalary: salary,
+            signingBonus: 0,
+            guaranteedPercent: 0,
+            noTradeClause: false
+        )
+        ContractEngine.applyNegotiatedDeal(
+            player: player,
+            team: team,
+            offer: offer,
+            application: .replaceContract,
+            capMode: career.capMode,
+            modelContext: modelContext
+        )
+        try? modelContext.save()
+    }
 
     private func isPending(_ playerID: UUID) -> Bool {
         guard let state = decisions[playerID] else { return true }
@@ -1004,6 +1186,15 @@ struct FinalPushView: View {
         allTeams = (try? modelContext.fetch(FetchDescriptor<Team>(
             predicate: #Predicate { $0.careerID == cid }
         ))) ?? []
+
+        // Owner trust — one of the five GM-standing inputs the demand model
+        // reads. Absent means the owner has never reacted to anything, which
+        // must cost nothing: `GMStanding`'s neutral is 70, not 50.
+        if let reputation = (try? modelContext.fetch(FetchDescriptor<DraftReputation>(
+            predicate: #Predicate { $0.careerID == cid }
+        )))?.max(by: { $0.seasonYear < $1.seasonYear }) {
+            ownerTrust = reputation.ownerTrust
+        }
 
         // R23: legal-tampering buzz — same pricing/need model the market uses.
         tamperingRumors = TamperingRumorEngine.generateRumors(
