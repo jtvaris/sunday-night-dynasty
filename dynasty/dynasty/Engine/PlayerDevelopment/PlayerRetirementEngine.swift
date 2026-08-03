@@ -24,6 +24,24 @@ enum PlayerRetirementEngine {
 
     // MARK: - Types
 
+    /// WHY a career ended — the story the news feed tells about a departure.
+    ///
+    /// Task #84. These are **classifications, not extra retirement rolls**: the
+    /// hazard above decides who leaves, and this decides how it reads. See
+    /// `classifySpecialCases` for the invariance argument that keeps the
+    /// aggregate rate (and with it the a33+ / pyramid calibration) untouched.
+    enum RetirementCase: String {
+        /// The ordinary path: age, decline, or the market moving on.
+        case standard
+        /// The Luck case — a body that ran out of road in the middle of a prime
+        /// career. Swapped 1:1 against an ordinary retirement, never added.
+        case injuryToll
+        /// The Donald case — an elite with a full trophy case who walks while
+        /// still playing at 90+ rather than declining into the sunset. Pure
+        /// relabelling of a man who was already retiring.
+        case onTop
+    }
+
     /// One retirement decided this offseason, with the career facts needed
     /// for news / Hall of Fame processing snapshotted at decision time.
     struct Retirement {
@@ -36,6 +54,10 @@ enum PlayerRetirementEngine {
         let isHallOfFamer: Bool
         /// Team the player retired from (nil = unsigned free agent).
         let teamIDAtRetirement: UUID?
+        /// The flavour the news feed reads (task #84). `var` because the Donald
+        /// case relabels an already-decided retirement in place; defaulted so
+        /// every existing construction site is unchanged.
+        var retirementCase: RetirementCase = .standard
     }
 
     /// Peak OVR that makes a retirement a league-wide "star" story.
@@ -362,6 +384,376 @@ enum PlayerRetirementEngine {
         return peakOverall >= 88 && seasonsPlayed >= 8
     }
 
+    // MARK: - Special cases (task #84)
+    //
+    // ============================================================================
+    // THE INVARIANCE CONTRACT
+    // ============================================================================
+    // The retirement hazard above is CALIBRATED — the `career` harness asserts
+    // the 33+ age share, the roster mean age, the drafted-career length and the
+    // whole §8 quality pyramid against it, and a retirement wave that got even a
+    // couple of percent heavier would move all four. So the two "special"
+    // retirements below are forbidden from adding a single departure:
+    //
+    //   • DONALD (`.onTop`) is a **relabel**. It never touches membership: it
+    //     reads the list the hazard already produced and renames at most two of
+    //     its members. Aggregate rate delta: exactly zero, by construction.
+    //
+    //   • LUCK (`.injuryToll`) is a **1:1 swap**. When its gate fires it adds
+    //     one prime-age man to the list AND removes one — so |retirements| is
+    //     bit-for-bit what the hazard produced, in every realization, not merely
+    //     in expectation. The removed man is the MARGINAL one (lowest
+    //     `retirementProbability` in the list, UUID tie-break), which is also the
+    //     equal-probability match the swap asks for: the Luck candidate is by
+    //     eligibility a man the hazard scores at or near 0 (he is inside his
+    //     position's peak window and under 33), so the nearest slot in the list
+    //     is its smallest. Read as a story: one man's body gives out, and the
+    //     one veteran who was closest to a coin flip decides to run it back.
+    //
+    // The residual effect is therefore not on the RATE but on WHICH man leaves,
+    // at ≤ `luckGateThousandths`/1000 events per league-season — 0.4/season
+    // against ~150 retirements, i.e. ≤0.3 % of the wave, and only when a
+    // qualified candidate exists at all. Against the pyramid's 33+ share that is
+    // ~0.01 pp of drift, three orders of magnitude inside the ±1.5 pp budget.
+    //
+    // Everything here is seeded from (careerID, season), never from
+    // `Double.random`: a shock retirement that re-rolled every time the offseason
+    // was recomputed would be a bug the player could see.
+    // ============================================================================
+
+    /// What the trophy case has to hold before "he walked away on top" is a
+    /// story rather than a coincidence. Assembled by the caller from league
+    /// history (rings) and season history (elite seasons) — the engine stays a
+    /// pure function of its arguments and the balance harness stays buildable.
+    struct TrophyCase {
+        /// Championships won while on the roster of the title team.
+        var rings: Int = 0
+        /// Seasons finished at or above `starPeakOverall`.
+        var eliteSeasons: Int = 0
+        /// Already clears the induction bar on career peak alone.
+        var isHallOfFameTrack: Bool = false
+
+        /// A résumé with nothing left to prove.
+        var isFull: Bool {
+            rings >= 1
+                && (isHallOfFameTrack
+                    || eliteSeasons >= PlayerRetirementEngine.onTopMinEliteSeasons)
+        }
+    }
+
+    /// The context the special cases need and a `Player` row cannot carry.
+    ///
+    /// Defaulted to DISABLED so `evaluateRetirements(allPlayers:peakOverallByPlayerID:)`
+    /// keeps its old two-argument shape and old behaviour for any caller that
+    /// does not opt in.
+    struct SpecialCaseContext {
+        var isEnabled: Bool = false
+        /// SplitMix seed derived from (careerID, season) — see `specialCaseSeed`.
+        var seed: UInt64 = 0
+        /// Résumé per player. Empty is legal: the Donald case simply finds
+        /// nobody eligible, which is the correct answer for a league with no
+        /// recorded history yet.
+        var trophyCaseByPlayerID: [UUID: TrophyCase] = [:]
+
+        static let disabled = SpecialCaseContext()
+    }
+
+    // MARK: Luck case constants
+
+    /// How often the shock retirement is even ALLOWED to happen, in thousandths
+    /// of a league-season. 400 = it clears the calendar gate in 2 seasons out of
+    /// 5, and a qualified candidate then has to exist on top of that — so the
+    /// realized rate is at most ~1 per 2.5 seasons and usually rarer.
+    static let luckGateThousandths = 400
+    /// Major injuries (6+ weeks) that have to be behind him.
+    static let luckMinMajorInjuries = 3
+    /// Total career weeks lost to injury — roughly two full seasons of football.
+    static let luckMinCareerWeeksOut = 30
+    /// A body that has stopped holding up.
+    static let luckMaxDurability = 58
+    /// Enough of a career that walking away is a loss to the league.
+    static let luckMinYearsPro = 4
+    static let luckMinAge = 25
+
+    /// Is this man a candidate for the shock retirement?
+    ///
+    /// Deliberately requires him to be INSIDE his position's peak window and
+    /// under the mid-thirties wall — i.e. exactly where `retirementProbability`
+    /// scores him at or near zero. That is what makes it a shock rather than an
+    /// early draw from the age curve, and it is also why the swap partner below
+    /// is the list's minimum: his own hazard is the smallest number in the room.
+    static func isInjuryTollCandidate(_ player: Player) -> Bool {
+        guard !player.isRetired else { return false }
+        guard player.age >= luckMinAge, player.yearsPro >= luckMinYearsPro else { return false }
+        guard player.age <= player.position.peakAgeRange.upperBound, player.age < 33 else {
+            return false
+        }
+
+        // Non-mercenary: the man who is in it for the cheque or the spotlight
+        // plays the deal out and lets the club release him. The one who walks
+        // in his prime is the one football was never a transaction for.
+        let motivation = player.personality.motivation
+        guard motivation != .money, motivation != .fame else { return false }
+
+        // Durability before the history reads: `injuryHistory` decodes JSON off
+        // the row on every access, and this filter runs over the whole league.
+        guard player.physical.durability <= luckMaxDurability else { return false }
+
+        let records = player.injuryHistory
+        let major = records.filter { $0.weeksOut >= 6 }.count
+        let weeksOut = records.reduce(0) { $0 + $1.weeksOut }
+        return major >= luckMinMajorInjuries && weeksOut >= luckMinCareerWeeksOut
+    }
+
+    /// How heavy the toll is, for picking the single worst-off candidate.
+    static func injuryTollBurden(_ player: Player) -> Int {
+        let records = player.injuryHistory
+        let weeksOut = records.reduce(0) { $0 + $1.weeksOut }
+        let major = records.filter { $0.weeksOut >= 6 }.count
+        return weeksOut + major * 6 + max(0, 60 - player.physical.durability)
+    }
+
+    // MARK: Donald case constants
+
+    /// Hard ceiling on "goes out on top" stories per offseason, league-wide.
+    static let onTopMaxPerSeason = 2
+    static let onTopMinAge = 30
+    /// Still elite at the moment he walks — this is the whole point of the case.
+    static let onTopMinOverall = 90
+    /// Elite seasons that stand in for a Hall of Fame track when the peak alone
+    /// does not clear the induction bar.
+    static let onTopMinEliteSeasons = 4
+    /// Even a man with the full résumé usually just fades. Percent of eligible
+    /// elites who actually get the "walked away on top" framing.
+    static let onTopGatePercent = 60
+
+    // MARK: Deterministic seeding
+
+    /// (careerID, season) → the stream every special case draws from. FNV-1a over
+    /// the UUID bytes, stirred with the SplitMix64 constant — the same shape
+    /// `ScoutingEngine` and `LeagueTemplateImporter` already use.
+    static func specialCaseSeed(careerID: UUID, season: Int) -> UInt64 {
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        withUnsafeBytes(of: careerID.uuid) { raw in
+            for byte in raw {
+                hash = (hash ^ UInt64(byte)) &* 0x0000_0100_0000_01b3
+            }
+        }
+        return hash ^ (UInt64(bitPattern: Int64(season)) &* 0x9E37_79B9_7F4A_7C15)
+    }
+
+    /// SplitMix64 finalizer — the whole generator, since every gate here needs
+    /// exactly one draw.
+    private static func mix(_ value: UInt64) -> UInt64 {
+        var z = value &+ 0x9E37_79B9_7F4A_7C15
+        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+        return z ^ (z >> 31)
+    }
+
+    /// A stable per-player salt, so a given man's gate answers the same way for
+    /// a given season no matter what order the league is iterated in.
+    private static func playerSalt(_ id: UUID) -> UInt64 {
+        var hash: UInt64 = 0x84222325_cbf29ce4
+        withUnsafeBytes(of: id.uuid) { raw in
+            for byte in raw {
+                hash = (hash ^ UInt64(byte)) &* 0x0000_0100_0000_01b3
+            }
+        }
+        return hash
+    }
+
+    // MARK: Classification
+
+    /// Turns the hazard's verdict into the hazard's verdict PLUS a story.
+    ///
+    /// Order is load-bearing: the Luck swap runs first (it changes membership by
+    /// +1/−1), then the Donald relabel reads the final list. See the invariance
+    /// contract at the top of this section.
+    static func classifySpecialCases(
+        retirements: [Retirement],
+        allPlayers: [Player],
+        peakOverallByPlayerID: [UUID: Int],
+        special: SpecialCaseContext
+    ) -> [Retirement] {
+        guard special.isEnabled, !retirements.isEmpty else { return retirements }
+        var result = retirements
+
+        // ---- 1. LUCK: the 1:1 swap -----------------------------------------
+        if mix(special.seed &+ 0x4C55_434B) % 1000 < UInt64(luckGateThousandths) {
+            let retiringIDs = Set(result.map { $0.player.id })
+            let candidates = allPlayers
+                .filter { !retiringIDs.contains($0.id) && isInjuryTollCandidate($0) }
+
+            // Worst toll wins; UUID breaks ties so the pick never depends on
+            // fetch order.
+            let chosen = candidates.max { a, b in
+                let ba = injuryTollBurden(a), bb = injuryTollBurden(b)
+                if ba != bb { return ba < bb }
+                return a.id.uuidString < b.id.uuidString
+            }
+
+            // The partner: the most marginal retirement on the board. `min` over
+            // the SAME hazard the list was built from, UUID tie-break.
+            let partnerIndex = result.indices.min { a, b in
+                let pa = retirementProbability(player: result[a].player)
+                let pb = retirementProbability(player: result[b].player)
+                if pa != pb { return pa < pb }
+                return result[a].player.id.uuidString < result[b].player.id.uuidString
+            }
+
+            // Both halves or neither — a Luck retirement with nothing to swap
+            // against would be exactly the extra roll this design forbids.
+            if let chosen, let partnerIndex {
+                result.remove(at: partnerIndex)
+                result.append(snapshot(
+                    player: chosen,
+                    peakOverallByPlayerID: peakOverallByPlayerID,
+                    retirementCase: .injuryToll
+                ))
+            }
+        }
+
+        // ---- 2. DONALD: the relabel ----------------------------------------
+        let eligible = result.indices.filter { index in
+            // Never relabel a man the Luck case already claimed: the two stories
+            // are mutually exclusive, and "goes out on top" is the wrong caption
+            // on a career a body ended.
+            guard result[index].retirementCase == .standard else { return false }
+            let player = result[index].player
+            guard player.age >= onTopMinAge, player.overall >= onTopMinOverall else { return false }
+            guard let trophies = special.trophyCaseByPlayerID[player.id], trophies.isFull else {
+                return false
+            }
+            return mix(special.seed &+ playerSalt(player.id)) % 100 < UInt64(onTopGatePercent)
+        }
+        .sorted { a, b in
+            let pa = result[a], pb = result[b]
+            if pa.peakOverall != pb.peakOverall { return pa.peakOverall > pb.peakOverall }
+            return pa.player.id.uuidString < pb.player.id.uuidString
+        }
+
+        for index in eligible.prefix(onTopMaxPerSeason) {
+            result[index].retirementCase = .onTop
+        }
+
+        return result
+    }
+
+    // MARK: - Comeback (task #84, case 3)
+    //
+    // The one door that swings the other way. It is NOT part of the invariance
+    // contract above — an un-retirement is an INFLOW, and the calibrated numbers
+    // are about outflow — but it is held to the same rarity discipline, because
+    // a league where legends routinely un-retire is a league with no stakes.
+    //
+    // Feasibility note (why this is implementable at all): `retire` never
+    // deletes the `Player` row, it flags it (`isRetired = true`) and hands back
+    // the face. Every attribute, every history row and the face itself are still
+    // there, so bringing a man back is a flag flip plus an honest ageing pass —
+    // no reconstruction from Hall of Fame snapshots required.
+
+    /// Thousandths of a league-season in which the comeback gate opens at all.
+    /// 450 with a candidate AND a contender-with-room both required on top puts
+    /// the realized rate at roughly one per two seasons, often none.
+    static let comebackGateThousandths = 450
+    /// He has to still be recognisably the same player — two seasons away, no
+    /// more. Season 3 is a different man.
+    static let comebackMaxSeasonsAway = 2
+    /// Only a genuine star is worth a roster spot and a ring-chasing headline.
+    static let comebackMinPeakOverall = 88
+    static let comebackMaxAge = 38
+    /// What "contender" means: a real playoff team from the season just played.
+    static let comebackContenderWins = 11
+    /// A one-year, prove-it deal, in thousands — comfortably inside any
+    /// contender's cap room and never a franchise-altering commitment.
+    static let comebackSalary = 4_000
+
+    /// Does the calendar even allow a comeback this offseason?
+    static func comebackGateFires(seed: UInt64) -> Bool {
+        mix(seed &+ 0x434F_4D45) % 1000 < UInt64(comebackGateThousandths)
+    }
+
+    /// Is this retired man a plausible returnee?
+    ///
+    /// - Parameters:
+    ///   - seasonsAway: Seasons between his retirement and this offseason.
+    ///   - peakOverall: Career peak from `PlayerSeasonHistory`.
+    ///   - retirementCase: The Luck case never comes back. His body is the whole
+    ///     reason he left, and undoing that would make the shock meaningless.
+    static func isComebackCandidate(
+        player: Player,
+        seasonsAway: Int,
+        peakOverall: Int,
+        retirementCase: RetirementCase
+    ) -> Bool {
+        guard player.isRetired, player.teamID == nil else { return false }
+        guard retirementCase != .injuryToll else { return false }
+        guard seasonsAway >= 1, seasonsAway <= comebackMaxSeasonsAway else { return false }
+        guard peakOverall >= comebackMinPeakOverall else { return false }
+        return player.age + seasonsAway <= comebackMaxAge
+    }
+
+    /// Brings a retired player back onto a roster at an age- and rust-appropriate
+    /// rating, and returns the OVR he lost while he was gone.
+    ///
+    /// The ageing half is the SHIPPED decline curve, not a bespoke penalty: one
+    /// `applyAgeRegression` per season away, then the service credit those calls
+    /// added is taken back off, because sitting on a couch is not a pro season.
+    /// The rust on top is the part ageing does not model — a man who has not been
+    /// hit since his last game is not in football shape, and it costs him
+    /// conditioning and sharpness before it costs him talent.
+    @discardableResult
+    static func unretire(
+        _ player: Player,
+        seasonsAway: Int,
+        teamID: UUID
+    ) -> Int {
+        let before = player.overall
+
+        for _ in 0..<max(0, seasonsAway) {
+            PlayerDevelopmentEngine.applyAgeRegression(player)
+        }
+        // He aged; he did not accrue service. Hand the years back.
+        player.yearsPro = max(0, player.yearsPro - max(0, seasonsAway))
+
+        let rust = 2 * max(1, seasonsAway)
+        player.physical.speed = max(1, player.physical.speed - rust)
+        player.physical.acceleration = max(1, player.physical.acceleration - rust)
+        player.physical.agility = max(1, player.physical.agility - rust)
+        player.physical.stamina = max(1, player.physical.stamina - rust)
+        player.mental.awareness = max(1, player.mental.awareness - rust / 2)
+
+        player.isRetired = false
+        player.teamID = teamID
+        player.contractYearsRemaining = 1
+        player.annualSalary = comebackSalary
+        player.isHoldingOut = false
+        player.isFranchiseTagged = false
+        player.isInjured = false
+        player.injuryWeeksRemaining = 0
+        player.injuryType = nil
+        player.rehabStatus = nil
+        player.rushBackWeeksRemaining = 0
+        player.fatigue = 0
+        player.loyaltyYears = 0
+        player.gamesPlayedThisSeason = 0
+        player.gamesStartedThisSeason = 0
+
+        // `retire` handed his portrait back to the pool with a two-season
+        // cooldown. He is a person again, so he takes it back — and if the
+        // cooldown already let somebody else have it, the library re-draws.
+        player.faceID = FaceLibrary.shared.claimFace(
+            player.faceID,
+            personID: player.id,
+            role: .player,
+            age: player.age,
+            position: player.position
+        ) ?? player.faceID
+
+        return max(0, before - player.overall)
+    }
+
     // MARK: - Evaluation
 
     /// Rolls retirement for every eligible player and returns the decided
@@ -371,14 +763,24 @@ enum PlayerRetirementEngine {
     ///   - allPlayers: Every player in the store (retired rows are skipped).
     ///   - peakOverallByPlayerID: Max end-of-season OVR per player from
     ///     `PlayerSeasonHistory` (missing entries fall back to current OVR).
+    ///   - special: Task #84's story layer. Defaulted to `.disabled`, and even
+    ///     when enabled it cannot change how many men retire — see the
+    ///     invariance contract above `classifySpecialCases`.
     static func evaluateRetirements(
         allPlayers: [Player],
-        peakOverallByPlayerID: [UUID: Int]
+        peakOverallByPlayerID: [UUID: Int],
+        special: SpecialCaseContext = .disabled
     ) -> [Retirement] {
-        roll(
+        let decided = roll(
             allPlayers: allPlayers,
             peakOverallByPlayerID: peakOverallByPlayerID,
             probability: { retirementProbability(player: $0) }
+        )
+        return classifySpecialCases(
+            retirements: decided,
+            allPlayers: allPlayers,
+            peakOverallByPlayerID: peakOverallByPlayerID,
+            special: special
         )
     }
 
@@ -418,20 +820,37 @@ enum PlayerRetirementEngine {
             let chance = probability(player)
             guard chance > 0, Double.random(in: 0.0..<1.0) < chance else { continue }
 
-            let peak = max(peakOverallByPlayerID[player.id] ?? 0, player.overall)
-            retirements.append(Retirement(
+            retirements.append(snapshot(
                 player: player,
-                peakOverall: peak,
-                isStar: peak >= starPeakOverall,
-                isHallOfFamer: qualifiesForHallOfFame(
-                    peakOverall: peak,
-                    seasonsPlayed: player.yearsPro
-                ),
-                teamIDAtRetirement: player.teamID
+                peakOverallByPlayerID: peakOverallByPlayerID,
+                retirementCase: .standard
             ))
         }
 
         return retirements
+    }
+
+    /// The career facts a departure carries, frozen at decision time. Shared so
+    /// the Luck case's man is snapshotted by exactly the same rule as everybody
+    /// the hazard picked — including the Hall of Fame test, which a prime-career
+    /// legend forced out by his body can absolutely still pass.
+    private static func snapshot(
+        player: Player,
+        peakOverallByPlayerID: [UUID: Int],
+        retirementCase: RetirementCase
+    ) -> Retirement {
+        let peak = max(peakOverallByPlayerID[player.id] ?? 0, player.overall)
+        return Retirement(
+            player: player,
+            peakOverall: peak,
+            isStar: peak >= starPeakOverall,
+            isHallOfFamer: qualifiesForHallOfFame(
+                peakOverall: peak,
+                seasonsPlayed: player.yearsPro
+            ),
+            teamIDAtRetirement: player.teamID,
+            retirementCase: retirementCase
+        )
     }
 
     // MARK: - Application

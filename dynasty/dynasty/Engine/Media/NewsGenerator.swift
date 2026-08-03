@@ -1259,3 +1259,93 @@ enum MilestoneNewsFactory {
     }
 
 }
+
+// MARK: - Retirement Realism News Factory (task #84)
+
+/// Copy for the three retirement stories that are not "another veteran got old":
+/// the shock, the walk-off, and the return.
+///
+/// Same shape as `TradeNewsFactory` / `MilestoneNewsFactory` — pure functions of
+/// facts the retirement pass already holds, no state, no randomness. The case
+/// itself is decided in `PlayerRetirementEngine`; this only knows how to say it.
+enum RetirementCaseNewsFactory {
+
+    /// The Luck case: a prime-career man whose body sent in the bill.
+    static func injuryToll(
+        player: Player,
+        teamName: String?,
+        peakOverall: Int,
+        careerWeeksOut: Int,
+        season: Int,
+        teamID: UUID?
+    ) -> NewsItem {
+        let club = teamName.map { "\($0) " } ?? ""
+        let years = max(1, player.yearsPro)
+        return NewsItem(
+            headline: "\(player.fullName) retires at \(player.age) — \"my body is done\"",
+            body: "Nobody saw this coming. \(player.fullName), the \(club)\(player.position.rawValue), walked into a press conference at \(player.age) years old and ended his career on the spot — still in his prime, still rated \(player.overall) overall, with a peak of \(peakOverall) behind him. He has missed roughly \(careerWeeksOut) weeks of football across \(years) seasons and said he is not willing to spend another year rehabbing to be three quarters of himself. \"I promised my family I'd know when,\" he said. \"I know.\"",
+            category: .retirement,
+            week: 0,
+            season: season,
+            relatedTeamID: teamID,
+            relatedPlayerID: player.id,
+            sentiment: .negative
+        )
+    }
+
+    /// The Donald case: still elite, and leaving anyway.
+    static func onTop(
+        player: Player,
+        teamName: String?,
+        peakOverall: Int,
+        rings: Int,
+        resume: String?,
+        season: Int,
+        teamID: UUID?
+    ) -> NewsItem {
+        let club = teamName.map { "\($0) " } ?? ""
+        let ringLine: String
+        switch rings {
+        case 0:  ringLine = ""
+        case 1:  ringLine = " He leaves with a ring."
+        default: ringLine = " He leaves with \(rings) rings."
+        }
+        let production = resume.map { " The record book says \($0)." } ?? ""
+        return NewsItem(
+            headline: "\(player.fullName) goes out on top",
+            body: "There was no decline, no farewell tour, no last bad season. \(player.fullName) retires at \(player.age) as a \(player.overall)-overall \(player.position.rawValue) — the \(club)star was still one of the best players alive when he decided he was finished.\(ringLine)\(production) Asked why now, he said the only honest answer: \"Because I still can. That's the whole point.\" Peak career rating: \(peakOverall).",
+            category: .retirement,
+            week: 0,
+            season: season,
+            relatedTeamID: teamID,
+            relatedPlayerID: player.id,
+            sentiment: .positive
+        )
+    }
+
+    /// The comeback: the door swinging the other way.
+    static func comeback(
+        player: Player,
+        teamName: String,
+        teamWins: Int,
+        seasonsAway: Int,
+        overallLost: Int,
+        season: Int,
+        teamID: UUID
+    ) -> NewsItem {
+        let away = seasonsAway == 1 ? "a season" : "\(seasonsAway) seasons"
+        let rustLine = overallLost > 0
+            ? " He is not the player he was — \(overallLost) points off his last rating, and he knows it."
+            : " He looks, improbably, like he never left."
+        return NewsItem(
+            headline: "He's back: \(player.fullName) un-retires to chase a ring with the \(teamName)",
+            body: "After \(away) away from football, \(player.fullName) has signed a one-year deal with the \(teamName), who went \(teamWins)-\(max(0, 17 - teamWins)) last season and have been one piece short.\(rustLine) At \(player.age) the \(player.position.rawValue) is not here to rebuild anything: \"I retired with everything except the one thing. They've got a real team. I'll take my shot.\" One year, no promises, and the league has its story of the offseason.",
+            category: .freeAgency,
+            week: 0,
+            season: season,
+            relatedTeamID: teamID,
+            relatedPlayerID: player.id,
+            sentiment: .positive
+        )
+    }
+}

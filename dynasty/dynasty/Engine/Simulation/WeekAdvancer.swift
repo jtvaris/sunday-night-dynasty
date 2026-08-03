@@ -1424,6 +1424,7 @@ enum WeekAdvancer {
                 allPlayers: allPlayers,
                 week: week,
                 season: season,
+                salaryCap: teams.first(where: { $0.id == playerTeamID })?.salaryCap ?? 265_000,
                 modelContext: modelContext
             )
         }
@@ -2104,7 +2105,8 @@ enum WeekAdvancer {
                     players: roster,
                     teamWins: team.wins,
                     teamLosses: team.losses,
-                    chemistry: LockerRoomEngine.chemistryScore(players: roster)
+                    chemistry: LockerRoomEngine.chemistryScore(players: roster),
+                    salaryCap: team.salaryCap
                 )
             }
 
@@ -2278,6 +2280,7 @@ enum WeekAdvancer {
         allPlayers: [Player],
         week: Int,
         season: Int,
+        salaryCap: Int = 265_000,
         modelContext: ModelContext
     ) {
         let descriptor = FetchDescriptor<Holdout>(
@@ -2300,7 +2303,7 @@ enum WeekAdvancer {
             if !player.isHoldingOut { player.isHoldingOut = true }
 
             // Settlement check: the front office already fixed the money.
-            let market = ContractEngine.estimateMarketValue(player: player)
+            let market = ContractEngine.estimateMarketValue(player: player, salaryCap: salaryCap)
             let paidFairly = market > 0 && Double(player.annualSalary) >= Double(market) * 0.95
             if paidFairly || player.contractYearsRemaining >= 2 {
                 player.isHoldingOut = false
@@ -2353,7 +2356,7 @@ enum WeekAdvancer {
             } else {
                 // Ongoing drama: the agent turns up the heat via the inbox.
                 let agentName = AgentPersona.agentName(for: player.id)
-                let demand = ContractEngine.estimateMarketValue(player: player)
+                let demand = ContractEngine.estimateMarketValue(player: player, salaryCap: salaryCap)
                 lastInboxMessages.append(InboxMessage(
                     sender: .playerAgent(name: agentName),
                     subject: "\(player.fullName) holdout — week \(holdout.weeksActive)",
@@ -2823,6 +2826,17 @@ enum WeekAdvancer {
             processPlayerRetirements(
                 career: career,
                 teamsByID: teamsByID,
+                allPlayers: allPlayers,
+                modelContext: modelContext
+            )
+
+            // Task #84: and once every couple of leagues-years, the door swings
+            // the other way — a recently retired star un-retires to chase a ring
+            // with a contender. Runs right after the wave so a man cannot retire
+            // and un-retire in the same offseason (`seasonsAway >= 1`).
+            processComeback(
+                career: career,
+                teams: teams,
                 allPlayers: allPlayers,
                 modelContext: modelContext
             )
@@ -5259,13 +5273,52 @@ enum WeekAdvancer {
             peakByID[playerID] = rows.map(\.overallAtEndOfSeason).max() ?? 0
         }
 
+        // Task #84: the trophy case the "goes out on top" case reads. Rings are
+        // derived, not stored — a player won a title in season S if the club he
+        // finished S on is the club `recordSeasonSummary` wrote as that season's
+        // champion. Elite seasons come off the same rows. Both are cheap folds
+        // over history we already fetched, so nothing new is persisted and
+        // nothing can drift out of sync with the record book.
+        let championBySeason: [Int: UUID] = career.seasonSummaries.reduce(into: [:]) { map, summary in
+            if let championID = summary.championTeamID { map[summary.season] = championID }
+        }
+        var trophyCases: [UUID: PlayerRetirementEngine.TrophyCase] = [:]
+        for (playerID, rows) in historyByPlayer {
+            var trophies = PlayerRetirementEngine.TrophyCase()
+            for row in rows {
+                if let teamID = row.teamID, championBySeason[row.season] == teamID {
+                    trophies.rings += 1
+                }
+                if row.overallAtEndOfSeason >= PlayerRetirementEngine.starPeakOverall {
+                    trophies.eliteSeasons += 1
+                }
+            }
+            trophies.isHallOfFameTrack = PlayerRetirementEngine.qualifiesForHallOfFame(
+                peakOverall: peakByID[playerID] ?? 0,
+                seasonsPlayed: rows.count
+            )
+            trophyCases[playerID] = trophies
+        }
+
+        let specialSeed = PlayerRetirementEngine.specialCaseSeed(
+            careerID: career.id,
+            season: career.currentSeason
+        )
         let retirements = PlayerRetirementEngine.evaluateRetirements(
             allPlayers: allPlayers,
-            peakOverallByPlayerID: peakByID
+            peakOverallByPlayerID: peakByID,
+            special: PlayerRetirementEngine.SpecialCaseContext(
+                isEnabled: true,
+                seed: specialSeed,
+                trophyCaseByPlayerID: trophyCases
+            )
         )
         guard !retirements.isEmpty else { return }
 
         let season = career.currentSeason
+        let dateString = InboxEngine.dateLabel(
+            week: 0, season: season, phase: .coachingChanges
+        )
         var inductees: [HallOfFameEntry] = []
         var starHeadlines = 0
 
@@ -5288,8 +5341,62 @@ enum WeekAdvancer {
             ChurnDiag.record(ChurnDiag.retire, player)
             PlayerRetirementEngine.retire(retirement, teamsByID: teamsByID)
 
+            // Task #84: the row remembers when and why. The comeback pass three
+            // offseasons from now has no other way to ask either question.
+            player.retirementSeason = season
+            player.retirementCaseRaw = retirement.retirementCase.rawValue
+
+            // Task #84: the two special cases REPLACE the generic ceremony for
+            // the man they fired on — one departure, one headline. Everything
+            // else about him (cap, Hall of Fame, roster spot) has already gone
+            // through the ordinary path above.
+            switch retirement.retirementCase {
+            case .injuryToll:
+                let weeksOut = player.injuryHistory.reduce(0) { $0 + $1.weeksOut }
+                lastNewsItems.append(RetirementCaseNewsFactory.injuryToll(
+                    player: player,
+                    teamName: teamName == "Free Agent" ? nil : teamName,
+                    peakOverall: retirement.peakOverall,
+                    careerWeeksOut: weeksOut,
+                    season: season,
+                    teamID: retirement.teamIDAtRetirement
+                ))
+                if wasUserPlayer {
+                    lastInboxMessages.append(InboxEngine.shockRetirementMessage(
+                        playerName: player.fullName,
+                        positionRaw: player.position.rawValue,
+                        age: player.age,
+                        seasonsPlayed: max(1, player.yearsPro),
+                        careerWeeksOut: weeksOut,
+                        dateString: dateString
+                    ))
+                }
+            case .onTop:
+                let rings = trophyCases[player.id]?.rings ?? 0
+                lastNewsItems.append(RetirementCaseNewsFactory.onTop(
+                    player: player,
+                    teamName: teamName == "Free Agent" ? nil : teamName,
+                    peakOverall: retirement.peakOverall,
+                    rings: rings,
+                    resume: resume,
+                    season: season,
+                    teamID: retirement.teamIDAtRetirement
+                ))
+                lastInboxMessages.append(InboxEngine.retiresOnTopMessage(
+                    playerName: player.fullName,
+                    positionRaw: player.position.rawValue,
+                    age: player.age,
+                    overall: player.overall,
+                    rings: rings,
+                    resume: resume,
+                    dateString: dateString
+                ))
+            case .standard:
+                break
+            }
+
             // Ceremony headline for league-wide stars (cap 4 per offseason).
-            if retirement.isStar && starHeadlines < 4 {
+            if retirement.retirementCase == .standard, retirement.isStar, starHeadlines < 4 {
                 starHeadlines += 1
                 let production = resume.map { " He leaves with \($0)." } ?? ""
                 lastNewsItems.append(NewsItem(
@@ -5304,16 +5411,23 @@ enum WeekAdvancer {
                 ))
             }
 
-            // The user's own legend gets a personal farewell.
-            if wasUserPlayer && (retirement.isStar || player.yearsPro >= 10) {
-                let production = resume.map { "\n\nThe career line: \($0), across \(facts.seasons) seasons and \(facts.gamesPlayed) games." } ?? ""
-                lastInboxMessages.append(InboxMessage(
-                    sender: .leagueOffice,
-                    subject: "\(player.fullName) Announces Retirement",
-                    body: "\(player.fullName) (\(player.position.rawValue), age \(player.age)) is hanging up his cleats after \(max(1, player.yearsPro)) pro seasons. He asked that the organization — and you personally — be thanked for the way his final chapter was handled. The locker room will feel his absence.\(production)\(retirement.isHallOfFamer ? "\n\nExpect the call from Canton: he retires as a Hall of Famer." : "")",
-                    date: "Offseason - Coaching Changes, Season \(season)",
-                    category: .leagueNotice
-                ))
+            // The user's own legend gets a personal farewell. Task #84: not when
+            // a special case already wrote him one — the shock letter and the
+            // walk-off notice ARE the farewell, and two of them in the same
+            // inbox reads like a bug.
+            if wasUserPlayer, retirement.isStar || player.yearsPro >= 10 {
+                if retirement.retirementCase == .standard {
+                    let production = resume.map { "\n\nThe career line: \($0), across \(facts.seasons) seasons and \(facts.gamesPlayed) games." } ?? ""
+                    lastInboxMessages.append(InboxMessage(
+                        sender: .leagueOffice,
+                        subject: "\(player.fullName) Announces Retirement",
+                        body: "\(player.fullName) (\(player.position.rawValue), age \(player.age)) is hanging up his cleats after \(max(1, player.yearsPro)) pro seasons. He asked that the organization — and you personally — be thanked for the way his final chapter was handled. The locker room will feel his absence.\(production)\(retirement.isHallOfFamer ? "\n\nExpect the call from Canton: he retires as a Hall of Famer." : "")",
+                        date: "Offseason - Coaching Changes, Season \(season)",
+                        category: .leagueNotice
+                    ))
+                }
+                // The legacy credit is about the CAREER, not the letter — it is
+                // owed however the man left, so it stays outside the flavour gate.
                 career.legacy.recordAchievement(LegacyTracker.LegacyAchievement(
                     title: "A Legend Retires",
                     description: "\(player.fullName) played his final season on your roster.",
@@ -5369,6 +5483,117 @@ enum WeekAdvancer {
             week: 0,
             season: season,
             sentiment: .neutral
+        ))
+    }
+
+    /// Task #84, case 3: the rare un-retirement.
+    ///
+    /// Runs immediately after the retirement wave, in the same
+    /// `.coachingChanges` phase, and is the only INFLOW in this file that is not
+    /// a draft pick or a street signing. It is held to the same rarity
+    /// discipline as the outflow cases: a seeded calendar gate that opens in
+    /// under half of offseasons, AND a recently-retired star to open it for, AND
+    /// a contender with a roster spot and the cap room to use it. Miss any one
+    /// and the offseason is quiet, which is the common case.
+    ///
+    /// The user's club is deliberately NOT a destination. Every other signing
+    /// path in this engine that touches the user's 53 asks him first; an AI
+    /// pass that parked a legend and a $4M cap hit on his roster without a
+    /// prompt would be the one thing about this feature he could not undo.
+    private static func processComeback(
+        career: Career,
+        teams: [Team],
+        allPlayers: [Player],
+        modelContext: ModelContext
+    ) {
+        let season = career.currentSeason
+        let seed = PlayerRetirementEngine.specialCaseSeed(careerID: career.id, season: season)
+        guard PlayerRetirementEngine.comebackGateFires(seed: seed) else { return }
+
+        // `team.wins` is still the season just played here — `startNewSeason`
+        // does not reset records until the rosterCuts → regularSeason boundary
+        // (see the ordering note on `lastSeasonRecord`).
+        let contenders = teams
+            .filter {
+                $0.id != career.teamID
+                    && $0.wins >= PlayerRetirementEngine.comebackContenderWins
+            }
+            .sorted { $0.wins == $1.wins ? $0.id.uuidString < $1.id.uuidString : $0.wins > $1.wins }
+        guard !contenders.isEmpty else { return }
+
+        let rosterCounts = allPlayers.reduce(into: [UUID: Int]()) { counts, player in
+            if let teamID = player.teamID, !player.isRetired { counts[teamID, default: 0] += 1 }
+        }
+        guard let destination = contenders.first(where: {
+            (rosterCounts[$0.id] ?? 0) < 53
+                && $0.availableCap >= PlayerRetirementEngine.comebackSalary
+        }) else { return }
+
+        let historyByPlayer = seasonHistoryByPlayer(
+            careerID: activeCareerID,
+            modelContext: modelContext
+        )
+        let candidates = allPlayers.filter { player in
+            guard player.retirementSeason > 0 else { return false }
+            let peak = max(
+                historyByPlayer[player.id]?.map(\.overallAtEndOfSeason).max() ?? 0,
+                player.overall
+            )
+            let endedAs = player.retirementCaseRaw
+                .flatMap { PlayerRetirementEngine.RetirementCase(rawValue: $0) } ?? .standard
+            return PlayerRetirementEngine.isComebackCandidate(
+                player: player,
+                seasonsAway: season - player.retirementSeason,
+                peakOverall: peak,
+                retirementCase: endedAs
+            )
+        }
+        // The best man available, UUID tie-break so the pick never depends on
+        // fetch order.
+        guard let returning = candidates.max(by: { a, b in
+            let pa = max(historyByPlayer[a.id]?.map(\.overallAtEndOfSeason).max() ?? 0, a.overall)
+            let pb = max(historyByPlayer[b.id]?.map(\.overallAtEndOfSeason).max() ?? 0, b.overall)
+            if pa != pb { return pa < pb }
+            return a.id.uuidString < b.id.uuidString
+        }) else { return }
+
+        let seasonsAway = season - returning.retirementSeason
+        let overallLost = PlayerRetirementEngine.unretire(
+            returning,
+            seasonsAway: seasonsAway,
+            teamID: destination.id
+        )
+        destination.currentCapUsage += returning.annualSalary
+
+        // The row stops describing a retired man, and the free-agency layer
+        // already knows what a returnee wants (`FAMilestone.comeback`: a
+        // contender and a meaningful role, on one year).
+        returning.retirementSeason = 0
+        returning.retirementCaseRaw = nil
+        returning.milestoneRaw = FAMilestone.comeback.rawValue
+
+        lastNewsItems.append(RetirementCaseNewsFactory.comeback(
+            player: returning,
+            teamName: destination.fullName,
+            teamWins: destination.wins,
+            seasonsAway: seasonsAway,
+            overallLost: overallLost,
+            season: season,
+            teamID: destination.id
+        ))
+
+        let userTeam = career.teamID.flatMap { id in teams.first { $0.id == id } }
+        lastInboxMessages.append(InboxEngine.comebackMessage(
+            playerName: returning.fullName,
+            positionRaw: returning.position.rawValue,
+            age: returning.age,
+            teamName: destination.fullName,
+            seasonsAway: seasonsAway,
+            isDivisionRival: userTeam?.conference == destination.conference
+                && userTeam?.division == destination.division,
+            dateString: InboxEngine.dateLabel(
+                week: 0, season: season, phase: .coachingChanges
+            )
         ))
     }
 
@@ -6161,6 +6386,7 @@ enum WeekAdvancer {
         var inputs: [UUID: PlayerDevelopmentEngine.OffseasonInputs] = [:]
         for player in allPlayers where !player.isRetired {
             var entry = PlayerDevelopmentEngine.OffseasonInputs()
+            entry.salaryCap = player.teamID.flatMap { teamsByID[$0]?.salaryCap } ?? 265_000
             let history = historyByPlayer[player.id] ?? []
             entry.latestOverall = history.first?.overallAtEndOfSeason
             if history.count >= 2 { entry.previousOverall = history[1].overallAtEndOfSeason }

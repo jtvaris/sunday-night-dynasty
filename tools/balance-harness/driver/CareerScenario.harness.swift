@@ -350,6 +350,14 @@ final class CRLeague {
     var clubs: [CRClub] = []
     var freeAgents: [Player] = []
 
+    /// Stands in for `Career.id` when seeding task #84's special-case gates.
+    /// The harness has no save slot, but the engine only ever asks for a stable
+    /// UUID to hash, so one per league is exactly the right shape.
+    let leagueID = UUID()
+    /// How many times the Luck (`.injuryToll`) swap actually fired across the
+    /// run — printed so the invariance claim is measured, not asserted.
+    var injuryTollSwaps = 0
+
     // --- per-player bookkeeping -------------------------------------------
     var history: [UUID: [CRSeasonRow]] = [:]
     var careers: [UUID: CRCareer] = [:]
@@ -1144,14 +1152,29 @@ final class CRLeague {
 
     // MARK: Retirement
 
-    func runRetirements() {
+    func runRetirements(season: Int) {
         var peakByID: [UUID: Int] = [:]
         for (id, rows) in history { peakByID[id] = rows.map(\.overall).max() ?? 0 }
         let all = clubs.flatMap(\.roster) + freeAgents
+        // Task #84 runs ENABLED here on purpose. The special cases are meant to
+        // be rate-neutral by construction (the Luck case swaps 1:1 against the
+        // most marginal ordinary retirement; the Donald case only relabels), and
+        // the honest way to back that claim is to let the calibration gates
+        // measure a league that has them switched on. The trophy map is left
+        // empty because the harness keeps no championship record, so only the
+        // Luck half — the half that touches membership — is exercised, which is
+        // precisely the half worth testing.
         let retirements = PlayerRetirementEngine.evaluateRetirements(
             allPlayers: all,
-            peakOverallByPlayerID: peakByID
+            peakOverallByPlayerID: peakByID,
+            special: PlayerRetirementEngine.SpecialCaseContext(
+                isEnabled: true,
+                seed: PlayerRetirementEngine.specialCaseSeed(
+                    careerID: leagueID, season: season
+                )
+            )
         )
+        injuryTollSwaps += retirements.filter { $0.retirementCase == .injuryToll }.count
         var teamsByID: [UUID: Team] = [:]
         for club in clubs { teamsByID[club.id] = club.team }
         for r in retirements {
@@ -1168,7 +1191,7 @@ final class CRLeague {
         buildLeague()
         for season in 1...cfg.totalSeasons {
             runOffseasonRehab()
-            runRetirements()
+            runRetirements(season: season)
             tickContracts()
             runDraft(season: season)
             reshapeRosters()
@@ -1666,6 +1689,13 @@ func crReport(leagues: [CRLeague], elapsed: TimeInterval) {
                  sh90, sh85, sh80, sh75, shSub65))
     print(String(format: "  blue chips (90+) %.1f players in a 1696-man league [25-35]   age mean %.2f [25.5-26.5]  33+ %.1f%% [<=4.0]",
                  blueChips, crMean(pyramidAges), a33))
+    // Task #84: how loud the Luck case actually was. Each one is a 1:1 swap, so
+    // this is the total number of retirements whose IDENTITY changed — the
+    // count itself never moved.
+    let luckSwaps = leagues.reduce(0) { $0 + $1.injuryTollSwaps }
+    print(String(format: "  #84 injury-toll swaps: %d over %d league-seasons (%.3f/season, 1:1 against an ordinary retirement)",
+                 luckSwaps, leagues.count * cfg.totalSeasons,
+                 Double(luckSwaps) / Double(max(1, leagues.count * cfg.totalSeasons))))
     let potSpan = max(1, cfg.totalSeasons - cfg.burnIn - 1)
     print(String(format: "  leaguePot: first measured season %.2f -> last %.2f (%+.3f/season over %d seasons)",
                  crMean(potFirst), crMean(potLast),

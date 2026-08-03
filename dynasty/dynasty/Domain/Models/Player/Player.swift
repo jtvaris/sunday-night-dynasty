@@ -356,6 +356,21 @@ final class Player {
     /// Career milestone enum raw value (e.g. "hofPush", "comeback"). Drives MilestoneTracker.
     var milestoneRaw: String?
 
+    // MARK: - Retirement record (task #84)
+    //
+    // Both are default-valued stored properties, never in `init` -> safe
+    // lightweight migration, same as every field added after ship.
+
+    /// Season the career ended in. `0` = never retired (or a legacy row written
+    /// before the retirement-realism wave). The comeback pass reads this to
+    /// answer "how long has he been gone?" — `isRetired` alone cannot.
+    var retirementSeason: Int = 0
+
+    /// `PlayerRetirementEngine.RetirementCase.rawValue` — WHY the career ended.
+    /// Kept on the row rather than only in the news feed because the comeback
+    /// pass has to honour it: a man whose body forced him out does not return.
+    var retirementCaseRaw: String? = nil
+
     // MARK: - Camp / Workload
 
     /// Accumulated training-load points across the current camp/season week.

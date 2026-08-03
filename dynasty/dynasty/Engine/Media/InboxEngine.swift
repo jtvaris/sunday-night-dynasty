@@ -1535,6 +1535,110 @@ enum InboxEngine {
         )
     }
 
+    // MARK: - Retirement Realism (task #84)
+
+    /// The letter a coach gets when one of HIS men walks away in his prime.
+    ///
+    /// Deliberately not the league-office roundup: this one is the player's own
+    /// voice, because the shock retirement is the moment where the roster stops
+    /// being a spreadsheet. The cap and roster consequences flow through the
+    /// ordinary retirement path — nothing here moves a number.
+    static func shockRetirementMessage(
+        playerName: String,
+        positionRaw: String,
+        age: Int,
+        seasonsPlayed: Int,
+        careerWeeksOut: Int,
+        dateString: String
+    ) -> InboxMessage {
+        InboxMessage(
+            sender: .playerAgent(name: "\(playerName)'s agent"),
+            subject: "\(playerName) is retiring — effective immediately",
+            body: """
+            Coach,
+
+            I need you to hear this from me before it hits the wire. \(playerName) is retiring. Today. He is \(age) years old and he is done.
+
+            You know the file as well as I do: \(seasonsPlayed) seasons, and something close to \(careerWeeksOut) weeks of them spent in a rehab room instead of on a field. The last scan was the one that decided it. He can pass a physical. He cannot promise anybody he will still be himself in December, and he will not take a cheque to find out.
+
+            He asked me to tell you he never once thought about the money in this building and he is not starting now. It was not you, it was not the plan, and it is not a bluff for a new number.
+
+            His roster spot and his cap number are yours again. I am sorry it is like this.
+
+            — for \(playerName), \(positionRaw)
+            """,
+            date: dateString,
+            category: .playerIssue,
+            actionDestination: .roster
+        )
+    }
+
+    /// The walk-off: an all-time great leaves while still an all-time great.
+    static func retiresOnTopMessage(
+        playerName: String,
+        positionRaw: String,
+        age: Int,
+        overall: Int,
+        rings: Int,
+        resume: String?,
+        dateString: String
+    ) -> InboxMessage {
+        let ringLine: String
+        switch rings {
+        case 0:  ringLine = ""
+        case 1:  ringLine = " He goes out with a ring."
+        default: ringLine = " He goes out with \(rings) rings."
+        }
+        let production = resume.map { "\n\nThe career line: \($0)." } ?? ""
+        return InboxMessage(
+            sender: .leagueOffice,
+            subject: "\(playerName) retires while still the best in the league",
+            body: """
+            \(playerName) (\(positionRaw), age \(age)) has filed his retirement papers rated \(overall) overall. There is no injury behind it, no decline and no dispute — he decided that finishing at the top was worth more to him than two more seasons of being slightly less than this.\(ringLine)\(production)
+
+            The league office does not often say this about a transaction: it is the right way to leave, and it is very rare.
+
+            NFL League Office
+            """,
+            date: dateString,
+            category: .leagueNotice,
+            actionDestination: .news
+        )
+    }
+
+    /// The return. Sent league-wide, because a legend un-retiring changes the
+    /// contender math for everybody — including the clubs he did not pick.
+    static func comebackMessage(
+        playerName: String,
+        positionRaw: String,
+        age: Int,
+        teamName: String,
+        seasonsAway: Int,
+        isDivisionRival: Bool,
+        dateString: String
+    ) -> InboxMessage {
+        let away = seasonsAway == 1 ? "one season" : "\(seasonsAway) seasons"
+        let closer = isDivisionRival
+            ? "He landed in our division. We see him twice, and the second time will be in December."
+            : "He is somebody else's problem for now. He will not stay that way if either of us makes a run."
+        return InboxMessage(
+            sender: .media(outlet: "League Wire"),
+            subject: "\(playerName) is coming out of retirement",
+            body: """
+            \(playerName) — \(positionRaw), \(age) years old, \(away) out of football — has signed a one-year deal with the \(teamName).
+
+            He is not being paid like a star and nobody is pretending he is the player he was. He is there for one reason and he said it on the record: he wants the ring.
+
+            \(closer)
+
+            League Wire
+            """,
+            date: dateString,
+            category: .leagueNotice,
+            actionDestination: .news
+        )
+    }
+
     // MARK: - Helpers
 
     /// Creates a human-readable date string for the given phase.
