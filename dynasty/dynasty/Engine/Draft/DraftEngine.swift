@@ -285,6 +285,47 @@ enum DraftEngine {
             age: player.age,
             position: player.position
         )
+        carryPreDraftInjury(from: prospect, to: player)
+    }
+
+    /// Pre-draft medical continuity (task #78, finding S15).
+    ///
+    /// `ScoutingEngine.applyPreDraftAttrition` tears about 2 % of every declared
+    /// class up in the spring, writes the injury into `medicalConcerns` and
+    /// knocks the man's projection down for it — and then the draft boundary
+    /// threw the whole thing away. A prospect who blew a knee at his pro day in
+    /// March reported to camp in July at full health, so the medical risk the
+    /// user had been asked to price was a pure scouting-screen fiction.
+    ///
+    /// The note is decoded back into the shared `MedicalEngine` vocabulary and
+    /// applied two ways:
+    ///
+    /// * it always lands in `injuryHistory`, so `Player.priorInjuryCount` and
+    ///   every re-injury / durability read see it for the rest of his career; and
+    /// * whatever recovery is still outstanding once the offseason calendar has
+    ///   run (`preDraftToCampWeeks`) becomes a live injury, so the rookie who
+    ///   tore something serious actually misses camp.
+    private static func carryPreDraftInjury(from prospect: CollegeProspect, to player: Player) {
+        guard let carry = ScoutingEngine.preDraftInjury(from: prospect.medicalConcerns) else { return }
+
+        player.injuryHistory = player.injuryHistory + [
+            InjuryRecord(injuryTypeRaw: carry.type.rawValue, weeksOut: carry.weeksOut)
+        ]
+
+        let residual = carry.weeksOut - ScoutingEngine.preDraftToCampWeeks
+        guard residual > 0 else { return }
+        player.isInjured = true
+        player.injuryWeeksRemaining = residual
+        // The PROGNOSIS, not the residual. `injuryWeeksOriginal` is the
+        // denominator every medical surface divides by — the "6 of 14 weeks"
+        // line, the rehab progress bar, `MedicalEngine`'s setback branch
+        // (`remaining < original`, which can never fire against a zero) and
+        // `WeekAdvancer`'s `>= 4` notability test. Leaving it at the model
+        // default of 0 printed "6 of 0 weeks remaining" and made rookie rehab
+        // the one injury in the game that cannot suffer a setback.
+        player.injuryWeeksOriginal = carry.weeksOut
+        player.injuryType = carry.type
+        player.rehabStatus = .onTrack
     }
 
     /// Draft round (1-7) for an overall pick number, matching the 32-pick round
@@ -849,7 +890,7 @@ enum DraftEngine {
         let offensiveNeeds = teamNeeds.filter { offensivePositions.contains($0) }
         let bestOffensive = availableProspects
             .filter { offensivePositions.contains($0.position) }
-            .sorted { ($0.scoutedOverall ?? $0.trueOverall) > ($1.scoutedOverall ?? $1.trueOverall) }
+            .sorted { ($0.scoutedOverall ?? $0.consensusOverall) > ($1.scoutedOverall ?? $1.consensusOverall) }
             .first
 
         if let prospect = bestOffensive {
@@ -881,7 +922,7 @@ enum DraftEngine {
         let defensiveNeeds = teamNeeds.filter { defensivePositions.contains($0) }
         let bestDefensive = availableProspects
             .filter { defensivePositions.contains($0.position) }
-            .sorted { ($0.scoutedOverall ?? $0.trueOverall) > ($1.scoutedOverall ?? $1.trueOverall) }
+            .sorted { ($0.scoutedOverall ?? $0.consensusOverall) > ($1.scoutedOverall ?? $1.consensusOverall) }
             .first
 
         if let prospect = bestDefensive, prospect.id != bestOffensive?.id {

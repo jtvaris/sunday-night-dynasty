@@ -664,10 +664,14 @@ struct BigBoardView: View {
         for (idx, p) in ordered.enumerated() { rankMap[p.id] = idx + 1 }
         cachedRankMap = rankMap
 
-        var customMap: [UUID: Int] = [:]
-        customMap.reserveCapacity(custom.count)
-        for (idx, p) in custom.enumerated() { customMap[p.id] = idx + 1 }
-        cachedCustomRankMap = customMap
+        // My Board prints the BOARD SLOT, not a position inside the section it
+        // happens to be rendered in. The war room and the pick sheet both say
+        // "MY #N is the slot the Big Board prints" — and it was not: this map
+        // used to be an index into `cachedCustomOrderedBoard`, i.e. the current
+        // FILTER re-sorted by mark tier, so marking three men `elite` printed
+        // them #1/#2/#3 here while the draft room printed #4/#19/#41. One
+        // reader now, shared with `DraftDayCoordinator` and `MockDraftView`.
+        cachedCustomRankMap = UserDraftBoard.slotMap(among: prospects)
     }
 
     // MARK: - Board Row
@@ -955,10 +959,14 @@ struct BigBoardView: View {
                                         boardRow(
                                             prospect: prospect,
                                             rank: customRankFor(prospect),
-                                            totalCount: cachedCustomOrderedBoard.count,
-                                            // My Board's rank is a position inside
-                                            // a mark-tier grouping, never the board
-                                            // slot the movement badge measures.
+                                            // The whole board, not this section:
+                                            // the rank printed is now the board
+                                            // SLOT, so "#41 of 12" would be the
+                                            // old, section-relative reading.
+                                            totalCount: cachedCustomRankMap.count,
+                                            // The movement badge measures the
+                                            // scout board's tier order, which is
+                                            // not what these sections show.
                                             showsMovement: false
                                         )
                                     }
@@ -1595,7 +1603,11 @@ struct BigBoardView: View {
         let board = showMyBoard ? cachedCustomOrderedBoard : cachedOrderedBoard
         var entries: [BoardComparisonEntry] = []
         for (index, prospect) in board.enumerated() {
-            let myRank = index + 1
+            // On My Board the row's own number is the board SLOT, so the diff
+            // has to compare the same number the row prints — an enumeration
+            // index would make "You: #3 Media: ~#48" out of a man the row
+            // itself labels #41.
+            let myRank = showMyBoard ? (customRankFor(prospect) == 0 ? index + 1 : customRankFor(prospect)) : index + 1
             // Use round-based projection scaled to a pick number (heuristic).
             guard let projRound = prospect.draftProjection else { continue }
             // Estimate media pick number from round: round 1 = 1-32, round 2 = 33-64, etc.
@@ -1834,22 +1846,27 @@ struct BigBoardView: View {
             }
         }
         Divider()
-        // Draft round projection
-        let roundOptions: [(label: String, projection: Int)] = [
-            ("Move to Round 1", 1),
-            ("Move to Round 2-3", 2),
-            ("Move to Round 4-5", 4),
-            ("Move to Round 6-7", 6)
-        ]
-        ForEach(roundOptions, id: \.projection) { option in
-            Button {
-                prospect.draftProjection = option.projection
-                try? modelContext.save()
-                refreshCachedBoard()
-            } label: {
-                Label(option.label, systemImage: "number.circle")
-            }
-        }
+        // NO "move to round N" here any more (task #78).
+        //
+        // Those four buttons wrote `draftProjection`, which is the MEDIA's
+        // projected round — not the user's board. Three things broke because of
+        // it, and the market model this wave adds makes all three worse:
+        //
+        //  * `applyProjectionDrift` guarantees the class-wide multiset of
+        //    projections is exactly preserved (every rise is paid for by a
+        //    fall). A manual write is unpaired, so a user could mint round-1
+        //    grades and quietly re-tune the whole draft;
+        //  * `ProspectFog.consensusBand` and `DraftIntel.publicOVREstimate` /
+        //    `consensusWindow` read it as "what the room thinks", so overwriting
+        //    it made the STEAL / REACH / value chips compare the user's opinion
+        //    against itself; and
+        //  * `projectionAtGeneration` now anchors the market arrow, which would
+        //    read as a media move that never happened.
+        //
+        // Everything the buttons were actually for is already above and below
+        // this line: the seven tier moves (`manualTier`), Move Up / Move Down,
+        // and the mark + user grade at the top of the menu — all of which are
+        // the user's own board and are stored as such.
         Divider()
         // #11: Scouting scratch note (separate from the board note the mark
         // carries — this one is the long-form pad).
@@ -2142,19 +2159,25 @@ struct BigBoardView: View {
         refreshCachedBoard()
     }
 
-    /// Probability prospect is available at user's first pick (#18)
+    /// Probability prospect is available at user's first pick (#18).
+    ///
+    /// ONE availability model, shared with the Mock Draft and the war room's
+    /// pick sheet (`DraftAvailability`). This used to bucket off the ROUND —
+    /// `boardProjectedRound` vs the pick's round → 0.95/0.75/0.40/0.15/0.05 —
+    /// so a man the media mocked at #18 read 40 % here and 76 % on the Mock
+    /// Draft, and the two screens contradicted each other about the same
+    /// player on the same day. The curve now reads the media's published
+    /// window and is as flat as that window is wide.
     private func availableAtPickProbability(for prospect: CollegeProspect) -> Double? {
         let sortedPicks = teamDraftPicks
             .filter { !$0.isComplete }
             .sorted { $0.pickNumber < $1.pickNumber }
         guard let firstPick = sortedPicks.first else { return nil }
-        let projRound = boardProjectedRound(for: prospect)
-        let pickRound = max(1, ((firstPick.pickNumber - 1) / 32) + 1)
-        if projRound > pickRound + 1 { return 0.95 }
-        if projRound > pickRound { return 0.75 }
-        if projRound == pickRound { return 0.40 }
-        if projRound == pickRound - 1 { return 0.15 }
-        return 0.05
+        return DraftAvailability.probability(
+            for: prospect,
+            atPick: firstPick.pickNumber,
+            consensusRank: marketRank(for: prospect)
+        )
     }
 
     private func loadCoaches() {
@@ -2347,6 +2370,8 @@ struct BigBoardRowView: View {
                             .padding(.vertical, 1)
                             .background(combinePerformanceColor, in: RoundedRectangle(cornerRadius: 2))
                     }
+                    // Is he even in this draft? (S11)
+                    ProspectDeclarationChip(prospect: prospect)
                     if let mention = prospect.combineMediaMention, !mention.isEmpty {
                         Image(systemName: "newspaper.fill")
                             .font(.system(size: 7))
@@ -2643,7 +2668,12 @@ struct BigBoardRowView: View {
                 .foregroundStyle(color)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
-            boardGradeChangeIndicator
+            // Two arrows, two sources: the MEDIA's move on the projected round
+            // (blue/amber) beside your own scouts' grade change (green/red).
+            HStack(spacing: 3) {
+                ProspectMarketArrow(prospect: prospect)
+                boardGradeChangeIndicator
+            }
         }
         .frame(width: 52, alignment: .center)
     }

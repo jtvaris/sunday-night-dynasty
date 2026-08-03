@@ -35,8 +35,14 @@ enum ScoutingEngine {
     /// call site are unchanged; `draftProjection` now comes straight from the
     /// prospect's grade band instead of a `trueOverall × positionValue` sort
     /// with per-position first-round caps and round-2 overflow.
-    static func generateDraftClass(count: Int = 350) -> [CollegeProspect] {
-        DraftClassBuilder.build(count: count).prospects
+    /// - Parameter careerID: the save this class belongs to. Only seeds the
+    ///   market's consensus error (`DraftClassBuilder.consensusError`), so the
+    ///   same save always produces the same wrong public board.
+    static func generateDraftClass(
+        count: Int = 350,
+        careerID: UUID? = nil
+    ) -> [CollegeProspect] {
+        DraftClassBuilder.build(count: count, careerID: careerID).prospects
     }
 
     // MARK: - Anthropometrics (Hand Size / Arm Length / Wingspan)
@@ -1221,9 +1227,25 @@ enum ScoutingEngine {
     // MARK: - Pro Day Simulation
 
     /// Simulates a pro day for a single prospect. Slightly better results than combine (home field advantage).
-    static func simulateProDay(prospect: inout CollegeProspect) {
+    ///
+    /// - Parameter markAttended: whether to flip `proDayCompleted`. The LEAGUE
+    ///   circuit (`runLeagueProDays`) passes `false`: every school holds its pro
+    ///   day whether or not this club sends anybody, so the numbers become
+    ///   public — but `proDayCompleted` is what `ProspectFog.combineFidelity`
+    ///   reads to hand out full stopwatch precision, and that is something a
+    ///   club buys by turning up. `attendProDay` (the paid trip) is the only
+    ///   caller that sets it.
+    static func simulateProDay(prospect: inout CollegeProspect, markAttended: Bool = true) {
         let phys = prospect.truePhysical
         let homefieldBoost = 0.3 // Slight positive modifier
+
+        // Kickers and punters are measured and weighed, never timed — the same
+        // rule the combine path follows. Running one through the drill table
+        // would invent a 40 time for a position that has never posted one.
+        guard prospect.position != .K, prospect.position != .P else {
+            if markAttended { prospect.proDayCompleted = true }
+            return
+        }
 
         let baseForty = 5.5 - (Double(phys.speed) * 0.013)
         let fortyVariance = Double.random(in: -0.06...0.04) - homefieldBoost * 0.03
@@ -1235,13 +1257,16 @@ enum ScoutingEngine {
             prospect.fortyTime = proDayForty
         }
 
-        let baseBench = Int(Double(phys.strength) * 0.35) - 5
-        let benchVariance = Int.random(in: -2...4)
-        let proDayBench = max(8, min(45, baseBench + benchVariance))
-        if let existing = prospect.benchPress {
-            prospect.benchPress = max(existing, proDayBench)
-        } else {
-            prospect.benchPress = proDayBench
+        // Quarterbacks do not bench — combine rule, pro-day rule, same rule.
+        if prospect.position != .QB {
+            let baseBench = Int(Double(phys.strength) * 0.35) - 5
+            let benchVariance = Int.random(in: -2...4)
+            let proDayBench = max(8, min(45, baseBench + benchVariance))
+            if let existing = prospect.benchPress {
+                prospect.benchPress = max(existing, proDayBench)
+            } else {
+                prospect.benchPress = proDayBench
+            }
         }
 
         let baseVertical = 20.0 + Double(phys.acceleration + phys.agility) * 0.13
@@ -1280,7 +1305,7 @@ enum ScoutingEngine {
             prospect.coneDrill = proDayCone
         }
 
-        prospect.proDayCompleted = true
+        if markAttended { prospect.proDayCompleted = true }
     }
 
     // MARK: - Interview
@@ -2013,10 +2038,20 @@ enum ScoutingEngine {
         // class blueprint (a position's talent is decided by the board slots it
         // is allocated), so a second positional multiplier here would double-count
         // it and re-create the "every QB above every RB" sort.
+        //
+        // Task #78: the sort key is `consensusOverall`, not `trueOverall`. A mock
+        // draft is the MEDIA's board — the same public board `draftProjection`
+        // was slotted from — so a man the consensus is 12 points high on goes
+        // top-10 in every mock all spring and busts on draft night, and the one
+        // it is 12 points low on falls to day 3 for whoever scouted him
+        // properly. Reading the true rating here made the mock omniscient and
+        // silently re-created the perfect market the projection no longer is.
         let sortedProspects = prospects
             .filter { $0.isDeclaringForDraft }
             .sorted { lhs, rhs in
-                if lhs.trueOverall != rhs.trueOverall { return lhs.trueOverall > rhs.trueOverall }
+                if lhs.consensusOverall != rhs.consensusOverall {
+                    return lhs.consensusOverall > rhs.consensusOverall
+                }
                 return (lhs.draftProjection ?? 8) < (rhs.draftProjection ?? 8)
             }
 
@@ -2034,7 +2069,9 @@ enum ScoutingEngine {
 
             // Score each available prospect
             let scored = available.prefix(80).compactMap { prospect -> (CollegeProspect, Double, String, String)? in
-                var score = Double(prospect.trueOverall)
+                // Fogged, like the sort above: the mock scores the man the
+                // consensus thinks it is looking at (task #78).
+                var score = Double(prospect.consensusOverall)
 
                 // Positional need boost
                 let needMultiplier = needs[prospect.position] ?? 1.0
@@ -2046,7 +2083,7 @@ enum ScoutingEngine {
                 }
 
                 // Potential factor
-                score += Double(prospect.truePotential) * 0.15
+                score += Double(prospect.consensusPotential) * 0.15
 
                 // Media noise: +-3-5 points of variance (media isn't perfect)
                 let noise = Double.random(in: -5.0...5.0)
@@ -2139,6 +2176,21 @@ enum ScoutingEngine {
     ///
     /// Each team's top 2-3 positional needs are identified, and prospects at those
     /// positions receive that team's ID in their `teamInterest` array.
+    ///
+    /// PUBLIC INFORMATION ONLY (task #78). The pass used to carry a second
+    /// branch — `else if prospects[i].trueOverall >= 74` — which meant a club
+    /// showed interest in a man because of his HIDDEN rating. Two things were
+    /// wrong with it: the row the user reads ("Hot / Warm / Cold") was a direct
+    /// tell for a number the fog spends the whole draft cycle hiding, and it
+    /// made interest immune to the market — a prospect the consensus had badly
+    /// wrong still drew 32 phone calls, because the branch was reading past the
+    /// consensus to the truth underneath it. Interest is now exactly what a
+    /// projected round and a stated need imply, which is what it claims to be.
+    ///
+    /// Writes are diffed rather than wiped: the old pass cleared all ~350 rows
+    /// and re-appended, so every call dirtied the whole class in SwiftData even
+    /// when nothing changed (finding S8). Only rows whose interest list actually
+    /// moves are assigned now.
     static func updateTeamInterest(
         prospects: inout [CollegeProspect],
         teams: [Team],
@@ -2146,10 +2198,7 @@ enum ScoutingEngine {
     ) {
         let playersByTeam = Dictionary(grouping: players) { $0.teamID ?? UUID() }
 
-        // Clear existing interest
-        for i in prospects.indices {
-            prospects[i].teamInterest = []
-        }
+        var rebuilt = [[UUID]](repeating: [], count: prospects.count)
 
         for team in teams {
             let roster = playersByTeam[team.id] ?? []
@@ -2161,16 +2210,18 @@ enum ScoutingEngine {
                 .prefix(3)
                 .map { $0.key }
 
-            // Add this team's interest to matching prospects
+            // Add this team's interest to matching prospects — the men the
+            // MEDIA has inside the top three rounds, nothing else.
             for i in prospects.indices where topNeeds.contains(prospects[i].position) {
-                // Only interested in prospects projected in rounds 1-3
+                guard prospects[i].isDeclaringForDraft else { continue }
                 if let proj = prospects[i].draftProjection, proj <= 3 {
-                    prospects[i].teamInterest.append(team.id)
-                } else if prospects[i].trueOverall >= 74 {
-                    // Also interested in high-talent prospects regardless of projection
-                    prospects[i].teamInterest.append(team.id)
+                    rebuilt[i].append(team.id)
                 }
             }
+        }
+
+        for i in prospects.indices where prospects[i].teamInterest != rebuilt[i] {
+            prospects[i].teamInterest = rebuilt[i]
         }
     }
 
@@ -2460,6 +2511,43 @@ enum ScoutingEngine {
 
     // MARK: - Declaration Period
 
+    /// Writes `declarationStatusRaw` for a class that went through the January
+    /// window BEFORE the field existed (finding C5).
+    ///
+    /// `generateDeclarations` is idempotent — it returns immediately once any
+    /// underclassman carries `isDeclaringForDraft == false` — so a save created
+    /// before this wave never gets the string written and the whole class
+    /// decodes as `.undecided`. `declarationLikelihood` then returns a value for
+    /// every underclassman and the board paints a green "LIKELY" chip on a man
+    /// who withdrew in January and cannot be drafted at all.
+    ///
+    /// The decision itself is never re-rolled: the status is reconstructed from
+    /// the `isDeclaringForDraft` flag the class already carries. Runs only for a
+    /// class whose window has demonstrably closed (the same test the generator's
+    /// own guard uses), so a genuinely undecided autumn class is left alone.
+    ///
+    /// Deliberately NOT called from `generateDeclarations`: that member is
+    /// sliced verbatim into the balance harness by `sync_sources.sh`, and a call
+    /// to a function defined outside the slice would stop the `draftclass` gate
+    /// compiling.
+    ///
+    /// - Returns: how many rows were healed.
+    @discardableResult
+    static func backfillDeclarationStatus(_ prospects: inout [CollegeProspect]) -> Int {
+        let seniorAge = CollegeProspect.seniorAge
+        guard prospects.contains(where: { $0.age < seniorAge && !$0.isDeclaringForDraft }) else {
+            return 0
+        }
+        var healed = 0
+        for i in prospects.indices where prospects[i].declarationStatusRaw.isEmpty {
+            prospects[i].declarationStatusRaw = prospects[i].isDeclaringForDraft
+                ? DeclarationStatus.declared.rawValue
+                : DeclarationStatus.withdrawn.rawValue
+            healed += 1
+        }
+        return healed
+    }
+
     /// Simulates the draft declaration period: seniors auto-declare, the best
     /// underclassmen declare on a talent-weighted roll (~70, more when the class
     /// is senior-light), ~5-10 withdraw, and exactly one genuine top-of-board
@@ -2506,8 +2594,11 @@ enum ScoutingEngine {
             return range.lowerBound + seededRoll(range.count)
         }
 
-        // Separate seniors (age 22+) and underclassmen (age < 22)
-        let seniorAge = 22
+        // Separate seniors and underclassmen. The cut lives on the model
+        // (`CollegeProspect.seniorAge`) so the January window and the board's
+        // own declaration read cannot drift into two different definitions of
+        // who still has eligibility to keep.
+        let seniorAge = CollegeProspect.seniorAge
 
         // 0. Idempotency guard. Before the window runs, `isDeclaringForDraft`
         //    carries the model default of `true` for the whole class; the pass
@@ -2521,6 +2612,7 @@ enum ScoutingEngine {
         // 1. All seniors auto-declare
         for i in prospects.indices where prospects[i].age >= seniorAge {
             prospects[i].isDeclaringForDraft = true
+            prospects[i].declarationStatusRaw = DeclarationStatus.declared.rawValue
         }
 
         // 2. Underclassmen: ~70 declare based on talent (higher overall = more likely)
@@ -2532,6 +2624,9 @@ enum ScoutingEngine {
         // declare him.
         for i in underclassmenIndices {
             prospects[i].isDeclaringForDraft = false
+            // The window is open, so nobody in the underclass is `.undecided`
+            // once it closes: whoever is not flipped below stayed in school.
+            prospects[i].declarationStatusRaw = DeclarationStatus.withdrawn.rawValue
         }
 
         // The declaring pool has to fill the whole draft AND leave a UDFA market
@@ -2596,6 +2691,7 @@ enum ScoutingEngine {
 
             if roll(1...100) <= declareChance {
                 prospects[i].isDeclaringForDraft = true
+                prospects[i].declarationStatusRaw = DeclarationStatus.declared.rawValue
                 declarationCount += 1
 
                 // Track top declarations for news
@@ -2619,6 +2715,7 @@ enum ScoutingEngine {
         // target rather than a ceiling the draw never touches.
         for i in undeclared where declarationCount < targetDeclarations {
             prospects[i].isDeclaringForDraft = true
+            prospects[i].declarationStatusRaw = DeclarationStatus.declared.rawValue
             declarationCount += 1
         }
 
@@ -2645,6 +2742,7 @@ enum ScoutingEngine {
 
         for i in declaredUnderclassmen.prefix(withdrawalCount) {
             prospects[i].isDeclaringForDraft = false
+            prospects[i].declarationStatusRaw = DeclarationStatus.withdrawn.rawValue
             let pos = prospects[i].position.rawValue
             newsItems.append((
                 name: prospects[i].fullName,
@@ -2685,6 +2783,7 @@ enum ScoutingEngine {
         if !shockPool.isEmpty {
             let choice = shockPool[seededRoll(shockPool.count)]
             prospects[choice].isDeclaringForDraft = false
+            prospects[choice].declarationStatusRaw = DeclarationStatus.withdrawn.rawValue
             let pos = prospects[choice].position.rawValue
             let college = prospects[choice].college
             // Phrased from the projection his own board row shows.
@@ -3454,6 +3553,231 @@ enum ScoutingEngine {
         static let mockDrift: UInt64       = 0x40_C1D2_A0_F7
         static let proDayAttrition: UInt64 = 0x94_0D47_A7_31
         static let declarations: UInt64    = 0xDE_C1A4_E0_5D
+        static let proDayDrift: UInt64     = 0x9D_0DA7_D8_1F
+        static let combineCharacter: UInt64 = 0xC4_A8AC_7E_11
+        static let proDayCharacter: UInt64  = 0xC4_A8AC_7E_22
+    }
+
+    // MARK: - The League Pro-Day Circuit (task #78)
+
+    /// What the league-wide pro-day circuit produced.
+    struct ProDayCircuitResult {
+        /// Prospects who finally posted numbers.
+        let tested: Int
+        /// The men the circuit covered — the population `proDayPressure` grades.
+        let cohort: Set<UUID>
+    }
+
+    /// Runs every school's pro day for the prospects the combine left blank.
+    ///
+    /// The combine deliberately sends about one invitee in eight home without a
+    /// number (`generateCombineResults` step 3) and every one of the five DNP
+    /// reasons ends "…at his pro day". Nothing then held one: `simulateProDay`
+    /// had been written, documented and never called from anywhere in the app,
+    /// so the DNP cohort carried empty cells from February all the way to the
+    /// draft and the `.proDays` phase was a calendar window with one event in it
+    /// (the medical attrition pass).
+    ///
+    /// This is the league half of that phase, and it is deliberately the CHEAP
+    /// half: the numbers become public — every club is at every pro day that
+    /// matters — but `proDayCompleted` is left alone, so `ProspectFog` still
+    /// only hands out broadcast-precision readings ("~4.5") to a club that did
+    /// not go. `attendProDay` remains the paid trip that buys the decimals, a
+    /// filed `.proDay` report and the flag-disclosure step.
+    ///
+    /// Idempotent by construction: the cohort is defined as "invited, declared,
+    /// no forty time", which this pass empties. Kickers and punters are excluded
+    /// — they never had drills to miss.
+    ///
+    /// - Returns: `nil` when there was nobody to test.
+    @discardableResult
+    static func runLeagueProDays(prospects: inout [CollegeProspect]) -> ProDayCircuitResult? {
+        // Canonical UUID order: `WeekAdvancer.currentDraftClass` comes back from
+        // an unsorted `FetchDescriptor`, and the drill draws are un-seeded, so
+        // walking raw array order would at least make the *cohort* unstable.
+        let cohortIndices = prospects.indices
+            .filter { index in
+                let p = prospects[index]
+                return p.combineInvite
+                    && p.isDeclaringForDraft
+                    && p.position != .K && p.position != .P
+                    && p.fortyTime == nil
+            }
+            .sorted { prospects[$0].id.uuidString < prospects[$1].id.uuidString }
+        guard !cohortIndices.isEmpty else { return nil }
+
+        var cohort = Set<UUID>()
+        for index in cohortIndices {
+            simulateProDay(prospect: &prospects[index], markAttended: false)
+            cohort.insert(prospects[index].id)
+        }
+
+        return ProDayCircuitResult(tested: cohortIndices.count, cohort: cohort)
+    }
+
+    /// Stock pressure out of the pro-day circuit — `combinePressure`'s sibling.
+    ///
+    /// Same shape (how a man tested against his own position group's class-year
+    /// mean percentile) with two deliberate differences:
+    ///
+    /// * the position MEAN is taken over everybody who has tested, combine or
+    ///   pro day, so the late testers are graded against the same bar the
+    ///   February group set rather than against each other; and
+    /// * the divisor is wider and the clamp tighter. A pro-day number is
+    ///   hand-timed on a friendly surface, and every scouting department
+    ///   discounts it — so the circuit is a nudge where the combine is a shove.
+    ///
+    /// Only `cohort` receives pressure: a man who ran in Indianapolis already
+    /// had his stock moved by `combinePressure`, and grading him twice off one
+    /// forty time would double-count the same information.
+    static func proDayPressure(
+        _ prospects: [CollegeProspect],
+        cohort: Set<UUID>
+    ) -> [UUID: Double] {
+        guard !cohort.isEmpty else { return [:] }
+
+        var percentileByIndex: [Int: Int] = [:]
+        var byPosition: [Position: [Int]] = [:]
+        for i in prospects.indices {
+            guard prospects[i].fortyTime != nil else { continue }
+            let pct = combineAveragePercentile(prospects[i])
+            percentileByIndex[i] = pct
+            byPosition[prospects[i].position, default: []].append(pct)
+        }
+        guard !percentileByIndex.isEmpty else { return [:] }
+
+        var meanByPosition: [Position: Double] = [:]
+        for (position, values) in byPosition where !values.isEmpty {
+            meanByPosition[position] = Double(values.reduce(0, +)) / Double(values.count)
+        }
+
+        var pressure: [UUID: Double] = [:]
+        for i in prospects.indices {
+            guard cohort.contains(prospects[i].id), let pct = percentileByIndex[i] else { continue }
+            let mean = meanByPosition[prospects[i].position] ?? 50.0
+            pressure[prospects[i].id] = max(-1.8, min(1.8, (Double(pct) - mean) / 30.0))
+        }
+        return pressure
+    }
+
+    // MARK: - Mid-cycle character findings (task #78)
+
+    /// One character flag that surfaced between the last college snap and the
+    /// draft.
+    struct CharacterFinding {
+        let prospectID: UUID
+        let name: String
+        let position: String
+        let college: String
+        /// The flag as it was appended to `redFlags`.
+        let flag: String
+        /// His projected round when it broke — the reason it is a story.
+        let projection: Int?
+    }
+
+    /// The two flag pools, split by the moment they can surface at.
+    ///
+    /// Splitting them is what makes each pass independently idempotent: the
+    /// guard is "does anybody in this class already carry a flag from THIS
+    /// pool", so a combine finding cannot suppress the pro-day pass and
+    /// re-entering either phase cannot stack a second wave. Deliberately
+    /// disjoint from `generateRiskProfile`'s generation-time pool for the same
+    /// reason, and phrased as things that surface in FEBRUARY and MARCH rather
+    /// than as things that were always on the file.
+    static let combineCharacterFindings = [
+        "Combine interview raised maturity questions",
+        "Failed a screening at the combine",
+        "Multiple clubs flagged his interview answers",
+        "Suspended for the bowl game, never explained why",
+        "Combine medical staff noted a missed rehab program"
+    ]
+
+    static let proDayCharacterFindings = [
+        "Background check turned up an unresolved case",
+        "Left his pro day early after a sideline argument",
+        "Position coaches questioned his work habits on the record",
+        "Two teammates declined to vouch for him",
+        "Skipped a scheduled club visit without notice"
+    ]
+
+    /// Appends one new character flag to 2-4 declared prospects.
+    ///
+    /// The board has always carried `redFlags`, and every one of them was
+    /// written at generation and never moved again — so a user who had read a
+    /// prospect's file in September knew it could not change. Real character
+    /// intel breaks in February and March, on the men whose interviews go badly
+    /// and whose backgrounds get checked, and it is the single most common
+    /// reason a projected first-rounder slides in a real draft.
+    ///
+    /// The flag lands in `redFlags` and is therefore revealed through the
+    /// EXISTING `ProspectFog.flagDisclosure` ladder — hidden until somebody in
+    /// your building has been near him, a count once they have, the text itself
+    /// at two reports / an interview / a Top-30 visit. Nothing here bypasses the
+    /// fog; it only gives it something new to disclose.
+    ///
+    /// Deterministic per `(careerID, season, phase)` and idempotent per pool.
+    @discardableResult
+    static func applyCharacterFindings(
+        prospects: inout [CollegeProspect],
+        pool: [String],
+        seed: UInt64
+    ) -> [CharacterFinding] {
+        guard !prospects.isEmpty, !pool.isEmpty else { return [] }
+        let poolSet = Set(pool)
+        guard !prospects.contains(where: { p in
+            (p.redFlags ?? []).contains { poolSet.contains($0) }
+        }) else { return [] }
+
+        // Canonical order before the seeded shuffle, for the same reason
+        // `applyPreDraftAttrition` sorts first: the array order the store hands
+        // back is not stable, so an unsorted draw would pick SLOTS, not men.
+        let candidates = prospects.indices
+            .filter { prospects[$0].isDeclaringForDraft }
+            .sorted { prospects[$0].id.uuidString < prospects[$1].id.uuidString }
+        guard candidates.count >= 40 else { return [] }
+
+        var rng = ScoutingCycleRandom(seed: seed)
+        let count = Int.random(in: 2...4, using: &rng)
+
+        // Weighted toward the top of the PUBLIC board: a story is a story
+        // because of where the man was projected, not because of who he is.
+        // Two thirds of the draws come from the graded first four rounds.
+        let early = candidates.filter { (prospects[$0].draftProjection ?? 8) <= 4 }
+        let rest = candidates.filter { (prospects[$0].draftProjection ?? 8) > 4 }
+        var earlyPool = early.shuffled(using: &rng)
+        var restPool = rest.shuffled(using: &rng)
+
+        var findings: [CharacterFinding] = []
+        var flags = pool.shuffled(using: &rng)
+        for slot in 0..<count {
+            let preferEarly = slot < (count * 2 + 2) / 3
+            let pick: Int?
+            if preferEarly, !earlyPool.isEmpty {
+                pick = earlyPool.removeLast()
+            } else if !restPool.isEmpty {
+                pick = restPool.removeLast()
+            } else if !earlyPool.isEmpty {
+                pick = earlyPool.removeLast()
+            } else {
+                pick = nil
+            }
+            guard let index = pick, !flags.isEmpty else { break }
+            let flag = flags.removeLast()
+
+            var existing = prospects[index].redFlags ?? []
+            existing.append(flag)
+            prospects[index].redFlags = existing
+
+            findings.append(CharacterFinding(
+                prospectID: prospects[index].id,
+                name: prospects[index].fullName,
+                position: prospects[index].position.rawValue,
+                college: prospects[index].college,
+                flag: flag,
+                projection: prospects[index].draftProjection
+            ))
+        }
+        return findings
     }
 
     // MARK: - Projection Drift (the zero-sum board)
@@ -3866,6 +4190,57 @@ enum ScoutingEngine {
     /// Marker every pre-draft medical note carries, so the pass can tell its own
     /// work from the generator's `generateRiskProfile` notes and stay idempotent.
     static let preDraftConcernPrefix = "Pre-draft: "
+
+    /// A pre-draft injury, decoded back out of the note the attrition pass wrote.
+    struct PreDraftInjuryCarry {
+        let type: InjuryType
+        /// Weeks the medical staff projected on the day it happened.
+        let weeksOut: Int
+        /// The note itself, for the news/inbox copy.
+        let concern: String
+    }
+
+    /// Weeks between the pro-day window (where `applyPreDraftAttrition` fires)
+    /// and the first day of training camp.
+    ///
+    /// The offseason calendar this game runs is `proDays → draft → OTAs →
+    /// trainingCamp`; in real months that is late March to late July. A knee
+    /// that cost 14 weeks in March is a man who limps into camp; a 3-week
+    /// hamstring is a line on his file and nothing else. This constant is what
+    /// makes the difference between the two survive the draft boundary
+    /// (finding S15).
+    static let preDraftToCampWeeks = 8
+
+    /// Reads a pre-draft setback back off a prospect's medical file.
+    ///
+    /// The attrition pass writes `"Pre-draft: {InjuryType.rawValue} —
+    /// {n}-week recovery"`; this is the inverse, so `DraftEngine`'s
+    /// prospect → player copy can carry the injury into the roster instead of
+    /// dropping it at the draft boundary — the prospect who tore a knee at his
+    /// pro day used to arrive at camp perfectly healthy with a scouting note
+    /// nobody would ever read again.
+    ///
+    /// Returns the WORST concern on file when there is more than one.
+    static func preDraftInjury(from concerns: [String]?) -> PreDraftInjuryCarry? {
+        guard let concerns else { return nil }
+        var best: PreDraftInjuryCarry?
+        for concern in concerns where concern.hasPrefix(preDraftConcernPrefix) {
+            let body = String(concern.dropFirst(preDraftConcernPrefix.count))
+            let parts = body.components(separatedBy: " \u{2014} ")
+            guard parts.count == 2, let type = InjuryType(rawValue: parts[0]) else { continue }
+            let weeks = Int(parts[1].prefix(while: { $0.isNumber })) ?? 0
+            guard weeks > 0 else { continue }
+            let carry = PreDraftInjuryCarry(type: type, weeksOut: weeks, concern: concern)
+            if let current = best {
+                let better = type.severity > current.type.severity
+                    || (type.severity == current.type.severity && weeks > current.weeksOut)
+                if better { best = carry }
+            } else {
+                best = carry
+            }
+        }
+        return best
+    }
 
     /// About 2 % of the declared class gets hurt between the combine and the
     /// draft — a torn ACL in a pro-day drill, a labrum found on a recheck, a

@@ -1378,6 +1378,163 @@ enum InboxEngine {
         )
     }
 
+    /// The pro-day circuit report: who finally tested, and what it changed.
+    static func proDayCircuitMessage(
+        result: ScoutingEngine.ProDayCircuitResult,
+        moves: [ScoutingEngine.ProjectionMove],
+        dateString: String
+    ) -> InboxMessage? {
+        guard result.tested > 0 else { return nil }
+
+        var lines: [String] = [
+            "Coach,",
+            "",
+            "The campus circuit is done. \(result.tested) of the men who tested in nothing at the combine have now put numbers on a board somewhere, and we have them off the wire.",
+            ""
+        ]
+
+        let risers = moves.filter(\.isRise).sorted { $0.rounds > $1.rounds }
+        let fallers = moves.filter { !$0.isRise }.sorted { $0.rounds > $1.rounds }
+        if !risers.isEmpty {
+            lines.append("Helped himself:")
+            lines.append(contentsOf: risers.prefix(5).map {
+                "- \($0.position) \($0.name) (\($0.college)): round \($0.from) to round \($0.to)"
+            })
+            lines.append("")
+        }
+        if !fallers.isEmpty {
+            lines.append("Did not:")
+            lines.append(contentsOf: fallers.prefix(5).map {
+                "- \($0.position) \($0.name) (\($0.college)): round \($0.from) to round \($0.to)"
+            })
+            lines.append("")
+        }
+
+        lines.append("Remember what these numbers are: hand-timed, on his own turf, in front of people who want him to look good. We discount them until one of ours holds the watch.")
+        lines.append("")
+        lines.append("Scouting Department")
+
+        return InboxMessage(
+            sender: .scout(name: "Director of Scouting"),
+            subject: "Pro-day circuit: \(result.tested) late testers on the board",
+            body: lines.joined(separator: "\n"),
+            date: dateString,
+            category: .scoutingReport,
+            attachments: [
+                MessageAttachment(title: "Open Big Board", destination: .bigBoard)
+            ]
+        )
+    }
+
+    /// The character memo — names only, never the file itself.
+    ///
+    /// The body deliberately does NOT print the flag: what the file says is
+    /// disclosed by `ProspectFog.flagDisclosure`, i.e. by having filed reports,
+    /// taken a meeting or spent a Top-30 visit. Mailing the text here would hand
+    /// the user for free the one piece of intel the whole disclosure ladder is
+    /// built to charge for.
+    static func characterFindingsMessage(
+        findings: [ScoutingEngine.CharacterFinding],
+        dateString: String
+    ) -> InboxMessage? {
+        guard !findings.isEmpty else { return nil }
+
+        var lines: [String] = [
+            "Coach,",
+            "",
+            "Character work. \(findings.count) name\(findings.count == 1 ? " has" : "s have") come up this week that we did not have anything on in the fall:",
+            ""
+        ]
+        for finding in findings {
+            let round = finding.projection.map { "round \($0)" } ?? "undrafted"
+            lines.append("- \(finding.position) \(finding.name) (\(finding.college)) — \(round) projection")
+        }
+        lines.append("")
+        lines.append("I am not putting what we heard in writing. Get two reports on him, put him in a room, or spend a visit, and the file opens.")
+        lines.append("")
+        lines.append("Scouting Department")
+
+        return InboxMessage(
+            sender: .scout(name: "Director of Scouting"),
+            subject: "Character notes: \(findings.count) name\(findings.count == 1 ? "" : "s") to re-check",
+            body: lines.joined(separator: "\n"),
+            date: dateString,
+            category: .scoutingReport,
+            attachments: [
+                MessageAttachment(title: "Open Big Board", destination: .bigBoard)
+            ]
+        )
+    }
+
+    // MARK: - Draft-cycle heartbeat (task #78, finding S9)
+
+    /// A two-line note from the scouting department at every phase boundary of
+    /// the draft cycle.
+    ///
+    /// The offseason calendar used to be silent between the loud events: the
+    /// user advanced a phase, the screen changed, and nothing told him what his
+    /// own building had been doing or where the board stood. This is not a
+    /// mechanic — it is the department checking in with real counts off the
+    /// live class, so the four months read as a season of work rather than as
+    /// four buttons.
+    ///
+    /// Returns `nil` for a phase outside the cycle or an empty class, so the
+    /// caller can skip the message entirely rather than mail an empty one.
+    static func draftCycleHeartbeat(
+        phase: SeasonPhase,
+        prospects: [CollegeProspect],
+        dateString: String
+    ) -> InboxMessage? {
+        guard !prospects.isEmpty else { return nil }
+
+        let declared = prospects.filter(\.isDeclaringForDraft)
+        guard !declared.isEmpty else { return nil }
+        let reported = declared.filter { !$0.scoutingReports.isEmpty }.count
+        let interviewed = declared.filter(\.interviewCompleted).count
+        let flagged = declared.filter { !($0.medicalConcerns ?? []).isEmpty }.count
+
+        let subject: String
+        let body: String
+        switch phase {
+        case .coachingChanges:
+            // The window has ALREADY closed by the time this note is mailed:
+            // `WeekAdvancer` runs `generateDeclarations` earlier in the same
+            // `.coachingChanges` block, and that pass leaves every underclassman
+            // `.declared` or `.withdrawn`. The old copy counted `.undecided` and
+            // therefore shipped the sentence "0 underclassmen are still
+            // deciding" in every save, every season. Report the outcome instead.
+            let withdrew = prospects.filter { $0.declarationStatus == .withdrawn }.count
+            let earlyEntrants = declared.filter(\.isUnderclassman).count
+            subject = "Declaration window closed: \(declared.count) in the class"
+            body = "The January deadline has passed. \(declared.count) players are in this draft, \(earlyEntrants) of them underclassmen who gave up eligibility to be here. \(withdrew) went back to school, and the men behind them at those positions just moved up our board. We have written reports on \(reported) so far."
+        case .combine:
+            subject = "Combine wrap: board settled, \(flagged) medical files open"
+            body = "Indianapolis is closed. The board has settled after the testing: \(reported) of the \(declared.count) declared players carry one of our reports and \(interviewed) have been in a room with us. \(flagged) men are carrying a medical note we would want a second look at before the draft."
+        case .freeAgency:
+            subject = "Post-market board: 32 needs boards rebuilt"
+            body = "The market has closed and every club in the league just changed what it needs. We have re-run the board against the new depth charts — the men who moved did so because somebody's roster moved, not because their tape did."
+        case .proDays:
+            subject = "Pro-day circuit: \(reported) of \(declared.count) covered"
+            body = "The campus workouts are running. We have filed on \(reported) of the \(declared.count) declared players and interviewed \(interviewed). Anybody still uncovered is a man we will be drafting off somebody else's opinion."
+        case .draft:
+            subject = "Draft eve: \(reported) reports, \(interviewed) interviews on file"
+            body = "Final board is locked. \(reported) of the \(declared.count) declared players carry at least one of our reports, \(interviewed) have been interviewed, and \(flagged) are flagged medically. Everything after this is the clock."
+        default:
+            return nil
+        }
+
+        return InboxMessage(
+            sender: .scout(name: "Director of Scouting"),
+            subject: subject,
+            body: ["Coach,", "", body, "", "Scouting Department"].joined(separator: "\n"),
+            date: dateString,
+            category: .scoutingReport,
+            attachments: [
+                MessageAttachment(title: "Open Big Board", destination: .bigBoard)
+            ]
+        )
+    }
+
     // MARK: - Helpers
 
     /// Creates a human-readable date string for the given phase.

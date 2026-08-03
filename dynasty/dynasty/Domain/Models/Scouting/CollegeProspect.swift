@@ -247,7 +247,103 @@ final class CollegeProspect {
     /// (pre-overhaul) class, `2` = `DraftClassBuilder`.
     var generatorVersion: Int = 0
 
+    // MARK: - Market realism v2 (task #78)
+    //
+    // Three more stored properties with INLINE defaults, never `init`
+    // parameters — same lightweight-migration convention as the block above.
+
+    /// The MARKET's error on this man, in OVR points: `consensus − truth`.
+    ///
+    /// Drawn once at generation (`DraftClassBuilder.consensusError`) and stored,
+    /// so the public board is a *wrong* board in a way that is stable across
+    /// relaunches. Positive means the consensus is high on him (the top-10 bust
+    /// waiting to happen), negative means the room is late on him (the day-3
+    /// steal your own scouting can find). `0` on a legacy class, which reads as
+    /// the old perfect-information market.
+    var consensusErrorStored: Int = 0
+
+    /// The projected round the class was BORN with, before four months of
+    /// Senior Bowl / combine / mock / pro-day drift moved it.
+    ///
+    /// `draftProjection − projectionAtGeneration` is the market arrow the board
+    /// rows render: it is the MEDIA's own movement, distinct from
+    /// `stockTrajectory`, which is what YOUR scouts have changed their mind
+    /// about. `0` means "not recorded" (legacy row) and suppresses the arrow.
+    var projectionAtGeneration: Int = 0
+
+    /// Where this prospect sits in the January declaration window
+    /// (`DeclarationStatus.rawValue`). Empty = the window has not been held for
+    /// him yet, which for an underclassman means genuinely UNDECLARED — the
+    /// autumn board used to show every underclassman as a lock because
+    /// `isDeclaringForDraft` carries a model default of `true`.
+    var declarationStatusRaw: String = ""
+
     // MARK: - Computed Properties
+
+    /// What the MARKET believes this prospect's current level is (25–99).
+    ///
+    /// Public information by construction — it is the number the consensus
+    /// board, the mock draft and the projected round are all built from. It is
+    /// never rendered raw: every user-facing surface goes through
+    /// `ProspectFog`, which turns it into a grade band.
+    var consensusOverall: Int {
+        min(99, max(25, trueOverall + consensusErrorStored))
+    }
+
+    /// The market's read on the ceiling. One scouting industry watching one set
+    /// of tape: a consensus that is high on a man is high on both his numbers,
+    /// so the same error carries (`AIDraftPerception`'s own fat-tail rule).
+    var consensusPotential: Int {
+        min(99, max(consensusOverall, truePotential + consensusErrorStored))
+    }
+
+    /// How far the media board has moved him since the class was generated, in
+    /// rounds. Positive = risen (a lower round number), negative = slid.
+    /// `nil` when the class predates the market-arrow fields.
+    var marketMove: Int? {
+        guard projectionAtGeneration > 0, let now = draftProjection, now > 0 else { return nil }
+        return projectionAtGeneration - now
+    }
+
+    /// Typed accessor for the January declaration window.
+    var declarationStatus: DeclarationStatus {
+        DeclarationStatus(rawValue: declarationStatusRaw) ?? .undecided
+    }
+
+    /// The age at which a prospect has no college eligibility left and is in the
+    /// draft whether he likes it or not. Shared with
+    /// `ScoutingEngine.generateDeclarations` so the board and the window agree
+    /// on who is even allowed to withdraw.
+    static let seniorAge = 22
+
+    /// Whether this man still has a decision to make.
+    var isUnderclassman: Bool { age < CollegeProspect.seniorAge }
+
+    /// PUBLIC read on how likely an undeclared underclassman is to come out.
+    ///
+    /// Built from class year and college PRODUCTION — both things that happened
+    /// on television — and deliberately NOT from `trueOverall`, which is the
+    /// hidden rating the whole fog exists to keep off the screen. `nil` for a
+    /// senior (no decision to make) and for anybody whose window has closed.
+    var declarationLikelihood: DeclarationLikelihood? {
+        guard isUnderclassman, declarationStatus == .undecided else { return nil }
+        let tier = collegeProductionTier
+        let starts = collegeYearsStarted
+        // A junior with two years of production behind him is a lock; a
+        // redshirt sophomore who has just broken out is the genuine coin flip.
+        if age == CollegeProspect.seniorAge - 1 {
+            switch tier {
+            case .elite, .aboveAvg: return .likely
+            case .average:          return starts >= 2 ? .likely : .leaning
+            case .belowAvg:         return .undecided
+            }
+        }
+        switch tier {
+        case .elite:    return .leaning
+        case .aboveAvg: return starts >= 2 ? .leaning : .undecided
+        default:        return .undecided
+        }
+    }
 
     /// Always returns a grade — uses scoutedOverallGrade if available, otherwise converts
     /// from legacy scoutedOverall or scoutGrade. This ensures all views show grades, not numbers.
@@ -778,6 +874,62 @@ final class CollegeProspect {
 
 enum ProspectFlag: String, Codable {
     case none, mustHave, sleeper, avoid
+}
+
+// MARK: - Declaration window (task #78, finding S11)
+
+/// Where a prospect sits in the January declaration window.
+///
+/// The board used to have no vocabulary for this at all: `isDeclaringForDraft`
+/// defaults to `true` on the model, so from September to January every
+/// underclassman in the class read as a lock to come out — including the ~100
+/// who never declare and the one who pulls his name back off the top of the
+/// board every year.
+enum DeclarationStatus: String {
+    /// The window has not been held for him. For an underclassman that means
+    /// genuinely undecided; a senior is moved to `.declared` at generation
+    /// because he has no eligibility left to keep.
+    case undecided = ""
+    case declared  = "Declared"
+    case withdrawn = "Withdrawn"
+
+    /// Row-badge text. Empty for the undecided case, which renders the public
+    /// `DeclarationLikelihood` chip instead.
+    var shortLabel: String {
+        switch self {
+        case .undecided: return ""
+        case .declared:  return "IN"
+        case .withdrawn: return "OUT"
+        }
+    }
+}
+
+/// The PUBLIC read on whether an undeclared underclassman comes out.
+///
+/// Built from class year and college production only — see
+/// `CollegeProspect.declarationLikelihood` for why `trueOverall` may not enter
+/// into it.
+enum DeclarationLikelihood: String {
+    case likely    = "Likely"
+    case leaning   = "Leaning"
+    case undecided = "Undecided"
+
+    /// Four characters or fewer so it fits a board row.
+    var shortLabel: String {
+        switch self {
+        case .likely:    return "LIKELY"
+        case .leaning:   return "LEAN"
+        case .undecided: return "UNDEC"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .likely:    return .success
+        case .leaning:   return .warning
+        case .undecided: return .textTertiary
+        }
+    }
 }
 
 // MARK: - Unified GM Mark Tier

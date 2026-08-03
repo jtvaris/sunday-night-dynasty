@@ -58,11 +58,18 @@ enum DraftClassBuilder {
     // MARK: - Public API
 
     /// Builds a complete draft class.
-    /// - Parameter count: Class size (default 350, matching the shipped call sites).
+    /// - Parameters:
+    ///   - count: Class size (default 350, matching the shipped call sites).
+    ///   - careerID: the save this class belongs to. Only ever used to seed the
+    ///     market's consensus error (`consensusError`); `nil` falls back to the
+    ///     prospect UUID alone, which is already unique per save.
     /// - Returns: The prospects (shuffled) and the class strength profile.
     @discardableResult
-    static func build(count: Int = 350) -> (prospects: [CollegeProspect], strength: DraftClassStrength) {
-        let ordered = buildOrdered(count: count)
+    static func build(
+        count: Int = 350,
+        careerID: UUID? = nil
+    ) -> (prospects: [CollegeProspect], strength: DraftClassStrength) {
+        let ordered = buildOrdered(count: count, careerID: careerID)
         var prospects = ordered.prospects
         prospects.shuffle()
         return (prospects, ordered.strength)
@@ -73,7 +80,10 @@ enum DraftClassBuilder {
     /// facts `build` throws away when it shuffles. Used by the balance harness's
     /// `draftclass` scenario to validate the band distributions
     /// (`tools/balance-harness`, plan §7); the shipped call sites use `build`.
-    static func buildOrdered(count: Int = 350) -> (prospects: [CollegeProspect], bands: [Int], strength: DraftClassStrength) {
+    static func buildOrdered(
+        count: Int = 350,
+        careerID: UUID? = nil
+    ) -> (prospects: [CollegeProspect], bands: [Int], strength: DraftClassStrength) {
         let size = max(60, count)
 
         // --- Step 1: blueprint -------------------------------------------------
@@ -164,6 +174,8 @@ enum DraftClassBuilder {
         lastClassStrength = strength
 
         assignPreviewFaces(to: prospects)
+        assignConsensusProjections(prospects, tokens: tokens, careerID: careerID)
+        assignDeclarationWindow(prospects)
 
         return (prospects, tokens.map { $0.band }, strength)
     }
@@ -188,6 +200,158 @@ enum DraftClassBuilder {
 
     /// Positions whose best prospect always shows at least one A-range trait.
     static let premiumTraitGroups: Set<PositionGroup> = [.qb, .wr, .ot, .edge, .cb, .dt]
+
+    // MARK: - The market's own error (task #78)
+    //
+    // Before this the PUBLIC projected round WAS the generator's grade band —
+    // `draftProjection = min(7, band)`, the same band the talent backbone was
+    // drawn from. The consensus was therefore omniscient: the media had every
+    // man in exactly the round his hidden rating deserved, so a "bust" could
+    // only ever be a development outcome and a "steal" could only ever be a
+    // prospect the user had scouted and nobody else had. Scouting could not
+    // beat the market, because there was no market to beat.
+    //
+    // The public board is now `trueOverall + consensusError`, re-slotted through
+    // the SAME band capacities. Two properties follow, both load-bearing:
+    //
+    //  * the multiset of `draftProjection` values over the class is EXACTLY
+    //    preserved (it is a permutation of the generator's own band array), so
+    //    every downstream consumer — `applyProjectionDrift`'s zero-sum swap,
+    //    `ProspectFog.consensusBand`, `DraftIntel.publicOVREstimate`, the
+    //    rookie-band fallbacks — sees the class shape it was calibrated on; and
+    //  * the generator's `bands` return value is untouched, so the whole
+    //    `draftclass` gate (which measures TRUE bands) is insulated by
+    //    construction. The error moves opinion, never talent.
+
+    /// σ of the consensus's read on a prospect's current level, in OVR points.
+    ///
+    /// Persona-free on purpose: `AIDraftPerception` gives each of the 31 clubs
+    /// its own σ off its GM archetype, because that is a statement about one
+    /// front office. This is the *aggregate* of every front office, every
+    /// analyst and every draftnik in one number, and it sits where the balanced
+    /// archetype does (4.5) plus a little for the fact that a consensus is an
+    /// average of opinions formed months before the workouts.
+    static let consensusSigma = 5.0
+
+    /// Share of prospects the consensus is simply wrong about. `AIDraftPerception`'s
+    /// own rate and band, and for the same reason: a Gaussian at σ ≈ 5 almost
+    /// never moves a man 20 board slots, and it is the 20-slot misses that make
+    /// a top-10 bust and a fifth-round steal exist at all.
+    static let consensusFatTailRate = 0.07
+    static let consensusFatTailMin = 8.0
+    static let consensusFatTailMax = 14.0
+
+    /// The class-wide seed the market draw folds the prospect UUID against when
+    /// no career is supplied (previews, the balance harness, a legacy call
+    /// site). Fixed, so the draw stays reproducible; the prospect UUID is
+    /// already unique per save, so this loses nothing but the audit trail.
+    private static let marketSeedID = UUID(uuidString: "5A4B0000-0000-4000-A000-4D41524B4554")
+        ?? UUID()
+
+    /// The consensus's signed error on one prospect, in OVR points.
+    ///
+    /// Deterministic per `(careerID, prospectID)` — the same save always
+    /// produces the same wrong board, across relaunches and re-entries into the
+    /// draft room. Uses `AIDraftPerception.pairSeed` (the FNV/SplitMix UUID
+    /// fold) rather than `hashValue`, whose seed is randomised per process.
+    static func consensusError(careerID: UUID?, prospectID: UUID) -> Double {
+        var rng = SeededLeagueRandom(
+            seed: AIDraftPerception.pairSeed(
+                teamID: careerID ?? marketSeedID,
+                prospectID: prospectID
+            )
+        )
+        // Box-Muller off the repo RNG; `u1` floored away from 0 because log(0)
+        // is −inf and SplitMix64 can legitimately return it.
+        let u1 = max(1e-12, Double.random(in: 0..<1, using: &rng))
+        let u2 = Double.random(in: 0..<1, using: &rng)
+        let z = (-2.0 * log(u1)).squareRoot() * cos(2.0 * .pi * u2)
+        var error = z * consensusSigma
+
+        if Double.random(in: 0..<1, using: &rng) < consensusFatTailRate {
+            let magnitude = Double.random(
+                in: consensusFatTailMin...consensusFatTailMax, using: &rng
+            )
+            error += (Double.random(in: 0..<1, using: &rng) < 0.5 ? -1.0 : 1.0) * magnitude
+        }
+        return error
+    }
+
+    /// Draws the market's error on every prospect, stores it, and rebuilds
+    /// `draftProjection` as the PUBLIC board rather than the true grade band.
+    ///
+    /// The band array is used verbatim as the slot ladder: public board slot `k`
+    /// inherits the band the generator gave generation slot `k`. Because that
+    /// array is non-decreasing and the assignment is a permutation of it, the
+    /// number of round-1 projections, round-7 projections and everything between
+    /// is bit-for-bit what it was before this pass existed.
+    ///
+    /// One repair pass runs on top: a kicker, punter or fullback may never carry
+    /// a projection earlier than his group's `earliestBand`, however well the
+    /// market happens to have read him. That is not fog, it is how the position
+    /// is valued — no amount of consensus error puts a punter in round 1.
+    private static func assignConsensusProjections(
+        _ prospects: [CollegeProspect],
+        tokens: [SlotToken],
+        careerID: UUID?
+    ) {
+        guard prospects.count == tokens.count, !prospects.isEmpty else { return }
+
+        var perceived = [Double](repeating: 0, count: prospects.count)
+        for index in prospects.indices {
+            let error = consensusError(careerID: careerID, prospectID: prospects[index].id)
+            prospects[index].consensusErrorStored = Int(error.rounded())
+            perceived[index] = Double(prospects[index].trueOverall) + error
+        }
+
+        // UUID tie-break: `sorted(by:)` is not stable, and two men on identical
+        // perceived grades must not be ordered by an array position that is not
+        // itself stable across a store round-trip.
+        var order = prospects.indices.sorted { lhs, rhs in
+            if perceived[lhs] != perceived[rhs] { return perceived[lhs] > perceived[rhs] }
+            return prospects[lhs].id.uuidString < prospects[rhs].id.uuidString
+        }
+
+        let bandBySlot = tokens.map { $0.band }
+        for slot in order.indices {
+            let group = tokens[order[slot]].group
+            guard group.earliestBand > bandBySlot[slot] else { continue }
+            // Swap him with the first man deeper on the public board who can
+            // legally take this slot, and whose own slot he can legally take.
+            let swap = (slot + 1..<order.count).first { candidate in
+                tokens[order[candidate]].group.earliestBand <= bandBySlot[slot]
+                    && group.earliestBand <= bandBySlot[candidate]
+            }
+            guard let swap else { continue }
+            order.swapAt(slot, swap)
+        }
+
+        for (slot, index) in order.enumerated() {
+            let projection = min(7, bandBySlot[slot])
+            prospects[index].draftProjection = projection
+            prospects[index].projectionAtGeneration = projection
+        }
+    }
+
+    /// Opens the January declaration window (task #78, finding S11).
+    ///
+    /// Seniors are in the draft whether they like it or not, so they are marked
+    /// `.declared` at birth. Everybody else starts `.undecided` and stays there
+    /// until `ScoutingEngine.generateDeclarations` runs in January — which is
+    /// the fact the autumn board had no way to render, because
+    /// `isDeclaringForDraft` carries a model default of `true` and the board read
+    /// that as a lock.
+    ///
+    /// `isDeclaringForDraft` itself is deliberately left alone: a November mock
+    /// draft does include the juniors everybody expects to come out, and the
+    /// declaration window is the only thing allowed to move that flag.
+    private static func assignDeclarationWindow(_ prospects: [CollegeProspect]) {
+        for prospect in prospects {
+            prospect.declarationStatusRaw = prospect.age >= CollegeProspect.seniorAge
+                ? DeclarationStatus.declared.rawValue
+                : DeclarationStatus.undecided.rawValue
+        }
+    }
 
     // MARK: - Step 2: talent curve
 
@@ -394,7 +558,12 @@ enum DraftClassBuilder {
         prospect.developmentArchetypeRaw = archetype.storedValue
         prospect.generatorVersion = currentGeneratorVersion
 
-        // --- Step 9: round projection is the band, nothing else ---------------
+        // --- Step 9: provisional round projection ------------------------------
+        // The TRUE grade band, which is what the class blueprint says this slot
+        // is worth. `assignConsensusProjections` overwrites it a moment later
+        // with the PUBLIC board — the market's read, error and all. This line
+        // survives so a prospect built outside `buildOrdered` (a preview, a
+        // one-off) still carries a sane projection.
         prospect.draftProjection = min(7, band)
 
         // --- Step 7: college production ---------------------------------------

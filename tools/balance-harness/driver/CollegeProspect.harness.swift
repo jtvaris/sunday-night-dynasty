@@ -1,5 +1,17 @@
 import Foundation
 
+// MARK: - Declaration window (harness stub — mirrors the repo enum)
+//
+// The repo declares this beside `CollegeProspect` in the same file, but that
+// file also carries SwiftUI `Color` on the risk enums, so only its math block is
+// spliced. The three cases and their raw values are all the synced
+// `generateDeclarations` / `DraftClassBuilder` slices touch.
+enum DeclarationStatus: String {
+    case undecided = ""
+    case declared  = "Declared"
+    case withdrawn = "Withdrawn"
+}
+
 // MARK: - CollegeProspect (HARNESS STANDALONE — assembled by sync_sources.sh)
 //
 // The shipped `CollegeProspect` is a SwiftData `@Model` that drags in SwiftUI
@@ -94,6 +106,20 @@ final class CollegeProspect {
     /// stub for them and every scenario failed at the sync step.
     var hometownState: String? = nil
     var hometownCity: String? = nil
+
+    // MARK: Market realism v2 (task #78) — storage for the synced generator
+    //
+    // `DraftClassBuilder.assignConsensusProjections` / `assignDeclarationWindow`
+    // and the synced `generateDeclarations` slice all write these, so the stubs
+    // have to exist or the harness does not compile. Same inline-default,
+    // never-in-init convention as the repo model.
+    var consensusErrorStored: Int = 0
+    var projectionAtGeneration: Int = 0
+    var declarationStatusRaw: String = ""
+
+    /// Mirrors the repo model's constant — the synced generator reads it to
+    /// decide who is even allowed to withdraw.
+    static let seniorAge = 22
 
     // MARK: - Repo math (spliced verbatim on every sync)
 

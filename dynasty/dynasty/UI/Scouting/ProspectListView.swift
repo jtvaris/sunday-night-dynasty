@@ -848,6 +848,8 @@ struct ProspectRowView: View {
                             .padding(.vertical, 1)
                             .background(Color.accentGold, in: RoundedRectangle(cornerRadius: 2))
                     }
+                    // Is he even in this draft? (S11)
+                    ProspectDeclarationChip(prospect: prospect)
                     if let mention = prospect.combineMediaMention, !mention.isEmpty {
                         Image(systemName: "newspaper.fill")
                             .font(.system(size: 7))
@@ -1165,7 +1167,12 @@ struct ProspectRowView: View {
                 .foregroundStyle(color)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
-            gradeChangeIndicator
+            // Two arrows, two sources: the market's move on the projected round
+            // (blue/amber) beside your own scouts' grade change (green/red).
+            HStack(spacing: 3) {
+                ProspectMarketArrow(prospect: prospect)
+                gradeChangeIndicator
+            }
         }
         .frame(width: 52, alignment: .center)
     }
@@ -1343,6 +1350,80 @@ struct ProspectRowView: View {
         if mention.contains("Faller") { return Color.danger }
         if mention.contains("Surprise") { return Color.accentBlue }
         return Color.textSecondary
+    }
+}
+
+// MARK: - Market arrow (task #78)
+
+/// How far the MEDIA has moved a prospect since the class was generated.
+///
+/// The board already had one arrow — `stockTrajectory` / the pre-combine grade
+/// diff — but that one is YOUR scouts changing their mind. This is the other
+/// half of the same picture and it is the half a GM actually trades on: the
+/// consensus is a separate opinion now (`CollegeProspect.consensusErrorStored`),
+/// it moves all spring on the Senior Bowl, the combine, four mocks and the
+/// pro-day circuit, and a man whose public round has slid two rounds while your
+/// own grade held is exactly the man you want at the price the room is asking.
+///
+/// Renders nothing at all when the market has not moved him, so a board full of
+/// arrows means something.
+struct ProspectMarketArrow: View {
+    let prospect: CollegeProspect
+    var font: Font = .system(size: 9, weight: .heavy)
+
+    var body: some View {
+        if let move = prospect.marketMove, move != 0 {
+            Text("\(move > 0 ? "\u{25B2}" : "\u{25BC}")\(abs(move))")
+                .font(font)
+                .foregroundStyle(move > 0 ? Color.accentBlue : Color.warning)
+                .lineLimit(1)
+                .accessibilityLabel(
+                    move > 0
+                        ? "media board has him up \(abs(move)) rounds since the class opened"
+                        : "media board has him down \(abs(move)) rounds since the class opened"
+                )
+        }
+    }
+}
+
+// MARK: - Declaration chip (task #78, finding S11)
+
+/// Whether an underclassman is even in this draft.
+///
+/// `isDeclaringForDraft` carries a model default of `true`, so from September to
+/// January every board in the game showed all ~175 underclassmen as locks — and
+/// roughly 100 of them never come out. The chip shows the PUBLIC read
+/// (`CollegeProspect.declarationLikelihood`, built from class year and college
+/// production, never from the hidden rating) until the window closes in January,
+/// and the decision itself after.
+struct ProspectDeclarationChip: View {
+    let prospect: CollegeProspect
+
+    var body: some View {
+        switch prospect.declarationStatus {
+        case .undecided:
+            if let likelihood = prospect.declarationLikelihood {
+                chip(likelihood.shortLabel, likelihood.color)
+                    .accessibilityLabel("declaration \(likelihood.rawValue)")
+            }
+        case .withdrawn:
+            chip("OUT", Color.danger)
+                .accessibilityLabel("withdrew from the draft")
+        case .declared:
+            EmptyView()
+        }
+    }
+
+    private func chip(_ text: String, _ color: Color) -> some View {
+        Text(text)
+            .font(.system(size: 7, weight: .bold))
+            .foregroundStyle(color)
+            .padding(.horizontal, 3)
+            .padding(.vertical, 1)
+            .overlay(
+                RoundedRectangle(cornerRadius: 2)
+                    .stroke(color.opacity(0.55), lineWidth: 0.5)
+            )
     }
 }
 

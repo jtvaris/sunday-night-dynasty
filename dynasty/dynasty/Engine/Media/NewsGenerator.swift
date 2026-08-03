@@ -448,6 +448,54 @@ enum NewsGenerator {
         }
     }
 
+    /// The league pro-day circuit: the men the combine sent home without a
+    /// number finally posting one (task #78).
+    static func proDayCircuitNews(
+        result: ScoutingEngine.ProDayCircuitResult,
+        season: Int
+    ) -> [NewsItem] {
+        guard result.tested > 0 else { return [] }
+        return [NewsItem(
+            headline: "Pro-day circuit opens: \(result.tested) combine no-shows finally test",
+            body: "The campus workouts are under way. \(result.tested) prospect\(result.tested == 1 ? "" : "s") who did not run a drill in Indianapolis — rehab, medical rechecks, agents holding a client back for a friendlier surface — put numbers on the board this week. Every club gets the results off the wire; only the clubs in the building get the hand-checked sheet.",
+            category: .draft,
+            week: 0,
+            season: season,
+            sentiment: .neutral
+        )]
+    }
+
+    /// Character intel breaking mid-cycle: the interview that went badly, the
+    /// background check that came back wrong (task #78).
+    ///
+    /// The headline names the man and says *that* something surfaced; it never
+    /// prints the flag itself. What the file actually says is disclosed through
+    /// `ProspectFog.flagDisclosure` — you have to have done the work.
+    static func characterFindingNews(
+        findings: [ScoutingEngine.CharacterFinding],
+        season: Int,
+        limit: Int = 4
+    ) -> [NewsItem] {
+        findings.prefix(limit).map { finding in
+            let where_: String
+            switch finding.projection ?? 8 {
+            case 1:  where_ = "a projected first-round "
+            case 2:  where_ = "a projected second-round "
+            case 3:  where_ = "a projected third-round "
+            case 4...5: where_ = "a projected day-three "
+            default: where_ = "a draftable "
+            }
+            return NewsItem(
+                headline: "Off-field questions surface around \(finding.college) \(finding.position) \(finding.name)",
+                body: "Clubs have started re-checking their file on \(finding.name), \(where_)\(finding.position) out of \(finding.college). Nobody in a front office is talking about what came up, and the men who have not done the background work are the ones who will find out on draft night. Rooms that have already interviewed him say the answer changes where he goes, not whether he goes.",
+                category: .draft,
+                week: 0,
+                season: season,
+                sentiment: .negative
+            )
+        }
+    }
+
     // MARK: - Private Generators
 
     private static func generatePlayerOfTheWeek(

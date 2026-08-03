@@ -115,6 +115,12 @@ enum WeekAdvancer {
     /// `currentMockDraft` taken right after that phase's mock was generated.
     static var mockDraftHistory: [String: [ScoutingEngine.MockDraftPick]] = [:]
 
+    /// `"season-phase"` keys the draft-cycle heartbeat has already been mailed
+    /// for (task #78, finding S9). The offseason phase hooks can be re-entered —
+    /// a save reloaded on a phase boundary runs them again — and a heartbeat is
+    /// a note, not an event, so it must not stack duplicates in the inbox.
+    static var draftCycleHeartbeatsSent: Set<String> = []
+
     // MARK: - Career switch reset
 
     /// The save this engine is currently bound to. **Every store-wide fetch in
@@ -159,6 +165,7 @@ enum WeekAdvancer {
         mockDraftHistory = [:]
         draftClassGenerated = false
         udfaStageCompletedSeasons = []
+        draftCycleHeartbeatsSent = []
 
         // Trade counters: the monotonic pair the per-season diff reads, plus the
         // per-cycle pair `startNewSeason` maintains (season 1 never calls it, so a
@@ -198,6 +205,28 @@ enum WeekAdvancer {
             context.insert(prospect)
         }
         try? context.save()
+    }
+
+    /// Writes `declarationStatusRaw` onto a class that went through the January
+    /// window before the field existed (finding C5).
+    ///
+    /// Idempotent and free after the first call — `backfillDeclarationStatus`
+    /// only touches rows whose status string is empty, and only for a class
+    /// whose window has demonstrably closed.
+    @MainActor
+    static func healDeclarationStatus(career: Career, modelContext: ModelContext) {
+        var klass = currentDraftClass
+        let fromMemory = !klass.isEmpty
+        if !fromMemory {
+            let cid = activeCareerID
+            klass = (try? modelContext.fetch(FetchDescriptor<CollegeProspect>(
+                predicate: #Predicate { $0.careerID == cid }
+            ))) ?? []
+        }
+        guard !klass.isEmpty else { return }
+        guard ScoutingEngine.backfillDeclarationStatus(&klass) > 0 else { return }
+        if fromMemory { currentDraftClass = klass }
+        try? modelContext.save()
     }
 
     // MARK: - NFL Combine
@@ -297,6 +326,12 @@ enum WeekAdvancer {
         modelContext: ModelContext
     ) -> Bool {
         bind(to: career)
+        // Field-level heal first, and OUTSIDE the version guard below: a class
+        // can be current-generation and still be missing `declarationStatusRaw`,
+        // because that field shipped after the generator version last moved.
+        // Both screens that restore a class (`ScoutingHubView.loadData`,
+        // `DraftDayCoordinator`) come through here, so this is the one hook.
+        healDeclarationStatus(career: career, modelContext: modelContext)
         guard isBeforeThisCycleDraft(career: career, modelContext: modelContext) else {
             return false
         }
@@ -339,7 +374,7 @@ enum WeekAdvancer {
         mockDraftHistory = [:]
         draftClassGenerated = false
 
-        var regenerated = ScoutingEngine.generateDraftClass()
+        var regenerated = ScoutingEngine.generateDraftClass(careerID: career.id)
         let isFirstSeason = career.totalWins == 0 && career.totalLosses == 0
         if isFirstSeason || hadScoutedGrades {
             ScoutingEngine.applyPreScoutedData(prospects: &regenerated)
@@ -1945,7 +1980,7 @@ enum WeekAdvancer {
         // 9b. Midseason mock draft at week 9 (generate draft class early for projections)
         if week == 9 {
             if !draftClassGenerated {
-                currentDraftClass = ScoutingEngine.generateDraftClass()
+                currentDraftClass = ScoutingEngine.generateDraftClass(careerID: career.id)
                 draftClassGenerated = true
                 persistDraftClass(currentDraftClass, to: modelContext)
             }
@@ -2738,7 +2773,7 @@ enum WeekAdvancer {
 
             // Generate draft class early so prospects are visible during offseason
             if !draftClassGenerated {
-                currentDraftClass = ScoutingEngine.generateDraftClass()
+                currentDraftClass = ScoutingEngine.generateDraftClass(careerID: career.id)
                 draftClassGenerated = true
                 // First season: apply pre-scouted data
                 let totalWins = teams.reduce(0) { $0 + $1.wins }
@@ -2911,6 +2946,10 @@ enum WeekAdvancer {
 
             // Declaration period: underclassmen declare or withdraw from draft
             if !currentDraftClass.isEmpty {
+                // A save that ran its window before `declarationStatusRaw`
+                // existed hits the generator's idempotency guard below and
+                // returns without writing anything, so heal it first.
+                ScoutingEngine.backfillDeclarationStatus(&currentDraftClass)
                 let declarationNews = ScoutingEngine.generateDeclarations(
                     prospects: &currentDraftClass,
                     seed: ScoutingEngine.cycleSeed(
@@ -2956,6 +2995,9 @@ enum WeekAdvancer {
                 runSeniorBowlEvent(career: career, modelContext: modelContext)
             }
 
+            // Finding S9 — the department checks in at every phase boundary.
+            sendDraftCycleHeartbeat(career: career, phase: .coachingChanges)
+
             lastInboxMessages.append(contentsOf: newMessages)
 
             lastNewsItems.append(contentsOf: NewsGenerator.generateOffseasonNews(
@@ -2967,7 +3009,7 @@ enum WeekAdvancer {
         case .combine:
             // Generate draft class if not yet generated
             if !draftClassGenerated {
-                currentDraftClass = ScoutingEngine.generateDraftClass()
+                currentDraftClass = ScoutingEngine.generateDraftClass(careerID: career.id)
                 draftClassGenerated = true
 
                 // First season: apply pre-scouted data from previous GM's staff
@@ -3057,6 +3099,17 @@ enum WeekAdvancer {
             // R41 drift moment 2 of 4.
             applyMockDrift(career: career, moment: 2, modelContext: modelContext)
 
+            // Task #78 — the first character wave. The combine is where the
+            // interviews happen and where the screenings are run, so it is
+            // where the first off-field questions surface.
+            applyCharacterFindingWave(
+                career: career,
+                pool: ScoutingEngine.combineCharacterFindings,
+                salt: ScoutingEngine.CycleSalt.combineCharacter,
+                phase: .combine,
+                modelContext: modelContext
+            )
+
             // R30: an unanswered interview request expires here — the club
             // moved on, the coordinator stays (no hard feelings).
             if let request = career.pendingInterviewRequest {
@@ -3102,6 +3155,8 @@ enum WeekAdvancer {
                 career: career,
                 teams: teams
             ))
+
+            sendDraftCycleHeartbeat(career: career, phase: .combine)
 
         case .freeAgency:
             // FA engine logic (contract decrements, AI signings, cap growth)
@@ -3166,6 +3221,18 @@ enum WeekAdvancer {
                     teams: teams,
                     players: allPlayers
                 )
+                // Finding S8: the post-FA mock is the ONE moment in the cycle
+                // when 32 rosters have genuinely changed, and it was the one
+                // mock that did not rebuild team interest — so the "Hot / Warm /
+                // Cold" a user read on a prospect all spring was still keyed to
+                // the depth charts as they stood before the market opened, and
+                // a club that had just signed a starting corner was still shown
+                // chasing corners.
+                ScoutingEngine.updateTeamInterest(
+                    prospects: &currentDraftClass,
+                    teams: teams,
+                    players: allPlayers
+                )
                 ScoutingEngine.applyMockDraftToProspects(
                     prospects: &currentDraftClass,
                     mockDraft: currentMockDraft
@@ -3177,12 +3244,75 @@ enum WeekAdvancer {
                 applyMockDrift(career: career, moment: 3, modelContext: modelContext)
             }
 
+            sendDraftCycleHeartbeat(career: career, phase: .freeAgency)
+
         case .proDays:
             // Pro days phase — engine work happens in scouting UI
             lastNewsItems = NewsGenerator.generateOffseasonNews(
                 phase: .proDays,
                 career: career,
                 teams: teams
+            )
+
+            // Task #78 — the league pro-day circuit. Every school holds one,
+            // and until now nothing in the app did: `simulateProDay` was
+            // written, documented and never called, so the ~40 men the combine
+            // sent home without a number carried empty cells to the draft and
+            // this phase held exactly one event. The circuit fills the numbers
+            // for everybody (public, broadcast precision) and the drift moves
+            // the board on them; `attendProDay` still buys the decimals and the
+            // filed report. Idempotent — the cohort it tests is the cohort it
+            // empties.
+            if !currentDraftClass.isEmpty,
+               let circuit = ScoutingEngine.runLeagueProDays(prospects: &currentDraftClass) {
+                lastNewsItems.append(contentsOf: NewsGenerator.proDayCircuitNews(
+                    result: circuit,
+                    season: career.currentSeason
+                ))
+                // A hand-timed number on a friendly surface is a nudge, not a
+                // shove: two rounds of headroom like the combine, but far fewer
+                // pairs, because only the late-testing cohort carries pressure.
+                let moves = ScoutingEngine.applyProjectionDrift(
+                    prospects: &currentDraftClass,
+                    pressure: ScoutingEngine.proDayPressure(
+                        currentDraftClass,
+                        cohort: circuit.cohort
+                    ),
+                    maxShift: 2,
+                    maxPairs: 12,
+                    seed: ScoutingEngine.cycleSeed(
+                        careerID: career.id,
+                        season: career.currentSeason,
+                        salt: ScoutingEngine.CycleSalt.proDayDrift
+                    )
+                )
+                if !moves.isEmpty {
+                    lastNewsItems.append(contentsOf: NewsGenerator.projectionDriftNews(
+                        moves: moves,
+                        season: career.currentSeason,
+                        limit: 2
+                    ))
+                }
+                if let message = InboxEngine.proDayCircuitMessage(
+                    result: circuit,
+                    moves: moves,
+                    dateString: InboxEngine.dateLabel(
+                        week: 0, season: career.currentSeason, phase: .proDays
+                    )
+                ) {
+                    lastInboxMessages.append(message)
+                }
+                persistDraftClass(currentDraftClass, to: modelContext)
+            }
+
+            // Task #78 — the second character wave. March is when the
+            // background checks come back.
+            applyCharacterFindingWave(
+                career: career,
+                pool: ScoutingEngine.proDayCharacterFindings,
+                salt: ScoutingEngine.CycleSalt.proDayCharacter,
+                phase: .proDays,
+                modelContext: modelContext
             )
 
             // R41 — pre-draft attrition. About 2 % of the declared class gets
@@ -3218,6 +3348,8 @@ enum WeekAdvancer {
                 }
             }
 
+            sendDraftCycleHeartbeat(career: career, phase: .proDays)
+
         case .reviewRoster:
             // Reset roster evaluation flags for the new Review Roster phase
             CareerScopedDefaults.set(false, "rosterEvaluationConfirmed")
@@ -3250,6 +3382,8 @@ enum WeekAdvancer {
                 career: career,
                 teams: teams
             )
+
+            sendDraftCycleHeartbeat(career: career, phase: .draft)
 
         case .otas:
             // Camp Phase 1 hook-up: apply training plan + workload tick + battles
@@ -3857,6 +3991,69 @@ enum WeekAdvancer {
             ))
         }
         persistDraftClass(currentDraftClass, to: modelContext)
+    }
+
+    /// One mid-cycle character wave: 2-4 declared prospects pick up a new red
+    /// flag, and the feed and the inbox both name them (task #78).
+    ///
+    /// The flag itself is never printed by either — it lands in `redFlags` and
+    /// is disclosed through the existing `ProspectFog.flagDisclosure` ladder, so
+    /// reading it still costs two reports, a meeting or a Top-30 visit.
+    ///
+    /// Deterministic per (careerID, season, salt) and idempotent per pool, so a
+    /// re-entered phase cannot run a second wave off the same list.
+    private static func applyCharacterFindingWave(
+        career: Career,
+        pool: [String],
+        salt: UInt64,
+        phase: SeasonPhase,
+        modelContext: ModelContext
+    ) {
+        guard !currentDraftClass.isEmpty else { return }
+        let findings = ScoutingEngine.applyCharacterFindings(
+            prospects: &currentDraftClass,
+            pool: pool,
+            seed: ScoutingEngine.cycleSeed(
+                careerID: career.id,
+                season: career.currentSeason,
+                salt: salt
+            )
+        )
+        guard !findings.isEmpty else { return }
+
+        lastNewsItems.append(contentsOf: NewsGenerator.characterFindingNews(
+            findings: findings,
+            season: career.currentSeason
+        ))
+        if let message = InboxEngine.characterFindingsMessage(
+            findings: findings,
+            dateString: InboxEngine.dateLabel(
+                week: 0, season: career.currentSeason, phase: phase
+            )
+        ) {
+            lastInboxMessages.append(message)
+        }
+        persistDraftClass(currentDraftClass, to: modelContext)
+    }
+
+    /// Mails the draft-cycle heartbeat for `phase`, once per season (finding S9).
+    ///
+    /// The offseason used to go quiet between the loud events; this is the
+    /// scouting department checking in with real counts off the live class at
+    /// every phase boundary, so the four months read as a season of work.
+    private static func sendDraftCycleHeartbeat(career: Career, phase: SeasonPhase) {
+        guard !currentDraftClass.isEmpty else { return }
+        let key = "\(career.currentSeason)-\(phase.rawValue)"
+        guard !draftCycleHeartbeatsSent.contains(key) else { return }
+        guard let message = InboxEngine.draftCycleHeartbeat(
+            phase: phase,
+            prospects: currentDraftClass,
+            dateString: InboxEngine.dateLabel(
+                week: 0, season: career.currentSeason, phase: phase
+            )
+        ) else { return }
+        draftCycleHeartbeatsSent.insert(key)
+        lastInboxMessages.append(message)
     }
 
     /// Holds the January all-star week and files what it produced.
