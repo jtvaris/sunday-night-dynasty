@@ -15,6 +15,9 @@ struct ScoutingHubView: View {
     @State private var combineMedia: [ScoutingEngine.CombineMediaMention] = []
     @CareerScopedStorage("scoutsSentToCombine") private var scoutsSentToCombine = false
     @CareerScopedStorage("combineResultsReviewed") private var combineResultsReviewed = false
+    /// Scouting budget already committed to this cycle's combine trip, in
+    /// thousands. Reset by `WeekAdvancer` when the combine window opens.
+    @CareerScopedStorage("combineTripSpend") private var combineTripSpend: Int = 0
     @State private var isLoading: Bool = true
 
     private let maxScouts = 8
@@ -94,7 +97,12 @@ struct ScoutingHubView: View {
             isLoading = false
         }
         .onChange(of: selectedTab) { _, newTab in
-            if newTab == .combine && scoutsSentToCombine {
+            // Reviewing is opening the tab and finding numbers in it. It used to
+            // additionally require that scouts had been sent, which made the
+            // task uncompletable for a class the user chose to watch on
+            // television — and permanently uncompletable when the combine had
+            // never been run at all.
+            if newTab == .combine && prospects.contains(where: { $0.fortyTime != nil }) {
                 combineResultsReviewed = true
             }
         }
@@ -168,53 +176,116 @@ struct ScoutingHubView: View {
                 .buttonStyle(.plain)
             } else {
                 // #22: More visually prominent CTA
+                let affordable = canAffordCombineTrip
                 Button {
                     sendScoutsToCombine()
                 } label: {
                     HStack(spacing: 12) {
                         Image(systemName: "binoculars.fill")
                             .font(.title2)
-                            .foregroundStyle(Color.backgroundPrimary)
+                            .foregroundStyle(affordable ? Color.backgroundPrimary : Color.textTertiary)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Send Scouts to NFL Combine")
+                            Text("Send Scouts to the NFL Combine")
                                 .font(.subheadline.weight(.bold))
-                                .foregroundStyle(Color.backgroundPrimary)
-                            Text("\(scouts.count) scout\(scouts.count == 1 ? "" : "s") will evaluate ~330 prospects")
+                                .foregroundStyle(affordable ? Color.backgroundPrimary : Color.textSecondary)
+                            Text(affordable
+                                 ? "\(scouts.count) scout\(scouts.count == 1 ? "" : "s") on site \u{2014} exact measurables and fresh reports on your board. $\(combineTripCost)K of $\(remainingScoutingBudget)K scouting budget."
+                                 : "Needs $\(combineTripCost)K \u{2014} only $\(remainingScoutingBudget)K left in the scouting budget. Reallocate in Owner Relations, or watch it on television.")
                                 .font(.caption)
-                                .foregroundStyle(Color.backgroundPrimary.opacity(0.8))
+                                .foregroundStyle(affordable
+                                                 ? Color.backgroundPrimary.opacity(0.8)
+                                                 : Color.textTertiary)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                         Spacer()
-                        Image(systemName: "arrow.right.circle.fill")
-                            .font(.title2)
-                            .foregroundStyle(Color.backgroundPrimary)
+                        if affordable {
+                            Image(systemName: "arrow.right.circle.fill")
+                                .font(.title2)
+                                .foregroundStyle(Color.backgroundPrimary)
+                        }
                     }
                     .padding(14)
                     .background(
-                        LinearGradient(
-                            colors: [Color.success, Color.success.opacity(0.8)],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        ),
+                        affordable
+                            ? AnyShapeStyle(LinearGradient(
+                                colors: [Color.success, Color.success.opacity(0.8)],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                              ))
+                            : AnyShapeStyle(Color.backgroundTertiary),
                         in: RoundedRectangle(cornerRadius: 12)
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: 12)
-                            .strokeBorder(Color.success.opacity(0.6), lineWidth: 1.5)
+                            .strokeBorder(
+                                affordable ? Color.success.opacity(0.6) : Color.surfaceBorder,
+                                lineWidth: 1.5
+                            )
                     )
-                    .shadow(color: Color.success.opacity(0.3), radius: 8, y: 2)
+                    .shadow(color: affordable ? Color.success.opacity(0.3) : .clear, radius: 8, y: 2)
                 }
                 .buttonStyle(.plain)
+                .disabled(!affordable)
             }
         }
     }
 
-    private func sendScoutsToCombine() {
-        var draftClass = WeekAdvancer.currentDraftClass
+    // MARK: - Combine Trip Economics
 
-        // Snapshot pre-combine grades so we can show grade change arrows later.
-        for i in draftClass.indices {
-            draftClass[i].preCombineGrade = draftClass[i].scoutGrade
+    /// Cost in thousands of sending the department to Indianapolis this cycle.
+    private var combineTripCost: Int {
+        ScoutingEngine.combineTripCost(scoutCount: scouts.count)
+    }
+
+    /// What is left of the owner's scouting pot after scout salaries and any
+    /// discretionary spend already committed this cycle.
+    private var remainingScoutingBudget: Int {
+        fetchScoutingBudget() - scouts.reduce(0) { $0 + $1.salary } - combineTripSpend
+    }
+
+    private var canAffordCombineTrip: Bool {
+        remainingScoutingBudget >= combineTripCost
+    }
+
+    /// Prospects this club's board actually tracks — starred, flagged, or given
+    /// a user grade. Only these get a combine report filed on them; a department
+    /// week in Indianapolis does not re-scout all 330 invitees.
+    private func trackedProspectIDs() -> Set<UUID> {
+        let board = UserProspectGradeStore.shared
+        var ids = Set<UUID>()
+        for prospect in prospects {
+            if prospect.prospectFlag != .none
+                || board.isStarred(prospect.id)
+                || board.grade(for: prospect.id) != nil {
+                ids.insert(prospect.id)
+            }
         }
+        // A brand-new board tracks nobody, and "you sent scouts and nothing
+        // happened" is the worse failure. Fall back to the top of the consensus
+        // board so the trip always buys something.
+        if ids.isEmpty {
+            let fallback = prospects
+                .filter { $0.combineInvite }
+                .sorted { ($0.draftProjection ?? 99) < ($1.draftProjection ?? 99) }
+                .prefix(25)
+            ids.formUnion(fallback.map(\.id))
+        }
+        return ids
+    }
+
+    /// Buys full-fidelity combine measurables plus fresh reports on the board.
+    ///
+    /// The combine itself is no longer this button's job — `WeekAdvancer`
+    /// holds the event when the phase opens (and `loadData` heals a save that
+    /// missed it). What attending changes is what the user is allowed to *read*:
+    /// exact times instead of the broadcast's rounded ones, position drill
+    /// grades with their modifier, percentiles, and a `.combine` scouting report
+    /// on every prospect the board tracks.
+    private func sendScoutsToCombine() {
+        guard career.currentPhase == .combine, !scoutsSentToCombine else { return }
+        guard canAffordCombineTrip else { return }
+
+        var draftClass = WeekAdvancer.currentDraftClass
 
         // Compute average scouting ability from coaching staff
         let staffScoutingAbility: Int = {
@@ -226,17 +297,23 @@ struct ScoutingHubView: View {
             return total / coaches.count
         }()
 
-        // Generate combine results if not yet available (WeekAdvancer may have already done this)
-        let hasCombineResults = draftClass.contains { $0.fortyTime != nil }
-        if !hasCombineResults {
-            ScoutingEngine.generateCombineResults(for: &draftClass, scoutingAbility: staffScoutingAbility)
-        }
+        // Belt and braces: the phase hook has normally already run the event,
+        // but a save that entered `.combine` before this shipped has not.
+        ScoutingEngine.runLeagueCombine(prospects: &draftClass, scoutingAbility: staffScoutingAbility)
 
-        combineMedia = ScoutingEngine.generateCombineMedia(prospects: &draftClass)
+        _ = ScoutingEngine.applyCombineScouting(
+            prospects: &draftClass,
+            trackedIDs: trackedProspectIDs(),
+            scouts: scouts
+        )
+
+        combineMedia = ScoutingEngine.combineMediaDigest(prospects: draftClass)
         WeekAdvancer.currentDraftClass = draftClass
         // Ensure prospects are tracked + flush combine results to SwiftData so
         // they survive an app restart (#data-flow-bug).
         WeekAdvancer.persistDraftClass(WeekAdvancer.currentDraftClass, to: modelContext)
+
+        combineTripSpend += combineTripCost
         scoutsSentToCombine = true
         loadData()
         showCombineReport = true
@@ -404,6 +481,7 @@ struct ScoutingHubView: View {
                 scoutsSentToCombine: scoutsSentToCombine,
                 prospects: prospects,
                 scoutingBudget: fetchScoutingBudget(),
+                combineTripSpend: combineTripSpend,
                 onHire: { showHireScout = true },
                 onFire: { fireScout($0) },
                 onSendToCombine: { sendScoutsToCombine() }
@@ -421,7 +499,19 @@ struct ScoutingHubView: View {
                 scoutCount: scouts.count
             )
         case .combine:
-            CombineResultsView(career: career, prospects: prospects)
+            CombineResultsView(
+                career: career,
+                prospects: prospects,
+                scoutsAttended: scoutsSentToCombine,
+                tripCost: combineTripCost,
+                // The trip is a one-phase window: offered inside `.combine`,
+                // gone afterwards. The results themselves stay readable through
+                // the draft either way.
+                onSendScouts: (career.currentPhase == .combine && !scoutsSentToCombine)
+                    ? { sendScoutsToCombine() }
+                    : nil,
+                canAffordTrip: canAffordCombineTrip
+            )
         case .interviews:
             InterviewSelectionView(career: career)
         case .mockDraft:
@@ -471,6 +561,11 @@ struct ScoutingHubView: View {
             }
         }
 
+        // Self-heal for saves that reached (or passed) the combine before the
+        // phase hook existed: the event is held now so the Combine tab has
+        // something in it. No-op once the class carries results.
+        WeekAdvancer.ensureCombineRun(career: career, modelContext: modelContext)
+
         // Prospects live in WeekAdvancer.currentDraftClass (not persisted in SwiftData)
         let allProspects = WeekAdvancer.currentDraftClass
         prospects = allProspects.filter { $0.isDeclaringForDraft }
@@ -479,6 +574,11 @@ struct ScoutingHubView: View {
             predicate: #Predicate { $0.teamID == teamID }
         )
         teamPlayers = (try? modelContext.fetch(playerDesc)) ?? []
+
+        // Rebuilt from what is stamped on the prospects, so the combine report
+        // sheet still opens after a relaunch or when the phase — rather than the
+        // button — held the event.
+        combineMedia = ScoutingEngine.combineMediaDigest(prospects: allProspects)
 
         if nextYearProspects.isEmpty {
             nextYearProspects = ScoutingEngine.generateNextYearPreview()

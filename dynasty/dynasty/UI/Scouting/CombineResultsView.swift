@@ -5,6 +5,20 @@ struct CombineResultsView: View {
     let career: Career
     let prospects: [CollegeProspect]
 
+    /// Whether this club's scouting department attended the combine. Drives the
+    /// precision of every drill cell below (`ProspectFog.combineFidelity`).
+    var scoutsAttended: Bool = false
+
+    /// Cost in thousands of sending the department, shown on the in-tab CTA.
+    var tripCost: Int = 0
+
+    /// `nil` outside the combine phase or once the trip has been bought — the
+    /// window is one phase wide, exactly like the hub's banner.
+    var onSendScouts: (() -> Void)? = nil
+
+    /// `false` when the scouting budget cannot cover `tripCost`.
+    var canAffordTrip: Bool = true
+
     @Environment(\.modelContext) private var modelContext
     @State private var positionFilter: ProspectPositionFilter = .all
     @State private var sortColumn: CombineColumn = .rank
@@ -296,6 +310,12 @@ struct CombineResultsView: View {
                 }
 
                 Spacer()
+
+                fidelityChip
+            }
+
+            if let onSendScouts {
+                sendScoutsCTA(action: onSendScouts)
             }
 
             Picker("Position", selection: $positionFilter) {
@@ -305,6 +325,75 @@ struct CombineResultsView: View {
             }
             .pickerStyle(.segmented)
         }
+    }
+
+    /// One line telling the user which of the two combine reads he is looking
+    /// at, because "~4.5" and "4.53" in the same column would otherwise read as
+    /// a formatting bug rather than as a decision he made.
+    private var fidelityChip: some View {
+        HStack(spacing: 6) {
+            Image(systemName: scoutsAttended ? "binoculars.fill" : "tv")
+                .font(.caption2)
+            Text(scoutsAttended ? "Your scouts on site" : "Broadcast numbers")
+                .font(.caption2.weight(.bold))
+        }
+        .foregroundStyle(scoutsAttended ? Color.success : Color.textTertiary)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(
+            Capsule().fill((scoutsAttended ? Color.success : Color.textTertiary).opacity(0.12))
+        )
+        .overlay(
+            Capsule().strokeBorder(
+                (scoutsAttended ? Color.success : Color.textTertiary).opacity(0.35),
+                lineWidth: 1
+            )
+        )
+        .accessibilityLabel(
+            scoutsAttended
+                ? "Your scouts attended the combine. Full measurements shown."
+                : "Televised combine numbers only. Values are approximate."
+        )
+    }
+
+    private func sendScoutsCTA(action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: "binoculars.fill")
+                    .font(.title3)
+                    .foregroundStyle(canAffordTrip ? Color.backgroundPrimary : Color.textTertiary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Send Scouts to the Combine")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(canAffordTrip ? Color.backgroundPrimary : Color.textSecondary)
+                    Text(canAffordTrip
+                         ? "Exact times and drill grades, plus fresh reports on your board \u{2014} $\(tripCost)K from the scouting budget"
+                         : "Not enough scouting budget ($\(tripCost)K needed) \u{2014} reallocate in Owner Relations")
+                        .font(.caption)
+                        .foregroundStyle(canAffordTrip
+                                         ? Color.backgroundPrimary.opacity(0.85)
+                                         : Color.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                if canAffordTrip {
+                    Image(systemName: "arrow.right.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(Color.backgroundPrimary)
+                }
+            }
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(canAffordTrip ? Color.accentGold : Color.backgroundTertiary)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(canAffordTrip ? Color.clear : Color.surfaceBorder, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(!canAffordTrip)
     }
 
     // MARK: - Risers & Fallers
@@ -453,6 +542,11 @@ struct CombineResultsView: View {
         // pure, but it is also seven cells' worth of repeat work otherwise.
         let dash = ScoutingEngine.combineParticipation(for: prospect).isDNP ? "DNP" : "--"
         let benchDash = prospect.position == .QB ? "--" : dash
+        // How precisely this club is entitled to read the card. Per-prospect,
+        // not per-table: a man your scouts already worked out is in full focus
+        // even in a year you skipped Indianapolis.
+        let fidelity = ProspectFog.combineFidelity(for: prospect, scoutsAttended: scoutsAttended)
+        let showsPercentile = ProspectFog.showsPercentile(fidelity)
         return HStack(spacing: 0) {
             // Star toggle using UserProspectGradeStore
             ProspectStarButton(prospectID: prospect.id)
@@ -559,40 +653,42 @@ struct CombineResultsView: View {
                 .lineLimit(1)
                 .frame(width: 110, alignment: .leading)
 
-            drillCell(value: prospect.fortyTime.map { String(format: "%.2f", $0) },
+            drillCell(value: ProspectFog.fortyText(prospect.fortyTime, fidelity: fidelity),
                       tier: prospect.fortyTime.map { fortyTierForPosition($0, prospect.position) }, width: 60,
-                      percentile: prospect.fortyTime.map { drillPercentile($0, drill: .forty, prospect.position) },
+                      percentile: showsPercentile ? prospect.fortyTime.map { drillPercentile($0, drill: .forty, prospect.position) } : nil,
                       emptyText: dash)
 
-            drillCell(value: prospect.benchPress.map { "\($0)" },
+            drillCell(value: ProspectFog.benchText(prospect.benchPress, fidelity: fidelity),
                       tier: prospect.benchPress.map { benchTier($0) }, width: 60,
-                      percentile: prospect.benchPress.map { drillPercentile(Double($0), drill: .bench, prospect.position) },
+                      percentile: showsPercentile ? prospect.benchPress.map { drillPercentile(Double($0), drill: .bench, prospect.position) } : nil,
                       emptyText: benchDash)
 
-            drillCell(value: prospect.verticalJump.map { String(format: "%.1f\"", $0) },
+            drillCell(value: ProspectFog.verticalText(prospect.verticalJump, fidelity: fidelity),
                       tier: prospect.verticalJump.map { verticalTier($0) }, width: 60,
-                      percentile: prospect.verticalJump.map { drillPercentile($0, drill: .vertical, prospect.position) },
+                      percentile: showsPercentile ? prospect.verticalJump.map { drillPercentile($0, drill: .vertical, prospect.position) } : nil,
                       emptyText: dash)
 
-            drillCell(value: prospect.broadJump.map { "\($0)in" },
+            drillCell(value: ProspectFog.broadJumpText(prospect.broadJump, fidelity: fidelity),
                       tier: prospect.broadJump.map { broadTier($0) }, width: 60,
-                      percentile: prospect.broadJump.map { drillPercentile(Double($0), drill: .broad, prospect.position) },
+                      percentile: showsPercentile ? prospect.broadJump.map { drillPercentile(Double($0), drill: .broad, prospect.position) } : nil,
                       emptyText: dash)
 
-            drillCell(value: prospect.coneDrill.map { String(format: "%.2f", $0) },
+            drillCell(value: ProspectFog.agilityText(prospect.coneDrill, fidelity: fidelity),
                       tier: prospect.coneDrill.map { coneTier($0) }, width: 66,
-                      percentile: prospect.coneDrill.map { drillPercentile($0, drill: .threeCone, prospect.position) },
+                      percentile: showsPercentile ? prospect.coneDrill.map { drillPercentile($0, drill: .threeCone, prospect.position) } : nil,
                       emptyText: dash)
 
-            drillCell(value: prospect.shuttleTime.map { String(format: "%.2f", $0) },
+            drillCell(value: ProspectFog.agilityText(prospect.shuttleTime, fidelity: fidelity),
                       tier: prospect.shuttleTime.map { shuttleTier($0) }, width: 66,
-                      percentile: prospect.shuttleTime.map { drillPercentile($0, drill: .shuttle, prospect.position) },
+                      percentile: showsPercentile ? prospect.shuttleTime.map { drillPercentile($0, drill: .shuttle, prospect.position) } : nil,
                       emptyText: dash)
 
-            // Position drill grade
-            Text(prospect.positionDrillGrade ?? dash)
+            // Position drill grade — a judgement rather than a stopwatch reading,
+            // so the broadcast read gets the tier letter without the modifier.
+            let drillGrade = ProspectFog.drillGradeText(prospect.positionDrillGrade, fidelity: fidelity)
+            Text(drillGrade ?? dash)
                 .font(.caption.weight(.bold))
-                .foregroundStyle(prospect.positionDrillGrade.map { PositionGradeCalculator.gradeColorForLetter($0) } ?? Color.textTertiary)
+                .foregroundStyle(drillGrade.map { PositionGradeCalculator.gradeColorForLetter($0) } ?? Color.textTertiary)
                 .frame(width: 66)
 
             // Chevron for row navigation
@@ -668,9 +764,9 @@ struct CombineResultsView: View {
             return "No prospects in this draft class were invited to the Combine."
         }
         if hasScoutedOnly {
-            return "Combine simulation needed for this draft class \u{2014} run \u{201C}Send Scouts to Combine\u{201D} from the Scout Team tab."
+            return "The combine has not been held for this draft class yet. It runs automatically when the Combine phase begins."
         }
-        return "Combine results will be available during the Combine phase."
+        return "The combine runs when the Combine phase begins \u{2014} results stay here through the draft."
     }
 
     // MARK: - Media Mention Helpers
@@ -682,12 +778,15 @@ struct CombineResultsView: View {
     }
 
     private func mediaBubble(_ mention: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("MEDIA")
+        // Stored as "[Stock Riser] He ran a 4.41" — the tag is the bubble's
+        // header, not part of the quote.
+        let split = ScoutingEngine.splitTaggedMention(mention)
+        return VStack(alignment: .leading, spacing: 6) {
+            Text(split.category.uppercased())
                 .font(.system(size: 9, weight: .heavy))
                 .foregroundStyle(Color.textTertiary)
 
-            Text("\"\(mention)\"")
+            Text("\"\(split.headline)\"")
                 .font(.caption)
                 .foregroundStyle(Color.textPrimary)
                 .italic()

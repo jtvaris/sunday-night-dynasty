@@ -487,45 +487,61 @@ struct ProspectDetailView: View {
 
             let bm = CombineBenchmarks.benchmarks(for: prospect.position)
             let pos = prospect.position.rawValue
+            // Same fog the Combine table reads: a club that stayed home gets the
+            // televised numbers, rounded, with no percentile or record chase off
+            // them. Tapping a row must not be a way around the decision.
+            let fidelity = ProspectFog.combineFidelity(for: prospect)
+            let precise = fidelity == .full
+
+            if !precise && hasCombine {
+                HStack(spacing: 6) {
+                    Image(systemName: "tv")
+                        .font(.caption2)
+                    Text("Broadcast numbers \u{2014} approximate. Send scouts to the Combine for exact times.")
+                        .font(.caption2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .foregroundStyle(Color.textTertiary)
+            }
 
             CombineMeasurableRow(label: "40-Yard Dash",
-                                 value: prospect.fortyTime.map { String(format: "%.2f sec", $0) },
-                                 percentile: prospect.fortyTime.map { CombineBenchmarks.percentile(value: $0, benchmark: bm.fortyYard) },
+                                 value: ProspectFog.fortyText(prospect.fortyTime, fidelity: fidelity, unit: " sec"),
+                                 percentile: precise ? prospect.fortyTime.map { CombineBenchmarks.percentile(value: $0, benchmark: bm.fortyYard) } : nil,
                                  posLabel: pos,
-                                 recordNote: prospect.fortyTime.flatMap { nearRecordNote(value: $0, record: CombineBenchmarks.records.fortyYard.value, name: CombineBenchmarks.records.fortyYard.name, lowerIsBetter: true, format: "%.2f") })
+                                 recordNote: precise ? prospect.fortyTime.flatMap { nearRecordNote(value: $0, record: CombineBenchmarks.records.fortyYard.value, name: CombineBenchmarks.records.fortyYard.name, lowerIsBetter: true, format: "%.2f") } : nil)
 
             CombineMeasurableRow(label: "Bench Press",
-                                 value: prospect.benchPress.map { "\($0) reps" },
-                                 percentile: prospect.benchPress.map { CombineBenchmarks.percentile(value: Double($0), benchmark: bm.benchPress) },
+                                 value: ProspectFog.benchText(prospect.benchPress, fidelity: fidelity, unit: " reps"),
+                                 percentile: precise ? prospect.benchPress.map { CombineBenchmarks.percentile(value: Double($0), benchmark: bm.benchPress) } : nil,
                                  posLabel: pos,
-                                 recordNote: prospect.benchPress.flatMap { nearRecordNote(value: Double($0), record: Double(CombineBenchmarks.records.benchPress.value), name: CombineBenchmarks.records.benchPress.name, lowerIsBetter: false, format: "%.0f") })
+                                 recordNote: precise ? prospect.benchPress.flatMap { nearRecordNote(value: Double($0), record: Double(CombineBenchmarks.records.benchPress.value), name: CombineBenchmarks.records.benchPress.name, lowerIsBetter: false, format: "%.0f") } : nil)
 
             CombineMeasurableRow(label: "Vertical Jump",
-                                 value: prospect.verticalJump.map { String(format: "%.1f in", $0) },
-                                 percentile: prospect.verticalJump.map { CombineBenchmarks.percentile(value: $0, benchmark: bm.verticalJump) },
+                                 value: ProspectFog.verticalText(prospect.verticalJump, fidelity: fidelity, unit: " in"),
+                                 percentile: precise ? prospect.verticalJump.map { CombineBenchmarks.percentile(value: $0, benchmark: bm.verticalJump) } : nil,
                                  posLabel: pos,
-                                 recordNote: prospect.verticalJump.flatMap { nearRecordNote(value: $0, record: CombineBenchmarks.records.verticalJump.value, name: CombineBenchmarks.records.verticalJump.name, lowerIsBetter: false, format: "%.1f") })
+                                 recordNote: precise ? prospect.verticalJump.flatMap { nearRecordNote(value: $0, record: CombineBenchmarks.records.verticalJump.value, name: CombineBenchmarks.records.verticalJump.name, lowerIsBetter: false, format: "%.1f") } : nil)
 
             CombineMeasurableRow(label: "Broad Jump",
-                                 value: prospect.broadJump.map { "\($0) in" },
-                                 percentile: prospect.broadJump.map { CombineBenchmarks.percentile(value: Double($0), benchmark: bm.broadJump) },
+                                 value: ProspectFog.broadJumpText(prospect.broadJump, fidelity: fidelity, unit: " in"),
+                                 percentile: precise ? prospect.broadJump.map { CombineBenchmarks.percentile(value: Double($0), benchmark: bm.broadJump) } : nil,
                                  posLabel: pos,
-                                 recordNote: prospect.broadJump.flatMap { nearRecordNote(value: Double($0), record: Double(CombineBenchmarks.records.broadJump.value), name: CombineBenchmarks.records.broadJump.name, lowerIsBetter: false, format: "%.0f") })
+                                 recordNote: precise ? prospect.broadJump.flatMap { nearRecordNote(value: Double($0), record: Double(CombineBenchmarks.records.broadJump.value), name: CombineBenchmarks.records.broadJump.name, lowerIsBetter: false, format: "%.0f") } : nil)
 
             CombineMeasurableRow(label: "Shuttle",
-                                 value: prospect.shuttleTime.map { String(format: "%.2f sec", $0) },
-                                 percentile: prospect.shuttleTime.map { CombineBenchmarks.percentile(value: $0, benchmark: bm.shuttle) },
+                                 value: ProspectFog.agilityText(prospect.shuttleTime, fidelity: fidelity, unit: " sec"),
+                                 percentile: precise ? prospect.shuttleTime.map { CombineBenchmarks.percentile(value: $0, benchmark: bm.shuttle) } : nil,
                                  posLabel: pos,
-                                 recordNote: prospect.shuttleTime.flatMap { nearRecordNote(value: $0, record: CombineBenchmarks.records.shuttle.value, name: CombineBenchmarks.records.shuttle.name, lowerIsBetter: true, format: "%.2f") })
+                                 recordNote: precise ? prospect.shuttleTime.flatMap { nearRecordNote(value: $0, record: CombineBenchmarks.records.shuttle.value, name: CombineBenchmarks.records.shuttle.name, lowerIsBetter: true, format: "%.2f") } : nil)
 
             CombineMeasurableRow(label: "3-Cone Drill",
-                                 value: prospect.coneDrill.map { String(format: "%.2f sec", $0) },
-                                 percentile: prospect.coneDrill.map { CombineBenchmarks.percentile(value: $0, benchmark: bm.threeCone) },
+                                 value: ProspectFog.agilityText(prospect.coneDrill, fidelity: fidelity, unit: " sec"),
+                                 percentile: precise ? prospect.coneDrill.map { CombineBenchmarks.percentile(value: $0, benchmark: bm.threeCone) } : nil,
                                  posLabel: pos,
-                                 recordNote: prospect.coneDrill.flatMap { nearRecordNote(value: $0, record: CombineBenchmarks.records.threeCone.value, name: CombineBenchmarks.records.threeCone.name, lowerIsBetter: true, format: "%.2f") })
+                                 recordNote: precise ? prospect.coneDrill.flatMap { nearRecordNote(value: $0, record: CombineBenchmarks.records.threeCone.value, name: CombineBenchmarks.records.threeCone.name, lowerIsBetter: true, format: "%.2f") } : nil)
 
             // Position drill grade
-            if let drillGrade = prospect.positionDrillGrade {
+            if let drillGrade = ProspectFog.drillGradeText(prospect.positionDrillGrade, fidelity: fidelity) {
                 HStack(spacing: 8) {
                     Image(systemName: "figure.run.circle.fill")
                         .font(.subheadline)

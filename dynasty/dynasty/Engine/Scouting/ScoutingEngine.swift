@@ -2814,6 +2814,126 @@ enum ScoutingEngine {
         return mentions
     }
 
+    // MARK: - Combine as a League Event
+
+    /// Runs the combine for a draft class that has not had one yet.
+    ///
+    /// The combine happens in Indianapolis in front of a television audience
+    /// whether or not any one club sends staff, and this is the function that
+    /// says so. It used to be reachable only from the "Send Scouts to Combine"
+    /// button in the scouting hub, which meant a user who advanced past the
+    /// phase without pressing it — or any user at all from season 2 onward,
+    /// where the career-scoped "already sent" flag was never cleared — ended the
+    /// cycle with a draft class carrying no measurements of any kind and a
+    /// Combine tab that could never fill in. Attendance is now a *fidelity*
+    /// decision (`ProspectFog.combineFidelity`), not the switch that decides
+    /// whether the event occurred.
+    ///
+    /// Idempotent: a class that already has a forty time on it is left alone, so
+    /// this is safe to call from the phase transition, from a view's load, and
+    /// from the button, all in the same cycle.
+    ///
+    /// - Returns: `true` when this call actually ran the event.
+    @discardableResult
+    static func runLeagueCombine(
+        prospects: inout [CollegeProspect],
+        scoutingAbility: Int = 50
+    ) -> Bool {
+        guard !prospects.isEmpty else { return false }
+        guard !prospects.contains(where: { $0.fortyTime != nil }) else { return false }
+
+        // Snapshot the pre-combine read so the risers/fallers strip has a
+        // baseline to diff against. Must happen before any new report lands.
+        for i in prospects.indices {
+            prospects[i].preCombineGrade = prospects[i].scoutGrade
+        }
+
+        generateCombineResults(for: &prospects, scoutingAbility: scoutingAbility)
+        _ = generateCombineMedia(prospects: &prospects)
+        return true
+    }
+
+    /// What sending your own department to the combine buys on top of the
+    /// broadcast: a filed `.combine` report on the men your board actually
+    /// tracks, which narrows their grade band and lifts
+    /// `DraftIntel.scoutConfidence`.
+    ///
+    /// Deliberately capped. A club has a week and a few dozen people in
+    /// Indianapolis; it does not re-scout all 330 invitees, and letting it would
+    /// make the trip strictly better than a season of regional work.
+    ///
+    /// - Parameter trackedIDs: prospects the user has starred, flagged or ranked.
+    /// - Returns: how many reports were filed.
+    @discardableResult
+    static func applyCombineScouting(
+        prospects: inout [CollegeProspect],
+        trackedIDs: Set<UUID>,
+        scouts: [Scout],
+        limit: Int = 40
+    ) -> Int {
+        guard !scouts.isEmpty, !trackedIDs.isEmpty else { return 0 }
+
+        var filed = 0
+        for i in prospects.indices {
+            guard filed < limit else { break }
+            guard prospects[i].combineInvite else { continue }
+            guard trackedIDs.contains(prospects[i].id) else { continue }
+            // One combine report per prospect — re-entering the phase must not
+            // stack bands narrower and narrower for free.
+            guard !prospects[i].scoutingReports.contains(where: { $0.phase == .combine }) else { continue }
+
+            let scout = scouts[filed % scouts.count]
+            let report = generateScoutReport(scout: scout, prospect: prospects[i], phase: .combine)
+            applyReport(report: report, to: prospects[i])
+            filed += 1
+        }
+        return filed
+    }
+
+    /// Cost in thousands of sending the scouting department to Indianapolis.
+    ///
+    /// Travel, a week of hotels and the analytics contractor who turns the
+    /// stopwatch sheet into percentiles — it scales with how many people go,
+    /// because a bigger department gets more of the board covered. Against the
+    /// default $4.0M scouting pot this is roughly 8–15 %, i.e. a real line item
+    /// next to scout salaries rather than a rounding error.
+    static func combineTripCost(scoutCount: Int) -> Int {
+        300 + 40 * max(0, min(8, scoutCount))
+    }
+
+    /// Rebuilds the combine media digest from what is stored on the prospects.
+    ///
+    /// `generateCombineMedia` stamps `combineMediaMention` as
+    /// `"[Category] headline"`, so the report sheet can be reopened after a
+    /// relaunch — or after the event was run by the phase transition rather than
+    /// by the button — without re-rolling a second, contradictory set of
+    /// headlines.
+    static func combineMediaDigest(prospects: [CollegeProspect]) -> [CombineMediaMention] {
+        prospects.compactMap { prospect -> CombineMediaMention? in
+            guard let stored = prospect.combineMediaMention else { return nil }
+            let (category, headline) = splitTaggedMention(stored)
+            return CombineMediaMention(
+                prospectID: prospect.id,
+                prospectName: prospect.fullName,
+                position: prospect.position.rawValue,
+                headline: headline,
+                category: category
+            )
+        }
+    }
+
+    /// `"[Stock Riser] He ran a 4.41"` -> `("Stock Riser", "He ran a 4.41")`.
+    /// An untagged string (older save) keeps its text and lands in "Standout".
+    static func splitTaggedMention(_ stored: String) -> (category: String, headline: String) {
+        guard stored.hasPrefix("["), let close = stored.firstIndex(of: "]") else {
+            return ("Standout", stored)
+        }
+        let category = String(stored[stored.index(after: stored.startIndex)..<close])
+        let headline = String(stored[stored.index(after: close)...])
+            .trimmingCharacters(in: .whitespaces)
+        return (category, headline.isEmpty ? stored : headline)
+    }
+
     // MARK: - Combine Media Helpers
 
     private static func isElite(_ value: Double?, benchmark: CombineBenchmarks.DrillBenchmark) -> Bool {

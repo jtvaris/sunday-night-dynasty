@@ -464,6 +464,9 @@ enum CareerScopedDefaults {
     static let keys: [String] = [
         "scoutsSentToCombine",
         "combineResultsReviewed",
+        // Scouting budget already committed to this cycle's combine trip, in
+        // thousands. Reset with the other two at the start of every combine.
+        "combineTripSpend",
         "interviewReportReviewed",
         "rosterEvaluationConfirmed",
         "franchiseTagVisited",

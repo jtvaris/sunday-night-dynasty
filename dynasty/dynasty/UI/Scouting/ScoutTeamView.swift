@@ -8,6 +8,9 @@ struct ScoutTeamView: View {
     let prospects: [CollegeProspect]
     /// R27: dedicated scouting department budget (in thousands).
     let scoutingBudget: Int
+    /// Non-salary spend already committed this cycle (the combine trip), in
+    /// thousands. Comes out of the same pot as scout salaries.
+    var combineTripSpend: Int = 0
     let onHire: () -> Void
     let onFire: (Scout) -> Void
     let onSendToCombine: () -> Void
@@ -22,7 +25,12 @@ struct ScoutTeamView: View {
     }
 
     private var remainingScoutBudget: Int {
-        scoutingBudget - totalScoutSalary
+        scoutingBudget - totalScoutSalary - combineTripSpend
+    }
+
+    /// Cost of the combine trip, in thousands. Same authority the hub uses.
+    private var combineTripCost: Int {
+        ScoutingEngine.combineTripCost(scoutCount: scouts.count)
     }
 
     private var formattedTotalSalary: String {
@@ -72,21 +80,28 @@ struct ScoutTeamView: View {
                 List {
                     // Budget impact summary (#232)
                     Section {
-                        HStack(spacing: 8) {
-                            Image(systemName: "dollarsign.circle")
-                                .foregroundStyle(Color.accentGold)
-                                .font(.caption)
-                            Text("Scout salaries: \(formattedTotalSalary) / \(formattedBudget) scouting budget")
-                                .font(.caption)
-                                .foregroundStyle(Color.textSecondary)
-                            Text(remainingScoutBudget >= 0 ? "(\(formattedRemaining) left)" : "(\(formattedRemaining) over)")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(remainingScoutBudget >= 0 ? Color.success : Color.danger)
-                            Spacer()
-                            if let spec = dominantSpecialization {
-                                Text("\(spec.rawValue) Specialist: +10% accuracy on \(spec.rawValue) evaluations")
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "dollarsign.circle")
+                                    .foregroundStyle(Color.accentGold)
+                                    .font(.caption)
+                                Text("Scout salaries: \(formattedTotalSalary) / \(formattedBudget) scouting budget")
+                                    .font(.caption)
+                                    .foregroundStyle(Color.textSecondary)
+                                Text(remainingScoutBudget >= 0 ? "(\(formattedRemaining) left)" : "(\(formattedRemaining) over)")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(remainingScoutBudget >= 0 ? Color.success : Color.danger)
+                                Spacer()
+                                if let spec = dominantSpecialization {
+                                    Text("\(spec.rawValue) Specialist: +10% accuracy on \(spec.rawValue) evaluations")
+                                        .font(.caption2)
+                                        .foregroundStyle(Color.success)
+                                }
+                            }
+                            if combineTripSpend > 0 {
+                                Text("Combine trip: $\(combineTripSpend)K committed from the same pot")
                                     .font(.caption2)
-                                    .foregroundStyle(Color.success)
+                                    .foregroundStyle(Color.textTertiary)
                             }
                         }
                     }
@@ -188,12 +203,13 @@ struct ScoutTeamView: View {
                             .font(.title3)
                             .foregroundStyle(Color.accentGold)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Send Scouts to NFL Combine")
+                            Text("Send Scouts to the NFL Combine")
                                 .font(.subheadline.weight(.bold))
                                 .foregroundStyle(Color.textPrimary)
-                            Text("\(scouts.count) scout\(scouts.count == 1 ? "" : "s") will evaluate ~330 prospects")
+                            Text("\(scouts.count) scout\(scouts.count == 1 ? "" : "s") on site \u{2014} exact measurables instead of the broadcast's rounded numbers. $\(combineTripCost)K from the scouting budget.")
                                 .font(.caption)
                                 .foregroundStyle(Color.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                         Spacer()
                         Image(systemName: "arrow.right.circle.fill")

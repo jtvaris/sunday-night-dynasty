@@ -112,6 +112,109 @@ enum ProspectFog {
             || !prospect.scoutingReports.isEmpty
     }
 
+    // MARK: - Combine fidelity
+
+    /// How precisely the user may read one prospect's combine card.
+    ///
+    /// The combine is televised: a club that sends nobody to Indianapolis still
+    /// learns that the receiver ran "about a four-five", because the broadcast
+    /// said so. What it does not get is the hand-checked stopwatch sheet, the
+    /// position-drill session, or the percentile the analytics staff would have
+    /// run off it. That is the whole shape of `Send Scouts to the Combine`:
+    /// attending buys **precision**, not access.
+    enum MeasurableFidelity {
+        /// Your own people were in the building — or have already worked this
+        /// man out somewhere else, which beats the broadcast either way.
+        case full
+        /// You watched it on television with everybody else. The numbers are
+        /// real; the decimals are not yours to have.
+        case broadcast
+    }
+
+    /// The fidelity the open save is entitled to for `prospect`.
+    ///
+    /// `scoutsAttended` defaults to the career-scoped combine flag so a view can
+    /// call this without threading the decision through every initialiser; pass
+    /// it explicitly in previews and tests.
+    static func combineFidelity(
+        for prospect: CollegeProspect,
+        scoutsAttended: Bool = CareerScopedDefaults.bool("scoutsSentToCombine")
+    ) -> MeasurableFidelity {
+        if scoutsAttended { return .full }
+        // Work your own building has already done on this man outranks the
+        // broadcast: a pro day or a filed report means somebody held the watch.
+        if prospect.proDayCompleted || !prospect.scoutingReports.isEmpty { return .full }
+        return .broadcast
+    }
+
+    /// Percentile / tier labels imply a precision the broadcast never had, so
+    /// they are suppressed alongside the decimals rather than computed off a
+    /// rounded number.
+    static func showsPercentile(_ fidelity: MeasurableFidelity) -> Bool {
+        fidelity == .full
+    }
+
+    /// Rounds `value` to the nearest `step` (0.1 s, 5 reps, 2 inches …).
+    private static func snapped(_ value: Double, to step: Double) -> Double {
+        (value / step).rounded() * step
+    }
+
+    /// Approximate values are prefixed rather than annotated: the combine table
+    /// is a 60 pt column, and "~4.5" says it in one glyph.
+    private static func approx(_ text: String) -> String { "~\(text)" }
+
+    static func fortyText(_ value: Double?, fidelity: MeasurableFidelity, unit: String = "") -> String? {
+        guard let value else { return nil }
+        switch fidelity {
+        case .full:      return String(format: "%.2f", value) + unit
+        case .broadcast: return approx(String(format: "%.1f", snapped(value, to: 0.1)) + unit)
+        }
+    }
+
+    static func benchText(_ value: Int?, fidelity: MeasurableFidelity, unit: String = "") -> String? {
+        guard let value else { return nil }
+        switch fidelity {
+        case .full:      return "\(value)" + unit
+        case .broadcast: return approx("\(Int(snapped(Double(value), to: 5)))" + unit)
+        }
+    }
+
+    static func verticalText(_ value: Double?, fidelity: MeasurableFidelity, unit: String = "\u{22}") -> String? {
+        guard let value else { return nil }
+        switch fidelity {
+        case .full:      return String(format: "%.1f", value) + unit
+        case .broadcast: return approx(String(format: "%.0f", snapped(value, to: 2)) + unit)
+        }
+    }
+
+    static func broadJumpText(_ value: Int?, fidelity: MeasurableFidelity, unit: String = "in") -> String? {
+        guard let value else { return nil }
+        switch fidelity {
+        case .full:      return "\(value)" + unit
+        case .broadcast: return approx("\(Int(snapped(Double(value), to: 3)))" + unit)
+        }
+    }
+
+    /// The cone and the shuttle share one format — both are agility seconds.
+    static func agilityText(_ value: Double?, fidelity: MeasurableFidelity, unit: String = "") -> String? {
+        guard let value else { return nil }
+        switch fidelity {
+        case .full:      return String(format: "%.2f", value) + unit
+        case .broadcast: return approx(String(format: "%.1f", snapped(value, to: 0.1)) + unit)
+        }
+    }
+
+    /// The position-drill grade is a judgement, not a stopwatch reading, so the
+    /// broadcast version drops the +/- modifier: "B+" becomes "B". You know the
+    /// tier the man tested in; you do not know where inside it he landed.
+    static func drillGradeText(_ grade: String?, fidelity: MeasurableFidelity) -> String? {
+        guard let grade else { return nil }
+        switch fidelity {
+        case .full:      return grade
+        case .broadcast: return String(grade.prefix(1))
+        }
+    }
+
     // MARK: - Band construction
 
     /// The confidence stars used to sit beside the grade as their own widget
