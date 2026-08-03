@@ -12,6 +12,10 @@ struct PlayerContractView: View {
     @State private var showExtensionSheet = false
     @State private var showCutAlert = false
     @State private var team: Team?
+    /// This player's detailed deal, when one exists. Realistic-mode signings
+    /// mint a `Contract`; everyone else is priced off `annualSalary` by the
+    /// engine's proxy.
+    @State private var contract: Contract?
 
     var body: some View {
         ZStack {
@@ -50,7 +54,7 @@ struct PlayerContractView: View {
             Button("Cut Player", role: .destructive) { cutPlayer() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This will release \(player.fullName) and free up \(formatMillions(player.annualSalary)) in cap space. This action cannot be undone.")
+            Text(cutAlertMessage)
         }
     }
 
@@ -226,9 +230,40 @@ struct PlayerContractView: View {
         return diff > 0 ? .danger : .success
     }
 
-    /// Simplified dead cap: 50% of remaining guaranteed value
-    private var deadCapIfCut: Int {
-        Int(Double(player.annualSalary) * 0.5)
+    /// The share of the league year still unpaid, for the release split (#26).
+    private var leagueYearRemaining: Double {
+        CapManagementEngine.leagueYearRemaining(
+            phase: career.currentPhase,
+            week: career.currentWeek
+        )
+    }
+
+    /// The release priced by the one engine authority (#68). This screen used to
+    /// quote 50 % of salary here and then book ZERO dead cap when the button was
+    /// pressed — the number on screen and the number on the ledger were unrelated.
+    private var releaseSplit: CapManagementEngine.ReleaseCapSplit {
+        CapManagementEngine.releaseCapSplit(
+            player: player,
+            contract: contract,
+            capMode: career.capMode,
+            leagueYearRemaining: leagueYearRemaining
+        )
+    }
+
+    private var deadCapIfCut: Int { releaseSplit.deadCap }
+
+    /// Confirmation copy that quotes what the release actually does to the cap:
+    /// the net saving, and the dead money that stays behind. The old line
+    /// promised the whole salary back.
+    private var cutAlertMessage: String {
+        let split = releaseSplit
+        let net = split.capSavings >= 0
+            ? "free up \(formatMillions(split.capSavings)) in cap space"
+            : "COST \(formatMillions(-split.capSavings)) in cap space"
+        let dead = split.deadCap > 0
+            ? " \(formatMillions(split.deadCap)) stays on the books as dead money."
+            : ""
+        return "This will release \(player.fullName) and \(net).\(dead) This action cannot be undone."
     }
 
     /// Simplified guaranteed remaining: decreases as years tick down
@@ -260,7 +295,7 @@ struct PlayerContractView: View {
                 .foregroundStyle(Color.textPrimary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                .background(positionSideColor, in: RoundedRectangle(cornerRadius: 4))
+                .background(positionSideColor, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
             Text(player.position.side.rawValue)
                 .foregroundStyle(Color.textSecondary)
         }
@@ -298,14 +333,28 @@ struct PlayerContractView: View {
         guard let teamID = career.teamID else { return }
         let descriptor = FetchDescriptor<Team>(predicate: #Predicate { $0.id == teamID })
         team = try? modelContext.fetch(descriptor).first
+
+        let playerID = player.id
+        let contractDescriptor = FetchDescriptor<Contract>(
+            predicate: #Predicate<Contract> { $0.playerID == playerID }
+        )
+        contract = try? modelContext.fetch(contractDescriptor).first
     }
 
     private func cutPlayer() {
         guard let team else { return }
-        // Release the player: remove team association, zero out contract
-        team.currentCapUsage = max(0, team.currentCapUsage - player.annualSalary)
-        player.teamID = nil
-        player.contractYearsRemaining = 0
+        // ONE authority (#68). The two lines this replaced handed back the FULL
+        // salary and booked no dead money, so an in-season release was free and
+        // the club's ledger drifted every time one happened.
+        CapManagementEngine.applyRelease(
+            player: player,
+            team: team,
+            contract: contract,
+            capMode: career.capMode,
+            leagueYearRemaining: leagueYearRemaining,
+            modelContext: modelContext
+        )
+        try? modelContext.save()
         dismiss()
     }
 }

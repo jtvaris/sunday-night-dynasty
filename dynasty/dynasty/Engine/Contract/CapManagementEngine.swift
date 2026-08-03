@@ -1,4 +1,5 @@
 import Foundation
+import SwiftData
 
 // MARK: - Cap Management Engine
 
@@ -301,6 +302,186 @@ enum CapManagementEngine {
             proratedPerYear: proratedPerYear,
             salaryRetained: base - assumed
         )
+    }
+
+    // MARK: - Release Cap Split (task #68)
+
+    /// How one released player's money divides between relief and dead charge.
+    ///
+    /// A release is the same transaction as a trade with nobody on the other
+    /// side: the signing-bonus proration accelerates onto the club that paid it,
+    /// and the base salary still owed simply stops being owed. `releaseCapSplit`
+    /// is therefore derived from `tradeCapSplit` rather than modelled twice —
+    /// what the buyer would have ASSUMED is exactly what the seller RELIEVES.
+    ///
+    /// Before this existed there were four different answers to "what does
+    /// cutting this man cost": `RosterCutEvaluator.deadCap` (15 %/yr, used by the
+    /// trade path), `RosterCutView` (a flat 20 % of salary), `PlayerContractView`
+    /// (50 % for display, ZERO when the button was actually pressed) and
+    /// `PlayerDetailView` (salary × years ÷ 4). Only one of them ever reached
+    /// `Team.currentCapUsage`, and it booked no dead money at all.
+    struct ReleaseCapSplit {
+        /// Signing-bonus acceleration that stays on the club's books, in
+        /// thousands. Identical model to `TradeCapSplit.deadCap`.
+        let deadCap: Int
+        /// Base salary the club stops owing, in thousands: the share of the base
+        /// still UNPAID at the moment of the release (see `leagueYearRemaining`).
+        let salaryRelieved: Int
+        /// Base salary already paid out this league year. Stays charged — money
+        /// spent does not come back because the man left.
+        let salaryRetained: Int
+        /// This year's prorated bonus slice, i.e. the part of the cap hit that was
+        /// bonus rather than salary.
+        let proratedPerYear: Int
+
+        /// Cap space the release actually frees, in thousands. Negative when the
+        /// acceleration outruns the salary relief — a bonus-heavy contract can
+        /// cost MORE to cut than to keep, which is the whole point of dead money.
+        ///
+        /// ## Why `proratedPerYear` is NOT scaled by `leagueYearRemaining`
+        ///
+        /// Read term by term this looks asymmetric — base is prorated by the
+        /// weeks left, the bonus slice is not — and reads as though a Week 12
+        /// release relieved a whole league year of bonus money. It does not, and
+        /// the reason is that `deadCap` charges the same slice straight back:
+        /// `deadCap` is the acceleration for EVERY remaining year *including the
+        /// current one* (`Contract.deadCap` / `RosterCutEvaluator.deadCap`), and
+        /// `proratedPerYear = deadCap / years`. So
+        ///
+        ///     capSavings = salaryRelieved + proratedPerYear − deadCap
+        ///                = salaryRelieved − (bonus for the years AFTER this one)
+        ///
+        /// and this year's proration nets to zero: removed from the cap hit,
+        /// re-added inside the residual. Worked example — 10 000K / 3 yrs, cut in
+        /// Week 12 (`leagueYearRemaining` = 7/18): deadCap 4 500, proratedPerYear
+        /// 1 500, base 8 500, relieved 3 306, retained 5 194 → capSavings **306**
+        /// = 3 306 unpaid base − 3 000 accelerated future bonus, residual 9 694.
+        /// The club keeps every cent it has already spent plus the whole
+        /// acceleration, which is the correct pre-June-1 answer.
+        var capSavings: Int { salaryRelieved + proratedPerYear - deadCap }
+
+        /// What the club is still charged for this player after the release.
+        var residualCharge: Int { salaryRetained + deadCap }
+    }
+
+    /// Prices a release without applying it — for previews and confirmations.
+    ///
+    /// `leagueYearRemaining` follows the same in-season rules as a trade (#26 /
+    /// #44 / #45): a Week 12 release only relieves the game checks still to come,
+    /// and every offseason phase relieves the whole base.
+    static func releaseCapSplit(
+        player: Player,
+        contract: Contract?,
+        capMode: CapMode,
+        leagueYearRemaining: Double = 1.0
+    ) -> ReleaseCapSplit {
+        let split = tradeCapSplit(
+            player: player,
+            contract: contract,
+            capMode: capMode,
+            leagueYearRemaining: leagueYearRemaining
+        )
+        return ReleaseCapSplit(
+            deadCap: split.deadCap,
+            salaryRelieved: split.salaryAssumed,
+            salaryRetained: split.salaryRetained,
+            proratedPerYear: split.proratedPerYear
+        )
+    }
+
+    /// Releases a player and books the release on the club's cap ledger.
+    ///
+    /// The ONE place a release is applied. It mirrors `WeekAdvancer.trimAIRosters`
+    /// (the AI cutdown) field for field so a user release and an AI release leave
+    /// the store in the same shape, and it books the dead-cap charge that the two
+    /// user-facing cut screens never booked at all.
+    ///
+    /// The ledger identity `CapOverviewView` derives its Dead Money card from —
+    /// `dead = currentCapUsage − Σ roster cap hits` — holds because the player
+    /// leaves the roster in the same call that adjusts the total: usage drops by
+    /// `capSavings`, the roster loses a cap hit of `salaryRelieved +
+    /// salaryRetained + proratedPerYear`, and the difference left behind is
+    /// exactly `residualCharge`.
+    ///
+    /// **That identity is EXACT only where the screen and this call price the
+    /// same cap hit.** The split is derived from `player.annualSalary` (the unit
+    /// `Team.currentCapUsage` is charged in, see `tradeCapSplit`), while
+    /// `CapOverviewView.capHit(for:)` prefers `Contract.capHit` when a detailed
+    /// row exists. For a player with no `Contract` — the common case, since rows
+    /// are only minted for realistic-mode signings — the two agree and the
+    /// residual is exactly `residualCharge`. For a player WITH one they differ
+    /// by `contract.capHit − annualSalary`, and the release moves the ledger by
+    /// that much less (or more) than the card's arithmetic expects. That gap is
+    /// pre-existing and the screen already surfaces it as "Ledger variance", but
+    /// this task newly routes realistic-mode `Contract` players down this path,
+    /// so it is stated here rather than left to be rediscovered. Closing it is
+    /// task #87's single-salary-source work, not this call's.
+    ///
+    /// **Scope note:** the dead-money ledger is rebuilt from rostered salaries at
+    /// every league-year rollover (`FreeAgencyEngine`'s task-#27 true-up), so a
+    /// residual booked here is a WITHIN-league-year figure by design. It does not
+    /// survive March, and the Dead Money card is not a multi-year obligation.
+    ///
+    /// Sandbox never charged the cap on signing, so it must not credit it on
+    /// release either — the player simply leaves.
+    ///
+    /// - Parameter modelContext: When supplied, every `Contract` row belonging to
+    ///   this player is deleted as part of the release. The rows are keyed by
+    ///   `teamID`, and `RosterCutView.loadContracts` / `CapComplianceView.loadData`
+    ///   fetch on exactly that key, so a row left attached would keep a released
+    ///   man in the club's contract map forever — harmless while every consumer
+    ///   keys off `Player.teamID`, a live double-count the moment anything sums
+    ///   contracts by team. Callers with no context (the AI cutdown path) pass
+    ///   nil; those players have no `Contract` row to begin with.
+    @discardableResult
+    static func applyRelease(
+        player: Player,
+        team: Team,
+        contract: Contract? = nil,
+        capMode: CapMode,
+        leagueYearRemaining: Double = 1.0,
+        modelContext: ModelContext? = nil
+    ) -> ReleaseCapSplit {
+        let split = releaseCapSplit(
+            player: player,
+            contract: contract,
+            capMode: capMode,
+            leagueYearRemaining: leagueYearRemaining
+        )
+
+        if capMode != .sandbox {
+            // `capSavings` is signed: a negative value (acceleration larger than
+            // the relief) correctly RAISES the club's usage.
+            team.currentCapUsage = max(0, team.currentCapUsage - split.capSavings)
+        }
+
+        player.teamID = nil
+        player.annualSalary = 0
+        player.contractYearsRemaining = 0
+        player.proratedFullBaseSalary = 0
+        player.isHoldingOut = false
+        player.isFranchiseTagged = false
+        player.trainingFocusArea = nil
+        player.trainingPosition = nil
+        // §5.1: stamp the release so `PracticeSquadEngine.fillSquads` can honour
+        // "own cuts first" and the Revenge Tour storyline can fire.
+        player.cutByTeamID = team.id
+        player.cutAt = .now
+
+        // The deal is over — the row must not stay in the club's contract map.
+        // Fetched rather than trusting the `contract` argument, because a caller
+        // that never looked one up would otherwise leave an orphan behind.
+        if let modelContext {
+            let playerID = player.id
+            let descriptor = FetchDescriptor<Contract>(
+                predicate: #Predicate<Contract> { $0.playerID == playerID }
+            )
+            for row in (try? modelContext.fetch(descriptor)) ?? [] {
+                modelContext.delete(row)
+            }
+        }
+
+        return split
     }
 
     // MARK: - Cap Growth

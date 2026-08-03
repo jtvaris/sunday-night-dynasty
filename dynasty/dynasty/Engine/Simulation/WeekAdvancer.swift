@@ -5682,6 +5682,8 @@ enum WeekAdvancer {
     /// - ALL `CollegeProspect` rows (the draft is over; next season's class
     ///   regenerates fresh — and the restart-restore path in ScoutingHubView
     ///   reads every persisted prospect, so stale rows would pollute it),
+    /// - the user's own per-prospect scouting data in `CareerScopedDefaults`,
+    ///   which is keyed by those same (now dead) uuids,
     /// - `Game` rows older than the just-finished season (~272/season).
     private static func purgeStaleSeasonData(career: Career, modelContext: ModelContext) {
         // Scoped hard: unscoped, these two sweeps deleted the OTHER save's
@@ -5693,6 +5695,17 @@ enum WeekAdvancer {
         for prospect in prospects {
             modelContext.delete(prospect)
         }
+
+        // Agent hygiene: the rows above are gone, so every watchlist entry,
+        // scouting note, own assessment, personal grade, star and original board
+        // slot the user wrote about them now points at nothing. Nothing pruned
+        // those stores — only `BigBoardView.syncBoardOrder` pruned the board
+        // ORDER, and only while that screen was open — so each concluded draft
+        // cycle left up to ~350 dead uuids per store behind, forever. Pruned
+        // here, in the one place the class is actually wiped, and expressed as
+        // "keep what survives" so it stays correct if this sweep ever becomes
+        // partial. Career-scoped: the other save's board is untouched.
+        CareerScopedDefaults.pruneProspectUserData(keeping: [], careerID: cid)
 
         let cutoff = career.currentSeason - 1   // keep last season + the new one
         let oldGamesDescriptor = FetchDescriptor<Game>(
@@ -7100,21 +7113,49 @@ enum WeekAdvancer {
             }
         }
 
-        // 3. Detect/resolve position battles. Detection is idempotent per season
-        //    -- we only insert if no open battles exist yet. Daily ticks fire 7x
-        //    to mirror the workload week.
-        let openBattles = fetchOpenPositionBattles(seasonYear: season, modelContext: modelContext)
-            .filter { battle in
-                // Only tick battles whose competitors belong to the user's roster.
-                let competitorSet = Set(battle.competitorIDs)
-                return roster.contains { competitorSet.contains($0.id) }
-            }
-        let battles: [PositionBattle]
-        if openBattles.isEmpty {
-            battles = PositionBattleTracker.detectBattles(roster: roster, modelContext: modelContext)
-        } else {
-            battles = openBattles
+        // 3. Detect/resolve position battles. Detection is genuinely idempotent
+        //    now (task #67): the tracker skips any (career, season, position)
+        //    that already has a row, and the season stamp it writes is
+        //    `career.currentSeason` — the same key the fetch below uses. Both
+        //    used to be false: the tracker stamped the real-world calendar year,
+        //    so the "already open?" test matched nothing and a fresh set of
+        //    battles was inserted every camp week.
+        //
+        //    Because it IS idempotent, it runs EVERY camp week rather than only
+        //    when the season has no rows yet. The old `isEmpty` gate was the
+        //    other half of the bug: a competition that only becomes detectable
+        //    in week 2+ — the veteran signed after week 1, the starter who got
+        //    hurt — was never detected at all, because week 1 had already put
+        //    something in the table. Daily ticks fire 7x to mirror the workload
+        //    week.
+        //
+        //    `career.id` is passed to BOTH calls on purpose: "has detection run?"
+        //    and "what did detection write?" must be answered from one identity.
+        //    The fetch used to read `WeekAdvancer.activeCareerID`, which `bind`
+        //    keeps equal to `career.id` in the normal flow but which would
+        //    silently resurrect the duplication bug if it were ever nil or stale
+        //    at camp time.
+        let detected = PositionBattleTracker.detectBattles(
+            roster: roster,
+            seasonYear: season,
+            careerID: career.id,
+            modelContext: modelContext
+        )
+        let seasonBattles = PositionBattleTracker.fetchSeasonBattles(
+            careerID: career.id,
+            seasonYear: season,
+            modelContext: modelContext
+        )
+        // Union by id — a just-inserted row may or may not be visible to the
+        // fetch before the context saves, and either way it must be ticked once.
+        var openByID: [UUID: PositionBattle] = [:]
+        for battle in detected + seasonBattles where battle.winnerID == nil {
+            // Only tick battles whose competitors belong to the user's roster.
+            let competitorSet = Set(battle.competitorIDs)
+            guard roster.contains(where: { competitorSet.contains($0.id) }) else { continue }
+            openByID[battle.id] = battle
         }
+        let battles = Array(openByID.values)
         var rng = SystemRandomNumberGenerator()
         for battle in battles {
             for _ in 0..<7 {
@@ -7233,6 +7274,13 @@ enum WeekAdvancer {
         )
         return (try? modelContext.fetch(descriptor)) ?? []
     }
+
+    // NOTE (task #67): there is deliberately no `fetchSeasonPositionBattles`
+    // wrapper here. The camp tick calls `PositionBattleTracker.fetchSeasonBattles`
+    // with `career.id` directly, so the identity it queries on and the identity
+    // `detectBattles` stamps are the same value read from the same place. A
+    // wrapper that sourced `activeCareerID` instead gave the two halves of one
+    // question two different answers.
 
     /// End-of-camp grade computation for the user's roster. Uses an estimate
     /// of training pts (10 pts/week × weeks-in-camp) and preseason snaps from

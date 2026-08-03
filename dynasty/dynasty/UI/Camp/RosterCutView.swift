@@ -19,6 +19,9 @@ struct RosterCutView: View {
     @State private var selectedIDs: Set<UUID> = []
     /// Player IDs that the user has flagged as practice-squad-eligible.
     @State private var practiceSquadIDs: Set<UUID> = []
+    /// Detailed deals for this club, so the release split prices a real
+    /// `Contract` where one exists instead of always using the proxy.
+    @State private var contractsByPlayer: [UUID: Contract] = [:]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -30,6 +33,7 @@ struct RosterCutView: View {
         .background(Color.backgroundPrimary.ignoresSafeArea())
         .navigationTitle("Roster Cuts")
         .navigationBarTitleDisplayMode(.inline)
+        .task { loadContracts() }
     }
 
     // MARK: - Header
@@ -117,7 +121,7 @@ struct RosterCutView: View {
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(
-                            RoundedRectangle(cornerRadius: 4)
+                            RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                                 .fill(Color.backgroundTertiary)
                         )
                         .foregroundStyle(Color.textSecondary)
@@ -156,7 +160,7 @@ struct RosterCutView: View {
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
                         .background(
-                            RoundedRectangle(cornerRadius: 4)
+                            RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                                 .fill(isPS ? Color.accentGold : Color.backgroundTertiary)
                         )
                         .foregroundStyle(isPS ? Color.backgroundPrimary : Color.textSecondary)
@@ -266,27 +270,75 @@ struct RosterCutView: View {
         return "\(f)\(l)"
     }
 
+    /// The share of the league year still unpaid, for the release split (#26).
+    /// Cutdown day is an offseason phase, so this is 1.0 in the normal flow —
+    /// it is read from the career anyway so a release made while the regular
+    /// season is running prices the remaining game checks, not a full year.
+    private var leagueYearRemaining: Double {
+        CapManagementEngine.leagueYearRemaining(
+            phase: career.currentPhase,
+            week: career.currentWeek
+        )
+    }
+
+    /// Detailed deals for this club, keyed by player. Most players have none —
+    /// `Contract` rows are only minted for realistic-mode signings — and the
+    /// engine falls back to the 15 %/yr proxy for the rest.
+    private func loadContracts() {
+        guard let teamID = career.teamID else { return }
+        let descriptor = FetchDescriptor<Contract>(
+            predicate: #Predicate<Contract> { $0.teamID == teamID }
+        )
+        let rows = (try? modelContext.fetch(descriptor)) ?? []
+        contractsByPlayer = Dictionary(rows.map { ($0.playerID, $0) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    private func releaseSplit(for player: Player) -> CapManagementEngine.ReleaseCapSplit {
+        CapManagementEngine.releaseCapSplit(
+            player: player,
+            contract: contractsByPlayer[player.id],
+            capMode: career.capMode,
+            leagueYearRemaining: leagueYearRemaining
+        )
+    }
+
+    /// Net cap effect of releasing this man — relief minus the dead money that
+    /// stays behind. Quoted from the same engine the cut itself books (#68), so
+    /// the row and the ledger can no longer disagree.
     private func capSavingsLabel(for player: Player) -> String {
-        // Quick cap-savings preview: 80% of remaining base salary recovered
-        // (rough placeholder — RosterCutEvaluator will compute the canonical value).
-        let savings = max(0, Int(Double(player.annualSalary) * 0.8))
-        return "+$\(savings / 1_000)M"
+        let split = releaseSplit(for: player)
+        let savings = split.capSavings
+        let sign = savings < 0 ? "-" : "+"
+        let millions = Double(abs(savings)) / 1_000.0
+        return String(format: "%@$%.1fM", sign, millions)
     }
 
     private func performCuts() {
         guard let teamID = career.teamID, !selectedIDs.isEmpty else { return }
+        let teamDescriptor = FetchDescriptor<Team>(predicate: #Predicate<Team> { $0.id == teamID })
+        guard let team = try? modelContext.fetch(teamDescriptor).first else { return }
+
         let now = Date()
         for id in selectedIDs {
             guard let player = roster.first(where: { $0.id == id }) else { continue }
-            let savings = max(0, Int(Double(player.annualSalary) * 0.8))
-            let dead = max(0, player.annualSalary - savings)
+            // ONE authority for the money AND the roster move: this screen used
+            // to write a receipt and nothing else — the player stayed on the 53
+            // and not a cent of dead cap ever reached `currentCapUsage` (#68).
+            let split = CapManagementEngine.applyRelease(
+                player: player,
+                team: team,
+                contract: contractsByPlayer[player.id],
+                capMode: career.capMode,
+                leagueYearRemaining: leagueYearRemaining,
+                modelContext: modelContext
+            )
             let cut = RosterCut(
                 playerID: player.id,
                 teamID: teamID,
                 seasonYear: career.currentSeason,
                 cutDayRaw: stage.rawValue,
-                capSavings: savings,
-                deadCap: dead,
+                capSavings: split.capSavings,
+                deadCap: split.deadCap,
                 practiceSquadEligible: practiceSquadIDs.contains(player.id),
                 occurredAt: now
             )

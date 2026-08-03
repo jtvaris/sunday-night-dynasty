@@ -1438,14 +1438,17 @@ struct CareerDashboardView: View {
     /// straight from the `PositionBattle` rows `PositionBattleTracker` writes
     /// during camp — the tile previously printed a hard-coded "0 active".
     ///
-    /// Deliberately NOT filtered by `seasonYear`: `detectBattles` stamps rows
-    /// with the real-world calendar year while the career runs on its own
-    /// season counter, so a year filter would silently drop every row.
+    /// Filtered by `seasonYear` again (task #67). The season filter had been
+    /// removed as a workaround for `detectBattles` stamping the real-world
+    /// calendar year instead of `career.currentSeason`; the tracker writes the
+    /// career's season now, so the tile can key on it — and must, or it would
+    /// list every unresolved battle the save has ever produced.
     private func loadPositionBattles() {
         let cid = career.id
+        let season = career.currentSeason
         let descriptor = FetchDescriptor<PositionBattle>(
             predicate: #Predicate<PositionBattle> {
-                $0.careerID == cid && $0.winnerID == nil
+                $0.careerID == cid && $0.seasonYear == season && $0.winnerID == nil
             }
         )
         let rosterIDs = Set(players.map(\.id))
@@ -1869,7 +1872,7 @@ struct CareerDashboardView: View {
                     .padding(.vertical, 3)
                     .padding(.horizontal, 6)
                     .background(
-                        RoundedRectangle(cornerRadius: 4)
+                        RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                             .fill(Color.accentGold.opacity(isMyTeam ? 0.08 : 0))
                     )
                 }
@@ -4444,7 +4447,7 @@ private struct CoachingStaffReviewSheet: View {
         .padding(.vertical, 5)
         .padding(.horizontal, 4)
         .background(
-            RoundedRectangle(cornerRadius: 4)
+            RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                 .fill(!isFilled && isRequired ? Color.warning.opacity(0.06) : Color.clear)
         )
     }

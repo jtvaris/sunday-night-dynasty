@@ -11,6 +11,9 @@ struct CapComplianceView: View {
     @State private var players: [Player] = []
     @State private var showCutConfirm: Player?
     @State private var showRestructureConfirm: Player?
+    /// Detailed deals for this club, so a release prices a real `Contract`
+    /// where one exists instead of always using the engine's proxy.
+    @State private var contractsByPlayer: [UUID: Contract] = [:]
 
     private var isOverCap: Bool {
         guard let team else { return false }
@@ -57,14 +60,10 @@ struct CapComplianceView: View {
             }
         } message: {
             if let player = showCutConfirm {
-                let savings = player.annualSalary
-                if career.capMode == .realistic {
-                    let deadCap = estimateDeadCap(player: player)
-                    let netSavings = savings - deadCap
-                    Text("Release \(player.fullName). Cap savings: \(formatMillions(netSavings)). Dead cap hit: \(formatMillions(deadCap)).")
-                } else {
-                    Text("Release \(player.fullName) to save \(formatMillions(savings)) in cap space.")
-                }
+                // One number, from the engine that books the release (#68) —
+                // simple mode used to be told it got the whole salary back.
+                let split = releaseSplit(for: player)
+                Text("Release \(player.fullName). Cap savings: \(formatMillions(split.capSavings)). Dead cap hit: \(formatMillions(split.deadCap)).")
             }
         }
         .alert("Restructure Contract?", isPresented: .init(
@@ -284,7 +283,7 @@ struct CapComplianceView: View {
                         .foregroundStyle(Color.danger)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
-                        .background(Color.danger.opacity(0.1), in: RoundedRectangle(cornerRadius: 4))
+                        .background(Color.danger.opacity(0.1), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
                 }
                 .buttonStyle(.plain)
 
@@ -297,7 +296,7 @@ struct CapComplianceView: View {
                             .foregroundStyle(Color.accentGold)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 3)
-                            .background(Color.accentGold.opacity(0.1), in: RoundedRectangle(cornerRadius: 4))
+                            .background(Color.accentGold.opacity(0.1), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
                     }
                     .buttonStyle(.plain)
                 }
@@ -342,7 +341,16 @@ struct CapComplianceView: View {
 
     private func cutPlayer(_ player: Player) {
         guard let team else { return }
-        ContractEngine.cutPlayerSimple(player: player, team: team)
+        // ONE authority (#68) — and cap-mode aware, which `cutPlayerSimple`
+        // never was: a sandbox release must not credit a cap it never charged.
+        CapManagementEngine.applyRelease(
+            player: player,
+            team: team,
+            contract: contractsByPlayer[player.id],
+            capMode: career.capMode,
+            leagueYearRemaining: leagueYearRemaining,
+            modelContext: modelContext
+        )
         loadData()
     }
 
@@ -359,10 +367,27 @@ struct CapComplianceView: View {
         loadData()
     }
 
+    /// The share of the league year still unpaid, for the release split (#26).
+    private var leagueYearRemaining: Double {
+        CapManagementEngine.leagueYearRemaining(
+            phase: career.currentPhase,
+            week: career.currentWeek
+        )
+    }
+
+    private func releaseSplit(for player: Player) -> CapManagementEngine.ReleaseCapSplit {
+        CapManagementEngine.releaseCapSplit(
+            player: player,
+            contract: contractsByPlayer[player.id],
+            capMode: career.capMode,
+            leagueYearRemaining: leagueYearRemaining
+        )
+    }
+
+    /// Dead cap from the one engine authority (#68). This was a fifth private
+    /// formula — 40 % of remaining total value — that no cut path ever booked.
     private func estimateDeadCap(player: Player) -> Int {
-        // Dead cap = remaining guaranteed money (approximated as 40% of remaining total value)
-        let remainingValue = player.annualSalary * max(player.contractYearsRemaining, 1)
-        return Int(Double(remainingValue) * 0.4)
+        releaseSplit(for: player).deadCap
     }
 
     // MARK: - Helpers
@@ -398,5 +423,11 @@ struct CapComplianceView: View {
         )
         playerDesc.sortBy = [SortDescriptor(\.annualSalary, order: .reverse)]
         players = (try? modelContext.fetch(playerDesc)) ?? []
+
+        let contractDesc = FetchDescriptor<Contract>(
+            predicate: #Predicate<Contract> { $0.teamID == fetchedTeamID }
+        )
+        let contracts = (try? modelContext.fetch(contractDesc)) ?? []
+        contractsByPlayer = Dictionary(contracts.map { ($0.playerID, $0) }, uniquingKeysWith: { first, _ in first })
     }
 }

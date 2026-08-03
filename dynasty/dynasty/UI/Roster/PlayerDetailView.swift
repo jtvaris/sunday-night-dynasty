@@ -106,6 +106,10 @@ struct PlayerDetailView: View {
     /// Public/True/Gem badge row in the header.
     @Query private var allDraftPickGradesUnscoped: [DraftPickGrade]
 
+    /// Detailed deals, so the cut preview prices a real `Contract` when one
+    /// exists rather than always falling back to the engine's proxy.
+    @Query private var allContractsUnscoped: [Contract]
+
     /// The save this screen belongs to — read off the player row itself, so no
     /// career has to be threaded into this view (it is pushed from six places).
     /// `@Query` cannot take a runtime predicate from a stored property, so every
@@ -117,6 +121,11 @@ struct PlayerDetailView: View {
     private var allTeams: [Team] { allTeamsUnscoped.filter { $0.careerID == scopeCareerID } }
     private var allSeasonHistory: [PlayerSeasonHistory] { allSeasonHistoryUnscoped.filter { $0.careerID == scopeCareerID } }
     private var allDraftPickGrades: [DraftPickGrade] { allDraftPickGradesUnscoped.filter { $0.careerID == scopeCareerID } }
+
+    /// This player's detailed deal, when one was ever minted for him.
+    private var playerContract: Contract? {
+        allContractsUnscoped.first { $0.careerID == scopeCareerID && $0.playerID == player.id }
+    }
 
     /// The career, for the one thing the stat surfaces cannot do without: which
     /// season is being played right now. Week 18 snapshots a season into
@@ -517,7 +526,7 @@ struct PlayerDetailView: View {
                     .foregroundStyle(.white)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(tint, in: RoundedRectangle(cornerRadius: 4))
+                    .background(tint, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
                 Text(team.fullName)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(Color.textPrimary)
@@ -604,7 +613,7 @@ struct PlayerDetailView: View {
                         .padding(.vertical, 4)
                         .background(Color.draftStealGold.opacity(0.25))
                         .foregroundStyle(Color.draftStealGold)
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                        .clipShape(RoundedRectangle(cornerRadius: DSCornerRadius.tight))
                 }
                 if grade.isBust {
                     Text("BUST")
@@ -613,7 +622,7 @@ struct PlayerDetailView: View {
                         .padding(.vertical, 4)
                         .background(Color.draftReachRed.opacity(0.25))
                         .foregroundStyle(Color.draftReachRed)
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                        .clipShape(RoundedRectangle(cornerRadius: DSCornerRadius.tight))
                 }
                 Spacer()
             }
@@ -632,7 +641,7 @@ struct PlayerDetailView: View {
                 .padding(.vertical, 4)
                 .background(badgeColor(grade))
                 .foregroundStyle(Color.textPrimary)
-                .clipShape(RoundedRectangle(cornerRadius: 4))
+                .clipShape(RoundedRectangle(cornerRadius: DSCornerRadius.tight))
         }
     }
 
@@ -973,7 +982,7 @@ struct PlayerDetailView: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 4))
+        .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
     }
 
     // MARK: - Compact Development (#39)
@@ -1567,17 +1576,27 @@ struct PlayerDetailView: View {
     }
 
     /// One-line dead cap preview for the Cut button. E.g. "$2.4M dead cap".
-    /// Until the live Contract model is wired through, falls back to a salary-based estimate.
+    ///
+    /// Quoted from `CapManagementEngine.releaseCapSplit` — the same call the cut
+    /// screens book against (#68). It used to be its own `salary × years ÷ 4`
+    /// invention, which agreed with neither the roster-cut screen (20 %), the
+    /// contract screen (50 %) nor the trade path (15 %/yr).
     private var cutImpactPreviewText: String? {
-        let salaryK = player.annualSalary
-        guard salaryK > 0 else { return nil }
-        // Rough estimate: dead cap ≈ remaining guaranteed money. Without a Contract object
-        // here we approximate as 25% of remaining salary.
-        let estimateK = salaryK * max(player.contractYearsRemaining, 1) / 4
-        if estimateK >= 1_000 {
-            return String(format: "~$%.1fM dead cap", Double(estimateK) / 1_000.0)
+        guard player.annualSalary > 0 else { return nil }
+        let split = CapManagementEngine.releaseCapSplit(
+            player: player,
+            contract: playerContract,
+            capMode: careers.first?.capMode ?? .simple,
+            leagueYearRemaining: careers.first.map {
+                CapManagementEngine.leagueYearRemaining(phase: $0.currentPhase, week: $0.currentWeek)
+            } ?? 1.0
+        )
+        let deadK = split.deadCap
+        guard deadK > 0 else { return "No dead cap" }
+        if deadK >= 1_000 {
+            return String(format: "~$%.1fM dead cap", Double(deadK) / 1_000.0)
         }
-        return "~$\(estimateK)K dead cap"
+        return "~$\(deadK)K dead cap"
     }
 
     /// Suggested-extension preview for the Extend button. E.g. "~$32M/yr × 4yr".
@@ -2458,7 +2477,7 @@ struct PlayerDetailView: View {
                 .foregroundStyle(Color.textPrimary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                .background(positionSideColor, in: RoundedRectangle(cornerRadius: 4))
+                .background(positionSideColor, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
             Text(player.position.side.rawValue)
                 .foregroundStyle(Color.textSecondary)
         }
@@ -2547,7 +2566,7 @@ struct PlayerDetailView: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 4))
+        .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
     }
 
     private var moraleIcon: some View {

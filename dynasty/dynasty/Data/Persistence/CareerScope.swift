@@ -548,6 +548,101 @@ enum CareerScopedDefaults {
         }
     }
 
+    // MARK: - Per-prospect user data
+
+    /// Scoped keys holding an ORDERED list of prospect uuid strings. Order is
+    /// meaning here (`prospectCustomBoard` IS the board), so these are decoded
+    /// as `[String]` and filtered in place rather than round-tripped through a
+    /// dictionary.
+    private static let prospectIDListKeys = [
+        "prospectWatchlist",
+        "prospectCustomBoard",
+        "userProspectStars",
+    ]
+
+    /// Scoped keys holding a dictionary KEYED by prospect uuid string. The value
+    /// shape differs per key (`String` grades and notes, `Int` board slots), so
+    /// the filter goes through `JSONSerialization` and stays shape-agnostic.
+    private static let prospectIDMapKeys = [
+        "prospectNotes",
+        "prospectOwnAssessments",
+        "userProspectGrades",
+        "originalBoardPositions",
+    ]
+
+    /// Drops every per-prospect entry whose prospect no longer exists.
+    ///
+    /// The seven stores above are keyed by `CollegeProspect.id` and **nothing
+    /// ever pruned them**. A draft class is ~350 men and every one of them stops
+    /// existing at the season rollover (`WeekAdvancer.purgeStaleSeasonData`
+    /// deletes the rows), so each concluded cycle left behind up to 350 dead
+    /// uuids per store — for the life of the save, growing without bound. The
+    /// Big Board pruned exactly one of them (`prospectCustomBoard`, in
+    /// `syncBoardOrder`) and only while that screen was open, which is why the
+    /// board order was the one that looked fine.
+    ///
+    /// Called from the rollover, immediately after the prospect rows are
+    /// deleted, with the ids that survive — an empty set today, but expressed as
+    /// "keep what still exists" so a future partial purge cannot orphan a live
+    /// prospect's notes.
+    ///
+    /// - Returns: how many entries were dropped (diagnostics only).
+    @discardableResult
+    static func pruneProspectUserData(keeping liveProspectIDs: Set<UUID>, careerID: UUID) -> Int {
+        let defaults = UserDefaults.standard
+        let live = Set(liveProspectIDs.map(\.uuidString))
+        var dropped = 0
+
+        func write(_ json: String?, to scopedKey: String) {
+            if let json {
+                defaults.set(json, forKey: scopedKey)
+            } else {
+                defaults.removeObject(forKey: scopedKey)
+            }
+        }
+
+        for base in prospectIDListKeys {
+            let scoped = key(base, careerID: careerID)
+            guard let raw = defaults.string(forKey: scoped),
+                  let ids = try? JSONDecoder().decode([String].self, from: Data(raw.utf8)),
+                  !ids.isEmpty
+            else { continue }
+            let kept = ids.filter { live.contains($0) }
+            guard kept.count != ids.count else { continue }
+            dropped += ids.count - kept.count
+            if kept.isEmpty {
+                write(nil, to: scoped)
+            } else if let data = try? JSONEncoder().encode(kept) {
+                write(String(decoding: data, as: UTF8.self), to: scoped)
+            }
+        }
+
+        for base in prospectIDMapKeys {
+            let scoped = key(base, careerID: careerID)
+            guard let raw = defaults.string(forKey: scoped),
+                  let object = try? JSONSerialization.jsonObject(with: Data(raw.utf8)),
+                  let dict = object as? [String: Any],
+                  !dict.isEmpty
+            else { continue }
+            let kept = dict.filter { live.contains($0.key) }
+            guard kept.count != dict.count else { continue }
+            dropped += dict.count - kept.count
+            if kept.isEmpty {
+                write(nil, to: scoped)
+            } else if let data = try? JSONSerialization.data(withJSONObject: kept) {
+                write(String(decoding: data, as: UTF8.self), to: scoped)
+            }
+        }
+
+        guard dropped > 0 else { return 0 }
+        // Both observers, for the two families of reader: `@CareerScopedStorage`
+        // views (notes, assessments, board) and `UserProspectGradeStore` views
+        // (grades, stars, original slots).
+        CareerScopedDefaultsStore.shared.notifyChanged()
+        UserProspectGradeStore.notifyPruned()
+        return dropped
+    }
+
     /// Hands the legacy global values to `careerID` (once), then clears the
     /// globals so a second career starts from defaults instead of inheriting.
     static func migrateGlobalKeys(into careerID: UUID) {
