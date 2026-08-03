@@ -130,17 +130,6 @@ enum LeagueGenerator {
         "Swearingen", "Tillinghast", "Wetherell", "Wimberly", "Wolverton"
     ]
 
-    // MARK: - 2026 NFL Draft Order (First Round)
-
-    /// Real 2026 NFL first-round draft order by team abbreviation.
-    /// Teams appearing multiple times have extra first-round picks from trades.
-    private static let firstRoundDraftOrder: [String] = [
-        "LV", "NYJ", "ARI", "TEN", "NYG", "CLE", "WAS", "NO",
-        "KC", "CIN", "MIA", "DAL", "LAR", "BAL", "TB", "NYJ",
-        "DET", "MIN", "CAR", "DAL", "PIT", "LAC", "PHI", "CLE",
-        "CHI", "BUF", "SF", "HOU", "KC", "DEN", "NE", "SEA"
-    ]
-
     // MARK: - Public API
 
     typealias GeneratedLeague = (
@@ -368,70 +357,66 @@ enum LeagueGenerator {
 
     // MARK: - Draft Pick Generation
 
-    /// Generates 7 rounds of draft picks for each team using the real 2026 first-round order.
-    /// Teams with extra first-round picks (from trades) receive bonus picks.
-    /// Rounds 2-7 use the same base order (simplified).
+    /// The order the first draft of a new career is picked in: worst record
+    /// first, exactly as the league does it.
+    ///
+    /// This replaced a hardcoded 32-name list copied from a real mock draft. That
+    /// list had two properties that made no sense inside a generated league:
+    /// four franchises appeared twice (they had traded up in reality) and four —
+    /// IND, JAX, GB, ATL — did not appear at all, so **those clubs started a
+    /// brand-new career with no first-round pick and nothing anywhere explaining
+    /// why**. The Draft tab simply showed six picks and no round 1. It also
+    /// contradicted the team picker, which advertises each club's record: a 4-13
+    /// team could find itself picking 16th, or not at all.
+    ///
+    /// Records come from the same `NFLTeamData` previews the picker shows, so
+    /// the order the user sees on draft day is the order the standings he chose
+    /// from imply. Fully deterministic (no RNG); ties break on abbreviation.
+    /// Rounds in an NFL draft — and therefore the picks a club starts a career
+    /// with, before trades and compensatory awards.
+    static let roundsPerDraft = 7
+
+    static func initialDraftOrder(teams: [Team]) -> [Team] {
+        teams.sorted { lhs, rhs in
+            let l = NFLTeamData.previews[lhs.abbreviation]
+            let r = NFLTeamData.previews[rhs.abbreviation]
+            let lWins = l?.lastSeasonWins ?? 8
+            let rWins = r?.lastSeasonWins ?? 8
+            let lGames = lWins + (l?.lastSeasonLosses ?? 9)
+            let rGames = rWins + (r?.lastSeasonLosses ?? 9)
+            let lPct = lGames > 0 ? Double(lWins) / Double(lGames) : 0.5
+            let rPct = rGames > 0 ? Double(rWins) / Double(rGames) : 0.5
+            if lPct != rPct { return lPct < rPct }
+            return lhs.abbreviation < rhs.abbreviation
+        }
+    }
+
+    /// Generates 7 rounds of draft picks for each team, worst record first.
+    ///
+    /// Every club gets exactly one pick in every round — 224 rows, 32 per round.
+    /// Compensatory picks are minted later by `CompensatoryPickEngine`; trades
+    /// move ownership. Nothing here hands a franchise an extra first or takes
+    /// one away.
+    ///
     /// - Parameters:
     ///   - teams: All 32 generated teams.
     ///   - seasonYear: The draft year.
     /// - Returns: An array of all draft picks.
     static func generateInitialDraftPicks(teams: [Team], seasonYear: Int) -> [DraftPick] {
-        // Build abbreviation -> Team lookup
-        var teamsByAbbreviation: [String: Team] = [:]
-        for team in teams {
-            teamsByAbbreviation[team.abbreviation] = team
-        }
-
+        let order = initialDraftOrder(teams: teams)
         var picks: [DraftPick] = []
         var overallPick = 1
 
-        // Round 1: Use the real 2026 draft order (32 picks, some teams appear twice)
-        for (index, abbreviation) in firstRoundDraftOrder.enumerated() {
-            guard let team = teamsByAbbreviation[abbreviation] else { continue }
-            let pick = DraftPick(
-                seasonYear: seasonYear,
-                round: 1,
-                pickNumber: overallPick,
-                originalTeamID: team.id,
-                currentTeamID: team.id,
-                teamAbbreviation: abbreviation
-            )
-            _ = index // suppress unused warning
-            picks.append(pick)
-            overallPick += 1
-        }
-
-        // Rounds 2-7: Each of the 32 teams gets one pick per round.
-        // Use the same first-round base order (deduplicated) for simplicity.
-        // Teams that had extra round-1 picks do NOT get extra picks in later rounds.
-        var baseOrder: [String] = []
-        var seen = Set<String>()
-        for abbreviation in firstRoundDraftOrder {
-            if !seen.contains(abbreviation) {
-                baseOrder.append(abbreviation)
-                seen.insert(abbreviation)
-            }
-        }
-        // Fill in any teams not in the first round order (IND, JAX, GB, ATL)
-        for team in teams {
-            if !seen.contains(team.abbreviation) {
-                baseOrder.append(team.abbreviation)
-                seen.insert(team.abbreviation)
-            }
-        }
-
-        for round in 2...7 {
-            for abbreviation in baseOrder {
-                guard let team = teamsByAbbreviation[abbreviation] else { continue }
-                let pick = DraftPick(
+        for round in 1...roundsPerDraft {
+            for team in order {
+                picks.append(DraftPick(
                     seasonYear: seasonYear,
                     round: round,
                     pickNumber: overallPick,
                     originalTeamID: team.id,
                     currentTeamID: team.id,
-                    teamAbbreviation: abbreviation
-                )
-                picks.append(pick)
+                    teamAbbreviation: team.abbreviation
+                ))
                 overallPick += 1
             }
         }

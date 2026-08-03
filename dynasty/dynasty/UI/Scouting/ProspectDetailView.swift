@@ -46,10 +46,19 @@ enum ScoutEvaluationBudget {
     }
 
     /// One line of prose naming when the window reopens.
+    ///
+    /// The regular season is split on purpose. The class is generated in week 9,
+    /// so from then on the board is real and readable — it is only the *paid*
+    /// report that has to wait for the offseason. The old copy told a user
+    /// staring at a full board in week 12 that "the class is off the board until
+    /// next season", which is wrong twice over: the class is right there, and
+    /// the window he is waiting for is nine weeks away, not a year.
     static func windowHint(for phase: SeasonPhase) -> String {
         switch phase {
-        case .otas, .trainingCamp, .preseason, .rosterCuts, .regularSeason, .tradeDeadline, .playoffs:
-            return "The class is off the board until next season's coaching changes."
+        case .regularSeason, .tradeDeadline, .playoffs:
+            return "Read-only until the season ends. Your department files its first paid reports at the coaching changes."
+        case .otas, .trainingCamp, .preseason, .rosterCuts:
+            return "This class has been drafted. The next one goes on the board in week \(TaskGenerator.draftClassOnBoardWeek)."
         default:
             return "Scouting opens with the coaching changes."
         }

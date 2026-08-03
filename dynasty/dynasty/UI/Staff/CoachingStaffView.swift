@@ -1,6 +1,31 @@
 import SwiftUI
 import SwiftData
 
+// MARK: - Money
+
+/// A coach salary (stored in thousands) as money a person reads.
+///
+/// Coach salaries are millions, so the raw thousands rendered as "$6 296K/yr" —
+/// a grouped five-figure number in a unit nobody quotes contracts in, which
+/// VoiceOver then read aloud as "six thousand two hundred ninety six thousand".
+/// Everything else on these screens (budgets, candidate asks) is already in
+/// millions; this brings the staff rows in line. Sub-million salaries keep the
+/// K unit, ungrouped.
+/// "a" or "an" for a role name. Staff roles start with O, A and I often enough
+/// ("Offensive Coordinator", "Assistant Head Coach") that a hardcoded "a" was
+/// audibly wrong in the spoken priority list.
+func indefiniteArticle(for noun: String) -> String {
+    guard let first = noun.first else { return "a" }
+    return "aeiouAEIOU".contains(first) ? "an" : "a"
+}
+
+func coachSalaryText(_ thousands: Int) -> String {
+    if thousands >= 1_000 {
+        return String(format: "$%.1fM/yr", Double(thousands) / 1_000.0)
+    }
+    return "$\(thousands)K/yr"
+}
+
 // MARK: - Staff Tab Selection
 
 enum StaffTab: String, CaseIterable {
@@ -357,17 +382,19 @@ struct CoachingStaffView: View {
     }
 
     /// Estimated salary range string for a vacant role.
+    ///
+    /// Derived from `CoachRole.salaryRange` — the band the candidate generator
+    /// actually draws from — rather than the hand-written four-case table that
+    /// used to live here. That table was a guess and it was wrong in both
+    /// directions: it promised "~$2-5M/yr" for a coordinator whose top man asks
+    /// $6.3M, and capped the head coach at $8M when the range runs to $32M.
     private func estimatedSalaryRange(for role: CoachRole) -> String {
-        switch role {
-        case .headCoach:
-            return "~$3-8M/yr"
-        case .assistantHeadCoach:
-            return "~$1-3M/yr"
-        case .offensiveCoordinator, .defensiveCoordinator, .specialTeamsCoordinator:
-            return "~$2-5M/yr"
-        default:
-            return "~$0.5-2M/yr"
+        let range = role.salaryRange
+        func millions(_ thousands: Int) -> String {
+            let m = Double(thousands) / 1_000.0
+            return m < 10 ? String(format: "%.1f", m) : String(format: "%.0f", m)
         }
+        return "~$\(millions(range.min))-\(millions(range.max))M/yr"
     }
 
     /// Minimum salary estimate (in thousands) for a vacant coaching role.
@@ -2672,7 +2699,7 @@ struct CoachingStaffView: View {
         }
         .buttonStyle(.plain)
         .disabled(isAutoHiring)
-        .accessibilityLabel("Priority \(rank): hire a \(vacancy.displayName)")
+        .accessibilityLabel("Priority \(rank): hire \(indefiniteArticle(for: vacancy.displayName)) \(vacancy.displayName)")
     }
 
     /// Routes a vacancy to the hire flow it already had — coordinators and
@@ -2990,7 +3017,10 @@ struct CoachingStaffView: View {
                         }
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Change portrait")
+                // Distinct from the labelled twin further down the card, which
+                // also says "Change portrait" — two controls reading identically
+                // in the same card is a VoiceOver dead end.
+                .accessibilityLabel("Your portrait. Double tap to change it")
 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
@@ -3577,7 +3607,7 @@ private struct HeadCoachCardView: View {
                                 .foregroundStyle(Color.accentBlue)
                         }
                         Text("\u{00B7}")
-                        Text("$\(coach.salary)K/yr")
+                        Text(coachSalaryText(coach.salary))
                             .foregroundStyle(Color.textTertiary)
                     }
                     .font(.caption)
@@ -3722,7 +3752,7 @@ private struct CoachRowWithDescriptionView: View {
                                 .foregroundStyle(Color.accentBlue)
                         }
                         Text("\u{00B7}")
-                        Text("$\(coach.salary)K/yr")
+                        Text(coachSalaryText(coach.salary))
                             .foregroundStyle(Color.textTertiary)
                     }
                     .font(.caption)

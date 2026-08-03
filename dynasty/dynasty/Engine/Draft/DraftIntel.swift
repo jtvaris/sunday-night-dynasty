@@ -97,6 +97,16 @@ enum DraftIntel {
         cachedConsensusRanks[prospectID]
     }
 
+    /// Drops the shared board. Called from
+    /// `WeekAdvancer.resetProcessStateForCareerSwitch` with every other
+    /// process-global cache: the ranks are keyed by prospect id, so another
+    /// save's board is harmless but its memory is not worth carrying, and a
+    /// stale board surviving a career switch is the kind of cross-save leak
+    /// that is easier to prevent than to debug.
+    static func resetProcessState() {
+        cachedConsensusRanks = [:]
+    }
+
     /// Board rank computed against an explicit class — for call sites that
     /// already hold the array and do not want to depend on build order. Pure:
     /// it does not touch the shared cache (see `refreshConsensusBoard`).

@@ -158,6 +158,56 @@ struct HireCoachView: View {
 
     private var sortedCandidates: [Coach] { cachedSortedCandidates }
 
+    /// Why the table is empty, in the user's terms.
+    ///
+    /// Without this the row area simply rendered nothing — the stadium
+    /// background showed through a header, a column strip and a void, which
+    /// reads as a broken screen rather than as "the filters exclude everyone"
+    /// (or, while the pool is still being built, "one moment").
+    @ViewBuilder
+    private var candidateEmptyState: some View {
+        let filtersActive = showAffordableOnly || schemeFilter != "All" || personalityFilter != "All"
+        VStack(spacing: 12) {
+            if candidates.isEmpty {
+                ProgressView()
+                    .progressViewStyle(.circular)
+                    .tint(Color.accentGold)
+                Text("Building the candidate pool\u{2026}")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color.textSecondary)
+                Text("Your scouts are working the phones for \(role.displayName.lowercased()) candidates.")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Color.textTertiary)
+                    .multilineTextAlignment(.center)
+            } else {
+                Image(systemName: "line.3.horizontal.decrease.circle")
+                    .font(.system(size: 34))
+                    .foregroundStyle(Color.textTertiary)
+                Text("No candidates match your filters")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color.textSecondary)
+                Text(filtersActive
+                     ? "\(candidates.count) \(role.displayName.lowercased()) candidates are available. Clear a filter above to see them."
+                     : "Nobody is available for this job right now.")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Color.textTertiary)
+                    .multilineTextAlignment(.center)
+                if filtersActive {
+                    Button("Clear filters") {
+                        showAffordableOnly = false
+                        schemeFilter = "All"
+                        personalityFilter = "All"
+                    }
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.accentGold)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 56)
+    }
+
     /// Recomputes all derived caches. Called when dependencies change.
     private func refreshCaches() {
         let filtered = filteredCandidates
@@ -235,13 +285,17 @@ struct HireCoachView: View {
 
                         // Candidate rows
                         ScrollView(.vertical) {
-                            LazyVStack(spacing: 0) {
-                                ForEach(sortedCandidates) { candidate in
-                                    candidateRow(candidate)
+                            if sortedCandidates.isEmpty {
+                                candidateEmptyState
+                            } else {
+                                LazyVStack(spacing: 0) {
+                                    ForEach(sortedCandidates) { candidate in
+                                        candidateRow(candidate)
 
-                                    Divider()
-                                        .overlay(Color.surfaceBorder.opacity(0.4))
-                                        .padding(.horizontal, 12)
+                                        Divider()
+                                            .overlay(Color.surfaceBorder.opacity(0.4))
+                                            .padding(.horizontal, 12)
+                                    }
                                 }
                             }
                         }
@@ -2018,7 +2072,12 @@ private struct CandidateDetailSheet: View {
                             Text("Candidate prefers: \(scheme)")
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(Color.textPrimary)
-                            Text("Hire a Head Coach first for scheme compatibility rating.")
+                            // A GM+HC career has no `.headCoach` Coach row — the
+                            // user IS the head coach — so telling him to "hire a
+                            // head coach first" was advice he could not take.
+                            Text(userIsHeadCoach
+                                 ? "You set the scheme as head coach. Compatibility is rated once your coordinators are in place."
+                                 : "Hire a Head Coach first for a scheme compatibility rating.")
                                 .font(.caption)
                                 .foregroundStyle(Color.textTertiary)
                         }

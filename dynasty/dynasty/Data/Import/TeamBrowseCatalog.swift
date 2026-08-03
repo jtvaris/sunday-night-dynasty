@@ -63,12 +63,41 @@ struct TeamBrowseCatalog {
 
     // MARK: - Random league
 
-    /// The classic catalog: the static team table, unchanged.
-    static let generated = TeamBrowseCatalog(
-        source: .generated,
-        teams: NFLTeamData.allTeams,
-        previews: NFLTeamData.previews
-    )
+    /// The classic catalog: the static team table, with one number corrected.
+    ///
+    /// `estimatedDraftPicks` in the static table ranges 7-10 — a leftover from
+    /// the hardcoded mock-draft order that used to hand some clubs two firsts
+    /// and others none. `LeagueGenerator.generateInitialDraftPicks` now mints
+    /// exactly one pick per team per round, so the picker was advertising "Draft
+    /// Picks 10" to a GM who would find seven on the board. Compensatory picks
+    /// are awarded later, in the career, and are not knowable here.
+    static let generated: TeamBrowseCatalog = {
+        var corrected: [String: TeamPreview] = [:]
+        for (abbreviation, preview) in NFLTeamData.previews {
+            corrected[abbreviation] = TeamPreview(
+                difficulty: preview.difficulty,
+                situation: preview.situation,
+                ownerPatience: preview.ownerPatience,
+                patienceSeasons: preview.patienceSeasons,
+                marketDescription: preview.marketDescription,
+                estimatedOVR: preview.estimatedOVR,
+                estimatedCapSpace: preview.estimatedCapSpace,
+                estimatedDraftPicks: LeagueGenerator.roundsPerDraft,
+                coachingBudget: preview.coachingBudget,
+                spendingWillingness: preview.spendingWillingness,
+                lastSeasonWins: preview.lastSeasonWins,
+                lastSeasonLosses: preview.lastSeasonLosses,
+                startingQBName: preview.startingQBName,
+                startingQBOverall: preview.startingQBOverall,
+                isLocked: preview.isLocked
+            )
+        }
+        return TeamBrowseCatalog(
+            source: .generated,
+            teams: NFLTeamData.allTeams,
+            previews: corrected
+        )
+    }()
 
     // MARK: - Fixed template
 

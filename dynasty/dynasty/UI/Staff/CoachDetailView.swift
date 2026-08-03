@@ -106,7 +106,7 @@ struct CoachDetailView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This will offer \(coach.firstName) a 2-year contract extension at their current salary of $\(coach.salary)K/yr. Contract will go from \(coach.contractYearsRemaining) to \(coach.contractYearsRemaining + 2) years.")
+            Text("This will offer \(coach.firstName) a 2-year contract extension at their current salary of \(coachSalaryText(coach.salary)). Contract will go from \(coach.contractYearsRemaining) to \(coach.contractYearsRemaining + 2) years.")
         }
         // Promote: role picker sheet
         .sheet(isPresented: $showPromoteSheet) {
@@ -125,7 +125,7 @@ struct CoachDetailView: View {
         } message: {
             if let targetRole = selectedPromotionRole {
                 let newSalary = Int(Double(coach.salary) * 1.2)
-                Text("This will promote \(coach.firstName) from \(coach.role.displayName) to \(targetRole.displayName). Salary will increase to $\(newSalary)K/yr.")
+                Text("This will promote \(coach.firstName) from \(coach.role.displayName) to \(targetRole.displayName). Salary will increase to \(coachSalaryText(newSalary)).")
             }
         }
         // Demote: confirmation alert
@@ -176,7 +176,7 @@ struct CoachDetailView: View {
                     .foregroundStyle(Color.textSecondary)
             }
             LabeledContent("Salary") {
-                Text("$\(coach.salary)K/yr")
+                Text(coachSalaryText(coach.salary))
                     .monospacedDigit()
                     .foregroundStyle(Color.accentGold)
             }
@@ -371,7 +371,7 @@ struct CoachDetailView: View {
                                             .font(.subheadline.weight(.bold))
                                             .foregroundStyle(Color.textPrimary)
                                         let newSalary = Int(Double(coach.salary) * 1.2)
-                                        Text("Salary: $\(coach.salary)K → $\(newSalary)K/yr")
+                                        Text("Salary: \(coachSalaryText(coach.salary)) → \(coachSalaryText(newSalary))")
                                             .font(.caption)
                                             .foregroundStyle(Color.textSecondary)
                                     }

@@ -98,6 +98,12 @@ enum TaskGenerator {
 
     static let totalPhases = 15
 
+    /// Regular-season week in which the college class first exists.
+    /// `WeekAdvancer.advanceRegularSeasonWeek` generates and persists it here,
+    /// alongside the midseason mock draft — nothing scouting-related can be
+    /// shown to the user before it.
+    static let draftClassOnBoardWeek = 9
+
     static func phaseInfo(for phase: SeasonPhase) -> PhaseInfo {
         switch phase {
         case .proBowl:
@@ -271,7 +277,8 @@ enum TaskGenerator {
                 hasPendingTradeOffers: hasPendingTradeOffers,
                 hasScoutsAssigned: hasScoutsAssigned,
                 hasPendingEvents: hasPendingEvents,
-                ownerSatisfaction: ownerSatisfaction
+                ownerSatisfaction: ownerSatisfaction,
+                week: career.currentWeek
             )
         case .tradeDeadline:
             // The deadline week is still a game week — it has an opponent, a game
@@ -286,7 +293,8 @@ enum TaskGenerator {
                 hasPendingTradeOffers: false,
                 hasScoutsAssigned: hasScoutsAssigned,
                 hasPendingEvents: hasPendingEvents,
-                ownerSatisfaction: ownerSatisfaction
+                ownerSatisfaction: ownerSatisfaction,
+                week: career.currentWeek
             ) + tradeDeadlineTasks(hasPendingTradeOffers: hasPendingTradeOffers)
         case .playoffs:
             phaseTasks = playoffTasks(
@@ -508,6 +516,20 @@ enum TaskGenerator {
 
     private static func reviewRosterTasks() -> [GameTask] {
         [
+            // The two events that fired on the way INTO this phase, and which the
+            // task list never mentioned: underclassmen declared for the draft
+            // (the class the user has been scouting just changed shape) and the
+            // Senior Bowl was played (a fresh report on every prospect who
+            // attended). Both landed as news + inbox only, so a user working the
+            // task list top-down never learned the board had moved.
+            GameTask(
+                phase: .reviewRoster,
+                title: "Read the Senior Bowl & declaration reports",
+                description: "Underclassmen have declared and the Senior Bowl has been played. New reports are on the board \u{2014} the class is not the one you scouted in the autumn.",
+                icon: "doc.text.magnifyingglass",
+                destination: .scouting,
+                isRequired: false
+            ),
             GameTask(
                 phase: .reviewRoster,
                 title: "Review Position Group Grades",
@@ -834,7 +856,8 @@ enum TaskGenerator {
         hasPendingTradeOffers: Bool,
         hasScoutsAssigned: Bool,
         hasPendingEvents: Bool,
-        ownerSatisfaction: Int
+        ownerSatisfaction: Int,
+        week: Int
     ) -> [GameTask] {
         // Regular season: no required tasks — advance always allowed
         var tasks: [GameTask] = []
@@ -876,11 +899,15 @@ enum TaskGenerator {
             isRequired: false
         ))
 
-        if hasScoutsAssigned {
+        // Week 9 is when the class is generated (`WeekAdvancer`, midseason mock).
+        // Before that the scouting hub has an empty board, and this row sent the
+        // user to it every week from opening day with a promise of "new reports"
+        // that could not possibly exist yet.
+        if hasScoutsAssigned && week >= Self.draftClassOnBoardWeek {
             tasks.append(GameTask(
                 phase: .regularSeason,
                 title: "Scout college prospects",
-                description: "Your scouts have filed new reports. Review updated scouting intel.",
+                description: "The college class is on the board. Your scouts have filed their first reports \u{2014} review the intel.",
                 icon: "binoculars.fill",
                 destination: .scouting,
                 isRequired: false
@@ -1007,5 +1034,39 @@ enum TaskGenerator {
     /// the button is enabled.
     static func allRequiredComplete(in tasks: [GameTask]) -> Bool {
         incompleteRequiredCount(in: tasks) == 0
+    }
+
+    /// The combine's four required steps, in the order they unlock.
+    ///
+    /// Declared once here because three separate screens used to carry their own
+    /// copy of this array (`TimelineTasksPanel.isTaskLocked`,
+    /// `CareerDashboardView.isHeroTaskLocked`, and the shell's completion pass),
+    /// and each compared against `task.title` — which the generator is free to
+    /// decorate with a progress counter. Compare against `GameTask.matchKey`.
+    static let combineChain: [String] = [
+        "Send scouts to Combine",
+        "Review Combine results",
+        "Conduct prospect interviews",
+        "Review interview report",
+    ]
+}
+
+// MARK: - Stable identity
+
+extension GameTask {
+
+    /// The task's identity for state matching, with any progress counter
+    /// stripped: `"Conduct prospect interviews (12/60 done)"` → `"Conduct
+    /// prospect interviews"`.
+    ///
+    /// Every "is this task done / is its prerequisite done" check in the app
+    /// keys off the title, and several titles carry a live counter. Matching the
+    /// decorated string meant that the moment a counter appeared the task could
+    /// no longer be completed, and the step after it stayed locked forever — so
+    /// the counters were simply never wired up. This is the seam that lets both
+    /// things be true at once.
+    var matchKey: String {
+        guard let paren = title.range(of: " (") else { return title }
+        return String(title[title.startIndex..<paren.lowerBound])
     }
 }

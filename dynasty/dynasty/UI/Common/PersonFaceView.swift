@@ -211,9 +211,73 @@ struct PersonFaceView: View {
 /// most lookups fail, and re-hitting the bundle for every scroll frame of a
 /// 53-row roster would be pure waste. Nothing here can throw or trap — a
 /// missing, unreadable or corrupt file all resolve to `nil`.
+///
+/// ## Why the decode is rationed
+///
+/// The first version dispatched one `Task.detached` per portrait. That reads as
+/// "get off the main thread", but a detached task runs on the **Swift
+/// cooperative pool**, whose width is the core count — and `CGImageSource`
+/// thumbnailing is a *blocking* call, so each one parks a pool thread for the
+/// whole decode. A screenful of 20-53 faces therefore parked every thread the
+/// process has for async work, and the starvation was global: coach-candidate
+/// generation, league loading, every `.task` in the app queued behind portraits.
+/// On a device with a hardware HEVC decoder each decode is milliseconds and the
+/// bug is invisible; in the Simulator, where HEVC is decoded in software, it is
+/// a hard hang (19 of 30 threads inside `decodeThumbnail`).
+///
+/// The fix is two rules, both enforced here rather than at the call sites:
+///
+/// 1. Decodes run on a **private GCD queue**, never on the cooperative pool, so
+///    a blocked decode can never be a blocked `async` task somewhere else.
+/// 2. At most `maxConcurrentDecodes` run at once (`DecodeGate`). Callers past
+///    the limit *suspend* — they do not occupy a thread — and a caller whose
+///    view scrolled away is dropped when its turn comes rather than decoded.
 nonisolated final class FaceImageCache: @unchecked Sendable {
 
     static let shared = FaceImageCache()
+
+    // MARK: - Decode rationing
+
+    /// Admission control for the decoder: `limit` concurrent decodes, everyone
+    /// else suspended (not blocked) until a slot frees.
+    private actor DecodeGate {
+        private let limit: Int
+        private var active = 0
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+
+        init(limit: Int) { self.limit = max(1, limit) }
+
+        func acquire() async {
+            if active < limit {
+                active += 1
+                return
+            }
+            await withCheckedContinuation { waiters.append($0) }
+        }
+
+        func release() {
+            if waiters.isEmpty {
+                active = max(0, active - 1)
+            } else {
+                waiters.removeFirst().resume()
+            }
+        }
+    }
+
+    /// Two cores' worth of decoding, never more than 3. Enough to keep a scroll
+    /// filling in, small enough that the rest of the app never notices.
+    private static let maxConcurrentDecodes =
+        min(3, max(1, ProcessInfo.processInfo.activeProcessorCount - 2))
+
+    private let gate = DecodeGate(limit: FaceImageCache.maxConcurrentDecodes)
+
+    /// Private, off the cooperative pool. Concurrent because the gate — not the
+    /// queue — is what bounds the width.
+    private static let decodeQueue = DispatchQueue(
+        label: "com.dynasty.faces.decode",
+        qos: .userInitiated,
+        attributes: .concurrent
+    )
 
     /// Longest edge the cache keeps, in pixels: `.large` (96 pt) at 3×.
     /// Bundled faces are 384², so this is a mild downscale for the biggest
@@ -225,7 +289,18 @@ nonisolated final class FaceImageCache: @unchecked Sendable {
 
     private let cache = NSCache<NSString, UIImage>()
     private let lock = NSLock()
+    /// Ids proven not to be in the bundle. A packaging fact, so it never expires.
     private var misses: Set<String> = []
+    /// Ids whose file EXISTS but whose decode failed, and how often. A decode
+    /// can fail for reasons that are not about the file — memory pressure above
+    /// all — so one failure must not blank a face for the rest of the launch,
+    /// which is what a single shared miss set used to do.
+    private var decodeFailures: [String: Int] = [:]
+
+    /// Decode attempts a present-but-unreadable file gets before it is written
+    /// off. Three is enough to ride out a transient; small enough that a genuinely
+    /// corrupt image is not re-decoded on every scroll frame.
+    private static let maxDecodeAttempts = 3
 
     private init() {
         cache.countLimit = 160
@@ -255,6 +330,7 @@ nonisolated final class FaceImageCache: @unchecked Sendable {
 
         lock.lock()
         let knownMiss = misses.contains(faceID)
+            || (decodeFailures[faceID] ?? 0) >= Self.maxDecodeAttempts
         lock.unlock()
         if knownMiss { return nil }
 
@@ -262,12 +338,37 @@ nonisolated final class FaceImageCache: @unchecked Sendable {
             noteMiss(faceID)
             return nil
         }
+
+        // Wait for a decoder slot. Suspends — no thread is held while queued.
+        // The slot is released on EVERY exit below; `defer` is not used because
+        // releasing it needs an `await`.
+        await gate.acquire()
+
+        // The row that asked may be long gone by the time a slot frees (a fling
+        // through the 350-row Big Board queues hundreds). Decoding for a
+        // cancelled view is pure waste, and skipping it is what keeps a fast
+        // scroll from paying for every row it flew past.
+        if Task.isCancelled {
+            await gate.release()
+            return nil
+        }
+
+        // Another caller may have decoded the same id while this one waited.
+        if let cached = cachedImage(for: faceID) {
+            await gate.release()
+            return cached
+        }
+
         let maxPixel = Self.maxPixelSize
-        let decoded = await Task.detached(priority: .userInitiated) {
-            Self.decodeThumbnail(at: url, maxPixel: maxPixel)
-        }.value
+        let decoded: CGImage? = await withCheckedContinuation { continuation in
+            Self.decodeQueue.async {
+                continuation.resume(returning: Self.decodeThumbnail(at: url, maxPixel: maxPixel))
+            }
+        }
+        await gate.release()
+
         guard let decoded else {
-            noteMiss(faceID)
+            noteDecodeFailure(faceID)
             return nil
         }
         let image = UIImage(cgImage: decoded)
@@ -275,9 +376,19 @@ nonisolated final class FaceImageCache: @unchecked Sendable {
         return image
     }
 
+    /// The file is not in the bundle. Permanent for this launch — packaging
+    /// does not change while the app runs.
     private func noteMiss(_ faceID: String) {
         lock.lock()
         misses.insert(faceID)
+        lock.unlock()
+    }
+
+    /// The file is there but would not decode. Counted, not blacklisted, so a
+    /// transient failure costs one retry instead of the whole session.
+    private func noteDecodeFailure(_ faceID: String) {
+        lock.lock()
+        decodeFailures[faceID, default: 0] += 1
         lock.unlock()
     }
 
@@ -301,6 +412,7 @@ nonisolated final class FaceImageCache: @unchecked Sendable {
         cache.removeAllObjects()
         lock.lock()
         misses.removeAll()
+        decodeFailures.removeAll()
         lock.unlock()
     }
 

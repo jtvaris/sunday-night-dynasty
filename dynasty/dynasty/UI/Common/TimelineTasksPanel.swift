@@ -390,10 +390,10 @@ struct TimelineTasksPanel: View {
     private func isTaskLocked(_ task: GameTask) -> Bool {
         guard task.status == .todo, task.isRequired else { return false }
         // Combine sequential blocking
-        let combineChain = ["Send scouts to Combine", "Review Combine results", "Conduct prospect interviews", "Review interview report"]
-        if let taskIdx = combineChain.firstIndex(of: task.title), taskIdx > 0 {
+        let combineChain = TaskGenerator.combineChain
+        if let taskIdx = combineChain.firstIndex(of: task.matchKey), taskIdx > 0 {
             let prereqTitle = combineChain[taskIdx - 1]
-            if let prereq = tasks.first(where: { $0.title == prereqTitle }), prereq.status != .done {
+            if let prereq = tasks.first(where: { $0.matchKey == prereqTitle }), prereq.status != .done {
                 return true
             }
         }

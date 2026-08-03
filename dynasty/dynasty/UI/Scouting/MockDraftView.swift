@@ -1316,7 +1316,16 @@ struct MockDraftView: View {
         players = (try? modelContext.fetch(playerDesc)) ?? []
 
         if let teamID = career.teamID {
-            let pickDesc = FetchDescriptor<DraftPick>(predicate: #Predicate { $0.currentTeamID == teamID })
+            // THIS year's picks only. The tradable horizon holds three more
+            // drafts whose slots are provisional midpoints (`round * 32 - 16`),
+            // and an unfiltered fetch mixed them in — the same board then showed
+            // "Rd 1 #16" three times for a club picking fourth.
+            let season = career.currentSeason
+            let pickDesc = FetchDescriptor<DraftPick>(
+                predicate: #Predicate<DraftPick> {
+                    $0.currentTeamID == teamID && $0.seasonYear == season
+                }
+            )
             teamDraftPicks = (try? modelContext.fetch(pickDesc)) ?? []
         }
     }

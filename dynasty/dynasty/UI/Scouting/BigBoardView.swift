@@ -2186,9 +2186,25 @@ struct BigBoardView: View {
         coaches = (try? modelContext.fetch(desc)) ?? []
     }
 
+    /// The club's picks in the draft this cycle is building toward — and ONLY
+    /// those.
+    ///
+    /// This used to fetch every `DraftPick` the team owned, in any year. The
+    /// pick pool always holds three future drafts as well (`futureDraftPicks`,
+    /// the tradable horizon), and each of those rows carries a *provisional*
+    /// slot: the midpoint of its round, `round * 32 - 16`. So the Draft Prep
+    /// card listed "Rd 1 #16, Rd 1 #16, Rd 1 #16, Rd 2 #48, Rd 2 #48…" — 28
+    /// picks in triplicate — and "available at your first pick" was computed
+    /// against a fabricated #16 belonging to a draft three years out, on a team
+    /// that in this year's draft was picking fourth.
     private func loadDraftPicks() {
         guard let teamID = career.teamID else { return }
-        let desc = FetchDescriptor<DraftPick>(predicate: #Predicate { $0.currentTeamID == teamID })
+        let season = career.currentSeason
+        let desc = FetchDescriptor<DraftPick>(
+            predicate: #Predicate<DraftPick> {
+                $0.currentTeamID == teamID && $0.seasonYear == season
+            }
+        )
         teamDraftPicks = (try? modelContext.fetch(desc)) ?? []
     }
 

@@ -166,6 +166,9 @@ enum WeekAdvancer {
         draftClassGenerated = false
         udfaStageCompletedSeasons = []
         draftCycleHeartbeatsSent = []
+        // The published media board is process-global too — one more cache that
+        // belonged to the save being left.
+        DraftIntel.resetProcessState()
 
         // Trade counters: the monotonic pair the per-season diff reads, plus the
         // per-cycle pair `startNewSeason` maintains (season 1 never calls it, so a
@@ -198,6 +201,44 @@ enum WeekAdvancer {
     /// context and persists the change. Safe to call repeatedly — `insert`
     /// is idempotent for managed instances and will register fresh ones so
     /// subsequent `save()` calls flush their property changes too.
+    /// Re-seeds `currentDraftClass` from SwiftData when the process has lost it.
+    ///
+    /// **This is what stops the class being generated twice.** `currentDraftClass`
+    /// and `draftClassGenerated` are process statics: they are correct for as long
+    /// as the app stays alive, and empty the moment it is relaunched. Both
+    /// generation sites are guarded by `!draftClassGenerated` only — so a cold
+    /// launch anywhere between the week-9 generation and the draft itself would
+    /// take that branch again and `persistDraftClass` would INSERT a second full
+    /// class (it inserts, it never replaces). The save then carried ~700 prospect
+    /// rows for one career, and every scouting report filed on the first class
+    /// was stranded on rows no screen showed again — nothing deletes them until
+    /// `purgeStaleSeasonData` a whole year later.
+    ///
+    /// Two screens already did this restore for themselves (`ScoutingHubView`,
+    /// `DraftDayCoordinator`), which is exactly why the bug only showed up when
+    /// the user advanced the calendar without opening either of them first.
+    /// Hoisted here and called from `advanceWeek`, so the engine can no longer
+    /// depend on a particular screen having been visited.
+    ///
+    /// Safe at any point in the calendar: prospect rows are purged wholesale at
+    /// every season rollover (`startNewSeason` → `purgeStaleSeasonData`), so any
+    /// row that exists belongs to the cycle currently in flight.
+    ///
+    /// - Returns: `true` when a class was restored from the store.
+    @discardableResult
+    @MainActor
+    static func restoreDraftClassIfNeeded(career: Career, modelContext: ModelContext) -> Bool {
+        guard !draftClassGenerated, currentDraftClass.isEmpty else { return false }
+        let cid = career.id
+        let stored = (try? modelContext.fetch(FetchDescriptor<CollegeProspect>(
+            predicate: #Predicate { $0.careerID == cid }
+        ))) ?? []
+        guard !stored.isEmpty else { return false }
+        currentDraftClass = stored
+        draftClassGenerated = true
+        return true
+    }
+
     @MainActor
     static func persistDraftClass(_ prospects: [CollegeProspect], to context: ModelContext) {
         for prospect in prospects {
@@ -612,6 +653,14 @@ enum WeekAdvancer {
         // Multi-save isolation: bind every store-wide fetch below to this save.
         bind(to: career)
 
+        // Rehydrate the cycle's draft class BEFORE any phase hook can decide it
+        // does not exist. `bind` above clears the statics on a career switch and
+        // a cold launch starts with them empty, so without this the
+        // `!draftClassGenerated` guards in the week-9 / coachingChanges /
+        // combine hooks generate and INSERT a second class over the top of the
+        // persisted one.
+        restoreDraftClassIfNeeded(career: career, modelContext: modelContext)
+
         // Reset per-advance state
         lastNewsItems = []
         lastEvents = []
@@ -868,6 +917,13 @@ enum WeekAdvancer {
         career.interviewsUsed = 0
         career.workoutsUsed = 0
         career.top30VisitsUsed = 0
+
+        // 6c-1. The pro-days private-workout allowance is the same kind of
+        // per-cycle budget, but it lives in `CareerScopedDefaults` rather than on
+        // the career, and it was the one counter this reset missed — so the
+        // "(n/10 used)" line kept climbing across seasons and the button went
+        // permanently dead once ten workouts had ever been scheduled.
+        CareerScopedDefaults.set(0, "personalWorkoutsUsed")
 
         // 6c-2. R32: scouts' pro-day trip counters are per-cycle too (same
         // leak — `canAttendProDay` went permanently false after season one).
@@ -4044,7 +4100,13 @@ enum WeekAdvancer {
     private static func sendDraftCycleHeartbeat(career: Career, phase: SeasonPhase) {
         guard !currentDraftClass.isEmpty else { return }
         let key = "\(career.currentSeason)-\(phase.rawValue)"
-        guard !draftCycleHeartbeatsSent.contains(key) else { return }
+        // The de-duplication has to survive a relaunch, because the thing it is
+        // preventing does: `draftCycleHeartbeatsSent` is a process static, so a
+        // user who quit the app and advanced the same boundary again got a
+        // second identical letter in the inbox. The persisted set is the
+        // authority; the static is just the hot path.
+        let sent = draftCycleHeartbeatsSent.union(persistedHeartbeatKeys())
+        guard !sent.contains(key) else { return }
         guard let message = InboxEngine.draftCycleHeartbeat(
             phase: phase,
             prospects: currentDraftClass,
@@ -4053,7 +4115,24 @@ enum WeekAdvancer {
             )
         ) else { return }
         draftCycleHeartbeatsSent.insert(key)
+        persistHeartbeatKeys(sent.union([key]))
         lastInboxMessages.append(message)
+    }
+
+    /// Heartbeat keys this save has already mailed, from `UserDefaults`.
+    ///
+    /// Stored as one pipe-joined string rather than an array so it travels
+    /// through the same `CareerScopedDefaults` string accessor every other
+    /// career-scoped flag uses (and is therefore purged with the save).
+    private static func persistedHeartbeatKeys() -> Set<String> {
+        guard let raw = CareerScopedDefaults.string("draftCycleHeartbeatsSent"), !raw.isEmpty else {
+            return []
+        }
+        return Set(raw.split(separator: "|").map(String.init))
+    }
+
+    private static func persistHeartbeatKeys(_ keys: Set<String>) {
+        CareerScopedDefaults.set(keys.sorted().joined(separator: "|"), "draftCycleHeartbeatsSent")
     }
 
     /// Holds the January all-star week and files what it produced.

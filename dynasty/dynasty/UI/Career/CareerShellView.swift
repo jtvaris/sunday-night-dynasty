@@ -394,7 +394,12 @@ struct CareerShellView: View {
     /// the underlying grievance is actually fixed (an unresolved pay gap would
     /// re-trigger the same drama next offseason).
     private func applyHoldoutResolutionEffects(_ resolution: HoldoutEngine.Resolution, player: Player) {
-        let market = ContractEngine.estimateMarketValue(player: player)
+        // The league's ACTUAL cap. At the 265 000 default this screen priced a
+        // holdout against season-1 money while the free-agency screen priced the
+        // same man against the real cap — a gap that widens every league year.
+        let market = ContractEngine.estimateMarketValue(
+            player: player, salaryCap: team?.salaryCap ?? 265_000
+        )
         switch resolution {
         case .extend:
             // Market-rate extension: pay the player and add years.
@@ -435,8 +440,9 @@ struct CareerShellView: View {
 
         // Build per-player market value map.
         var marketValues: [UUID: Int] = [:]
+        let cap = team?.salaryCap ?? 265_000
         for p in roster {
-            marketValues[p.id] = ContractEngine.estimateMarketValue(player: p)
+            marketValues[p.id] = ContractEngine.estimateMarketValue(player: p, salaryCap: cap)
         }
         let candidates = HoldoutEngine.detectStarHoldoutCandidates(roster: roster, marketValues: marketValues)
 
@@ -1414,7 +1420,10 @@ struct CareerShellView: View {
             guard currentTasks[index].status != .done else { continue }
             let task = currentTasks[index]
 
-            switch task.title {
+            // Matched on `matchKey`, not on the raw title: several titles carry a
+            // live progress counter ("… (12/60 done)") and an exact-title switch
+            // silently stopped completing them the moment one appeared.
+            switch task.matchKey {
             // Coaching Changes — verified by actual game state (coach exists)
             case "Hire Head Coach":
                 if hasHC { currentTasks[index].status = .done }
@@ -1474,7 +1483,7 @@ struct CareerShellView: View {
 
             case "Conduct prospect interviews":
                 // Locked until combine results reviewed
-                let resultsReviewed = currentTasks.first(where: { $0.title == "Review Combine results" })?.status == .done
+                let resultsReviewed = currentTasks.first(where: { $0.matchKey == "Review Combine results" })?.status == .done
                 if !resultsReviewed {
                     currentTasks[index].status = .todo
                 } else if career.interviewsUsed > 0 {
@@ -1484,7 +1493,7 @@ struct CareerShellView: View {
 
             case "Review interview report":
                 // Locked until interviews conducted
-                let interviewsDone = currentTasks.first(where: { $0.title == "Conduct prospect interviews" })?.status == .done
+                let interviewsDone = currentTasks.first(where: { $0.matchKey == "Conduct prospect interviews" })?.status == .done
                 if !interviewsDone {
                     currentTasks[index].status = .todo
                 } else if CareerScopedDefaults.bool("interviewReportReviewed") {
@@ -1532,10 +1541,32 @@ struct CareerShellView: View {
                     currentTasks[index].status = .done
                 }
 
-            // Draft — done when this season's draftees are on the roster
+            // Draft — done when this season's draftees are on the roster, OR
+            // when there is nothing left on the board for this club to use.
+            //
+            // The roster check alone made this REQUIRED gate unsatisfiable for a
+            // GM who arrived at the draft holding no picks — traded them all,
+            // or simply never had one in the round the generator gave him. He
+            // drafted nobody, no rookie ever appeared, and the phase could not
+            // be advanced from either surface: a dead career with no message
+            // explaining why. Having no incomplete pick left IS a finished
+            // draft, so it counts as one.
             case "Enter the Draft":
                 if players.contains(where: { $0.draftPickNumber != nil && $0.yearsPro == 0 }) {
                     currentTasks[index].status = .done
+                } else {
+                    let draftSeason = career.currentSeason
+                    let ownPicksDescriptor = FetchDescriptor<DraftPick>(
+                        predicate: #Predicate<DraftPick> {
+                            $0.currentTeamID == teamID
+                                && $0.seasonYear == draftSeason
+                                && $0.isComplete == false
+                        }
+                    )
+                    let picksLeft = (try? modelContext.fetchCount(ownPicksDescriptor)) ?? 1
+                    if picksLeft == 0 {
+                        currentTasks[index].status = .done
+                    }
                 }
 
             // Pro Days — completion checks
@@ -1688,6 +1719,31 @@ struct CareerShellView: View {
         let hasPendingEvents = !WeekAdvancer.lastEvents.isEmpty
         let ownerSatisfaction = team?.owner?.satisfaction ?? 50
 
+        // Cycle progress the generator has always accepted and nobody ever
+        // passed, so a save reopened mid-phase came back with every scouting
+        // step at zero. `refreshTaskCompletionStatus` corrects the statuses a
+        // moment later; these make the list correct on the FIRST frame, and put
+        // the interview counter in the row title where the user can see it.
+        let cid = career.id
+        let draftSeason = career.currentSeason
+        let proDayDone: Bool = {
+            let descriptor = FetchDescriptor<CollegeProspect>(
+                predicate: #Predicate { $0.careerID == cid && $0.proDayCompleted == true }
+            )
+            return ((try? modelContext.fetchCount(descriptor)) ?? 0) > 0
+        }()
+        let draftAlreadyRun: Bool = {
+            guard let teamID = career.teamID else { return false }
+            let descriptor = FetchDescriptor<DraftPick>(
+                predicate: #Predicate<DraftPick> {
+                    $0.currentTeamID == teamID
+                        && $0.seasonYear == draftSeason
+                        && $0.isComplete == false
+                }
+            )
+            return ((try? modelContext.fetchCount(descriptor)) ?? 1) == 0
+        }()
+
         // Determine opponent name for game-week phases
         var opponentName: String? = nil
         if let nextGame = upcomingGames.first {
@@ -1710,7 +1766,10 @@ struct CareerShellView: View {
             playoffRoundName: playoffRoundName,
             hasScoutsAssigned: hasScoutsAssigned,
             hasPendingEvents: hasPendingEvents,
-            ownerSatisfaction: ownerSatisfaction
+            ownerSatisfaction: ownerSatisfaction,
+            isDraftComplete: draftAlreadyRun,
+            interviewsDone: career.interviewsUsed,
+            allScoutsAssignedToProDays: proDayDone
         )
     }
 

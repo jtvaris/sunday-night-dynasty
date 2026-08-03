@@ -145,6 +145,8 @@ struct DraftPrepCard: View {
             return "Pro days"
         case .draft:
             return "Draft week"
+        case .regularSeason, .tradeDeadline, .playoffs:
+            return "Autumn tape"
         default:
             return "Draft prep"
         }
@@ -162,6 +164,8 @@ struct DraftPrepCard: View {
             return "Last hands-on look: pro days, private workouts, Top-30 visits."
         case .draft:
             return "Anything unscouted now goes on the clock unscouted."
+        case .regularSeason, .tradeDeadline, .playoffs:
+            return "The class is on the board but the chequebook is shut. Reports open at the coaching changes."
         default:
             return "The board keeps between cycles \u{2014} coverage carries into draft week."
         }

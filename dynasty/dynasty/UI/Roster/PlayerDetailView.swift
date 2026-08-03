@@ -143,6 +143,10 @@ struct PlayerDetailView: View {
 
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
+    /// Needed by the contract close: booking a negotiated deal writes the club's
+    /// cap ledger and the player's detailed `Contract` row, not just two fields
+    /// on the player.
+    @Environment(\.modelContext) private var modelContext
 
     @State private var showCutConfirmation = false
     @State private var showPositionChange = false
@@ -325,10 +329,25 @@ struct PlayerDetailView: View {
                     negotiationType: .extend,
                     teamCapSpace: negotiationCapSpace,
                     onDealCompleted: { offer in
-                        // Extension: ADD new years to existing contract, don't replace
-                        player.contractYearsRemaining = player.contractYearsRemaining + offer.years
-                        player.annualSalary = offer.annualSalary
-                        showContractNegotiation = false
+                        // Extension: ADD new years to the existing contract.
+                        // Routed through the engine because the two lines this
+                        // used to be never touched `team.currentCapUsage`, never
+                        // charged the negotiated signing bonus and never updated
+                        // the detailed `Contract` row.
+                        ContractEngine.applyNegotiatedDeal(
+                            player: player,
+                            team: allTeams.first(where: { $0.id == player.teamID }),
+                            offer: offer,
+                            application: .extendExisting,
+                            capMode: careers.first?.capMode ?? .simple,
+                            modelContext: modelContext
+                        )
+                        try? modelContext.save()
+                        // Deliberately NOT dismissing: the agent's closing line and
+                        // the signed card render inside the thread, and the user
+                        // closes the conversation with the Done button when he has
+                        // read them. Auto-exiting here is exactly what made the
+                        // handshake invisible before this wave.
                     }
                 )
             }
@@ -1488,11 +1507,19 @@ struct PlayerDetailView: View {
                     color: .accentGold,
                     subtitle: nil
                 ) {}
+                // ONE uniform entry into a contract conversation. It says the
+                // same thing on every player and never reveals willingness —
+                // whether his camp picks up is something the agent tells you in
+                // the chat, not something the roster leaks by hiding a button.
                 actionButton(
-                    label: "Extend Contract",
-                    icon: "doc.badge.plus",
+                    label: ContactAgentEntry.title,
+                    icon: ContactAgentEntry.icon,
                     color: .accentBlue,
-                    subtitle: extensionPreviewText
+                    subtitle: ContactAgentEntry.subtitle(
+                        for: player,
+                        season: careers.first?.currentSeason ?? 0,
+                        fallback: extensionPreviewText
+                    )
                 ) {
                     showContractNegotiation = true
                 }

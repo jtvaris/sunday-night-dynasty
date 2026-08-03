@@ -444,7 +444,14 @@ struct ProspectListView: View {
         coaches = (try? modelContext.fetch(coachDesc)) ?? []
         let playerDesc = FetchDescriptor<Player>(predicate: #Predicate { $0.teamID == teamID })
         teamPlayers = (try? modelContext.fetch(playerDesc)) ?? []
-        let pickDesc = FetchDescriptor<DraftPick>(predicate: #Predicate { $0.currentTeamID == teamID })
+        // This cycle's draft only — the future-pick horizon carries provisional
+        // slots that would otherwise read as extra picks in the same round.
+        let pickSeason = career.currentSeason
+        let pickDesc = FetchDescriptor<DraftPick>(
+            predicate: #Predicate<DraftPick> {
+                $0.currentTeamID == teamID && $0.seasonYear == pickSeason
+            }
+        )
         teamDraftPicks = (try? modelContext.fetch(pickDesc)) ?? []
     }
 

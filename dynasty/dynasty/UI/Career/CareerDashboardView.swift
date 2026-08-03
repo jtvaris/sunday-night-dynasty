@@ -180,10 +180,10 @@ struct CareerDashboardView: View {
     /// Mirror of TimelineTasksPanel.isTaskLocked for hero-banner gating.
     private func isHeroTaskLocked(_ task: GameTask) -> Bool {
         guard task.status == .todo, task.isRequired else { return false }
-        let combineChain = ["Send scouts to Combine", "Review Combine results", "Conduct prospect interviews", "Review interview report"]
-        if let taskIdx = combineChain.firstIndex(of: task.title), taskIdx > 0 {
+        let combineChain = TaskGenerator.combineChain
+        if let taskIdx = combineChain.firstIndex(of: task.matchKey), taskIdx > 0 {
             let prereqTitle = combineChain[taskIdx - 1]
-            if let prereq = tasks.first(where: { $0.title == prereqTitle }), prereq.status != .done {
+            if let prereq = tasks.first(where: { $0.matchKey == prereqTitle }), prereq.status != .done {
                 return true
             }
         }
@@ -252,8 +252,12 @@ struct CareerDashboardView: View {
     private func runAdvance() {
         guard canAdvance else { return }
 
-        // During coaching changes, show the review sheet instead of advancing directly
+        // During coaching changes, show the review sheet instead of advancing
+        // directly. Guarded: a second tap while the sheet is already up used to
+        // present another copy on top of it, and the user then had to dismiss a
+        // stack of identical sheets before anything could happen.
         if career.currentPhase == .coachingChanges {
+            guard !showCoachingStaffReview else { return }
             loadCoaches()
             showCoachingStaffReview = true
             return
@@ -358,11 +362,30 @@ struct CareerDashboardView: View {
         }
     }
 
-    /// Confirm and advance from coaching changes to review roster.
+    /// Confirm and advance out of coaching changes.
+    ///
+    /// This used to write `career.currentPhase = .reviewRoster` directly, which
+    /// looked like an advance and was not one: it skipped
+    /// `WeekAdvancer.advanceWeek` entirely, so the whole `.coachingChanges`
+    /// engine block never ran for anybody who advanced from the dashboard —
+    /// no retirement wave, no coach carousel, no underclassman declarations, no
+    /// **Senior Bowl**, no draft-cycle heartbeat — and none of the `.reviewRoster`
+    /// entry work either (the `rosterEvaluationConfirmed` / `franchiseTagVisited`
+    /// reset and the owner's roster demands). The calendar sidebar's Advance
+    /// button, which goes straight to the shell, DID run all of it, so the same
+    /// screen had two buttons with two different meanings.
+    ///
+    /// Now the sheet is purely a confirmation step: it hands the advance back to
+    /// the one path every other phase uses.
     private func confirmCoachingAdvance() {
-        career.currentPhase = .reviewRoster
-        try? modelContext.save()
-        loadAllData()
+        if let onAdvance {
+            onAdvance()
+        } else {
+            // Standalone/preview use (no shell): still go through the engine.
+            WeekAdvancer.advanceWeek(career: career, modelContext: modelContext)
+            try? modelContext.save()
+            loadAllData()
+        }
     }
 
     private func loadCoaches() {
@@ -4264,6 +4287,18 @@ private struct CoachingStaffReviewSheet: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { onCancel() }
                         .foregroundStyle(Color.textSecondary)
+                }
+                // The inline confirm button lives at the BOTTOM of a scroll that
+                // runs staff list → schemes → warnings, so on a short sheet it is
+                // below the fold and the only visible action is Cancel — which
+                // reads as "this screen cannot advance". The bar copy of it is
+                // always on screen.
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(missingRequiredRoles.isEmpty ? "Advance" : "Advance Anyway") {
+                        onConfirm()
+                    }
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(missingRequiredRoles.isEmpty ? Color.accentGold : Color.warning)
                 }
             }
         }
