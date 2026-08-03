@@ -376,13 +376,19 @@ struct LeagueHistoryView: View {
         HStack(spacing: DSSpacing.sm) {
             // The legend's portrait in a gold ring — the induction row is the
             // one place a retired player is still a person rather than a stat
-            // line. Faces snapshotted at induction; missing ones fall back to
-            // the silhouette, which still reads as a bust in a gold frame.
+            // line. Faces snapshotted at induction; a legend inducted before
+            // faces existed has no image and never can, so the fallback is the
+            // initials rather than one more identical silhouette in a column of
+            // them.
             PersonFaceView(
                 faceID: entry.faceID,
                 size: .small,
                 ringColor: .accentGold,
-                accessibilityName: entry.playerName
+                accessibilityName: entry.playerName,
+                placeholder: .monogram(
+                    initials: PersonFaceView.initials(fromFullName: entry.playerName),
+                    seed: entry.id
+                )
             )
 
             VStack(alignment: .leading, spacing: 2) {

@@ -293,12 +293,18 @@ private struct OwnerMeetingStep: View {
                 if showHeader {
 
                     VStack(spacing: 12) {
-                        if let owner = owner {
-                            PersonFaceView(owner: owner, size: .large)
-                        } else {
-                            Image(systemName: "person.crop.rectangle")
-                                .font(.system(size: 36))
-                                .foregroundStyle(Color.accentGold)
+                        // Two people in the room: the owner who just hired you,
+                        // and you. The scene showed only the owner.
+                        HStack(spacing: -14) {
+                            if let owner = owner {
+                                PersonFaceView(owner: owner, size: .large)
+                            } else {
+                                Image(systemName: "person.crop.rectangle")
+                                    .font(.system(size: 36))
+                                    .foregroundStyle(Color.accentGold)
+                            }
+                            UserPortraitView(career: career, size: .medium)
+                                .offset(y: 16)
                         }
 
                         Text("OWNER MEETING")
@@ -1499,7 +1505,7 @@ private struct IntroContinueButton: View {
     NavigationStack {
         IntroSequenceView(career: Career(
             playerName: "Mike Johnson",
-            avatarID: "coach_m1",
+            avatarID: "avatar_00000",
             role: .gmAndHeadCoach,
             capMode: .simple
         ))

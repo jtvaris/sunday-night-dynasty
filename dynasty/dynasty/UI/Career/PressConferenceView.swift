@@ -113,13 +113,25 @@ struct PressConferenceView: View {
 
                 if showHeader {
                     VStack(spacing: 20) {
-                        // Microphone icon — gold glow + dark drop shadow so the
-                        // glyph separates from the photo instead of floating flat (audit).
-                        Image(systemName: "mic.fill")
-                            .font(.system(size: 52))
-                            .foregroundStyle(Color.accentGold)
-                            .shadow(color: Color.accentGold.opacity(0.4), radius: 16, y: 0)
-                            .shadow(color: Color.black.opacity(0.55), radius: 5, y: 3)
+                        // The person about to take the podium is the player, so
+                        // the podium screen opens on the player's own face with
+                        // the microphone tucked under it. The mic alone was
+                        // scene-setting for nobody in particular.
+                        UserPortraitView(career: career, size: .large)
+                            .shadow(color: Color.black.opacity(0.5), radius: 10, y: 4)
+                            .overlay(alignment: .bottom) {
+                                Image(systemName: "mic.fill")
+                                    .font(.system(size: 24))
+                                    .foregroundStyle(Color.accentGold)
+                                    .shadow(color: Color.accentGold.opacity(0.4), radius: 10)
+                                    .shadow(color: Color.black.opacity(0.55), radius: 4, y: 2)
+                                    .offset(y: 12)
+                            }
+
+                        Text(career.playerName)
+                            .font(.headline.weight(.bold))
+                            .foregroundStyle(Color.textPrimary)
+                            .padding(.top, 6)
 
                         // Eyebrow shrunk + tracking widened: clear 3-step ladder of
                         // eyebrow < subtitle < title (audit).
@@ -1195,7 +1207,7 @@ struct PressConferenceView: View {
     PressConferenceView(
         career: Career(
             playerName: "Mike Johnson",
-            avatarID: "coach_m1",
+            avatarID: "avatar_00000",
             role: .gmAndHeadCoach,
             capMode: .simple
         ),

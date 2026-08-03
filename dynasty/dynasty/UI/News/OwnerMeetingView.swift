@@ -61,9 +61,15 @@ struct OwnerMeetingView: View {
 
     private func ownerProfileCard(_ owner: Owner) -> some View {
         HStack(spacing: 16) {
-            // Avatar — AI executive photograph when the extras shipped, the
-            // illustrated `owner_m*` art otherwise (`PersonFaceView.init(owner:)`).
-            PersonFaceView(owner: owner, size: .medium)
+            // Both sides of the meeting, facing each other: the owner's AI
+            // executive photograph and the player's own portrait. This screen is
+            // a conversation, and it used to show only one participant.
+            ZStack(alignment: .bottomTrailing) {
+                PersonFaceView(owner: owner, size: .medium)
+                UserPortraitView(career: career, size: .small)
+                    .offset(x: 10, y: 6)
+            }
+            .padding(.trailing, 10)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(owner.name)

@@ -249,7 +249,11 @@ final class Career {
 
     init(
         playerName: String,
-        avatarID: String = "coach_m1",
+        // The first of the 20 AI headshots (`ExtrasCatalog`). Literal rather
+        // than `UserPortrait.fallbackID` to keep the model free of the view
+        // layer; every read goes through `UserPortrait.resolve`, which maps any
+        // legacy `coach_*` value from an older save onto a photograph too.
+        avatarID: String = "avatar_00000",
         coachingStyle: CoachingStyle = .tactician,
         role: CareerRole,
         capMode: CapMode,

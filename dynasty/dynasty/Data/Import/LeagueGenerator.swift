@@ -97,8 +97,29 @@ enum LeagueGenerator {
     /// the file instead (`LeagueTemplate.Identity.ownerGender`).
     private static let ownerFemaleShare: Double = 0.12
 
-    /// The illustrated owner avatars of one gender (`owner_m*` / `owner_f*` in
-    /// `OwnerAvatars.allIDs`).
+    /// The legacy illustrated owner-avatar ids.
+    ///
+    /// **Nothing renders these any more.** The hand-drawn `owner_m*`/`owner_f*`
+    /// art and the view that drew it are gone; every owner surface shows the AI
+    /// executive photograph (`Owner.faceID`, `ExtrasCatalog`) or the owner's
+    /// initials. The list survives here for exactly two reasons:
+    ///
+    /// 1. `Owner.avatarID` is a non-optional stored property on a SwiftData
+    ///    model, so it still has to be given a value.
+    /// 2. The draw below **consumes one random value** from the seeded generator.
+    ///    Removing it would shift every subsequent draw — patience, spending,
+    ///    meddling, prefersWinNow — and silently change all 32 owners in every
+    ///    seeded template import.
+    ///
+    /// Moved out of the deleted `OwnerAvatarImageView.swift` verbatim, order
+    /// included, so the stream is bit-identical to before.
+    private static let legacyOwnerAvatarIDs: [String] = [
+        "owner_m1", "owner_m2", "owner_m3", "owner_m4", "owner_m5",
+        "owner_m6", "owner_m7", "owner_m8", "owner_m9", "owner_m10", "owner_m11",
+        "owner_f1", "owner_f2", "owner_f3",
+    ]
+
+    /// The legacy avatar ids of one gender.
     ///
     /// The draw used to run over the whole 14-id list, which handed roughly one
     /// owner in five a portrait of the wrong sex — invisible while every owner
@@ -107,8 +128,8 @@ enum LeagueGenerator {
     /// force-unwrapped `randomElement`.
     private static func ownerAvatarIDs(female: Bool) -> [String] {
         let prefix = female ? "owner_f" : "owner_m"
-        let matching = OwnerAvatars.allIDs.filter { $0.hasPrefix(prefix) }
-        return matching.isEmpty ? OwnerAvatars.allIDs : matching
+        let matching = legacyOwnerAvatarIDs.filter { $0.hasPrefix(prefix) }
+        return matching.isEmpty ? legacyOwnerAvatarIDs : matching
     }
 
     private static let coachFirstNames: [String] = [

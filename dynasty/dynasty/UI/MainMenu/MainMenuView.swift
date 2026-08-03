@@ -820,6 +820,10 @@ private struct SaveSlotCard: View {
                     size: 56
                 )
 
+                // Whose save this is. Two careers on the same team are otherwise
+                // told apart only by a name in 13 pt type.
+                UserPortraitView(career: career, size: .medium)
+
                 VStack(alignment: .leading, spacing: 4) {
                     Text(team?.fullName ?? "Free Agent")
                         .font(.system(size: 18, weight: .bold))

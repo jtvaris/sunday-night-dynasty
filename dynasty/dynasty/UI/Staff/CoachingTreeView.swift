@@ -57,6 +57,25 @@ struct CoachingTreeView: View {
     private var legacyScoreSection: some View {
         Section("Legacy") {
             VStack(spacing: 16) {
+                // The root of the tree is the user. Every branch below is
+                // someone who worked for them, and each of those rows carries a
+                // face — the root had none, which made the section read as a
+                // scoreboard rather than as the top of a coaching lineage.
+                HStack(spacing: 12) {
+                    UserPortraitView(career: career, size: .medium)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(career.playerName)
+                            .font(.headline.weight(.bold))
+                            .foregroundStyle(Color.textPrimary)
+                        Text("\(career.coachingStyle.displayName) \u{00B7} Tree root")
+                            .font(.caption)
+                            .foregroundStyle(Color.textSecondary)
+                    }
+
+                    Spacer()
+                }
+
                 HStack(alignment: .bottom, spacing: 8) {
                     Text("\(tree.legacyScore)")
                         .font(.system(size: 52, weight: .bold).monospacedDigit())

@@ -32,7 +32,13 @@ struct NewCareerView: View {
     /// Which league the career is built from. `.generated` keeps the classic
     /// random path, so an untouched flow behaves exactly as before.
     @State private var leagueSource: LeagueSource = .generated
-    @State private var selectedAvatarID: String = "coach_m1"
+    /// The portrait the career starts on. Seeded from a fresh shuffle rather
+    /// than pinned to a constant, so the wizard does not open on the same face
+    /// every single career — and never on an illustration, which is what the old
+    /// `"coach_m1"` default did to every Quick Start save (the Quick Start flow
+    /// skips the identity step, so that default was the *only* thing most
+    /// careers ever stored).
+    @State private var selectedAvatarID: String = UserPortrait.randomStartingID()
     @State private var selectedCoachingStyle: CoachingStyle = .tactician
     @State private var selectedRole: CareerRole = .gmAndHeadCoach
     @State private var capSelection: CapModeSelection = .realistic
@@ -183,7 +189,7 @@ struct NewCareerView: View {
 
             Text(flowMode == .quickStart
                  ? "Jump straight in with sensible defaults: GM & Head Coach, Realistic cap, standard mode, Tactician style."
-                 : "Tailor everything: role, cap rules, game mode or scenario, league settings, coaching style, and avatar.")
+                 : "Tailor everything: role, cap rules, game mode or scenario, league settings, coaching style, and portrait.")
                 .font(.subheadline)
                 .foregroundStyle(Color.textSecondary)
         }
@@ -199,11 +205,16 @@ struct NewCareerView: View {
             VStack(spacing: 0) {
                 VStack(spacing: 24) {
                     if flowMode == .quickStart {
-                        // Quick Start: name plus the league source — defaults
+                        // Quick Start: name, league source, portrait — defaults
                         // cover the rest of the configuration surface, but which
-                        // league you play is too fundamental to hide behind one.
+                        // league you play is too fundamental to hide behind one,
+                        // and the portrait is the player's own face. It used to
+                        // be Custom-League-only, which is precisely how every
+                        // Quick Start career ended up wearing the default
+                        // illustration for the rest of its life.
                         nameSection
                         leagueSourceSection
+                        avatarSection
                     } else if isLandscape {
                         nameSection
                         leagueSourceSection
@@ -502,23 +513,21 @@ struct NewCareerView: View {
         }
     }
 
-    // #108, #109, #110, #113: Avatar section with cosmetic label, cleaner headers
+    // #108, #109, #110, #113: portrait section with cosmetic label, cleaner headers
     private var avatarSection: some View {
-        cardSection(icon: "person.crop.circle.fill", title: "Your Look") {
-            VStack(spacing: 4) {
-                // #108: Clarify avatar is cosmetic
+        cardSection(icon: "person.crop.circle.fill", title: "Your Portrait") {
+            VStack(spacing: 8) {
+                // #108: Clarify the portrait is cosmetic
                 Text("Cosmetic only — does not affect gameplay")
                     .font(.caption.weight(.medium))
                     .foregroundStyle(Color.textTertiary)
 
-                AvatarSelectionView(selectedAvatarID: $selectedAvatarID, avatarSize: 48)
+                UserPortraitPicker(selectedAvatarID: $selectedAvatarID, avatarSize: 56)
 
-                // #105: larger avatar name, #110: remove confusing "outside -> Male coach" text
-                if let avatar = CoachAvatars.avatar(for: selectedAvatarID) {
-                    Text("\"\(avatar.name)\"")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Color.textPrimary)
-                }
+                // #105: larger persona name under the grid
+                Text("\"\(UserPortrait.label(for: selectedAvatarID) ?? "Portrait")\"")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.textPrimary)
             }
         }
     }

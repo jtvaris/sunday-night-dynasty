@@ -13,52 +13,23 @@ import ImageIO
 /// caller that knows *who* the person is hands over an identity source, and the
 /// silhouette is reserved for the case where nothing is known (a news item that
 /// only carries a face id, a Hall-of-Fame row whose player row is long gone).
+///
+/// ## No drawn faces
+///
+/// There used to be three more cases here, each of which drew an *illustration*
+/// of a person: a Canvas-rendered helmet cartoon for players, a hand-drawn
+/// `coach_m*` portrait for coaches, a hand-drawn `owner_m*` portrait for owners.
+/// They are gone. Sitting next to 3 712 photographic faces, a cartoon does not
+/// read as "this person has no photo yet" — it reads as a different, worse art
+/// style leaking into the same list. A monogram is honest about being a
+/// stand-in, so that is the only per-person fallback left.
 enum PersonFacePlaceholder {
     /// Neutral silhouette — nothing is known beyond the (missing) face id.
     case silhouette
-    /// The procedural, UUID-derived helmet avatar (`PlayerAvatarView`): every
-    /// player gets a different skin tone, face shape, facemask and jersey
-    /// number, and it always renders.
-    case playerAvatar(Player)
-    /// One of the 20 bundled `coach_m*`/`coach_f*` photographs, picked stably
-    /// from a person id.
-    case coachAvatar(String)
-    /// One of the illustrated `owner_m*`/`owner_f*` portraits — what every owner
-    /// surface drew before the AI executive photographs existed, and therefore
-    /// the natural fallback for an owner whose `faceID` is nil (a career created
-    /// before the field, or a build without the extras).
-    case ownerAvatar(String)
-    /// Initials on a per-person tinted disc — for people with no `Player` row
-    /// and no bundled asset (draft prospects).
+    /// Initials on a per-person tinted disc — the fallback for anyone whose
+    /// photograph has not shipped (draft prospects, a coach past the face-pool
+    /// ceiling, an owner in a build without the extras).
     case monogram(initials: String, seed: UUID)
-}
-
-extension CoachAvatars {
-
-    /// A stable pick from the bundled coach portraits **of the matching
-    /// gender**.
-    ///
-    /// Deliberately NOT `fullName.hashValue`, which is what the pre-face-library
-    /// code used: Swift's string hashing is seeded per process, so that version
-    /// handed the same coach a different photo on every launch. `stableHash` is
-    /// FNV-1a over the person's UUID bytes and survives relaunches.
-    ///
-    /// Scoped by gender because `all` is 10 `coach_m*` + 10 `coach_f*`: the
-    /// unscoped version drew from the mixed list, so roughly half of every male
-    /// coach in the game wore a woman's photograph. The male default keeps the
-    /// one gender-less caller (`Career.avatarID`, chosen in the new-career
-    /// wizard) source-compatible, and an empty sub-list falls back to the full
-    /// list so a pruned asset catalog degrades instead of returning a missing
-    /// image name.
-    static func avatarID(
-        for personID: UUID,
-        gender: CoachAvatarInfo.Gender = .male
-    ) -> String {
-        let scoped = (gender == .female ? femaleAvatars : maleAvatars).map(\.id)
-        let ids = scoped.isEmpty ? all.map(\.id) : scoped
-        guard !ids.isEmpty else { return gender == .female ? "coach_f1" : "coach_m1" }
-        return ids[Int(FaceLibrary.stableHash(personID) % UInt64(ids.count))]
-    }
 }
 
 // MARK: - PersonFaceView
@@ -169,12 +140,6 @@ struct PersonFaceView: View {
         switch placeholder {
         case .silhouette:
             silhouette
-        case .playerAvatar(let player):
-            PlayerAvatarView(player: player, size: size.diameter)
-        case .coachAvatar(let avatarID):
-            CoachAvatarImageView(avatarID: avatarID, size: size.diameter)
-        case .ownerAvatar(let avatarID):
-            OwnerAvatarImageView(avatarID: avatarID, size: size.diameter)
         case .monogram(let initials, let seed):
             monogram(initials: initials, seed: seed)
         }
@@ -372,7 +337,13 @@ extension PersonFaceView {
             size: size,
             ringColor: ringColor,
             accessibilityName: player.fullName,
-            placeholder: .playerAvatar(player)
+            // Was a procedurally drawn helmet cartoon. A roster is 53 rows of
+            // photographs with a handful of gaps; a cartoon in those gaps looked
+            // like a different game, initials look like a missing photo.
+            placeholder: .monogram(
+                initials: Self.initials(player.firstName, player.lastName),
+                seed: player.id
+            )
         )
     }
 
@@ -388,11 +359,13 @@ extension PersonFaceView {
             ringColor: ringColor,
             accessibilityName: coach.fullName,
             // A nil `faceID` is the normal outcome for a female coach hired past
-            // the 35-face ceiling (`FaceLibrary.pickLocked` stage 20), so this
-            // placeholder has to be gender-correct — it is the fallback the
-            // gender-strict picker deliberately falls back TO.
-            placeholder: .coachAvatar(
-                CoachAvatars.avatarID(for: coach.id, gender: coach.avatarGender)
+            // the 35-face ceiling (`FaceLibrary.pickLocked` stage 20). The old
+            // fallback drew one of the 20 illustrated `coach_*` portraits and
+            // therefore had to be gender-matched; a monogram carries no gender to
+            // get wrong, which removes that whole failure mode.
+            placeholder: .monogram(
+                initials: Self.initials(coach.firstName, coach.lastName),
+                seed: coach.id
             )
         )
     }
@@ -410,44 +383,23 @@ extension PersonFaceView {
         )
     }
 
-    /// The user's own head-coach portrait: the avatar they picked in the new-
-    /// career wizard, so the person they created is not the only face-less row
-    /// on their own staff screen.
+    /// A league owner's portrait: one of the 96 AI executive photographs
+    /// (`ExtrasCatalog`), or the owner's initials when the extras did not ship.
     ///
-    /// `Career.avatarID` holds whatever the picker wrote, and the picker offers
-    /// two families (`AvatarSelectionView`): the illustrated `coach_m*`/`coach_f*`
-    /// asset-catalog art and the 20 AI photo headshots
-    /// (`avatar_00000`…`avatar_00019`, `ExtrasCatalog`). Only the first kind is an
-    /// asset — a photo id has to travel the ordinary face path, through
-    /// `FaceImageCache`, so it is decoded off the main thread, downscaled once and
-    /// shared with every other portrait on screen. Hence the split: a photo id
-    /// becomes the `faceID` (and falls back to the neutral silhouette if the HEICs
-    /// did not ship), an illustrated id stays a placeholder.
-    ///
-    /// The prefix test is manifest-independent on purpose — a saved career must
-    /// not render a missing asset-catalog image in a build whose extras manifest
-    /// failed to load.
-    init(careerAvatarID: String, size: Size = .medium, ringColor: Color? = nil, name: String? = nil) {
-        let isPhoto = ExtrasCatalog.isAvatarID(careerAvatarID)
-        self.init(
-            faceID: isPhoto ? careerAvatarID : nil,
-            size: size,
-            ringColor: ringColor,
-            accessibilityName: name,
-            placeholder: isPhoto ? .silhouette : .coachAvatar(careerAvatarID)
-        )
-    }
-
-    /// A league owner's portrait: the AI executive photograph when the extras
-    /// shipped, otherwise the illustrated `owner_m*`/`owner_f*` avatar the owner
-    /// screens have always shown.
+    /// The illustrated `owner_m*`/`owner_f*` art that used to fill that gap is
+    /// gone with the rest of the drawn faces; `Owner.avatarID` still exists as a
+    /// stored property (dropping it would be a schema change for no gain) but
+    /// nothing renders it.
     init(owner: Owner, size: Size = .medium, ringColor: Color? = nil) {
         self.init(
             faceID: owner.faceID,
             size: size,
             ringColor: ringColor,
             accessibilityName: owner.name,
-            placeholder: .ownerAvatar(owner.avatarID)
+            placeholder: .monogram(
+                initials: Self.initials(fromFullName: owner.name),
+                seed: owner.id
+            )
         )
     }
 
@@ -456,6 +408,19 @@ extension PersonFaceView {
         let l = last.first.map(String.init) ?? ""
         let combined = (f + l).uppercased()
         return combined.isEmpty ? "?" : combined
+    }
+
+    /// Initials from a single "First Last" string — for the people the app
+    /// stores as one name (owners, and the user's own career name).
+    static func initials(fromFullName name: String) -> String {
+        let parts = name
+            .split(whereSeparator: { $0 == " " || $0 == "\u{00A0}" })
+            .filter { !$0.isEmpty }
+        guard let first = parts.first else { return "?" }
+        if parts.count == 1 {
+            return String(first.prefix(1)).uppercased()
+        }
+        return initials(String(first), String(parts[parts.count - 1]))
     }
 }
 
@@ -473,14 +438,13 @@ extension PersonFaceView {
                 PersonFaceView(faceID: "face_00001", size: .medium)
                 PersonFaceView(faceID: "face_00002", size: .large)
             }
-            Text("Per-person fallbacks: bundled coach photo + monogram")
+            Text("Per-person fallback: monogram (the only one left)")
                 .font(.caption)
                 .foregroundStyle(Color.textSecondary)
             HStack(alignment: .center, spacing: 16) {
-                PersonFaceView(careerAvatarID: "coach_m3", size: .small, ringColor: .accentGold)
-                PersonFaceView(careerAvatarID: "coach_f4", size: .medium, ringColor: .accentGold)
-                // AI photo pick — travels the FaceImageCache path, not the assets.
-                PersonFaceView(careerAvatarID: "avatar_00000", size: .medium, ringColor: .accentGold)
+                // The user's own portrait — an AI photo travelling the
+                // FaceImageCache path, never an asset-catalog illustration.
+                UserPortraitView(avatarID: "avatar_00000", name: "Juha Varis", size: .medium)
                 PersonFaceView(
                     faceID: nil, size: .medium, ringColor: .accentBlue,
                     placeholder: .monogram(initials: "JV", seed: UUID())

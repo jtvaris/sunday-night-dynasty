@@ -83,6 +83,9 @@ struct CoachingStaffView: View {
     // MARK: - Navigation State
     @State private var activeHireSheet: HireSheetType?  // Single sheet for all hire flows
     @State private var detailCoachID: UUID?             // Pushes CoachDetailView via navigationDestination
+    /// "Change portrait" on the head-coach card — the one place in a running
+    /// career where `Career.avatarID` can still be edited.
+    @State private var showPortraitPicker = false
     @State private var detailScoutID: UUID?             // Pushes ScoutDetailView via navigationDestination
 
     /// Coaches filtered to this team, derived from @Query result.
@@ -2965,20 +2968,29 @@ struct CoachingStaffView: View {
                     .padding(.vertical, 6)
                     .background(Color.accentGold, in: RoundedRectangle(cornerRadius: 6))
 
-                // The user's own portrait — the avatar picked in the new-career
-                // wizard — MOVED here from the row's trailing edge. It was the
-                // only face on the staff screen that did not sit right after
-                // the role badge (`HeadCoachCardView`, `CoachRowView` and
-                // `CoachRowWithDescriptionView` all lead with it), which read
+                // The user's own portrait — the photograph picked in the
+                // new-career wizard — MOVED here from the row's trailing edge.
+                // It was the only face on the staff screen that did not sit
+                // right after the role badge (`HeadCoachCardView`, `CoachRowView`
+                // and `CoachRowWithDescriptionView` all lead with it), which read
                 // as the head-coach card missing the portrait every row under
-                // it had. Same `PersonFaceView` styling as the AI rows, so the
-                // gold ring and diameter match.
-                PersonFaceView(
-                    careerAvatarID: career.avatarID,
-                    size: .medium,
-                    ringColor: .accentGold,
-                    name: career.playerName
-                )
+                // it had. Same styling as the AI rows, so the gold ring and
+                // diameter match. Tapping it re-opens the picker: this card is
+                // the only place a running career can change its face.
+                Button {
+                    showPortraitPicker = true
+                } label: {
+                    UserPortraitView(career: career, size: .medium)
+                        .overlay(alignment: .bottomTrailing) {
+                            Image(systemName: "pencil.circle.fill")
+                                .font(.system(size: 16))
+                                .symbolRenderingMode(.palette)
+                                .foregroundStyle(Color.backgroundPrimary, Color.accentGold)
+                                .offset(x: 2, y: 2)
+                        }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Change portrait")
 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
@@ -3021,8 +3033,22 @@ struct CoachingStaffView: View {
                     .font(.system(size: 10, weight: .medium))
             }
             .foregroundStyle(Color.accentGold.opacity(0.8))
+
+            // Discoverable twin of the tap target on the portrait itself — a
+            // pencil badge alone is easy to miss on a card this dense.
+            Button {
+                showPortraitPicker = true
+            } label: {
+                Label("Change portrait", systemImage: "person.crop.circle")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.accentBlue)
+            }
+            .buttonStyle(.plain)
         }
         .padding(.vertical, 6)
+        .sheet(isPresented: $showPortraitPicker) {
+            ChangeUserPortraitSheet(career: career)
+        }
     }
 
     // MARK: - Coach Row with Chemistry Indicator

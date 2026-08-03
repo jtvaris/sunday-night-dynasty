@@ -1975,7 +1975,11 @@ struct CareerDashboardView: View {
             DashboardTile(icon: "person.2.fill", title: "Staff", highlighted: currentPhaseHighlightedTiles.contains("Staff")) {
                 VStack(alignment: .leading, spacing: 4) {
                     if isGMAndHC {
-                        HStack(spacing: 4) {
+                        HStack(spacing: 6) {
+                            // Same leading-portrait rhythm as the AI head-coach
+                            // branch right below — "You" was the one HC on this
+                            // tile without a face.
+                            UserPortraitView(career: career, size: .small)
                             Text("HC")
                                 .font(.system(size: 10, weight: .bold))
                                 .foregroundStyle(Color.accentGold)

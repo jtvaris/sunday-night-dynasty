@@ -143,6 +143,22 @@ struct WeeklyPressConferenceView: View {
                 }
             }
 
+            // The player is the one answering, so the player's own face heads
+            // the screen — the reporter's badge already carries a portrait slot
+            // one card down, and only one side of the exchange had a face.
+            HStack(spacing: 10) {
+                UserPortraitView(career: career, size: .small)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(career.playerName)
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(Color.textPrimary)
+                    Text("At the podium")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textTertiary)
+                }
+            }
+
             Text("POST-GAME PRESS CONFERENCE")
                 .font(.system(size: 11, weight: .black))
                 .tracking(4)
@@ -807,7 +823,7 @@ struct WeeklyPressConferenceView: View {
         questions: PressConferenceEngine.generateWeeklyPressConference(
             career: Career(
                 playerName: "Mike Johnson",
-                avatarID: "coach_m1",
+                avatarID: "avatar_00000",
                 role: .gmAndHeadCoach,
                 capMode: .simple
             ),
@@ -825,7 +841,7 @@ struct WeeklyPressConferenceView: View {
         ),
         career: Career(
             playerName: "Mike Johnson",
-            avatarID: "coach_m1",
+            avatarID: "avatar_00000",
             role: .gmAndHeadCoach,
             capMode: .simple
         ),

@@ -105,16 +105,13 @@ final class Coach {
     /// Stored property with an inline default → safe lightweight migration.
     var gender: String = "male"
 
-    /// `gender` as the enum the bundled placeholder photographs are tagged with
-    /// (`CoachAvatars.maleAvatars` / `femaleAvatars`).
+    /// `gender` as the enum the face library buckets are tagged with. Anything
+    /// that is not `"female"` reads as male, exactly like `FacePersonGender(tag:)`.
     ///
-    /// A shim on the model rather than a string comparison in the view layer:
-    /// `PersonFaceView.init(coach:)` is where a nil `faceID` turns into a
-    /// `coach_m*`/`coach_f*` photo, and it should not be the place that decides
-    /// what an unrecognised gender string means. Anything that is not
-    /// `"female"` reads as male, exactly like `FacePersonGender(tag:)`.
-    var avatarGender: CoachAvatarInfo.Gender {
-        gender == "female" ? .female : .male
+    /// A shim on the model rather than a string comparison in the view layer, so
+    /// nothing downstream has to decide what an unrecognised gender string means.
+    var faceGender: FacePersonGender {
+        FacePersonGender(tag: gender)
     }
 
     /// Get expertise for a specific scheme (baseline 20 for unknown schemes).

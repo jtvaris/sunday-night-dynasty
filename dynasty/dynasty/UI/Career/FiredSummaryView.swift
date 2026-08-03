@@ -53,9 +53,18 @@ struct FiredSummaryView: View {
 
     private var header: some View {
         VStack(spacing: 10) {
-            Image(systemName: "xmark.octagon.fill")
-                .font(.system(size: 44))
-                .foregroundStyle(Color.danger)
+            // The person being fired. A career ending is the one screen that
+            // should be about a face, not an icon — the octagon stays as a badge
+            // on the portrait rather than replacing it.
+            UserPortraitView(career: career, size: .large, ringColor: .danger)
+                .overlay(alignment: .bottomTrailing) {
+                    Image(systemName: "xmark.octagon.fill")
+                        .font(.system(size: 26))
+                        .symbolRenderingMode(.palette)
+                        .foregroundStyle(Color.white, Color.danger)
+                        .offset(x: 4, y: 4)
+                }
+                .padding(.bottom, 6)
 
             Text("Relieved of Duties")
                 .font(.largeTitle.weight(.black))
