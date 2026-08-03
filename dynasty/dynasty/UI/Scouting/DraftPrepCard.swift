@@ -86,9 +86,11 @@ struct DraftPrepCard: View {
     let teamRoster: [Player]
     let scouts: [Scout]
     let scoutsSentToCombine: Bool
-    /// Thousands left in the owner's scouting pot after salaries and the
-    /// combine trip.
+    /// Thousands left in the owner's scouting pot after salaries, the combine
+    /// trip and this cycle's per-prospect evaluations.
     let scoutingBudgetRemaining: Int
+    /// Per-prospect scout evaluations spent this cycle (`ScoutEvaluationBudget`).
+    var evaluationsUsed: Int = 0
     /// Jumps the hub to a tab (used by the position-coverage rows).
     var onSelectTab: ((ScoutingTab) -> Void)? = nil
     /// Applies a position filter to the hub's shared chips.
@@ -119,6 +121,14 @@ struct DraftPrepCard: View {
     /// Interview slots only mean something while the window is open.
     private var interviewWindowOpen: Bool {
         career.currentPhase == .combine || career.currentPhase == .proDays
+    }
+
+    private var evaluationsRemaining: Int {
+        max(0, ScoutEvaluationBudget.slotsPerCycle - evaluationsUsed)
+    }
+
+    private var evaluationWindowOpen: Bool {
+        ScoutEvaluationBudget.isWindowOpen(career.currentPhase)
     }
 
     // MARK: - Phase copy
@@ -393,6 +403,17 @@ struct DraftPrepCard: View {
                     label: "Pro day visits",
                     tint: proDayVisits > 0 ? .accentBlue : .textTertiary,
                     detail: "\(career.top30VisitsUsed)/30 Top-30"
+                )
+                stat(
+                    icon: "magnifyingglass",
+                    value: "\(evaluationsUsed)/\(ScoutEvaluationBudget.slotsPerCycle)",
+                    label: evaluationWindowOpen ? "Evaluations used" : "Evaluations (window shut)",
+                    tint: evaluationWindowOpen
+                        ? (evaluationsRemaining == 0 ? .warning : .accentGold)
+                        : .textTertiary,
+                    detail: evaluationsRemaining == 0
+                        ? "None left this cycle"
+                        : "\(evaluationsRemaining) left"
                 )
                 stat(
                     icon: "dollarsign.circle",

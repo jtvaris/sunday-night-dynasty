@@ -1,9 +1,123 @@
 import SwiftUI
 import SwiftData
 
+// MARK: - Scout evaluation economy
+//
+// "Send Scout to Evaluate" was the hole in the middle of the intel economy.
+// The combine trip is priced ($300-620K out of the owner's scouting pot),
+// interviews are rationed (60 a cycle, combine window only), private workouts
+// are rationed (30), Top-30 visits are rationed (30) — and the one button that
+// files an actual `ScoutingReport`, the thing `ProspectFog` reads to decide how
+// much of a man the user is allowed to see, was free, unlimited and available
+// in every phase of the calendar. Three taps on any prospect took
+// `DraftIntel.scoutConfidence` to 5 and collapsed his band to a single letter,
+// so nothing else in the economy had to be bought at all.
+//
+// It is now a rationed, priced, windowed action like the other four.
+
+/// Prices and rations the per-prospect scouting evaluation.
+enum ScoutEvaluationBudget {
+
+    /// Evaluations the department can run in one draft cycle.
+    ///
+    /// Sized against the rest of the board: 60 interview slots and 30 workouts
+    /// buy *depth* on men you already know, and 25 evaluations is what it takes
+    /// to put a first report on a quarter of the consensus top 100. Covering
+    /// the class is the combine trip's and the pro-day tour's job.
+    static let slotsPerCycle = 25
+
+    /// Reports one prospect may carry. The detail card has always drawn a
+    /// "\(count)/3 scouts" confidence meter; nothing enforced it, so a fourth
+    /// and fifth look were possible and simply invisible.
+    static let maxReportsPerProspect = 3
+
+    /// Phases in which the club may put a scout on a college prospect.
+    ///
+    /// The same window in which the hub considers a draft class to exist
+    /// (`ScoutingHubView.loadData`), minus `.otas` — by OTAs the class has been
+    /// drafted and evaluating it buys nothing.
+    static func isWindowOpen(_ phase: SeasonPhase) -> Bool {
+        switch phase {
+        case .coachingChanges, .reviewRoster, .combine, .freeAgency, .proDays, .draft:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// One line of prose naming when the window reopens.
+    static func windowHint(for phase: SeasonPhase) -> String {
+        switch phase {
+        case .otas, .trainingCamp, .preseason, .rosterCuts, .regularSeason, .tradeDeadline, .playoffs:
+            return "The class is off the board until next season's coaching changes."
+        default:
+            return "Scouting opens with the coaching changes."
+        }
+    }
+
+    /// Cost in thousands of the *next* report on a man who already carries
+    /// `existingReports`.
+    ///
+    /// Rising, because that is where the exploit lived: the first look is a
+    /// cheap tape grade, the third is a cross-check trip nobody runs on a man
+    /// they are not seriously considering. Twenty-five slots at these prices is
+    /// $500K-1.4M of a $4.0M pot depending on how deep the user doubles back —
+    /// the same order as the combine trip, so the two compete for the money.
+    static func cost(existingReports: Int) -> Int {
+        switch existingReports {
+        case 0:  return 20
+        case 1:  return 35
+        default: return 55
+        }
+    }
+
+    /// The cycle-scoped read of a stored counter: a stamp from an earlier draft
+    /// cycle reads as zero, so slots and spend reset with the new class instead
+    /// of needing a hook in `WeekAdvancer`.
+    static func thisCycle(_ stored: Int, stampedSeason: Int, currentSeason: Int) -> Int {
+        stampedSeason == currentSeason ? stored : 0
+    }
+}
+
+/// Why the evaluate button is (not) tappable. Every blocked case carries the
+/// sentence the row prints — a disabled control that does not say why is the
+/// bug this whole pass exists to stop repeating.
+enum ScoutEvaluationAvailability {
+    case available(cost: Int, slotsLeft: Int)
+    case windowShut(hint: String)
+    case noScouts
+    case slotsSpent
+    case reportsMaxed
+    case cannotAfford(cost: Int, remaining: Int)
+
+    var isAvailable: Bool {
+        if case .available = self { return true }
+        return false
+    }
+}
+
 struct ProspectDetailView: View {
     let career: Career
     let prospect: CollegeProspect
+
+    /// `true` when this card was opened from the war room while the draft clock
+    /// is running (`LiveBigBoardPanel`, `PickSheetView`).
+    ///
+    /// The card is a READ on draft night. Every one of its priced, rationed
+    /// actions is a spring action that mutates the man the user is about to
+    /// pick: "Invite for Workout" rewrites his measurables and burns a slot,
+    /// "Send Scout" files a report that moves his `ProspectFog` band and then
+    /// re-persists the whole class onto the same `ModelContext` the clock task
+    /// is writing — while `DraftDayCoordinator` holds cached `publicBoardRanks`
+    /// / `userBoardRanks` / `availableProspects` that nothing invalidates, so
+    /// the row and the number beside it would disagree for the rest of the
+    /// round. `.draft` is inside all three spring windows
+    /// (`ScoutEvaluationBudget.isWindowOpen`, `isWorkoutWindow`), which is
+    /// correct for the scouting hub in draft WEEK and wrong for the clock.
+    ///
+    /// Marks and notes stay live: they are free, local to the user's own board
+    /// and are the whole point of having the card on the clock.
+    var isLiveDraftCard: Bool = false
 
     @Environment(\.modelContext) private var modelContext
     @State private var scouts: [Scout] = []
@@ -14,14 +128,55 @@ struct ProspectDetailView: View {
     @State private var positionRank: Int?
     @State private var teamPlayers: [Player] = []
     @State private var showMarkNote = false
+    /// The owner's scouting pot in thousands, loaded with the scouts.
+    @State private var scoutingBudget: Int = 4_000
+
+    // MARK: - Evaluation ledger (career- and cycle-scoped)
+
+    /// Evaluations run this cycle. Stored career-scoped like `combineTripSpend`
+    /// rather than on `Career` so the three counters travel together and a
+    /// deleted save purges them with everything else.
+    @CareerScopedStorage("scoutEvaluationsUsed") private var evaluationsUsedStored: Int = 0
+    /// Thousands of the scouting pot committed to evaluations this cycle.
+    @CareerScopedStorage("scoutEvaluationSpend") private var evaluationSpendStored: Int = 0
+    /// The season the two counters above belong to. A mismatch means a new
+    /// draft class, and both read as zero.
+    @CareerScopedStorage("scoutEvaluationCycle") private var evaluationCycleStored: Int = 0
+
+    private var evaluationsUsed: Int {
+        ScoutEvaluationBudget.thisCycle(
+            evaluationsUsedStored,
+            stampedSeason: evaluationCycleStored,
+            currentSeason: career.currentSeason
+        )
+    }
+
+    private var evaluationSpend: Int {
+        ScoutEvaluationBudget.thisCycle(
+            evaluationSpendStored,
+            stampedSeason: evaluationCycleStored,
+            currentSeason: career.currentSeason
+        )
+    }
+
+    private var evaluationSlotsLeft: Int {
+        max(0, ScoutEvaluationBudget.slotsPerCycle - evaluationsUsed)
+    }
 
     // MARK: - Derived
 
-    /// Always read the grade through the model's `effectiveOverallGrade` extension
-    /// so the detail header, Big Board, prospect lists, and combine table all agree
-    /// on a single value for the same prospect.
+    /// The user-facing overall grade, through `ProspectFog` so this card and the
+    /// Big Board print the same band for the same man.
+    ///
+    /// Still `nil` for a prospect nobody has filed on — the header's "?" branch
+    /// and the "vs Current Starter" fallback both key off that — but a scouted
+    /// prospect now gets the *confidence-widened* band rather than the raw
+    /// stored range. Reading `prospect.effectiveOverallGrade` straight made this
+    /// screen the one place in the app that looked more certain than the scouts
+    /// actually were.
     private var effectiveOverallGrade: GradeRange? {
-        prospect.effectiveOverallGrade
+        let read = ProspectFog.read(prospect)
+        return read.source == .scouts ? read.band : nil
     }
 
     private var isScouted: Bool { prospect.scoutedOverall != nil }
@@ -30,10 +185,76 @@ struct ProspectDetailView: View {
         prospect.verticalJump != nil || prospect.broadJump != nil ||
         prospect.shuttleTime != nil || prospect.coneDrill != nil
     }
-    private var isCombinePhase: Bool { career.currentPhase == .combine }
-    private var isDraftPhase: Bool { career.currentPhase == .draft }
-    private var canInterview: Bool { isCombinePhase && !prospect.interviewCompleted && career.interviewsUsed < 60 }
-    private var canWorkout: Bool { (isCombinePhase || isDraftPhase) && !prospect.proDayCompleted && career.workoutsUsed < 30 }
+    private static let maxInterviews = 60
+    private static let maxWorkouts = 30
+
+    // MARK: - Phase gates
+    //
+    // These used to disagree with the hub that owns them. The Interviews tab is
+    // visible in `.combine` AND `.proDays` (`ScoutingHubView.visibleTabs`), and
+    // the Draft Prep card counts interview slots as live in both — but this card
+    // accepted only `.combine`, so a user who followed the hub into pro days
+    // found a prospect page with no interview button and no explanation. The
+    // workout gate had the mirror-image bug: it accepted `.combine` and `.draft`
+    // and refused `.proDays`, the phase named after the event. The hub is the
+    // truth; both windows below are copied from it.
+
+    /// `ScoutingHubView.visibleTabs` shows the Interviews tab exactly here.
+    private var isInterviewWindow: Bool {
+        guard !isLiveDraftCard else { return false }
+        return career.currentPhase == .combine || career.currentPhase == .proDays
+    }
+
+    /// `ProDayListView.isProDayPhase` — the hub's own pro-day/workout window.
+    private var isWorkoutWindow: Bool {
+        guard !isLiveDraftCard else { return false }
+        switch career.currentPhase {
+        case .combine, .freeAgency, .proDays, .draft: return true
+        default:                                      return false
+        }
+    }
+
+    /// The one sentence every blocked action prints on draft night, so a
+    /// greyed-out row on the clock still says why.
+    private static let liveDraftHint = "The clock is running \u{2014} the board is a read tonight. Pre-draft work closed with the last pro day."
+
+    private var canInterview: Bool {
+        isInterviewWindow && !prospect.interviewCompleted && career.interviewsUsed < Self.maxInterviews
+    }
+
+    private var canWorkout: Bool {
+        isWorkoutWindow && !prospect.proDayCompleted && career.workoutsUsed < Self.maxWorkouts
+    }
+
+    // MARK: - Evaluation gate
+
+    /// What is left of the owner's scouting pot: the same arithmetic
+    /// `ScoutingHubView.remainingScoutingBudget` does, so the number quoted on
+    /// this button matches the one on the hub's budget tile.
+    private var remainingScoutingBudget: Int {
+        let combineTripSpend: Int = CareerScopedDefaults.value("combineTripSpend") ?? 0
+        return scoutingBudget
+            - scouts.reduce(0) { $0 + $1.salary }
+            - combineTripSpend
+            - evaluationSpend
+    }
+
+    private var evaluationAvailability: ScoutEvaluationAvailability {
+        guard !isLiveDraftCard else { return .windowShut(hint: Self.liveDraftHint) }
+        guard ScoutEvaluationBudget.isWindowOpen(career.currentPhase) else {
+            return .windowShut(hint: ScoutEvaluationBudget.windowHint(for: career.currentPhase))
+        }
+        guard !scouts.isEmpty else { return .noScouts }
+        guard prospect.scoutingReports.count < ScoutEvaluationBudget.maxReportsPerProspect else {
+            return .reportsMaxed
+        }
+        guard evaluationSlotsLeft > 0 else { return .slotsSpent }
+        let cost = ScoutEvaluationBudget.cost(existingReports: prospect.scoutingReports.count)
+        guard remainingScoutingBudget >= cost else {
+            return .cannotAfford(cost: cost, remaining: remainingScoutingBudget)
+        }
+        return .available(cost: cost, slotsLeft: evaluationSlotsLeft)
+    }
 
     var body: some View {
         ZStack {
@@ -74,7 +295,15 @@ struct ProspectDetailView: View {
             }
         }
         .sheet(isPresented: $showSendScout) {
-            SendScoutSheet(prospect: prospect, scouts: scouts, scoutingPhase: currentScoutingPhase)
+            SendScoutSheet(
+                prospect: prospect,
+                scouts: scouts,
+                scoutingPhase: currentScoutingPhase,
+                cost: ScoutEvaluationBudget.cost(existingReports: prospect.scoutingReports.count),
+                slotsLeft: evaluationSlotsLeft,
+                budgetRemaining: remainingScoutingBudget,
+                onFiled: { recordEvaluation(cost: $0) }
+            )
         }
         .sheet(isPresented: $showMarkNote) {
             ProspectMarkNoteSheet(
@@ -604,7 +833,7 @@ struct ProspectDetailView: View {
                         Image(systemName: "person.fill.badge.plus")
                             .font(.caption)
                             .foregroundStyle(Color.success)
-                        Text("No \(prospect.position.rawValue) on roster -- immediate starter")
+                        Text("No \(prospect.position.rawValue) on roster \u{2014} immediate starter")
                             .font(.subheadline)
                             .foregroundStyle(Color.success)
                     }
@@ -1634,11 +1863,16 @@ struct ProspectDetailView: View {
 
     // MARK: - Risk Flags Section
 
+    /// Concerns your own work produced, as distinct from the medical/character
+    /// FILE above it — that one is the league's paperwork, opened in three steps
+    /// by `ProspectFog.flagDisclosure`; this one is what your interviewer and
+    /// your scouts came back saying. Two sections both titled like red flags read
+    /// as a duplicate, so the header names the source.
     @ViewBuilder
     private var riskFlagsSection: some View {
         let flags = collectRiskFlags()
         if !flags.isEmpty {
-            Section("Risk Flags") {
+            Section("Scouting Concerns") {
                 ForEach(flags, id: \.self) { flag in
                     HStack(spacing: 10) {
                         Image(systemName: "exclamationmark.triangle.fill")
@@ -1672,12 +1906,21 @@ struct ProspectDetailView: View {
             }
         }
 
-        if isScouted && prospect.truePhysical.durability < 50 {
-            flags.append("Durability concern -- injury-prone profile")
-        }
-
-        if isScouted && prospect.trueMental.workEthic < 45 {
-            flags.append("Poor work ethic -- development may stall")
+        // The last two read HIDDEN attributes (`truePhysical.durability`,
+        // `trueMental.workEthic`) and were gated on nothing but "one report
+        // exists" — a single cheap tape grade handed over a durability verdict
+        // the medical file two sections up would not have disclosed. They are
+        // the same class of information as the file, so they open on the same
+        // authority: `ProspectFog.flagDisclosure` at `.full`, i.e. two reports,
+        // a meeting, or a Top-30 visit.
+        let disclosure = ProspectFog.flagDisclosure(for: prospect, userTeamID: career.teamID)
+        if disclosure == .full {
+            if prospect.truePhysical.durability < 50 {
+                flags.append("Durability concern \u{2014} injury-prone profile")
+            }
+            if prospect.trueMental.workEthic < 45 {
+                flags.append("Poor work ethic \u{2014} development may stall")
+            }
         }
 
         return flags
@@ -1737,20 +1980,110 @@ struct ProspectDetailView: View {
 
     // MARK: - Actions Section
 
+    /// The priced, rationed replacement for the old free "Send Scout to
+    /// Evaluate" row. Always rendered, never silently missing: a blocked
+    /// evaluation states its price, its slot count or its reason.
+    @ViewBuilder
+    private var evaluationRow: some View {
+        let availability = evaluationAvailability
+        let title = isScouted
+            ? "Send Another Scout (\(currentScoutingPhase.displayName))"
+            : "Send Scout to Evaluate"
+
+        Button {
+            showSendScout = true
+        } label: {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "magnifyingglass")
+                    .font(.subheadline)
+                    .foregroundStyle(availability.isAvailable ? Color.accentGold : Color.textTertiary)
+                    .frame(width: 20)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.body)
+                        .foregroundStyle(availability.isAvailable ? Color.accentGold : Color.textSecondary)
+                    Text(evaluationDetail(availability))
+                        .font(.caption)
+                        .foregroundStyle(evaluationDetailTint(availability))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .multilineTextAlignment(.leading)
+                }
+                Spacer(minLength: 0)
+                Text("\(prospect.scoutingReports.count)/\(ScoutEvaluationBudget.maxReportsPerProspect)")
+                    .font(.caption.monospacedDigit().weight(.bold))
+                    .foregroundStyle(Color.textTertiary)
+            }
+        }
+        .disabled(!availability.isAvailable)
+        .accessibilityLabel("\(title). \(evaluationDetail(availability))")
+    }
+
+    private func evaluationDetail(_ availability: ScoutEvaluationAvailability) -> String {
+        switch availability {
+        case let .available(cost, slotsLeft):
+            return "$\(cost)K \u{00B7} \(slotsLeft) of \(ScoutEvaluationBudget.slotsPerCycle) evaluations left this cycle"
+        case let .windowShut(hint):
+            return "Scouting window closed. \(hint)"
+        case .noScouts:
+            return "No scouts on staff \u{2014} hire one from the Scout Team tab."
+        case .slotsSpent:
+            return "All \(ScoutEvaluationBudget.slotsPerCycle) evaluations are spent. The combine trip and pro-day visits still add reports."
+        case .reportsMaxed:
+            return "Three reports filed \u{2014} your department has seen everything it is going to see."
+        case let .cannotAfford(cost, remaining):
+            return "Needs $\(cost)K \u{2014} only $\(remaining)K left in the scouting budget."
+        }
+    }
+
+    private func evaluationDetailTint(_ availability: ScoutEvaluationAvailability) -> Color {
+        switch availability {
+        case .available:    return .textTertiary
+        case .reportsMaxed: return .success
+        case .cannotAfford, .slotsSpent, .noScouts: return .warning
+        case .windowShut:   return .textTertiary
+        }
+    }
+
+    private func completedActionRow(_ text: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(Color.success)
+                .font(.caption)
+            Text(text)
+                .font(.subheadline)
+                .foregroundStyle(Color.success)
+        }
+    }
+
+    private func blockedActionRow(icon: String, title: String, reason: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon)
+                .font(.subheadline)
+                .foregroundStyle(Color.textTertiary)
+                .frame(width: 20)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.body)
+                    .foregroundStyle(Color.textSecondary)
+                Text(reason)
+                    .font(.caption)
+                    .foregroundStyle(Color.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(title), unavailable. \(reason)")
+    }
+
     private var actionsSection: some View {
         Section {
-            Button {
-                showSendScout = true
-            } label: {
-                Label(
-                    isScouted ? "Send Another Scout (\(currentScoutingPhase.displayName))" : "Send Scout to Evaluate",
-                    systemImage: "magnifyingglass"
-                )
-                .foregroundStyle(Color.accentGold)
-            }
+            evaluationRow
 
-            // Interview button (combine phase, max 60)
-            if canInterview {
+            // Interview — combine and pro days, 60 a cycle.
+            if prospect.interviewCompleted {
+                completedActionRow("Interview completed")
+            } else if canInterview {
                 Button {
                     performInterview()
                 } label: {
@@ -1758,24 +2091,27 @@ struct ProspectDetailView: View {
                         Label("Conduct Interview", systemImage: "person.crop.circle.badge.questionmark")
                             .foregroundStyle(Color.accentBlue)
                         Spacer()
-                        Text("Interviews: \(career.interviewsUsed)/60 used")
+                        Text("Interviews: \(career.interviewsUsed)/\(Self.maxInterviews) used")
                             .font(.caption)
                             .foregroundStyle(Color.textTertiary)
                     }
                 }
-            } else if prospect.interviewCompleted {
-                HStack(spacing: 6) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(Color.success)
-                        .font(.caption)
-                    Text("Interview completed")
-                        .font(.subheadline)
-                        .foregroundStyle(Color.success)
-                }
+            } else {
+                blockedActionRow(
+                    icon: "person.crop.circle.badge.questionmark",
+                    title: "Conduct Interview",
+                    reason: isLiveDraftCard
+                        ? Self.liveDraftHint
+                        : isInterviewWindow
+                            ? "All \(Self.maxInterviews) interview slots are spent for this cycle."
+                            : "Interviews run at the combine and through pro days."
+                )
             }
 
-            // Personal workout button (combine/draft phase, max 30)
-            if canWorkout {
+            // Private workout / pro day — 30 a cycle.
+            if prospect.proDayCompleted {
+                completedActionRow("Workout/Pro Day completed")
+            } else if canWorkout {
                 Button {
                     performWorkout()
                 } label: {
@@ -1783,20 +2119,21 @@ struct ProspectDetailView: View {
                         Label("Invite for Workout", systemImage: "figure.run")
                             .foregroundStyle(Color.accentBlue)
                         Spacer()
-                        Text("Workouts: \(career.workoutsUsed)/30 used")
+                        Text("Workouts: \(career.workoutsUsed)/\(Self.maxWorkouts) used")
                             .font(.caption)
                             .foregroundStyle(Color.textTertiary)
                     }
                 }
-            } else if prospect.proDayCompleted {
-                HStack(spacing: 6) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(Color.success)
-                        .font(.caption)
-                    Text("Workout/Pro Day completed")
-                        .font(.subheadline)
-                        .foregroundStyle(Color.success)
-                }
+            } else {
+                blockedActionRow(
+                    icon: "figure.run",
+                    title: "Invite for Workout",
+                    reason: isLiveDraftCard
+                        ? Self.liveDraftHint
+                        : isWorkoutWindow
+                            ? "All \(Self.maxWorkouts) workout slots are spent for this cycle."
+                            : "Workouts run from the combine through draft week."
+                )
             }
 
             if isScouted {
@@ -1957,6 +2294,21 @@ struct ProspectDetailView: View {
         guard let teamID = career.teamID else { return }
         let desc = FetchDescriptor<Scout>(predicate: #Predicate { $0.teamID == teamID })
         scouts = (try? modelContext.fetch(desc)) ?? []
+        let teamDesc = FetchDescriptor<Team>(predicate: #Predicate { $0.id == teamID })
+        scoutingBudget = (try? modelContext.fetch(teamDesc))?.first?.owner?.scoutingBudget ?? 4_000
+    }
+
+    /// Books one evaluation against the cycle's slots and the scouting pot.
+    private func recordEvaluation(cost: Int) {
+        let used = evaluationsUsed
+        let spend = evaluationSpend
+        evaluationCycleStored = career.currentSeason
+        evaluationsUsedStored = used + 1
+        evaluationSpendStored = spend + cost
+        // The report itself is written onto the in-memory draft class; flush it
+        // or the money is spent and the intel is forgotten on relaunch.
+        WeekAdvancer.persistDraftClass(WeekAdvancer.currentDraftClass, to: modelContext)
+        try? modelContext.save()
     }
 
     private func loadCoaches() {
@@ -1975,9 +2327,19 @@ struct ProspectDetailView: View {
         let cid = career.id
         let desc = FetchDescriptor<CollegeProspect>(predicate: #Predicate { $0.careerID == cid })
         guard let all = try? modelContext.fetch(desc) else { return }
+        // Ranked by the FOGGED band, not by `scoutedOverall`: the badge sits
+        // two inches under a grade the user reads as "B+", and a position rank
+        // computed off the raw number would order the class by information the
+        // screen is deliberately not showing him. Ties break on the stored
+        // number, which is never printed.
         let ranked = all
             .filter { $0.position == prospect.position && $0.scoutedOverall != nil }
-            .sorted { ($0.scoutedOverall ?? 0) > ($1.scoutedOverall ?? 0) }
+            .sorted {
+                let a = ProspectFog.rank($0)
+                let b = ProspectFog.rank($1)
+                if a != b { return a > b }
+                return ($0.scoutedOverall ?? 0) > ($1.scoutedOverall ?? 0)
+            }
         if let idx = ranked.firstIndex(where: { $0.id == prospect.id }) {
             positionRank = idx + 1
         }
@@ -2210,6 +2572,12 @@ private struct SendScoutSheet: View {
     let prospect: CollegeProspect
     let scouts: [Scout]
     let scoutingPhase: ScoutingPhase
+    /// Thousands this report costs — rising with the number already on file.
+    let cost: Int
+    let slotsLeft: Int
+    let budgetRemaining: Int
+    /// Books the slot and the money once the report is actually filed.
+    let onFiled: (Int) -> Void
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -2238,6 +2606,14 @@ private struct SendScoutSheet: View {
                                 Text("Phase: \(scoutingPhase.displayName) (Confidence: \(Int(scoutingPhase.confidenceLevel * 100))%)")
                                     .font(.subheadline)
                                     .foregroundStyle(Color.textSecondary)
+                            }
+                            HStack(spacing: 8) {
+                                Image(systemName: "dollarsign.circle")
+                                    .foregroundStyle(Color.accentGold.opacity(0.8))
+                                Text("$\(cost)K of $\(budgetRemaining)K \u{00B7} \(slotsLeft) evaluation\(slotsLeft == 1 ? "" : "s") left this cycle")
+                                    .font(.subheadline)
+                                    .foregroundStyle(Color.textSecondary)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
                         }
                         .listRowBackground(Color.backgroundSecondary)
@@ -2269,12 +2645,24 @@ private struct SendScoutSheet: View {
     }
 
     private func sendScout(_ scout: Scout) {
+        // Belt and braces: the row that opened this sheet is already gated, and
+        // this re-reads the three things that CAN move while the sheet is open
+        // — the report count, the cycle's slots and the pot. It deliberately
+        // does not re-check the phase: the sheet has no `Career` to read one
+        // from, and a phase cannot advance while it is presented.
+        guard prospect.scoutingReports.count < ScoutEvaluationBudget.maxReportsPerProspect,
+              slotsLeft > 0,
+              budgetRemaining >= cost else {
+            dismiss()
+            return
+        }
         let report = ScoutingEngine.generateScoutReport(
             scout: scout,
             prospect: prospect,
             phase: scoutingPhase
         )
         ScoutingEngine.applyReport(report: report, to: prospect)
+        onFiled(cost)
         dismiss()
     }
 }

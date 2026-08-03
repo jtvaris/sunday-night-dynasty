@@ -467,6 +467,13 @@ enum CareerScopedDefaults {
         // Scouting budget already committed to this cycle's combine trip, in
         // thousands. Reset with the other two at the start of every combine.
         "combineTripSpend",
+        // Per-prospect scout evaluations (`ScoutEvaluationBudget`): slots spent
+        // this draft cycle, thousands of the scouting pot they cost, and the
+        // season the two belong to — a stamp from an older cycle reads as zero,
+        // which is how the pool refills with the new class.
+        "scoutEvaluationsUsed",
+        "scoutEvaluationSpend",
+        "scoutEvaluationCycle",
         "interviewReportReviewed",
         "rosterEvaluationConfirmed",
         "franchiseTagVisited",

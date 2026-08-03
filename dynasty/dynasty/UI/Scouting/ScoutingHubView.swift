@@ -78,6 +78,7 @@ struct ScoutingHubView: View {
                     scouts: scouts,
                     scoutsSentToCombine: scoutsSentToCombine,
                     scoutingBudgetRemaining: remainingScoutingBudget,
+                    evaluationsUsed: evaluationsUsed,
                     onSelectTab: { selectedTab = $0 },
                     onFilterPosition: { positionFilter = $0 }
                 )
@@ -294,8 +295,37 @@ struct ScoutingHubView: View {
 
     /// What is left of the owner's scouting pot after scout salaries and any
     /// discretionary spend already committed this cycle.
+    ///
+    /// Per-prospect evaluations are part of that spend now — see
+    /// `ScoutEvaluationBudget` — so the tile on the Draft Prep card and the
+    /// price quoted on a prospect's evaluate button are the same money.
     private var remainingScoutingBudget: Int {
-        fetchScoutingBudget() - scouts.reduce(0) { $0 + $1.salary } - combineTripSpend
+        fetchScoutingBudget()
+            - scouts.reduce(0) { $0 + $1.salary }
+            - combineTripSpend
+            - evaluationSpend
+    }
+
+    // MARK: - Evaluation ledger (mirrors `ProspectDetailView`)
+
+    @CareerScopedStorage("scoutEvaluationsUsed") private var evaluationsUsedStored: Int = 0
+    @CareerScopedStorage("scoutEvaluationSpend") private var evaluationSpendStored: Int = 0
+    @CareerScopedStorage("scoutEvaluationCycle") private var evaluationCycleStored: Int = 0
+
+    private var evaluationsUsed: Int {
+        ScoutEvaluationBudget.thisCycle(
+            evaluationsUsedStored,
+            stampedSeason: evaluationCycleStored,
+            currentSeason: career.currentSeason
+        )
+    }
+
+    private var evaluationSpend: Int {
+        ScoutEvaluationBudget.thisCycle(
+            evaluationSpendStored,
+            stampedSeason: evaluationCycleStored,
+            currentSeason: career.currentSeason
+        )
     }
 
     private var canAffordCombineTrip: Bool {
@@ -382,8 +412,13 @@ struct ScoutingHubView: View {
         return .danger
     }
 
+    /// Prospects your building has actually filed on.
+    ///
+    /// Counted off `scoutingReports` rather than `scoutedOverall` so this header
+    /// and the Draft Prep card underneath it mean the same thing by "scouted" —
+    /// the card has always counted filed reports.
     private var scoutedCount: Int {
-        prospects.filter { $0.scoutedOverall != nil }.count
+        prospects.filter { !$0.scoutingReports.isEmpty }.count
     }
 
     private var scoutedPercentage: Int {
@@ -391,11 +426,29 @@ struct ScoutingHubView: View {
         return Int((Double(scoutedCount) / Double(prospects.count) * 100).rounded())
     }
 
-    private var topProspect: CollegeProspect? {
+    /// The best man your own scouts have filed on, with the band the user is
+    /// entitled to read.
+    ///
+    /// The header used to print `"Top: Smith (OVR 87)"` — a naked overall, on
+    /// the one screen whose entire job is to sell the intel that would earn it,
+    /// while the Big Board two taps away showed the same man as "B/A-". Ranked
+    /// by `ProspectFog.Read.rank` so the ordering cannot leak the board either.
+    private var topScoutedRead: (prospect: CollegeProspect, read: ProspectFog.Read)? {
         prospects
-            .filter { $0.scoutedOverall != nil }
-            .sorted { ($0.scoutedOverall ?? 0) > ($1.scoutedOverall ?? 0) }
-            .first
+            .map { (prospect: $0, read: ProspectFog.read($0)) }
+            .filter { $0.read.source == .scouts }
+            // `read.rank` is a coarse letter-grade rank, so thirty men share
+            // "B+" and `max` alone returned whichever of them the unsorted
+            // fetch happened to hand back last — the header named a different
+            // player after a relaunch. Ties break on the stored number and then
+            // on the id, exactly like `ProspectDetailView.loadPositionRank`.
+            .max { lhs, rhs in
+                if lhs.read.rank != rhs.read.rank { return lhs.read.rank < rhs.read.rank }
+                let l = lhs.prospect.scoutedOverall ?? 0
+                let r = rhs.prospect.scoutedOverall ?? 0
+                if l != r { return l < r }
+                return lhs.prospect.id.uuidString > rhs.prospect.id.uuidString
+            }
     }
 
     private var phaseLabel: String {
@@ -438,11 +491,11 @@ struct ScoutingHubView: View {
 
             metricDivider
 
-            // Top prospect
-            if let top = topProspect, let ovr = top.scoutedOverall {
+            // Top prospect — the fogged band, never the overall.
+            if let top = topScoutedRead {
                 metricItem(
                     icon: "star.fill",
-                    label: "Top: \(top.lastName) (OVR \(ovr))",
+                    label: "Top: \(top.prospect.lastName) (\(top.read.text))",
                     color: .accentGold
                 )
             } else {
