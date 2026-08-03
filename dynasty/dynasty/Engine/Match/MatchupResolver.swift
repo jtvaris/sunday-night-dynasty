@@ -451,7 +451,14 @@ enum MatchupResolver {
         m.holeSize = yards <= 0 ? 0.1 : (yards <= 3 ? 0.35 : (yards <= 7 ? 0.6 : 0.95))
 
         // Point of attack: interior for inside runs/sneaks, edge otherwise.
-        let inside = call.map { [.insideRun, .qbSneak, .draw, .counter, .dive].contains($0) } ?? true
+        // The expansion's gap/zone hammers and the QB-conflict runs that hit
+        // downhill belong on the interior; `wideZone`, `endAround` and
+        // `speedOption` correctly stay on the edge (they carry a non-zero
+        // `edgeFactor` in `SimulatorHint` for exactly the same reason).
+        let inside = call.map {
+            [.insideRun, .qbSneak, .draw, .counter, .dive,
+             .insideZone, .duo, .power, .trap, .zoneRead, .qbDraw, .tushPush].contains($0)
+        } ?? true
         let poaBlockers = inside ? [3, 4, 5] : [2, 6]
         let poaDefenders = inside ? [1, 2, 5] : [0, 3]
         let carrierRole = m.targetOffRole ?? 1
@@ -548,11 +555,23 @@ enum MatchupResolver {
     }
 
     /// Scheme-familiarity bust roll — low familiarity busts more often.
+    ///
+    /// Presentation-only: the result drives an `Event` string in the play feed
+    /// and never touches yardage (`PlaySimulator` has already resolved the
+    /// play by the time this runs).
     private static func bustRoll(_ player: SimPlayer, scheme: OffensiveScheme,
                                  call: OffensivePlayCall?) -> Bool {
         var fam = Double(player.schemeFam(for: scheme.rawValue))
-        // Calling a play outside the installed playbook is harder on everyone.
-        if let call, !call.schemes.contains(scheme) { fam -= 15 }
+        if let call {
+            if !call.schemes.contains(scheme) {
+                // Calling a play outside the installed playbook is harder on everyone.
+                fam -= 15
+            } else if Playbook.isSignature(call, of: scheme) {
+                // ...and the scheme's identity plays are the ones this room has
+                // rep'd since day one of camp. Mirrors the penalty above.
+                fam += 10
+            }
+        }
         guard fam < 45 else { return false }
         return Double.random(in: 0...1) < (45 - fam) / 120
     }

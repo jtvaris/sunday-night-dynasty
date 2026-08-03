@@ -255,11 +255,32 @@ enum PlaySimulator {
         }
     }
 
-    /// Maps an explicit offensive play call to the simulator's ``PlayType``.
+    /// Maps an explicit offensive play call to the simulator's ``PlayType`` —
+    /// the QUICK-SIM ABSTRACTION of the call, and the only thing about a play
+    /// call that `GameSimulator` could ever observe.
     ///
-    /// `.screen` is intentionally routed as a PASS: its hint carries
-    /// `passDepth: .short` plus a high YAC multiplier, which models the
-    /// screen game far better than the run path would.
+    /// The whole 65-play call sheet collapses to exactly three outcomes here:
+    ///
+    /// * `.run`   — every carry: the gap/zone runs, the QB-conflict runs
+    ///              (`zoneRead`, `qbDraw`, `speedOption`), the sneaks.
+    /// * `.pass`  — every drop-back, screen, RPO, play-action and `hailMary`.
+    ///              RPOs resolve on the pass path by design: the engine has no
+    ///              give/pull mechanic, so the "give" side of the read is
+    ///              represented by the same formation family's zone runs, which
+    ///              the coach reaches through the audible strip.
+    /// * `.spike` / `.kneel` — the two clock plays. The expansion adds none.
+    ///
+    /// `.screen` is the one legacy inconsistency: it reports `isRun == true`
+    /// but is routed as a PASS, because its hint carries `passDepth: .short`
+    /// plus a high YAC multiplier, which models the screen game far better than
+    /// the run path would. The NEWER screens are honest passes (`isPass`), so
+    /// they need no special case here.
+    ///
+    /// `GameSimulator.simulate` passes `offensiveCall: nil` on every scrimmage
+    /// snap, so no expansion play ever reaches season simulation, the balance
+    /// harness or `MultiSeasonSmokeTest`. The only two call-aware quick-sim
+    /// sites are the DEBUG micro-harnesses (`.playActionDeep`, `.slant`), both
+    /// of which name pre-existing calls and are untouched.
     static func playType(for call: OffensivePlayCall) -> PlayType {
         switch call {
         case .spike:  return .spike
@@ -888,8 +909,11 @@ enum PlaySimulator {
         // who beats the jam gets a cleaner window; a good press corner erases
         // it. Near-zero mean (release ≈ press league-wide) so it never shifts
         // the completion rate — it only rewards the individual matchup.
+        // `isManCoverage` (not an identity check on `.manToMan`) so the new
+        // zero-help man shell gets the same press/release treatment; the new
+        // ZONE shells (tampa2/cover6) correctly stay out of this branch.
         if let package = defensivePackage,
-           package.coverage == .manToMan, passDistance == .short {
+           package.coverage.isManCoverage, passDistance == .short {
             let dbs = defensePlayers.filter { isDB($0) }
             let press = averageAttribute(dbs, extractor: { dbPressRating(for: $0) })
 
@@ -2550,10 +2574,16 @@ enum PlaySimulator {
     private static func coverageManWeight(_ package: DefensivePackage?) -> Double {
         guard let package = package else { return baseZoneManWeight }
         switch package.coverage {
+        // Zero help behind it: every defender is locked on a man, so the
+        // individual WR-vs-CB matchup decides more of the snap than in any
+        // other shell.
+        case .cover0:          return 0.95
         case .manToMan:        return 0.90
         case .cover1:          return 0.80
         case .cover2, .cover4: return 0.45
+        case .cover6:          return 0.42   // split-field zone, quarters-ish
         case .cover3:          return 0.40
+        case .tampa2:          return 0.35   // deepest zone commitment in the game
         case .prevent:         return 0.30
         default:               return baseZoneManWeight
         }
@@ -2587,9 +2617,12 @@ enum PlaySimulator {
             let wrs = offense.filter { $0.position == .WR }.sorted { $0.overall > $1.overall }
             let rank = wrs.firstIndex(where: { $0.id == target.id }) ?? 0
             if rank <= 1, cbs.count > rank { return dbMatch(cbs[rank]) }
-            // Slot (rank 2+): the nickel/dime corner if the front fields one, else
-            // the better safety rolls down over the slot.
-            let nickelDime = package.map { $0.front == .nickel || $0.front == .dime } ?? false
+            // Slot (rank 2+): the sub-package corner if the front fields one,
+            // else the better safety rolls down over the slot. Big nickel is a
+            // five-DB front too — it just spends the fifth on a safety.
+            let nickelDime = package.map {
+                $0.front == .nickel || $0.front == .bigNickel || $0.front == .dime
+            } ?? false
             if nickelDime, cbs.count > 2 { return dbMatch(cbs[2]) }
             if let s = betterSafety() { return dbMatch(s) }
             if let cb = cbs.first { return dbMatch(cb) }

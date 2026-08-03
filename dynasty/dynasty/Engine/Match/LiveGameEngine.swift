@@ -2281,10 +2281,21 @@ final class LiveGameEngine: ObservableObject {
         }
     }
 
-    /// Deterministic run pick: first installed play off the persona's ordered
-    /// preference for the situation (short yardage / goal line come first).
+    /// Deterministic run pick: first installed play off the ordered preference
+    /// for the situation (short yardage / goal line come first).
+    ///
+    /// The SCHEME's own call-tendency order (`Playbook.runOrder`) is consulted
+    /// first — that is what makes a Shanahan offense open with wide zone and a
+    /// power team open with Power O. The persona order stays as the fallback
+    /// for a coordinator whose scheme is unknown, and the category sweep is the
+    /// last resort.
     private func recommendedRunCall(_ s: CoordinatorSituation, persona: OCPersona) -> OffensivePlayCall {
-        if s.distance <= 1 || (s.isGoalToGo && s.yardsToEndzone <= 2) {
+        let shortYardage = s.distance <= 1 || (s.isGoalToGo && s.yardsToEndzone <= 2)
+        if let scheme = playerOffensiveScheme {
+            for c in Playbook.runOrder(for: scheme, shortYardage: shortYardage)
+            where playerHasInstalled(c) { return c }
+        }
+        if shortYardage {
             for c: OffensivePlayCall in [.qbSneak, .dive, .insideRun] where playerHasInstalled(c) { return c }
         }
         let order: [OffensivePlayCall]
@@ -2298,17 +2309,27 @@ final class LiveGameEngine: ObservableObject {
         return firstInstalledOffense(category: "Run") ?? .insideRun
     }
 
-    /// Deterministic pass pick: depth from distance/field, persona-ordered.
-    /// Never a deep shot inside the red zone (collapses to a timing throw).
+    /// Deterministic pass pick: depth from distance/field, scheme-ordered with
+    /// a persona fallback. Never a deep shot inside the red zone (collapses to
+    /// a timing throw).
     private func recommendedPassCall(_ s: CoordinatorSituation, persona: OCPersona, playAction: Bool) -> OffensivePlayCall {
-        if playAction, s.yardsToEndzone >= 22, playerHasInstalled(.playActionDeep) {
-            return .playActionDeep
+        if playAction, s.yardsToEndzone >= 22 {
+            // `playActionDeep` stays first so an offense that installs it keeps
+            // its existing behavior exactly; the boot/crosser calls only come
+            // into play for a playbook that has no deep PA shot at all.
+            for c: OffensivePlayCall in [.playActionDeep, .paCross, .paBoot, .paGlance]
+            where playerHasInstalled(c) { return c }
         }
         var depth: Int  // 0 short, 1 medium, 2 deep
         if s.distance <= 4 { depth = 0 } else if s.distance <= 9 { depth = 1 } else { depth = 2 }
         if s.isRedZone { depth = 0 }                       // no verticals near the goal
         if s.isBackedUp { depth = 0 }                      // protect the ball in our own end
         if s.isTwoMinute { depth = min(depth, 1) }         // move the ball, not a bomb
+        let callDepth: Playbook.CallDepth = depth == 0 ? .short : (depth == 1 ? .medium : .deep)
+        if let scheme = playerOffensiveScheme {
+            for c in Playbook.passOrder(for: scheme, depth: callDepth)
+            where playerHasInstalled(c) { return c }
+        }
         let order: [OffensivePlayCall]
         switch (persona, depth) {
         case (.airRaid, 0):        order = [.slant, .mesh, .stick, .quickOut]
@@ -2327,7 +2348,9 @@ final class LiveGameEngine: ObservableObject {
         for c in order where playerHasInstalled(c) { return c }
         let cat = depth == 0 ? "Short Pass" : (depth == 1 ? "Medium Pass" : "Deep Pass")
         return firstInstalledOffense(category: cat)
-            ?? OffensivePlayCall.allCases.first { $0.isPass && $0 != .spike && playerHasInstalled($0) }
+            ?? firstInstalledOffense(category: "Screen")
+            // Hail Mary is a desperation call the coach makes, never a fallback.
+            ?? OffensivePlayCall.allCases.first { $0.isPass && $0 != .hailMary && playerHasInstalled($0) }
             ?? .slant
     }
 

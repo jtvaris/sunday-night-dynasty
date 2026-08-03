@@ -87,18 +87,48 @@ enum AdaptiveOpponentAI {
     /// Derives the tracked category from the call's own metadata (category +
     /// run-gap / pass-depth hints). Spike/kneel are clock plays, not
     /// tendencies — they return nil and are never recorded.
+    ///
+    /// Deliberately EXHAUSTIVE (no `default:`): the archetype a play is tracked
+    /// under is what the AI defense keys, what `PlayMemory` accumulates and
+    /// what `counterConcepts` trades against, so a new call silently defaulting
+    /// into the wrong family would be invisible and wrong. The compiler must
+    /// stop the build until the call is placed by hand.
+    ///
+    /// Note the consequence of the expansion, which is intended: a coach who
+    /// calls `power → duo → trap` trips the inside-run key exactly as if he had
+    /// called `insideRun` three times. Rotating same-family plays does NOT hide
+    /// a tendency from the AI — only genuinely mixing archetypes does.
     static func tendency(of call: OffensivePlayCall) -> OffenseTendency? {
         switch call {
-        case .insideRun, .counter, .draw, .dive, .qbSneak: return .insideRun
-        case .outsideRun, .toss, .jetSweep:                return .outsideRun
-        case .screen:                                      return .screen
-        case .slant, .quickOut, .hitch, .flat, .drag, .stick, .mesh:
+        // Interior ground game + the QB-conflict runs (the read/keeper is
+        // still a downhill interior threat as far as the box is concerned).
+        case .insideRun, .counter, .draw, .dive, .qbSneak,
+             .insideZone, .duo, .power, .trap, .zoneRead, .qbDraw, .tushPush:
+            return .insideRun
+        // Anything that attacks the perimeter (edgeFactor ≥ ~0.95).
+        case .outsideRun, .toss, .jetSweep,
+             .wideZone, .endAround, .speedOption:
+            return .outsideRun
+        case .screen, .bubbleScreen, .tunnelScreen, .slipScreen:
+            return .screen
+        // Quick game — the RPOs live here: the ball is out on the read, which
+        // is exactly what the short-pass key is looking for.
+        case .slant, .quickOut, .hitch, .flat, .drag, .stick, .mesh,
+             .spot, .snag, .shallowCross, .angle, .fade,
+             .rpoBubble, .rpoSlant, .rpoStick, .rpoPop:
             return .shortPass
-        case .curl, .dig, .seam, .cross, .postCorner, .comeback, .wheel:
+        case .curl, .dig, .seam, .cross, .postCorner, .comeback, .wheel,
+             .levels, .yCross, .dagger, .sail, .smash:
             return .mediumPass
-        case .goRoute, .post, .corner, .flood, .bomb:      return .deepPass
-        case .playActionDeep:                              return .playAction
-        case .spike, .kneel:                               return nil
+        case .goRoute, .post, .corner, .flood, .bomb,
+             .fourVerts, .sluggo, .backShoulder, .hailMary:
+            return .deepPass
+        // Every run-fake pass keys the same way regardless of throw depth —
+        // the box bite is the tell, not the route.
+        case .playActionDeep, .paBoot, .paCross, .paGlance:
+            return .playAction
+        case .spike, .kneel:
+            return nil
         }
     }
 
@@ -143,7 +173,11 @@ enum AdaptiveOpponentAI {
         let isSingleHigh: Bool
 
         init(package: DefensivePackage) {
-            isMan = package.coverage == .manToMan
+            // Cover 0 is man coverage (see `DefensivePlayCall.isManCoverage`) —
+            // but it is NOT single-high: there is no deep help at all behind
+            // it, so a Cover 0 diet must read as man-heavy, never as a
+            // single-high shell the offense can attack over the top of.
+            isMan = package.coverage.isManCoverage
             isBlitz = package.blitz != .noBlitz
             isZone = !isMan
             isSingleHigh = package.coverage == .cover1 || package.coverage == .cover3
@@ -246,44 +280,87 @@ enum AdaptiveOpponentAI {
 
     /// Defensive counter calls per offensive tendency (existing call-sheet
     /// calls — their package modifiers ARE the counter, no extra malus).
+    ///
+    /// The expansion entries keep each pool's INTENT and simply give more
+    /// schemes a way to express it: the odd front against the interior run,
+    /// the field/boundary two-high checks against the perimeter game, the
+    /// press/edge answers to the quick game, and the creeper/robber looks that
+    /// keep coverage whole against the intermediate and play-action reads.
     static func defensiveCounterCalls(for tendency: OffenseTendency) -> [DefensiveCall] {
         switch tendency {
-        case .insideRun:          return [.bearFront, .goalLineD, .doubleAGap]
-        case .outsideRun:         return [.cornerBlitz, .safetyBlitz, .cover2Shell]
-        case .screen, .shortPass: return [.manPress, .twoManUnder, .nickelPackage]
-        case .mediumPass:         return [.twoManUnder, .cover4Match, .dimePackage]
-        case .deepPass:           return [.cover2Shell, .quarters, .twoManUnder]
-        case .playAction:         return [.cover3Base, .quarters, .cover4Match]
+        case .insideRun:          return [.bearFront, .goalLineD, .doubleAGap, .base34]
+        case .outsideRun:         return [.cornerBlitz, .safetyBlitz, .cover2Shell, .cloud2, .tampa2]
+        case .screen, .shortPass: return [.manPress, .twoManUnder, .nickelPackage, .twoManPress, .edgeDog]
+        case .mediumPass:         return [.twoManUnder, .cover4Match, .dimePackage, .simPressure, .cover1Robber]
+        case .deepPass:           return [.cover2Shell, .quarters, .twoManUnder, .tampa2, .cover6, .bigNickel]
+        case .playAction:         return [.cover3Base, .quarters, .cover4Match, .simPressure, .cover6]
         }
     }
 
-    /// A counter package for the AI defense, preferring calls installed in
-    /// its coordinator's playbook.
+    /// A counter package for the AI defense, drawn from its coordinator's OWN
+    /// playbook: the pool is narrowed to installed calls and the scheme's
+    /// signature answers are entered twice, so the counter reads as *this*
+    /// defense's answer (a 3-4 staff keys the run with the odd front, a Tampa 2
+    /// staff keys the deep ball with the pipe) instead of a generic one.
     static func defensiveCounter(
         for tendency: OffenseTendency,
         scheme: DefensiveScheme?
     ) -> DefensivePackage {
         let pool = defensiveCounterCalls(for: tendency)
+        let sheet = schemeWeighted(pool, scheme: scheme)
+        return ((sheet.isEmpty ? pool : sheet).randomElement() ?? .cover3Base).package
+    }
+
+    /// Narrow a defensive counter pool to the scheme's installed calls, then
+    /// enter its signature calls a second time (≈2× draw weight — an identity
+    /// lean, never a lock). Empty result = the playbook installs none of them.
+    private static func schemeWeighted(
+        _ pool: [DefensiveCall],
+        scheme: DefensiveScheme?
+    ) -> [DefensiveCall] {
+        guard let scheme else { return pool }
         let installed = pool.filter { $0.isInPlaybook(of: scheme) }
-        return ((installed.isEmpty ? pool : installed).randomElement() ?? .cover3Base).package
+        guard !installed.isEmpty else { return [] }
+        return installed + installed.filter { Playbook.isSignature($0, of: scheme) }
     }
 
     /// Offensive counter plays per defensive tendency: blitz-heavy defenses
-    /// eat screens/quick game/draws, man gets crossers, zone gets seams and
-    /// curl holes, single-high shells get attacked over the top.
+    /// eat screens/quick game/draws, man gets crossers, zone gets the holes
+    /// between levels, single-high shells get attacked over the top.
+    ///
+    /// The new screens are honest passes (`isPass`), so they survive the
+    /// long-yardage run filter in ``offensiveCounter`` without a special case —
+    /// which is exactly why a blitz-heavy read now opens the screen game on
+    /// 3rd-and-long, where only the legacy `.screen` wart could reach before.
     static func offensiveCounterCalls(for tendency: DefenseTendency) -> [OffensivePlayCall] {
         switch tendency {
-        case .blitzHeavy:      return [.screen, .slant, .quickOut, .draw, .flat]
-        case .manHeavy:        return [.mesh, .drag, .cross]
-        case .zoneHeavy:       return [.seam, .curl, .dig, .stick]
-        case .singleHighHeavy: return [.post, .playActionDeep, .goRoute, .corner]
+        case .blitzHeavy:
+            return [.screen, .slant, .quickOut, .draw, .flat,
+                    .slipScreen, .bubbleScreen, .rpoSlant, .qbDraw, .angle]
+        case .manHeavy:
+            return [.mesh, .drag, .cross,
+                    .shallowCross, .yCross, .angle, .sluggo, .endAround]
+        case .zoneHeavy:
+            return [.seam, .curl, .dig, .stick,
+                    .levels, .snag, .spot, .dagger, .smash]
+        case .singleHighHeavy:
+            return [.post, .playActionDeep, .goRoute, .corner,
+                    .fourVerts, .paCross, .sluggo, .backShoulder]
         }
     }
 
     /// A counter play for the AI offense, filtered for basic situational
-    /// sanity (no draws on long yardage, no deep shots near the goal line)
-    /// and preferring the coordinator's installed playbook. `nil` = no sane
-    /// counter here — the AI stays on base logic for this snap.
+    /// sanity (no draws on long yardage, no deep shots near the goal line) and
+    /// drawn from the coordinator's OWN playbook. `nil` = no sane counter here
+    /// — the AI stays on base logic for this snap.
+    ///
+    /// Three-step resolution, because the per-scheme playbooks are now
+    /// exclusive: (1) the canonical answers this scheme installs, signature
+    /// calls double-weighted; (2) if it installs none of them, the scheme's own
+    /// ordered preference at the depth the read opens up — a West Coast offense
+    /// answers a single-high shell with its boot, not with a Go route it has
+    /// never practiced; (3) only a schemeless coordinator falls through to the
+    /// raw pool.
     static func offensiveCounter(
         for tendency: DefenseTendency,
         scheme: OffensiveScheme?,
@@ -296,8 +373,42 @@ enum AdaptiveOpponentAI {
             pool.removeAll { $0.simulatorHint.passDepth == .deep || $0 == .playActionDeep }
         }
         guard !pool.isEmpty else { return nil }
-        let installed = pool.filter { $0.isInPlaybook(of: scheme) }
-        return (installed.isEmpty ? pool : installed).randomElement()
+        if let scheme {
+            let installed = pool.filter { $0.isInPlaybook(of: scheme) }
+            if !installed.isEmpty {
+                let signature = installed.filter { Playbook.isSignature($0, of: scheme) }
+                return (installed + signature).randomElement()
+            }
+            return schemeAnswer(for: tendency, scheme: scheme, yardsToEndzone: yardsToEndzone)
+        }
+        return pool.randomElement()
+    }
+
+    /// The scheme's own answer to a defensive read when its playbook installs
+    /// none of the canonical counters — the first call off its ordered
+    /// preference (`Playbook.passOrder`) at the depth the read opens up.
+    /// Deterministic by design: this is the coordinator's *stated* preference,
+    /// the same list `LiveGameEngine.recommendedPassCall` walks.
+    private static func schemeAnswer(
+        for tendency: DefenseTendency,
+        scheme: OffensiveScheme,
+        yardsToEndzone: Int
+    ) -> OffensivePlayCall? {
+        let depths: [Playbook.CallDepth]
+        switch tendency {
+        case .blitzHeavy:      depths = [.short]                  // get it out on time
+        case .manHeavy:        depths = [.short, .medium]         // rubs and crossers
+        case .zoneHeavy:       depths = [.medium, .short]         // sit in the holes
+        case .singleHighHeavy: depths = yardsToEndzone < 25       // take the top off
+            ? [.medium, .short] : [.deep, .medium]
+        }
+        for depth in depths {
+            for call in Playbook.passOrder(for: scheme, depth: depth) {
+                if yardsToEndzone < 25, call.simulatorHint.passDepth == .deep { continue }
+                return call
+            }
+        }
+        return nil
     }
 
     // MARK: - Broadcast hints

@@ -200,6 +200,14 @@ struct GamePlanView: View {
         .onChange(of: gamePlan) { _, _ in
             flashSavedIndicator()
         }
+        // Setting the plan is the last thing before kickoff, so this screen
+        // gets the pregame score rather than the front-office bed.
+        .onAppear {
+            MusicDirector.shared.pushOverride(.gameday)
+        }
+        .onDisappear {
+            MusicDirector.shared.clearOverride(.gameday)
+        }
     }
 
     // MARK: - Header Bar
@@ -744,7 +752,11 @@ struct GamePlanView: View {
                 } else {
                     // Nothing queued: pick a play to drill.
                     Menu {
-                        ForEach(["Run", "Short Pass", "Medium Pass", "Deep Pass"], id: \.self) { category in
+                        // The catalog's own tab order — the picker gained
+                        // Screen / Play Action / RPO with the playbook
+                        // expansion, and a hardcoded list here would have
+                        // silently hidden 12 practicable plays.
+                        ForEach(OffensivePlayCall.categories, id: \.self) { category in
                             let plays = practicablePlays(practice).filter { $0.category == category }
                             if !plays.isEmpty {
                                 Section(category) {

@@ -286,6 +286,262 @@ struct RouteSpec {
                 9: [W(12, -1)],
             ], primaryRole: 7)
 
+        // ==============================================================
+        // Playbook expansion. Same vocabulary as everything above — a
+        // waypoint list per role, one gold primary, blockers left out. No
+        // new drawing primitive was invented for these: if a concept cannot
+        // be said in waypoints it is drawn as the simplest track that is
+        // still football (a correct three-point stem beats a decorative
+        // squiggle on a 190 pt card).
+        // ==============================================================
+
+        // --- Expansion: zone / gap runs ---
+        case .insideZone:
+            // Press the front side, one cut back, get north.
+            return RouteSpec(routes: [1: [W(-1.2, -0.8), W(1.5, -2.2), W(6, -1.6)]],
+                             primaryRole: 1, carrierRole: 1)
+        case .wideZone:
+            // Stretch the whole front, then bend it back off the overrun.
+            return RouteSpec(routes: [1: [W(-1.4, 3.5), W(0, 7), W(3.5, 6.5), W(9, 5.5)]],
+                             primaryRole: 1, carrierRole: 1)
+        case .duo:
+            return RouteSpec(routes: [1: [W(-1.0, -0.6), W(2.5, -0.8), W(8, -0.4)]],
+                             primaryRole: 1, carrierRole: 1)
+        case .power:
+            // Open step to the kick-out, then downhill behind the puller;
+            // the TE's down block is the only non-carrier track worth art.
+            return RouteSpec(routes: [
+                1: [W(-1.2, 1.6), W(1.2, -1.8), W(5, -2.4), W(9, -2.0)],
+                10: [W(1.0, 2.5)],
+            ], primaryRole: 1, carrierRole: 1)
+        case .trap:
+            return RouteSpec(routes: [1: [W(-0.8, 0.4), W(2, -1.6), W(7, -2.2)]],
+                             primaryRole: 1, carrierRole: 1)
+
+        // --- Expansion: QB-conflict runs ---
+        case .zoneRead:
+            // Both halves of the read are drawn: the give track outside and
+            // the QB's pull lane back inside the vacated end.
+            return RouteSpec(routes: [
+                1: [W(-1.0, 2.5), W(1.0, 4.5)],
+                0: [W(-0.8, -0.5), W(1.5, -3.5), W(6, -5.0)],
+                9: [W(2, 1)],
+            ], primaryRole: 1, carrierRole: 1)
+        case .qbDraw:
+            // Show the drop, then run it at the middle the rush vacated.
+            return RouteSpec(routes: [
+                0: [W(-4, 0.5), W(-1, -1), W(4, -1.5), W(9, -1)],
+                7: [W(14, 0)], 8: [W(14, 0)],
+            ], primaryRole: 0, carrierRole: 0)
+        case .endAround:
+            // The WR comes back the other way at speed; the back sells flow.
+            // `carrierRole: 7` is presentation-only (the sim picks its own
+            // rusher) — the same mismatch `jetSweep` already carries.
+            return RouteSpec(routes: [
+                7: [W(-1.5, -12), W(-0.5, -16), W(3, -18), W(9, -19)],
+                1: [W(-1.2, 3.5), W(0, 6)],
+            ], primaryRole: 7, carrierRole: 7, motionRole: 7)
+        case .speedOption:
+            // QB attacks the edge with the pitch man running his track.
+            return RouteSpec(routes: [
+                0: [W(-0.5, 2.5), W(1.5, 5.5), W(4, 7)],
+                1: [W(-1.5, 5), W(1, 9)],
+            ], primaryRole: 0, carrierRole: 0)
+
+        // --- Expansion: screens ---
+        case .bubbleScreen:
+            return RouteSpec(routes: [
+                9: [W(-0.5, 3.5), W(0, 6)],
+                7: [W(1, 1)],
+                8: [W(12, 0)],
+            ], primaryRole: 9)
+        case .tunnelScreen:
+            return RouteSpec(routes: [
+                8: [W(1, -2), W(1.5, -5)],
+                9: [W(0.5, 2)],
+                7: [W(12, 0)],
+            ], primaryRole: 8)
+        case .slipScreen:
+            return RouteSpec(routes: [
+                1: [W(-2.5, -1.5), W(-0.5, -4)],
+                7: [W(13, 0)], 8: [W(13, 0)],
+                9: [W(2, 3)],
+            ], primaryRole: 1)
+
+        // --- Expansion: short passes ---
+        case .spot:
+            // Corner / flat / spot-sitter — the triangle on the card.
+            return RouteSpec(routes: [
+                9: [W(5, -1), W(5.5, -3)],
+                10: [W(2, 3.5), W(3, 6.5)],
+                8: [W(6, 0), W(9, 5)],
+                7: [W(12, 0)],
+            ], primaryRole: 9)
+        case .snag:
+            return RouteSpec(routes: [
+                7: [W(4, 0), W(6, -4)],
+                9: [W(9, -1), W(13, 4)],
+                1: [W(-1, 4), W(0.5, 7)],
+                8: [W(14, 0)],
+            ], primaryRole: 7)
+        case .shallowCross:
+            return RouteSpec(routes: [
+                9: [W(1.5, -1), W(3, -16)],
+                8: [W(12, 0), W(12, -9)],
+                7: [W(16, 0)],
+                10: [W(6, -2)],
+            ], primaryRole: 9)
+        case .angle:
+            // Back sells the flat, then snaps back under the backer.
+            return RouteSpec(routes: [
+                1: [W(-1, 3.5), W(1, 6), W(3, 1)],
+                10: [W(7, -2)],
+                7: [W(13, 0)],
+                8: [W(11, 0), W(10, -5)],
+            ], primaryRole: 1)
+        case .fade:
+            return RouteSpec(routes: [
+                8: [W(6, 0.5), W(14, 2.5)],
+                9: [W(4, -1)],
+                7: [W(10, 0), W(9, -1)],
+                10: [W(3, 2)],
+            ], primaryRole: 8)
+
+        // --- Expansion: medium passes ---
+        case .levels:
+            return RouteSpec(routes: [
+                8: [W(6, 0), W(7, -10)],
+                7: [W(12, 0), W(13, -11)],
+                9: [W(3, 3)],
+                1: [W(-1, 4)],
+            ], primaryRole: 7)
+        case .yCross:
+            // `.crossSet` flips the slot right, so the TE crosser and the
+            // slot dig genuinely X the field — the same trick `.cross` uses.
+            return RouteSpec(routes: [
+                10: [W(4, -2), W(10, -14), W(16, -24)],
+                8: [W(20, 0)],
+                9: [W(12, -1)],
+                7: [W(6, 0), W(5, -1)],
+                1: [W(-1.5, 4.5), W(0, 7.5)],
+            ], primaryRole: 10)
+        case .dagger:
+            return RouteSpec(routes: [
+                9: [W(16, -1)],
+                8: [W(14, 0), W(14, -14)],
+                7: [W(20, 0)],
+                1: [W(-1, 4)],
+            ], primaryRole: 8)
+        case .sail:
+            return RouteSpec(routes: [
+                10: [W(3, 3), W(4, 7)],
+                8: [W(12, 0), W(16, 6)],
+                9: [W(18, -1)],
+                7: [W(14, 0), W(12, -1)],
+            ], primaryRole: 8)
+        case .smash:
+            return RouteSpec(routes: [
+                8: [W(5, 0), W(4, 1.5)],
+                9: [W(8, -1), W(16, 6)],
+                7: [W(14, 0), W(12, 2)],
+                10: [W(5, -2)],
+            ], primaryRole: 9)
+
+        // --- Expansion: deep passes ---
+        case .fourVerts:
+            return RouteSpec(routes: [
+                7: [W(24, 0)], 8: [W(24, 0)],
+                9: [W(22, -2)], 10: [W(20, -3)],
+                1: [W(-1, 4)],
+            ], primaryRole: 9)
+        case .sluggo:
+            // Slant-and-go: the stem breaks in, then straightens up the boundary.
+            return RouteSpec(routes: [
+                8: [W(3, -2.5), W(6, -3.5), W(22, -3)],
+                7: [W(16, 0)],
+                9: [W(5, -1)],
+                10: [W(6, -2)],
+            ], primaryRole: 8)
+        case .backShoulder:
+            return RouteSpec(routes: [
+                8: [W(18, 0), W(16, 1.5)],
+                7: [W(20, 0)],
+                9: [W(6, -1)],
+                10: [W(5, 2)],
+            ], primaryRole: 8)
+        case .hailMary:
+            // Depths clamp at the top of the card — four lines running off
+            // the edge is exactly the right read.
+            return RouteSpec(routes: [
+                7: [W(42, 1)], 8: [W(42, -1)],
+                9: [W(40, -2)], 10: [W(38, 2)],
+            ], primaryRole: 8)
+
+        // --- Expansion: play action ---
+        case .paBoot:
+            // Role 0 gets the rollout track — that is what makes a boot read
+            // as a boot on the card (legal: qbSneak/spike/kneel route 0 too).
+            return RouteSpec(routes: [
+                0: [W(-3, -1), W(-1.5, 6), W(-1, 9)],
+                10: [W(2, 4), W(3, 8)],
+                8: [W(12, 0), W(15, 7)],
+                9: [W(4, -1), W(6, -14)],
+                7: [W(18, 0)],
+            ], primaryRole: 8)
+        case .paCross:
+            return RouteSpec(routes: [
+                7: [W(8, 0), W(14, -13), W(19, -26)],
+                9: [W(3, -1), W(6, -12)],
+                8: [W(22, 0)],
+                10: [W(6, 3)],
+            ], primaryRole: 7)
+        case .paGlance:
+            return RouteSpec(routes: [
+                8: [W(3, 0), W(9, -6)],
+                7: [W(3, 0), W(9, -6)],
+                9: [W(5, -1)],
+                10: [W(4, 2)],
+            ], primaryRole: 8)
+
+        // --- Expansion: RPO ---
+        // Every RPO draws the give track for role 1 so the card shows the
+        // mesh point; the back's track stays short because the pass
+        // resolution makes it a fake.
+        case .rpoBubble:
+            return RouteSpec(routes: [
+                9: [W(-0.5, 3.5), W(0, 6)],
+                1: [W(-1, -1), W(2, -2)],
+                7: [W(1, 1)],
+                8: [W(11, 0)],
+            ], primaryRole: 9)
+        case .rpoSlant:
+            return RouteSpec(routes: [
+                8: [W(2.5, 0), W(8, -6)],
+                1: [W(-1, -1), W(2, -2)],
+                9: [W(1, 2)],
+                7: [W(11, 0)],
+            ], primaryRole: 8)
+        case .rpoStick:
+            return RouteSpec(routes: [
+                10: [W(5.5, 0), W(5, 2.5)],
+                9: [W(2, 3.5)],
+                1: [W(-1, -1), W(2, -2)],
+                8: [W(12, 0)],
+            ], primaryRole: 10)
+        case .rpoPop:
+            return RouteSpec(routes: [
+                9: [W(3, -1), W(10, -2)],
+                1: [W(-1, -1), W(2, -2)],
+                8: [W(12, 0)], 7: [W(12, 0)],
+            ], primaryRole: 9)
+
+        // --- Expansion: special ---
+        case .tushPush:
+            return RouteSpec(routes: [
+                0: [W(1.0, 0), W(2.0, 0)],
+                1: [W(-0.4, 0)],
+            ], primaryRole: 0, carrierRole: 0)
+
         // --- Clock plays (card art only — their scripts are bespoke) ---
         case .spike:
             return RouteSpec(routes: [0: [W(-7, 0)]], primaryRole: 0, carrierRole: 0)

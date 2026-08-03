@@ -52,10 +52,13 @@ cleanup() { rm -f "$SLICE" "$STORAGE" "$COMPUTED" "$SCOUTSLICE" "$ANCHORS" "$PRO
 trap cleanup EXIT
 
 # --- Canonical repo sources (relative to $ENGINE) --------------------------
-# 30 files copied verbatim: 11 play-by-play + 6 full-game + 7 draft-class +
+# 31 files copied verbatim: 12 play-by-play + 6 full-game + 7 draft-class +
 # 6 development.
 VERBATIM_SOURCES=(
   "Domain/Enums/PlayCall.swift"
+  # Playbook catalog: the per-scheme install / signature / call-order tables the
+  # AdaptiveOpponentAI extract reads (Playbook.isSignature, Playbook.passOrder).
+  "Domain/Models/Playbook.swift"
   "Domain/Enums/PlayType.swift"
   "Domain/Enums/Position.swift"
   "Domain/Enums/Scheme.swift"

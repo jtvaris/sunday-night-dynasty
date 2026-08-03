@@ -201,7 +201,9 @@ struct PlayCallView: View {
         }
     }
 
-    private let offensiveCategories = ["Run", "Short Pass", "Medium Pass", "Deep Pass", "Special"]
+    /// The catalog's own tab order (the legacy sheet lists every category as a
+    /// section, so it picks up Screen / Play Action / RPO for free).
+    private let offensiveCategories = OffensivePlayCall.categories
 
     private func offenseCategorySection(_ category: String) -> some View {
         let plays = OffensivePlayCall.allCases.filter { $0.category == category }

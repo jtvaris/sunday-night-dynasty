@@ -480,10 +480,17 @@ struct CoachedGameView: View {
             }
         }
         .statusBarHidden()
-        .onAppear(perform: startGame)
+        .onAppear {
+            // The live match owns the mix outright: crowd bed, contact, and
+            // the play SFX. A menu score under all that would be mud, and the
+            // stadium is the atmosphere here — it does not need scoring.
+            MusicDirector.shared.suspend()
+            startGame()
+        }
         .onDisappear {
             AudioDirector.shared.endMatch()
             CrowdReactor.shared.matchDidEnd()
+            MusicDirector.shared.resume()
         }
         .onReceive(playClockTicker) { _ in tickPlayClock() }
         .onChange(of: shown.timeRemaining) { _, remaining in
@@ -1409,7 +1416,11 @@ struct CoachedGameView: View {
 
     // MARK: Offense panel
 
-    private let categories = ["Run", "Short Pass", "Medium Pass", "Deep Pass", "Special"]
+    /// The tab strip is the catalog's own ordered list — one source, so a new
+    /// play can never land in a tab the sheet does not render (eight tabs
+    /// since the playbook expansion: Run · Screen · Short · Medium · Deep ·
+    /// PA · RPO · Special).
+    private let categories = OffensivePlayCall.categories
 
     private var offenseCallPanel: some View {
         VStack(alignment: .leading, spacing: 9) {
@@ -1522,12 +1533,17 @@ struct CoachedGameView: View {
             .padding(.horizontal, 14)
 
             // Clipboard-style call sheet: every play as a card with its
-            // chalkboard art and a one-line description; installed plays first
-            // (practice-installed plays count — R36).
+            // chalkboard art and a one-line description. The ACTIVE SCHEME
+            // composes the sheet — its signature calls lead, the rest of its
+            // playbook follows (practice-installed plays count — R36), and
+            // everything else stays on the sheet, dimmed and one context menu
+            // away from the practice queue. Nothing is hidden; the order is
+            // the coaching.
             let sectionPlays = OffensivePlayCall.allCases
                 .filter { $0.category == selectedCategory && $0 != .kneel && $0 != .spike }
-            // Stable order: installed playbook plays first, original order kept.
-            let plays = sectionPlays.filter { engine.playerHasInstalled($0) }
+            // Three stable tiers, each keeping the catalog's own order.
+            let plays = sectionPlays.filter { isSignaturePlay($0) }
+                + sectionPlays.filter { engine.playerHasInstalled($0) && !isSignaturePlay($0) }
                 + sectionPlays.filter { !engine.playerHasInstalled($0) }
             // The grid takes ALL the leftover panel height (no trailing Spacer
             // to halve it) and sizes its rows to what it was handed, so a full
@@ -1687,6 +1703,55 @@ struct CoachedGameView: View {
         }
     }
 
+    // MARK: Scheme identity (playbook expansion)
+
+    /// A signature call of the ACTIVE offensive scheme — the handful of plays
+    /// that define the identity. They lead their tab and wear a scheme chip;
+    /// with no scheme set (exhibition) nothing is a signature.
+    private func isSignaturePlay(_ play: OffensivePlayCall) -> Bool {
+        guard let scheme = engine.playerOffensiveScheme else { return false }
+        return Playbook.isSignature(play, of: scheme)
+    }
+
+    private func isSignatureCall(_ call: DefensiveCall) -> Bool {
+        guard let scheme = engine.playerDefensiveScheme else { return false }
+        return Playbook.isSignature(call, of: scheme)
+    }
+
+    /// Short scheme tag for the signature chip. A call card is ~190 pt wide
+    /// with the name, the OC pill and the checkmark already on that row, so
+    /// the chip says it in at most five characters.
+    private func schemeChipLabel(_ scheme: OffensiveScheme) -> String {
+        switch scheme {
+        case .westCoast:  return "WC"
+        case .airRaid:    return "AIR"
+        case .spread:     return "SPR"
+        case .powerRun:   return "PWR"
+        case .shanahan:   return "WZ"
+        case .proPassing: return "PRO"
+        case .rpo:        return "RPO"
+        case .option:     return "OPT"
+        }
+    }
+
+    private func schemeChipLabel(_ scheme: DefensiveScheme) -> String {
+        switch scheme {
+        case .base34:   return "3-4"
+        case .base43:   return "4-3"
+        case .cover3:   return "C3"
+        case .pressMan: return "PRESS"
+        case .tampa2:   return "TB2"
+        case .multiple: return "MULT"
+        case .hybrid:   return "HYB"
+        }
+    }
+
+    /// The established call-sheet accessibility sentence: "Name. Blurb."
+    /// followed by whatever state clauses apply, nil clauses dropped.
+    private func callSheetLabel(_ head: String, _ clauses: [String?]) -> String {
+        ([head] + clauses.compactMap { $0 }).joined(separator: " ")
+    }
+
     private func categoryTab(_ category: String) -> some View {
         let isSelected = selectedCategory == category
         return Button {
@@ -1695,6 +1760,8 @@ struct CoachedGameView: View {
             Text(shortCategoryName(category))
                 .font(.system(size: 12, weight: .bold))
                 .foregroundStyle(isSelected ? Color.backgroundPrimary : Color.textSecondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)   // eight capsules share the row
                 .padding(.vertical, 7)
                 .frame(maxWidth: .infinity)
                 .background(isSelected ? Color.accentGold : Color.backgroundTertiary, in: Capsule())
@@ -1702,11 +1769,15 @@ struct CoachedGameView: View {
         .buttonStyle(.plain)
     }
 
+    /// Eight capsules have to share one row, so the long labels shorten.
+    /// "Run" / "Screen" / "RPO" / "Special" are already short enough to fall
+    /// through untouched.
     private func shortCategoryName(_ category: String) -> String {
         switch category {
         case "Short Pass": return "Short"
         case "Medium Pass": return "Medium"
         case "Deep Pass": return "Deep"
+        case "Play Action": return "PA"
         default: return category
         }
     }
@@ -1719,6 +1790,7 @@ struct CoachedGameView: View {
         let isSelected = selectedCall == play
         let isSuggested = cachedSuggestion == play
         let installed = engine.playerHasInstalled(play)
+        let signature = isSignaturePlay(play)
         return Button {
             offCallDirtied = true // the coach's own pick — a delay snaps it
             withAnimation(.spring(duration: 0.15)) { selectedCall = play }
@@ -1736,6 +1808,13 @@ struct CoachedGameView: View {
                         Image(systemName: "book.closed")
                             .font(.system(size: 9))
                             .foregroundStyle(Color.textTertiary)
+                    }
+                    // The scheme's identity calls wear their scheme's tag —
+                    // this is what makes a West Coast sheet read as a West
+                    // Coast sheet instead of a list of 65 plays.
+                    if signature, let scheme = engine.playerOffensiveScheme {
+                        coordinatorChip(schemeChipLabel(scheme), icon: "star.fill",
+                                        accent: Color.accentGold)
                     }
                     // #2: the OC's pick, named ON the card. The bubble says
                     // "Coach's pick: Slant" — this is how you find Slant.
@@ -1775,9 +1854,11 @@ struct CoachedGameView: View {
         .buttonStyle(.plain)
         // R38: the call-sheet card reads as "play name. description" with
         // installed/selected state — play names stay English (football terms).
-        .accessibilityLabel(Text(verbatim: isSuggested
-            ? "\(play.rawValue). \(play.blurb). Coordinator's pick."
-            : "\(play.rawValue). \(play.blurb)"))
+        .accessibilityLabel(Text(verbatim: callSheetLabel(
+            "\(play.rawValue). \(play.blurb)",
+            [signature ? "Scheme signature play." : nil,
+             isSuggested ? "Coordinator's pick." : nil]
+        )))
         .accessibilityValue(installed ? Text(verbatim: "") : Text("Not installed"))
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
         // R36: a dimmed card can be queued as the week's practice play —
@@ -1822,14 +1903,23 @@ struct CoachedGameView: View {
                     .foregroundStyle(Color.textTertiary)
                     .tracking(1.2)
                 ForEach(options, id: \.self) { option in
+                    let beatsShell = believedShell.map { option.goodAgainst($0) } ?? false
                     Button {
                         commitAudible(to: option)
                     } label: {
                         HStack(spacing: 5) {
-                            if let shell = believedShell, option.goodAgainst(shell) {
+                            if beatsShell {
                                 Image(systemName: "checkmark.circle.fill")
                                     .font(.system(size: 11, weight: .bold))
                                     .foregroundStyle(Color.success)
+                            }
+                            // The identity checks are marked here too — the
+                            // strip is the RPO give/pull, so the scheme's own
+                            // answer must be findable at a glance.
+                            if isSignaturePlay(option) {
+                                Image(systemName: "star.fill")
+                                    .font(.system(size: 8, weight: .black))
+                                    .foregroundStyle(Color.accentGold)
                             }
                             Text(option.rawValue)
                                 .font(.system(size: 12, weight: .bold))
@@ -1841,6 +1931,10 @@ struct CoachedGameView: View {
                         .overlay(Capsule().strokeBorder(Color.accentGold.opacity(0.5), lineWidth: 1))
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(Text(verbatim: callSheetLabel(
+                        "Check into \(option.rawValue) — \(option.blurb)",
+                        [beatsShell ? "Beats the shell your quarterback is reading." : nil]
+                    )))
                 }
             }
             .padding(.horizontal, 14)
@@ -2358,7 +2452,9 @@ struct CoachedGameView: View {
 
     // MARK: Defense panel
 
-    private let defensiveCategories = ["Coverage", "Pressure", "Man", "Packages"]
+    /// Same single source as the offensive strip: the catalog owns the tabs.
+    /// The expansion added 14 named calls but no new defensive tab.
+    private let defensiveCategories = DefensiveCall.categories
 
     private var defensePanel: some View {
         VStack(alignment: .leading, spacing: 9) {
@@ -2421,9 +2517,14 @@ struct CoachedGameView: View {
             }
             .padding(.horizontal, 14)
 
-            // Installed playbook calls first, original order kept.
+            // Same three-tier composition as the offensive sheet: the active
+            // scheme's signature calls lead, the rest of its playbook follows,
+            // everything else stays available but dimmed.
             let sectionCalls = DefensiveCall.allCases.filter { $0.category == defCategory }
-            let calls = sectionCalls.filter { $0.isInPlaybook(of: engine.playerDefensiveScheme) }
+            let calls = sectionCalls.filter { isSignatureCall($0) }
+                + sectionCalls.filter {
+                    $0.isInPlaybook(of: engine.playerDefensiveScheme) && !isSignatureCall($0)
+                }
                 + sectionCalls.filter { !$0.isInPlaybook(of: engine.playerDefensiveScheme) }
             // Same deal as the offensive sheet: the grid owns the leftover
             // height and sizes its rows to it (#1).
@@ -2539,6 +2640,7 @@ struct CoachedGameView: View {
         let isSelected = defCall == call
         let isSuggested = defRecommendation?.call == call
         let installed = call.isInPlaybook(of: engine.playerDefensiveScheme)
+        let signature = isSignatureCall(call)
         return Button {
             defCallDirtied = true // the coach's own pick — a delay snaps it
             withAnimation(.easeInOut(duration: 0.15)) { defCall = call }
@@ -2557,6 +2659,11 @@ struct CoachedGameView: View {
                             .font(.system(size: 9))
                             .foregroundStyle(Color.textTertiary)
                     }
+                    // The scheme's identity calls, tagged with the scheme.
+                    if signature, let scheme = engine.playerDefensiveScheme {
+                        coordinatorChip(schemeChipLabel(scheme), icon: "star.fill",
+                                        accent: Color.accentGold)
+                    }
                     // #2: the DC's pick, named on the card.
                     if isSuggested {
                         coordinatorChip("DC", icon: "shield.lefthalf.filled",
@@ -2569,8 +2676,12 @@ struct CoachedGameView: View {
                     }
                 }
                 .frame(height: 16)
+                // Man-under lines are drawn for the Man tab AND for any call
+                // whose shell the simulator treats as assigned man (Cover 0
+                // lives in the Pressure tab but plays man everywhere).
                 DefenseDiagramView(coverage: call.package.coverage, blitz: call.package.blitz,
-                                   manUnder: call.category == "Man")
+                                   manUnder: call.category == "Man"
+                                       || call.package.coverage.isManCoverage)
                     .frame(height: diagramHeight)
                     .frame(maxWidth: .infinity)
                     .opacity(installed ? 1 : 0.45)
@@ -2594,9 +2705,11 @@ struct CoachedGameView: View {
             )
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(Text(verbatim: isSuggested
-            ? "\(call.rawValue). \(call.blurb). Coordinator's pick."
-            : "\(call.rawValue). \(call.blurb)"))
+        .accessibilityLabel(Text(verbatim: callSheetLabel(
+            "\(call.rawValue). \(call.blurb)",
+            [signature ? "Scheme signature call." : nil,
+             isSuggested ? "Coordinator's pick." : nil]
+        )))
         .accessibilityValue(installed ? Text(verbatim: "") : Text("Not installed"))
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
@@ -2634,6 +2747,8 @@ struct CoachedGameView: View {
                             .overlay(Capsule().strokeBorder(Color.accentBlue.opacity(0.5), lineWidth: 1))
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(Text(verbatim:
+                        "Rotate the shell to \(shell.rawValue) for the next snap"))
                 }
             }
             .padding(.horizontal, 14)

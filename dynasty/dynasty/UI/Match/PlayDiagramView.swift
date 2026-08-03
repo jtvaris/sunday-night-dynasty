@@ -120,18 +120,29 @@ struct DefenseDiagramView: View {
                 let x = 0.5 + CGFloat(i * 2 - 3) * 0.07
                 drawX(context, at: CGPoint(x: x * w, y: 0.78 * h), size: 0.025 * w)
             }
+            // Fire zone and the creeper both TRADE a rusher for a dropper:
+            // the end peels out into the hook while a backer replaces him.
+            // That swap is the identity of the call, so it is drawn.
+            if blitz == .fireZone || blitz == .simPressure {
+                drawDropArrow(context, from: CGPoint(x: 0.71 * w, y: 0.78 * h),
+                              to: CGPoint(x: 0.80 * w, y: 0.52 * h))
+            }
             // Linebackers — Double A-Gap mugs both outside backers over center.
             let lbY = 0.62
             let lbXs: [CGFloat] = blitz == .doubleAGap ? [0.44, 0.56, 0.68] : [0.32, 0.5, 0.68]
             for (i, x) in lbXs.enumerated() {
                 let y = (blitz == .doubleAGap && i < 2) ? 0.72 : lbY
                 drawX(context, at: CGPoint(x: x * w, y: y * h), size: 0.025 * w)
-                if blitz == .lbBlitz || blitz == .allOutBlitz {
+                if blitz == .lbBlitz || blitz == .allOutBlitz || blitz == .fireZone {
                     drawBlitzArrow(context, from: CGPoint(x: x * w, y: lbY * h),
                                    to: CGPoint(x: (0.5 + (x - 0.5) * 0.6) * w, y: 0.9 * h))
                 } else if blitz == .doubleAGap && i < 2 {
                     drawBlitzArrow(context, from: CGPoint(x: x * w, y: y * h),
                                    to: CGPoint(x: (0.5 + (x - 0.5) * 0.5) * w, y: 0.92 * h))
+                } else if blitz == .simPressure && i == 1 {
+                    // Creeper: exactly one late body, so the rush still counts four.
+                    drawBlitzArrow(context, from: CGPoint(x: x * w, y: lbY * h),
+                                   to: CGPoint(x: (x + 0.06) * w, y: 0.9 * h))
                 }
             }
             // Corners + safeties
@@ -143,10 +154,17 @@ struct DefenseDiagramView: View {
                 }
             }
             // Safeties: Cover 1 shows a single-high dome with the other one
-            // down in the box; the safety blitz sends him instead.
-            let safetySpots: [CGPoint] = coverage == .cover1 || blitz == .safetyBlitz
-                ? [CGPoint(x: 0.5, y: 0.22), CGPoint(x: 0.7, y: 0.5)]
-                : [CGPoint(x: 0.34, y: 0.32), CGPoint(x: 0.66, y: 0.32)]
+            // down in the box; the safety blitz sends him instead. Cover 0 is
+            // the one shell with NO deep marker at all — both safeties walk
+            // down, and the empty top of the card IS the read.
+            let safetySpots: [CGPoint]
+            if coverage == .cover0 {
+                safetySpots = [CGPoint(x: 0.3, y: 0.54), CGPoint(x: 0.7, y: 0.54)]
+            } else if coverage == .cover1 || blitz == .safetyBlitz {
+                safetySpots = [CGPoint(x: 0.5, y: 0.22), CGPoint(x: 0.7, y: 0.5)]
+            } else {
+                safetySpots = [CGPoint(x: 0.34, y: 0.32), CGPoint(x: 0.66, y: 0.32)]
+            }
             for spot in safetySpots {
                 drawX(context, at: CGPoint(x: spot.x * w, y: spot.y * h), size: 0.025 * w)
             }
@@ -173,6 +191,24 @@ struct DefenseDiagramView: View {
                 for x in [0.14, 0.38, 0.62, 0.86] {
                     drawZone(context, center: CGPoint(x: x * w, y: 0.17 * h), rx: 0.10 * w, ry: 0.09 * h)
                 }
+            case .tampa2:
+                // Cover 2 halves, and the Mike runs the pipe: the deep-middle
+                // drop is the whole identity of the shell, so it is drawn.
+                drawZone(context, center: CGPoint(x: 0.28 * w, y: 0.17 * h), rx: 0.20 * w, ry: 0.10 * h)
+                drawZone(context, center: CGPoint(x: 0.72 * w, y: 0.17 * h), rx: 0.20 * w, ry: 0.10 * h)
+                drawDropArrow(context, from: CGPoint(x: 0.5 * w, y: 0.58 * h),
+                              to: CGPoint(x: 0.5 * w, y: 0.28 * h))
+            case .cover6:
+                // Split field: quarters to the field side, a Cover 2 half and
+                // a squatting corner to the boundary.
+                for x in [0.14, 0.38] {
+                    drawZone(context, center: CGPoint(x: x * w, y: 0.17 * h), rx: 0.10 * w, ry: 0.09 * h)
+                }
+                drawZone(context, center: CGPoint(x: 0.76 * w, y: 0.17 * h), rx: 0.20 * w, ry: 0.10 * h)
+                drawZone(context, center: CGPoint(x: 0.90 * w, y: 0.52 * h), rx: 0.08 * w, ry: 0.07 * h)
+            case .cover0:
+                // Zero: five press locks, nothing behind them.
+                drawPressLocks(context, w: w, h: h)
             case .prevent:
                 // Sky-deep umbrella: three deep zones pushed to the very top.
                 for x in [0.2, 0.5, 0.8] {
@@ -197,6 +233,46 @@ struct DefenseDiagramView: View {
             context.stroke(line, with: .color(.accentBlue.opacity(0.6)),
                            style: StrokeStyle(lineWidth: 1.5, dash: [2, 3]))
         }
+    }
+
+    /// Cover 0: every eligible is locked up in press, and the arrowhead says
+    /// the defender is going wherever the receiver goes. Five locks — corners,
+    /// nickel, and the two walked-down safeties.
+    private func drawPressLocks(_ context: GraphicsContext, w: CGFloat, h: CGFloat) {
+        let locks: [(x: CGFloat, y: CGFloat)] = [
+            (0.08, 0.60), (0.30, 0.54), (0.50, 0.62), (0.70, 0.54), (0.92, 0.60),
+        ]
+        for (x, y) in locks {
+            var line = Path()
+            line.move(to: CGPoint(x: x * w, y: y * h))
+            line.addLine(to: CGPoint(x: x * w, y: 0.84 * h))
+            context.stroke(line, with: .color(.accentBlue.opacity(0.7)),
+                           style: StrokeStyle(lineWidth: 1.6, dash: [2, 3]))
+            var tip = Path()
+            tip.move(to: CGPoint(x: (x - 0.02) * w, y: 0.79 * h))
+            tip.addLine(to: CGPoint(x: x * w, y: 0.84 * h))
+            tip.addLine(to: CGPoint(x: (x + 0.02) * w, y: 0.79 * h))
+            context.stroke(tip, with: .color(.accentBlue.opacity(0.7)),
+                           style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
+        }
+    }
+
+    /// A coverage DROP (not a blitz): blue, pointing away from the LOS. The
+    /// Tampa 2 Mike carrying the pipe is the only user today.
+    private func drawDropArrow(_ context: GraphicsContext, from: CGPoint, to: CGPoint) {
+        var path = Path()
+        path.move(to: from)
+        path.addLine(to: to)
+        context.stroke(path, with: .color(.accentBlue.opacity(0.7)),
+                       style: StrokeStyle(lineWidth: 1.8, dash: [3, 3]))
+        let angle = atan2(to.y - from.y, to.x - from.x)
+        var arrow = Path()
+        arrow.move(to: to)
+        arrow.addLine(to: CGPoint(x: to.x - 6 * cos(angle - 0.5), y: to.y - 6 * sin(angle - 0.5)))
+        arrow.move(to: to)
+        arrow.addLine(to: CGPoint(x: to.x - 6 * cos(angle + 0.5), y: to.y - 6 * sin(angle + 0.5)))
+        context.stroke(arrow, with: .color(.accentBlue.opacity(0.7)),
+                       style: StrokeStyle(lineWidth: 1.8, lineCap: .round))
     }
 
     private func drawX(_ context: GraphicsContext, at point: CGPoint, size: CGFloat) {

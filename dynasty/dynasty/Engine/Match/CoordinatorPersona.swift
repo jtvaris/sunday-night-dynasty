@@ -99,21 +99,42 @@ enum DCPersona: String, CaseIterable {
     /// the engine pre-rolls this once per snap so the pre-snap preview and the
     /// actual play always agree. Never called for the red-zone sellout or the
     /// late-lead prevent shell (the engine guards those).
+    ///
+    /// The persona decides *how often* the base fabric gets overridden; the
+    /// active SCHEME decides *with what*. Rates track the scheme's own
+    /// `Playbook.mix` (a press-man staff blitzes and plays man about twice as
+    /// often as a Tampa 2 staff) and every override is a named call off that
+    /// scheme's call sheet, so the pressure a 3-4 defense brings is its Fire
+    /// Zone and the pressure a press-man defense brings is Cover 0.
+    /// A schemeless coordinator falls back to the pre-expansion behavior
+    /// exactly — same rates, same dimension-only mutations.
     func shadedDefense(
         base: DefensivePackage,
         distance: Int,
         scheme: DefensiveScheme?
     ) -> DefensivePackage {
         var package = base
+        let mix = DCPersona.mix(for: scheme)
         switch self {
         case .balanced:
+            // The balanced DC IS his scheme's base fabric: `derive` only ever
+            // pairs `.balanced` with the two zone-first schemes (`cover3`,
+            // `base43`), whose identity is the sound Cover 3 / two-high look
+            // the engine already handed us. Nothing to shade, no RNG consumed.
             return base
         case .aggressive:
-            // Pressure on standard downs, man leanings over the zone fabric.
-            if package.blitz == .noBlitz, Double.random(in: 0..<1) < 0.30 {
+            // Pressure on standard downs — the scheme's own heat, at its own
+            // rate (0.22 Tampa 2 → 0.48 press man blitz share).
+            if package.blitz == .noBlitz,
+               Double.random(in: 0..<1) < DCPersona.pressureChance(mix) {
+                if let call = DCPersona.pressureCall(distance: distance, scheme: scheme) {
+                    return DCPersona.shade(call, over: package)
+                }
                 package.blitz = Double.random(in: 0..<1) < 0.35 ? .doubleAGap : .lbBlitz
             }
-            if package.coverage == .cover3, Double.random(in: 0..<1) < 0.35 {
+            // Man leanings over the zone fabric, at the scheme's man share.
+            if package.coverage == .cover3,
+               Double.random(in: 0..<1) < DCPersona.manRotationChance(mix) {
                 package.coverage = .manToMan
             }
         case .conservative:
@@ -121,9 +142,18 @@ enum DCPersona: String, CaseIterable {
             if package.blitz != .noBlitz, Double.random(in: 0..<1) < 0.60 {
                 package.blitz = .noBlitz
                 if distance >= 7 {
-                    package.coverage = .cover4
-                    package.front = .dime
+                    return DCPersona.shade(
+                        DCPersona.softShellCall(scheme: scheme), over: package)
                 }
+            } else if distance >= 7, package.blitz == .noBlitz,
+                      Double.random(in: 0..<1) < 0.40 {
+                // Nothing to call off — but on a passing down the conservative
+                // DC still checks into HIS OWN shell instead of the generic
+                // quarters/dime the situational logic hands every defense: a
+                // Tampa 2 staff plays Tampa 2, a 4-3 staff plays its Cloud 2.
+                // The personnel grouping (dime on 3rd-&-long) is preserved.
+                return DCPersona.shade(
+                    DCPersona.softShellCall(scheme: scheme), over: package)
             }
         case .exotic:
             // Unusual packages far more often than anyone else calls them.
@@ -137,16 +167,142 @@ enum DCPersona: String, CaseIterable {
         return package
     }
 
-    /// The exotic pool: Double A-Gap, Zone Blitz, Bear — preferring calls the
-    /// coordinator's playbook installs, and never Bear on long yardage.
+    // MARK: Scheme weights
+
+    /// The mix a coordinator with no named scheme trends to — the neutral
+    /// middle, chosen so every rate below reproduces the pre-expansion
+    /// constants (0.30 pressure / 0.35 man) for a schemeless staff.
+    static let neutralMix = Playbook.DefensiveMix(
+        manShare: 0.35, blitzShare: 0.35, twoHighShare: 0.35
+    )
+
+    static func mix(for scheme: DefensiveScheme?) -> Playbook.DefensiveMix {
+        scheme.map(Playbook.mix(for:)) ?? neutralMix
+    }
+
+    /// Chance the aggressive DC adds pressure to a standard down: the old flat
+    /// 0.30 at the neutral 0.35 blitz share, tracking the scheme one-for-one
+    /// and bounded so no scheme blitzes half its standard downs away.
+    private static func pressureChance(_ mix: Playbook.DefensiveMix) -> Double {
+        min(0.45, max(0.12, 0.30 + (mix.blitzShare - 0.35)))
+    }
+
+    /// Chance the aggressive DC rotates the zone fabric to man — simply the
+    /// scheme's own man share (0.15 Tampa 2 … 0.72 press man), bounded.
+    private static func manRotationChance(_ mix: Playbook.DefensiveMix) -> Double {
+        min(0.60, max(0.08, mix.manShare))
+    }
+
+    // MARK: Scheme call pools
+
+    /// Apply a named call as the shade, but never downgrade a FRONT the
+    /// situational logic deliberately chose. The engine's base package sets
+    /// `.base` on a neutral down and something specific when the situation
+    /// (or a read) demands it: the short-yardage / keyed-run Bear box the
+    /// player is meant to SEE, or the 3rd-&-long dime personnel. The persona
+    /// owns the coverage and the pressure; the situation owns the personnel.
+    private static func shade(
+        _ call: DefensiveCall,
+        over base: DefensivePackage
+    ) -> DefensivePackage {
+        var package = call.package
+        if base.front != .base { package.front = base.front }
+        return package
+    }
+
+    /// The pressure this scheme actually owns, preferring its signature heat
+    /// (entered twice ≈ 2× draw weight). `nil` for a schemeless coordinator or
+    /// a playbook with no pressure call — the caller then shades the blitz
+    /// dimension exactly as it did before schemes existed.
+    private static func pressureCall(
+        distance: Int,
+        scheme: DefensiveScheme?
+    ) -> DefensiveCall? {
+        guard let scheme else { return nil }
+        let pool = longYardageFiltered(
+            Playbook.installedCalls(for: scheme).filter { $0.package.blitz != .noBlitz },
+            distance: distance
+        )
+        guard !pool.isEmpty else { return nil }
+        let signature = pool.filter { Playbook.isSignature($0, of: scheme) }
+        return (pool + signature).randomElement()
+    }
+
+    /// The long-yardage shell a conservative DC drops into: the scheme's own
+    /// two-high, extra-DB coverage call, signature preferred. Dime is the
+    /// fallback — Cover 4 out of six DBs, i.e. exactly the cover4 + dime
+    /// package this branch produced before schemes existed.
+    private static func softShellCall(scheme: DefensiveScheme?) -> DefensiveCall {
+        guard let scheme else { return .dimePackage }
+        let twoHigh: Set<DefensivePlayCall> = [.cover2, .cover4, .tampa2, .cover6]
+        let extraDB: Set<DefensivePlayCall> = [.nickel, .bigNickel, .dime]
+        let pool = Playbook.installedCalls(for: scheme).filter {
+            $0.package.blitz == .noBlitz
+                && twoHigh.contains($0.package.coverage)
+                && extraDB.contains($0.package.front)
+        }
+        guard !pool.isEmpty else { return .dimePackage }
+        let signature = pool.filter { Playbook.isSignature($0, of: scheme) }
+        return (pool + signature).randomElement() ?? .dimePackage
+    }
+
+    /// The exotic pool: the shared Double A-Gap / Zone Blitz / Bear trio plus
+    /// whatever exotic heat the scheme adds (`Playbook.exoticAdditions` — the
+    /// Fire Zone for a 3-4, the creeper for a multiple front, Cover 0 for press
+    /// man), preferring calls the coordinator's playbook installs.
     private static func exoticPackage(
         distance: Int,
         scheme: DefensiveScheme?
     ) -> DefensivePackage {
         var pool: [DefensiveCall] = [.doubleAGap, .zoneBlitz, .bearFront]
-        if distance >= 7 { pool.removeAll { $0 == .bearFront } }
+        if let scheme { pool += Playbook.exoticAdditions(for: scheme) }
+        pool = longYardageFiltered(pool, distance: distance)
         let installed = pool.filter { $0.isInPlaybook(of: scheme) }
         return ((installed.isEmpty ? pool : installed).randomElement() ?? .zoneBlitz).package
+    }
+
+    /// Long-yardage sanity for a pressure/exotic pool: once the offense HAS to
+    /// throw, the heavy run fronts (Bear, Goal Line) and the zero-help gamble
+    /// (Cover 0 — committing to no deep help on 3rd-and-long is a call, not a
+    /// surprise) both come off the sheet. Never empties the pool.
+    private static func longYardageFiltered(
+        _ pool: [DefensiveCall],
+        distance: Int
+    ) -> [DefensiveCall] {
+        guard distance >= 7 else { return pool }
+        let filtered = pool.filter {
+            $0.package.front != .bear
+                && $0.package.front != .goalLine
+                && $0.package.coverage != .cover0
+        }
+        return filtered.isEmpty ? pool : filtered
+    }
+
+    // MARK: Shell audible (presentation surface — see OCPersona.preferredAudible)
+
+    /// The DC's own pick out of the shell-audible strip
+    /// (`DefensivePlayCall.audibleShells`, already filtered to exclude the
+    /// current shell). Deterministic — no RNG — so the chip the UI stars is
+    /// the check this coordinator would actually make.
+    ///
+    /// Aggressive DCs and high-man schemes rotate INTO man; conservative DCs
+    /// and two-high schemes rotate into a two-high zone; everyone else keeps
+    /// the sound single-high fabric.
+    func preferredShellAudible(
+        from options: [DefensivePlayCall],
+        scheme: DefensiveScheme?
+    ) -> DefensivePlayCall? {
+        guard !options.isEmpty else { return nil }
+        let mix = DCPersona.mix(for: scheme)
+        let order: [DefensivePlayCall]
+        if self == .aggressive || mix.manShare >= 0.45 {
+            order = [.manToMan, .cover1, .cover6, .cover2, .tampa2, .cover3, .cover4]
+        } else if self == .conservative || mix.twoHighShare >= 0.45 {
+            order = [.tampa2, .cover2, .cover4, .cover6, .cover3, .cover1, .manToMan]
+        } else {
+            order = [.cover3, .cover6, .cover4, .cover2, .tampa2, .cover1, .manToMan]
+        }
+        return order.first(where: options.contains) ?? options.first
     }
 
     // MARK: Presentation
@@ -224,7 +380,11 @@ enum OCPersona: String, CaseIterable {
     // MARK: Signature calls (live AI offense only)
 
     /// Share of AI offensive snaps the persona overrides the base logic with
-    /// an identity play (0 = pure base logic, today's behavior).
+    /// an identity play. This is the fallback for a coordinator with NO named
+    /// scheme; a coordinator who runs one uses his scheme's own share instead
+    /// (`Playbook.signatureShare` — 0.28 pro passing … 0.38 power run/option),
+    /// which is why a `.balanced` persona still shows an identity as long as
+    /// he runs a real system. 0 = pure base logic.
     var signatureChance: Double {
         switch self {
         case .groundAndPound: return 0.35
@@ -234,9 +394,11 @@ enum OCPersona: String, CaseIterable {
         }
     }
 
-    /// The persona's identity plays for this distance. Empty = the situation
-    /// doesn't fit the identity — stay on base logic for this snap.
-    private func signaturePool(distance: Int) -> [OffensivePlayCall] {
+    /// The persona's identity plays for this distance, used ONLY when the
+    /// coordinator runs no named scheme (a real scheme supplies its own pool
+    /// via `Playbook.signaturePool`). Empty = the situation doesn't fit the
+    /// identity — stay on base logic for this snap.
+    private func personaPool(distance: Int) -> [OffensivePlayCall] {
         switch self {
         case .groundAndPound:
             guard distance < 8 else { return [] }          // no runs into long yardage
@@ -255,23 +417,83 @@ enum OCPersona: String, CaseIterable {
         }
     }
 
-    /// One pre-rolled signature call for the next AI offensive snap, filtered
-    /// for situational sanity (no deep shots near the goal line) and
-    /// preferring the coordinator's installed playbook. `nil` = base logic.
-    /// Uses live RNG — the engine rolls this once per snap.
+    /// Whether a call fits the persona's temperament. This is the ONLY thing
+    /// the persona does inside a real scheme's identity pool: a favoured call
+    /// is entered twice, so it is drawn ~2× as often without ever locking the
+    /// scheme's other identity plays out. The scheme picks the sheet, the
+    /// persona picks off it.
+    private func favours(_ call: OffensivePlayCall) -> Bool {
+        switch self {
+        case .groundAndPound:
+            return call.isRun
+        case .airRaid:
+            let depth = call.simulatorHint.passDepth
+            return depth == .deep || depth == .medium
+        case .westCoast:
+            return call.isPass && call.simulatorHint.passDepth == .short
+        case .balanced:
+            return false
+        }
+    }
+
+    /// One pre-rolled signature call for the next AI offensive snap, drawn from
+    /// the ACTIVE SCHEME's identity pool (`Playbook.signaturePool` — the
+    /// distance-banded lists from the playbook catalog) at the scheme's own
+    /// signature share, biased by the persona and filtered for situational
+    /// sanity (no deep shots near the goal line). `nil` = base logic.
+    ///
+    /// Both ground schemes deliberately return an EMPTY pool in true passing
+    /// downs — a power-run identity has no answer to 3rd-and-12, and forcing
+    /// one would be worse than falling back to the situational logic.
+    ///
+    /// Uses live RNG — the engine rolls this once per snap, gated on the
+    /// player having made at least one explicit call (quick-sim parity).
     func rollSignatureCall(
         distance: Int,
         yardsToEndzone: Int,
         scheme: OffensiveScheme?
     ) -> OffensivePlayCall? {
-        guard signatureChance > 0, Double.random(in: 0..<1) < signatureChance else { return nil }
-        var pool = signaturePool(distance: distance)
+        let share = scheme.map(Playbook.signatureShare(for:)) ?? signatureChance
+        guard share > 0, Double.random(in: 0..<1) < share else { return nil }
+        var pool = scheme.map { Playbook.signaturePool(for: $0, distance: distance) }
+            ?? personaPool(distance: distance)
         if yardsToEndzone < 25 {
             pool.removeAll { $0.simulatorHint.passDepth == .deep || $0 == .playActionDeep }
         }
         guard !pool.isEmpty else { return nil }
         let installed = pool.filter { $0.isInPlaybook(of: scheme) }
-        return (installed.isEmpty ? pool : installed).randomElement()
+        let sheet = installed.isEmpty ? pool : installed
+        return (sheet + sheet.filter(favours)).randomElement()
+    }
+
+    // MARK: Audible mapping (presentation surface)
+
+    /// The coach's own pick out of an audible strip. The options are already
+    /// filtered to the current formation family and the installed playbook by
+    /// `OffensivePlayCall.audibleOptions(installed:)`; this only RANKS them,
+    /// deterministically (no RNG), so the chip the UI stars is the check this
+    /// coordinator would actually make and it never changes under the player's
+    /// finger.
+    ///
+    /// Preference order:
+    ///  1. a call the pre-snap coverage read says beats the shell shown
+    ///     (`OffensivePlayCall.goodAgainst`),
+    ///  2. one of the active scheme's signature calls — its identity check,
+    ///  3. a call this persona's temperament favours,
+    ///  4. the first option on the strip (call-sheet order).
+    func preferredAudible(
+        from options: [OffensivePlayCall],
+        scheme: OffensiveScheme?,
+        against coverage: DefensivePlayCall?
+    ) -> OffensivePlayCall? {
+        guard !options.isEmpty else { return nil }
+        if let coverage, let beater = options.first(where: { $0.goodAgainst(coverage) }) {
+            return beater
+        }
+        if let scheme, let signature = options.first(where: { Playbook.isSignature($0, of: scheme) }) {
+            return signature
+        }
+        return options.first(where: favours) ?? options.first
     }
 
     // MARK: Presentation
