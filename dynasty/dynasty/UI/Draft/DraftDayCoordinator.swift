@@ -39,6 +39,14 @@ final class DraftDayCoordinator: ObservableObject {
     @Published private(set) var recentEvents: [PlannedDraftEvent] = []
     @Published private(set) var lastPickResult: PickResult?
     @Published private(set) var publicBoardRanks: [UUID: Int] = [:]
+    /// The USER's own board — `prospectCustomBoard`, the order the Big Board
+    /// persists — as `[ProspectID: 1-based slot]`.
+    ///
+    /// Computed once, over the whole DECLARED class rather than the live pool,
+    /// so "MY #12" means the same thing at pick 1 and at pick 200 and is the
+    /// same number the Big Board prints. (Ranking the shrinking pool would have
+    /// every row renumber itself after every selection.)
+    @Published private(set) var userBoardRanks: [UUID: Int] = [:]
     @Published private(set) var teamNeedScores: [Position: Double] = [:]
     @Published private(set) var reputation: DraftReputation?
     @Published private(set) var pendingReactions: [ReactionsEngine.Reaction] = []
@@ -216,6 +224,11 @@ final class DraftDayCoordinator: ObservableObject {
 
     var draftYear: Int { career.currentSeason }
 
+    /// The open save. Exposed so the draft room can present the scouting
+    /// prospect card (`ProspectDetailView`), which needs it for the phase gates
+    /// on its own actions.
+    var careerRef: Career { career }
+
     var userTeamID: UUID? { career.teamID }
 
     var isUserOnClock: Bool {
@@ -349,6 +362,12 @@ final class DraftDayCoordinator: ObservableObject {
         // from the war room prints the same `market ≈ #N` as the scouting hub
         // instead of a rank measured against a pool that is 20 picks shorter.
         DraftIntel.refreshConsensusBoard(for: draftClass)
+
+        // The user's own board, read from the same persisted order the Big
+        // Board writes. Built over the declared class (not `availablePool`) so
+        // the slot a row prints is stable for the whole night — and identical
+        // to the one the scouting screens print.
+        self.userBoardRanks = UserDraftBoard.slotMap(among: draftClass)
 
         // Team needs for the user's roster — refreshes each time the user
         // makes a pick so the picture stays current.
@@ -1265,6 +1284,17 @@ final class DraftDayCoordinator: ObservableObject {
         guard let teamID = userTeamID else { return nil }
         return picks
             .dropFirst(currentPickIndex)
+            .first { $0.currentTeamID == teamID }?
+            .pickNumber
+    }
+
+    /// Pick number of the turn AFTER the one on the clock — the slot a trade
+    /// down is measured against, and the only pick availability means anything
+    /// at while the user is picking. `nil` when this is his last.
+    var pickNumberAfterCurrent: Int? {
+        guard let teamID = userTeamID else { return nil }
+        return picks
+            .dropFirst(currentPickIndex + 1)
             .first { $0.currentTeamID == teamID }?
             .pickNumber
     }

@@ -21,6 +21,10 @@ struct MockDraftView: View {
     @State private var cachedTradeHints: [TradeHint] = []
     @State private var cachedPicksForRound: [ScoutingEngine.MockDraftPick] = []
     @State private var cachedTargetCountdown: TargetCountdownInfo? = nil
+    @State private var cachedTradeDownHints: [TradeDownHint] = []
+    /// `[ProspectID: user board slot]`. Cached because it was an O(n) `firstIndex`
+    /// per rendered row over a ~285-man class.
+    @State private var cachedUserBoardRanks: [UUID: Int] = [:]
 
     /// Ordered snapshot tags shown in the picker.
     private let snapshotTags: [String] = ["Latest", "Mid-Season", "Combine", "Post-FA", "Pre-Draft"]
@@ -59,13 +63,14 @@ struct MockDraftView: View {
         Dictionary(uniqueKeysWithValues: prospects.filter { $0.scoutedOverall != nil }.map { ($0.id, $0) })
     }
 
-    /// User's big board order — scouted prospects sorted by their scoutedOverall descending.
-    private var userBoardOrder: [UUID] {
-        prospects
-            .filter { $0.scoutedOverall != nil }
-            .sorted { ($0.scoutedOverall ?? 0) > ($1.scoutedOverall ?? 0) }
-            .map { $0.id }
-    }
+    /// The user's board — the ONE persisted order (`prospectCustomBoard`) the
+    /// Big Board writes and every "Your Board: #N" must print from.
+    ///
+    /// This screen used to sort by `scoutedOverall` descending, which made it a
+    /// THIRD board: the tier movers, the drags and the auto-rank the user spent
+    /// the spring on were invisible here, and "Your Board: #12" named a
+    /// different man than the Big Board's #12.
+    private var userBoardRanks: [UUID: Int] { cachedUserBoardRanks }
 
     /// User's pick numbers across all rounds.
     private var userPickNumbers: Set<Int> {
@@ -116,9 +121,14 @@ struct MockDraftView: View {
     /// Recomputes all derived caches. Called from .task and on dependency changes.
     private func refreshCaches() {
         cachedPicksForRound = mockDraft.filter { $0.round == selectedRound }
+        // `slotMap`, not `rankMap`: the war room ranks the DECLARED class, so
+        // ranking everybody here shifted every slot below any man who withdrew
+        // in January and the two screens printed different "MY #N" for him.
+        cachedUserBoardRanks = UserDraftBoard.slotMap(among: prospects)
         cachedStrategyRecommendation = computeStrategyRecommendation()
         cachedTargetAvailability = selectedRound == 1 ? computeTargetAvailability() : []
         cachedTradeHints = selectedRound == 1 ? computeTradeHints() : []
+        cachedTradeDownHints = selectedRound == 1 ? computeTradeDownHints() : []
         cachedTargetCountdown = selectedRound == 1 ? computeTargetCountdown() : nil
     }
 
@@ -202,8 +212,9 @@ struct MockDraftView: View {
                         // Draft availability for user targets
                         targetAvailabilitySection
 
-                        // Trade hints
+                        // Trade hints — up, then down.
                         tradeHintsSection
+                        tradeDownHintsSection
 
                         // All picks for the round
                         Section {
@@ -770,46 +781,42 @@ struct MockDraftView: View {
         let prospectID: UUID
         let name: String
         let position: Position
-        let mockPickNumber: Int
+        let mark: ProspectMarkTier
+        let boardRank: Int?
         let userPickNumber: Int
-        let availabilityPercent: Int
+        let read: DraftAvailability.Read
     }
 
+    /// Availability for the men on the USER's board, through the one shared
+    /// model (`DraftAvailability`).
+    ///
+    /// It used to walk every scouted prospect and interpolate off
+    /// `mockDraftPickNumber` alone — a second opinion that disagreed with the
+    /// Big Board's round-bucket version on every prospect the media had named a
+    /// slot for, and that had nothing at all to say about a man the media only
+    /// put in a band.
     private func computeTargetAvailability() -> [TargetAvailabilityInfo] {
         guard let userAbbr = userTeamAbbreviation else { return [] }
         let userPicks = mockDraft.filter { $0.teamAbbreviation == userAbbr }.map { $0.pickNumber }.sorted()
         guard let firstUserPick = userPicks.first else { return [] }
 
-        // Find scouted prospects the user might want
-        return scoutedProspects.values
+        return UserDraftBoard.targets(among: prospects, limit: 12)
             .compactMap { prospect -> TargetAvailabilityInfo? in
-                guard let mockPick = prospect.mockDraftPickNumber else { return nil }
-                // Only show targets that are projected near or above the user's pick
-                guard mockPick >= firstUserPick - 10 && mockPick <= firstUserPick + 10 else { return nil }
-
-                // Availability probability: higher if mock pick is after user's pick
-                let diff = mockPick - firstUserPick
-                let probability: Int
-                if diff > 5 {
-                    probability = min(95, 70 + diff * 3)
-                } else if diff > 0 {
-                    probability = 55 + diff * 5
-                } else if diff == 0 {
-                    probability = 45
-                } else {
-                    probability = max(5, 40 + diff * 8)
-                }
-
+                guard let read = DraftAvailability.read(for: prospect, atPick: firstUserPick) else { return nil }
+                // A man the room has going 80 slots before your pick is not a
+                // decision — he is a fantasy. Keep the window around your slot.
+                guard abs(read.expectedPick - firstUserPick) <= max(16, read.windowWidth) else { return nil }
                 return TargetAvailabilityInfo(
                     prospectID: prospect.id,
                     name: prospect.fullName,
                     position: prospect.position,
-                    mockPickNumber: mockPick,
+                    mark: prospect.userMark,
+                    boardRank: userBoardRanks[prospect.id],
                     userPickNumber: firstUserPick,
-                    availabilityPercent: probability
+                    read: read
                 )
             }
-            .sorted { $0.availabilityPercent > $1.availabilityPercent }
+            .sorted { $0.read.probability > $1.read.probability }
             .prefix(5)
             .map { $0 }
     }
@@ -823,16 +830,41 @@ struct MockDraftView: View {
                 .padding(.vertical, 2)
                 .background(Color.accentBlue.opacity(0.3), in: RoundedRectangle(cornerRadius: 3))
 
-            Text(target.name)
-                .font(.caption.weight(.medium))
-                .foregroundStyle(Color.textPrimary)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 5) {
+                    Text(target.name)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(Color.textPrimary)
+                    if target.mark != .none {
+                        Text(target.mark.shortLabel)
+                            .font(.system(size: 8, weight: .heavy))
+                            .foregroundStyle(target.mark.color)
+                    }
+                }
+                if let rank = target.boardRank {
+                    Text("Your Board: #\(rank)")
+                        .font(.system(size: 9).monospacedDigit())
+                        .foregroundStyle(Color.textTertiary)
+                }
+            }
 
             Spacer()
 
-            Text("\(target.availabilityPercent)% available at #\(target.userPickNumber)")
-                .font(.caption2.weight(.semibold).monospacedDigit())
-                .foregroundStyle(availabilityColor(target.availabilityPercent))
+            VStack(alignment: .trailing, spacing: 1) {
+                Text("\(target.read.percent)% available at #\(target.userPickNumber)")
+                    .font(.caption2.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(target.read.tier.color)
+                // Says WHY the number is soft: a band read is the media
+                // shrugging at a whole round, not a slot opinion.
+                Text(target.read.isBandEstimate
+                     ? "Round-band estimate"
+                     : "Mocked #\(target.read.expectedPick)")
+                    .font(.system(size: 9))
+                    .foregroundStyle(Color.textTertiary)
+            }
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(target.name), \(target.read.percent) percent available at pick \(target.userPickNumber)")
     }
 
     // MARK: - Trade Hints
@@ -879,7 +911,11 @@ struct MockDraftView: View {
                 TradeValueEngine.pickTradeValue(pick: $1, currentSeason: season)
             }
 
-        return scoutedProspects.values
+        // Keyed to the user's own board, like the trade-DOWN hints below: a
+        // "trade up for him?" card about a man he never marked is a suggestion
+        // from nobody. Walking every scouted prospect also made the list a
+        // second board (see `userBoardRanks`).
+        return UserDraftBoard.targets(among: prospects, limit: 12)
             .compactMap { prospect -> TradeHint? in
                 guard let mockPick = prospect.mockDraftPickNumber,
                       mockPick < firstUserPick,
@@ -980,6 +1016,136 @@ struct MockDraftView: View {
         }
     }
 
+    // MARK: - Trade DOWN hints
+
+    /// The other half of the phone.
+    ///
+    /// Every trade idea on this screen was a move UP: "pay this club to jump
+    /// ahead of the room". The move the draft actually rewards more often is
+    /// the slide — and it was unplannable, because nothing said who behind you
+    /// wants up, what the chart says you would collect, or (the only question
+    /// that decides it) whether the men you MARKED are still there when you
+    /// pick again.
+    private struct TradeDownHint {
+        let buyerAbbreviation: String
+        /// The slot you would slide back to.
+        let buyerPickNumber: Int
+        let userPickNumber: Int
+        /// Why that club wants up: a top-of-the-board position it needs.
+        let buyerNeed: Position
+        /// Jimmy Johnson gap between the two slots — what they have to make up,
+        /// i.e. what you collect on top of the swap.
+        let chartGain: Int
+        /// Your marked targets with a real chance of surviving to their slot.
+        let survivingTargets: [String]
+        let targetCount: Int
+
+        var id: Int { buyerPickNumber }
+    }
+
+    private func computeTradeDownHints() -> [TradeDownHint] {
+        guard let userAbbr = userTeamAbbreviation else { return [] }
+        let userPicks = mockDraft.filter { $0.teamAbbreviation == userAbbr && $0.round == 1 }.map { $0.pickNumber }.sorted()
+        guard let firstUserPick = userPicks.first else { return [] }
+
+        // The positions at the top of the board are what makes anybody want to
+        // move up at all — nobody trades a third-rounder to jump for a man the
+        // room has 90th.
+        let topBoardPositions = DraftIntel
+            .consensusTop(prospects.filter(\.isDeclaringForDraft), count: 14)
+            .map(\.position)
+        let targets = UserDraftBoard.targets(among: prospects, limit: 8)
+        let userPoints = PickValueChart.points(forPick: firstUserPick)
+
+        var seenTeams = Set<String>()
+        var hints: [TradeDownHint] = []
+        for pick in mockDraft.sorted(by: { $0.pickNumber < $1.pickNumber }) {
+            guard hints.count < 3 else { break }
+            guard pick.pickNumber > firstUserPick,
+                  pick.pickNumber <= firstUserPick + 20,
+                  pick.teamAbbreviation != userAbbr,
+                  seenTeams.insert(pick.teamAbbreviation).inserted else { continue }
+
+            guard let team = teams.first(where: { $0.abbreviation == pick.teamAbbreviation }) else { continue }
+            let roster = players.filter { $0.teamID == team.id }
+            let needs = DraftEngine.topTeamNeeds(roster: roster, limit: 3)
+            guard let match = topBoardPositions.first(where: { needs.contains($0) }) else { continue }
+
+            // Same chart the war room prices a real move on.
+            let gain = userPoints - PickValueChart.points(forPick: pick.pickNumber)
+            guard gain > 0 else { continue }
+
+            let survivors = targets.filter {
+                DraftAvailability.probability(for: $0, atPick: pick.pickNumber) >= 0.35
+            }
+
+            hints.append(TradeDownHint(
+                buyerAbbreviation: pick.teamAbbreviation,
+                buyerPickNumber: pick.pickNumber,
+                userPickNumber: firstUserPick,
+                buyerNeed: match,
+                chartGain: gain,
+                survivingTargets: survivors.prefix(3).map(\.lastName),
+                targetCount: survivors.count
+            ))
+        }
+        return hints
+    }
+
+    private var tradeDownHintsData: [TradeDownHint] { cachedTradeDownHints }
+
+    @ViewBuilder
+    private var tradeDownHintsSection: some View {
+        if !tradeDownHintsData.isEmpty {
+            Section {
+                ForEach(tradeDownHintsData, id: \.id) { hint in
+                    tradeDownHintRow(hint: hint)
+                }
+            } header: {
+                Text("TRADE DOWN SCENARIOS")
+                    .font(.caption2.weight(.heavy))
+                    .foregroundStyle(Color.textSecondary)
+            }
+            .listRowBackground(Color.backgroundSecondary)
+        }
+    }
+
+    private func tradeDownHintRow(hint: TradeDownHint) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: hint.targetCount > 0 ? "arrow.down.circle.fill" : "arrow.down.circle")
+                .font(.caption)
+                .foregroundStyle(hint.targetCount > 0 ? Color.success : Color.textTertiary)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Slide to #\(hint.buyerPickNumber) with \(hint.buyerAbbreviation)?")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(Color.textPrimary)
+                Text("\(hint.buyerAbbreviation) needs \(hint.buyerNeed.rawValue) and the board is thin there \u{2014} they must make up \(hint.chartGain) pts from #\(hint.userPickNumber).")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(Color.textTertiary)
+                    .lineLimit(2)
+                // The decision, not the arithmetic: a slide is only free when
+                // the men you marked survive it.
+                if hint.targetCount > 0 {
+                    Text("\(hint.targetCount) of your targets still there at #\(hint.buyerPickNumber): \(hint.survivingTargets.joined(separator: ", "))")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(Color.success)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                } else {
+                    Text("None of your marked targets survive to #\(hint.buyerPickNumber) \u{2014} sliding costs you the board.")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(Color.warning)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                }
+            }
+
+            Spacer()
+        }
+        .accessibilityElement(children: .combine)
+    }
+
     // MARK: - #5: Top Targets Countdown
 
     /// Snapshot of how many of the user's "top targets" are likely to still be on the board at their pick.
@@ -991,30 +1157,30 @@ struct MockDraftView: View {
         let topAvailableNames: [String]
     }
 
-    /// Determine "targets" — top user-graded prospects (or top-board prospects) above mid-tier.
+    /// Targets = the men the USER marked, in his own board order (see
+    /// `UserDraftBoard.targets`). Not "whatever my scouts rated highest" — a
+    /// countdown of ten men the user never picked is a countdown of nobody.
     private func computeTargetCountdown() -> TargetCountdownInfo? {
         guard let userAbbr = userTeamAbbreviation else { return nil }
         let userPicks = mockDraft.filter { $0.teamAbbreviation == userAbbr }.map { $0.pickNumber }.sorted()
         guard let firstUserPick = userPicks.first else { return nil }
 
-        // Targets = top 10 prospects on the user's big board (sorted by scoutedOverall).
-        let targets = prospects
-            .filter { $0.scoutedOverall != nil }
-            .sorted { ($0.scoutedOverall ?? 0) > ($1.scoutedOverall ?? 0) }
-            .prefix(10)
-
+        let targets = UserDraftBoard.targets(among: prospects, limit: 10)
         guard !targets.isEmpty else { return nil }
 
         var likely = 0
         var coinflip = 0
         var availableNames: [String] = []
         for prospect in targets {
-            let prob = availabilityProbability(for: prospect, userPick: firstUserPick)
-            if prob >= 0.5 {
+            guard let read = DraftAvailability.read(for: prospect, atPick: firstUserPick) else { continue }
+            switch read.tier {
+            case .likely:
                 likely += 1
                 if availableNames.count < 3 { availableNames.append(prospect.lastName) }
-            } else if prob >= 0.25 {
+            case .coinflip:
                 coinflip += 1
+            case .longShot:
+                break
             }
         }
 
@@ -1025,16 +1191,6 @@ struct MockDraftView: View {
             coinflipAvailable: coinflip,
             topAvailableNames: availableNames
         )
-    }
-
-    /// Probability a prospect is still available at the user's pick, mirroring target availability logic.
-    private func availabilityProbability(for prospect: CollegeProspect, userPick: Int) -> Double {
-        guard let mockPick = prospect.mockDraftPickNumber else { return 0.5 }
-        let diff = mockPick - userPick
-        if diff > 5 { return min(0.95, 0.70 + Double(diff) * 0.03) }
-        if diff > 0 { return min(0.85, 0.55 + Double(diff) * 0.05) }
-        if diff == 0 { return 0.45 }
-        return max(0.05, 0.40 + Double(diff) * 0.08)
     }
 
     @ViewBuilder
@@ -1146,16 +1302,9 @@ struct MockDraftView: View {
         }
     }
 
-    private func availabilityColor(_ percent: Int) -> Color {
-        if percent >= 70 { return .success }
-        if percent >= 40 { return .accentBlue }
-        return .danger
-    }
-
     /// Returns the user's big board rank (1-based) for a prospect, or nil if not on board.
     private func userBoardRank(for prospectID: UUID) -> Int? {
-        guard let idx = userBoardOrder.firstIndex(of: prospectID) else { return nil }
-        return idx + 1
+        userBoardRanks[prospectID]
     }
 
     private func loadData() {

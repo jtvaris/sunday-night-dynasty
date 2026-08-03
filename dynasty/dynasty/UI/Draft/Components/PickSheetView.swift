@@ -4,11 +4,37 @@ struct PickSheetView: View {
     @ObservedObject var coordinator: DraftDayCoordinator
     @Environment(\.dismiss) private var dismiss
 
-    @State private var showComparison: Bool = false
-
     /// Prospect awaiting draft confirmation. Every draft surface routes
     /// through this so a stray tap can't burn a pick instantly.
     @State private var pendingProspect: CollegeProspect? = nil
+
+    // MARK: - Browsing the board (search + scope + depth)
+
+    /// Which board the list is showing. The media's order is the default —
+    /// it is the room's opinion and the one the value chips are graded against
+    /// — but the user's own board is one tap away, in the order he left it.
+    enum BoardScope: String, CaseIterable {
+        case media = "Board"
+        case mine  = "My Board"
+    }
+
+    @State private var boardScope: BoardScope = .media
+    @State private var searchText: String = ""
+    /// Off: the top 20, which is all anyone reads at pick 12. On: the whole
+    /// board, which is the only way to find a man in round six.
+    @State private var showsFullBoard: Bool = false
+    @State private var positionFilter: Position? = nil
+
+    // MARK: - Compare (the user picks who)
+
+    /// Ids the user has ticked for comparison. Was a fixed "top three of the
+    /// media board", i.e. a compare of three men he had not chosen.
+    @State private var compareIDs: [UUID] = []
+    @State private var isPickingCompare: Bool = false
+    @State private var showCompareSheet: Bool = false
+
+    /// The man whose scouting card is open.
+    @State private var cardProspect: CollegeProspect? = nil
 
     private var showDraftConfirm: Binding<Bool> {
         Binding(
@@ -56,15 +82,70 @@ struct PickSheetView: View {
                 bestByPositionStrip
                     .padding(.bottom, DSSpacing.xs)
 
-                if showComparison {
-                    comparisonView
-                } else {
-                    ScrollView {
-                        LazyVStack(spacing: DSSpacing.xs) {
-                            ForEach(topProspects, id: \.id) { prospect in
-                                prospectButton(prospect)
-                            }
+                // Each of the three sheets this screen can raise is attached to
+                // a DIFFERENT subview on purpose: stacking three `.sheet`
+                // modifiers on one view is the same trap `DraftDayView` already
+                // documents — only one of them would ever present.
+                browseBar
+                    .sheet(isPresented: $showCompareSheet) {
+                        // The scouting screens' compare, unchanged: it reads
+                        // every value through `ProspectFog`, so nothing the user
+                        // has not earned can leak out of a side-by-side taken at
+                        // the clock.
+                        if compareSelection.count >= 2 {
+                            ProspectCompareSheet(
+                                career: coordinator.careerRef,
+                                prospects: compareSelection,
+                                onDismiss: { showCompareSheet = false }
+                            )
                         }
+                    }
+
+                if isPickingCompare {
+                    compareBar
+                }
+
+                ScrollView {
+                    LazyVStack(spacing: DSSpacing.xs) {
+                        if listedProspects.isEmpty {
+                            Text(searchText.isEmpty
+                                 ? "Nobody left matching that filter."
+                                 : "No prospect matches \u{201C}\(searchText)\u{201D}.")
+                                .font(.caption)
+                                .foregroundStyle(Color.textTertiary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.vertical, DSSpacing.md)
+                        }
+                        ForEach(listedProspects, id: \.id) { prospect in
+                            prospectRow(prospect)
+                        }
+                        if !showsFullBoard && searchText.isEmpty && truncatedCount > 0 {
+                            Button {
+                                showsFullBoard = true
+                            } label: {
+                                Text("Show all \(scopePool.count) on the board")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(Color.accentGold)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, DSSpacing.sm)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                .sheet(item: $cardProspect) { prospect in
+                    NavigationStack {
+                        // Read-only on the clock — see `isLiveDraftCard`.
+                        ProspectDetailView(
+                            career: coordinator.careerRef,
+                            prospect: prospect,
+                            isLiveDraftCard: true
+                        )
+                            .toolbar {
+                                ToolbarItem(placement: .topBarTrailing) {
+                                    Button("Close") { cardProspect = nil }
+                                }
+                            }
                     }
                 }
 
@@ -77,10 +158,11 @@ struct PickSheetView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
-                        showComparison.toggle()
+                        isPickingCompare.toggle()
+                        if !isPickingCompare { compareIDs.removeAll() }
                     } label: {
-                        Label(showComparison ? "List" : "Compare",
-                              systemImage: showComparison ? "list.bullet" : "rectangle.split.3x1")
+                        Label(isPickingCompare ? "Cancel Compare" : "Compare",
+                              systemImage: isPickingCompare ? "xmark.circle" : "rectangle.split.3x1")
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
@@ -109,28 +191,242 @@ struct PickSheetView: View {
         }
     }
 
-    // MARK: - Top Prospects List
+    // MARK: - Browse bar (search · scope · position)
 
-    /// The twenty names the sheet offers, in MEDIA board order.
-    ///
-    /// This list used to be ordered by `publicBoardRanks` when that map was
-    /// `scoutedOverall ?? trueOverall` — so for every prospect the user had not
-    /// scouted, the hidden rating decided where he appeared in the list he was
-    /// picking from. The order was a bigger leak than any number on the row.
-    /// Your own read is on each row (the grade band); the ORDER is the room's.
-    private var topProspects: [CollegeProspect] {
-        Array(
-            coordinator.availableProspects
-                .sorted {
-                    (coordinator.publicBoardRanks[$0.id] ?? 999) <
-                    (coordinator.publicBoardRanks[$1.id] ?? 999)
+    private var browseBar: some View {
+        VStack(spacing: DSSpacing.xs) {
+            HStack(spacing: DSSpacing.xs) {
+                Image(systemName: "magnifyingglass")
+                    .font(.caption)
+                    .foregroundStyle(Color.textTertiary)
+                TextField("Search name, position or college", text: $searchText)
+                    .textFieldStyle(.plain)
+                    .font(.callout)
+                    .foregroundStyle(Color.textPrimary)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                    .submitLabel(.search)
+                if !searchText.isEmpty {
+                    Button {
+                        searchText = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Clear search")
                 }
-                .prefix(20)
+            }
+            .padding(.horizontal, DSSpacing.sm)
+            .padding(.vertical, DSSpacing.xs)
+            .background(
+                RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                    .fill(Color.backgroundSecondary)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                            .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+                    )
+            )
+
+            HStack(spacing: DSSpacing.xs) {
+                Picker("Board", selection: $boardScope) {
+                    ForEach(BoardScope.allCases, id: \.self) { scope in
+                        Text(scope.rawValue).tag(scope)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 220)
+
+                Menu {
+                    Button("All positions") { positionFilter = nil }
+                    ForEach(Position.allCases, id: \.self) { pos in
+                        Button(pos.rawValue) { positionFilter = pos }
+                    }
+                } label: {
+                    Label(positionFilter?.rawValue ?? "All", systemImage: "line.3.horizontal.decrease.circle")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, DSSpacing.xs)
+                        .padding(.vertical, 5)
+                        .background(Color.backgroundSecondary)
+                        .foregroundStyle(positionFilter == nil ? Color.textSecondary : Color.accentGold)
+                        .clipShape(RoundedRectangle(cornerRadius: DSCornerRadius.inline))
+                }
+
+                Spacer()
+
+                Text(boardScope == .mine
+                     ? "Your order, your marks."
+                     : "Media consensus order.")
+                    .font(.caption2)
+                    .foregroundStyle(Color.textTertiary)
+            }
+        }
+    }
+
+    // MARK: - Compare bar
+
+    private var compareSelection: [CollegeProspect] {
+        compareIDs.compactMap { id in
+            coordinator.availableProspects.first { $0.id == id }
+        }
+    }
+
+    private var compareBar: some View {
+        HStack(spacing: DSSpacing.sm) {
+            Image(systemName: "rectangle.split.3x1")
+                .font(.caption)
+                .foregroundStyle(Color.accentBlue)
+            Text(compareIDs.isEmpty
+                 ? "Tap up to \(ProspectCompareSheet.maxProspects) prospects to compare"
+                 : "\(compareIDs.count) selected")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.textPrimary)
+            Spacer()
+            Button {
+                showCompareSheet = true
+            } label: {
+                Text("Compare \(compareIDs.count)")
+                    .font(.caption.weight(.heavy))
+                    .padding(.horizontal, DSSpacing.sm)
+                    .padding(.vertical, 5)
+                    .background(compareIDs.count >= 2 ? Color.accentBlue : Color.backgroundTertiary)
+                    .foregroundStyle(compareIDs.count >= 2 ? Color.backgroundPrimary : Color.textTertiary)
+                    .clipShape(RoundedRectangle(cornerRadius: DSCornerRadius.inline))
+            }
+            .buttonStyle(.plain)
+            .disabled(compareIDs.count < 2)
+        }
+        .padding(DSSpacing.sm)
+        .background(
+            RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                .fill(Color.accentBlue.opacity(0.12))
         )
     }
 
-    private func prospectButton(_ prospect: CollegeProspect) -> some View {
+    private func toggleCompare(_ prospect: CollegeProspect) {
+        if let idx = compareIDs.firstIndex(of: prospect.id) {
+            compareIDs.remove(at: idx)
+        } else {
+            if compareIDs.count >= ProspectCompareSheet.maxProspects {
+                compareIDs.removeFirst()
+            }
+            compareIDs.append(prospect.id)
+        }
+    }
+
+    // MARK: - The list
+
+    /// The pool the chosen scope defines, before search and the depth cut.
+    ///
+    /// The media order used to be the only one available, and it was the right
+    /// default for the value chips — but it meant the board the user spent the
+    /// whole spring building was invisible at the only moment it mattered.
+    private var scopePool: [CollegeProspect] {
+        let pool = positionFilter.map { pos in
+            coordinator.availableProspects.filter { $0.position == pos }
+        } ?? coordinator.availableProspects
+
+        switch boardScope {
+        case .media:
+            return pool.sorted {
+                (coordinator.publicBoardRanks[$0.id] ?? 999) <
+                (coordinator.publicBoardRanks[$1.id] ?? 999)
+            }
+        case .mine:
+            // ONE comparator, not two `sorted` passes: Swift's sort is not
+            // stable, so sinking the `avoid` men in a second pass would have
+            // scrambled the board order the first pass just established.
+            // `avoid` sinks rather than disappearing — the user still has to
+            // see who is left on the board.
+            return pool.sorted { lhs, rhs in
+                let lAvoid = lhs.userMark == .avoid ? 1 : 0
+                let rAvoid = rhs.userMark == .avoid ? 1 : 0
+                if lAvoid != rAvoid { return lAvoid < rAvoid }
+                let lSlot = coordinator.userBoardRanks[lhs.id] ?? Int.max
+                let rSlot = coordinator.userBoardRanks[rhs.id] ?? Int.max
+                if lSlot != rSlot { return lSlot < rSlot }
+                return (coordinator.publicBoardRanks[lhs.id] ?? 999) <
+                       (coordinator.publicBoardRanks[rhs.id] ?? 999)
+            }
+        }
+    }
+
+    /// Default depth. Twenty is what fits without scrolling on the clock; the
+    /// full board is one tap (or one search) away.
+    private static let defaultDepth = 20
+
+    private var listedProspects: [CollegeProspect] {
+        let pool = scopePool
+        let query = searchText.trimmingCharacters(in: .whitespaces).lowercased()
+        if !query.isEmpty {
+            // Search always spans the whole board — a name typed in is a name
+            // the user already has in mind, and he may well be in round five.
+            return Array(pool.filter { matches($0, query: query) }.prefix(60))
+        }
+        return showsFullBoard ? pool : Array(pool.prefix(Self.defaultDepth))
+    }
+
+    private var truncatedCount: Int {
+        max(0, scopePool.count - Self.defaultDepth)
+    }
+
+    private func matches(_ prospect: CollegeProspect, query: String) -> Bool {
+        prospect.lastName.lowercased().contains(query)
+            || prospect.firstName.lowercased().contains(query)
+            || prospect.college.lowercased().contains(query)
+            || prospect.position.rawValue.lowercased().contains(query)
+    }
+
+    private func prospectRow(_ prospect: CollegeProspect) -> some View {
+        HStack(spacing: DSSpacing.xs) {
+            if isPickingCompare {
+                Button {
+                    toggleCompare(prospect)
+                } label: {
+                    Image(systemName: compareIDs.contains(prospect.id) ? "checkmark.circle.fill" : "circle")
+                        .font(.title3)
+                        .foregroundStyle(compareIDs.contains(prospect.id) ? Color.accentBlue : Color.textTertiary)
+                        .frame(width: 32, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(compareIDs.contains(prospect.id)
+                                    ? "Remove \(prospect.fullName) from compare"
+                                    : "Add \(prospect.fullName) to compare")
+            }
+
+            Button {
+                if isPickingCompare {
+                    toggleCompare(prospect)
+                } else {
+                    pendingProspect = prospect
+                }
+            } label: {
+                prospectRowContent(prospect)
+            }
+            .buttonStyle(.plain)
+
+            // The card is the reason the notes, the medical flags and the
+            // interview your staff took are readable AT the clock instead of
+            // only in the spring.
+            Button {
+                cardProspect = prospect
+            } label: {
+                Image(systemName: "person.text.rectangle")
+                    .font(.callout)
+                    .foregroundStyle(Color.accentGold)
+                    .frame(width: 40, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Scouting card for \(prospect.fullName)")
+        }
+    }
+
+    private func prospectRowContent(_ prospect: CollegeProspect) -> some View {
         let bbRank = coordinator.publicBoardRanks[prospect.id]
+        let myRank = coordinator.userBoardRanks[prospect.id]
         let pickNumber = coordinator.currentPick?.pickNumber ?? 0
         let needScore = coordinator.teamNeedScores[prospect.position] ?? 0.2
         let valueDelta = DraftIntel.pickValueDelta(for: prospect, pickNumber: pickNumber, consensusRank: bbRank)
@@ -140,179 +436,83 @@ struct PickSheetView: View {
         let showReachWarning = (preview.grade == .reach || preview.grade == .bigReach) && valueDelta >= 4
         let mark = DraftIntel.mark(for: prospect)
 
-        return Button {
-            pendingProspect = prospect
-        } label: {
-            HStack(spacing: DSSpacing.sm) {
-                PersonFaceView(prospect: prospect, size: .small)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text("\(prospect.firstName) \(prospect.lastName)")
-                            .font(.body.weight(.semibold))
-                            .foregroundStyle(Color.textPrimary)
-                        // His own mark from the scouting board, on the screen
-                        // where it finally decides something.
-                        if let mark {
-                            Label(mark.shortLabel, systemImage: mark.icon)
-                                .labelStyle(.titleAndIcon)
-                                .font(.caption2.weight(.heavy))
-                                .padding(.horizontal, 5).padding(.vertical, 2)
-                                .background(mark.color.opacity(0.22))
-                                .foregroundStyle(mark.color)
-                                .clipShape(RoundedRectangle(cornerRadius: 3))
-                        }
-                        if needScore >= 0.7 {
-                            Text("NEED")
-                                .font(.caption2.weight(.heavy))
-                                .padding(.horizontal, 5).padding(.vertical, 2)
-                                .background(Color.draftStealGold.opacity(0.25))
-                                .foregroundStyle(Color.draftStealGold)
-                                .clipShape(RoundedRectangle(cornerRadius: 3))
-                        }
-                    }
-                    HStack(spacing: 4) {
-                        Text("\(prospect.position.rawValue) · \(prospect.college)")
-                            .font(.caption)
-                            .foregroundStyle(Color.textSecondary)
-                        // The confidence stars are the band width now — a
-                        // single "B+" is a converged read, "C+/A-" is a class
-                        // your scouts have barely opened.
-                        ProspectGradeBand(prospect: prospect, alignment: .leading, font: .caption.monospaced().weight(.heavy))
-                        Text("·")
-                            .font(.caption)
-                            .foregroundStyle(Color.textSecondary)
-                        ProductionMicroLabel(tier: prospect.collegeProductionTier, fontSize: 9)
-                    }
-                    if showReachWarning {
-                        Text("⚠️ Position not a top need")
-                            .font(.caption2)
-                            .foregroundStyle(Color.warning)
-                    }
-                }
-                Spacer()
-                VStack(alignment: .trailing, spacing: 4) {
-                    gradeChip(preview.grade)
-                    if let bb = bbRank {
-                        Text("BB #\(bb) · \(reachLabel(grade: preview.grade, delta: valueDelta))")
-                            .font(.caption2)
-                            .foregroundStyle(Color.textSecondary)
-                    }
-                }
-            }
-            .padding(DSSpacing.sm)
-            .frame(maxWidth: .infinity)
-            .background(
-                RoundedRectangle(cornerRadius: DSCornerRadius.card)
-                    .fill(Color.backgroundSecondary)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: DSCornerRadius.card)
-                            .strokeBorder(borderColor(for: preview.grade),
-                                          lineWidth: preview.isGemCandidate ? 2 : 1)
-                    )
-            )
-        }
-        .buttonStyle(.plain)
-    }
-
-    // MARK: - Side-by-side Comparison
-
-    private var comparisonView: some View {
-        let top3 = Array(topProspects.prefix(3))
-        return ScrollView {
-            HStack(alignment: .top, spacing: DSSpacing.sm) {
-                ForEach(top3, id: \.id) { prospect in
-                    comparisonCard(prospect)
-                }
-                if top3.count < 3 {
-                    Spacer()
-                }
-            }
-        }
-    }
-
-    private func comparisonCard(_ prospect: CollegeProspect) -> some View {
-        let bbRank = coordinator.publicBoardRanks[prospect.id]
-        let pickNumber = coordinator.currentPick?.pickNumber ?? 0
-        let needScore = coordinator.teamNeedScores[prospect.position] ?? 0.2
-        let valueDelta = DraftIntel.pickValueDelta(for: prospect, pickNumber: pickNumber, consensusRank: bbRank)
-        let preview = pickGradePreview(prospect: prospect, valueDelta: valueDelta, needScore: needScore)
-
-        return VStack(alignment: .leading, spacing: DSSpacing.xs) {
+        return HStack(spacing: DSSpacing.sm) {
             PersonFaceView(prospect: prospect, size: .small)
 
-            Text("\(prospect.firstName) \(prospect.lastName)")
-                .font(.callout.weight(.bold))
-                .foregroundStyle(Color.textPrimary)
-                .lineLimit(2)
-            HStack(spacing: 4) {
-                ProspectGradeBand(prospect: prospect, alignment: .leading, font: .caption.monospaced().weight(.heavy))
-                Text("·")
-                    .foregroundStyle(Color.textSecondary)
-                Text(prospect.position.rawValue)
-                    .font(.caption.weight(.heavy))
-                    .foregroundStyle(Color.accentGold)
-            }
-            if let bb = bbRank {
-                Text("Big Board #\(bb)")
-                    .font(.caption2)
-                    .foregroundStyle(Color.textSecondary)
-            }
-            gradeChip(preview.grade)
-            if needScore >= 0.7 {
-                Text("NEED")
-                    .font(.caption2.weight(.heavy))
-                    .padding(.horizontal, 5).padding(.vertical, 2)
-                    .background(Color.draftStealGold.opacity(0.25))
-                    .foregroundStyle(Color.draftStealGold)
-                    .clipShape(RoundedRectangle(cornerRadius: 3))
-            }
-            Divider().overlay(Color.surfaceBorder)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Production")
-                    .font(.caption2)
-                    .foregroundStyle(Color.textSecondary)
-                Text(prospect.collegeProductionTier.displayName)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(prospect.collegeProductionTier.chipColor)
-                // Measurables are public the moment a man runs them in front of
-                // 32 clubs — but only then. A prospect with no combine invite,
-                // no pro day and no report filed has none the user could know.
-                let hasMeasurables = ProspectFog.showsMeasurables(prospect)
-                Text("Speed")
-                    .font(.caption2)
-                    .foregroundStyle(Color.textSecondary)
-                Text(hasMeasurables ? "\(prospect.truePhysical.speed)" : "—")
-                    .font(.caption.monospaced().weight(.semibold))
-                    .foregroundStyle(hasMeasurables ? Color.textPrimary : Color.textTertiary)
-                Text("Strength")
-                    .font(.caption2)
-                    .foregroundStyle(Color.textSecondary)
-                Text(hasMeasurables ? "\(prospect.truePhysical.strength)" : "—")
-                    .font(.caption.monospaced().weight(.semibold))
-                    .foregroundStyle(hasMeasurables ? Color.textPrimary : Color.textTertiary)
-                Text("Agility")
-                    .font(.caption2)
-                    .foregroundStyle(Color.textSecondary)
-                Text(hasMeasurables ? "\(prospect.truePhysical.agility)" : "—")
-                    .font(.caption.monospaced().weight(.semibold))
-                    .foregroundStyle(hasMeasurables ? Color.textPrimary : Color.textTertiary)
+                HStack(spacing: 6) {
+                    Text("\(prospect.firstName) \(prospect.lastName)")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(mark == .avoid ? Color.textTertiary : Color.textPrimary)
+                    // His own mark from the scouting board, on the screen
+                    // where it finally decides something.
+                    if let mark {
+                        Label(mark.shortLabel, systemImage: mark.icon)
+                            .labelStyle(.titleAndIcon)
+                            .font(.caption2.weight(.heavy))
+                            .padding(.horizontal, 5).padding(.vertical, 2)
+                            .background(mark.color.opacity(0.22))
+                            .foregroundStyle(mark.color)
+                            .clipShape(RoundedRectangle(cornerRadius: 3))
+                    }
+                    if needScore >= 0.7 {
+                        Text("NEED")
+                            .font(.caption2.weight(.heavy))
+                            .padding(.horizontal, 5).padding(.vertical, 2)
+                            .background(Color.draftStealGold.opacity(0.25))
+                            .foregroundStyle(Color.draftStealGold)
+                            .clipShape(RoundedRectangle(cornerRadius: 3))
+                    }
+                }
+                HStack(spacing: 4) {
+                    Text("\(prospect.position.rawValue) · \(prospect.college)")
+                        .font(.caption)
+                        .foregroundStyle(Color.textSecondary)
+                    // The confidence stars are the band width now — a
+                    // single "B+" is a converged read, "C+/A-" is a class
+                    // your scouts have barely opened.
+                    ProspectGradeBand(prospect: prospect, alignment: .leading, font: .caption.monospaced().weight(.heavy))
+                    Text("·")
+                        .font(.caption)
+                        .foregroundStyle(Color.textSecondary)
+                    ProductionMicroLabel(tier: prospect.collegeProductionTier, fontSize: 9)
+                }
+                if showReachWarning {
+                    Text("⚠️ Position not a top need")
+                        .font(.caption2)
+                        .foregroundStyle(Color.warning)
+                }
+                // The trade-down question, answered on the row instead of in
+                // the user's head: is this man still here next time I pick?
+                // Same model the Mock Draft and the Big Board now read from
+                // (`DraftAvailability`), so the number cannot contradict the
+                // one he planned against in the spring.
+                if let nextPick = coordinator.pickNumberAfterCurrent,
+                   let read = DraftAvailability.read(for: prospect, atPick: nextPick, consensusRank: bbRank) {
+                    Text("\(read.percent)% still there at your #\(nextPick)\(read.isBandEstimate ? " (band)" : "")")
+                        .font(.caption2)
+                        .foregroundStyle(read.tier.color)
+                }
             }
-            Button {
-                pendingProspect = prospect
-            } label: {
-                Text("DRAFT")
-                    .font(.caption.weight(.heavy))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
-                    .background(Color.accentGold)
-                    .foregroundStyle(Color.backgroundPrimary)
-                    .clipShape(RoundedRectangle(cornerRadius: DSCornerRadius.inline))
+            Spacer()
+            VStack(alignment: .trailing, spacing: 4) {
+                gradeChip(preview.grade)
+                if let bb = bbRank {
+                    Text("BB #\(bb) · \(reachLabel(grade: preview.grade, delta: valueDelta))")
+                        .font(.caption2)
+                        .foregroundStyle(Color.textSecondary)
+                }
+                // Same slot the Big Board and the Mock Draft print — the three
+                // "your board" numbers used to be three different sorts.
+                if let my = myRank {
+                    Text("MY #\(my)")
+                        .font(.caption2.monospaced().weight(.heavy))
+                        .foregroundStyle(Color.accentGold.opacity(0.85))
+                }
             }
-            .buttonStyle(.plain)
         }
         .padding(DSSpacing.sm)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity)
         .background(
             RoundedRectangle(cornerRadius: DSCornerRadius.card)
                 .fill(Color.backgroundSecondary)
@@ -322,6 +522,7 @@ struct PickSheetView: View {
                                       lineWidth: preview.isGemCandidate ? 2 : 1)
                 )
         )
+        .opacity(mark == .avoid ? 0.55 : 1.0)
     }
 
     // MARK: - Trade Action Row
@@ -402,7 +603,7 @@ struct PickSheetView: View {
     }
 
     /// One name per position, taken in MEDIA board order — the same reason
-    /// `topProspects` is: picking the "best" at a position off a board that
+    /// `scopePool` is: picking the "best" at a position off a board that
     /// fell back to `trueOverall` handed the user the hidden answer for every
     /// prospect his scouts had never seen.
     private func computeTopByPosition() -> [Position: CollegeProspect] {

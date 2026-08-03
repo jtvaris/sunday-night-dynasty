@@ -4,17 +4,27 @@ struct LiveBigBoardPanel: View {
     @ObservedObject var coordinator: DraftDayCoordinator
     @State private var sortMode: SortMode = .projection
     @State private var positionFilter: Position?
+    /// The man whose scouting card is open. Presented from this panel rather
+    /// than from `DraftDayView` because that view already owns two `.sheet`
+    /// modifiers (pick sheet, round recap) and one view can only present one.
+    @State private var cardProspect: CollegeProspect?
 
     enum SortMode: String, CaseIterable {
+        /// The user's own board — the persisted `prospectCustomBoard` order,
+        /// grouped by his marks. Deliberately first: the spring's work is the
+        /// point of the room.
+        case myBoard = "My Board"
         case projection = "BB Rank"
         case grade = "Grade"
         case position = "Position"
+
+        var isMyBoard: Bool { self == .myBoard }
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: DSSpacing.xs) {
             HStack {
-                SectionHeaderText(title: "Big Board")
+                SectionHeaderText(title: sortMode.isMyBoard ? "My Board" : "Big Board")
                 Spacer()
                 Menu {
                     ForEach(SortMode.allCases, id: \.self) { mode in
@@ -34,14 +44,18 @@ struct LiveBigBoardPanel: View {
             // projected round and nothing more. The rank column is the media's
             // consensus slot, which is why it is NOT gold — gold in this panel
             // means "this is your building's opinion".
-            Text("#N is the media's consensus slot. Gold bands are your scouts; grey bands are the media's projection — scout them to narrow it.")
+            Text(footnote)
                 .font(.system(size: 9))
                 .foregroundStyle(Color.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 4) {
-                    ForEach(Array(sortedProspects.prefix(40)), id: \.id) { prospect in
-                        prospectRow(prospect)
+                LazyVStack(alignment: .leading, spacing: 4, pinnedViews: [.sectionHeaders]) {
+                    if sortMode.isMyBoard {
+                        myBoardSections
+                    } else {
+                        ForEach(Array(sortedProspects.prefix(40)), id: \.id) { prospect in
+                            prospectRow(prospect)
+                        }
                     }
                 }
             }
@@ -49,6 +63,82 @@ struct LiveBigBoardPanel: View {
         .padding(DSSpacing.md)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.backgroundSecondary)
+        .sheet(item: $cardProspect) { prospect in
+            NavigationStack {
+                // Read-only on the clock: the card's paid, rationed spring
+                // actions mutate the man and re-persist the class underneath
+                // the coordinator's cached ranks (finding C6).
+                ProspectDetailView(
+                    career: coordinator.careerRef,
+                    prospect: prospect,
+                    isLiveDraftCard: true
+                )
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("Close") { cardProspect = nil }
+                        }
+                    }
+            }
+        }
+    }
+
+    private var footnote: String {
+        sortMode.isMyBoard
+            ? "Your board, in the order you left it — MY #N is the slot the Big Board prints. Tap a name for his card; the phone calls about moving up for him."
+            : "#N is the media's consensus slot. Gold bands are your scouts; grey bands are the media's projection — scout them to narrow it. Tap a name for his card; the phone calls about moving up."
+    }
+
+    // MARK: - My Board (persisted order, grouped by the user's marks)
+
+    /// The user's board with the drafted men already gone: `availableProspects`
+    /// in `prospectCustomBoard` order, split into the mark tiers.
+    @ViewBuilder
+    private var myBoardSections: some View {
+        let pool: [CollegeProspect] = {
+            if let pos = positionFilter {
+                return coordinator.availableProspects.filter { $0.position == pos }
+            }
+            return coordinator.availableProspects
+        }()
+        let groups = UserDraftBoard.groupedByMark(pool)
+        if groups.isEmpty {
+            Text("Nobody left on your board.")
+                .font(.caption2)
+                .foregroundStyle(Color.textTertiary)
+        } else {
+            ForEach(groups, id: \.tier) { group in
+                Section {
+                    // Only the tiers the user actually filled deserve the whole
+                    // column: an unmarked class is 285 men and the board still
+                    // has to scroll to the bottom of it.
+                    ForEach(Array(group.prospects.prefix(group.tier == .none ? 40 : 60)), id: \.id) { prospect in
+                        prospectRow(prospect)
+                    }
+                } header: {
+                    tierHeader(tier: group.tier, count: group.prospects.count)
+                }
+            }
+        }
+    }
+
+    private func tierHeader(tier: ProspectMarkTier, count: Int) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: tier.icon)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(tier == .none ? Color.textTertiary : tier.color)
+            Text(tier == .none ? "UNMARKED" : tier.label.uppercased())
+                .font(.system(size: 10, weight: .heavy))
+                .foregroundStyle(tier == .none ? Color.textTertiary : tier.color)
+            Text("\(count)")
+                .font(.system(size: 9).monospaced())
+                .foregroundStyle(Color.textTertiary)
+            Spacer()
+        }
+        .padding(.vertical, 3)
+        .padding(.horizontal, DSSpacing.xxs)
+        .background(Color.backgroundSecondary)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(tier == .none ? "Unmarked" : tier.label) tier, \(count) prospects")
     }
 
     private var sortedProspects: [CollegeProspect] {
@@ -60,6 +150,8 @@ struct LiveBigBoardPanel: View {
         }()
 
         switch sortMode {
+        case .myBoard:
+            return UserDraftBoard.sorted(pool)
         case .projection:
             return pool.sorted {
                 (coordinator.publicBoardRanks[$0.id] ?? 999) <
@@ -82,17 +174,45 @@ struct LiveBigBoardPanel: View {
         }
     }
 
-    /// Wave 4: the board is the natural place to start a move-up call — the
-    /// user is looking at the man he wants when the thought occurs. Tapping a
-    /// row opens the call sheet pre-targeted at that prospect, which filters
-    /// the quotes to the slots where he is plausibly still on the board.
+    /// A row is two targets, because it has two jobs on the night: reading the
+    /// man (his card — notes, medical, the interview your staff took) and
+    /// calling about him. Tapping the name used to open the trade-up phone,
+    /// which meant the one screen with the whole board on it had no way at all
+    /// to look a prospect up.
     private func prospectRow(_ prospect: CollegeProspect) -> some View {
-        Button {
-            coordinator.openTradeUpBoard(for: prospect)
-        } label: {
-            prospectRowContent(prospect)
+        HStack(spacing: 0) {
+            Button {
+                cardProspect = prospect
+            } label: {
+                prospectRowContent(prospect)
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Opens the scouting card")
+
+            Button {
+                coordinator.openTradeUpBoard(for: prospect)
+            } label: {
+                Image(systemName: "phone.arrow.up.right.fill")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Color.draftStealGold.opacity(0.85))
+                    .frame(width: 22, height: 24)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Call about moving up for \(prospect.lastName)")
         }
-        .buttonStyle(.plain)
+        .contextMenu {
+            Button {
+                cardProspect = prospect
+            } label: {
+                Label("Scouting Card", systemImage: "person.text.rectangle")
+            }
+            Button {
+                coordinator.openTradeUpBoard(for: prospect)
+            } label: {
+                Label("Call About Moving Up", systemImage: "phone.arrow.up.right.fill")
+            }
+        }
     }
 
     /// One board row in a 288 pt panel. Fixed columns are kept to 136 pt total
@@ -103,8 +223,17 @@ struct LiveBigBoardPanel: View {
     private func prospectRowContent(_ prospect: CollegeProspect) -> some View {
         let need = coordinator.teamNeedScores[prospect.position] ?? 0
         let mark = DraftIntel.mark(for: prospect)
+        // On My Board the number is HIS board slot, not the media's — the whole
+        // point of the mode is that the room finally prints the user's order.
+        let myRank = coordinator.userBoardRanks[prospect.id]
         return HStack(spacing: DSSpacing.xxs) {
-            if let rank = coordinator.publicBoardRanks[prospect.id] {
+            if sortMode.isMyBoard {
+                Text(myRank.map { "\($0)" } ?? "—")
+                    .font(.caption.monospaced().weight(.bold))
+                    .foregroundStyle(myRank == nil ? Color.textTertiary : Color.accentGold)
+                    .frame(width: 34, alignment: .leading)
+                    .accessibilityLabel(myRank.map { "Your board slot \($0)" } ?? "Not on your board")
+            } else if let rank = coordinator.publicBoardRanks[prospect.id] {
                 Text("#\(rank)")
                     .font(.caption.monospaced().weight(.bold))
                     .foregroundStyle(Color.textSecondary)
@@ -121,8 +250,10 @@ struct LiveBigBoardPanel: View {
                 .frame(width: 26, alignment: .leading)
             // The user's own mark, carried from the scouting board to the one
             // screen where it decides something: a star on the men he wants,
-            // and nothing shouty on the ones he does not.
-            if let mark {
+            // and nothing shouty on the ones he does not. Inside a tier group
+            // the icon would be the header repeated on every row, so My Board
+            // spends the width on the name instead.
+            if let mark, !sortMode.isMyBoard {
                 Image(systemName: mark.icon)
                     .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(mark.color)
