@@ -1,0 +1,68 @@
+<meta charset="utf-8"><title>Sunday Night Dynasty — music candidates</title>
+<style>
+body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;margin:0;background:#0b1020;color:#e8ecf1}
+header{position:sticky;top:0;background:#070b16;border-bottom:1px solid #1c2740;padding:14px 20px;z-index:10}
+h1{margin:0 0 4px;font-size:19px;letter-spacing:.04em}
+h1 b{color:#e0b050}
+.sub{color:#8b97a8;font-size:12px;line-height:1.5}
+button{background:#c9a227;color:#0b1020;border:0;border-radius:6px;padding:8px 14px;font-size:13px;
+cursor:pointer;margin-right:8px;font-weight:600}
+button:hover{background:#e0b050}
+h2{margin:26px 20px 6px;font-size:15px;color:#e0b050;border-bottom:1px solid #1c2740;padding-bottom:6px}
+table{width:calc(100% - 40px);margin:0 20px;border-collapse:collapse;font-size:12px}
+th{text-align:left;color:#5f6b80;font-weight:500;font-size:10px;text-transform:uppercase;
+letter-spacing:.06em;padding:6px 8px;border-bottom:1px solid #1c2740}
+td{padding:7px 8px;border-bottom:1px solid #141b2c;vertical-align:middle}
+tr:hover{background:#111829}
+.fn{font-family:ui-monospace,Menlo,monospace;color:#dfe6ee;white-space:nowrap;font-weight:600}
+.pr{color:#8b97a8;max-width:400px;overflow-wrap:anywhere;font-size:11px;line-height:1.45}
+.kw{color:#e0b050;font-family:ui-monospace,Menlo,monospace;font-size:11px;white-space:nowrap}
+.num{color:#8b97a8;text-align:right;white-space:nowrap;font-family:ui-monospace,Menlo,monospace;font-size:11px}
+.lufs{color:#6fa8dc;text-align:right;white-space:nowrap;font-family:ui-monospace,Menlo,monospace;font-size:11px}
+.ok{color:#7fd4a0;font-family:ui-monospace,Menlo,monospace;font-size:11px}
+.bad{color:#e0806a;font-family:ui-monospace,Menlo,monospace;font-size:11px}
+audio{height:30px;vertical-align:middle}
+.note{margin:8px 20px;color:#8b97a8;font-size:12px;line-height:1.6;max-width:1100px}
+.note b{color:#cfd8e3}
+.rank{color:#e0b050;font-weight:700;font-family:ui-monospace,Menlo,monospace}
+#out{width:calc(100% - 40px);margin:10px 20px;height:120px;background:#060910;color:#9fe8b8;
+border:1px solid #1c2740;border-radius:6px;font-family:ui-monospace,Menlo,monospace;font-size:11px;
+display:none;padding:8px}
+</style>
+<header><h1>SUNDAY NIGHT <b>DYNASTY</b> — music candidates</h1>
+<div class="sub">6 menu themes (<code>lucataco/ace-step</code>, Apache-2.0) &middot; 4 ambient loops (<code>stackadoc/stable-audio-open-1.0</code>, Stability Community Licence) &middot; all instrumental, &minus;16 LUFS / &minus;1.5 dBTP, 48 kHz stereo<br>tick what is worth keeping, then copy the list and save it as <code>selections_music.tsv</code></div>
+<div style="margin-top:10px"><button onclick="copySel()">Copy selected list</button><button onclick="document.querySelectorAll('input[type=checkbox]').forEach(c=>c.checked=false);count()">Clear all</button><span id="n" class="sub"></span></div></header>
+<textarea id="out" readonly></textarea>
+<div class="note"><b>Read this before trusting the order.</b> Nobody in the generation loop could hear these files. The <span class="rank">#</span> rank is derived only from measurable proxies for the brief: <b>peak @</b> is where the loudest moment falls (0 = opens loudest, 1 = ends loudest), <b>build</b> is the last third minus the first third in dB, <b>arc</b> is the spread between the quiet and loud sections, <b>cent</b> is the median spectral centroid (low = dark and bass-led, high = bright and thin) and <b>LRA</b> is loudness range. A theme that "builds to a peak" should show a late peak, a positive build and a wide arc. None of that can tell you whether the melody is any good, whether the brass sounds synthetic, or whether the model hallucinated wordless vocal pads &mdash; <b>that judgement is yours, by ear</b>.</div>
+<h2>MENU THEMES &mdash; ACE-Step, 90 s requested, instrumental marker forced</h2>
+<table><tr><th></th><th>#</th><th>take</th><th>dur</th><th>LUFS / dBTP</th><th>LRA</th><th>cent</th><th>peak@</th><th>build</th><th>arc</th><th>seed</th><th>prompt tags</th><th>preview</th></tr>
+<tr><td><input type="checkbox" data-style="broadcast_anthem" value="gen_music/broadcast_anthem/broadcast_anthem_take1.wav"></td><td class="rank">1</td><td class="fn">broadcast_anthem_take1</td><td class="num">87.5s</td><td class="lufs">-16.0 / -3.2</td><td class="num">11.4</td><td class="num">2210</td><td class="num">0.74</td><td class="num">3.3</td><td class="num">13.7</td><td class="kw">770101</td><td class="pr">epic sports broadcast theme, heroic brass fanfare, marching drumline, snare rolls, timpani, orchestral horns, cymbal swells, stadium anthem, triumphant, confident, building to a big finish, wide stereo, instrumental, no vocals, 140 BPM, D minor</td><td><audio controls preload="none" src="gen_music/broadcast_anthem/broadcast_anthem_take1.m4a"></audio></td></tr>
+<tr><td><input type="checkbox" data-style="orchestral_cinematic" value="gen_music/orchestral_cinematic/orchestral_cinematic_take1.wav"></td><td class="rank">2</td><td class="fn">orchestral_cinematic_take1</td><td class="num">88.7s</td><td class="lufs">-16.0 / -3.0</td><td class="num">7.4</td><td class="num">3262</td><td class="num">0.96</td><td class="num">3.7</td><td class="num">11.7</td><td class="kw">770301</td><td class="pr">epic orchestral cinematic, sweeping legato strings, noble french horns, slow burn build, timpani, string ensemble, championship gravitas, majestic, emotional, film score, instrumental, no vocals, 90 BPM, C minor</td><td><audio controls preload="none" src="gen_music/orchestral_cinematic/orchestral_cinematic_take1.m4a"></audio></td></tr>
+<tr><td><input type="checkbox" data-style="dark_hybrid" value="gen_music/dark_hybrid/dark_hybrid_take1.wav"></td><td class="rank">3</td><td class="fn">dark_hybrid_take1</td><td class="num">89.9s</td><td class="lufs">-16.0 / -1.5</td><td class="num">7.5</td><td class="num">1329</td><td class="num">0.54</td><td class="num">-1.4</td><td class="num">12.8</td><td class="kw">770201</td><td class="pr">dark hybrid cinematic, pulsing analog synth bass, taiko drums, cinematic percussion, tense string ostinato, brass swells, trailer tension and release, modern primetime sports, brooding, night game, instrumental, no vocals, 120 BPM, F minor</td><td><audio controls preload="none" src="gen_music/dark_hybrid/dark_hybrid_take1.m4a"></audio></td></tr>
+<tr><td><input type="checkbox" data-style="orchestral_cinematic" value="gen_music/orchestral_cinematic/orchestral_cinematic_take2.wav"></td><td class="rank">4</td><td class="fn">orchestral_cinematic_take2</td><td class="num">88.0s</td><td class="lufs">-16.0 / -3.2</td><td class="num">7.6</td><td class="num">2148</td><td class="num">0.83</td><td class="num">1.1</td><td class="num">11.0</td><td class="kw">770302</td><td class="pr">cinematic orchestral anthem, soaring string melody, heroic horn theme, deep low brass, orchestral timpani rolls, gradual crescendo to triumphant climax, legacy and dynasty, grand, sweeping, instrumental, no vocals, 100 BPM, G minor</td><td><audio controls preload="none" src="gen_music/orchestral_cinematic/orchestral_cinematic_take2.m4a"></audio></td></tr>
+<tr><td><input type="checkbox" data-style="broadcast_anthem" value="gen_music/broadcast_anthem/broadcast_anthem_take2.wav"></td><td class="rank">5</td><td class="fn">broadcast_anthem_take2</td><td class="num">88.8s</td><td class="lufs">-16.0 / -1.5</td><td class="num">6.3</td><td class="num">3147</td><td class="num">0.98</td><td class="num">-3.1</td><td class="num">9.5</td><td class="kw">770102</td><td class="pr">primetime american football intro theme, bold brass stabs, military snare drumline, low brass ostinato, french horns, orchestral percussion, powerful, swaggering, broadcast package, crescendo to peak, instrumental, no vocals, 128 BPM, E minor</td><td><audio controls preload="none" src="gen_music/broadcast_anthem/broadcast_anthem_take2.m4a"></audio></td></tr>
+<tr><td><input type="checkbox" data-style="dark_hybrid" value="gen_music/dark_hybrid/dark_hybrid_take2.wav"></td><td class="rank">6</td><td class="fn">dark_hybrid_take2</td><td class="num">88.7s</td><td class="lufs">-16.0 / -1.5</td><td class="num">1.8</td><td class="num">4860</td><td class="num">0.12</td><td class="num">-0.9</td><td class="num">7.3</td><td class="kw">770202</td><td class="pr">hybrid orchestral electronic, driving synth bass pulse, industrial percussion hits, dark atmospheric pads, staccato strings, rising tension, epic drop, aggressive, sleek and modern, instrumental, no vocals, 130 BPM, A minor</td><td><audio controls preload="none" src="gen_music/dark_hybrid/dark_hybrid_take2.m4a"></audio></td></tr>
+</table>
+<h2>DASHBOARD / AMBIENT LOOPS &mdash; Stable Audio Open, 47 s requested, seamless-wrap edited</h2>
+<div class="note">Each file has had its tail folded back onto its head with a 2.0 s equal-power crossfade, so it wraps on <code>numberOfLoops = -1</code>. <b>seam</b> is the measured wrap discontinuity: the sample jump across the wrap minus the 99.9th-percentile jump the waveform already makes on its own. Negative = the wrap moves the signal <i>less</i> than the music does anyway, i.e. no click is physically present. <b>lvl</b> is the level match across the wrap (tail minus head, dB) &mdash; a big number there can still be audible as a jump in level even with a click-free seam.</div>
+<table><tr><th></th><th>take</th><th>dur</th><th>LUFS / dBTP</th><th>LRA</th><th>cent</th><th>arc</th><th>seam before</th><th>seam after</th><th>lvl</th><th>seed</th><th>prompt</th><th>preview</th></tr>
+<tr><td><input type="checkbox" data-style="ambient_broadcast" value="gen_music/ambient_broadcast/ambient_broadcast_take1_loop.wav"></td><td class="fn">ambient_broadcast_take1</td><td class="num">45.5s</td><td class="lufs">-16.1 / -3.1</td><td class="num">8.5</td><td class="num">310</td><td class="num">11.0</td><td class="bad">22.2 dB</td><td class="ok">-11.8 dB clean</td><td class="ok">1.0</td><td class="kw">880201</td><td class="pr">ambient sports broadcast underscore, muted electric piano, soft pad wash, light brushed percussion, distant stadium crowd ambience, relaxed, professional, steady loop, instrumental</td><td><audio controls preload="none" src="gen_music/ambient_broadcast/ambient_broadcast_take1.m4a"></audio></td></tr>
+<tr><td><input type="checkbox" data-style="ambient_cinematic" value="gen_music/ambient_cinematic/ambient_cinematic_take1_loop.wav"></td><td class="fn">ambient_cinematic_take1</td><td class="num">40.6s</td><td class="lufs">-16.2 / -4.3</td><td class="num">20.3</td><td class="num">1709</td><td class="num">23.8</td><td class="bad">6.4 dB</td><td class="ok">-13.4 dB clean</td><td class="ok">-1.4</td><td class="kw">880401</td><td class="pr">cinematic ambient bed, sustained warm string pad, slow pulse, subtle low percussion, restrained, moody, pre-game calm, evolving texture, steady loop, instrumental</td><td><audio controls preload="none" src="gen_music/ambient_cinematic/ambient_cinematic_take1.m4a"></audio></td></tr>
+<tr><td><input type="checkbox" data-style="ambient_downtempo" value="gen_music/ambient_downtempo/ambient_downtempo_take1_loop.wav"></td><td class="fn">ambient_downtempo_take1</td><td class="num">44.7s</td><td class="lufs">-16.0 / -1.5</td><td class="num">1.0</td><td class="num">1378</td><td class="num">11.1</td><td class="ok">-9.9 dB</td><td class="ok">-33.4 dB clean</td><td class="bad">7.8</td><td class="kw">880301</td><td class="pr">downtempo lo-fi beat, dusty warm keys, soft kick and rim shot, vinyl texture, low-key confident, dark and moody, understated menu music, steady groove, instrumental</td><td><audio controls preload="none" src="gen_music/ambient_downtempo/ambient_downtempo_take1.m4a"></audio></td></tr>
+<tr><td><input type="checkbox" data-style="ambient_lofi" value="gen_music/ambient_lofi/ambient_lofi_take1_loop.wav"></td><td class="fn">ambient_lofi_take1</td><td class="num">45.5s</td><td class="lufs">-16.0 / -2.9</td><td class="num">1.5</td><td class="num">717</td><td class="num">3.1</td><td class="ok">-4.8 dB</td><td class="ok">-28.1 dB clean</td><td class="ok">-2.3</td><td class="kw">880101</td><td class="pr">lo-fi ambient underscore, soft warm synth pads, gentle brushed drums, subtle sub bass, mellow, understated, calm and spacious, steady unchanging loop, background music, instrumental</td><td><audio controls preload="none" src="gen_music/ambient_lofi/ambient_lofi_take1.m4a"></audio></td></tr>
+</table>
+<div class="note" style="margin-bottom:40px"><b>Licensing, short version.</b> ACE-Step weights are Apache-2.0 &mdash; commercial use, no revenue cap, no attribution burden. Stable Audio Open is the Stability AI Community Licence, which is royalty-free commercial <i>only under $1M annual revenue</i>. If the ambient loops ship and Brew Crow ever crosses that line, they must be relicensed or replaced; the menu themes have no such string attached. MusicGen and everything else built on <code>audiocraft</code> was rejected outright: its weights are CC-BY-NC 4.0. Full detail in <code>LICENSES.md</code>.</div>
+<script>
+function count(){document.getElementById('n').textContent=
+ document.querySelectorAll('input[type=checkbox]:checked').length+' selected';}
+document.addEventListener('change',count);
+function copySel(){
+ const rows=[...document.querySelectorAll('input[type=checkbox]:checked')]
+   .map(c=>c.dataset.style+'\t'+c.value);
+ const t=rows.join('\n');
+ const o=document.getElementById('out');o.style.display='block';o.value=t;
+ navigator.clipboard.writeText(t).then(()=>{},()=>{o.select();});
+ count();
+}
+count();
+</script>

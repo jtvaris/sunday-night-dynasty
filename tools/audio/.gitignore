@@ -5,5 +5,10 @@ approved/
 extracted/
 gen_raw/
 gen/
+# Music experiment (generate_music.py / post_music.py) — same deal: raw model
+# returns plus 24-bit masters, ~130 MB, all reproducible from the seed+prompt
+# in gen_music/manifest.json and the per-take JSON sidecars.
+gen_music_raw/
+gen_music/
 raw_bundles/
 staging/

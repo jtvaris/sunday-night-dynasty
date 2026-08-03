@@ -317,3 +317,140 @@ measured spectral analysis rather than guesswork (`analyze_gen.py`):
 - **`shouts`** grunts were also re-prompted deeper (3.3 kHz → ~2.1 kHz centroid).
 
 Both waves are kept in the review page so the user can A/B them.
+
+---
+
+## Music candidates
+
+Exploratory only — **nothing in this section ships yet**. The question being
+answered is whether open, commercially-licensed music models clear the
+"SUNDAY NIGHT DYNASTY primetime broadcast" bar, or whether a paid service
+(Suno Pro) is required. Review page: `review_music.html`. Generated
+2026-08-03 by `generate_music.py`, mastered by `post_music.py`.
+
+Everything is **instrumental** by construction — no vocals were requested and
+ACE-Step was given its explicit `[instrumental]` lyrics marker.
+
+### License gate
+
+Every model in Replicate's `ai-music-generation` collection (17 entries) was
+checked against one rule: **the weights must permit commercial use.** Verdicts
+recorded 2026-08-03.
+
+| Model | Weights licence | Verdict |
+|---|---|---|
+| `lucataco/ace-step` | Apache-2.0 | ✅ **USED** — no revenue cap, no attribution burden |
+| `stackadoc/stable-audio-open-1.0` | Stability AI Community | ⚠️ **USED** — commercial only under $1M revenue (see caveat above) |
+| `meta/musicgen` | CC-BY-NC 4.0 | ❌ rejected — non-commercial |
+| `andreasjansson/musicgen-looper` | CC-BY-NC 4.0 | ❌ rejected — same `audiocraft` weights |
+| `sakemin/musicgen-chord`, `-stereo-chord`, `-remixer` | CC-BY-NC 4.0 | ❌ rejected — same weights |
+| `lucataco/magnet` | CC-BY-NC 4.0 | ❌ rejected — `audiocraft` weights, MIT code only |
+| `google/lyria-2`, `minimax/music-*`, `elevenlabs/music`, `stability-ai/stable-audio-2.5` | closed weights, vendor ToS | ⊘ not evaluated — hosted paid services, not "open models"; revisit only if the open route fails |
+| `zsxkib/flux-music`, `riffusion/riffusion` | — | ⊘ not evaluated — neither targets full-song broadcast music |
+
+**The MusicGen family is disqualified as a class.** Its weights ship under
+`LICENSE_weights` = *Creative Commons Attribution-NonCommercial 4.0*
+(https://github.com/facebookresearch/audiocraft/blob/main/LICENSE_weights,
+checked 2026-08-03). The MIT licence on the `audiocraft` *code* does not
+extend to the weights — a genuinely easy trap, since the repo's headline
+licence badge says MIT.
+
+### ACE-Step — the full-song model
+
+| Field | Value |
+|---|---|
+| Model | `lucataco/ace-step` (Replicate) |
+| Version pinned | `280fc4f9ee507577f880a167f639c02622421d8fecf492454320311217b688f1` |
+| Upstream weights | `ACE-Step/ACE-Step-v1-3.5B` (Hugging Face) |
+| Licence | **Apache-2.0** |
+| Evidence | HF model card metadata `license: apache-2.0` (card modified 2025-05-22); GitHub `ace-step/ACE-Step` LICENSE = Apache-2.0 (GitHub licence API, `spdx_id: Apache-2.0`) |
+| Hardware / rate | Nvidia L40S, $0.000975 / sec |
+| Takes | 6 (3 styles × 2) |
+| GPU time | 45.2 s |
+| Date checked | 2026-08-03 |
+
+**No stale-licence trap here**, unlike the Stable Audio wrapper. The Replicate
+model's `github_url` and `weights_url` point *directly* at the upstream
+`ace-step/ACE-Step` repo and the `ACE-Step/ACE-Step-v1-3.5B` HF repo — there is
+no intermediate cog wrapper carrying its own older licence file, so the
+Apache-2.0 chain is unbroken from Replicate to weights.
+
+Apache-2.0 is materially better than the Stable Audio position: **no revenue
+cap**, so the menu themes carry no live obligation to re-check at funding
+milestones. If only one of the two model families can ship, this is the one
+with no strings.
+
+**Output format caveat:** ACE-Step returns **MP3 (320 kbps)**, not WAV. Fine
+for candidate review; if a take is chosen for the game it is a lossy master,
+and it would be worth re-running the winning seed to see whether a WAV-capable
+host or a local ACE-Step run can produce a lossless version of the same seed.
+
+### Stable Audio Open — the ambient loops
+
+Same model, version, licence and **$1M annual-revenue caveat** as the
+Generated SFX section above — see *"⚠ Licence caveat"* there, it applies
+verbatim to these loops. 4 takes, 22.4 s GPU.
+
+### Cost
+
+| Model | Takes | GPU time | Cost @ $0.000975/s |
+|---|---|---|---|
+| `lucataco/ace-step` | 6 | 45.2 s | $0.044 |
+| `stackadoc/stable-audio-open-1.0` | 4 | 22.4 s | $0.022 |
+| **Total** | **10** | **67.6 s** | **≈ $0.07** |
+
+Replicate exposes no per-prediction cost field, so this is
+`predict_time × published L40S rate`, summed over the 10 prediction IDs
+recorded in `gen_music/manifest.json`. Budget was $3.
+
+### Takes — seed and prompt
+
+Reproducible from seed + prompt + the pinned version. Duration and LUFS are
+measured on the mastered file (−16 LUFS / −1.5 dBTP, 48 kHz stereo).
+
+**Menu themes — `lucataco/ace-step`, `duration=90`, `number_of_steps=60`,
+`scheduler=euler`, `guidance_type=apg`, `guidance_scale=15`,
+`tag_guidance_scale=5`, `lyrics="[instrumental]"`**
+
+| File | Seed | Duration | LUFS | Prompt tags |
+|---|---|---|---|---|
+| `broadcast_anthem_take1` | 770101 | 87.5 s | −16.0 | epic sports broadcast theme, heroic brass fanfare, marching drumline, snare rolls, timpani, orchestral horns, cymbal swells, stadium anthem, triumphant, confident, building to a big finish, wide stereo, instrumental, no vocals, 140 BPM, D minor |
+| `broadcast_anthem_take2` | 770102 | 88.8 s | −16.0 | primetime american football intro theme, bold brass stabs, military snare drumline, low brass ostinato, french horns, orchestral percussion, powerful, swaggering, broadcast package, crescendo to peak, instrumental, no vocals, 128 BPM, E minor |
+| `dark_hybrid_take1` | 770201 | 89.9 s | −16.0 | dark hybrid cinematic, pulsing analog synth bass, taiko drums, cinematic percussion, tense string ostinato, brass swells, trailer tension and release, modern primetime sports, brooding, night game, instrumental, no vocals, 120 BPM, F minor |
+| `dark_hybrid_take2` | 770202 | 88.7 s | −16.0 | hybrid orchestral electronic, driving synth bass pulse, industrial percussion hits, dark atmospheric pads, staccato strings, rising tension, epic drop, aggressive, sleek and modern, instrumental, no vocals, 130 BPM, A minor |
+| `orchestral_cinematic_take1` | 770301 | 88.7 s | −16.0 | epic orchestral cinematic, sweeping legato strings, noble french horns, slow burn build, timpani, string ensemble, championship gravitas, majestic, emotional, film score, instrumental, no vocals, 90 BPM, C minor |
+| `orchestral_cinematic_take2` | 770302 | 88.0 s | −16.0 | cinematic orchestral anthem, soaring string melody, heroic horn theme, deep low brass, orchestral timpani rolls, gradual crescendo to triumphant climax, legacy and dynasty, grand, sweeping, instrumental, no vocals, 100 BPM, G minor |
+
+**Ambient loops — `stackadoc/stable-audio-open-1.0`, `seconds_total=47`,
+`cfg_scale=7`, `steps=100`, `sampler_type=dpmpp-3m-sde`**, negative prompt
+`vocals, singing, voice, lyrics, choir, speech, announcer, rapping, harsh,
+distorted, clipping, sound effect, sudden silence`. Durations are post-trim
+and post-loop-edit (a 2.0 s crossfade is folded back onto the head).
+
+| File | Seed | Duration | LUFS | Prompt |
+|---|---|---|---|---|
+| `ambient_broadcast_take1` | 880201 | 45.5 s | −16.1 | ambient sports broadcast underscore, muted electric piano, soft pad wash, light brushed percussion, distant stadium crowd ambience, relaxed, professional, steady loop, instrumental |
+| `ambient_cinematic_take1` | 880401 | 40.6 s | −16.2 | cinematic ambient bed, sustained warm string pad, slow pulse, subtle low percussion, restrained, moody, pre-game calm, evolving texture, steady loop, instrumental |
+| `ambient_downtempo_take1` | 880301 | 44.7 s | −16.0 | downtempo lo-fi beat, dusty warm keys, soft kick and rim shot, vinyl texture, low-key confident, dark and moody, understated menu music, steady groove, instrumental |
+| `ambient_lofi_take1` | 880101 | 45.5 s | −16.0 | lo-fi ambient underscore, soft warm synth pads, gentle brushed drums, subtle sub bass, mellow, understated, calm and spacious, steady unchanging loop, background music, instrumental |
+
+### Loop-seam measurements
+
+Wrap discontinuity = the sample-value jump between the last and first sample,
+compared against the 99.9th-percentile jump the waveform already makes on its
+own. Negative headroom means the wrap moves the signal *less* than the music
+does anyway, i.e. no click is physically present. `lvl` is tail-minus-head RMS
+over 200 ms.
+
+| Loop | Headroom before | Headroom after | Verdict | lvl |
+|---|---|---|---|---|
+| `ambient_broadcast_take1` | +22.2 dB (click) | **−11.8 dB** | clean | +1.0 dB |
+| `ambient_cinematic_take1` | +6.4 dB (click) | **−13.4 dB** | clean | −1.4 dB |
+| `ambient_downtempo_take1` | −9.9 dB | **−33.4 dB** | clean | +7.8 dB ⚠ |
+| `ambient_lofi_take1` | −4.8 dB | **−28.1 dB** | clean | −2.3 dB |
+
+Two of the four had a genuine click at the raw wrap; the crossfade removed
+both. `ambient_downtempo_take1` is click-free but its last 200 ms are 7.8 dB
+**louder** than its first 200 ms — most likely a drum hit landing right on the
+boundary. It will not tick, but it may audibly "drop" in level each time it
+wraps, so it needs an ear before use.
