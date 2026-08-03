@@ -135,11 +135,19 @@ enum TradeValueEngine {
     /// - Expiring deal (≤ 1 year left) or free agent → rental discount (×0.85).
     /// - Cheap multi-year deal (salary ≤ 70 % of market, 2+ years) → premium.
     /// - Overpaid (salary ≥ 130 % of market) → discount (×0.8).
-    static func contractMultiplier(player: Player) -> Double {
+    ///
+    /// `salaryCap` is the **one remaining defaulted cap in the engine layer**
+    /// (task #87 / F5). It is a helper three levels inside the trade-value curve,
+    /// reached from fifteen call sites that have no `Team` in hand, and the value
+    /// it feeds is a RATIO (`salary ÷ market`) — so the cap cancels almost
+    /// exactly and a stale one moves a multiplier by fractions of a percent
+    /// rather than mispricing a contract. Every top-level market entry point
+    /// takes the cap as a required argument.
+    static func contractMultiplier(player: Player, salaryCap: Int = ContractEngine.openingSalaryCap) -> Double {
         guard player.teamID != nil, player.contractYearsRemaining > 0 else {
             return 0.85
         }
-        let market = max(1, ContractEngine.estimateMarketValue(player: player))
+        let market = max(1, ContractEngine.estimateMarketValue(player: player, salaryCap: salaryCap))
         let salaryRatio = Double(player.annualSalary) / Double(market)
 
         var multiplier = 1.0

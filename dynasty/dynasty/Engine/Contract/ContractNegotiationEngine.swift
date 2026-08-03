@@ -612,7 +612,7 @@ enum ContractNegotiationEngine {
     static func demand(
         player: Player,
         negotiationType: NegotiationType,
-        salaryCap: Int = 265_000,
+        salaryCap: Int,
         situation: NegotiationSituation = .neutral,
         standing: GMStanding = .neutral,
         insultCount: Int = 0
@@ -1256,7 +1256,7 @@ enum ContractNegotiationEngine {
     static func generateOpeningDemand(
         player: Player,
         negotiationType: NegotiationType,
-        salaryCap: Int = 265_000,
+        salaryCap: Int,
         situation: NegotiationSituation = .neutral,
         standing: GMStanding = .neutral
     ) -> (offer: NegotiationOffer, message: String, demand: ContractDemand) {
@@ -1541,7 +1541,7 @@ enum ContractNegotiationEngine {
         previousAgentOffer: NegotiationOffer,
         roundNumber: Int,
         negotiationType: NegotiationType,
-        salaryCap: Int = 265_000,
+        salaryCap: Int,
         situation: NegotiationSituation = .neutral,
         standing: GMStanding = .neutral,
         insultCount: Int = 0

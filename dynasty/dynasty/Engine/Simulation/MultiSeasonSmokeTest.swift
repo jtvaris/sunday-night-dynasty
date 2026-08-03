@@ -423,7 +423,8 @@ enum MultiSeasonSmokeTest {
                 prospect: chosen,
                 teamID: pick.currentTeamID,
                 pickNumber: pick.pickNumber,
-                draftSeason: pick.seasonYear
+                draftSeason: pick.seasonYear,
+                salaryCap: team.salaryCap
             )
             DraftEngine.initializeRookieFamiliarity(
                 player: player,
@@ -640,6 +641,39 @@ enum MultiSeasonSmokeTest {
                 payroll / rosteredPaid.count,
                 FreeAgencyEngine.signingLedger.summary
             ))
+
+            // WHO the money went to (task #87 / F7). Every gate above this line
+            // is a league AGGREGATE — `underCap >= 24/32` and `avgRoom >= 8 %`
+            // are satisfied perfectly by a league that pays twenty men 22 % of
+            // the cap each and fills the other 1 676 slots at the minimum. The
+            // #87 audit's central unmeasured risk was exactly that: a
+            // position-level shift in who gets paid, invisible to every
+            // instrument in the repo. This is the instrument.
+            var payByGroup: [String: Int] = [:]
+            for p in rosteredPaid {
+                payByGroup[salaryGroup(p.position), default: 0] += p.annualSalary
+            }
+            let groupLine = payByGroup
+                .sorted { $0.value > $1.value }
+                .map { String(format: "%@=%.1f%%", $0.key, Double($0.value) / Double(max(1, payroll)) * 100) }
+                .joined(separator: " ")
+            print("SMOKE: diag salaryByPosition season=\(seasonLabel) \(groupLine)")
+
+            // ONE sanity gate on the shape. A position group taking more than
+            // 30 % of a league's payroll is not a balance preference, it is a
+            // broken multiplier: the fattest group a real NFL payroll produces is
+            // the offensive line at ~18-20 %, and the game's own roster blueprint
+            // puts no group above nine of fifty-three slots.
+            if let (fattest, fattestPay) = payByGroup.max(by: { $0.value < $1.value }) {
+                let share = Double(fattestPay) / Double(max(1, payroll)) * 100
+                if share > 30.0 {
+                    print(String(
+                        format: "SMOKE: ANOMALY season=%d salaryByPosition %@ takes %.1f%% of league payroll (>30 %%) "
+                              + "— see ContractEngine.positionMultiplier",
+                        seasonLabel, fattest, share
+                    ))
+                }
+            }
         }
         FreeAgencyEngine.signingLedger = FreeAgencyEngine.SigningLedger()
         FreeAgencyEngine.priorSalaryByPlayerID.removeAll()
@@ -1254,6 +1288,23 @@ enum MultiSeasonSmokeTest {
         print("SMOKE: faces season=\(seasonLabel) livingCoaches=\(coaches.count - deadCoaches) "
               + "livingFemaleCoaches=\(livingFemaleCoaches) "
               + "retiredCoaches=\(deadCoaches) livingPlayers=\(players.filter { !$0.isRetired }.count)")
+    }
+
+    /// Position groups for the `salaryByPosition` diag (task #87 / F7). A share
+    /// is only readable at group level: "RT" is one roster slot and "OL" is nine,
+    /// so the question worth asking is never "what does the right tackle take"
+    /// but "what does the offensive line take, against the defensive line".
+    private static func salaryGroup(_ position: Position) -> String {
+        switch position {
+        case .QB:                       return "QB"
+        case .RB, .FB:                  return "RB"
+        case .WR, .TE:                  return "WR/TE"
+        case .LT, .LG, .C, .RG, .RT:    return "OL"
+        case .DE, .DT:                  return "DL"
+        case .OLB, .MLB:                return "LB"
+        case .CB, .FS, .SS:             return "DB"
+        case .K, .P:                    return "ST"
+        }
     }
 
     private static func headCoachByTeam(context: ModelContext) -> [UUID: UUID] {

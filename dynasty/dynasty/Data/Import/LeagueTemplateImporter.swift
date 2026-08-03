@@ -281,23 +281,16 @@ enum LeagueTemplateImporter {
         )
 
         var contractRNG = SeededLeagueRandom(seed: seed &+ contractSeedOffset)
-        let salary = LeagueGenerator.realisticSalary(
-            for: position, yearsPro: template.yearsPro, depthIndex: depthIndex, using: &contractRNG
-        )
         let contractYears = LeagueGenerator.realisticContractYears(
             yearsPro: template.yearsPro, age: template.age, using: &contractRNG
         )
-        let morale = LeagueGenerator.initialMorale(
-            personality: personality.archetype,
-            age: template.age,
-            depthIndex: depthIndex,
-            contractYears: contractYears,
-            salary: salary,
-            position: position,
-            using: &contractRNG
-        )
 
         let (firstName, lastName) = splitName(template)
+        // Built before priced, exactly as `LeagueGenerator.generatePlayer` does
+        // it — the seeder is rating-aware since task #87 (F1) and `overall` is a
+        // blend only `Player` computes. Salary and morale are written back below,
+        // still off `contractRNG`, so the contract sub-stream stays a pure
+        // function of the player's seed.
         let player = Player(
             firstName: firstName,
             lastName: lastName,
@@ -308,15 +301,37 @@ enum LeagueTemplateImporter {
             mental: solved.mental,
             positionAttributes: solved.positionAttributes,
             personality: personality,
-            morale: morale,
             teamID: teamID,
             contractYearsRemaining: contractYears,
-            annualSalary: salary,
+            annualSalary: 750,
             // Draft provenance: round and year are real, the overall pick is the
             // profile's pick of record (fuzzed within round in publish).
             draftPickNumber: template.effectiveDraftPick,
             draftSeason: template.draftYear,
             draftRound: template.draftRound
+        )
+        let salary = LeagueGenerator.realisticSalary(
+            for: position,
+            overall: player.overall,
+            age: template.age,
+            yearsPro: template.yearsPro,
+            depthIndex: depthIndex,
+            salaryCap: ContractEngine.openingSalaryCap,
+            using: &contractRNG
+        )
+        player.annualSalary = salary
+        player.morale = LeagueGenerator.initialMorale(
+            personality: personality.archetype,
+            age: template.age,
+            depthIndex: depthIndex,
+            contractYears: contractYears,
+            salary: salary,
+            marketValue: ContractEngine.estimateMarketValue(
+                overall: player.overall, position: position, age: template.age,
+                salaryCap: ContractEngine.openingSalaryCap
+            ),
+            position: position,
+            using: &contractRNG
         )
 
         // Phase-2 mental software, same models the draft class and the random
@@ -427,7 +442,7 @@ enum LeagueTemplateImporter {
     /// cannot replay the team's whole random sequence to get there.
     static func capTarget(teamKey: String, globalSeed: UInt64) -> Int {
         var rng = SeededLeagueRandom(seed: globalSeed &+ fnv1a(teamKey + "|cap"))
-        return Int.random(in: 212_000...252_000, using: &rng)
+        return Int.random(in: LeagueGenerator.rosterCapTargetBand, using: &rng)
     }
 
     /// Scales a roster's approximated salaries onto `capUsage` (thousands),

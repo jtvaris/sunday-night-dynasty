@@ -3,8 +3,9 @@ import SwiftUI
 /// Always-visible summary bar at the top of the Roster view showing key team stats.
 struct RosterSummaryBar: View {
     let players: [Player]
-    /// The team's current salary cap in thousands. Falls back to 265_000 if not provided.
-    var teamSalaryCap: Int = 265_000
+    /// The team's current salary cap in thousands. Falls back to the league's
+    /// opening cap (`ContractEngine.openingSalaryCap`) if not provided.
+    var teamSalaryCap: Int = ContractEngine.openingSalaryCap
     /// `Team.currentCapUsage` in thousands — the league's cap ledger.
     ///
     /// THE number, not a number: it is what the Cap screen, the dashboard, the

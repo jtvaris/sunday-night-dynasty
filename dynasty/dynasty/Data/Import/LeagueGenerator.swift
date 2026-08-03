@@ -630,8 +630,12 @@ enum LeagueGenerator {
             }
         }
 
-        // Adjust total salary to target 80-95% of $265,000 cap (~$212K-$252K in thousands)
-        let targetCap = Int.random(in: 212_000...252_000)
+        // Adjust total salary to target 80-95 % of the cap. `realisticSalary`
+        // supplies the SHAPE of a cap sheet (who is paid what, relative to what
+        // he is worth); this supplies the LEVEL, and holding it here is what
+        // keeps aggregate payroll where the #27/#53 economy calibration put it
+        // no matter how the shape is re-derived.
+        let targetCap = Int.random(in: rosterCapTargetBand)
         let currentTotal = players.reduce(0) { $0 + $1.annualSalary }
 
         if currentTotal > 0 {
@@ -690,17 +694,12 @@ enum LeagueGenerator {
             archetype: PersonalityArchetype.allCases.randomElement()!,
             motivation: Motivation.allCases.randomElement()!
         )
-        let salary = realisticSalary(for: position, yearsPro: yearsPro, depthIndex: depthIndex)
         let contractYears = realisticContractYears(yearsPro: yearsPro, age: age)
-        let morale = initialMorale(
-            personality: personality.archetype,
-            age: age,
-            depthIndex: depthIndex,
-            contractYears: contractYears,
-            salary: salary,
-            position: position
-        )
 
+        // The man is built BEFORE he is priced (task #87 / F1): the seeder is
+        // rating-aware now, and `overall` is a blend of all three attribute
+        // blocks that only `Player` knows how to compute. Salary and morale are
+        // written back a few lines down.
         let player = Player(
             firstName: name.first,
             lastName: name.last,
@@ -711,10 +710,27 @@ enum LeagueGenerator {
             mental: mental,
             positionAttributes: posAttrs,
             personality: personality,
-            morale: morale,
             teamID: teamID,
             contractYearsRemaining: contractYears,
-            annualSalary: salary
+            annualSalary: 750
+        )
+        let salary = realisticSalary(
+            for: position, overall: player.overall, age: age,
+            yearsPro: yearsPro, depthIndex: depthIndex,
+            salaryCap: ContractEngine.openingSalaryCap
+        )
+        player.annualSalary = salary
+        player.morale = initialMorale(
+            personality: personality.archetype,
+            age: age,
+            depthIndex: depthIndex,
+            contractYears: contractYears,
+            salary: salary,
+            marketValue: ContractEngine.estimateMarketValue(
+                overall: player.overall, position: position, age: age,
+                salaryCap: ContractEngine.openingSalaryCap
+            ),
+            position: position
         )
         player.learning = learningValue(mental: mental)
         player.competitiveness = competitivenessValue(
@@ -1179,17 +1195,9 @@ enum LeagueGenerator {
             age = Int.random(in: 22...28)  // Young or developing
         }
         let yearsPro = max(1, age - Int.random(in: 21...23))
-        let salary = realisticSalary(for: .QB, yearsPro: yearsPro, depthIndex: 0)
         let contractYears = realisticContractYears(yearsPro: yearsPro, age: age)
-        let morale = initialMorale(
-            personality: personality.archetype,
-            age: age,
-            depthIndex: 0,
-            contractYears: contractYears,
-            salary: salary,
-            position: .QB
-        )
 
+        // Same order as `generatePlayer`: build, then price (task #87 / F1).
         let player = Player(
             firstName: firstName,
             lastName: lastName,
@@ -1200,10 +1208,27 @@ enum LeagueGenerator {
             mental: mentalAttrs,
             positionAttributes: posAttrs,
             personality: personality,
-            morale: morale,
             teamID: teamID,
             contractYearsRemaining: contractYears,
-            annualSalary: salary
+            annualSalary: 750
+        )
+        let salary = realisticSalary(
+            for: .QB, overall: player.overall, age: age,
+            yearsPro: yearsPro, depthIndex: 0,
+            salaryCap: ContractEngine.openingSalaryCap
+        )
+        player.annualSalary = salary
+        player.morale = initialMorale(
+            personality: personality.archetype,
+            age: age,
+            depthIndex: 0,
+            contractYears: contractYears,
+            salary: salary,
+            marketValue: ContractEngine.estimateMarketValue(
+                overall: player.overall, position: .QB, age: age,
+                salaryCap: ContractEngine.openingSalaryCap
+            ),
+            position: .QB
         )
         player.learning = learningValue(mental: mentalAttrs)
         player.competitiveness = competitivenessValue(
@@ -1423,22 +1448,32 @@ enum LeagueGenerator {
         depthIndex: Int,
         contractYears: Int,
         salary: Int,
+        marketValue: Int,
         position: Position
     ) -> Int {
         var rng = SystemRandomNumberGenerator()
         return initialMorale(
             personality: personality, age: age, depthIndex: depthIndex,
-            contractYears: contractYears, salary: salary, position: position, using: &rng
+            contractYears: contractYears, salary: salary, marketValue: marketValue,
+            position: position, using: &rng
         )
     }
 
     /// Seeded variant of `initialMorale`.
+    ///
+    /// `marketValue` is **this man's own** `ContractEngine.estimateMarketValue`
+    /// (task #87). It used to be a lookup into `averageMarketSalary`, a hardcoded
+    /// per-position table on the pre-normalisation scale — so a 96-OVR starter
+    /// and a 62-OVR starter were held to the same "am I paid fairly?" bar, and
+    /// the bar itself was a fourth set of salary numbers that nothing else in the
+    /// game used.
     static func initialMorale<G: RandomNumberGenerator>(
         personality: PersonalityArchetype,
         age: Int,
         depthIndex: Int,
         contractYears: Int,
         salary: Int,
+        marketValue: Int,
         position: Position,
         using rng: inout G
     ) -> Int {
@@ -1451,8 +1486,8 @@ enum LeagueGenerator {
             morale -= Int.random(in: 5...10, using: &rng)
         }
 
-        // Salary perception (rough market value check)
-        let marketAvg = averageMarketSalary(for: position, depthIndex: depthIndex)
+        // Salary perception — against HIS market value, not a position average.
+        let marketAvg = max(1, marketValue)
         if salary > Int(Double(marketAvg) * 1.3) {
             // Overpaid = happy
             morale += 5
@@ -1488,30 +1523,6 @@ enum LeagueGenerator {
         }
 
         return min(99, max(30, morale))
-    }
-
-    /// Rough average market salary for starter vs backup at a position (in thousands).
-    static func averageMarketSalary(for position: Position, depthIndex: Int) -> Int {
-        if depthIndex >= 2 { return 1_500 }
-        if depthIndex == 1 {
-            return position == .QB ? 3_000 : 2_500
-        }
-        // Starter averages
-        switch position {
-        case .QB:            return 35_000
-        case .DE, .OLB:      return 20_000
-        case .CB:            return 18_000
-        case .WR:            return 20_000
-        case .LT, .RT:       return 16_000
-        case .DT:            return 14_000
-        case .FS, .SS:       return 11_000
-        case .TE:            return 11_000
-        case .MLB:           return 11_000
-        case .LG, .RG, .C:  return 11_000
-        case .RB:            return 8_000
-        case .FB:            return 2_500
-        case .K, .P:         return 3_500
-        }
     }
 
     // MARK: - Helpers
@@ -1606,83 +1617,197 @@ enum LeagueGenerator {
         return min(range.max, max(range.min, final))
     }
 
-    // MARK: - Realistic Salary (Bug Fix #5)
+    // MARK: - Realistic Salary (Bug Fix #5; rewritten task #87 / F1)
 
-    /// Returns a salary in thousands that reflects the player's position tier and depth.
-    /// - depthIndex 0 = starter, 1 = backup, 2+ = deep depth
-    private static func realisticSalary(for position: Position, yearsPro: Int, depthIndex: Int) -> Int {
+    /// Opening payroll a generated roster is normalised onto, in thousands —
+    /// 80-95 % of ``ContractEngine/openingSalaryCap``. `LeagueTemplateImporter`
+    /// draws from this same band (on its own seed stream) for the fixed league.
+    static let rosterCapTargetBand: ClosedRange<Int> = (ContractEngine.openingSalaryCap * 80 / 100)...(ContractEngine.openingSalaryCap * 95 / 100)
+
+    /// How long a rookie contract runs, in league years. Every drafted player is
+    /// on a slotted deal for this long, which is why `yearsPro` alone identifies
+    /// the cheapest population on a roster.
+    static let rookieDealYears = 4
+
+    /// OVR a player gains per season while he is still short of his position's
+    /// peak window, and loses per season once he is past it.
+    ///
+    /// Deliberately coarse — these exist to make the SHAPE of a real cap sheet
+    /// fall out of the seeder rather than to model development (the development
+    /// stack does that, and the `career` harness measures it at −1 to −2 OVR/yr
+    /// past peak). A rising 26-year-old is legitimately underpaid on the deal he
+    /// signed at 23; a declining 34-year-old is legitimately overpaid on the one
+    /// he signed at 31.
+    static let preePeakOverallGain = 1.6
+    static let postPeakOverallLoss = 1.4
+
+    /// The rating at which a club stops letting a young player run out his rookie
+    /// deal and pays him early. Set at the `marketBasePercent` shoulder where a
+    /// contract starts resetting a market rather than filling a slot: 82 is
+    /// comfortably inside the league's top 12 % and below the 85 the audit and
+    /// `HoldoutEngine` both use for "star", so the men who arrive at year four
+    /// still on rookie money are the ones a club genuinely hesitated over.
+    static let earlyExtensionOverall = 82
+
+    /// Returns a salary in thousands for a rostered player, seeded from what he
+    /// was worth **when his current deal was signed**.
+    ///
+    /// ## What this replaced, and why it had to go (task #87 / F1)
+    ///
+    /// The old seeder took `position`, `yearsPro` and `depthIndex` — and nothing
+    /// else. **It never looked at `overall`.** A 96-OVR starter and a 62-OVR
+    /// starter at the same position drew their pay from the same uniform band,
+    /// and the whole roster was then scaled onto a cap target, so what a league
+    /// actually shipped was a payroll with the right TOTAL and no relationship
+    /// at all between a man's ability and his salary.
+    ///
+    /// Measured on the shipped 2026 template (1 807 players) that produced:
+    ///
+    /// | metric | value |
+    /// |---|---|
+    /// | league-wide salary ÷ market | **0.725** |
+    /// | 85+ OVR cohort, mean salary ÷ market | **0.666** |
+    /// | players under `HoldoutEngine.subMarketThreshold` (0.85×) | **68.1 %** |
+    /// | players under `TradeValueEngine`'s bargain line (0.70×) | **60.8 %** |
+    ///
+    /// Two thirds of the league was a holdout candidate on the morning of season
+    /// one, three fifths carried a permanent trade-value premium, and because
+    /// `realisticContractYears` gives veterans 1-2 years remaining, roughly half
+    /// the highly-paid starter population reached free agency after season one
+    /// and re-priced from 0.67× market to 1.0-1.6× — doubling star payroll at
+    /// every position outside QB/LT/CB inside two league years, against 5-8 %
+    /// cap growth.
+    ///
+    /// ## What it does now
+    ///
+    /// One idea: **a man mid-contract is paid what he was worth when he signed,
+    /// not what he is worth today.** That is the whole reason a real cap sheet is
+    /// full of players below their current ask without any of them being a
+    /// grievance — and it is a rating-aware, tenure-aware discount that falls out
+    /// of the market model instead of sitting beside it.
+    ///
+    /// So the deal is priced against the league of `dealAge` seasons ago:
+    ///
+    /// * **a smaller cap** — the engine rolls the cap forward 5-8 % a league year
+    ///   (``ContractEngine/capGrowthRange``), so a three-year-old deal was
+    ///   negotiated against a money supply ~18 % smaller;
+    /// * **a different player** — pre-peak he was worse than he is now (and is
+    ///   therefore underpaid today), past peak he was better (and is therefore
+    ///   overpaid today);
+    /// * **a different kind of deal** — a rookie contract is slotted, not
+    ///   negotiated, and comes in far under market; a veteran starter's was
+    ///   negotiated at roughly that year's market; a depth man's is a one-year
+    ///   deal at or near the minimum.
+    ///
+    /// `generateRoster` / `LeagueTemplateImporter.normalizeRosterSalaries` then
+    /// scale the finished roster onto its cap target exactly as before, so
+    /// aggregate payroll still lands at 80-95 % of the cap. The normalization is
+    /// a LEVEL; everything above is the SHAPE, and the shape is what was missing.
+    private static func realisticSalary(
+        for position: Position,
+        overall: Int,
+        age: Int,
+        yearsPro: Int,
+        depthIndex: Int,
+        salaryCap: Int
+    ) -> Int {
         var rng = SystemRandomNumberGenerator()
-        return realisticSalary(for: position, yearsPro: yearsPro, depthIndex: depthIndex, using: &rng)
+        return realisticSalary(
+            for: position, overall: overall, age: age, yearsPro: yearsPro,
+            depthIndex: depthIndex, salaryCap: salaryCap, using: &rng
+        )
     }
 
-    /// Seeded variant of `realisticSalary` — the fixed-league template import
-    /// approximates every contract from the same role/age bands, deterministically.
+    /// Seeded variant — the fixed-league template import prices every contract
+    /// through this exact function, deterministically.
     static func realisticSalary<G: RandomNumberGenerator>(
-        for position: Position, yearsPro: Int, depthIndex: Int, using rng: inout G
+        for position: Position,
+        overall: Int,
+        age: Int,
+        yearsPro: Int,
+        depthIndex: Int,
+        salaryCap: Int,
+        using rng: inout G
     ) -> Int {
-        // Rookies / deep backups
-        if yearsPro <= 1 || depthIndex >= 2 {
-            return Int.random(in: 750...2_000, using: &rng)
+        // Clubs extend their best young players BEFORE the rookie deal runs out.
+        // That is not a nicety — it is the single most consequential fact about a
+        // real cap sheet, and leaving it out is what produced a day-one league in
+        // which two fifths of the 85+ cohort was a holdout candidate purely
+        // because a 25-year-old star was still being priced off the rookie scale
+        // he signed at 21. A man who plays out a whole rookie contract at that
+        // level is the exception; the rule is the extension in year three.
+        let extendedEarly = overall >= earlyExtensionOverall && yearsPro >= 3
+        let onRookieScale = yearsPro <= rookieDealYears && !extendedEarly
+
+        // How long ago the deal was written. A man still on his rookie contract
+        // signed it the day he was drafted — that is not a draw, it is his
+        // tenure. An early extension was written in year three. Everyone else
+        // re-signed at some point in the last few years.
+        let dealAge: Int
+        if onRookieScale {
+            dealAge = yearsPro
+        } else if yearsPro <= rookieDealYears {
+            dealAge = max(0, yearsPro - 3)
+        } else {
+            dealAge = Int.random(in: 0...3, using: &rng)
         }
 
-        // Backup tier (depthIndex == 1)
-        if depthIndex == 1 {
-            switch position {
-            case .QB:
-                return Int.random(in: 1_000...5_000, using: &rng)
-            default:
-                return Int.random(in: 1_000...4_000, using: &rng)
+        // The cap it was written against.
+        let capThen = max(
+            1_000,
+            Int(Double(salaryCap) / pow(1.0 + ContractEngine.capGrowthPerSeason, Double(dealAge)))
+        )
+        // ...and the player it was written for.
+        let overallThen = min(99, max(40, overall - overallDrift(
+            position: position, age: age, years: dealAge
+        )))
+        let ageThen = max(21, age - dealAge)
+
+        let marketThen = ContractEngine.estimateMarketValue(
+            overall: overallThen, position: position, age: ageThen, salaryCap: capThen
+        )
+
+        // What KIND of deal it is.
+        let band: ClosedRange<Double>
+        if onRookieScale {
+            // Slotted rookie scale — the discount that makes an NFL roster
+            // affordable at all (DEVELOPMENT_NFL_REFERENCE §8). The spread is
+            // draft position standing in for itself: a first-rounder is paid
+            // roughly what he was worth as a rookie, a day-three pick a fraction
+            // of it. Note this multiplies his ROOKIE-YEAR market against the
+            // ROOKIE-YEAR cap, so the discount against TODAY's ask is far
+            // steeper than the band alone suggests.
+            band = 0.40...0.78
+        } else if depthIndex >= 2 {
+            // Roster filler on one-year veteran deals at or near the minimum.
+            band = 0.50...0.85
+        } else {
+            // Negotiated at that year's market, with the usual spread between a
+            // club that had leverage and one that did not.
+            band = 0.86...1.12
+        }
+
+        let salary = Double(marketThen) * Double.random(in: band, using: &rng)
+        return max(750, Int(salary.rounded()))
+    }
+
+    /// Net OVR a player of this position gained over the last `years` seasons —
+    /// positive before his peak window, negative after it. See
+    /// ``preePeakOverallGain`` for why it is this coarse.
+    static func overallDrift(position: Position, age: Int, years: Int) -> Int {
+        guard years > 0 else { return 0 }
+        let peak = position.peakAgeRange
+        var drift = 0.0
+        for step in 0..<years {
+            // The age he was going INTO that season.
+            let then = age - step - 1
+            if then < peak.lowerBound {
+                drift += preePeakOverallGain
+            } else if then > peak.upperBound {
+                drift -= postPeakOverallLoss
             }
         }
-
-        // Starter tier (depthIndex == 0) — calibrated to 2026 NFL pay scales
-        switch position {
-        case .QB:
-            // Franchise QBs: $30M-$55M+
-            return Int.random(in: 30_000...55_000, using: &rng)
-        case .WR:
-            // WR1: $18M-$35M
-            return Int.random(in: 18_000...35_000, using: &rng)
-        case .DE:
-            // Edge rushers: $18M-$33M
-            return Int.random(in: 18_000...33_000, using: &rng)
-        case .OLB:
-            // OLB: $14M-$25M
-            return Int.random(in: 14_000...25_000, using: &rng)
-        case .CB:
-            // Top corners: $14M-$25M
-            return Int.random(in: 14_000...25_000, using: &rng)
-        case .LT:
-            // Left tackles: $16M-$28M
-            return Int.random(in: 16_000...28_000, using: &rng)
-        case .RT:
-            // Right tackles: $12M-$22M
-            return Int.random(in: 12_000...22_000, using: &rng)
-        case .DT:
-            // Interior DL: $12M-$22M
-            return Int.random(in: 12_000...22_000, using: &rng)
-        case .MLB:
-            // MLB: $10M-$20M
-            return Int.random(in: 10_000...20_000, using: &rng)
-        case .FS, .SS:
-            // Safeties: $8M-$18M
-            return Int.random(in: 8_000...18_000, using: &rng)
-        case .TE:
-            // Tight ends: $8M-$16M
-            return Int.random(in: 8_000...16_000, using: &rng)
-        case .LG, .RG, .C:
-            // Interior OL: $8M-$16M
-            return Int.random(in: 8_000...16_000, using: &rng)
-        case .RB:
-            // RBs devalued: $4M-$14M
-            return Int.random(in: 4_000...14_000, using: &rng)
-        case .FB:
-            // Fullbacks: $1.5M-$4M
-            return Int.random(in: 1_500...4_000, using: &rng)
-        case .K, .P:
-            // Specialists: $2M-$6M
-            return Int.random(in: 2_000...6_000, using: &rng)
-        }
+        return Int(drift.rounded())
     }
 
     // MARK: - Realistic Contract Years (Bug Fix #6)

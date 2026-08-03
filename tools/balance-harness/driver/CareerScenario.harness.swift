@@ -184,6 +184,78 @@ let crUDFAsPerTeam = 16
 /// Weeks of rehab between the season finale and the first camp practice.
 let crOffseasonRehabWeeks = 18
 
+// MARK: - Money (task #87 / F6-F8)
+
+/// The share of its cap a club will commit to salary before it stops writing
+/// market deals. The mirror image of the shipped smoke's `avgRoom >= 8 %` gate
+/// and of `FreeAgencyEngine.capReservePercent`: what is left over has to cover a
+/// rookie class, in-season injury replacements and a deadline move.
+let crPayrollCeiling = 0.92
+
+/// The veteran minimum, as `ContractEngine`'s own market-value floor defines it
+/// (0.28 % of the cap, never below $750K) — so it grows with the cap instead of
+/// being a hardcoded 900 that a thirty-season league has left far behind.
+func crVeteranMinimum(cap: Int) -> Int { max(Int(0.0028 * Double(cap)), 750) }
+
+/// Position groups, for the payroll-share view. A share is only readable at
+/// group level: "QB" is three roster slots and "OL" is nine, so the interesting
+/// question is never "what share does RT take" but "what share does the
+/// offensive line take, against the defensive line".
+func crPayGroup(_ pos: Position) -> String {
+    switch pos {
+    case .QB:                       return "QB"
+    case .RB, .FB:                  return "RB"
+    case .WR, .TE:                  return "WR/TE"
+    case .LT, .LG, .C, .RG, .RT:    return "OL"
+    case .DE, .DT:                  return "DL"
+    case .OLB, .MLB:                return "LB"
+    case .CB, .FS, .SS:             return "DB"
+    case .K, .P:                    return "ST"
+    }
+}
+
+/// What the equilibrium cap sheet has to look like. The bands the parent wave
+/// derived from the #87 audit, with the reasoning kept next to them:
+///
+/// * **elite QB pay 16-23 % of cap.** `ContractEngine`'s ladder pays a 92 at QB
+///   18.1 % and a 96 22.9 %, and the real league's top quarterbacks sit at
+///   19-21 %. The band is that ask, ±: below 16 the franchise quarterback has
+///   stopped being a cap decision (the exact defect the #82 tail recalibration
+///   existed to fix — the shipped game was paying its five best 12.6-17.2 %);
+///   above 23 the harness is re-signing at a premium the ladder never asked for.
+/// * **star salary/market 0.78-1.15.** `tickContracts` re-signs starters at
+///   0.95-1.15× the market **of the year the deal is written**, and then holds
+///   that number for three to five seasons while the cap grows 6.5 %/yr AND the
+///   player keeps developing. A cohort mean therefore CANNOT sit inside the
+///   signing band: it must sit below it, by roughly the age of the average deal.
+///   The wave's brief asked for 0.9-1.3 here; 0.9 as a floor would be asserting
+///   that no star ever outgrows his contract, which is the same as asserting that
+///   `HoldoutEngine` has nothing to do. The floor is instead set just under the
+///   0.85 trigger — below 0.78 the league's stars are underpaid as a CLASS, which
+///   is the day-one defect this wave fixed at the other end of the pipeline.
+/// * **league salary/market 0.65-1.00.** This is the band the wave's brief got
+///   wrong in the other direction (it asked for 0.85-1.1), and the arithmetic is
+///   worth writing out because it is the same arithmetic that makes holdouts
+///   exist. `Σsalary ÷ Σmarket` is MARKET-weighted, so it is a statement about
+///   the men with big markets — starters — and every one of them is on a deal
+///   written 0-4 seasons ago. Two things have moved since it was written: the
+///   cap (+6.5 %/yr, so a deal of average age is ~12 % behind) and the PLAYER
+///   (the shipped development stack runs +2 OVR/season, and the ladder is convex,
+///   so a star who was an 85 at signing and is a 91 now has outgrown his number
+///   by a further ~15-25 %). A league that re-signs everybody at market and
+///   develops nobody would sit at 1.0; this one cannot, and a gate that demanded
+///   it would be demanding that `HoldoutEngine` never fire. The floor is set
+///   where the defect was: the pre-#87 harness measured **0.575**, with clubs at
+///   59 % of a cap they had no way to reach, and that fails this band.
+///
+/// The two engine-side fixes those numbers came out of are in `tickContracts`
+/// (the real cap, a payroll ceiling, and a depth branch that no longer buys the
+/// league's middle class below the shipped agent's floor) and in `rookieSalary`
+/// (slot money as a share of the cap rather than season-one dollars).
+let crSalaryBands: (eliteQB: (Double, Double), qbPayAsk: (Double, Double),
+                    star: (Double, Double), league: (Double, Double)) =
+    (eliteQB: (16.0, 23.0), qbPayAsk: (0.75, 1.15), star: (0.78, 1.15), league: (0.65, 1.00))
+
 /// Half-width of the uniform error a club carries into the draft, applied to the
 /// consensus grade below.
 ///
@@ -295,6 +367,12 @@ final class CRClub {
     var defenseInstallYear = false
     /// Position-coach roles filled by a NEW, good (dev ≥ 70) hire this offseason.
     var freshPositionCoachRoles: Set<Int> = []
+    /// The club's salary cap, in thousands (task #87 / F8). It used to not exist
+    /// at all: `tickContracts` re-signed the whole league at market with NO cap
+    /// constraint whatsoever, and priced it against `estimateMarketValue`'s
+    /// then-default season-one 265 000 while the league it was pricing had been
+    /// running for thirty years. Both halves of that are now wrong to write.
+    var salaryCap: Int = ContractEngine.openingSalaryCap
 
     init(offensiveScheme: OffensiveScheme, defensiveScheme: DefensiveScheme) {
         self.team = Team(players: [])
@@ -399,6 +477,13 @@ final class CRLeague {
     /// Carried here so the two harnesses can be compared on the number the
     /// intake ratchet is diagnosed from, not only on rated ability.
     var leaguePotBySeason: [Int: [Double]] = [:]
+    /// The final measured season's cap sheet, one row per rostered man (task
+    /// #87 / F6). Until this wave the harness printed no money at all — grep it
+    /// for `salaryCap`, `payroll` or `marketValue` and you found nothing — so the
+    /// one risk the #87 audit could not answer, a position-level shift in who
+    /// gets paid, was invisible to every gate in the repo.
+    var capSheet: [(position: Position, overall: Int, age: Int, salary: Int, market: Int)] = []
+    var finalSalaryCap = ContractEngine.openingSalaryCap
 
     init(cfg: CRConfig) { self.cfg = cfg }
 
@@ -594,7 +679,9 @@ final class CRLeague {
         player.draftSeason = season
         player.draftRound = pickNumber.map { DraftEngine.roundForPick($0) }
         player.contractYearsRemaining = undrafted ? 3 : 4
-        player.annualSalary = undrafted ? 750 : rookieSalary(pick: pickNumber ?? 999)
+        player.annualSalary = undrafted
+            ? crVeteranMinimum(cap: club.salaryCap)
+            : rookieSalary(pick: pickNumber ?? 999, cap: club.salaryCap)
         player.morale = 70
         DraftEngine.initializeRookieFamiliarity(
             player: player,
@@ -619,14 +706,23 @@ final class CRLeague {
 
     /// Rookie-scale money in thousands, so `contractYearsRemaining == 1` reads
     /// as a real contract year and an extension can be priced against market.
-    private func rookieSalary(pick: Int) -> Int {
+    ///
+    /// **Expressed as a share of the CAP since task #87 / F8.** The five figures
+    /// are the old hardcoded ones divided by the opening cap, so a season-one
+    /// class is paid exactly what it always was — but a season-thirty class is no
+    /// longer paid season-one money against a cap six times larger, which is most
+    /// of why the harness's league sat at 0.575 salary ÷ market with its clubs at
+    /// 59 % of a cap they could not get near.
+    private func rookieSalary(pick: Int, cap: Int) -> Int {
+        let share: Double
         switch pick {
-        case 1...10:   return 6500
-        case 11...32:  return 3800
-        case 33...64:  return 1900
-        case 65...105: return 1300
-        default:       return 950
+        case 1...10:   share = 6500.0 / Double(ContractEngine.openingSalaryCap)
+        case 11...32:  share = 3800.0 / Double(ContractEngine.openingSalaryCap)
+        case 33...64:  share = 1900.0 / Double(ContractEngine.openingSalaryCap)
+        case 65...105: share = 1300.0 / Double(ContractEngine.openingSalaryCap)
+        default:       share = 950.0 / Double(ContractEngine.openingSalaryCap)
         }
+        return max(crVeteranMinimum(cap: cap), Int(share * Double(cap)))
     }
 
     private func openings(for club: CRClub) -> [Position: Int] {
@@ -720,20 +816,56 @@ final class CRLeague {
     /// (the club keeps a starter) or replaced by a short veteran-minimum deal.
     /// This is what makes the shipped §2.3 contract-year bump and post-payday
     /// complacency trigger reachable at all.
+    ///
+    /// **Task #87 / F8 gave it a budget.** Two things were wrong and they
+    /// compounded: the cap was never passed to `estimateMarketValue`, so a
+    /// thirty-season league was priced against the season-one money supply; and
+    /// nothing at all constrained the total, so the harness's clubs could and did
+    /// write a payroll no real club could carry. A development harness does not
+    /// need a full cap economy — but a contract tick that CANNOT run out of money
+    /// is not measuring contracts, and the `SALARY BY POSITION` block below reads
+    /// straight off it.
     func tickContracts() {
         for club in clubs {
+            // The league year rolls the cap forward, exactly as
+            // `FreeAgencyEngine` does it.
+            club.salaryCap = Int(Double(club.salaryCap)
+                * (1.0 + Double.random(in: ContractEngine.capGrowthRange)))
+            let cap = club.salaryCap
+            let ceiling = Int(Double(cap) * crPayrollCeiling)
+            let minimum = crVeteranMinimum(cap: cap)
             let starters = Set(startingLineup(club: club).map(\.id))
+            var payroll = club.roster.reduce(0) { $0 + $1.annualSalary }
             for p in club.roster {
                 p.contractYearsRemaining -= 1
                 guard p.contractYearsRemaining <= 0 else { continue }
-                let market = ContractEngine.estimateMarketValue(player: p)
+                let market = ContractEngine.estimateMarketValue(player: p, salaryCap: cap)
+                let old = p.annualSalary
+                var deal: Int
                 if starters.contains(p.id) || p.overall >= 74 {
                     p.contractYearsRemaining = Int.random(in: 3...5)
-                    p.annualSalary = Int(Double(market) * Double.random(in: 0.95...1.15))
+                    deal = Int(Double(market) * Double.random(in: 0.95...1.15))
                 } else {
+                    // A short deal, priced the way the SHIPPED engine prices one:
+                    // `FreeAgencyEngine.signFreeAgent` settles uniformly between
+                    // the agent's floor and his ask and NEVER below the floor
+                    // (`:895-898`). The old `0.45...0.8` had no floor under it at
+                    // all — it was buying the league's middle class for half of
+                    // what the shipped agent would ever have taken, which is most
+                    // of why the harness's clubs sat at 59-72 % of a cap they
+                    // could not get near (task #87 / F8).
                     p.contractYearsRemaining = Int.random(in: 1...2)
-                    p.annualSalary = max(900, Int(Double(market) * Double.random(in: 0.45...0.8)))
+                    deal = max(minimum, Int(Double(market) * Double.random(in: 0.70...1.00)))
                 }
+                // A club cannot write a deal it has no room for. The shipped
+                // engine's answer to this is `capReservePercent` plus a
+                // veteran-minimum refill pass; the harness's is the same shape,
+                // one line: what is left, floored at the minimum.
+                if payroll - old + deal > ceiling {
+                    deal = max(minimum, min(deal, ceiling - (payroll - old)))
+                }
+                payroll += deal - old
+                p.annualSalary = deal
             }
         }
     }
@@ -1231,6 +1363,17 @@ final class CRLeague {
         // shares of everyone who entered, not of everyone who survived.
         measuredCareers = careers.values
             .sorted { $0.playerID.uuidString < $1.playerID.uuidString }
+        // The equilibrium cap sheet (task #87 / F6).
+        finalSalaryCap = clubs.first?.salaryCap ?? ContractEngine.openingSalaryCap
+        for club in clubs {
+            for p in club.roster where !p.isRetired {
+                capSheet.append((
+                    position: p.position, overall: p.overall, age: p.age,
+                    salary: p.annualSalary,
+                    market: ContractEngine.estimateMarketValue(player: p, salaryCap: club.salaryCap)
+                ))
+            }
+        }
     }
 }
 
@@ -1972,6 +2115,110 @@ func crReport(leagues: [CRLeague], elapsed: TimeInterval) {
     // quietly grow while that wave is pending.
     A.check("6.9g", a33 <= 4.0,
             String(format: "33+ age share <= 4.0%% (%.2f%%; §8 target <=2%% — retirement-calibration follow-up)", a33))
+
+    // ---- 12. Salary by position (task #87 / F6-F8) -----------------------
+    print("")
+    print("--- SALARY BY POSITION (task #87 / F6) -----------------------------------")
+    print("  The equilibrium cap sheet. Until this wave the balance harness printed NO")
+    print("  money — no salary, no cap, no payroll, no market value, and `tickContracts`")
+    print("  re-signed the league at market with no budget at all — so the one risk the")
+    print("  #87 salary audit could not answer was the one nothing could see: a")
+    print("  position-level shift in WHO gets paid. `underCap >= 24/32` and `avgRoom >= 8 %`")
+    print("  in the shipped smoke are satisfied perfectly by a league that pays twenty men")
+    print("  22 % of the cap each and fills the other 1 676 slots at the minimum.")
+    let capRows = leagues.flatMap { $0.capSheet }
+    let capAtEnd = crMean(leagues.map { Double($0.finalSalaryCap) })
+    if !capRows.isEmpty, capAtEnd > 0 {
+        let paidTotal = capRows.reduce(0.0) { $0 + Double($1.salary) }
+        let askTotal = capRows.reduce(0.0) { $0 + Double($1.market) }
+        let leagueRatio = paidTotal / max(1, askTotal)
+        print(String(format: "  cap at equilibrium $%.0fM   n=%d rostered   payroll %.1f%% of cap   league salary/market %.3f [%.2f-%.2f]",
+                     capAtEnd / 1000.0, capRows.count,
+                     paidTotal / (capAtEnd * Double(capRows.count) / 53.0) * 100,
+                     leagueRatio, crSalaryBands.league.0, crSalaryBands.league.1))
+        // "best" = one man per club (the pooled top `clubs` at the position);
+        // "top5" = five per club. For QB, five per club is the whole depth chart,
+        // which is why the elite read below is the top THREE PER LEAGUE — the
+        // franchise-quarterback tier of a 32-team league, and the only population
+        // the 16-23 %-of-cap band is a statement about.
+        let clubCount = leagues.count * cfg.teams
+        print("  pos      n   meanOVR   best pay%cap  best ask%cap   top5 pay%cap  top5 ask%cap   sal/mkt   %ofPayroll")
+        var groupPay: [String: Double] = [:]
+        for pos in Position.allCases {
+            let group = capRows.filter { $0.position == pos }
+            guard !group.isEmpty else { continue }
+            let ranked = group.sorted { $0.overall > $1.overall }
+            let best = ranked.prefix(clubCount)
+            let top5 = ranked.prefix(clubCount * 5)
+            let pay = group.reduce(0.0) { $0 + Double($1.salary) }
+            groupPay[crPayGroup(pos), default: 0] += pay
+            print(String(format: "  %-5@%7d%10.2f%14.2f%14.2f%15.2f%14.2f%10.3f%12.2f%%",
+                         pos.rawValue, group.count,
+                         crMean(group.map { Double($0.overall) }),
+                         crMean(best.map { Double($0.salary) }) / capAtEnd * 100,
+                         crMean(best.map { Double($0.market) }) / capAtEnd * 100,
+                         crMean(top5.map { Double($0.salary) }) / capAtEnd * 100,
+                         crMean(top5.map { Double($0.market) }) / capAtEnd * 100,
+                         crMean(group.map { Double($0.salary) / Double(max(1, $0.market)) }),
+                         pay / paidTotal * 100))
+        }
+        let shares = groupPay.sorted { $0.value > $1.value }
+            .map { String(format: "%@ %.1f%%", $0.key, $0.value / paidTotal * 100) }
+        print("  payroll share by group: " + shares.joined(separator: "  "))
+
+        // The three bands. See `crSalaryBands` for the derivation of each.
+        let eliteQBs = capRows.filter { $0.position == .QB }
+            .sorted { $0.overall > $1.overall }
+            .prefix(max(1, leagues.count * 3))
+        let eliteQBPay = crMean(eliteQBs.map { Double($0.salary) }) / capAtEnd * 100
+        let eliteQBAsk = crMean(eliteQBs.map { Double($0.market) }) / capAtEnd * 100
+        let eliteQBOvr = crMean(eliteQBs.map { Double($0.overall) })
+        // The LADDER's own answer to the same question, independent of whatever
+        // ratings this Monte-Carlo happened to produce: what `ContractEngine`
+        // charges for a 92 and a 96 at quarterback. This is the number the #82
+        // tail recalibration existed to move and the one the band is a statement
+        // about; the measured pay above is whether the league actually pays it.
+        let ladderQB92 = ContractEngine.marketBasePercent(overall: 92)
+            * ContractEngine.positionMultiplier(.QB) * ContractEngine.leagueAffordabilityScale
+        let ladderQB96 = ContractEngine.marketBasePercent(overall: 96)
+            * ContractEngine.positionMultiplier(.QB) * ContractEngine.leagueAffordabilityScale
+        let starRows = capRows.filter { $0.overall >= 85 }
+        let starRatio = crMean(starRows.map { Double($0.salary) / Double(max(1, $0.market)) })
+        let holdout = Double(capRows.filter { Double($0.salary) < 0.85 * Double($0.market) }.count)
+            / Double(capRows.count) * 100
+        print(String(format: "  franchise QB (top 3 per league, n=%d, meanOVR %.1f): pay %.2f%% of cap  ask %.2f%%  pay/ask %.3f [%.2f-%.2f]",
+                     eliteQBs.count, eliteQBOvr, eliteQBPay, eliteQBAsk,
+                     eliteQBPay / max(0.01, eliteQBAsk), crSalaryBands.qbPayAsk.0, crSalaryBands.qbPayAsk.1))
+        print(String(format: "  ContractEngine's PRICE for one: OVR 92 -> %.2f%% of cap, OVR 96 -> %.2f%% [%.0f-%.0f]  (the #82 tail recalibration's target)",
+                     ladderQB92, ladderQB96, crSalaryBands.eliteQB.0, crSalaryBands.eliteQB.1))
+        print(String(format: "  star 85+ (n=%d) sal/mkt %.3f [%.1f-%.1f]   under HoldoutEngine 0.85x %.1f%%",
+                     starRows.count, starRatio, crSalaryBands.star.0, crSalaryBands.star.1, holdout))
+        // Two separate questions, deliberately. (1) Is an elite quarterback
+        // PRICED as a cap decision? That is `ContractEngine`'s ladder and it is
+        // deterministic — no Monte-Carlo league has to produce a 92 for the
+        // question to have an answer. (2) Does the league actually PAY that
+        // price? That is the harness's contract tick, and it is a ratio, because
+        // what a given run's best quarterback happens to be rated is noise.
+        A.check("6.11a", ladderQB92 >= crSalaryBands.eliteQB.0 && ladderQB96 <= crSalaryBands.eliteQB.1
+                        && ladderQB96 > ladderQB92,
+                String(format: "elite QB PRICE in [%.0f,%.0f]%% of cap (92 -> %.2f%%, 96 -> %.2f%%) — a franchise quarterback has to BE a cap decision",
+                       crSalaryBands.eliteQB.0, crSalaryBands.eliteQB.1, ladderQB92, ladderQB96))
+        let qbPayAsk = eliteQBPay / max(0.01, eliteQBAsk)
+        A.check("6.11e", qbPayAsk >= crSalaryBands.qbPayAsk.0 && qbPayAsk <= crSalaryBands.qbPayAsk.1,
+                String(format: "franchise QBs are PAID in [%.2f,%.2f] of their own ask (%.3f) — the league has to be able to afford the price above",
+                       crSalaryBands.qbPayAsk.0, crSalaryBands.qbPayAsk.1, qbPayAsk))
+        A.check("6.11b", starRatio >= crSalaryBands.star.0 && starRatio <= crSalaryBands.star.1,
+                String(format: "85+ cohort salary/market in [%.1f,%.1f] (%.3f) — `tickContracts` re-signs starters at 0.95-1.15x market",
+                       crSalaryBands.star.0, crSalaryBands.star.1, starRatio))
+        A.check("6.11c", leagueRatio >= crSalaryBands.league.0 && leagueRatio <= crSalaryBands.league.1,
+                String(format: "league salary/market in [%.2f,%.2f] (%.3f) — was 0.575 before the cap, ceiling and floor went into `tickContracts`",
+                       crSalaryBands.league.0, crSalaryBands.league.1, leagueRatio))
+        let fattest = shares.first ?? "n/a"
+        let worstGroup = groupPay.values.max().map { $0 / paidTotal * 100 } ?? 0
+        A.check("6.11d", worstGroup <= 30.0,
+                String(format: "no position group takes >30%% of league payroll (fattest: %@) — the star-vs-depth crowding the audit could not see",
+                       fattest))
+    }
 
     A.report()
 

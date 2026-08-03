@@ -6,7 +6,7 @@ struct RosterViewWrapper: View {
     let career: Career
     @Environment(\.modelContext) private var modelContext
     @State private var players: [Player] = []
-    @State private var teamSalaryCap: Int = 265_000
+    @State private var teamSalaryCap: Int = ContractEngine.openingSalaryCap
     /// `Team.currentCapUsage` — read from the same team fetch as the ceiling so
     /// the roster header quotes the league's cap ledger, not its own sum.
     @State private var teamCapUsed: Int? = nil

@@ -1424,7 +1424,8 @@ enum WeekAdvancer {
                 allPlayers: allPlayers,
                 week: week,
                 season: season,
-                salaryCap: teams.first(where: { $0.id == playerTeamID })?.salaryCap ?? 265_000,
+                salaryCap: teams.first(where: { $0.id == playerTeamID })?.salaryCap
+                    ?? ContractEngine.openingSalaryCap,
                 modelContext: modelContext
             )
         }
@@ -2280,7 +2281,7 @@ enum WeekAdvancer {
         allPlayers: [Player],
         week: Int,
         season: Int,
-        salaryCap: Int = 265_000,
+        salaryCap: Int,
         modelContext: ModelContext
     ) {
         let descriptor = FetchDescriptor<Holdout>(
@@ -6399,7 +6400,8 @@ enum WeekAdvancer {
         var inputs: [UUID: PlayerDevelopmentEngine.OffseasonInputs] = [:]
         for player in allPlayers where !player.isRetired {
             var entry = PlayerDevelopmentEngine.OffseasonInputs()
-            entry.salaryCap = player.teamID.flatMap { teamsByID[$0]?.salaryCap } ?? 265_000
+            entry.salaryCap = player.teamID.flatMap { teamsByID[$0]?.salaryCap }
+                ?? ContractEngine.openingSalaryCap
             let history = historyByPlayer[player.id] ?? []
             entry.latestOverall = history.first?.overallAtEndOfSeason
             if history.count >= 2 { entry.previousOverall = history[1].overallAtEndOfSeason }

@@ -60,7 +60,7 @@ enum FASigningTracker {
 
     static func getBaseSalaryCap() -> Int {
         let val = UserDefaults.standard.integer(forKey: baseSalaryCapKey)
-        return val > 0 ? val : 265_000
+        return val > 0 ? val : ContractEngine.openingSalaryCap
     }
 
     static func reset() {
@@ -896,8 +896,8 @@ struct FAWeeklyView: View {
     // MARK: - Cap Impact Badge (preview)
 
     private func capImpactBadge(asking: Int) -> some View {
-        // Base on team salaryCap if available, else $260M baseline
-        let cap = team?.salaryCap ?? 260_000
+        // Task #87 / U13: the fallback was a fourth cap constant ($260M).
+        let cap = team?.salaryCap ?? ContractEngine.openingSalaryCap
         let pct = cap > 0 ? Double(asking) / Double(cap) * 100 : 0
         let pctRounded = Int(pct.rounded())
         let color: Color = {
@@ -1292,7 +1292,14 @@ struct FAWeeklyView: View {
         allPlayers = (try? modelContext.fetch(FetchDescriptor<Player>(
             predicate: #Predicate { $0.careerID == cid }
         ))) ?? []
-        freeAgents = FreeAgencyEngine.generateFreeAgentMarket(allPlayers: allPlayers)
+        // Task #87 / F9: this whole screen's asking prices used to be generated
+        // against `generateFreeAgentMarket`'s season-one default while `team` sat
+        // in scope eleven lines above, so from season two onward FA Weekly and
+        // `FreeAgencyView` quoted different prices for the same free agent.
+        freeAgents = FreeAgencyEngine.generateFreeAgentMarket(
+            allPlayers: allPlayers,
+            salaryCap: team?.salaryCap ?? ContractEngine.openingSalaryCap
+        )
 
         // FA Drama: load bids + visits for heat / ticker / outbid detection
         allBids = (try? modelContext.fetch(FetchDescriptor<FABid>(

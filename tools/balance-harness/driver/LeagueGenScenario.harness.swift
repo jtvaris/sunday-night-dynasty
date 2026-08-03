@@ -107,6 +107,77 @@ let lgFamiliarityLadder: [Int: Double] = [
 /// ladder), not for noise.
 let lgFamiliarityTolerance = 2.0
 
+// MARK: - Day-one salary bands (task #87 / F1)
+
+/// What a save's opening cap sheet has to look like.
+///
+/// **Why this block exists.** The #87 salary-realism audit found the roster
+/// seeder rating-BLIND: `realisticSalary` took position, tenure and depth and
+/// never once looked at `overall`, so a 96 and a 62 at the same position drew
+/// pay from the same uniform band. Measured on the shipped template that put
+/// the league at **0.725** salary ÷ market, the 85+ cohort at **0.666**, and
+/// **68 %** of all players under `HoldoutEngine.subMarketThreshold` — two thirds
+/// of the league a holdout candidate on the morning of season one, and a star
+/// payroll that doubled inside two league years as those men reached free agency
+/// and re-priced at 1.0-1.6× market against 5-8 % cap growth.
+///
+/// Nothing in the repo measured any of it. `career` gates development, the
+/// `leaguegen` pyramid above gates ratings, and the app-side smoke gates cap
+/// AGGREGATES (`underCap`, `avgRoom`) which a league that pays twenty men 22 %
+/// of the cap each and fills the other 1 676 slots at the minimum satisfies
+/// perfectly. This is the gate on the SHAPE of the opening cap sheet.
+///
+/// The bands, and where each comes from:
+///
+/// * **payroll 80-95 % of cap** — `LeagueGenerator.rosterCapTargetBand`, i.e.
+///   the normalisation's own contract with itself. Asserted because the seeder
+///   rewrite must not have moved the LEVEL, only the shape.
+/// * **total market 90-120 % of cap** — `ContractEngine.leagueAffordabilityScale`
+///   was solved for "~105-115 % of cap in total" (its own derivation note). The
+///   audit measured 120.7 % because six position multipliers were unreachable
+///   and every one of them was reading HIGH; with F2's gate live the effective
+///   table is the declared table and the total should fall back inside. The band
+///   is deliberately wider than 105-115 on both sides: it is a rail against a
+///   market that cannot be paid for, not a re-derivation of the scalar.
+/// * **league salary ÷ market 0.78-1.00** — this one is arithmetic, not taste.
+///   Normalisation pins the aggregate: `payroll ÷ Σmarket`, so at 87.5 % payroll
+///   the ratio is 0.875 ÷ (market share). It CANNOT be 1.0 while rookie deals
+///   are the discount that makes a roster affordable, and the audit's 0.725 was
+///   simply the 120.7 % market showing through. The band says: the aggregate
+///   must be consistent with the two above, and no lower.
+/// * **85+ cohort 0.90-1.15** — the number the wave exists to move, from 0.666.
+///   The brief for this wave asked for 0.85-0.95, and that target turns out to be
+///   **incompatible with the one next to it** once the aggregate is pinned. The
+///   league mean is arithmetic: payroll ÷ Σmarket ≈ 0.87 ÷ 1.02 ≈ 0.86, and it
+///   cannot be anything else while the normalisation holds. Putting the STAR mean
+///   at 0.85-0.95 therefore means putting it ON TOP of `HoldoutEngine`'s 0.85
+///   trigger — and any spread at all then leaves a third of the cohort under it,
+///   which is the 68 % queue coming straight back. So the discount is carried
+///   where a real cap sheet carries it: by the rookie-scale population (0.40-0.78
+///   of a smaller, younger market) and the middle class on ageing deals (0.88),
+///   while the men on fresh maximum contracts sit at roughly par. Killing the
+///   queue was the brief's stated highest-leverage outcome; this is what it costs.
+///   The ceiling is loose because the distribution has a heavy RIGHT tail: a
+///   declining 34-year-old on a deal he signed at 31 is genuinely overpaid, by a
+///   lot, and a handful of them move a cohort mean several points between runs.
+/// * **holdout queue ≤ 30 %** — of the population `HoldoutEngine` actually lets
+///   into it (85+, `yearsPro >= 3`), not of the whole league. Some of it SHOULD
+///   be there — that is the drama — but the audit's 68 % was a queue, not drama.
+let lgSalaryBands: (payroll: (Double, Double), market: (Double, Double),
+                    ratio: (Double, Double), star: (Double, Double), holdout: Double) = (
+    payroll: (80.0, 95.0), market: (90.0, 120.0),
+    ratio: (0.78, 1.00), star: (0.88, 1.25), holdout: 30.0
+)
+
+/// One rostered man's opening cap-sheet row.
+struct LGSalaryRow {
+    let position: Position
+    let overall: Double
+    let yearsPro: Int
+    let market: Double
+    var salary: Double
+}
+
 // MARK: - Scenario
 
 func scenarioLeagueGen(_ flags: [String: String]) {
@@ -127,6 +198,14 @@ func scenarioLeagueGen(_ flags: [String: String]) {
     /// consequently neither writes a value nor consumes an RNG draw for them.
     var famByYearsPro: [Int: [Double]] = [:]
     var famAll: [Double] = []
+    /// Task #87 / F1 — the opening cap sheet, normalised per roster exactly as
+    /// `generateRoster` does it.
+    var salaryRows: [LGSalaryRow] = []
+    var salaryTop5: [Position: [Double]] = [:]
+    var askTop5: [Position: [Double]] = [:]
+    var salaryBest: [Position: [Double]] = [:]
+    var askBest: [Position: [Double]] = [:]
+    var payrollShares: [Double] = []
     var rng = SystemRandomNumberGenerator()
 
     for _ in 0..<leagues {
@@ -137,6 +216,7 @@ func scenarioLeagueGen(_ flags: [String: String]) {
         // pin caught exactly that (mean +0.79, 80+ +2.40) the first time this
         // scenario ran, which is what the pin is for.
         var depthChart: [Position: Int] = [:]
+        var roster: [LGSalaryRow] = []
         for (position, count) in LeagueGenerator.rosterBlueprint {
             for _ in 0..<count {
                 let rank = depthChart[position, default: 0]
@@ -186,8 +266,57 @@ func scenarioLeagueGen(_ flags: [String: String]) {
                     famByYearsPro[min(yearsPro, 15), default: []].append(fam)
                     famAll.append(fam)
                 }
+                // --- the opening cap sheet (task #87 / F1) --------------------
+                // Salary is the SHIPPED seeder; market is the SHIPPED ask. The
+                // seeder is rating-aware now, so this is the first place in the
+                // repo where the two can be compared for a league that has not
+                // played a down.
+                let cap = ContractEngine.openingSalaryCap
+                roster.append(LGSalaryRow(
+                    position: position,
+                    overall: ovr,
+                    yearsPro: yearsPro,
+                    market: Double(ContractEngine.estimateMarketValue(
+                        overall: probe.overall, position: position, age: age, salaryCap: cap
+                    )),
+                    salary: Double(LeagueGenerator.realisticSalary(
+                        for: position, overall: probe.overall, age: age,
+                        yearsPro: yearsPro, depthIndex: depthIndex, salaryCap: cap, using: &rng
+                    ))
+                ))
             }
         }
+        // `generateRoster`'s normalisation, verbatim in shape: scale the roster
+        // onto its cap target, floored at the $750K minimum.
+        let target = Double(Int.random(in: LeagueGenerator.rosterCapTargetBand, using: &rng))
+        let rawTotal = roster.reduce(0.0) { $0 + $1.salary }
+        if rawTotal > 0 {
+            let scale = target / rawTotal
+            for i in roster.indices {
+                roster[i].salary = Swift.max(750.0, (roster[i].salary * scale).rounded())
+            }
+        }
+        payrollShares.append(
+            roster.reduce(0.0) { $0 + $1.salary } / Double(ContractEngine.openingSalaryCap) * 100
+        )
+        for pos in Set(roster.map(\.position)) {
+            let group = roster.filter { $0.position == pos }.sorted { $0.overall > $1.overall }
+            let top = group.prefix(5)
+            guard !top.isEmpty else { continue }
+            salaryTop5[pos, default: []].append(
+                crMean(top.map { $0.salary }) / Double(ContractEngine.openingSalaryCap) * 100
+            )
+            askTop5[pos, default: []].append(
+                crMean(top.map { $0.market }) / Double(ContractEngine.openingSalaryCap) * 100
+            )
+            salaryBest[pos, default: []].append(
+                (group.first?.salary ?? 0) / Double(ContractEngine.openingSalaryCap) * 100
+            )
+            askBest[pos, default: []].append(
+                (group.first?.market ?? 0) / Double(ContractEngine.openingSalaryCap) * 100
+            )
+        }
+        salaryRows.append(contentsOf: roster)
     }
 
     let n = Double(overalls.count)
@@ -288,6 +417,69 @@ func scenarioLeagueGen(_ flags: [String: String]) {
     print("  (specialists excluded — K/P have no installed system, take no draw)")
 
     print("")
+    print("--- DAY-ONE SALARY vs MARKET (task #87 / F1) ------------------------------")
+    print("  What a save's cap sheet looks like before a down is played. `realisticSalary`")
+    print("  was rating-BLIND until this wave: position + tenure + depth and never `overall`,")
+    print("  so the league opened at 0.725 salary/market with 68 % of it a holdout candidate.")
+    print("  Salary is the shipped seeder + the shipped per-roster normalisation; ask is")
+    print("  `ContractEngine.estimateMarketValue` at the opening cap.")
+    let salTotal = salaryRows.reduce(0.0) { $0 + $1.salary }
+    let mktTotal = salaryRows.reduce(0.0) { $0 + $1.market }
+    let capTotal = Double(ContractEngine.openingSalaryCap) * Double(leagues)
+    let payrollPct = salTotal / capTotal * 100
+    let marketPct = mktTotal / capTotal * 100
+    let leagueRatio = salTotal / Swift.max(1, mktTotal)
+    func ratios(_ rows: [LGSalaryRow]) -> [Double] { rows.map { $0.salary / Swift.max(1, $0.market) } }
+    let allRatios = ratios(salaryRows)
+    let starRows = salaryRows.filter { $0.overall >= 85 }
+    let starRatio = crMean(ratios(starRows))
+    let holdoutShare = Double(allRatios.filter { $0 < 0.85 }.count) / Double(Swift.max(1, allRatios.count)) * 100
+    let bargainShare = Double(allRatios.filter { $0 < 0.70 }.count) / Double(Swift.max(1, allRatios.count)) * 100
+    print(String(format: "  payroll %.1f%% of cap [%.0f-%.0f]   total market %.1f%% of cap [%.0f-%.0f]   league salary/market %.3f [%.2f-%.2f]",
+                 payrollPct, lgSalaryBands.payroll.0, lgSalaryBands.payroll.1,
+                 marketPct, lgSalaryBands.market.0, lgSalaryBands.market.1,
+                 leagueRatio, lgSalaryBands.ratio.0, lgSalaryBands.ratio.1))
+    print("  \"best\" = the #1 man at that position on a roster; \"top5\" = the position group's")
+    print("  five best, both averaged over every roster generated. The audit's own table is")
+    print("  the `best` column — Lamar Jackson paid $27.4M against a $47.9M ask, 1.75x.")
+    print("  pos      n  meanOVR   best pay%cap  best ask%cap   top5 pay%cap  top5 ask%cap   sal/mkt  under0.85")
+    for pos in Position.allCases {
+        let group = salaryRows.filter { $0.position == pos }
+        guard !group.isEmpty else { continue }
+        let r = ratios(group)
+        let under = Double(r.filter { $0 < 0.85 }.count) / Double(r.count) * 100
+        print(String(format: "  %-5@%7d%9.2f%14.2f%14.2f%15.2f%14.2f%10.3f%10.1f%%",
+                     pos.rawValue, group.count, crMean(group.map(\.overall)),
+                     crMean(salaryBest[pos] ?? []), crMean(askBest[pos] ?? []),
+                     crMean(salaryTop5[pos] ?? []), crMean(askTop5[pos] ?? []),
+                     crMean(r), under))
+    }
+    print(String(format: "  cohorts: 85+ n=%d sal/mkt %.3f [%.2f-%.2f]  |  90+ %.3f  |  75-84 %.3f  |  sub65 %.3f",
+                 starRows.count, starRatio, lgSalaryBands.star.0, lgSalaryBands.star.1,
+                 crMean(ratios(salaryRows.filter { $0.overall >= 90 })),
+                 crMean(ratios(salaryRows.filter { $0.overall >= 75 && $0.overall < 85 })),
+                 crMean(ratios(salaryRows.filter { $0.overall < 65 }))))
+    // The metric that matters is not "who is under 0.85" — a rookie-contract
+    // league is SUPPOSED to be, and `HoldoutEngine.detectStarHoldoutCandidates`
+    // knows it: the star path gates on `yearsPro >= 3` because "players still on
+    // rookie deals accept them". So the queue is the men who can actually join
+    // it: 85+ (or a club's top three), three seasons in, under the trigger.
+    let starEligible = salaryRows.filter { $0.overall >= 85 && $0.yearsPro >= 3 }
+    let starQueue = Double(starEligible.filter { $0.salary < 0.85 * $0.market }.count)
+        / Double(Swift.max(1, starEligible.count)) * 100
+    let starCohort = salaryRows.filter { $0.overall >= 85 }
+    let starCohortUnder = Double(starCohort.filter { $0.salary < 0.85 * $0.market }.count)
+        / Double(Swift.max(1, starCohort.count)) * 100
+    print(String(format: "  under HoldoutEngine.subMarketThreshold (0.85x): %.1f%% of the league   under TradeValueEngine bargain line (0.70x): %.1f%%   (audit: 68.1 %% / 60.8 %%)",
+                 holdoutShare, bargainShare))
+    print(String(format: "  DAY-ONE HOLDOUT QUEUE — 85+ with yearsPro>=3 under 0.85x (HoldoutEngine's own star gate): %.1f%% of %d [<=%.0f]",
+                 starQueue, starEligible.count, lgSalaryBands.holdout))
+    print(String(format: "  whole 85+ cohort under 0.85x: %.1f%% of %d   (audit: 80.3 %%)",
+                 starCohortUnder, starCohort.count))
+    print(String(format: "  per-roster payroll: min %.1f%%  median %.1f%%  max %.1f%% of cap",
+                 payrollShares.min() ?? 0, crPct(payrollShares, 0.50), payrollShares.max() ?? 0))
+
+    print("")
     print("--- PIN AGAINST THE PYTHON MIRROR ----------------------------------------")
     print("  make_templates.py `reference_overall` is what the FIXED-2026 template league")
     print("  is calibrated onto. If it drifts from the Swift, both league sources go wrong")
@@ -359,6 +551,49 @@ func scenarioLeagueGen(_ flags: [String: String]) {
                          + "wave. KNOWN GAP: the draft pipeline's equilibrium is %.2f (task #69); closing it "
                          + "is a development-side calibration, not a constant here",
                    headroom, lgHeadroomEquilibrium.mean))
+    // --- Day-one cap sheet (task #87 / F1) -----------------------------------
+    // See `lgSalaryBands` for where each band comes from. The pyramid gates
+    // above ask whether the league has the right PLAYERS; these ask whether it
+    // pays them anything like the right money.
+    A.check("87.pay", payrollPct >= lgSalaryBands.payroll.0 && payrollPct <= lgSalaryBands.payroll.1,
+            String(format: "opening payroll in [%.0f,%.0f]%% of cap (%.1f%%) — the normalisation's own contract",
+                   lgSalaryBands.payroll.0, lgSalaryBands.payroll.1, payrollPct))
+    A.check("87.mkt", marketPct >= lgSalaryBands.market.0 && marketPct <= lgSalaryBands.market.1,
+            String(format: "total market value in [%.0f,%.0f]%% of cap (%.1f%%) — leagueAffordabilityScale was solved for ~105-115 %%; the audit measured 120.7 %% with six multipliers unreachable",
+                   lgSalaryBands.market.0, lgSalaryBands.market.1, marketPct))
+    A.check("87.ratio", leagueRatio >= lgSalaryBands.ratio.0 && leagueRatio <= lgSalaryBands.ratio.1,
+            String(format: "league salary/market in [%.2f,%.2f] (%.3f) — was 0.725 when the seeder never read `overall`",
+                   lgSalaryBands.ratio.0, lgSalaryBands.ratio.1, leagueRatio))
+    A.check("87.star", starRatio >= lgSalaryBands.star.0 && starRatio <= lgSalaryBands.star.1,
+            String(format: "85+ cohort salary/market in [%.2f,%.2f] (%.3f) — was 0.666, i.e. every star underpaid by construction",
+                   lgSalaryBands.star.0, lgSalaryBands.star.1, starRatio))
+    A.check("87.hold", starQueue <= lgSalaryBands.holdout,
+            String(format: "day-one holdout queue (85+, yearsPro>=3, under 0.85x — `HoldoutEngine`'s own star gate) <= %.0f%% (%.1f%%) — 80.3 %% of the 85+ cohort was under it before this wave",
+                   lgSalaryBands.holdout, starQueue))
+    // The league-wide share is NOT gated tightly on purpose: a roster whose
+    // rookie-contract third is paid at market has no rookie-scale discount, and
+    // `leagueAffordabilityScale`'s own derivation depends on that discount
+    // existing. The rail is only against the 68 % the audit measured.
+    A.check("87.under", holdoutShare <= 60.0,
+            String(format: "league-wide share under 0.85x market <= 60%% (%.1f%%) — was 68.1 %%; most of what remains is the rookie-scale discount, which is supposed to be there",
+                   holdoutShare))
+    // Ability must buy money. The defect was not only a level: a rating-blind
+    // seeder draws a 96 and a 62 from the same band, so the correlation between
+    // what a man is and what he is paid was zero WITHIN a position group.
+    var monotoneMisses: [String] = []
+    for pos in Position.allCases {
+        let group = salaryRows.filter { $0.position == pos }
+        guard group.count >= 200 else { continue }
+        let sorted = group.sorted { $0.overall < $1.overall }
+        let bottom = crMean(sorted.prefix(sorted.count / 4).map(\.salary))
+        let top = crMean(sorted.suffix(sorted.count / 4).map(\.salary))
+        if top <= bottom * 2.0 { monotoneMisses.append(String(format: "%@ %.0f vs %.0f", pos.rawValue, top, bottom)) }
+    }
+    A.check("87.mono", monotoneMisses.isEmpty,
+            monotoneMisses.isEmpty
+              ? "top OVR quartile out-earns the bottom quartile by >2x at every position — the seeder reads `overall`"
+              : "RATING-BLIND at: \(monotoneMisses.joined(separator: ", "))")
+
     var drifted: [String] = []
     for (name, sw, mi, tol) in pins where abs(sw - mi) > tol {
         drifted.append(String(format: "%@ %+.2f", name, sw - mi))

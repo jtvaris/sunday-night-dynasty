@@ -184,25 +184,19 @@ struct PlayerContractView: View {
         return player.teamID == teamID
     }
 
-    /// Market value estimate: overall * position multiplier (in thousands)
+    /// Market value — **`ContractEngine`, at the club's real cap** (task #87 / F4).
+    ///
+    /// This screen used to run a THIRD independent market formula:
+    /// `overall² × its own position table` (QB 8.0, LT 4.5, WR/TE 3.5…), with no
+    /// salary cap, no age curve and no vet-minimum floor. An 84-OVR quarterback
+    /// priced at **$56.4M** here, ~$40M in `ContractEngine` and ~$34M in the
+    /// now-deleted `PlayerValueEngine` — three numbers for one player, on three
+    /// screens, in one build.
     private var estimatedMarketValue: Int {
-        let base = Double(player.overall) * Double(player.overall) * positionMultiplier
-        return max(500, Int(base))
-    }
-
-    private var positionMultiplier: Double {
-        switch player.position {
-        case .QB:          return 8.0
-        case .LT:          return 4.5
-        case .WR, .TE:     return 3.5
-        case .RB:          return 2.5
-        case .DE, .DT:     return 3.5
-        case .CB:          return 3.0
-        case .OLB, .MLB:   return 2.8
-        case .FS, .SS:     return 2.5
-        case .FB, .LG, .C, .RG, .RT: return 2.2
-        case .K, .P:       return 0.8
-        }
+        ContractEngine.estimateMarketValue(
+            player: player,
+            salaryCap: team?.salaryCap ?? ContractEngine.openingSalaryCap
+        )
     }
 
     private var marketComparisonLabel: String {

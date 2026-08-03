@@ -1084,7 +1084,11 @@ final class DraftDayCoordinator: ObservableObject {
             prospect: prospect,
             teamID: pick.currentTeamID,
             pickNumber: pick.pickNumber,
-            draftSeason: pick.seasonYear
+            draftSeason: pick.seasonYear,
+            // Rookie slot money is a share of the cap; the drafting club's own
+            // cap is what it is a share OF (task #87 / F5).
+            salaryCap: teamsByID[pick.currentTeamID]?.salaryCap
+                ?? ContractEngine.openingSalaryCap
         )
         // Seed scheme/position familiarity from the drafting team's coordinators —
         // without this every rookie enters the league at familiarity 0.

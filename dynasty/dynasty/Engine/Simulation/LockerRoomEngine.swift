@@ -163,15 +163,15 @@ enum LockerRoomEngine {
     ///   market priced for a cap the league had long outgrown, salaries had
     ///   inflated with the real cap, and the "significantly underpaid" branch
     ///   had effectively stopped firing while the "great deal" branch fired for
-    ///   nearly everybody. Defaulted rather than required so no call site
-    ///   breaks; **`WeekAdvancer` should pass `team.salaryCap`** (see the report
-    ///   for the exact line).
+    ///   nearly everybody. Required since task #87 / F5 — `WeekAdvancer` passes
+    ///   `team.salaryCap`, and a missing cap is now a compile error rather than a
+    ///   silent season-one price on a season-ten save.
     static func applyMoraleEffects(
         players: [Player],
         teamWins: Int,
         teamLosses: Int,
         chemistry: Int,
-        salaryCap: Int = 265_000
+        salaryCap: Int
     ) {
         let totalGames = teamWins + teamLosses
         let winRate = totalGames > 0 ? Double(teamWins) / Double(totalGames) : 0.5

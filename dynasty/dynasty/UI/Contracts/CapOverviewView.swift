@@ -417,30 +417,28 @@ struct CapOverviewView: View {
 
     // MARK: - Cap Outlook Card
 
-    /// Estimated replacement cost for a position at league-minimum level (in thousands).
-    private func replacementCost(for position: Position) -> Int {
-        switch position {
-        case .QB:                            return 1_350
-        case .DE, .CB:                       return 975
-        case .WR:                            return 940
-        case .OLB:                           return 900
-        case .LT:                            return 860
-        case .DT, .FS, .SS:                  return 825
-        case .TE, .MLB:                      return 790
-        case .LG, .RG, .C, .RT:             return 715
-        case .RB:                            return 675
-        case .FB:                            return 525
-        case .K, .P:                         return 450
-        }
+    /// What it costs to replace an expiring player — **his own market value**
+    /// (task #87 / F11).
+    ///
+    /// This was a hardcoded per-position table of veteran-MINIMUM figures (QB
+    /// 1 350, K/P 450) answering a MARKET question, and never scaled with the
+    /// cap. `RosterEvaluationView:1255` answers the identical question with
+    /// `estimateMarketValue` at the real cap; the two screens differed by ~30x.
+    private func replacementCost(for player: Player, salaryCap: Int) -> Int {
+        ContractEngine.estimateMarketValue(player: player, salaryCap: salaryCap)
     }
 
-    /// Annual cap growth the projection assumes (NFL trend).
-    private static let capGrowthRate = 1.07
+    /// Annual cap growth the projection assumes — the engine's own roll
+    /// (task #87 / F15). Was a hand-typed 1.07 against `RosterEvaluationView`'s
+    /// 1.05, neither of which was `FreeAgencyEngine`'s 5-8 %.
+    private static let capGrowthRate = 1.0 + ContractEngine.capGrowthPerSeason
 
     private func capOutlookCard(team: Team) -> some View {
         let expiringPlayers = players.filter { $0.contractYearsRemaining == 1 }
         let totalFreed = expiringPlayers.reduce(0) { $0 + $1.annualSalary }
-        let totalReplacement = expiringPlayers.reduce(0) { $0 + replacementCost(for: $1.position) }
+        let totalReplacement = expiringPlayers.reduce(0) {
+            $0 + replacementCost(for: $1, salaryCap: team.salaryCap)
+        }
         let netChange = totalFreed - totalReplacement
         // Gold discipline: one number in this list is the story — the biggest
         // deal coming off the books. Seventeen gold values were seventeen equal

@@ -1310,13 +1310,24 @@ struct CareerDashboardView: View {
         return "\(wins)-\(losses) record"
     }
 
+    /// "$265M → $321M" — the club's ACTUAL cap rolled forward three league
+    /// years at the engine's own growth rate (task #87 / F14, F15).
+    private var threeYearCapProjection: String {
+        let now = team?.salaryCap ?? ContractEngine.openingSalaryCap
+        let then = Double(now) * pow(1.0 + ContractEngine.capGrowthPerSeason, 3)
+        return String(format: "$%.0fM \u{2192} $%.0fM", Double(now) / 1_000.0, then / 1_000.0)
+    }
+
     private var cap3yearForecastTile: some View {
         Button {
             onTaskSelected(.capOverview)
         } label: {
             DashboardTile(icon: "chart.line.uptrend.xyaxis", title: "3-Year Cap") {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("$285M \u{2192} $310M")
+                    // Task #87 / F14: this was the string literal `$285M → $310M`
+                    // on a live tile — never read `team.salaryCap`, and deceptive
+                    // precisely because $285M is close to a number the docs used.
+                    Text(threeYearCapProjection)
                         .font(.system(size: 12, weight: .bold).monospacedDigit())
                         .foregroundStyle(Color.accentGold)
                     Text("Projection across 3 seasons")
@@ -3923,7 +3934,10 @@ struct CareerDashboardView: View {
         phaseCardBase(icon: "scissors", accent: .draftStealGold) {
             heroHeader("Roster Cuts · 90 → 53")
             heroStatRow("Stage", value: "Cut 1 of 3 (90→75)")
-            heroStatRow("Cap savings projected", value: "$4.2M")
+            // Task #87 / F18: "Cap savings projected $4.2M" was a literal. There
+            // is no cut plan to project from at this point in the flow, so the
+            // row is gone rather than invented — current room is a real number.
+            heroStatRow("Cap room", value: formatCap(team?.availableCap ?? 0))
             heroStatRow("Practice squad protected", value: "7")
             heroActionLink(title: "Make Cuts", destination: .roster)
         }
@@ -4074,7 +4088,7 @@ struct CareerDashboardView: View {
     private var faHeroCard: some View {
         let stepLabel = FreeAgencyStep(rawValue: career.freeAgencyStep)?.rawValue.capitalized ?? "Open"
         return phaseCardBase(icon: "dollarsign.circle.fill", accent: .accentGold) {
-            heroHeader("Free Agency · \(stepLabel) · $24M cap")
+            heroHeader("Free Agency · \(stepLabel) · \(formatCap(team?.availableCap ?? 0)) cap")
             heroStatRow("Frenzy", value: "7 hot · 2 outbid alerts")
             heroStatRow("Top targets remaining", value: "5")
             heroStatRow("Pending offers", value: "3")
@@ -4102,12 +4116,20 @@ struct CareerDashboardView: View {
         }
     }
 
+    /// Next league year's room: this year's unspent cap, rolled forward at the
+    /// engine's growth rate (task #87 / F18 — it was the literal "$58.4M").
+    private var nextYearCapSpace: String {
+        guard let team else { return "—" }
+        let nextCap = Double(team.salaryCap) * (1.0 + ContractEngine.capGrowthPerSeason)
+        return formatCap(max(0, Int(nextCap) - team.currentCapUsage))
+    }
+
     private var offseasonOpenerHeroCard: some View {
         phaseCardBase(icon: "arrow.triangle.2.circlepath", accent: .accentGold) {
             heroHeader("Offseason Begins")
             heroStatRow("Coach contracts expiring", value: "2")
             heroStatRow("Roster OVR", value: "76 → 73 projected")
-            heroStatRow("Cap space (next yr)", value: "$58.4M")
+            heroStatRow("Cap space (next yr)", value: nextYearCapSpace)
             HStack(spacing: DSSpacing.sm) {
                 heroActionLink(title: "Roster Review", destination: .rosterEvaluation)
                 heroActionLink(title: "Salary Cap", destination: .capOverview)

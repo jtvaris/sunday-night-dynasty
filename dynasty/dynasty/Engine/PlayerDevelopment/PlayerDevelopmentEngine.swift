@@ -517,10 +517,11 @@ enum PlayerDevelopmentEngine {
         /// "everybody just got paid" — which quietly turns a 5 %-of-league
         /// complacency trigger into a general one as a dynasty ages.
         ///
-        /// Defaulted so no existing call site changes behaviour by a single bit;
-        /// **`WeekAdvancer`'s offseason builder should set it to `team.salaryCap`**
-        /// (see the report for the exact line).
-        var salaryCap: Int = 265_000
+        /// `WeekAdvancer.buildOffseasonInputs` sets it to the club's own
+        /// `team.salaryCap`; the default is the opening cap so that a harness or
+        /// a test that builds an `OffseasonInputs()` by hand still compiles
+        /// (task #87 / F5 — verified plumbed).
+        var salaryCap: Int = ContractEngine.openingSalaryCap
     }
 
     /// The team-level slice of the offseason environment (plan §2.9.2-3) —

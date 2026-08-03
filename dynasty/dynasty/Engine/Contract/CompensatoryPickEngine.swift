@@ -99,7 +99,7 @@ enum CompensatoryPickEngine {
         guard !departures.isEmpty else { return [] }
 
         let avgCap = allTeams.isEmpty
-            ? 265_000
+            ? ContractEngine.openingSalaryCap
             : allTeams.reduce(0) { $0 + $1.salaryCap } / allTeams.count
         let playersByID = Dictionary(uniqueKeysWithValues: allPlayers.map { ($0.id, $0) })
 

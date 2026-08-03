@@ -3,8 +3,9 @@ import SwiftData
 
 struct RosterView: View {
     let players: [Player]
-    /// The team's current salary cap in thousands. Falls back to 265_000 if not provided.
-    var teamSalaryCap: Int = 265_000
+    /// The team's current salary cap in thousands. Falls back to the league's
+    /// opening cap (`ContractEngine.openingSalaryCap`) if not provided.
+    var teamSalaryCap: Int = ContractEngine.openingSalaryCap
     /// `Team.currentCapUsage` in thousands — the same ledger the Cap screen and
     /// the dashboard quote. `nil` only for previews and lightweight call sites,
     /// where the summary bar falls back to summing the roster's salaries.

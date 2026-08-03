@@ -133,13 +133,13 @@ enum FreeAgencyEngine {
     /// It is now the demand model's own opening ask, so the number the tampering
     /// rumor mill leaks, the number the AI market bids against and the number
     /// the user hears on the phone are the same number.
-    static func projectedAskingPrice(player: Player, salaryCap: Int = 265_000) -> Int {
+    static func projectedAskingPrice(player: Player, salaryCap: Int) -> Int {
         agentDemand(player: player, salaryCap: salaryCap).askAmount
     }
 
     /// The full demand behind ``projectedAskingPrice`` — ask AND floor, which is
     /// what a settlement needs.
-    static func agentDemand(player: Player, salaryCap: Int = 265_000) -> ContractDemand {
+    static func agentDemand(player: Player, salaryCap: Int) -> ContractDemand {
         ContractNegotiationEngine.demand(
             player: player,
             negotiationType: .freeAgent,
@@ -154,7 +154,7 @@ enum FreeAgencyEngine {
     /// market. `!isOnPracticeSquad` is belt-and-braces on that invariant — if a
     /// squad deal ever reached zero years without being dissolved, the market
     /// would otherwise quietly sell 512 players who already have jobs.
-    static func generateFreeAgentMarket(allPlayers: [Player], salaryCap: Int = 265_000) -> [FreeAgent] {
+    static func generateFreeAgentMarket(allPlayers: [Player], salaryCap: Int) -> [FreeAgent] {
         allPlayers
             .filter {
                 $0.contractYearsRemaining == 0 && !$0.isFranchiseTagged && !$0.isRetired
@@ -450,7 +450,7 @@ enum FreeAgencyEngine {
         PracticeSquadEngine.dissolveSquads(allPlayers: allPlayers)
 
         // Apply cap growth (~5-8% increase)
-        let capGrowth = Double.random(in: 0.05...0.08)
+        let capGrowth = Double.random(in: ContractEngine.capGrowthRange)
         for team in allTeams {
             team.salaryCap = Int(Double(team.salaryCap) * (1.0 + capGrowth))
         }
@@ -557,7 +557,7 @@ enum FreeAgencyEngine {
         capMode: CapMode = .simple
     ) {
         // Use average cap across all teams for market valuation
-        let avgCap = allTeams.isEmpty ? 265_000 : allTeams.reduce(0) { $0 + $1.salaryCap } / allTeams.count
+        let avgCap = allTeams.isEmpty ? ContractEngine.openingSalaryCap : allTeams.reduce(0) { $0 + $1.salaryCap } / allTeams.count
         let freeAgents = generateFreeAgentMarket(allPlayers: allPlayers, salaryCap: avgCap)
         let aiTeams = allTeams.filter { $0.id != playerTeamID }
         simulateAIFreeAgency(

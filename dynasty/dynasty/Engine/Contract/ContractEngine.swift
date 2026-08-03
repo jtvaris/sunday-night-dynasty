@@ -4,6 +4,39 @@ import SwiftData
 /// Handles all contract operations for both simple and realistic salary-cap modes.
 enum ContractEngine {
 
+    // MARK: - The Cap
+
+    /// **The league's opening salary cap, in thousands. One number, one place.**
+    ///
+    /// Task #87 found four of them shipping at once — `265_000` in a dozen engine
+    /// defaults, `260_000` in two UI fallbacks and a cap-% pill, a `$285M → $310M`
+    /// string literal on a live dashboard tile, and `$284.9M` in this file's own
+    /// prose (which was season-TWO money, `265 × 1.075`, and therefore made every
+    /// headline number in the #82 rationale one league-year ahead of what a save
+    /// actually starts with). A cap is a money supply: four of them is four
+    /// economies, and the screens quoted different prices for the same player.
+    ///
+    /// This is the definition. `Team.salaryCap` defaults to it, every engine
+    /// entry point below takes the club's ACTUAL cap as a REQUIRED argument (so
+    /// a missing one is a compile error rather than a silent season-one price on
+    /// a season-ten save), and the only remaining defaults are on internal
+    /// helpers that cannot reach a `Team`.
+    static let openingSalaryCap = 265_000
+
+    /// How much the cap grows in a league year. **The engine's own roll** —
+    /// `FreeAgencyEngine`'s league-year rollover draws from exactly this range.
+    ///
+    /// Task #87 / F15: two screens used to project two different futures off two
+    /// hand-typed constants (`RosterEvaluationView` × 1.05, `CapOverviewView`
+    /// × 1.07), neither of which was the number the league actually rolls.
+    static let capGrowthRange: ClosedRange<Double> = 0.05...0.08
+
+    /// The midpoint of ``capGrowthRange``, for anything that has to project a
+    /// single future rather than draw one: cap-outlook tiles, three-year
+    /// projections, and the roster seeder's back-dating of an old contract to
+    /// the smaller cap it was negotiated against.
+    static let capGrowthPerSeason = (capGrowthRange.lowerBound + capGrowthRange.upperBound) / 2
+
     // MARK: - Simple Mode
 
     /// Sign a player in simple cap mode by setting contract length, salary,
@@ -76,11 +109,12 @@ enum ContractEngine {
     /// on the open market based on position, age, and overall rating.
     ///
     /// Values are expressed as a percentage of the salary cap, so they scale
-    /// naturally as the cap grows each season. The default cap (265_000) matches
-    /// the 2026 projection; callers should pass the team's actual `salaryCap`.
+    /// naturally as the cap grows each season. Callers pass the club's ACTUAL
+    /// `salaryCap`; there is no default (see ``openingSalaryCap``).
     ///
-    /// Uses the player's natural position (derived from positionAttributes) for salary
-    /// calculation. A player moved from DE to DT still demands DE money.
+    /// A player genuinely converted across position families still demands the
+    /// money of the family he was built for — see ``bestPayingPosition`` for what
+    /// "genuinely" now means and why it used to mean nothing.
     /// Base market value as a percentage of the salary cap, before the position
     /// multiplier and the age curve.
     ///
@@ -246,78 +280,120 @@ enum ContractEngine {
     /// and the level it is denominated in stays one auditable number.
     static let leagueAffordabilityScale = 0.75
 
-    static func estimateMarketValue(player: Player, salaryCap: Int = 265_000) -> Int {
-        let overall = player.overall
-        // Use the higher-paying position: current or natural (players demand pay
-        // based on their best position — a DE moved to DT still demands DE money)
+    /// Position multiplier calibrated to real NFL 2026 pay scales.
+    ///
+    /// **ONE table (task #87 / F20).** This vector used to be written out twice —
+    /// once inside `estimateMarketValue` and once, verbatim, inside
+    /// `bestPayingPosition`'s `rank` closure — so "which position pays more" and
+    /// "how much does that position pay" were two copies that had to be kept in
+    /// sync by hand. They are now the same function, and the ranking question is
+    /// literally a comparison of this table's own values.
+    ///
+    /// **The vector is now REACHABLE (task #87 / F2).** Before that wave six of
+    /// these fifteen entries were dead code: every generation path in the game
+    /// assigns attributes by position *group*, `naturalPositionForAttributes`
+    /// maps each group to its premium position, and `bestPayingPosition` then
+    /// upgraded unconditionally — so DT was paid DE's 1.25, RT/IOL were paid
+    /// LT's 1.05, MLB was paid OLB's 1.00, S was paid CB's 0.95 and FB was paid
+    /// RB's rate. Four of the five "overpaid position" verdicts in the #87 audit
+    /// were that bug rather than this table. `bestPayingPosition` now gates the
+    /// upgrade on a genuine cross-group position CHANGE, so the numbers below
+    /// are the numbers that run.
+    ///
+    /// **As ratios to the quarterback** — which is all a multiplier vector means
+    /// — the reachable table reproduces the modern market: QB 1.00,
+    /// WR 0.59 (real ~0.58), EDGE 0.57 (~0.67), OT 0.48 (~0.47), CB 0.43 (~0.50),
+    /// DT 0.41 (~0.40), RT 0.39 (~0.38), MLB 0.36 (~0.35), S 0.34 (~0.35),
+    /// TE 0.32 (~0.32), IOL 0.30 (~0.30), RB 0.27 (~0.30), K/P 0.11 (~0.10).
+    ///
+    /// **RB 0.45 → 0.60 (task #87 / F12).** At 0.45 the best running back in the
+    /// world topped out at 4.7 % of the cap; the real top of that market is ~7 %
+    /// (Barkley's 2025 APY against a $279M cap). RB is the one position the #82
+    /// wave left genuinely underpriced rather than accidentally overpriced, and
+    /// unlike the six above it needed a constant rather than a bug fix. 0.60
+    /// puts a generational back at 6.3 % and a 92 at 4.9 % — devalued relative
+    /// to a receiver, as the modern market has him, but no longer a rounding
+    /// error against the cap.
+    ///
+    /// A multiplier is NOT a top-end lever: it scales a position's whole
+    /// population, so it sets that position's SHARE OF PAYROLL. QB is 3/53 of a
+    /// roster × 2.2 ≈ 13 % of the cap, which is exactly right and is the reason
+    /// 2.2 must not move. Elite dollar targets are reached through
+    /// `marketBasePercent`'s tail instead, and at the real season-one cap
+    /// ($265M — see ``openingSalaryCap``) they land: at OVR 94-96 this pays
+    /// EDGE $31.2M / WR $32.4M and CB $23.7M / LT $26.2M.
+    static func positionMultiplier(_ position: Position) -> Double {
+        switch position {
+        case .QB:
+            return 2.2    // Elite QBs: ~20%+ of cap
+        case .WR:
+            return 1.3    // WR1: ~11-13%
+        case .DE:
+            return 1.25   // Edge rushers: ~11-13%
+        case .LT:
+            return 1.05   // LT: ~8.5-10%
+        case .OLB:
+            return 1.0    // OLB: ~8-9%
+        case .CB:
+            return 0.95   // Top CB: ~8-9.5%
+        case .DT:
+            return 0.9    // Interior DL: ~7-8.5%
+        case .RT:
+            return 0.85   // RT: ~7-8%
+        case .MLB:
+            return 0.8    // MLB: ~6-7%
+        case .FS, .SS:
+            return 0.75   // Safeties: ~5.5-7%
+        case .TE:
+            return 0.7    // TE: ~4.5-6%
+        case .LG, .RG, .C:
+            return 0.65   // Interior OL: ~4-5%
+        case .RB:
+            return 0.6    // RBs devalued but not free: ~4.5-6.5%
+        case .FB:
+            return 0.25   // FB: ~1-2%
+        case .K, .P:
+            return 0.25   // Specialists: ~1-2%
+        }
+    }
+
+    /// Market value for a player, denominated in his club's ACTUAL cap.
+    ///
+    /// `salaryCap` is required on purpose (task #87 / F5): it used to default to
+    /// the season-one 265 000, which on a season-ten save priced every player
+    /// against a cap 40 % smaller than the one his salary was negotiated under.
+    /// Two call sites were relying on that default and neither knew it.
+    static func estimateMarketValue(player: Player, salaryCap: Int) -> Int {
+        // Which position is he PAID as? His own, unless he has genuinely been
+        // converted across position families — see `bestPayingPosition`.
         let natural = naturalPositionForAttributes(player.positionAttributes)
-        let position = bestPayingPosition(current: player.position, natural: natural)
-        let age = player.age
+        let position = bestPayingPosition(
+            current: player.position, natural: natural, physical: player.physical
+        )
+        return estimateMarketValue(
+            overall: player.overall,
+            position: position,
+            age: player.age,
+            salaryCap: salaryCap
+        )
+    }
 
+    /// The market-value core, over plain values instead of a `Player`.
+    ///
+    /// Split out for the roster seeder (`LeagueGenerator.realisticSalary`), which
+    /// has to price a man BEFORE the `Player` object exists and — more
+    /// importantly — has to price the man he *was* when his current deal was
+    /// signed: a lower rating, a younger age and a smaller cap. `position` is
+    /// the position he is PAID as; the `Player` overload above resolves that
+    /// through `bestPayingPosition` first.
+    static func estimateMarketValue(
+        overall: Int, position: Position, age: Int, salaryCap: Int
+    ) -> Int {
         let basePercent = marketBasePercent(overall: overall)
-
-        // Position multiplier calibrated to real NFL 2026 pay scales.
-        //
-        // AUDITED and deliberately LEFT ALONE by the market-realism wave. Two
-        // reasons, and the second is the load-bearing one:
-        //
-        // 1. As *ratios to the quarterback* — which is all a multiplier vector
-        //    means — it already reproduces the modern market: QB 1.00,
-        //    WR 0.59 (real ~0.58), EDGE 0.57 (~0.67), OT 0.48 (~0.47),
-        //    CB 0.43 (~0.50), MLB 0.36 (~0.35), S 0.34 (~0.35), TE 0.32 (~0.32),
-        //    K/P 0.11 (~0.10). The two genuine gaps are EDGE and CB.
-        // 2. A multiplier is NOT a top-end lever. It scales a position's whole
-        //    population, so it sets that position's SHARE OF PAYROLL — QB is
-        //    3/53 of a roster × 2.2/0.96 ≈ 13 % of the cap, which is exactly
-        //    right and is the reason 2.2 must not move. Closing the EDGE and CB
-        //    gaps costs ~1.9 % of league-wide market value; funding that out of
-        //    the rating ladder would mean a 13 % cut at OVR 80, i.e. moving the
-        //    mass the aggregate-spend constraint exists to protect.
-        //
-        // So the elite dollar targets are reached through `marketBasePercent`'s
-        // tail instead, and they land: at OVR 94-96 and a $284.9M cap this pays
-        // EDGE $33.5M / WR $34.8M (band $30-40M) and CB $25.4M / OT $28.1M
-        // (band $25-30M). CB is the one position that only reaches its band at
-        // the very top of the rating range; raising CB 0.95 → ~1.07 is the
-        // follow-up, and it needs its own aggregate offset, not this wave's.
-        let positionMultiplier: Double = {
-            switch position {
-            case .QB:
-                return 2.2    // Elite QBs: ~20%+ of cap
-            case .WR:
-                return 1.3    // WR1: ~11-13%
-            case .DE:
-                return 1.25   // Edge rushers: ~11-13%
-            case .LT:
-                return 1.05   // LT: ~8.5-10%
-            case .OLB:
-                return 1.0    // OLB: ~8-9%
-            case .CB:
-                return 0.95   // Top CB: ~8-9.5%
-            case .DT:
-                return 0.9    // Interior DL: ~7-8.5%
-            case .RT:
-                return 0.85   // RT: ~7-8%
-            case .MLB:
-                return 0.8    // MLB: ~6-7%
-            case .FS, .SS:
-                return 0.75   // Safeties: ~5.5-7%
-            case .TE:
-                return 0.7    // TE: ~4.5-6%
-            case .LG, .RG, .C:
-                return 0.65   // Interior OL: ~4-5%
-            case .RB:
-                return 0.45   // RBs devalued: ~3-5%
-            case .FB:
-                return 0.25   // FB: ~1-2%
-            case .K, .P:
-                return 0.25   // Specialists: ~1-2%
-            }
-        }()
 
         // Convert cap percentage to thousands, denominated in a league that can
         // afford its own roster (see `leagueAffordabilityScale`).
-        var value = basePercent * positionMultiplier * leagueAffordabilityScale
+        var value = basePercent * positionMultiplier(position) * leagueAffordabilityScale
             * Double(salaryCap) / 100.0
 
         // Age adjustment: discount once the player is past peak years
@@ -693,16 +769,28 @@ enum ContractEngine {
         return topFive.reduce(0, +) / topFive.count
     }
 
-    /// Cap-mode-aware franchise-tag value. Sandbox returns `0` so the UI shows
-    /// the tag as costing nothing and no cap accounting is needed.
-    static func franchiseTagValue(position: Position, topSalaries: [Int], capMode: CapMode) -> Int {
+    /// Cap-mode-aware franchise-tag value, **floor included** (task #87 / F16).
+    ///
+    /// The floor used to be a hardcoded `max(value, 5_000)` written out twice, in
+    /// `FranchiseTagView` and `FinalPushView` — two copies of a cap-INDEPENDENT
+    /// number guarding a cap-relative one, so by season five the floor had
+    /// quietly become a rounding error. It is now 1.9 % of the cap (5 000 ÷ 265
+    /// 000, i.e. exactly what it has always been in season one) and it lives with
+    /// the value it floors. `FranchiseTagView` also used to call the overload
+    /// WITHOUT `capMode`, so a sandbox save was charged a real tag.
+    static func franchiseTagValue(position: Position, topSalaries: [Int], capMode: CapMode, salaryCap: Int) -> Int {
         switch capMode {
         case .simple, .realistic:
-            return franchiseTagValue(position: position, topSalaries: topSalaries)
+            let value = franchiseTagValue(position: position, topSalaries: topSalaries)
+            return max(value, Int(franchiseTagFloorShare * Double(salaryCap)))
         case .sandbox:
             return 0
         }
     }
+
+    /// The tag floor, as a share of the cap. `5_000 / 265_000` — the number both
+    /// screens hardcoded, expressed so it grows with the league.
+    static let franchiseTagFloorShare = 5_000.0 / Double(openingSalaryCap)
 
     /// Apply franchise tag to a player. Sets their salary to the tag value
     /// and marks them as franchise-tagged for the season.
@@ -762,7 +850,7 @@ enum ContractEngine {
         allTeams: [Team],
         playerTeamID: UUID,
         position: Position,
-        salaryCap: Int = 265_000,
+        salaryCap: Int,
         limit: Int = 5
     ) -> [FAPreviewPlayer] {
         allPlayers
@@ -791,7 +879,7 @@ enum ContractEngine {
         allTeams: [Team],
         playerTeamID: UUID,
         positions: [Position],
-        salaryCap: Int = 265_000,
+        salaryCap: Int,
         limit: Int = 5
     ) -> [FAPreviewPlayer] {
         allPlayers
@@ -862,30 +950,110 @@ enum ContractEngine {
         }
     }
 
-    /// Returns whichever position commands more money on the market.
-    /// Players demand pay based on their highest-value position.
-    static func bestPayingPosition(current: Position, natural: Position) -> Position {
-        // Use a simple ranking by position multiplier (higher = more expensive)
-        let rank: (Position) -> Double = { pos in
-            switch pos {
-            case .QB:             return 2.2
-            case .WR:             return 1.3
-            case .DE:             return 1.25
-            case .LT:             return 1.05
-            case .OLB:            return 1.0
-            case .CB:             return 0.95
-            case .DT:             return 0.9
-            case .RT:             return 0.85
-            case .MLB:            return 0.8
-            case .FS, .SS:        return 0.75
-            case .TE:             return 0.7
-            case .LG, .RG, .C:   return 0.65
-            case .RB:             return 0.45
-            case .FB:             return 0.25
-            case .K, .P:         return 0.25
-            }
+    /// The premium position `naturalPositionForAttributes` would return for a
+    /// player *built for this position* — i.e. the position group's own top of
+    /// the market.
+    ///
+    /// This is the inverse of the collapse above, and it exists to answer one
+    /// question: is a listed position and an attribute-derived natural position
+    /// the same BUILD, or two different ones? `.DT` and `.DE` both live in the
+    /// `.defensiveLine` group, so a defensive tackle whose attributes come back
+    /// `.DE` has not been converted from anything — that is just what the
+    /// attribute model calls his group.
+    static func attributeGroupPremium(for position: Position) -> Position {
+        switch position {
+        case .QB:                    return .QB
+        case .RB, .FB:               return .RB
+        case .WR:                    return .WR
+        case .TE:                    return .TE
+        case .LT, .LG, .C, .RG, .RT: return .LT
+        case .DE, .DT:               return .DE
+        case .OLB, .MLB:             return .OLB
+        case .CB, .FS, .SS:          return .CB
+        case .K, .P:                 return .K
         }
-        return rank(current) >= rank(natural) ? current : natural
+    }
+
+    /// How well a body fits a position's build, in standard deviations of that
+    /// position's own physical priors — 0 is the average man at that position,
+    /// −1 is a full sigma light for it, averaged over the four discriminating
+    /// attributes (stamina and durability are position-independent and carry no
+    /// signal).
+    ///
+    /// The table is `PositionPhysicalProfile`'s, the same priors every generator
+    /// draws bodies from, so this asks the question in exactly the units the
+    /// bodies were made in and needs no constants of its own.
+    static func physicalFitZ(_ physical: PhysicalAttributes, at position: Position) -> Double {
+        let p = PositionPhysicalProfile.profile(for: position)
+        let terms: [(Double, PositionPhysicalProfile.Prior)] = [
+            (Double(physical.speed), p.speed),
+            (Double(physical.acceleration), p.acceleration),
+            (Double(physical.strength), p.strength),
+            (Double(physical.agility), p.agility),
+        ]
+        let total = terms.reduce(0.0) { $0 + ($1.0 - $1.1.mean) / max(1.0, $1.1.sd) }
+        return total / Double(terms.count)
+    }
+
+    /// A man is worth one sigma of slack against the build he wants to be PAID
+    /// for. Tighter than this and a legitimate 3-4/4-3 conversion loses his edge
+    /// money on a rounding error; looser and the clause stops doing any work at
+    /// all, because every body in the game is drawn from *some* position's prior
+    /// and the priors overlap.
+    static let positionSwitchFitFloor = -1.0
+
+    /// Returns the position a player is PAID as.
+    ///
+    /// **Rewritten in task #87 (F2). This used to be an unconditional upgrade,
+    /// and it made a third of the position multiplier vector unreachable.**
+    ///
+    /// The intent has always been narrow and correct: a man who has been moved
+    /// off the position he was built for still commands the market rate of the
+    /// position he was built for. "A DE moved to DT still demands DE money."
+    ///
+    /// The implementation was not narrow at all. `naturalPositionForAttributes`
+    /// does not return the position a player was built for — it returns his
+    /// attribute GROUP's premium position, because the attribute model has one
+    /// `.defensiveLine` shape and not separate DE and DT shapes. Every
+    /// generation path in the game (`LeagueGenerator.randomPositionAttributes`,
+    /// `DraftClassBuilder`, `TemplateAttributeSolver`) assigns attributes by
+    /// group. So `natural` was ALWAYS the group premium, the old
+    /// `rank(current) >= rank(natural)` test therefore ALWAYS upgraded, and six
+    /// declared multipliers could never be reached by any player the game can
+    /// produce: DT was paid DE's rate (+39 %), RT and IOL were paid LT's
+    /// (+24 % / +62 %), MLB was paid OLB's (+25 %), the safeties were paid CB's
+    /// (+27 %) and a fullback was paid a running back's (+80 %).
+    ///
+    /// Two conditions now gate the upgrade, and both are the question the intent
+    /// was always asking:
+    ///
+    /// 1. **A real position change.** His listed position must belong to a
+    ///    DIFFERENT attribute group than his attributes do
+    ///    (`attributeGroupPremium(for: current) != natural`). A defensive end
+    ///    listed at outside linebacker qualifies; a defensive tackle listed at
+    ///    defensive tackle does not, and neither does a right guard, a middle
+    ///    linebacker, a strong safety or a fullback.
+    /// 2. **Attributes that actually support the switch.** His body must fit the
+    ///    position he wants to be paid for to within ``positionSwitchFitFloor``
+    ///    sigma of that position's own priors. This is what stops the group
+    ///    premium being claimed by the group's non-premium build: a nose tackle
+    ///    playing outside linebacker has `.defensiveLine` attributes and so
+    ///    reads `natural == .DE`, but he is two sigma short of an edge rusher's
+    ///    speed and does not get an edge rusher's money.
+    ///
+    /// Failing either test, a player is paid at the position he plays — which is
+    /// the job he does, and which is what makes the six multipliers above real
+    /// numbers instead of dead ones.
+    static func bestPayingPosition(
+        current: Position, natural: Position, physical: PhysicalAttributes
+    ) -> Position {
+        // Same build, differently listed — no premium, he is what he plays.
+        guard attributeGroupPremium(for: current) != natural else { return current }
+        // A change that costs him money is not a claim he would make.
+        guard positionMultiplier(natural) > positionMultiplier(current) else { return current }
+        // ...and the body has to back the claim up.
+        guard physicalFitZ(physical, at: natural) >= positionSwitchFitFloor else { return current }
+        return natural
     }
 
     // MARK: - Incentive Valuation (TODO §5.5)

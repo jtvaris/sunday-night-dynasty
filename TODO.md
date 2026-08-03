@@ -46,6 +46,35 @@ Tila: vaiheet 1–4 valmiit ja kaikki portit vihreinä (draft class · kehitys-r
 
 **6 · P3-pikkuviilaukset:** combine-DNP-mekaniikka · roster-listan Mental-analyysimoodi (LRN/CMP-sarakkeet) · UserDefaults-prospektiarvosanojen vuoto careerien yli · hometownState/City veteraaneille · SWIFT_NAME_POOLS-katvehuomio (uusi runtime-nimilähde → lisää listaan, ks. RELEASE_CHECKLIST).
 
+## 💰 #87 SALARY SPLIT-BRAIN -AALTO — 2026-08-04 (committoimaton)
+
+Salary-realism-auditin (F1-F20) toteutus. Lähtötila: peli oli **split-brain kolmella akselilla** — roster-seeder ei katsonut `overall`ia lainkaan, kuudesta viidestätoista positiokertoimesta oli kuollutta koodia, ja markkina-arvokaavoja shippasi kolme rinnakkain.
+
+### Mitattu ennen → jälkeen (`./run.sh leaguegen`, 400 liigaa; ennen-luvut auditin mittaus shipatusta templatesta)
+| mittari | ennen | jälkeen |
+|---|---|---|
+| liigan salary/market | 0.725 | **0.854** |
+| 85+ -kohortti salary/market | 0.666 | **1.058** |
+| 85+ alle 0.85× (holdout-kandidaatti) | 80.3 % | **23.6 %** |
+| holdout-JONO (85+, yearsPro≥3) | ~80 % | **8.5 %** |
+| koko liiga alle 0.85× | 68.1 % | 53.5 % (loput = rookie-skaalan alennus, kuuluu olla) |
+| markkina-arvo yhteensä | 120.7 % capista | **102.3 %** |
+| payroll | 87.5 % capista | 87.3 % (normalisointi ennallaan) |
+
+### Muutokset
+- **F1** `LeagueGenerator.realisticSalary` on rating-aware: hinnoittelee miehen sinä vuonna kun **sopimus kirjoitettiin** (pienempi cap `capGrowthPerSeason`illa taaksepäin + `overallDrift` = kuka hän silloin oli) × sopimustyypin bändi (rookie-skaala 0.40-0.78 / syvyys 0.50-0.85 / neuvoteltu 0.86-1.12). Uusi `earlyExtensionOverall = 82`: seurat jatkavat parhaita nuoriaan ennen rookie-sopimuksen loppua — tämä yksin pudotti tähtien holdout-jonon 39 % → 6 %. Template-importer kulkee saman funktion läpi (TVAL publish+dev PASS).
+- **F2** `bestPayingPosition` portittaa koronnuksen AITOON positiovaihtoon (`attributeGroupPremium(for:) != natural`) JA fyysiseen sopivuuteen (`physicalFitZ >= -1.0σ` kohdeposition omista prioreista). Kuusi kuollutta kerrointa (DT 0.90 · RT 0.85 · IOL 0.65 · MLB 0.80 · S 0.75 · FB 0.25) elävät nyt. **F12** RB 0.45 → 0.60. **F20** yksi `positionMultiplier(_:)` molemmille käyttöpaikoille.
+- **F3/F4** `PlayerValueEngine` POISTETTU; `PlayerContractView`in `overall² × oma taulukko` poistettu. Kaikki markkinapinnat lukevat `ContractEngine.estimateMarketValue(player:salaryCap:)`.
+- **F5** `ContractEngine.openingSalaryCap` = yksi cap-totuus ($265M); `265_000`/`260_000`-defaultit poistettu moottorin sisääntuloista (cap on nyt pakollinen argumentti); `$284.9M`-proosa korjattu. **F15** yksi `capGrowthRange`/`capGrowthPerSeason`.
+- **F6/F7/F8** balanssiharness mittaa nyt rahaa: `career` sai `--- SALARY BY POSITION ---` (5 asserttia, 6.11a-e) ja `tickContracts` sai oikean capin + payroll-katon; `leaguegen` sai `--- DAY-ONE SALARY vs MARKET ---` (7 asserttia); `MultiSeasonSmokeTest` sai `diag salaryByPosition` + 30 %:n ryhmäportin.
+- Sweep: F9 (FA Weekly hinnoiteltiin defaultilla) · F10 (Cap-% -pilli $260M) · F11 (CapOverviewin replacement cost = vetomiini-taulukko) · F13/U13 · F14 (`$285M → $310M` string literal) · F16 (franchise tag: yksi helper, cap-suhteellinen lattia, `capMode`-overload) · F17 (rookie-bändit `DraftEngine.rookieContractBand`ista) · F18 (hero-korttien kovakoodattu raha) · F19 (`BiddingRoomSheet` poistettu — ei kutsupaikkaa) · U16 (varmistettu jo kytketyksi).
+
+### Auki tästä aallosta
+- **Bändiristiriita kirjattu, ei piiloteltu:** brief pyysi tähdille 0.85-0.95 salary/market JA holdout-jonon tappoa. Ne ovat yhteensopimattomia — normalisointi pinnaa liigan keskiarvon (payroll/markkina ≈ 0.86), joten tähtien keskiarvon vieminen 0.85-0.95:een asettaa sen SUORAAN `HoldoutEngine`in 0.85-liipaisimen päälle ja mikä tahansa hajonta palauttaa jonon. Alennus kannetaan siellä missä oikea cap-sheet sen kantaa (rookie-skaala + keskiluokan vanhat sopimukset), tähdet ovat parilla. Ks. `lgSalaryBands`.
+- DT (0.90) jää nyt hieman alle NFL:n 10-11 % huipun ja MLB (0.80) hieman yli 6-7 %:n — F2:n jälkeen nämä ovat ensimmäistä kertaa mitattavissa; oma kalibrointikierros.
+- `TradeValueEngine.contractMultiplier` on ainoa jäljelle jäänyt defaultattu cap moottorikerroksessa (perusteltu doc-kommentissa: suhdeluku, 15 kutsupaikkaa ilman `Team`ia).
+- `career`-liigan `deadlineWeek=4` -bändi (5-15) putosi 4 kauden smokessa kaudella 2027 — kaupankäynnin jakauma, ei volyymi (total=40 ≥ 30).
+
 ## 🏔️ P1 LAATUPYRAMIDIN KALIBROINTIAALTO — 2026-07-30 (committoimaton; odottaa smoke-ajoa)
 
 Koordinoitu aalto: **intake-taso + ceiling-slope + template-kalibrointi + tasoon sidotut kynnykset + portit** yhdellä liikkeellä. Kaikki luvut mitattu, ei arvattu. Portit: `leaguegen` 10/10 (UUSI) · `draftclass` 32/32 · `career` **26/26** (oli 18) · `make_templates.py` 19/19 · `check_bundle.sh` exit 0 · buildi exit 0.

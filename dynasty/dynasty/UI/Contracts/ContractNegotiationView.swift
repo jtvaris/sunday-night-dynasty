@@ -183,7 +183,7 @@ struct ContractNegotiationView: View {
     /// call from this screen used to do — meant that by season 10 the agent
     /// quoted season-1 money while the free-agency screen and the AI market
     /// quoted the real number.
-    private var salaryCap: Int { team?.salaryCap ?? 265_000 }
+    private var salaryCap: Int { team?.salaryCap ?? ContractEngine.openingSalaryCap }
 
     private var capMode: CapMode { career?.capMode ?? .simple }
 

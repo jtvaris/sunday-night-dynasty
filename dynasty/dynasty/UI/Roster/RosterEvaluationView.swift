@@ -64,7 +64,7 @@ struct RosterEvaluationView: View {
     /// offseason would actually cost, and the numbers here disagreed with the
     /// negotiation screen and the free-agent market, which both pass the real
     /// one. The fallback exists only for the frame before `team` loads.
-    private var salaryCap: Int { team?.salaryCap ?? 265_000 }
+    private var salaryCap: Int { team?.salaryCap ?? ContractEngine.openingSalaryCap }
 
     @State private var players: [Player] = []
     @State private var allPlayers: [Player] = []
@@ -842,6 +842,7 @@ struct RosterEvaluationView: View {
                     allTeams: allTeams,
                     playerTeamID: teamID,
                     positions: [player.position],
+                    salaryCap: salaryCap,
                     limit: 3
                 )
                 if !faPreviews.isEmpty {
@@ -993,6 +994,7 @@ struct RosterEvaluationView: View {
                 allTeams: allTeams,
                 playerTeamID: teamID,
                 positions: group.positions,
+                salaryCap: salaryCap,
                 limit: 3
             )
             return (group, expiring, previews)
@@ -1256,8 +1258,10 @@ struct RosterEvaluationView: View {
             }
             let projectedUsage = max(0, team.currentCapUsage - expiringCap)
             let projectedWithReplacements = projectedUsage + replacementCost
-            // NFL cap typically grows ~5% per year
-            let projectedNextCap = Int(Double(team.salaryCap) * 1.05)
+            // Task #87 / F15: the engine rolls the cap 5-8 % a league year; this
+            // screen used to project 5 % and `CapOverviewView` 7 %, so the two
+            // showed the user two different futures.
+            let projectedNextCap = Int(Double(team.salaryCap) * (1.0 + ContractEngine.capGrowthPerSeason))
             let projectedSpaceAfterReplacements = projectedNextCap - projectedWithReplacements
 
             return AnyView(

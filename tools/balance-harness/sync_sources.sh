@@ -580,11 +580,33 @@ static let leagueAffordabilityScale
 static func estimateMarketValue\(
 static func marketBasePercent\(
 static func naturalPositionForAttributes\(
+static func attributeGroupPremium\(
+static func physicalFitZ\(
 static func bestPayingPosition\(
 EOF
 keeplist_slice "$CONTRACT_SOURCE" "$DEVANCHORS" "$DEVSLICE"
 verbatim_guard "$CONTRACT_SOURCE" "$DEVSLICE"
-grep -q 'basePercent \* positionMultiplier' "$DEVSLICE" || die "ContractEngine slice lost the market-value formula."
+grep -q 'basePercent \* positionMultiplier(position)' "$DEVSLICE" || die "ContractEngine slice lost the market-value formula."
+# Task #87: the cap itself, the league-year growth roll and the position-switch
+# fit floor are the file's four bare constants. They cannot be reached by a
+# keep-list anchor (a `static let` line has no braces, so the slicer would run on
+# into whatever follows it), so they come across by grep like every other
+# constant block in this script.
+CONTRACT_CONSTS="$(grep -E '^[[:space:]]*static let (openingSalaryCap|capGrowthRange|capGrowthPerSeason|positionSwitchFitFloor)(: [A-Za-z<>]+)? =' "$CONTRACT_SOURCE")"
+for k in openingSalaryCap capGrowthRange capGrowthPerSeason positionSwitchFitFloor; do
+  printf '%s\n' "$CONTRACT_CONSTS" | grep -qE "static let $k(:| =)" || die "ContractEngine constant $k not found in the repo file."
+done
+# Task #87 / F2: the upgrade gate. Without these three the six formerly-dead
+# position multipliers go dead again and the harness would measure the OLD
+# effective table while the app measured the new one — the exact split-brain the
+# wave exists to close.
+grep -q 'static func attributeGroupPremium' "$DEVSLICE" || die "ContractEngine slice lost attributeGroupPremium (F2 gate)."
+grep -q 'static func physicalFitZ' "$DEVSLICE" || die "ContractEngine slice lost physicalFitZ (F2 gate)."
+grep -q 'guard attributeGroupPremium(for: current) != natural' "$DEVSLICE" \
+  || die "ContractEngine slice lost the real-position-change gate (F2)."
+# F20: one multiplier table, used by both the valuation and the ranking.
+grep -q 'static func positionMultiplier' "$DEVSLICE" \
+  || die "ContractEngine slice lost the single positionMultiplier table (F20)."
 # Task #27 put the league's price LEVEL in its own constant; the formula above
 # multiplies by it, so a slice without it compiles against a missing symbol.
 grep -q 'leagueAffordabilityScale = ' "$DEVSLICE" \
@@ -602,6 +624,8 @@ grep -q 'anchors: \[(ovr: Double, pct: Double)\]' "$DEVSLICE" \
   echo "import Foundation"
   echo ""
   echo "enum ContractEngine {"
+  echo "$CONTRACT_CONSTS"
+  echo ""
   cat "$DEVSLICE"
   echo "}"
 } > "$CONTRACT_OUT"
@@ -737,13 +761,25 @@ private static func careerAgeSpan\(
 static func veteranPotential\(
 static func tierEarnedUpside\(
 static func activeSchemeSeed<G: RandomNumberGenerator>\(
+static func realisticSalary<G: RandomNumberGenerator>\(
+static func overallDrift\(
 EOF
 keeplist_slice "$LEAGUEGEN_SOURCE" "$DEVANCHORS" "$DEVSLICE"
 verbatim_guard "$LEAGUEGEN_SOURCE" "$DEVSLICE"
-LEAGUEGEN_CONSTS="$(grep -E '^[[:space:]]*static let (rookieAgeLevel|primeAgeLevel|pastPeakAgeDecay|talentSpreadLimit): Double =' "$LEAGUEGEN_SOURCE")"
-for k in rookieAgeLevel primeAgeLevel pastPeakAgeDecay talentSpreadLimit; do
+LEAGUEGEN_CONSTS="$(grep -E '^[[:space:]]*static let ((rookieAgeLevel|primeAgeLevel|pastPeakAgeDecay|talentSpreadLimit): Double|rosterCapTargetBand: ClosedRange<Int>|rookieDealYears|preePeakOverallGain|postPeakOverallLoss|earlyExtensionOverall) =' "$LEAGUEGEN_SOURCE")"
+for k in rookieAgeLevel primeAgeLevel pastPeakAgeDecay talentSpreadLimit \
+         rosterCapTargetBand rookieDealYears preePeakOverallGain postPeakOverallLoss earlyExtensionOverall; do
   echo "$LEAGUEGEN_CONSTS" | grep -q "$k" || die "LeagueGenerator constant $k not found in the repo file."
 done
+# Task #87 / F1: the roster seeder. `leaguegen` prices a generated league off it
+# and gates the result, so a seeder that stopped reading `overall` — the defect
+# the wave fixed — would fail the harness instead of shipping silently.
+grep -q 'let marketThen = ContractEngine.estimateMarketValue(' "$DEVSLICE" \
+  || die "LeagueGenerator slice lost the rating-aware salary seed (F1)."
+grep -q 'let extendedEarly = overall >= earlyExtensionOverall' "$DEVSLICE" \
+  || die "LeagueGenerator slice lost the early-extension rule (F1)."
+grep -q 'let capThen = max(' "$DEVSLICE" \
+  || die "LeagueGenerator slice lost the deal-age back-dating (F1)." 
 grep -q 'z \* (z >= 0 ? up : down)' "$DEVSLICE" || die "LeagueGenerator slice lost the split-normal talent draw."
 grep -q 'case 0:  return 66...88' "$DEVSLICE" || die "LeagueGenerator slice lost the depth-tier rating ranges."
 grep -q 'rosterBlueprint' "$DEVSLICE" || die "LeagueGenerator slice lost the 53-man rosterBlueprint."

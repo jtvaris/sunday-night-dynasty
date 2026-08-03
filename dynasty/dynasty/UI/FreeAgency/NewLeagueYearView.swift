@@ -215,7 +215,7 @@ struct NewLeagueYearView: View {
             let have = myRoster.filter { $0.position == pos }.count
             if have < needed { starterGaps += (needed - have) }
         }
-        let baseCap = myTeam?.salaryCap ?? 265_000
+        let baseCap = myTeam?.salaryCap ?? ContractEngine.openingSalaryCap
 
         summary = FreeAgencyEngine.executeNewLeagueYear(
             allPlayers: allPlayers,

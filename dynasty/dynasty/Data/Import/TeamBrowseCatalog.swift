@@ -207,7 +207,7 @@ struct TeamBrowseCatalog {
     }
 
     /// `Team.salaryCap`'s default, in thousands.
-    private static let defaultSalaryCap = 265_000
+    private static let defaultSalaryCap = ContractEngine.openingSalaryCap
 
     /// Career difficulty = how much pressure the job carries.
     ///

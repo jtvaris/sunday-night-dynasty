@@ -331,6 +331,7 @@ struct FinalPushView: View {
             allTeams: allTeams,
             playerTeamID: career.teamID ?? UUID(),
             position: player.position,
+            salaryCap: team.salaryCap,
             limit: 3
         )
 
@@ -566,7 +567,7 @@ struct FinalPushView: View {
                         player: player,
                         offeredSalary: currentSalary,
                         offeredYears: currentYears,
-                        salaryCap: team?.salaryCap ?? 265_000,
+                        salaryCap: team?.salaryCap ?? ContractEngine.openingSalaryCap,
                         situation: reSignSituation(for: player),
                         standing: gmStanding,
                         standingAsk: decisions[player.id]?.standingAsk?.offer,
@@ -1025,12 +1026,12 @@ struct FinalPushView: View {
         let positionSalaries = allPlayers
             .filter { $0.position == position && $0.annualSalary > 0 }
             .map { $0.annualSalary }
-        let value = ContractEngine.franchiseTagValue(
+        return ContractEngine.franchiseTagValue(
             position: position,
             topSalaries: positionSalaries,
-            capMode: career.capMode
+            capMode: career.capMode,
+            salaryCap: team?.salaryCap ?? ContractEngine.openingSalaryCap
         )
-        return career.capMode == .sandbox ? value : max(value, 5_000)
     }
 
     /// Applies the franchise tag to an expiring player straight from the

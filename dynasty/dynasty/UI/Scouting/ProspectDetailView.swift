@@ -136,6 +136,9 @@ struct ProspectDetailView: View {
     @State private var interviewResult: (personality: PersonalityArchetype, footballIQ: Int, characterNotes: [String])?
     @State private var positionRank: Int?
     @State private var teamPlayers: [Player] = []
+    /// The user's club, for the one thing this screen needs money for: pricing a
+    /// rookie contract at the league's ACTUAL cap (task #87 / F17).
+    @State private var userTeam: Team?
     @State private var showMarkNote = false
     /// The owner's scouting pot in thousands, loaded with the scouts.
     @State private var scoutingBudget: Int = 4_000
@@ -2271,16 +2274,21 @@ struct ProspectDetailView: View {
         }
     }
 
+    /// Rookie money for a projected round, **from `DraftEngine.rookieContract`**
+    /// at the club's real cap (task #87 / F17).
+    ///
+    /// This was a hardcoded round→band table that never called the engine, so
+    /// the number a user read on a prospect and the number the draft actually
+    /// wrote him were unrelated — and the table never moved with the cap.
     private func rookieContractEstimate(round: Int) -> String {
-        switch round {
-        case 1: return "~$12-40M / 4yr"
-        case 2: return "~$6-10M / 4yr"
-        case 3: return "~$4-6M / 4yr"
-        case 4: return "~$3-4M / 4yr"
-        case 5: return "~$2-3M / 4yr"
-        case 6: return "~$1-2M / 4yr"
-        default: return "~$900K / 4yr"
+        let cap = userTeam?.salaryCap ?? ContractEngine.openingSalaryCap
+        let band = DraftEngine.rookieContractBand(round: round, salaryCap: cap)
+        func money(_ k: Int) -> String {
+            k >= 1_000 ? String(format: "$%.0fM", Double(k) / 1_000.0)
+                       : String(format: "$%dK", k)
         }
+        if band.low == band.high { return "~\(money(band.low)) / \(band.years)yr" }
+        return "~\(money(band.low))-\(money(band.high)) / \(band.years)yr"
     }
 
     /// Maps the career's current season phase to a scouting phase for report generation.
@@ -2329,6 +2337,8 @@ struct ProspectDetailView: View {
         guard let teamID = career.teamID else { return }
         let desc = FetchDescriptor<Player>(predicate: #Predicate { $0.teamID == teamID })
         teamPlayers = (try? modelContext.fetch(desc)) ?? []
+        let teamDesc = FetchDescriptor<Team>(predicate: #Predicate { $0.id == teamID })
+        userTeam = try? modelContext.fetch(teamDesc).first
     }
 
     private func loadPositionRank() {

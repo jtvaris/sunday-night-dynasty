@@ -506,9 +506,14 @@ struct FranchiseTagView: View {
         let positionSalaries = allPlayers
             .filter { $0.position == position && $0.annualSalary > 0 }
             .map { $0.annualSalary }
-        let value = ContractEngine.franchiseTagValue(position: position, topSalaries: positionSalaries)
-        // Ensure a minimum tag value (league minimum floor)
-        return max(value, 5_000)
+        // Task #87 / F16: the `capMode:` overload (this screen used to charge a
+        // sandbox save a real tag) and the shared cap-relative floor.
+        return ContractEngine.franchiseTagValue(
+            position: position,
+            topSalaries: positionSalaries,
+            capMode: career.capMode,
+            salaryCap: team?.salaryCap ?? ContractEngine.openingSalaryCap
+        )
     }
 
     // MARK: - Actions

@@ -116,6 +116,18 @@ struct PlayerDetailView: View {
     /// store-wide result above is narrowed here. The league-percentile ranks in
     /// particular were computed against BOTH saves' players before this.
     private var scopeCareerID: UUID? { player.careerID }
+
+    /// The salary cap every money surface on this screen is denominated in
+    /// (task #87 / F3, F10): the player's own club's, falling back to the
+    /// league's. It used to be three different numbers on one card — a
+    /// hardcoded $260M in the Cap-% pill, no cap at all in the Market and
+    /// Value pills (`PlayerValueEngine` never took one), and the real cap
+    /// only once the user tapped through to `ContractNegotiationView`.
+    private var contextSalaryCap: Int {
+        allTeams.first { $0.id == player.teamID }?.salaryCap
+            ?? allTeams.first?.salaryCap
+            ?? ContractEngine.openingSalaryCap
+    }
     private var allLeaguePlayers: [Player] { allLeaguePlayersUnscoped.filter { $0.careerID == scopeCareerID } }
     private var allCoaches: [Coach] { allCoachesUnscoped.filter { $0.careerID == scopeCareerID } }
     private var allTeams: [Team] { allTeamsUnscoped.filter { $0.careerID == scopeCareerID } }
@@ -938,18 +950,18 @@ struct PlayerDetailView: View {
         .accessibilityLabel("\(category.displayName): \(detail), worth \(ContractIncentive.money(progress.incentive.bonusK))")
     }
 
-    /// Player's salary as a percentage of the league cap (#38). Uses 2026 cap of $260M.
+    /// Player's salary as a percentage of the league cap (#38). Reads the club's
+    /// ACTUAL cap — it was hardcoded to $260M, a number that appears nowhere else
+    /// in the game and over-reported by ~31 % by season five (task #87 / F10).
     /// Falls back to "—" when salary is zero.
     private var capPercentageText: String {
         guard player.annualSalary > 0 else { return "—" }
-        let capK = 260_000  // $260M 2026 NFL salary cap, in thousands
-        let pct = Double(player.annualSalary) / Double(capK) * 100.0
+        let pct = Double(player.annualSalary) / Double(contextSalaryCap) * 100.0
         return String(format: "%.1f%%", pct)
     }
 
     private var capPercentageColor: Color {
-        let capK = 260_000
-        let pct = Double(player.annualSalary) / Double(capK) * 100.0
+        let pct = Double(player.annualSalary) / Double(contextSalaryCap) * 100.0
         if pct >= 12 { return .danger }
         if pct >= 7  { return .warning }
         return .textSecondary
@@ -1601,7 +1613,9 @@ struct PlayerDetailView: View {
 
     /// Suggested-extension preview for the Extend button. E.g. "~$32M/yr × 4yr".
     private var extensionPreviewText: String? {
-        let market = PlayerValueEngine.estimatedMarketValue(for: player)
+        // The same engine and cap `ContractNegotiationView` opens with, so the
+        // number on the button is the number behind it (task #87 / F3).
+        let market = estimateMarketValueAmount
         guard market > 0 else { return nil }
         let years: Int
         switch player.age {
@@ -2650,14 +2664,32 @@ struct PlayerDetailView: View {
         }
     }
 
-    /// Realistic NFL-calibrated market value (in thousands), delegated to PlayerValueEngine.
-    /// Replaces the old `OVR^2 / 10` formula which produced absurd values (e.g. $705K for an 84 OVR QB).
+    /// Market value in thousands — **`ContractEngine`, the one market authority**
+    /// (task #87 / F3).
+    ///
+    /// This pill used to run `PlayerValueEngine`: its own `20_000 × (ovr/75)^4.5`
+    /// curve, its own position table that contradicted `ContractEngine`'s
+    /// outright, no salary cap at all, and no knowledge of the vet-minimum floor
+    /// or the position-switch rule. Measured against the real engine it was
+    /// +111 % at RB / +35 % at QB down at OVR 74 and −27 % at C / −21 % at DT up
+    /// at 96 — so the number on the card the user looks at most matched neither
+    /// the ask he met in `ContractNegotiationView` nor the peer band printed two
+    /// pills to its right.
     private var estimateMarketValueAmount: Int {
-        PlayerValueEngine.estimatedMarketValue(for: player)
+        ContractEngine.estimateMarketValue(player: player, salaryCap: contextSalaryCap)
     }
 
+    /// Bargain / Fair / Overpaid, off the same engine and the same cap as the
+    /// Market pill above it — and therefore agreeing with `RosterEvaluationView`,
+    /// which has always graded the same player off `ContractEngine`.
     private var marketValueComparison: MarketValueAssessment {
-        PlayerValueEngine.marketAssessment(for: player)
+        let market = estimateMarketValueAmount
+        // No salary on file (e.g. an unsigned rookie) — surface the upside.
+        guard player.annualSalary > 0 else { return .bargain }
+        let ratio = Double(market) / Double(player.annualSalary)
+        if ratio > 1.3 { return .bargain }
+        if ratio > 0.8 { return .fairValue }
+        return .overpaid
     }
 
     // MARK: - Development Phase
@@ -2766,7 +2798,7 @@ struct PlayerDetailView: View {
     }
 
     private var tradeValueContractMultiplier: Double {
-        TradeValueEngine.contractMultiplier(player: player)
+        TradeValueEngine.contractMultiplier(player: player, salaryCap: contextSalaryCap)
     }
 
     /// The earliest pick those points buy on the same chart the war room reads.

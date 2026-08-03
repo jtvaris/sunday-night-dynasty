@@ -218,14 +218,15 @@ enum DraftEngine {
     ///   - pickNumber: The overall draft pick number (1-224).
     ///   - draftSeason: The calendar year of this draft, stamped onto the player
     ///     as draft provenance (#40). `nil` leaves the season unrecorded.
-    ///   - salaryCap: The current salary cap (in thousands). Defaults to 265_000.
+    ///   - salaryCap: The club's ACTUAL salary cap, in thousands (required —
+    ///     task #87 / F5).
     /// - Returns: A fully initialized `Player` ready to be inserted into the data store.
     static func convertToPlayer(
         prospect: CollegeProspect,
         teamID: UUID,
         pickNumber: Int,
         draftSeason: Int? = nil,
-        salaryCap: Int = 265_000
+        salaryCap: Int
     ) -> Player {
         let contract = rookieContract(pickNumber: pickNumber, salaryCap: salaryCap)
         let factors = rookieScaleFactors(
@@ -1245,7 +1246,7 @@ enum DraftEngine {
     /// - 2nd round: 4 years, lower salary.
     /// - 3rd-4th round: 4 years, modest salary.
     /// - 5th-7th round: 3 years, league minimum-tier salary.
-    private static func rookieContract(pickNumber: Int, salaryCap: Int = 265_000) -> (years: Int, salary: Int) {
+    static func rookieContract(pickNumber: Int, salaryCap: Int) -> (years: Int, salary: Int) {
         // Cap percentage for each draft slot tier.
         let capPercent: Double
         let years: Int
@@ -1288,6 +1289,25 @@ enum DraftEngine {
 
         let salary = max(Int(capPercent * Double(salaryCap) / 100.0), 750)
         return (years: years, salary: salary)
+    }
+
+    /// The rookie-money BAND for a projected draft round, at a given cap —
+    /// the same ``rookieContract`` slots the draft actually writes, read from
+    /// the first and last pick of the round (task #87 / F17).
+    ///
+    /// `ProspectDetailView` used to print its own hardcoded round→band table
+    /// ("~$12-40M / 4yr"), which never called this engine and never moved with
+    /// the cap, so the number a user read on a prospect and the number the draft
+    /// wrote him were unrelated.
+    static func rookieContractBand(round: Int, salaryCap: Int) -> (low: Int, high: Int, years: Int) {
+        let clamped = min(max(round, 1), 7)
+        let firstPick = (clamped - 1) * 32 + 1
+        let lastPick = clamped * 32
+        let top = rookieContract(pickNumber: firstPick, salaryCap: salaryCap)
+        let bottom = rookieContract(pickNumber: lastPick, salaryCap: salaryCap)
+        return (low: min(top.salary, bottom.salary),
+                high: max(top.salary, bottom.salary),
+                years: top.years)
     }
 
     // MARK: - Pick Value Chart Internals

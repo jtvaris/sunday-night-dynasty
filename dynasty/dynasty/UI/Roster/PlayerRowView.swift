@@ -45,7 +45,7 @@ struct PlayerRowView: View {
     /// Number of starters at this player's specific position (scheme-aware). Used for depth numbering (#279).
     var starterCountForPosition: Int = 1
     /// Team salary cap in thousands — used to calculate cap% per player.
-    var teamSalaryCap: Int = 265_000
+    var teamSalaryCap: Int = ContractEngine.openingSalaryCap
 
     /// TRACK B — season + phase, injected once by `CareerShellView`. A rookie
     /// who has not yet reported to training camp shows his scouting BAND where

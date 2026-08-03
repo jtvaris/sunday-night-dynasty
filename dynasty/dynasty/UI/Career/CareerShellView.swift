@@ -404,7 +404,7 @@ struct CareerShellView: View {
         // holdout against season-1 money while the free-agency screen priced the
         // same man against the real cap — a gap that widens every league year.
         let market = ContractEngine.estimateMarketValue(
-            player: player, salaryCap: team?.salaryCap ?? 265_000
+            player: player, salaryCap: team?.salaryCap ?? ContractEngine.openingSalaryCap
         )
         switch resolution {
         case .extend:
@@ -446,7 +446,7 @@ struct CareerShellView: View {
 
         // Build per-player market value map.
         var marketValues: [UUID: Int] = [:]
-        let cap = team?.salaryCap ?? 265_000
+        let cap = team?.salaryCap ?? ContractEngine.openingSalaryCap
         for p in roster {
             marketValues[p.id] = ContractEngine.estimateMarketValue(player: p, salaryCap: cap)
         }

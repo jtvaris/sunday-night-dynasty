@@ -58,7 +58,7 @@ enum TamperingRumorEngine {
             .prefix(limit)
 
         let avgCap = allTeams.isEmpty
-            ? 265_000
+            ? ContractEngine.openingSalaryCap
             : allTeams.reduce(0) { $0 + $1.salaryCap } / allTeams.count
 
         return pool.map { player in

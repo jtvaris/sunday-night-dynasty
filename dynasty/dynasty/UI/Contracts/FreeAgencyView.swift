@@ -101,7 +101,7 @@ struct FreeAgencyView: View {
 
     /// The salary cap to use for market value estimates; updated when team is loaded.
     private var currentSalaryCap: Int {
-        team?.salaryCap ?? 265_000
+        team?.salaryCap ?? ContractEngine.openingSalaryCap
     }
 
     /// Current FA round from career state (1-6).
@@ -746,8 +746,8 @@ struct FreeAgencyView: View {
     // MARK: - Cap Impact % Badge (Task 1: "Will use X% of cap")
 
     private func capImpactPctBadge(asking: Int) -> some View {
-        // Use team salaryCap if available, else $260M baseline
-        let cap = team?.salaryCap ?? 260_000
+        // Task #87 / U13: the fallback was a fourth cap constant ($260M).
+        let cap = team?.salaryCap ?? ContractEngine.openingSalaryCap
         let pct = cap > 0 ? Double(asking) / Double(cap) * 100 : 0
         let pctRounded = Int(pct.rounded())
         let color: Color = {
@@ -936,7 +936,7 @@ struct FreeAgencyView: View {
         teamDraftPicks = (try? modelContext.fetch(pickDescriptor)) ?? []
 
         // Generate FA market data
-        let cap = team?.salaryCap ?? 265_000
+        let cap = team?.salaryCap ?? ContractEngine.openingSalaryCap
         let market = FreeAgencyEngine.generateFreeAgentMarket(allPlayers: allFreeAgents, salaryCap: cap)
         for fa in market {
             freeAgentData[fa.player.id] = FreeAgentInfo(

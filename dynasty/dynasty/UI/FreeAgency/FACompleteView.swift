@@ -17,7 +17,7 @@ struct FACompleteView: View {
     @State private var remainingNeeds: [(position: Position, level: String)] = []
     @State private var compPickEstimate: [String] = []
     @State private var mediaQuote: String = ""
-    @State private var baseSalaryCap: Int = 265_000
+    @State private var baseSalaryCap: Int = ContractEngine.openingSalaryCap
     @State private var isLoading: Bool = true
 
     // MARK: - Data Types
