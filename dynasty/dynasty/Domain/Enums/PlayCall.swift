@@ -389,6 +389,50 @@ enum OffensivePlayCall: String, Codable, CaseIterable {
         }
     }
 
+    // MARK: Designed Carrier
+
+    /// Who the DESIGN hands the ball to on a run call.
+    ///
+    /// Most runs are the back's. Four calls are the quarterback's by design
+    /// (the sneaks, the QB draw, the speed option) and one is a receiver's
+    /// (the end around). This is the SINGLE source of truth both halves of
+    /// the engine read: `PlaySimulator` credits the rushing stats and the
+    /// play-by-play line to this man, and the 3D field hands him the ball —
+    /// so the box score, the feed and the choreography can never name three
+    /// different players on the same snap.
+    ///
+    /// It mirrors `RouteSpec.spec(for:).carrierRole` exactly (role 0 = QB,
+    /// role 7 = WR-L, everything else the back); the spec owns the GEOMETRY
+    /// of his track, this owns WHO he is.
+    enum DesignedRusher {
+        /// The starting back (every ordinary carry — and every pass call).
+        case back
+        /// The quarterback keeps it: sneak, push, QB draw, speed option.
+        case quarterback
+        /// The receiver comes back the other way at speed: the end around.
+        case receiver
+    }
+
+    /// The designed ball-carrier for this call (see `DesignedRusher`).
+    /// A pass call has no designed carry, so it reports `.back` — the value
+    /// only ever matters on the simulator's run path.
+    var designedRusher: DesignedRusher {
+        switch self {
+        // RouteSpec carrierRole 0 — the QB's own track is the carry.
+        // (`zoneRead` deliberately stays with the back: its spec draws BOTH
+        // halves of the read but names the give, and the sim has no pull.)
+        case .qbSneak, .tushPush, .qbDraw, .speedOption:
+            return .quarterback
+        // RouteSpec carrierRole 7 — the WR takes it going the other way.
+        // (`jetSweep` is NOT here: its spec motions the slot as a decoy and
+        // hands the sweep to the back, carrierRole 1.)
+        case .endAround:
+            return .receiver
+        default:
+            return .back
+        }
+    }
+
     // MARK: Simulator Hint
 
     /// A lightweight struct the `PlaySimulator` reads to adjust probabilities.

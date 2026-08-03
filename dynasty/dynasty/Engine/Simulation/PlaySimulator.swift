@@ -181,6 +181,7 @@ enum PlaySimulator {
                 offensiveScheme: offensiveScheme,
                 defensiveScheme: defensiveScheme,
                 hint: hint,
+                call: offensiveCall,
                 defensivePackage: defensivePackage,
                 weather: weather,
                 adjustments: adjustments,
@@ -244,6 +245,7 @@ enum PlaySimulator {
                 offensiveScheme: offensiveScheme,
                 defensiveScheme: defensiveScheme,
                 hint: hint,
+                call: offensiveCall,
                 defensivePackage: defensivePackage,
                 weather: weather,
                 adjustments: adjustments,
@@ -1039,6 +1041,11 @@ enum PlaySimulator {
             )
             play.defenseBitOnFake = paBite
             play.passVelocityScale = velocityScale
+            // Choreography surface (additive, no sim effect): the man who blew it
+            // is the target whose familiarity drove the roll — the 3D field breaks
+            // HIS route off early and lets the ball go where it should have been.
+            play.bustKind = .route
+            play.bustPlayerID = target.id
             return play
         }
         let defBustChance = squadBustChance(defensePlayers, scheme: defensiveScheme?.rawValue)
@@ -1046,7 +1053,12 @@ enum PlaySimulator {
             // Blown coverage — the receiver is uncovered, so it is a clean grab,
             // but bounded (round-5 P1): a coverage bust is a chunk gain, not a free
             // deep TD. `famDefBustYardCap` mirrors the offense bust's 0-yard floor.
-            return makeCatch(contested: false, yardCap: famDefBustYardCap)
+            var play = makeCatch(contested: false, yardCap: famDefBustYardCap)
+            // Squad-wide roll — the sim names no defender, so the choreographer
+            // stages the man the coverage assignment already penalizes (the
+            // target's cover man). No player id here on purpose.
+            play.bustKind = .coverage
+            return play
         }
 
         // --- Interception Check ---
@@ -1348,6 +1360,10 @@ enum PlaySimulator {
         offensiveScheme: OffensiveScheme? = nil,
         defensiveScheme: DefensiveScheme? = nil,
         hint: OffensivePlayCall.SimulatorHint? = nil,
+        // The dialed call, when a coach dialed one — it names the DESIGNED
+        // ball-carrier (a keeper is the QB's, an end around the receiver's).
+        // nil (quick sim / season sim) → the back, exactly as before.
+        call: OffensivePlayCall? = nil,
         defensivePackage: DefensivePackage? = nil,
         weather: GameWeather? = nil,
         adjustments: Adjustments? = nil,
@@ -1360,7 +1376,13 @@ enum PlaySimulator {
         // 0 = parity.
         scoreDifferential: Int = 0
     ) -> PlayResult {
-        let rb = findRB(in: offensePlayers)
+        // The man the DESIGN gives it to. Everything below — the yard math, the
+        // fumble roll, the play-by-play line, `keyOffensePlayerID` (and through
+        // it the box score, the feed and the 3D carrier) — rides this one
+        // binding, so a QB sneak is the quarterback's carry and an end around
+        // is the receiver's, instead of the back silently collecting stats for
+        // a run the coach watched somebody else make.
+        let rb = designedCarrier(call: call, in: offensePlayers)
         let rbAttrs = rbAttributes(for: rb)
         let momentumBoost = momentum * 0.05
         // P0-2: team-breadth diminishing-returns scale + garbage-time damp (see
@@ -1573,6 +1595,33 @@ enum PlaySimulator {
             totalYards = Int.random(in: -3...1)
             runWasStuffed = true
         }
+        // Choreography surface (additive, no sim effect): when the carry was
+        // stuffed, was the FAMILIARITY term what actually stuffed it?
+        //
+        // `famRunBust` is one additive slice of `stuffChance` (base front edge
+        // + run key + coached read + bust). Conditional attribution: given that
+        // a stuff happened, the probability the bust slice is what caused it is
+        // exactly `famRunBust / stuffChance` — so rolling that share stamps the
+        // blown-block visual at the sim's TRUE bust rate. (Stamping every stuff
+        // with famRunBust > 0, as the first cut did, showed a whiffed blocker on
+        // ~every stuffed run of any sub-55-familiarity offense, while the bust
+        // term itself was worth a percent or two of the ~18% stuff rate — the
+        // ordinary "the DL just won" stuff must stay ordinary.) Clamped at 1 for
+        // the corner where `stuffChance`'s own 0.04 floor binds below the slice.
+        //
+        // Determinism: the extra draw happens ONLY inside the stuffed branch and
+        // ONLY when the bust term was live at all (famRunBust > 0 — a neutral
+        // squad, or a nil scheme, is 0 and draws nothing), which is exactly the
+        // set of snaps the old code stamped. Every other path keeps its RNG
+        // stream byte-for-byte.
+        var runBustBlockerID: UUID? = nil
+        if runWasStuffed, famRunBust > 0,
+           randomChance(Swift.min(famRunBust / Swift.max(stuffChance, 0.0001), 1.0)) {
+            // The blown assignment is the weakest run blocker on the field — the
+            // 3D field whiffs HIM and lets his man through untouched.
+            runBustBlockerID = startingOL(offensePlayers)
+                .min(by: { olRunBlockRating(for: $0) < olRunBlockRating(for: $1) })?.id
+        }
 
         // --- Breakaway Run Check ---
         // R37: the carrier's VISION finds the crease. Vision + awareness
@@ -1772,6 +1821,10 @@ enum PlaySimulator {
             keyDefensePlayerID: tackler?.id
         )
         if bigHit { play.defensiveHighlight = true }
+        if let runBustBlockerID {
+            play.bustKind = .block
+            play.bustPlayerID = runBustBlockerID
+        }
         return play
     }
 
@@ -2238,7 +2291,10 @@ enum PlaySimulator {
                 ? "\(qb.fullName) throws to \(targetName) for the two-point conversion!"
                 : "\(qb.fullName) throws to \(targetName), but the two-point conversion fails."
         } else {
-            let rb = findRB(in: offensePlayers)
+            // Same designed-carrier rule as the scrimmage run path: a two-point
+            // sneak is the quarterback's, not a back's (the 3D field hands it to
+            // him either way, so the credit and the line have to agree).
+            let rb = designedCarrier(call: offensiveCall, in: offensePlayers)
             keyPlayerID = rb.id
             description = isGood
                 ? "\(rb.fullName) punches it in for the two-point conversion!"
@@ -2277,6 +2333,31 @@ enum PlaySimulator {
         let backs = players.filter { $0.position == .RB }
         if let best = backs.max(by: { $0.overall < $1.overall }) { return best }
         return players.first(where: { $0.position == .FB }) ?? players.first!
+    }
+
+    /// The X receiver — the man `FieldUnit.offense` seats at role 7, so an
+    /// end-around's credited rusher IS the player the 3D field runs.
+    private static func findWR(in players: [SimPlayer]) -> SimPlayer? {
+        players.filter { $0.position == .WR }.max(by: { $0.overall < $1.overall })
+    }
+
+    /// The ball-carrier the CALL designs the run for (`OffensivePlayCall
+    /// .designedRusher`): the quarterback on a sneak/push/QB draw/speed option,
+    /// the X receiver on an end around, the back on everything else.
+    ///
+    /// The starters picked here mirror `FieldUnit.offense`'s role order (best
+    /// QB = role 0, best WR = role 7, `findRB` = role 1), which is what keeps
+    /// the credited rusher, the play-by-play line and the man carrying the ball
+    /// on the 3D field the same person. A nil call — quick sim, season sim, the
+    /// balance harness — always resolves to the back, so those paths are
+    /// byte-identical to before.
+    private static func designedCarrier(call: OffensivePlayCall?,
+                                        in players: [SimPlayer]) -> SimPlayer {
+        switch call?.designedRusher {
+        case .quarterback: return findQB(in: players)
+        case .receiver:    return findWR(in: players) ?? findRB(in: players)
+        case .back, nil:   return findRB(in: players)
+        }
     }
 
     private static func eligibleReceivers(from players: [SimPlayer]) -> [SimPlayer] {

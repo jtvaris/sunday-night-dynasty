@@ -166,6 +166,17 @@ struct PlayMatchups {
     /// dropback — the "QB missed the read" signal for the feed line and his
     /// day grade. Purely presentational; the sim never reads it.
     var qbMissedOpenMan = false
+
+    // MARK: Blown Assignment (choreography surface)
+
+    /// WHAT was blown on this snap, when the SIM's familiarity roll produced a
+    /// bust (`PlayResult.bustKind`) — or, failing that, when the feed's own
+    /// bust callout named one. nil = everybody executed.
+    var bustKind: PlayBustKind?
+    /// Offense role of the man who blew it (route / block busts).
+    var bustOffRole: Int?
+    /// Defense role of the man who blew it (coverage busts).
+    var bustDefRole: Int?
 }
 
 // MARK: - Matchup Resolver
@@ -210,6 +221,11 @@ enum MatchupResolver {
             resolveOpenNonTarget(&m, play: play, offense: offense, defense: defense)
         }
 
+        // Blown assignment → a ROLE the choreographer can stage. The sim's own
+        // familiarity bust wins; the feed's presentation bust event is the
+        // fallback so the 3D field always agrees with the line the coach reads.
+        resolveBust(&m, play: play, offense: offense, defense: defense)
+
         // Star showcase: an 88+ OVR winner gets flagged so the UI can shine.
         m.events = m.events.map { event in
             let winner: SimPlayer? = event.offenseWon
@@ -223,6 +239,40 @@ enum MatchupResolver {
     }
 
     private typealias Event = PlayMatchups.Event
+
+    // MARK: Blown Assignment
+
+    /// Turns the sim's bust stamp into role indices the 3D choreographer can
+    /// stage. Nothing here rolls anything: it only maps a decision the
+    /// simulator (or, as a fallback, the already-emitted feed callout) made.
+    ///   • `.route`    → the receiver who broke it off (the sim's target).
+    ///   • `.block`    → the blocker the sim named, else the point-of-attack
+    ///                   lineman the feed's bust event already blamed.
+    ///   • `.coverage` → the assigned cover man on the target (the squad-wide
+    ///                   defensive roll names nobody, so we stage the man the
+    ///                   coverage assignment itself penalizes).
+    private static func resolveBust(_ m: inout PlayMatchups, play: PlayResult,
+                                    offense: FieldUnit, defense: FieldUnit) {
+        if let kind = play.bustKind {
+            m.bustKind = kind
+            switch kind {
+            case .route, .block:
+                m.bustOffRole = offense.role(of: play.bustPlayerID)
+                    ?? (kind == .route ? m.targetOffRole : nil)
+            case .coverage:
+                m.bustDefRole = defense.role(of: play.bustPlayerID)
+                    ?? m.targetOffRole.map { coverFor(offRole: $0) }
+            }
+            // A stamp that can't be placed on the field is no stamp at all.
+            if m.bustOffRole == nil && m.bustDefRole == nil { m.bustKind = nil }
+            if m.bustKind != nil { return }
+        }
+        // Fallback: the feed already told the coach somebody blew it.
+        guard let event = m.events.first(where: { $0.kind == .bust }),
+              let offRole = event.offRole else { return }
+        m.bustOffRole = offRole
+        m.bustKind = (2...6).contains(offRole) ? .block : .route
+    }
 
     // MARK: Sack
 

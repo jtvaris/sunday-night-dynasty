@@ -1,5 +1,22 @@
 import Foundation
 
+// MARK: - Busted Assignment
+
+/// WHAT a player got wrong when the sim's scheme-familiarity roll came up a
+/// blown assignment. The 3D choreographer reads it (through
+/// `PlayMatchups.bustKind`) to stage the mistake — a route broken off early, a
+/// missed block, a coverage bust — so the coach SEES the play the sim already
+/// decided. Never a separate dice roll: this only ever labels a bust the
+/// simulator itself rolled.
+enum PlayBustKind: String, Codable {
+    /// A receiver ran the wrong depth / broke it off early (offense pass bust).
+    case route
+    /// A blocker missed his man at the point of attack (run-side bust).
+    case block
+    /// A coverage defender blew his assignment — the man came wide open.
+    case coverage
+}
+
 struct PlayResult: Codable {
     var playNumber: Int
     /// 1–4 for regulation quarters, 5 for overtime
@@ -68,6 +85,15 @@ struct PlayResult: Codable {
     /// The live match view stages that rusher beating his block and closing to
     /// the launch point. Presentation only — no sim math or box-score stat.
     var pressured: Bool? = nil
+    // Scheme-familiarity bust signals (optional so older encoded plays keep
+    // decoding; nil = no bust, exactly as before).
+    /// Set when the sim's familiarity roll produced a blown assignment on this
+    /// snap. `MatchupResolver` turns it into a role the choreographer stages.
+    var bustKind: PlayBustKind? = nil
+    /// The player who blew it, when the sim named one (a route bust names the
+    /// target). nil = derive the role from the assignment (`bustKind`).
+    var bustPlayerID: UUID? = nil
+
     /// True when the pressured throw was a DELIBERATE throwaway to open space
     /// (not a hurried near-target miss): the 3D ball is a low flat heave to the
     /// sideline/out of bounds with no contester. Only meaningful when

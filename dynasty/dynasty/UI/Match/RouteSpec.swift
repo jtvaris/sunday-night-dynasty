@@ -335,8 +335,10 @@ struct RouteSpec {
             ], primaryRole: 0, carrierRole: 0)
         case .endAround:
             // The WR comes back the other way at speed; the back sells flow.
-            // `carrierRole: 7` is presentation-only (the sim picks its own
-            // rusher) — the same mismatch `jetSweep` already carries.
+            // `carrierRole: 7` is the X receiver, and the SIM credits him too
+            // (`OffensivePlayCall.designedRusher == .receiver` → the same
+            // best-WR that `FieldUnit.offense` seats at role 7), so the box
+            // score, the feed line and the man carrying the ball agree.
             return RouteSpec(routes: [
                 7: [W(-1.5, -12), W(-0.5, -16), W(3, -18), W(9, -19)],
                 1: [W(-1.2, 3.5), W(0, 6)],
@@ -547,6 +549,130 @@ struct RouteSpec {
             return RouteSpec(routes: [0: [W(-7, 0)]], primaryRole: 0, carrierRole: 0)
         case .kneel:
             return RouteSpec(routes: [0: [W(-4, 0)]], primaryRole: 0, carrierRole: 0)
+        }
+    }
+
+    // MARK: - Play Shape (how the call is EXECUTED)
+    //
+    // `routes` says where the skill players go. `Shape` says what everybody
+    // ELSE does with the same call: how the front blocks it, what the QB does
+    // with the ball, how long he holds it. Both are data — the choreographer
+    // reads them, it never switches on a play by name.
+
+    /// How the offensive line works a run concept.
+    enum RunScheme {
+        /// Not a run.
+        case none
+        /// Zone: the whole front slides in the carrier's flow and reaches.
+        case zone
+        /// Gap: down blocks with a puller wrapping to the point of attack.
+        case gap
+        /// Man/down blocking: everybody covers his own man, straight ahead.
+        case manDown
+        /// Everybody surges forward as one body (sneak / push).
+        case surge
+    }
+
+    /// What the QB does after the exchange.
+    enum QBAction {
+        /// Straight-back drop to a launch point.
+        case dropback
+        /// Designed rollout — the spec draws HIS track (boot / sprint out).
+        case rollout
+        /// Hand the ball off at the mesh.
+        case handoff
+        /// Pitch it out.
+        case pitch
+        /// He keeps it (sneak, draw, option, scramble).
+        case keeper
+        /// Ride the mesh, then pull it and throw NOW.
+        case rpoRide
+    }
+
+    /// Everything the choreographer needs about a call beyond its routes.
+    struct Shape {
+        var run: RunScheme = .none
+        /// A gap scheme's backside guard wraps to the point of attack.
+        var pulls = false
+        /// Drop depth in STEPS (0 = the ball is out now, 3/5/7 = real drops).
+        var dropSteps: Int = 5
+        var qb: QBAction = .dropback
+        /// The box gets a run fake before the drop.
+        var playAction = false
+        /// Run-fake-then-throw: the ride is real, the release is instant.
+        var rpo = false
+        /// A slow screen: invite the rush, leak the line out in front.
+        var slowScreen = false
+    }
+
+    /// The shape of one call. Everything is read from properties the call
+    /// already publishes (`isRun`, `simulatorHint.passDepth`,
+    /// `simulatorHint.isPlayAction`, `formationFamily`, and the spec's own
+    /// `carrierRole` / role-0 track); the only bespoke table is the four-way
+    /// run-scheme grouping, which no other type can infer.
+    static func shape(for call: OffensivePlayCall?) -> Shape {
+        var shape = Shape()
+        guard let call else { return shape }
+        let spec = RouteSpec.spec(for: call)
+        let hint = call.simulatorHint
+        shape.playAction = hint.isPlayAction
+        shape.rpo = call.category == "RPO"
+
+        // The legacy wart: `.screen` reports `isRun` but is thrown. Every
+        // screen is a pass on the field, so the category decides here.
+        let isScreen = call.category == "Screen"
+        if call.isRun && !isScreen {
+            shape.run = runScheme(for: call)
+            shape.pulls = [.power, .counter, .trap].contains(call)
+            shape.dropSteps = 0
+            // The spec already says who ends up with it: a role-0 carrier is a
+            // keeper, a toss is a pitch, everything else is a mesh hand-off.
+            if call == .toss {
+                shape.qb = .pitch
+            } else if spec.carrierRole == 0 {
+                shape.qb = .keeper
+            } else {
+                shape.qb = .handoff
+            }
+            // A draw sells the drop first, so it still needs drop depth.
+            if call == .draw || call == .qbDraw { shape.dropSteps = 3 }
+            return shape
+        }
+
+        shape.slowScreen = call == .screen || call == .slipScreen
+        switch hint.passDepth {
+        case .short: shape.dropSteps = 3
+        case .medium: shape.dropSteps = 5
+        case .deep: shape.dropSteps = 7
+        case nil: shape.dropSteps = 5
+        }
+        // The ball is out on rhythm: quick screens and RPOs never really drop.
+        if shape.rpo || isScreen { shape.dropSteps = 0 }
+        if shape.rpo {
+            shape.qb = .rpoRide
+        } else if spec.routes[0] != nil {
+            // The design draws the passer a track — that IS the boot/sprint-out.
+            shape.qb = .rollout
+        } else {
+            shape.qb = .dropback
+        }
+        return shape
+    }
+
+    /// The four blocking families. Zone reaches and flows, gap pulls and
+    /// wraps, man/down blocking fires straight off the ball, and a surge is
+    /// eleven men pushing one pile.
+    private static func runScheme(for call: OffensivePlayCall) -> RunScheme {
+        switch call {
+        case .insideZone, .wideZone, .outsideRun, .toss, .draw,
+             .zoneRead, .qbDraw, .jetSweep, .endAround, .speedOption, .screen:
+            return .zone
+        case .power, .counter, .trap:
+            return .gap
+        case .qbSneak, .tushPush:
+            return .surge
+        default:
+            return .manDown
         }
     }
 
