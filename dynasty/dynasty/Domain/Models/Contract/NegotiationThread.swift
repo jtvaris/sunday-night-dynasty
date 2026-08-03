@@ -62,6 +62,14 @@ enum AgentToneKey: String, Codable, CaseIterable {
 /// Stance, not money: an agent refuses because of what the building has done to
 /// his man, not because of a number. Each case has its own flavor line in
 /// `AgentDialogue.refusalLine`.
+///
+/// **The reason decides what money cannot fix.** Four of these are moods with a
+/// price attached somewhere down the line — start him, win a few, let the winter
+/// pass — and they lift on their own as the inputs move. ``ringChasing`` is the
+/// one that is not a mood at all: an elite competitor on a club that is going
+/// nowhere does not want a bigger number, he wants a different season, and no
+/// offer this front office can write is the thing he is asking for. See
+/// ``neverSignsAtAnyPrice`` and ``exitCondition``.
 enum AgentRefusalReason: String, Codable, CaseIterable {
     /// He is not playing. No contract talk survives a healthy scratch.
     case benched
@@ -71,6 +79,13 @@ enum AgentRefusalReason: String, Codable, CaseIterable {
     case wantsOut
     /// Last contract of a career he intends to end on his own terms.
     case ridingIntoRetirement
+    /// **Never-sign.** Elite, fiercely competitive, and out of patience with a
+    /// club that is going nowhere. He is not holding out for more money — he is
+    /// holding out for a contender, and the only thing that reopens the door is
+    /// the record. Deliberately rare: see
+    /// `ContractNegotiationEngine.ringChaserVerdict` for the eligibility gates
+    /// that hold it to a handful of men league-wide per season.
+    case ringChasing
 
     /// Short label for the entry-point badge.
     var badgeLabel: String {
@@ -79,6 +94,32 @@ enum AgentRefusalReason: String, Codable, CaseIterable {
         case .losingCulture:        return "Not talking"
         case .wantsOut:             return "Wants out"
         case .ridingIntoRetirement: return "Weighing retirement"
+        case .ringChasing:          return "Wants a winner"
+        }
+    }
+
+    /// Whether money is simply the wrong instrument here.
+    ///
+    /// Load-bearing rather than decorative: the pestering path reads it to
+    /// decide whether an offer is a bad idea (the other four — he may come round
+    /// next league year) or a category error (this one — he never will, at any
+    /// number, until the standings change).
+    var neverSignsAtAnyPrice: Bool { self == .ringChasing }
+
+    /// The single sentence that says what WOULD change his mind, shown next to
+    /// the refusal so the stance is a puzzle rather than a wall.
+    var exitCondition: String {
+        switch self {
+        case .benched:
+            return "Play him. Snaps reopen this conversation; money does not."
+        case .losingCulture:
+            return "Win games. He is listening to the record, not the offer."
+        case .wantsOut:
+            return "Mend it or move him — he has already made his decision about the room."
+        case .ridingIntoRetirement:
+            return "Give him the winter. He may feel differently about football next league year."
+        case .ringChasing:
+            return "Become a contender. No price signs him while this club is going nowhere."
         }
     }
 
@@ -99,13 +140,43 @@ enum AgentRefusalReason: String, Codable, CaseIterable {
     /// is a mood about a moment; it has to be allowed to change.
     ///
     /// The verdict belongs to `ContractNegotiationEngine.refusalVerdict`, which
-    /// calls this and then adds the one door it owns (a mercenary who will not
-    /// sign up to lose). The chat layer keeps owning the *wording*. Everything
-    /// here reads stance signals (snaps, record, tenure, age), never money.
+    /// calls this and then adds the two doors it owns (the ring-chaser, and a
+    /// mercenary who will not sign up to lose). The chat layer keeps owning the
+    /// *wording*. Everything here reads stance signals (snaps, record, tenure,
+    /// age), never money.
+    ///
+    /// ## The rarity budget
+    ///
+    /// **The mass of negotiations must go normally.** A refusal is a story beat,
+    /// and a story beat that fires on a fifth of the roster is a mechanic the
+    /// user routes around rather than reacts to. The budget this model is
+    /// written to is `< 5 %` of re-sign candidates refusing for ANY reason,
+    /// which is why every rule below is gated **structurally** first and only
+    /// then by a roll:
+    ///
+    /// | reason | structural gate | roll | ≈ share of candidates |
+    /// |---|---|---|---|
+    /// | retirement | 35+, morale < 70 | 25 % | ~0.2 % |
+    /// | benched | 72+ OVR, 0 starts by week 6, morale < 60 | 30 % | ~0.6 % |
+    /// | wants out | morale < 40, ≤ 2 years here | 35 % | ~0.8 % |
+    /// | losing culture | ≤ .333 ball through 8 games, morale < 55 | 25 % | ~1.3 % |
+    ///
+    /// The structural half is what makes the budget hold as a league ages: rolls
+    /// alone would scale with roster size, while "an above-replacement man who
+    /// has not started a game by week six AND is unhappy about it" stays a small
+    /// and self-limiting population however many players exist.
+    ///
+    /// The `overall` gate on `.benched` is the single biggest change from the
+    /// first cut of this model, and it is worth naming: without it, *every
+    /// backup on the roster* — thirty men per club, most of whom have never
+    /// started a game in their lives and are not remotely insulted by that —
+    /// was rolling for a refusal, which put the real figure north of 10 %.
+    /// A healthy scratch is only an insult to somebody who should be playing.
     static func evaluate(
         playerID: UUID,
         season: Int,
         age: Int,
+        overall: Int,
         morale: Int,
         gamesStartedThisSeason: Int,
         loyaltyYears: Int,
@@ -119,28 +190,30 @@ enum AgentRefusalReason: String, Codable, CaseIterable {
         let seasonSalt = UInt64(bitPattern: Int64(season)) &* 0x9E37_79B9_7F4A_7C15
         let roll = Int((seed(playerID, byteOffset: 4) ^ seasonSalt) % 100)
 
-        // Riding into retirement: an old man on a bad team who has already
-        // given this building years. Checked first — it outranks every other
-        // reason he might have to say no.
-        if age >= 35, morale < 80, roll < 45 {
+        // Riding into retirement: an old man who has already given the game
+        // everything he has. Checked first — it outranks every other reason he
+        // might have to say no.
+        if age >= 35, morale < 70, roll < 25 {
             return .ridingIntoRetirement
         }
 
-        // Benched: snaps are the loudest signal in the building. Only counts
-        // once enough of the season has been played for "0 starts" to mean
-        // something.
-        if weeksPlayed >= 6, gamesStartedThisSeason == 0, morale < 65, roll < 70 {
+        // Benched: snaps are the loudest signal in the building — but only to a
+        // man the building should be playing. Below 72 he is a backup, and a
+        // backup's agent does not open a contract call by complaining about
+        // snaps he was never promised.
+        if weeksPlayed >= 6, gamesStartedThisSeason == 0, overall >= 72,
+           morale < 60, roll < 30 {
             return .benched
         }
 
-        // Wants out: unhappy and not tied to the place.
-        if morale < 45, loyaltyYears <= 2, roll < 55 {
+        // Wants out: genuinely unhappy and not tied to the place.
+        if morale < 40, loyaltyYears <= 2, roll < 35 {
             return .wantsOut
         }
 
         // Losing culture: the record speaks, and he is not deaf to it.
         let played = teamWins + teamLosses
-        if played >= 8, teamWins * 3 <= played, morale < 60, roll < 40 {
+        if played >= 8, teamWins * 3 <= played, morale < 55, roll < 25 {
             return .losingCulture
         }
 
@@ -265,6 +338,20 @@ enum NegotiationThreadStatus: String, Codable {
 
     var isTerminal: Bool { self != .open }
 
+    /// Whether the composer stays live in this state.
+    ///
+    /// **A refusal is not a closed door, it is an answer you did not like.** The
+    /// club can always table another offer — that is what a front office DOES,
+    /// and a screen that takes the composer away is telling the user a rule the
+    /// league does not have. What it costs to keep asking is the agent's problem
+    /// to state and `ContractNegotiationEngine`'s to price (the ask ratchets, the
+    /// man's morale slips, the ledger remembers); it is not the UI's to prevent.
+    ///
+    /// `.brokenOff` is deliberately NOT here: that one is the agent hanging up
+    /// on a lowball for the offseason, which is a consequence the user earned
+    /// rather than a stance he can keep pushing against.
+    var acceptsOffers: Bool { self == .open || self == .refused }
+
     /// What the entry button badges when a thread is in this state.
     var entryBadge: String? {
         switch self {
@@ -307,6 +394,14 @@ struct NegotiationThread: Codable, Identifiable {
     /// documented "each insult costs a round of patience" never fired. Optional
     /// so a transcript written before this field existed still decodes.
     var insultCount: Int?
+    /// Offers tabled at a client who had already declined to negotiate.
+    ///
+    /// Separate from ``insultCount`` because they are different sins with
+    /// different tells: an insult is a number that was too low, a pester is a
+    /// number offered to a man who said the number was not the problem. The
+    /// agent's answer escalates on this count, and it is what the morale write
+    /// is metered by. Optional so transcripts written before this field decode.
+    var pesterCount: Int?
     var messages: [NegotiationThreadMessage]
     /// The agent's standing counter — what "Accept" accepts.
     var pendingAgentOffer: NegotiationOfferSnapshot?
@@ -346,6 +441,7 @@ struct NegotiationThread: Codable, Identifiable {
         season: Int,
         round: Int = 0,
         insultCount: Int = 0,
+        pesterCount: Int = 0,
         messages: [NegotiationThreadMessage] = [],
         pendingAgentOffer: NegotiationOfferSnapshot? = nil,
         openingAsk: NegotiationOfferSnapshot? = nil,
@@ -364,6 +460,7 @@ struct NegotiationThread: Codable, Identifiable {
         self.season = season
         self.round = round
         self.insultCount = insultCount
+        self.pesterCount = pesterCount
         self.messages = messages
         self.pendingAgentOffer = pendingAgentOffer
         self.openingAsk = openingAsk
@@ -480,6 +577,14 @@ enum ContactAgentEntry {
     /// The "wants more" note a begrudging signing left behind, if any.
     static func lingeringNote(for player: Player, season: Int) -> String? {
         NegotiationThreadStore.liveThread(for: player, season: season)?.lingeringNote
+    }
+
+    /// What would change a refusing client's mind, for a surface that wants to
+    /// show the puzzle rather than only the wall. `nil` unless this player's
+    /// live thread is a refusal.
+    static func exitCondition(for player: Player, season: Int) -> String? {
+        NegotiationThreadStore.liveThread(for: player, season: season)?
+            .refusalReason?.exitCondition
     }
 
     /// Subtitle for a button that also wants to show a money hint: the thread

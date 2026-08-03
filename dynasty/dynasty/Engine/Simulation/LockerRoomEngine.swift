@@ -156,11 +156,22 @@ enum LockerRoomEngine {
     /// Runs ONCE per season (week 18, before contracts tick down), and the net
     /// swing is clamped to ±`seasonMoraleSwingCap` so a single call can never
     /// dominate the weekly loop that has been running all year.
+    /// - Parameter salaryCap: the club's ACTUAL cap for the league year being
+    ///   settled. The pay-vs-market term below calls
+    ///   `ContractEngine.estimateMarketValue`, which defaults to the season-one
+    ///   265 000 — so on a season-ten save every player was compared against a
+    ///   market priced for a cap the league had long outgrown, salaries had
+    ///   inflated with the real cap, and the "significantly underpaid" branch
+    ///   had effectively stopped firing while the "great deal" branch fired for
+    ///   nearly everybody. Defaulted rather than required so no call site
+    ///   breaks; **`WeekAdvancer` should pass `team.salaryCap`** (see the report
+    ///   for the exact line).
     static func applyMoraleEffects(
         players: [Player],
         teamWins: Int,
         teamLosses: Int,
-        chemistry: Int
+        chemistry: Int,
+        salaryCap: Int = 265_000
     ) {
         let totalGames = teamWins + teamLosses
         let winRate = totalGames > 0 ? Double(teamWins) / Double(totalGames) : 0.5
@@ -191,7 +202,7 @@ enum LockerRoomEngine {
             }
 
             // --- Contract situation: underpaid players lose morale ---
-            let marketValue = ContractEngine.estimateMarketValue(player: player)
+            let marketValue = ContractEngine.estimateMarketValue(player: player, salaryCap: salaryCap)
             let payRatio = marketValue > 0 ? Double(player.annualSalary) / Double(marketValue) : 1.0
             if payRatio < 0.65 {
                 // Significantly underpaid

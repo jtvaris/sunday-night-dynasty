@@ -1403,14 +1403,20 @@ enum FreeAgencyEngine {
         }
 
         if let offer = playerOffer {
+            // The user's own club is a club. Its record was `nil` here, which
+            // meant a `.winning`-motivated free agent gave every AI bidder a
+            // record bonus and the user none — his 13-3 season was worth exactly
+            // nothing at the table, and a legacy veteran could not tell a
+            // contender from a tyre fire if the contender was the user.
+            let ownTeam = userTeamID.flatMap { id in teams.first { $0.id == id } }
             allBids.append(Bid(
                 teamID: nil,
                 teamName: "Your Team",
                 salary: offer.salary,
                 years: offer.years,
                 isPlayer: true,
-                mediaMarket: nil,
-                teamRecord: nil,
+                mediaMarket: ownTeam?.mediaMarket,
+                teamRecord: ownTeam.map { (wins: $0.wins, losses: $0.losses) },
                 rosterTeamID: userTeamID
             ))
         }
@@ -1514,6 +1520,17 @@ enum FreeAgencyEngine {
                 score *= 1.0 + Double(bid.years) * 0.05
             }
 
+            // **The legacy veteran's half of the Brady clause.**
+            //
+            // The extension side of this stance is a discount for a contender
+            // (`ContractNegotiationEngine`'s team term). This is the free-agent
+            // side, and it has to be strong enough to actually LOSE the man a
+            // cheque: an aging great choosing a winner over money is only a
+            // story if the money sometimes loses. At ±25 % it takes roughly a
+            // 50 % overpay for a 4-12 club to outbid a contender — which is
+            // about what it took in real life, and never a certainty either way.
+            score *= legacyVeteranPreference(player: player, record: bid.teamRecord)
+
             return score
         }
 
@@ -1541,6 +1558,31 @@ enum FreeAgencyEngine {
                 shoppingAround: false
             )
         }
+    }
+
+    // MARK: - Legacy Veteran Preference
+
+    /// How much an aging great wants to play for THIS club, as a multiplier on
+    /// the money it is offering.
+    ///
+    /// `1.0` for everybody who is not a legacy veteran, so this is a no-op on
+    /// the overwhelming majority of the market — and a deliberate no-op on the
+    /// AI-vs-AI pass, which never calls `resolvePlayerDecision` at all. The
+    /// stance belongs to the decisions a player actually makes between named
+    /// suitors, not to the bulk market's cap arithmetic.
+    ///
+    /// A missing record reads as 1.0 rather than as a loser: "I could not find
+    /// out how this team is doing" is not a reason to walk away from it.
+    static func legacyVeteranPreference(
+        player: Player,
+        record: (wins: Int, losses: Int)?
+    ) -> Double {
+        guard ContractNegotiationEngine.isLegacyVeteran(player), let record else { return 1.0 }
+        let played = record.wins + record.losses
+        guard played >= 6 else { return 1.0 }
+        let winPct = Double(record.wins) / Double(played)
+        // −25 % at winless, +25 % at unbeaten, straight through 1.0 at .500.
+        return 1.0 + (winPct - 0.5) * 0.5
     }
 
     // MARK: - Media Headlines

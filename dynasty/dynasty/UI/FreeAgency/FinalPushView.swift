@@ -49,14 +49,17 @@ struct FinalPushView: View {
     private func reSignSituation(for player: Player) -> NegotiationSituation {
         let wins = team?.wins ?? 0
         let losses = team?.losses ?? 0
-        let played = wins + losses
+        // "Contender" comes from `ContractNegotiationEngine.isContender` (the
+        // default when the parameter is omitted) rather than being spelled out
+        // here — this screen used to carry its own copy of the threshold, which
+        // meant the ring-chaser's exit condition and this screen agreed only by
+        // coincidence.
         return ContractNegotiationEngine.situation(
             for: player,
             season: career.currentSeason,
             teamWins: wins,
             teamLosses: losses,
-            weeksPlayed: max(played, career.currentWeek),
-            isContender: played >= 6 && Double(wins) / Double(max(1, played)) >= 0.65
+            weeksPlayed: max(wins + losses, career.currentWeek)
         )
     }
 
@@ -574,6 +577,16 @@ struct FinalPushView: View {
                         // R22: hardliner freeze-out persists for the offseason.
                         NegotiationLockRegistry.lock(player.id)
                     }
+                    // Pestering costs the man morale here exactly as it does in
+                    // the chat: the ask ratcheted inside `evaluateReSignOffer`,
+                    // and the engine cannot reach the player row to do the rest.
+                    // Detected by the count moving on a REJECTED offer — the
+                    // only way that happens is the refusal path.
+                    if case .rejected = outcome.response,
+                       outcome.insultCount > (decisions[player.id]?.insultCount ?? 0) {
+                        player.morale = max(1, min(100,
+                            player.morale - ContractNegotiationEngine.pesterMoraleCost))
+                    }
                     decisions[player.id]?.insultCount = outcome.insultCount
                     if let counter = outcome.standingAsk {
                         decisions[player.id]?.standingAsk = NegotiationOfferSnapshot(counter)
@@ -824,10 +837,29 @@ struct FinalPushView: View {
         )
 
         if demand.isRefusing {
+            // **Pestering, Quick-Offer edition.** Same rule as the chat: the
+            // door being shut does not stop the club offering, and the offer
+            // does not stop the door being shut. `respond` books the insult and
+            // ratchets the ask, and the count rides back out so the NEXT Quick
+            // Offer is graded against the hardened number — which is the only
+            // thing that makes repeated pushing cost anything on this screen.
+            let response = ContractNegotiationEngine.respond(
+                gmOffer: NegotiationOffer(
+                    years: offeredYears,
+                    annualSalary: offeredSalary,
+                    signingBonus: 0,
+                    guaranteedPercent: 0,
+                    noTradeClause: false
+                ),
+                player: player,
+                demand: demand,
+                previousAgentOffer: standingAsk ?? demand.openingOffer,
+                roundNumber: roundNumber
+            )
             return ReSignOutcome(
                 response: .rejected(reason: refusalReason(player: player, reason: demand.refusalReason)),
                 standingAsk: standingAsk,
-                insultCount: insultCount
+                insultCount: response.demand.insultCount
             )
         }
 
@@ -909,6 +941,11 @@ struct FinalPushView: View {
             return "\(player.firstName) has already decided he wants out"
         case .ridingIntoRetirement:
             return "He's weighing retirement and won't commit to a new deal"
+        case .ringChasing:
+            // Says "not the money" explicitly. On a screen whose whole idiom is
+            // "offer more", a refusal that does not close the door on money is
+            // read as a hard negotiation and answered with a bigger number.
+            return "He wants to play for a contender \u{2014} no offer changes that while this team is going nowhere"
         }
     }
 

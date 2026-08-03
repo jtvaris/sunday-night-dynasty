@@ -245,11 +245,60 @@ struct NegotiationSituation {
     var weeksPlayed: Int = 0
     /// The club is a real contender this season. A legacy-hunter discounts for
     /// this and only this.
+    ///
+    /// Defined in ONE place — `ContractNegotiationEngine.isContender(wins:losses:)`
+    /// — because three systems now turn on it (the legacy veteran's discount,
+    /// the ring-chaser's exit condition, the team term in the breakdown) and a
+    /// second definition living in a View would mean the chat could call a club
+    /// a contender while the stance model called it a loser.
     var isContender: Bool = false
     /// He is coming off the best season of his career and both sides know it.
     var cameOffCareerYear: Bool = false
+    /// **He took a prove-it deal and won the bet.**
+    ///
+    /// The other half of the prove-it story, and the reason a short deal is a
+    /// decision rather than a free discount: a man who signed one year to
+    /// rebuild his market and then played like it comes back to the table
+    /// holding the receipts. Set by
+    /// `ContractNegotiationEngine.situation(for:…)` from the persisted
+    /// `ProveItRegistry` plus a season that beat expectation; the neutral
+    /// identity is `false`, so nothing in the AI market can be moved by it.
+    var provedTheBet: Bool = false
 
     static let neutral = NegotiationSituation()
+}
+
+// MARK: - Negotiation Stance
+
+/// The situation-driven character of one negotiation.
+///
+/// Three cases the money alone cannot express, each with its own trigger, its
+/// own exit and its own eligibility gate:
+///
+/// | stance | trigger | what it does | exit |
+/// |---|---|---|---|
+/// | ``ringChaser`` | 88+ OVR, fiercely competitive, club going nowhere | refuses at ANY price, may demand a trade | the club becomes a contender |
+/// | ``legacyVeteran`` | 33+, 82+ OVR | discounts hard for a contender; as an FA walks away from a loser for less money | ceases when he is no longer elite |
+/// | ``proveIt`` | market marked down (crashed value, low morale, past peak) | takes a short, clause-heavy bet readily | he plays the season |
+/// | ``provenBet`` | won the prove-it bet last year | opens hardline: "I bet on myself and won" | the deal gets done |
+///
+/// Raw-string backed for the same migration-safety reason `AgentToneKey` is:
+/// a persisted transcript must still decode when this vocabulary grows.
+enum NegotiationStance: String, Codable, CaseIterable {
+    case ringChaser
+    case legacyVeteran
+    case proveIt
+    case provenBet
+
+    /// One line for the chat header / roster row.
+    var label: String {
+        switch self {
+        case .ringChaser:    return "Chasing a ring"
+        case .legacyVeteran: return "Legacy veteran"
+        case .proveIt:       return "Betting on himself"
+        case .provenBet:     return "Won his bet"
+        }
+    }
 }
 
 // MARK: - Contract Demand
@@ -304,6 +353,17 @@ struct ContractDemand {
     let personaTone: AgentToneKey
     /// Set only when `personaTone == .refusing`.
     let refusalReason: AgentRefusalReason?
+    /// The situation-driven character of this negotiation, when it has one.
+    ///
+    /// Not a fifth tone and not a second refusal: a stance is the *story* the
+    /// numbers are already telling, named so the chat can say it out loud. All
+    /// three are derived from the same inputs the money is, so nothing here can
+    /// disagree with the ask.
+    let stance: NegotiationStance?
+
+    /// No offer this club can write will be accepted. Distinct from
+    /// ``isRefusing``, which merely means he is not at the table today.
+    var neverSigns: Bool { refusalReason?.neverSignsAtAnyPrice == true }
 
     // MARK: Breakdown
     let gmAdjustment: GMAdjustment
@@ -393,6 +453,7 @@ struct ContractDemand {
             isProveIt: isProveIt,
             personaTone: personaTone,
             refusalReason: refusalReason,
+            stance: stance,
             gmAdjustment: gmAdjustment,
             situationBreakdown: situationBreakdown,
             insultCount: insultCount + 1,
@@ -472,7 +533,64 @@ enum ContractNegotiationEngine {
 
     /// What a lowball costs the GM: the ask (and the floor with it) moves up
     /// 6 %, and `ContractDemand.maxRounds` loses a round.
+    ///
+    /// Also what one round of PESTERING costs — an offer tabled at a man who
+    /// has already said the number is not the problem rides the same ratchet,
+    /// deliberately, so the two ways of not listening cost the same.
     static let insultRatchet = 1.06
+
+    // MARK: - Stance Tuning
+    //
+    // The eligibility gates and prices for the three situation-driven stances,
+    // in one block so the rarity budget is auditable in one read rather than
+    // spread across five functions. See `stanceCensus` to measure the result
+    // against a real league instead of against this arithmetic.
+
+    /// Rating floor for a ring-chaser. 88 is roughly the top 2.5 % of a
+    /// calibrated league — the tier where a man is genuinely the reason a team
+    /// might win, and therefore genuinely entitled to be angry that it does not.
+    static let ringChaserOverallGate = 88
+
+    /// Competitiveness floor. `Player.competitiveness` sits at 55 by default, so
+    /// 80 selects the men the trait is actually about rather than everyone who
+    /// dislikes losing (which is everyone).
+    static let ringChaserCompetitivenessGate = 80
+
+    /// The tiebreak draw among the handful who clear every structural gate.
+    /// Not season-salted: see `ringChaserVerdict` for why a never-sign stance
+    /// must persist until its stated exit condition is met.
+    static let ringChaserDraw = 0.5
+
+    /// A legacy veteran is old AND still elite. Old alone is a decline story;
+    /// this is the other one.
+    static let legacyVeteranAgeGate = 33
+    static let legacyVeteranOverallGate = 82
+
+    /// What an aging great knocks off his ask to play for a contender. Stacks
+    /// with the `.winning` motivation discount rather than replacing it — a man
+    /// can be both, and Brady was.
+    static let legacyVeteranDiscount = 0.10
+
+    /// What winning a prove-it bet is worth on the next ask. Large on purpose:
+    /// it is the entire reason a player would take one year instead of four,
+    /// and a premium the club can shrug off makes the short deal a free option.
+    static let provenBetPremium = 0.10
+
+    /// Extra weight a prove-it client puts on performance clauses. He is not
+    /// being paid for last season, he is being paid for the next one — so
+    /// money that only arrives if he is right is money he was going to bet on
+    /// anyway.
+    static let proveItIncentiveCredit = 1.35
+
+    /// What a prove-it client will shave for a genuinely short deal. He wants
+    /// back on the market; a one- or two-year term is part of the price he is
+    /// paying for that, not a concession the club has to buy.
+    static let proveItShortDealCredit = 1.05
+
+    /// Morale a player loses each time the club tables an offer his agent has
+    /// already declined to consider. Small, and it has to be: pestering is
+    /// rude, not career-altering, and the real cost is the ratcheting ask.
+    static let pesterMoraleCost = 1
 
     // MARK: - Demand Model
 
@@ -542,6 +660,9 @@ enum ContractNegotiationEngine {
             ? refusalVerdict(player: player, situation: situation, gm: gm)
             : nil
         let proveIt = wantsProveItDeal(player: player, situation: situation)
+        let stance = self.stance(
+            player: player, situation: situation, refusal: refusal, isProveIt: proveIt
+        )
 
         return ContractDemand(
             playerID: player.id,
@@ -557,8 +678,11 @@ enum ContractNegotiationEngine {
             guaranteedPercent: preferredGuaranteedPercent(player: player, persona: persona),
             wantsNoTradeClause: player.overall >= 90 && unitDraw(player.id, salt: 0x9C) < 0.5,
             isProveIt: proveIt,
-            personaTone: refusal == nil ? openingTone(persona: persona, player: player) : .refusing,
+            personaTone: refusal == nil
+                ? openingTone(persona: persona, player: player, situation: situation)
+                : .refusing,
             refusalReason: refusal,
+            stance: stance,
             gmAdjustment: gm,
             situationBreakdown: breakdown,
             insultCount: insults,
@@ -610,28 +734,65 @@ enum ContractNegotiationEngine {
 
     /// The player-derived half of a situation, so a caller only has to supply
     /// what it actually knows about the club and the season.
+    ///
+    /// `isContender` is a parameter rather than a computed value only so a
+    /// caller that knows better (a playoff seed, a division lead) can overrule
+    /// the record; leaving it out gets ``isContender(wins:losses:)``, which is
+    /// the definition every other part of this model uses.
     static func situation(
         for player: Player,
         season: Int = 0,
         teamWins: Int = 0,
         teamLosses: Int = 0,
         weeksPlayed: Int = 0,
-        isContender: Bool = false
+        isContender: Bool? = nil
     ) -> NegotiationSituation {
         let played = max(0, teamWins + teamLosses)
+        // A career year, from what a `Player` row actually knows: he started
+        // essentially every game and the building is happy with him. It is a
+        // proxy, and a deliberately conservative one — a caller holding real
+        // `PlayerSeasonHistory` should overwrite it.
+        let careerYear = player.gamesStartedThisSeason >= 15 && player.morale >= 70
         return NegotiationSituation(
             season: season,
             teamWinPercentage: played == 0 ? 0.5 : Double(teamWins) / Double(played),
             teamWins: teamWins,
             teamLosses: teamLosses,
             weeksPlayed: weeksPlayed,
-            isContender: isContender,
-            // A career year, from what a `Player` row actually knows: he started
-            // essentially every game and the building is happy with him. It is a
-            // proxy, and a deliberately conservative one — a caller holding real
-            // `PlayerSeasonHistory` should overwrite it.
-            cameOffCareerYear: player.gamesStartedThisSeason >= 15 && player.morale >= 70
+            isContender: isContender ?? self.isContender(wins: teamWins, losses: teamLosses),
+            cameOffCareerYear: careerYear,
+            // The prove-it bet is settled here rather than in the demand model
+            // because it is the one input that is a FACT about the save (he
+            // signed that deal, in that league year) rather than a property of
+            // the player row. The bet only counts once the season it bought has
+            // actually been played, and only if he beat expectation in it.
+            provedTheBet: ProveItRegistry.betSeason(player.id).map { $0 < season } == true
+                && careerYear
         )
+    }
+
+    // MARK: - Contender
+
+    /// **The one definition of a contender**, so the ring-chaser's exit
+    /// condition, the legacy veteran's discount and the team term in the
+    /// breakdown cannot disagree about the same club.
+    ///
+    /// Two thirds of the games won, once at least six have been played. Record
+    /// rather than projection on purpose: the men in this model are reacting to
+    /// what they have watched, not to a simulation's opinion of what comes next.
+    static func isContender(wins: Int, losses: Int) -> Bool {
+        let played = wins + losses
+        guard played >= 6 else { return false }
+        return Double(wins) / Double(played) >= 0.65
+    }
+
+    /// The mirror: a record a player reads as "this is not going anywhere".
+    /// Deliberately NOT `!isContender` — most clubs are neither, and a .500 team
+    /// in October is not something a man demands out of.
+    static func isGoingNowhere(wins: Int, losses: Int) -> Bool {
+        let played = wins + losses
+        guard played >= 6 else { return false }
+        return Double(wins) / Double(played) < 0.45
     }
 
     // MARK: - GM Factor
@@ -759,6 +920,11 @@ enum ContractNegotiationEngine {
         // year and has every reason to charge for the next five.
         if player.isFranchiseTagged { leverage += 0.08 }
         if player.isHoldingOut { leverage += 0.05 }
+        // He took the short deal, played the season, and was right. The premium
+        // is the point of the mechanic: a prove-it contract that costs the club
+        // nothing when the bet lands is not a bet, it is a discount with extra
+        // steps.
+        if situation.provedTheBet { leverage += provenBetPremium }
 
         // The club itself. A losing building pays a premium to keep anybody who
         // is not motivated by winning; a contender is its own argument.
@@ -766,6 +932,23 @@ enum ContractNegotiationEngine {
         if situation.weeksPlayed >= 6 {
             if situation.teamWinPercentage < 0.35 { team += 0.05 }
             else if situation.isContender { team -= 0.03 }
+
+            // **The legacy clause.** An aging great on a contender takes less —
+            // he is buying a chance at the ending he wants, and both sides know
+            // there are not many autumns left to spend. On a club going nowhere
+            // the same man charges for his time instead.
+            //
+            // Gated on `weeksPlayed >= 6` for the same reason the two lines
+            // above it are: this is a reaction to a season, and a neutral
+            // situation (which is what the AI free-agent market prices against)
+            // must stay exactly neutral. Verified against the existing
+            // motivation term, which discounts a `.winning` man −0.12 on a
+            // contender: the two stack, and both now REACH the ask, because the
+            // opening band's floor is 0.75× market rather than the 1.0× that
+            // used to quietly delete every discount this model computed.
+            if isLegacyVeteran(player) {
+                team += situation.isContender ? -legacyVeteranDiscount : 0.04
+            }
         }
 
         return ContractDemand.SituationBreakdown(components: [
@@ -811,23 +994,41 @@ enum ContractNegotiationEngine {
 
     /// Whether this client will come to the table at all, and why not.
     ///
-    /// Two sources, in order. First the shared stance model
-    /// (`AgentRefusalReason.evaluate`) — benched, wants out, riding into
-    /// retirement, losing culture — which is deliberately the chat layer's
-    /// vocabulary so the badge, the opening line and this verdict cannot
-    /// disagree. Then one economy-owned addition the stance model has no inputs
-    /// for: **a mercenary will not sign up to lose for a front office he does
-    /// not rate.** That second door opens wider the worse the GM's standing is,
-    /// which is the "bad GM gets more refusals" half of the brief.
+    /// Three sources, in order of precedence.
+    ///
+    /// 1. **The ring-chaser**, checked first because it is the only never-sign
+    ///    stance and its exit condition is the narrowest: if a man who cannot be
+    ///    bought at any price were allowed to draw `.losingCulture` instead, the
+    ///    chat would promise him back next league year and then not deliver.
+    /// 2. The shared stance model (`AgentRefusalReason.evaluate`) — benched,
+    ///    wants out, riding into retirement, losing culture — deliberately the
+    ///    chat layer's vocabulary so the badge, the opening line and this verdict
+    ///    cannot disagree.
+    /// 3. One economy-owned addition the stance model has no inputs for: **a
+    ///    mercenary will not sign up to lose for a front office he does not
+    ///    rate.** That door opens wider the worse the GM's standing is, which is
+    ///    the "bad GM gets more refusals" half of the brief.
+    ///
+    /// Door 3's threshold came down from 18 % to 8 % and gained a morale gate in
+    /// this wave, for the budget reason documented on `AgentRefusalReason.evaluate`:
+    /// a quarter of the league is money-motivated or a lone wolf, and on a bad
+    /// team nearly one in five of them was refusing to take the call. It is a
+    /// stance for a man who is visibly unhappy about losing, not for everybody
+    /// who happens to like being paid.
     static func refusalVerdict(
         player: Player,
         situation: NegotiationSituation,
         gm: GMAdjustment
     ) -> AgentRefusalReason? {
+        if ringChaserVerdict(player: player, situation: situation) {
+            return .ringChasing
+        }
+
         if let stance = AgentRefusalReason.evaluate(
             playerID: player.id,
             season: situation.season,
             age: player.age,
+            overall: player.overall,
             morale: player.morale,
             gamesStartedThisSeason: player.gamesStartedThisSeason,
             loyaltyYears: player.loyaltyYears,
@@ -841,24 +1042,113 @@ enum ContractNegotiationEngine {
         let isMercenary = player.personality.motivation == .money
             || player.personality.archetype == .loneWolf
         guard isMercenary,
+              player.morale < 65,
               situation.weeksPlayed >= 6,
               situation.teamWinPercentage < 0.35
         else { return nil }
 
-        // 18 % at a neutral front office, rising toward 48 % at the worst one
-        // the GM factor can produce. Deterministic, on a salt no other agent
-        // trait uses, so the answer does not change between two openings of the
-        // same conversation — but salted by the season as well, so a door that
-        // closed one league year is not closed for the rest of his career.
-        let threshold = 0.18 + Swift.max(0, gm.total) * 2.0
+        // 8 % at a neutral front office, rising toward 23 % at the worst one the
+        // GM factor can produce. Deterministic, on a salt no other agent trait
+        // uses, so the answer does not change between two openings of the same
+        // conversation — but salted by the season as well, so a door that closed
+        // one league year is not closed for the rest of his career.
+        let threshold = 0.08 + Swift.max(0, gm.total) * 1.0
         let salt = 0xA7 ^ (UInt64(bitPattern: Int64(situation.season)) &* 0x9E37_79B9_7F4A_7C15)
         return unitDraw(player.id, salt: salt) < threshold ? .losingCulture : nil
+    }
+
+    // MARK: - The Ring-Chaser (never-sign)
+
+    /// **The rarest stance in the game, and the only one money cannot touch.**
+    ///
+    /// An elite defender in his prime on a club that loses does not want a
+    /// bigger contract — he wants January. The gates below exist to keep that
+    /// story at the frequency it earns its weight at: the user's own roster
+    /// should produce roughly one of these every couple of seasons, and the
+    /// league one to three per year.
+    ///
+    /// Every gate is **structural** — a fact about the man or the standings, not
+    /// a die roll — because a probability alone scales with roster size and
+    /// would drift as a league grows. The single draw at the end is the tiebreak
+    /// among the handful who clear everything else, and it is deliberately NOT
+    /// salted by the season: a stance whose stated exit condition is "become a
+    /// contender" must not quietly evaporate in a league year where the club is
+    /// just as bad. It persists until the record changes, which is what makes
+    /// the exit condition true.
+    ///
+    /// ## Why it lands where it does
+    ///
+    /// Multiplying the gates through a typical league: ~2.5 % of players are
+    /// 88+; roughly 40 % of clubs are under .450 by week six; ~28 % of players
+    /// are `.winning`-motivated or fiery competitors; the 80-competitiveness
+    /// floor keeps about half of those; morale under 75 about half again; and
+    /// the draw halves it once more. That is on the order of **one or two men
+    /// league-wide per season**, before the extension window narrows it further
+    /// (nobody negotiates an extension with a man who has four years left).
+    /// `stanceCensus` measures the real number rather than trusting this
+    /// arithmetic.
+    static func ringChaserVerdict(player: Player, situation: NegotiationSituation) -> Bool {
+        guard player.overall >= ringChaserOverallGate else { return false }
+        // A 23-year-old star still believes he is going to fix the place. This
+        // is a stance for a man far enough in to know better.
+        guard player.age >= 26 else { return false }
+        guard player.competitiveness >= ringChaserCompetitivenessGate else { return false }
+        guard player.personality.motivation == .winning
+                || player.personality.archetype == .fieryCompetitor
+        else { return false }
+        // A man who is happy is not demanding out, however bad the record.
+        guard player.morale < 75 else { return false }
+        guard isGoingNowhere(wins: situation.teamWins, losses: situation.teamLosses) else {
+            return false
+        }
+        // Salt 0xD5 — used by nothing else, so the ring-chaser draw does not
+        // correlate with the persona, the theatre or the mercenary door.
+        return unitDraw(player.id, salt: 0xD5) < ringChaserDraw
+    }
+
+    // MARK: - The Legacy Veteran
+
+    /// The Brady clause: an aging great who is still genuinely elite.
+    ///
+    /// Two effects, in two places, and both are the same idea seen from either
+    /// side of a signature — he discounts for a contender
+    /// (`situationBreakdown`'s team term) and, as a free agent, walks away from
+    /// a loser for less money elsewhere
+    /// (`FreeAgencyEngine.legacyVeteranPreference`).
+    static func isLegacyVeteran(_ player: Player) -> Bool {
+        player.age >= legacyVeteranAgeGate && player.overall >= legacyVeteranOverallGate
+    }
+
+    // MARK: - Stance
+
+    /// Names the story the numbers are telling, for the chat to say out loud.
+    private static func stance(
+        player: Player,
+        situation: NegotiationSituation,
+        refusal: AgentRefusalReason?,
+        isProveIt: Bool
+    ) -> NegotiationStance? {
+        if refusal == .ringChasing { return .ringChaser }
+        if situation.provedTheBet { return .provenBet }
+        if isLegacyVeteran(player) { return .legacyVeteran }
+        if isProveIt { return .proveIt }
+        return nil
     }
 
     // MARK: - Structure Preferences
 
     /// Opening frame for an agent who IS willing to talk.
-    private static func openingTone(persona: AgentPersona, player: Player) -> AgentToneKey {
+    ///
+    /// The proven bet overrides the persona, and it is the only thing that does:
+    /// a man who took one year to rebuild his market and then delivered opens
+    /// every conversation from the same place regardless of who represents him,
+    /// because he is the one holding the evidence this time.
+    private static func openingTone(
+        persona: AgentPersona,
+        player: Player,
+        situation: NegotiationSituation
+    ) -> AgentToneKey {
+        if situation.provedTheBet { return .hardline }
         switch persona {
         case .hardliner:   return .hardline
         case .cooperative: return player.morale >= 75 ? .eager : .professional
@@ -869,7 +1159,13 @@ enum ContractNegotiationEngine {
     /// A prove-it deal is a bet, not a concession: a man whose market has just
     /// been marked down takes one year, plays well, and comes back at a price
     /// this contract could not have got him.
+    ///
+    /// The `provedTheBet` guard is what closes the loop. Without it a player who
+    /// had just WON a prove-it bet still read as a prove-it candidate the
+    /// following winter — a short cheap deal every year forever, which is the
+    /// exact opposite of the mechanic. Once the bet lands he is done betting.
     private static func wantsProveItDeal(player: Player, situation: NegotiationSituation) -> Bool {
+        guard !situation.provedTheBet else { return false }
         if player.motivationState == .driven && player.age <= 29 && player.morale < 70 { return true }
         if player.morale < 45 { return true }
         let peak = player.position.peakAgeRange
@@ -1008,6 +1304,9 @@ enum ContractNegotiationEngine {
         /// The agent's own number this round, per year — what the counter card
         /// and the sentence both have to quote.
         let counterPerYear: Int
+        /// The offer was tabled at a client who had already declined to
+        /// negotiate. Not a grade on the money — the money was never read.
+        var isPestering: Bool = false
     }
 
     /// **Grade one GM offer against the demand model.**
@@ -1030,12 +1329,32 @@ enum ContractNegotiationEngine {
         roundNumber: Int,
         recordToLedger: Bool = true
     ) -> AgentResponse {
-        // A client who will not talk cannot be negotiated into talking.
+        // **Pestering.** A client who will not talk cannot be negotiated into
+        // talking — but the club is entitled to keep trying, and the model has
+        // to price that rather than forbid it.
+        //
+        // What used to happen here was `.playerWalked`, which ended the thread:
+        // one offer to an unwilling man and the conversation was over for the
+        // league year, with no way back and nothing learned. That is a rule the
+        // league does not have. A front office CAN table another offer; what it
+        // cannot do is make the offer be the answer.
+        //
+        // So the money is not graded at all — it was never the question — and
+        // the offer costs exactly what ignoring somebody costs: the standing ask
+        // ratchets (`escalated()`, the same 6 % a lowball buys), a round of
+        // patience is gone with it, the ledger books it as an insult because
+        // that is what the agent community would call it, and the chat layer
+        // takes `pesterMoraleCost` off the man himself. The outcome stays
+        // `.pending` so the composer survives; the tone stays `.refusing` so
+        // every downstream surface still knows the door is shut.
         guard !demand.isRefusing else {
+            if recordToLedger { NegotiationLedger.recordInsult() }
+            let escalated = demand.escalated()
             return AgentResponse(
-                tone: .refusing, counterOffer: nil, outcome: .playerWalked,
-                demand: demand, isYearsPushback: false,
-                counterPerYear: previousAgentOffer.annualCapHit
+                tone: .refusing, counterOffer: nil, outcome: .pending,
+                demand: escalated, isYearsPushback: false,
+                counterPerYear: escalated.askAmount,
+                isPestering: true
             )
         }
 
@@ -1066,10 +1385,26 @@ enum ContractNegotiationEngine {
 
         // §5.5: clauses count toward the offer at the agent's own discount, per
         // year, so they land on the same scale the thresholds are written in.
+        //
+        // The prove-it client counts them for MORE. That is the whole shape of
+        // the Mayfield deal: a man whose market has just been marked down is not
+        // arguing about guaranteed money, he is buying a stage — so clause money
+        // he has to earn is money he was betting on anyway, and a short term is
+        // part of what he came for rather than a concession the club has to buy
+        // back. Both credits are applied here, in the grading, so they change
+        // what an offer is WORTH to him without touching the ask or the floor —
+        // which is what keeps the AI free-agent market (which never writes
+        // clauses and never calls this) bit-identical.
         let years = max(1, gmOffer.years)
-        let creditedPerYear = ContractEngine.creditedIncentiveValue(
+        let rawCredit = ContractEngine.creditedIncentiveValue(
             gmOffer.incentives, player: player, persona: persona, years: years
         ) / years
+        let creditedPerYear = demand.isProveIt
+            ? Int(Double(rawCredit) * proveItIncentiveCredit)
+            : rawCredit
+        let shortDealCredit = demand.isProveIt && gmOffer.years <= 2
+            ? proveItShortDealCredit
+            : 1.0
 
         // Guarantees are the other half of an offer. A number that matches the
         // ask on paper but guarantees 20 points less of it is not the same
@@ -1077,7 +1412,9 @@ enum ContractNegotiationEngine {
         let guaranteeGap = previousAgentOffer.guaranteedPercent - gmOffer.guaranteedPercent
         let guaranteeDrag = guaranteeGap > 15 ? 0.96 : 1.0
 
-        let effectivePerYear = Int(Double(gmOffer.annualCapHit + creditedPerYear) * guaranteeDrag)
+        let effectivePerYear = Int(
+            Double(gmOffer.annualCapHit + creditedPerYear) * guaranteeDrag * shortDealCredit
+        )
         let tone = demand.tone(forPerYear: effectivePerYear, currentAskPerYear: standingAsk)
 
         switch tone {
@@ -1185,6 +1522,10 @@ enum ContractNegotiationEngine {
         let demand: ContractDemand
         /// Rejected on LENGTH rather than money.
         let isYearsPushback: Bool
+        /// The offer went to a client who had already declined to negotiate.
+        /// The caller owes the man `pesterMoraleCost` morale and owes the
+        /// transcript an escalating line from `AgentDialogue.pesteringLine`.
+        var isPestering: Bool = false
     }
 
     /// Agent evaluates the GM's counter-offer and responds.
@@ -1223,7 +1564,18 @@ enum ContractNegotiationEngine {
                 tone: response.tone,
                 insultCount: response.demand.insultCount,
                 demand: response.demand,
-                isYearsPushback: response.isYearsPushback
+                isYearsPushback: response.isYearsPushback,
+                isPestering: response.isPestering
+            )
+        }
+
+        // Pestering short-circuits the outcome switch: the offer was never
+        // graded, so there is no counter to describe and no walk to explain.
+        // The caller supplies the wording (it owns the agent's voice); this is
+        // the fallback for surfaces that do not.
+        if response.isPestering {
+            return verdict(
+                "I've told you — this isn't about the number. My client isn't interested."
             )
         }
 
@@ -1485,5 +1837,200 @@ enum ContractNegotiationEngine {
             return String(format: "$%.1fM", millions)
         }
         return "$\(thousands)K"
+    }
+
+    // MARK: - Stance Census (rarity budget instrumentation)
+
+    /// How many men in a league are actually eligible for each stance.
+    ///
+    /// **The budget is a claim, and a claim needs a measurement.** Every gate in
+    /// this file was tuned against arithmetic — "88+ is about 2.5 % of a
+    /// calibrated league" — and arithmetic drifts as a league ages, as ratings
+    /// inflate, as the generator changes. This counts the real thing on a real
+    /// roster set, so the claim can be checked rather than believed.
+    ///
+    /// Eligibility, not incidence: a refusal only actually happens when somebody
+    /// picks up the phone, so `refusals` here is the size of the population that
+    /// WOULD refuse if contacted — the conservative reading, and the one the
+    /// `< 5 %` budget is written against.
+    struct StanceCensus {
+        var players = 0
+        var refusals = 0
+        var ringChasers = 0
+        var legacyVeterans = 0
+        var proveIts = 0
+        /// Refusing share of the population, as a percentage.
+        var refusalPercent: Double {
+            players == 0 ? 0 : Double(refusals) / Double(players) * 100
+        }
+        var summary: String {
+            String(
+                format: "n=%d refusing=%d (%.1f%%, budget <5%%) ringChasers=%d legacyVets=%d proveIt=%d",
+                players, refusals, refusalPercent, ringChasers, legacyVeterans, proveIts
+            )
+        }
+    }
+
+    /// Runs every stance gate over a roster set. `recordByTeamID` supplies the
+    /// standings the situation-driven stances read; a player whose club is
+    /// missing from it is measured against a neutral season, which is the
+    /// conservative direction (no ring-chasers, no losing-culture refusals).
+    static func stanceCensus(
+        players: [Player],
+        recordByTeamID: [UUID: (wins: Int, losses: Int)],
+        season: Int,
+        weeksPlayed: Int
+    ) -> StanceCensus {
+        var census = StanceCensus()
+        for player in players where !player.isRetired {
+            census.players += 1
+            let record = player.teamID.flatMap { recordByTeamID[$0] } ?? (wins: 0, losses: 0)
+            let situation = situation(
+                for: player,
+                season: season,
+                teamWins: record.wins,
+                teamLosses: record.losses,
+                weeksPlayed: weeksPlayed
+            )
+            if let reason = refusalVerdict(
+                player: player, situation: situation, gm: .neutral
+            ) {
+                census.refusals += 1
+                if reason == .ringChasing { census.ringChasers += 1 }
+            }
+            if isLegacyVeteran(player) { census.legacyVeterans += 1 }
+            if wantsProveItDeal(player: player, situation: situation) { census.proveIts += 1 }
+        }
+        return census
+    }
+}
+
+// MARK: - Prove-It Registry
+
+/// Which players took a short deal to bet on themselves, and in which league
+/// year.
+///
+/// **Why this has to be persisted.** Everything else the demand model reads is a
+/// property of the player row — age, rating, morale, snaps. "He signed a
+/// one-year prove-it deal last winter" is not: it is a fact about a *contract
+/// this save wrote*, and by the time it matters the deal it describes is either
+/// expiring or expired. Without a record of it the bounce-back half of the
+/// mechanic is unreachable, and a prove-it deal becomes a permanent discount the
+/// club renews every year — which is the exact opposite of a bet.
+///
+/// careerID-scoped `UserDefaults`, the `NegotiationLockRegistry` /
+/// `ContractIncentiveRegistry` shape: a handful of entries per save, written a
+/// few times an offseason, and listed in `CareerScopedDefaults.keys` so a
+/// deleted career takes its bets with it. No SwiftData migration.
+enum ProveItRegistry {
+
+    /// Base key — namespaced per save through `CareerScopedDefaults.scopedKey`.
+    /// Never read bare (see `NegotiationLockRegistry.baseKey`).
+    static let defaultsKey = "proveItDealSeasons"
+
+    private static var key: String { CareerScopedDefaults.scopedKey(defaultsKey) }
+
+    /// The league year this player signed a prove-it deal in, if he did.
+    static func betSeason(_ playerID: UUID) -> Int? {
+        table()[playerID.uuidString]
+    }
+
+    /// Books a signed prove-it deal. Overwrites: a man can bet on himself more
+    /// than once in a career, and only the most recent bet is the live one.
+    static func record(playerID: UUID, season: Int) {
+        var t = table()
+        t[playerID.uuidString] = season
+        write(t)
+    }
+
+    /// Settles a bet — called once its premium has been charged, so a single
+    /// bounce-back season cannot be sold twice.
+    static func clear(playerID: UUID) {
+        var t = table()
+        t.removeValue(forKey: playerID.uuidString)
+        write(t)
+    }
+
+    static func reset() {
+        UserDefaults.standard.removeObject(forKey: key)
+    }
+
+    private static func table() -> [String: Int] {
+        UserDefaults.standard.dictionary(forKey: key) as? [String: Int] ?? [:]
+    }
+
+    private static func write(_ t: [String: Int]) {
+        UserDefaults.standard.set(t, forKey: key)
+    }
+}
+
+// MARK: - Trade Request Registry
+
+/// Players who have publicly asked out, and the league year they asked in.
+///
+/// **A request is not a trade.** It is two things and deliberately no more: a
+/// news story the league reacts to, and a flag the trade AI can read
+/// (`TradeValueEngine.saleCandidates` treats a requesting player as available
+/// regardless of the selling club's stance, which is what a real front office
+/// does the morning after a star's agent goes public). No new trade mechanics,
+/// no forced execution — `HoldoutEngine.forceTrade` already owns the "he is
+/// actually leaving" path, and a request that shipped the man out on its own
+/// would take the decision away from the user, who is the one being asked.
+///
+/// Same storage shape and lifetime as `ProveItRegistry`.
+enum TradeRequestRegistry {
+
+    static let defaultsKey = "tradeRequestSeasons"
+
+    private static var key: String { CareerScopedDefaults.scopedKey(defaultsKey) }
+
+    /// The league year he asked out in, if he has.
+    static func requestSeason(_ playerID: UUID) -> Int? {
+        table()[playerID.uuidString]
+    }
+
+    /// Whether a request is standing right now. Season-checked rather than a
+    /// bare flag: a demand made three years ago on a team that has since won a
+    /// division is not a demand, it is history.
+    ///
+    /// `season: nil` means the caller genuinely does not know the league year
+    /// (some of the trade market's private helpers do not carry one), and it
+    /// falls back to "any recorded request counts". That is the conservative
+    /// direction for THIS flag — it can only ever make a man more available,
+    /// never less, and being available is what he asked for.
+    static func hasStandingRequest(_ playerID: UUID, season: Int?) -> Bool {
+        guard let asked = table()[playerID.uuidString] else { return false }
+        guard let season else { return true }
+        return asked >= season - 1
+    }
+
+    /// Records a request. Returns `false` when one was already standing, so the
+    /// caller can avoid writing the same news story twice.
+    @discardableResult
+    static func record(playerID: UUID, season: Int) -> Bool {
+        var t = table()
+        if let existing = t[playerID.uuidString], existing >= season { return false }
+        t[playerID.uuidString] = season
+        write(t)
+        return true
+    }
+
+    /// Withdraws a request — he was traded, or the club won him back.
+    static func clear(playerID: UUID) {
+        var t = table()
+        t.removeValue(forKey: playerID.uuidString)
+        write(t)
+    }
+
+    static func reset() {
+        UserDefaults.standard.removeObject(forKey: key)
+    }
+
+    private static func table() -> [String: Int] {
+        UserDefaults.standard.dictionary(forKey: key) as? [String: Int] ?? [:]
+    }
+
+    private static func write(_ t: [String: Int]) {
+        UserDefaults.standard.set(t, forKey: key)
     }
 }

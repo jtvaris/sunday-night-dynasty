@@ -364,6 +364,14 @@ enum AgentDialogue {
                 "At his age this is the last contract of a life. He's not rushing it, and neither am I.",
                 "He's weighing whether there's a next season at all. Give the man his winter."
             ]
+        case .ringChasing:
+            // The never-sign line has to close the door on MONEY specifically,
+            // or the user reads it as a hard negotiation and keeps bidding.
+            flavor = [
+                "And before you ask — it isn't the money. He's given that building his best years and watched it lose them. He wants to play in January.",
+                "There's no number here. He's not signing five more years of this. Win something and we'll talk.",
+                "You could offer him every dollar you have. He'd still be watching the playoffs on television, and he knows it."
+            ]
         }
         let sign: String
         switch voice {
@@ -373,6 +381,94 @@ enum AgentDialogue {
         case .oldSchool:    sign = "I've told you straight, which is more than most would."
         }
         return "\(core) \(flavor.randomElement()!) \(sign)"
+    }
+
+    // MARK: Pestering
+
+    /// **The answer to an offer tabled at a man who already said no.**
+    ///
+    /// One line per escalation tier rather than a random pool, on purpose: the
+    /// whole point of pestering is that it gets WORSE, and a pool would let the
+    /// third attempt read softer than the first. `attempt` is 1-based.
+    ///
+    /// Tier 3 deliberately says out loud what the model is doing to the price —
+    /// the ask has been ratcheting 6 % a round this whole time, and an agent who
+    /// never mentions it is a mechanic the user cannot learn.
+    static func pesteringLine(
+        voice: AgentVoice,
+        reason: AgentRefusalReason,
+        attempt: Int,
+        ctx: Context
+    ) -> String {
+        // The never-sign stance gets its own first answer. On the fourth of the
+        // reasons a man can decline, "not interested" is a negotiating position
+        // the user is right to test; on THIS one it is a fact about the standings
+        // that no offer touches, and the line has to say so before the user
+        // spends an offseason bidding against a wall.
+        if attempt <= 1, reason.neverSignsAtAnyPrice {
+            switch voice {
+            case .shark:
+                return "You didn't hear me. There is no number. Put a blank cheque on that table and he'd still be watching January from his couch."
+            case .professional:
+                return "I have to stop you. I understand the instinct, but money genuinely is not the variable here — the standings are. I can't take this to him."
+            case .friendly:
+                return "Oh, friend. That's a lot of money and it isn't the thing. He wants to play in January. That's all he's asked me for."
+            case .oldSchool:
+                return "You're answering a question he didn't ask. He wants to win something before he's done. You can't write that on a contract."
+            }
+        }
+
+        switch max(1, attempt) {
+        case 1:
+            switch voice {
+            case .shark:
+                return "I told you — my client isn't interested. Don't waste our time."
+            case .professional:
+                return "I appreciate the effort, but I was clear: this isn't a money conversation. I won't be taking that to him."
+            case .friendly:
+                return "Ah, come on now. I said no, and I meant it kindly. Put the pen down."
+            case .oldSchool:
+                return "I gave you a straight answer. A straight answer deserves to be heard the first time."
+            }
+        case 2:
+            switch voice {
+            case .shark:
+                return "Are you listening, or just talking? Same answer. \(ctx.playerFirst) is not interested, and every call makes this more expensive."
+            case .professional:
+                return "This is the second offer I've had to decline on the same grounds. I'd rather not do it a third time."
+            case .friendly:
+                return "You're a stubborn one. I like you, but he's not moving — and he's hearing about these calls."
+            case .oldSchool:
+                return "Twice now. In my day a man took no for an answer and kept his dignity."
+            }
+        default:
+            switch voice {
+            case .shark:
+                return "Enough. \(ctx.playerFirst) knows exactly how many times you've called and exactly what you've offered, and neither one has helped. If we ever DO talk, the number starts higher than it did today."
+            case .professional:
+                return "I have to be blunt. This is now doing damage — to the relationship, and to the price. My client hears about every one of these."
+            case .friendly:
+                return "I'm going to be honest with you because I like you: he's insulted now. Not by the money. By the not-listening."
+            case .oldSchool:
+                return "You've asked the same question four different ways and got the same answer four times. It costs a man something to keep being told no in his own building."
+            }
+        }
+    }
+
+    /// What a client who just won a prove-it bet opens with. The one line in
+    /// this file that exists to make a MECHANIC legible: the user signed him
+    /// short and cheap last winter and is about to find out what that bought.
+    static func provenBetLine(voice: AgentVoice, ctx: Context) -> String {
+        switch voice {
+        case .shark:
+            return "Last year you wanted him on a one-year deal. He took it, he bet on himself, and he won. \(ctx.askPerYear) a year. That's not an opening number."
+        case .professional:
+            return "We agreed a short deal so the market could price him properly. It has. \(ctx.askPerYear) a year over \(ctx.askYears) — the season speaks for itself."
+        case .friendly:
+            return "Remember what I said last winter? He'd play his way back. Well — he did. \(ctx.askPerYear) a year, and I think you knew that was coming."
+        case .oldSchool:
+            return "He bet on himself when nobody else would, and the man was right. \(ctx.askPerYear) a year. I'd have asked for more."
+        }
     }
 
     // MARK: Counters

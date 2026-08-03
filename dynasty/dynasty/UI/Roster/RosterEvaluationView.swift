@@ -53,6 +53,19 @@ struct RosterEvaluationView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @State private var team: Team?
+
+    /// The league's ACTUAL cap, for every `ContractEngine.estimateMarketValue`
+    /// call on this screen.
+    ///
+    /// Those calls all took the 265 000 default, which is the *season-one* cap.
+    /// By season ten the roster screen was pricing every man against a cap the
+    /// league left behind years ago — so "market value" read low across the
+    /// board, the re-sign estimates in the cap outlook understated what the
+    /// offseason would actually cost, and the numbers here disagreed with the
+    /// negotiation screen and the free-agent market, which both pass the real
+    /// one. The fallback exists only for the frame before `team` loads.
+    private var salaryCap: Int { team?.salaryCap ?? 265_000 }
+
     @State private var players: [Player] = []
     @State private var allPlayers: [Player] = []
     @State private var allTeams: [Team] = []
@@ -728,7 +741,7 @@ struct RosterEvaluationView: View {
 
     private func keyDecisionFinancialDetails(_ decision: KeyDecision) -> some View {
         let player = decision.player
-        let marketValue = ContractEngine.estimateMarketValue(player: player)
+        let marketValue = ContractEngine.estimateMarketValue(player: player, salaryCap: salaryCap)
         let salary = player.annualSalary
         let remainingValue = salary * max(player.contractYearsRemaining, 1)
         let deadMoney = Int(Double(remainingValue) * 0.4)
@@ -1238,7 +1251,9 @@ struct RosterEvaluationView: View {
             let expiringCap = expiringPlayers.reduce(0) { $0 + $1.annualSalary }
             let expiringCount = expiringPlayers.count
             // Estimate replacement cost: market value of each expiring player
-            let replacementCost = expiringPlayers.reduce(0) { $0 + ContractEngine.estimateMarketValue(player: $1) }
+            let replacementCost = expiringPlayers.reduce(0) {
+                $0 + ContractEngine.estimateMarketValue(player: $1, salaryCap: team.salaryCap)
+            }
             let projectedUsage = max(0, team.currentCapUsage - expiringCap)
             let projectedWithReplacements = projectedUsage + replacementCost
             // NFL cap typically grows ~5% per year
@@ -1847,7 +1862,7 @@ struct RosterEvaluationView: View {
         var decisions: [KeyDecision] = []
 
         for player in players {
-            let marketValue = ContractEngine.estimateMarketValue(player: player)
+            let marketValue = ContractEngine.estimateMarketValue(player: player, salaryCap: salaryCap)
             let salary = player.annualSalary
             let isPastPeak = player.age > player.position.peakAgeRange.upperBound
 
@@ -2057,8 +2072,12 @@ struct RosterEvaluationView: View {
 
         // Re-sign cost estimates based on market value
         let top3Expiring = Array(expiringPlayers.prefix(3))
-        let top3ReSignCost = top3Expiring.reduce(0) { $0 + ContractEngine.estimateMarketValue(player: $1) }
-        let allReSignCost = expiringPlayers.reduce(0) { $0 + ContractEngine.estimateMarketValue(player: $1) }
+        let top3ReSignCost = top3Expiring.reduce(0) {
+            $0 + ContractEngine.estimateMarketValue(player: $1, salaryCap: team.salaryCap)
+        }
+        let allReSignCost = expiringPlayers.reduce(0) {
+            $0 + ContractEngine.estimateMarketValue(player: $1, salaryCap: team.salaryCap)
+        }
 
         let currentUsage = team.currentCapUsage
         let cap = team.salaryCap

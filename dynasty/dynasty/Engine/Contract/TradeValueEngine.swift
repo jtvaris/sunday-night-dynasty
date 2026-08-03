@@ -2128,14 +2128,24 @@ enum TradeValueEngine {
     /// Shared by the user-facing sell offers and the AI-vs-AI league pass so the
     /// league's shopping list is one list (plan §6 Wave 2.5: the need model is
     /// shared by offers and `respond`).
-    static func saleCandidates(seller: GMMarketView, contracts: [Contract]) -> [Player] {
+    ///
+    /// **The one thing that overrides the stance is the player himself.** A man
+    /// whose agent has gone public asking out (`TradeRequestRegistry`) is
+    /// available whatever the club's plan was that morning — that is what a
+    /// front office does the day after a star says he wants to play somewhere
+    /// else, and it is the entire mechanical meaning of a trade request. The
+    /// hard gates above it still apply: an injured man, the last body at his
+    /// position and a no-trade clause are all still no.
+    static func saleCandidates(seller: GMMarketView, contracts: [Contract],
+                               season: Int? = nil) -> [Player] {
         seller.roster
             .filter { player in
                 // #30: 72 → 66, same percentile floor as `shoppingTarget`.
                 guard !player.isInjured, !player.isHoldingOut, player.overall >= 66 else { return false }
-                guard seller.untouchableReason(player) == nil,
-                      seller.lastManReason(player) == nil else { return false }
+                guard seller.lastManReason(player) == nil else { return false }
                 guard !hasActiveNoTradeClause(player: player, contracts: contracts) else { return false }
+                if TradeRequestRegistry.hasStandingRequest(player.id, season: season) { return true }
+                guard seller.untouchableReason(player) == nil else { return false }
                 switch seller.stance {
                 case .rebuild:
                     // Anyone who will not be part of the next winning team.
@@ -2950,7 +2960,7 @@ enum TradeValueEngine {
         week: Int,
         modelContext: ModelContext
     ) -> (record: TradeRecord, summary: LeagueTradeSummary, buyerID: UUID)? {
-        let listed = saleCandidates(seller: seller, contracts: contracts)
+        let listed = saleCandidates(seller: seller, contracts: contracts, season: currentSeason)
         funnel.supply += listed.count
         let shopping = listed.prefix(6)
         guard !shopping.isEmpty else {

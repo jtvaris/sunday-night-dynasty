@@ -514,6 +514,14 @@ enum CareerScopedDefaults {
         // (lowball insults, broken-off talks, clean signings). Career state, so
         // a deleted save must not hand its hardball reputation to the next one.
         "negotiationHistoryLedger",
+        // `ProveItRegistry.defaultsKey` — who bet on himself, and in which
+        // league year. Listed so a deleted save cannot hand a new career a
+        // bounce-back premium for a contract it never wrote.
+        "proveItDealSeasons",
+        // `TradeRequestRegistry.defaultsKey` — standing "trade me" demands. Same
+        // reason: a new career must not open with somebody else's disgruntled
+        // star already on the block.
+        "tradeRequestSeasons",
     ]
 
     /// Every read of a key above goes through `CareerScopedDefaults.scopedKey`

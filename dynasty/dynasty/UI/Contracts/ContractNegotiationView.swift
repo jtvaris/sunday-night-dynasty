@@ -111,7 +111,23 @@ struct ContractNegotiationView: View {
         .task { loadIfNeeded() }
     }
 
-    private var isNegotiationActive: Bool { thread?.isOpen ?? false }
+    /// Whether the composer stays on screen.
+    ///
+    /// `acceptsOffers`, not `isOpen`: a refusal keeps the composer, because a
+    /// front office is always allowed to table another offer. What that costs is
+    /// the engine's business (`ContractNegotiationEngine`'s pestering path) and
+    /// the agent's to say out loud — it is not something this screen prevents by
+    /// taking the buttons away.
+    private var isNegotiationActive: Bool { thread?.status.acceptsOffers ?? false }
+
+    /// The refusing thread, if this conversation is one. Drives the stance
+    /// banner over the composer.
+    private var refusalReason: AgentRefusalReason? {
+        guard thread?.status == .refused else { return nil }
+        return thread?.refusalReason
+    }
+
+    private var pesterCount: Int { thread?.pesterCount ?? 0 }
 
     // MARK: - Agent Identity
 
@@ -131,6 +147,10 @@ struct ContractNegotiationView: View {
     private var roundsRemaining: Int {
         max(0, liveDemand.maxRounds - (thread?.round ?? 0))
     }
+
+    /// The situation-driven character of this talk, if it has one — the engine's
+    /// verdict, rendered as a chip. The chat never derives a stance of its own.
+    private var stance: NegotiationStance? { liveDemand.stance }
 
     // MARK: - Economy Inputs
     //
@@ -157,19 +177,17 @@ struct ContractNegotiationView: View {
 
     /// The club and the season, as the demand model reads them.
     private var negotiationSituation: NegotiationSituation {
-        let wins = team?.wins ?? 0
-        let losses = team?.losses ?? 0
-        let played = wins + losses
-        // "Contender" is the club's own record, not a prediction: two-thirds of
-        // a season's games won, once there is enough of a season to say so.
-        let isContender = played >= 6 && Double(wins) / Double(max(1, played)) >= 0.65
-        return ContractNegotiationEngine.situation(
+        // "Contender" is `ContractNegotiationEngine.isContender` and nothing
+        // else. It used to be an inline expression here, which meant this screen
+        // owned a second definition of the word that the ring-chaser's exit
+        // condition and the legacy veteran's discount would have had to agree
+        // with by coincidence.
+        ContractNegotiationEngine.situation(
             for: player,
             season: season,
-            teamWins: wins,
-            teamLosses: losses,
-            weeksPlayed: currentWeek,
-            isContender: isContender
+            teamWins: team?.wins ?? 0,
+            teamLosses: team?.losses ?? 0,
+            weeksPlayed: currentWeek
         )
     }
 
@@ -279,7 +297,27 @@ struct ContractNegotiationView: View {
                         .padding(.vertical, 2)
                         .background(Color.backgroundTertiary, in: Capsule())
                 }
-                if isNegotiationActive {
+                // The stance chip. Only shown when the engine says there IS one
+                // — a normal negotiation is the overwhelming majority and must
+                // not be dressed up as a story it isn't.
+                if let stance {
+                    Text(stance.label)
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(Color.accentBlue)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.accentBlue.opacity(0.12), in: Capsule())
+                }
+
+                if refusalReason != nil {
+                    // Patience is meaningless when he is not negotiating; what
+                    // matters is how many times you have asked anyway.
+                    Text(pesterCount == 0
+                         ? agentPersona.styleDescription
+                         : "\(agentPersona.styleDescription)  ·  \(pesterCount) offer\(pesterCount == 1 ? "" : "s") tabled since he declined")
+                        .font(.caption2)
+                        .foregroundStyle(pesterCount >= 2 ? Color.danger : Color.textTertiary)
+                } else if isNegotiationActive {
                     Text("\(agentPersona.styleDescription)  ·  \(roundsRemaining) round\(roundsRemaining == 1 ? "" : "s") of patience left")
                         .font(.caption2)
                         .foregroundStyle(roundsRemaining <= 1 ? Color.warning : Color.textTertiary)
@@ -563,7 +601,11 @@ struct ContractNegotiationView: View {
                 .padding(.horizontal, 4)
             }
 
-            if let status = thread?.status, status == .refused || status == .brokenOff {
+            // `.refused` is deliberately absent: that thread keeps its composer
+            // now, so it never reaches this bar. The only camp that genuinely
+            // will not hear from you again this league year is the one that hung
+            // up on a lowball.
+            if thread?.status == .brokenOff {
                 HStack(spacing: 6) {
                     Image(systemName: "clock.arrow.circlepath")
                         .font(.system(size: 11))
@@ -603,6 +645,11 @@ struct ContractNegotiationView: View {
             Rectangle()
                 .fill(Color.surfaceBorder)
                 .frame(height: 1)
+
+            // The stance banner. Shown ABOVE the composer rather than instead of
+            // it: the user can still make the offer, and should — he just gets
+            // to make it knowing what he is doing and what it will cost.
+            refusalBanner
 
             VStack(spacing: 10) {
                 // Years
@@ -669,6 +716,54 @@ struct ContractNegotiationView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .background(Color.backgroundSecondary)
+    }
+
+    /// What his camp said, and the one thing that would change it.
+    ///
+    /// The exit condition is the whole reason this is a banner and not a locked
+    /// door: a refusal the user cannot read is a wall, and a refusal that names
+    /// its own exit is a puzzle. `neverSignsAtAnyPrice` gets the sharper framing
+    /// because it is the only stance where tabling a better number is not a long
+    /// shot but a category error.
+    @ViewBuilder
+    private var refusalBanner: some View {
+        if let reason = refusalReason {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Image(systemName: reason.neverSignsAtAnyPrice
+                          ? "nosign" : "hand.raised.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(reason.neverSignsAtAnyPrice ? Color.danger : Color.warning)
+                    Text(reason.badgeLabel)
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(reason.neverSignsAtAnyPrice ? Color.danger : Color.warning)
+                    Spacer()
+                }
+                Text(reason.exitCondition)
+                    .font(.caption2)
+                    .foregroundStyle(Color.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(reason.neverSignsAtAnyPrice
+                     ? "You can still table an offer. He will not read it as one — the ask hardens, and he hears about every call."
+                     : "You can still table an offer. It will not be graded on the money, the ask hardens, and he hears about every call.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill((reason.neverSignsAtAnyPrice ? Color.danger : Color.warning).opacity(0.10))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .strokeBorder(
+                                (reason.neverSignsAtAnyPrice ? Color.danger : Color.warning).opacity(0.30),
+                                lineWidth: 1
+                            )
+                    )
+            )
+        }
     }
 
     private func builderRow(
@@ -1044,9 +1139,13 @@ struct ContractNegotiationView: View {
                     )
             }
             .disabled(builderExceedsCap)
-            .accessibilityHint(builderExceedsCap
-                               ? "Disabled: the offer exceeds your available cap space."
-                               : "Sends this package to the agent.")
+            .accessibilityHint(
+                builderExceedsCap
+                    ? "Disabled: the offer exceeds your available cap space."
+                    : (refusalReason != nil
+                       ? "Tables this package at a camp that has declined to negotiate. The ask hardens and he loses morale."
+                       : "Sends this package to the agent.")
+            )
 
             // Accept (only when agent has made an offer)
             if thread?.pendingAgentOffer != nil {
@@ -1109,9 +1208,61 @@ struct ContractNegotiationView: View {
                 scrollTarget = existing.messages.last?.id
                 return
             }
+            // The door opened. **Continue the conversation rather than wiping
+            // it**: this is the payoff for meeting the exit condition the banner
+            // named — you started the winter being told no, you started him /
+                // won games / gave him time, and now the same man is at the same
+            // table. Opening a blank thread here (which is what shipped) threw
+            // away the refusal, every offer tabled at it, and the entire reason
+            // this moment means anything.
+            reopenAfterStanceLift(existing)
+            return
         }
 
         openNewThread()
+    }
+
+    /// Turns a refused thread back into a live negotiation, in place.
+    ///
+    /// The pestering history is deliberately KEPT — `insultCount` rides forward,
+    /// so a GM who spent the autumn tabling offers at a man who kept saying no
+    /// opens this conversation against a ratcheted ask. That is the cost of not
+    /// listening, and it is not forgiven just because he is listening now.
+    private func reopenAfterStanceLift(_ existing: NegotiationThread) {
+        var live = existing
+        // `generateOpeningDemand` cannot be used here: it opens at
+        // `insultCount: 0`, which would hand the ask back at market and quietly
+        // refund every offer tabled at the closed door. The demand model is
+        // asked directly, with the count this thread actually carries.
+        let opening = ContractNegotiationEngine.demand(
+            player: player,
+            negotiationType: negotiationType,
+            salaryCap: salaryCap,
+            situation: negotiationSituation,
+            standing: gmStanding,
+            insultCount: existing.insultCount ?? 0
+        )
+        let ask = opening.openingOffer
+
+        live.status = .open
+        live.refusalReasonRaw = nil
+        live.openingAsk = NegotiationOfferSnapshot(ask)
+        live.pendingAgentOffer = NegotiationOfferSnapshot(ask)
+        live.append(NegotiationThreadMessage(
+            sender: .system,
+            text: "\(live.agentName) called back — \(player.firstName)'s camp is willing to talk now.",
+            round: live.round
+        ))
+        live.append(NegotiationThreadMessage(
+            sender: .agent,
+            text: openerText(demand: opening, ask: ask),
+            offer: NegotiationOfferSnapshot(ask),
+            round: live.round,
+            tone: opening.personaTone
+        ))
+
+        primeComposer(from: ask)
+        commit(live)
     }
 
     /// Season, week, team and the user's standing — everything the demand model
@@ -1136,7 +1287,41 @@ struct ContractNegotiationView: View {
             .max(by: { $0.seasonYear < $1.seasonYear }) {
             ownerTrust = reputation.ownerTrust
         }
+
+        #if DEBUG
+        logStanceCensus(careerID: careerID)
+        #endif
     }
+
+    #if DEBUG
+    /// One line, once per app run, measuring the rarity budget against the live
+    /// league instead of against the arithmetic in `ContractNegotiationEngine`'s
+    /// doc comments. Grep for `STANCE-CENSUS`.
+    ///
+    /// Opening a Contact Agent thread is the cheapest honest trigger available:
+    /// the fetch is already warm here, the numbers only mean anything mid-season
+    /// (the record-driven stances all gate on `weeksPlayed >= 6`), and it costs
+    /// a shipped build exactly nothing.
+    private static var stanceCensusLogged = false
+
+    private func logStanceCensus(careerID: UUID) {
+        guard !Self.stanceCensusLogged else { return }
+        Self.stanceCensusLogged = true
+        let teams = ((try? modelContext.fetch(FetchDescriptor<Team>())) ?? [])
+            .filter { $0.careerID == careerID }
+        let players = ((try? modelContext.fetch(FetchDescriptor<Player>())) ?? [])
+            .filter { $0.careerID == careerID && $0.teamID != nil }
+        var records: [UUID: (wins: Int, losses: Int)] = [:]
+        for t in teams { records[t.id] = (wins: t.wins, losses: t.losses) }
+        let census = ContractNegotiationEngine.stanceCensus(
+            players: players,
+            recordByTeamID: records,
+            season: season,
+            weeksPlayed: currentWeek
+        )
+        print("STANCE-CENSUS season=\(season) week=\(currentWeek) \(census.summary)")
+    }
+    #endif
 
     private func openNewThread() {
         var newThread = NegotiationThread(
@@ -1190,6 +1375,15 @@ struct ContractNegotiationView: View {
             ))
             newThread.status = .refused
             newThread.refusalReasonRaw = reason.rawValue
+            // The composer survives a refusal, so it has to be primed for one
+            // too. Without this the dials sat at the $5M default and the user's
+            // first act of pestering was a lowball he never meant to make.
+            primeComposer(from: opening.demand.openingOffer)
+            // The ring-chaser does not merely decline — he asks out, publicly.
+            // News plus a flag the trade AI reads, and nothing more: see
+            // `TradeRequestRegistry` for why a request must never move a player
+            // on its own.
+            if reason == .ringChasing { fileTradeRequest() }
             commit(newThread)
             return
         }
@@ -1201,18 +1395,34 @@ struct ContractNegotiationView: View {
         newThread.pendingAgentOffer = NegotiationOfferSnapshot(ask)
         newThread.append(NegotiationThreadMessage(
             sender: .agent,
-            text: AgentDialogue.opener(
-                voice: agentVoice,
-                isExtension: negotiationType == .extend,
-                ctx: context(ask: ask)
-            ),
+            text: openerText(demand: opening.demand, ask: ask),
             offer: NegotiationOfferSnapshot(ask),
             round: 0,
             // The engine's own opening frame, not a second copy of the rule.
             tone: opening.demand.personaTone
         ))
 
-        // Pre-fill the composer slightly below the ask.
+        primeComposer(from: ask)
+        commit(newThread)
+    }
+
+    /// The agent's opening line. One branch: a client who won a prove-it bet
+    /// opens by saying so, because the user WROTE that bet last winter and the
+    /// mechanic is worthless if he cannot see it pay out.
+    private func openerText(demand: ContractDemand, ask: NegotiationOffer) -> String {
+        let ctx = context(ask: ask)
+        if demand.stance == .provenBet {
+            return AgentDialogue.provenBetLine(voice: agentVoice, ctx: ctx)
+        }
+        return AgentDialogue.opener(
+            voice: agentVoice,
+            isExtension: negotiationType == .extend,
+            ctx: ctx
+        )
+    }
+
+    /// Pre-fills the composer slightly below the ask and prices the clause menu.
+    private func primeComposer(from ask: NegotiationOffer) {
         offerYears = ask.years
         offerSalary = roundToStep(Int(Double(ask.annualSalary) * 0.85))
         offerBonus = roundToStep(Int(Double(ask.signingBonus) * 0.75))
@@ -1226,14 +1436,49 @@ struct ContractNegotiationView: View {
             annualSalaryK: ask.annualSalary
         )
         enabledIncentiveIDs = []
+    }
 
-        commit(newThread)
+    // MARK: - Trade Request (ring-chaser)
+
+    /// Files a public trade request: a news story and a flag, through the
+    /// machinery that already exists.
+    ///
+    /// **Minimal on purpose.** `HoldoutEngine.forceTrade` is the precedent for
+    /// "a player actually leaves", and it is a much heavier thing — a valuation,
+    /// a partner, an executed `TradeRecord`, dead money. A REQUEST is the step
+    /// before that: the league finds out, the trade AI starts treating him as
+    /// available (`TradeValueEngine.saleCandidates`), and the decision about
+    /// what to do next stays with the user, who is the one being asked. No new
+    /// trade mechanics, and nothing here moves a player.
+    private func fileTradeRequest() {
+        guard let career, let team else { return }
+        guard TradeRequestRegistry.record(playerID: player.id, season: season) else { return }
+        career.newsLog.append(NewsItem(
+            headline: "\(player.fullName) asks \(team.abbreviation) for a trade",
+            body: "\(player.fullName)'s agent went public today, saying the \(player.position.rawValue) has told the club he wants to play for a contender. "
+                + "\"This isn't about money,\" the agent said. \"He's given this building his best football and watched it go nowhere. He wants a chance to win.\" "
+                + "The \(team.abbreviation) front office has not commented.",
+            category: .trade,
+            week: currentWeek,
+            season: season,
+            relatedTeamID: team.id,
+            relatedPlayerID: player.id,
+            sentiment: .negative
+        ))
+        try? modelContext.save()
     }
 
     /// Puts the composer back where a resumed conversation left it.
     private func restoreBuilder(from existing: NegotiationThread) {
-        let reference = existing.pendingAgentOffer ?? existing.openingAsk
-        guard let reference else { return }
+        // A refused thread has neither a standing counter nor an opening ask —
+        // nobody ever put a number on the table. It still has a live composer,
+        // so it is primed off the demand model instead of left on the defaults.
+        guard let reference = existing.pendingAgentOffer ?? existing.openingAsk else {
+            if existing.status == .refused {
+                primeComposer(from: liveDemand.openingOffer)
+            }
+            return
+        }
         offerYears = reference.years
         offerSalary = roundToStep(Int(Double(reference.annualSalary) * 0.9))
         offerBonus = roundToStep(Int(Double(reference.signingBonus) * 0.8))
@@ -1252,7 +1497,17 @@ struct ContractNegotiationView: View {
     // MARK: - Actions
 
     private func submitCounterOffer() {
-        guard var live = thread, live.isOpen, let askSnapshot = live.pendingAgentOffer else { return }
+        guard var live = thread, live.status.acceptsOffers else { return }
+
+        // A refusing camp has no standing offer to counter, so this path forks
+        // before the normal one: there is nothing to grade the money against
+        // because the money was never the question.
+        if live.status == .refused {
+            pester(&live)
+            return
+        }
+
+        guard live.isOpen, let askSnapshot = live.pendingAgentOffer else { return }
         let agentAsk = askSnapshot.offer
 
         let gmOffer = builderOffer
@@ -1357,6 +1612,83 @@ struct ContractNegotiationView: View {
         commit(live)
     }
 
+    // MARK: - Pestering
+
+    /// An offer tabled at a client who has already declined to negotiate.
+    ///
+    /// **This is a full mechanic, not a rejection message.** The engine grades
+    /// nothing (the money was never the question), and the four things that
+    /// happen instead are the four things that would actually happen: the
+    /// standing ask ratchets 6 % (`respond`'s pestering path calls
+    /// `ContractDemand.escalated`), the ledger books it as an insult so it rides
+    /// into every future negotiation in the league, the man himself loses
+    /// `pesterMoraleCost` morale because his agent tells him about the call, and
+    /// the agent's answer gets sharper each time.
+    ///
+    /// The cap gate still applies. An offer the club cannot fit is not a
+    /// legitimate way to annoy somebody.
+    private func pester(_ live: inout NegotiationThread) {
+        let gmOffer = builderOffer
+        guard !exceedsCap(gmOffer) else { return }
+
+        let attempt = (live.pesterCount ?? 0) + 1
+        live.pesterCount = attempt
+        live.round += 1
+        let round = live.round
+
+        live.append(NegotiationThreadMessage(
+            sender: .you,
+            text: AgentDialogue.gmOfferLine(round: round, playerFirst: player.firstName),
+            offer: NegotiationOfferSnapshot(gmOffer),
+            round: round
+        ))
+
+        // The engine owns the consequence; this only chooses the words. Note
+        // that `previousAgentOffer` is the GM's own offer here — a refusing camp
+        // has no standing number, and `respond` short-circuits before it reads
+        // one, so passing the offer back is honest rather than a placeholder.
+        let result = ContractNegotiationEngine.evaluateCounterOffer(
+            gmOffer: gmOffer,
+            player: player,
+            previousAgentOffer: gmOffer,
+            roundNumber: round,
+            negotiationType: negotiationType,
+            salaryCap: salaryCap,
+            situation: negotiationSituation,
+            standing: gmStanding,
+            insultCount: live.insultCount ?? 0
+        )
+        live.insultCount = result.insultCount
+
+        let reason = live.refusalReason ?? .losingCulture
+        live.append(NegotiationThreadMessage(
+            sender: .agent,
+            text: AgentDialogue.pesteringLine(
+                voice: agentVoice,
+                reason: reason,
+                attempt: attempt,
+                ctx: context(ask: gmOffer, gmOffer: gmOffer, rounds: round)
+            ),
+            round: round,
+            tone: .refusing
+        ))
+
+        // He hears about it. Small, and cumulative — which is the point.
+        player.morale = max(1, min(100, player.morale - ContractNegotiationEngine.pesterMoraleCost))
+        try? modelContext.save()
+
+        // The third time, say out loud what has been happening to the price.
+        if attempt >= 3 {
+            live.append(NegotiationThreadMessage(
+                sender: .system,
+                text: "\(player.fullName)'s asking price has hardened \(attempt) times since his camp declined to negotiate.",
+                round: round
+            ))
+        }
+
+        commit(live)
+    }
+
     private func acceptAgentOffer() {
         guard var live = thread, live.isOpen, let snapshot = live.pendingAgentOffer else { return }
         guard !exceedsCap(snapshot.offer) else { return }
@@ -1440,6 +1772,22 @@ struct ContractNegotiationView: View {
         // the money its own way, so a clause that only survived on some of those
         // paths would be worse than no clause at all.
         ContractIncentiveRegistry.set(offer.incentives, for: player)
+
+        // The prove-it bet, booked and settled in the one place a contract is
+        // actually signed.
+        //
+        // Booking it: a short deal to a client the engine graded prove-it IS the
+        // bet, and next winter's demand model has no other way to know it
+        // happened (see `ProveItRegistry`). Settling it: a man who just cashed a
+        // proven bet has been paid for it, and leaving the flag standing would
+        // charge the club the same premium every year forever.
+        if demand.stance == .provenBet {
+            ProveItRegistry.clear(playerID: player.id)
+        } else if demand.isProveIt, offer.years <= 2 {
+            ProveItRegistry.record(playerID: player.id, season: season)
+        }
+        // He signed. Whatever he was asking the league for, he is staying.
+        TradeRequestRegistry.clear(playerID: player.id)
 
         if !live.moraleApplied {
             live.moraleApplied = true

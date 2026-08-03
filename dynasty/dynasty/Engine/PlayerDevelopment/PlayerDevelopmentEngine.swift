@@ -504,6 +504,23 @@ enum PlayerDevelopmentEngine {
         /// club, counted off `PlayerSeasonHistory`. Drives how much noise the
         /// coaching staff's potential assessment still carries.
         var yearsOnTeam: Int = 0
+
+        // --- Economy (post-payday trigger) ---
+
+        /// The club's ACTUAL cap for the league year being processed.
+        ///
+        /// Trigger 6 ("just paid") asks whether a man's salary is at least 95 %
+        /// of his market value, and `ContractEngine.estimateMarketValue` defaults
+        /// to the **season-one** cap of 265 000. On a season-ten save that
+        /// default understates every market value while real salaries have
+        /// inflated with the real cap, so the comparison drifts steadily toward
+        /// "everybody just got paid" — which quietly turns a 5 %-of-league
+        /// complacency trigger into a general one as a dynasty ages.
+        ///
+        /// Defaulted so no existing call site changes behaviour by a single bit;
+        /// **`WeekAdvancer`'s offseason builder should set it to `team.salaryCap`**
+        /// (see the report for the exact line).
+        var salaryCap: Int = 265_000
     }
 
     /// The team-level slice of the offseason environment (plan §2.9.2-3) —
@@ -954,7 +971,9 @@ enum PlayerDevelopmentEngine {
         if player.contractYearsRemaining >= 3, player.yearsPro >= 4,
            player.mental.workEthic < paydayDriveGate, comp < paydayCompGate,
            player.personality.motivation != .winning {
-            let market = ContractEngine.estimateMarketValue(player: player)
+            let market = ContractEngine.estimateMarketValue(
+                player: player, salaryCap: inputs.salaryCap
+            )
             if market > 0, Double(player.annualSalary) >= Double(market) * 0.95 {
                 add(-2, isPayday: true)
                 if player.personality.motivation == .money {
