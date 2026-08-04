@@ -119,6 +119,23 @@ struct CoachingStaffView: View {
         return allCoaches.filter { $0.teamID == teamID }
     }
 
+    /// Task #96 — the medical hire sheets show the league's real out-of-work
+    /// staff alongside the invented field, for the same reason `HireCoachView`
+    /// does: the AI clubs have been hiring out of that bench every offseason and
+    /// the user could not see it. Exact title only, so nothing has to be
+    /// re-priced or re-titled before he actually signs anybody.
+    private func medicalHireCandidates(role: CoachRole) -> [Coach] {
+        let invented = CoachingEngine.generateCoachCandidates(
+            role: role,
+            count: Int.random(in: 8...12),
+            teamBudget: coachingBudget,
+            teamWins: team?.wins ?? 8,
+            teamReputation: career.reputation
+        )
+        let market = CoachMarketEngine.availableBench(allCoaches).filter { $0.role == role }
+        return market + invented
+    }
+
     /// Scouts filtered to this team.
     private var scouts: [Scout] {
         guard let teamID = career.teamID else { return [] }
@@ -625,13 +642,16 @@ struct CoachingStaffView: View {
 
             switch vacancy {
             case .coach(let role):
-                let pool = CoachingEngine.generateCoachCandidates(
-                    role: role,
-                    count: 20,
-                    teamBudget: coachingBudget,
-                    teamWins: team?.wins ?? 8,
-                    teamReputation: career.reputation
-                )
+                // Task #96: auto-hire shops the same market the manual sheet
+                // does — real out-of-work coaches of this exact title first.
+                let pool = CoachMarketEngine.availableBench(allCoaches).filter { $0.role == role }
+                    + CoachingEngine.generateCoachCandidates(
+                        role: role,
+                        count: 20,
+                        teamBudget: coachingBudget,
+                        teamWins: team?.wins ?? 8,
+                        teamReputation: career.reputation
+                    )
                 guard let pick = bestAffordableCoach(in: pool, cap: cap) else { continue }
                 hire(coach: pick, teamID: teamID)
                 wallet[potKey] = (wallet[potKey] ?? 0) - pick.salary
@@ -715,12 +735,17 @@ struct CoachingStaffView: View {
         candidate.careerID = career.id
         candidate.hireSeasonYear = career.currentSeason
         candidate.contractYearsRemaining = 3
+        // Task #96 — stop the unemployment clock, and do not re-insert a coach
+        // signed off the league's market (he is already a row in this store).
+        candidate.unemployedSeasons = 0
         candidate.faceID = FaceLibrary.shared.claimFace(
             candidate.faceID, personID: candidate.id,
             role: .coach, age: candidate.age, position: nil,
             gender: FacePersonGender(tag: candidate.gender)
         )
-        modelContext.insert(candidate)
+        if candidate.modelContext == nil {
+            modelContext.insert(candidate)
+        }
 
         // R30: every coaching hire joins the tree (medical staff sit outside it,
         // exactly as `syncCoachingTree` treats them).
@@ -2709,14 +2734,7 @@ struct CoachingStaffView: View {
     private func openHireSheet(for vacancy: StaffVacancy) {
         switch vacancy {
         case .coach(let role) where Self.medicalRoles.contains(role):
-            let candidates = CoachingEngine.generateCoachCandidates(
-                role: role,
-                count: Int.random(in: 8...12),
-                teamBudget: coachingBudget,
-                teamWins: team?.wins ?? 8,
-                teamReputation: career.reputation
-            )
-            activeHireSheet = .medical(role, candidates)
+            activeHireSheet = .medical(role, medicalHireCandidates(role: role))
         case .coach(let role):
             activeHireSheet = .coach(role)
         case .scout(let role):
@@ -3239,14 +3257,7 @@ struct CoachingStaffView: View {
     @ViewBuilder
     private func compactVacantMedicalCard(role: CoachRole) -> some View {
         Button {
-            let candidates = CoachingEngine.generateCoachCandidates(
-                role: role,
-                count: Int.random(in: 8...12),
-                teamBudget: coachingBudget,
-                teamWins: team?.wins ?? 8,
-                teamReputation: career.reputation
-            )
-            activeHireSheet = .medical(role, candidates)
+            activeHireSheet = .medical(role, medicalHireCandidates(role: role))
         } label: {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
@@ -4124,24 +4135,38 @@ private struct SimpleMedicalHireSheet: View {
     private func hireMedical(_ candidate: Coach) {
         guard candidate.salary <= remainingBudget else { return }
 
-        // Remove existing coach in this role
+        // Release the incumbent — never delete him. Same rule as
+        // `HireCoachView.hire`: the row is permanent (archived `LeagueEvent`s
+        // fetch coaches by id and render their portrait) and the man belongs on
+        // the unemployed bench, not in the void. See `CoachMarketEngine`.
         let descriptor = FetchDescriptor<Coach>(
             predicate: #Predicate { $0.teamID == teamID }
         )
         if let existing = try? modelContext.fetch(descriptor) {
-            existing.filter { $0.role == role }.forEach { modelContext.delete($0) }
+            for outgoing in existing where outgoing.role == role && outgoing.id != candidate.id {
+                outgoing.teamID = nil
+                outgoing.contractYearsRemaining = 0
+                outgoing.unemployedSeasons = 0
+            }
         }
 
         candidate.teamID = teamID
+        // Back in work — stop the unemployment clock (task #96). No-op for an
+        // invented candidate.
+        candidate.unemployedSeasons = 0
         // Phase 4 faces: turn the candidate's non-reserving preview portrait
-        // into a real reservation (same reason as `HireCoachView.hire`).
+        // into a real reservation (same reason as `HireCoachView.hire`). A coach
+        // signed off the market already holds his, and `claimFace` hands the
+        // same id back when the registry names him as its holder.
         candidate.faceID = FaceLibrary.shared.claimFace(
             candidate.faceID, personID: candidate.id,
             role: .coach, age: candidate.age, position: nil,
             gender: FacePersonGender(tag: candidate.gender)
         )
         candidate.careerID = careerID
-        modelContext.insert(candidate)
+        if candidate.modelContext == nil {
+            modelContext.insert(candidate)
+        }
         hiredID = candidate.id
         try? modelContext.save()
 

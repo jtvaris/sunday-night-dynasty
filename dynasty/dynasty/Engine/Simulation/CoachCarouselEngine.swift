@@ -167,6 +167,7 @@ enum CoachCarouselEngine {
             firing.coach.teamID = nil
             firing.coach.reputation = max(1, firing.coach.reputation - 4)
             result.firedHeadCoaches += 1
+            CoachChurnDiag.record(CoachChurnDiag.detached)
             vacancyTeams.append(firing.team)
 
             result.moves.append(CarouselMove(
@@ -259,8 +260,12 @@ enum CoachCarouselEngine {
 
         for vacancyTeam in vacancyTeams {
             // Pool rebuilt per vacancy — earlier hires leave the market.
+            // `!isRetired` is belt-and-braces next to the age ceiling: age
+            // retirement only fires at 65+, but task #96's attrition can retire a
+            // 40-year-old who spent four years out of work, and a man who left
+            // the profession must never be handed a head-coaching job.
             let recycledHCs = allCoaches.filter {
-                $0.teamID == nil && $0.role == .headCoach && $0.age < 64
+                $0.teamID == nil && !$0.isRetired && $0.role == .headCoach && $0.age < 64
             }
             let unattachedCoordinators = allCoaches.filter {
                 $0.teamID == nil
@@ -283,6 +288,7 @@ enum CoachCarouselEngine {
             var originNote = ""
             if let pick = pool.prefix(3).randomElement() ?? pool.first {
                 hired = pick
+                if pick.teamID == nil { CoachChurnDiag.record(CoachChurnDiag.recycled) }
                 if let oldTeamID = pick.teamID, let oldTeam = teamsByID[oldTeamID] {
                     // Promotion out of a coordinator seat — the chain begins.
                     originNote = "former \(oldTeam.fullName) \(pick.role.abbreviation)"
@@ -307,8 +313,10 @@ enum CoachCarouselEngine {
                     gender: FacePersonGender(tag: generated.gender)
                 )
                 result.newCoaches.append(generated)
+                CoachChurnDiag.record(CoachChurnDiag.generated)
             }
 
+            hired.unemployedSeasons = 0
             hired.teamID = vacancyTeam.id
             if hired.role != .headCoach {
                 hired.role = .headCoach
@@ -370,6 +378,7 @@ enum CoachCarouselEngine {
                 .max(by: { CoachingEngine.coachOverallRating($0) < CoachingEngine.coachOverallRating($1) }) {
                 filled = free
                 originNote = "veteran \(vacancy.role.abbreviation)"
+                CoachChurnDiag.record(CoachChurnDiag.recycled)
             }
             // 2) Internal promotion from the position-coach room.
             else if let internalPick = allCoaches
@@ -392,12 +401,14 @@ enum CoachCarouselEngine {
                 result.newCoaches.append(generated)
                 filled = generated
                 originNote = "outside hire"
+                CoachChurnDiag.record(CoachChurnDiag.generated)
             }
 
             guard let coach = filled else { continue }
             coach.teamID = vacancy.team.id
             coach.hireSeasonYear = season
             coach.contractYearsRemaining = 3
+            coach.unemployedSeasons = 0
 
             result.moves.append(CarouselMove(
                 season: season,

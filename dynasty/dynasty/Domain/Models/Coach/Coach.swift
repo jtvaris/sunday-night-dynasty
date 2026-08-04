@@ -79,9 +79,10 @@ final class Coach {
     /// Optional stored property with a nil default → safe lightweight migration.
     var faceID: String? = nil
 
-    /// `true` once the coach has left coaching for good (the 65+ retirement in
-    /// `WeekAdvancer`). The row is kept forever — coaching trees, history and
-    /// portraits still read it — exactly like a retired player's row.
+    /// `true` once the coach has left coaching for good — the 65+ retirement in
+    /// `WeekAdvancer` or the unemployment attrition in `CoachMarketEngine`. The
+    /// row is kept forever — coaching trees, history and portraits still read it
+    /// — exactly like a retired player's row.
     ///
     /// It exists because "unemployed" and "gone" used to be the same state
     /// (`teamID == nil`), which made the coach half of the face pool leak: a
@@ -91,6 +92,30 @@ final class Coach {
     /// the reconciliation pass from taking it back.
     /// Stored property with an inline default → safe lightweight migration.
     var isRetired: Bool = false
+
+    /// Consecutive offseasons this coach has ended without a job, counted by
+    /// `CoachMarketEngine.settleUnemployment` once the carousel and the AI staff
+    /// refill have both had their chance to hire him. `0` for anyone employed.
+    ///
+    /// Task #96: the league had no concept of a coach being out of work. Firings
+    /// and poaching set `teamID = nil` and nothing ever looked at that row again,
+    /// so a career accumulated an unemployed bench that only ever grew (+82 living
+    /// coaches a season on a 512-man league) and every one of them held a portrait.
+    /// This counter is what lets men leave the profession the way they do in life:
+    /// one year out is a sabbatical, three years out is a broadcasting job.
+    /// Stored property with an inline default → safe lightweight migration.
+    var unemployedSeasons: Int = 0
+
+    /// Why this coach's `isRetired` flag is set: `"retired"` (age) or
+    /// `"leftLeague"` (attrition — took a college/broadcast/front-office job).
+    /// `nil` for everyone still in the profession.
+    ///
+    /// Purely descriptive: every consumer keys on `isRetired`, which is the flag
+    /// that means "no longer occupies a face reservation". This exists so the
+    /// smoke can separate the two exit doors and so UI copy can avoid calling a
+    /// 41-year-old who left for college football "retired".
+    /// Stored property with an inline default → safe lightweight migration.
+    var departureReason: String? = nil
 
     /// `"male"` | `"female"` — the same two-value vocabulary `FaceBucket.gender`
     /// uses, because portrait matching is gender-strict: a female coach may only

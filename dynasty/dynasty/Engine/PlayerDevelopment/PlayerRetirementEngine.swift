@@ -890,6 +890,6 @@ enum PlayerRetirementEngine {
         // pass before anyone else can wear it. Both the retirement pass and the
         // free-agency washout pass land here, so this is the single release
         // point for a player leaving the league.
-        FaceLibrary.shared.releaseFace(player.faceID)
+        FaceLibrary.shared.releaseFace(player.faceID, heldBy: player.id)
     }
 }

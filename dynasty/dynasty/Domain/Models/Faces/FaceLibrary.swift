@@ -599,14 +599,33 @@ final class FaceLibrary {
     /// Frees a face and starts its cooldown (retirement, washout, a coach
     /// leaving the league for good). Keeping `faceID` on the row is deliberate:
     /// history and Hall-of-Fame views still render the person's portrait.
-    func releaseFace(_ faceID: String?) {
+    ///
+    /// - Parameter heldBy: the id of the person who is leaving. The release is a
+    ///   no-op unless the registry agrees that this person is the id's holder.
+    ///
+    ///   That check is not paranoia. `backfill` deliberately KEEPS stable
+    ///   duplicates once the pool is full (see `claimRebuilt`), so two living
+    ///   people can wear the same portrait while only one of them is the
+    ///   registered holder. Without the check, the duplicate leaving would clear
+    ///   the *other* man's reservation and put his portrait on cooldown while he
+    ///   is still wearing it — and tier 16 of `assignFace` ("sweep the whole
+    ///   catalog for anything unheld") ignores cooldown, so a third living
+    ///   person could then be handed it before the next `backfill` repairs the
+    ///   map. Task #96 made this reachable at volume: coach departures went from
+    ///   ~17 a season (age retirement only) to ~90 (age + unemployment attrition).
+    ///
+    ///   Pass `nil` only where the caller genuinely means "release this id
+    ///   whoever holds it".
+    func releaseFace(_ faceID: String?, heldBy personID: UUID? = nil) {
         guard let faceID, !faceID.isEmpty else { return }
         lock.lock()
         defer { lock.unlock() }
         // Only a face somebody actually held goes on cooldown. Releasing an
         // unheld id must stay a no-op, or a stray call would freeze a free
         // face out of circulation for two seasons for nothing.
-        guard registry.inUse[faceID] != nil else { return }
+        guard let holder = registry.inUse[faceID] else { return }
+        // ...and only the holder may release it.
+        if let personID, holder != personID { return }
         registry.inUse[faceID] = nil
         registry.cooldown[faceID] = currentSeasonLocked
         registryDirty = true
@@ -735,7 +754,10 @@ final class FaceLibrary {
                    entry.bucket.gender != FacePersonGender(tag: coach.gender).tag {
                     genderRepairs += 1
                     coach.faceID = nil
-                    releaseFace(faceID)
+                    // `heldBy:` so a coach who is only a *duplicate* wearer of
+                    // this id cannot cancel the real holder's reservation; her
+                    // row is corrected either way by the `faceID = nil` above.
+                    releaseFace(faceID, heldBy: coach.id)
                 }
                 if !claimRebuilt(coach.faceID, personID: coach.id, onTeam: coach.teamID != nil),
                    coach.faceID != nil {

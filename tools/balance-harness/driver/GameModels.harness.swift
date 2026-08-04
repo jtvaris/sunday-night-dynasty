@@ -448,5 +448,5 @@ final class FaceLibrary {
     func claimFace(_ preferred: String?, personID: UUID, role: FacePersonRole,
                    age: Int, position: Position?) -> String? { nil }
 
-    func releaseFace(_ faceID: String?) {}
+    func releaseFace(_ faceID: String?, heldBy personID: UUID? = nil) {}
 }

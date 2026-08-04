@@ -2906,6 +2906,7 @@ enum WeekAdvancer {
                         career.coachingTree = tree
                     }
                     coach.teamID = nil
+                    CoachChurnDiag.record(CoachChurnDiag.detached)
                 }
             }
 
@@ -2920,6 +2921,7 @@ enum WeekAdvancer {
                 )
                 for coach in poached {
                     coach.teamID = nil
+                    CoachChurnDiag.record(CoachChurnDiag.detached)
                 }
             }
 
@@ -2932,13 +2934,19 @@ enum WeekAdvancer {
                     CoachingEngine.developCoach(coach, teamWins: team.wins, headCoach: hc, assistantHC: ahc)
                 }
             }
-            // Develop unattached coaches with neutral win total
-            for coach in allCoaches where coach.teamID == nil {
+            // Develop unattached coaches with neutral win total.
+            //
+            // `!isRetired` because "unattached" and "gone" are the same `teamID`:
+            // without it every dead row in the store kept drawing a season of XP
+            // and a birthday forever, so a man who retired at 65 in season 2 was
+            // 71 by season 8, his aged portrait kept sliding in archived news,
+            // and the pass below re-rolled his retirement every year.
+            for coach in allCoaches where coach.teamID == nil && !coach.isRetired {
                 CoachingEngine.developCoach(coach, teamWins: 8)
             }
 
             // Coach retirement (65+)
-            for coach in allCoaches where coach.age >= 65 {
+            for coach in allCoaches where coach.age >= 65 && !coach.isRetired {
                 if CoachDevelopmentEngine.shouldRetire(coach: coach) {
                     // Generate retirement news if it's the player's team
                     if coach.teamID == career.teamID {
@@ -2969,7 +2977,10 @@ enum WeekAdvancer {
                     // next advance — without it the coach half of the pool
                     // leaked a few hundred ids over a long career.
                     coach.isRetired = true
-                    FaceLibrary.shared.releaseFace(coach.faceID)
+                    coach.departureReason = "retired"
+                    FaceLibrary.shared.releaseFace(coach.faceID, heldBy: coach.id)
+                    CoachChurnDiag.record(CoachChurnDiag.retiredAge)
+                    CoachChurnDiag.record(CoachChurnDiag.detached)
                 }
             }
 
@@ -3016,6 +3027,22 @@ enum WeekAdvancer {
                 career: career,
                 teams: teams,
                 modelContext: modelContext
+            )
+
+            // Task #96 — the profession's exit door, and the LAST hiring-related
+            // pass of the offseason on purpose: everyone the carousel and the
+            // refill above could place is already placed, so whoever is still
+            // unattached here is genuinely out of work this year. A man who
+            // stays out of work long enough takes the college job or the booth,
+            // which is what stops the living-coach count (and with it the face
+            // catalog) from growing forever.
+            //
+            // Re-fetched rather than reusing `allCoaches`: the two passes above
+            // inserted rows that must be counted as EMPLOYED, not charged a year
+            // on the bench for having existed for one line of code.
+            CoachMarketEngine.settleUnemployment(
+                coaches: fetchAllCoaches(modelContext: modelContext),
+                season: career.currentSeason
             )
 
             // Increment scout seasonsInRole for familiarity bonus
@@ -3210,6 +3237,7 @@ enum WeekAdvancer {
                     )
                     newHC.careerID = career.id
                     modelContext.insert(newHC)
+                    CoachChurnDiag.record(CoachChurnDiag.generated)
                     lastNewsItems.append(NewsItem(
                         headline: "\(reqTeam.fullName) name \(newHC.fullName) head coach",
                         body: "With their interview request for \(request.coachName) left unanswered, the \(reqTeam.fullName) have moved on and hired \(newHC.fullName) as their next head coach.",
@@ -5889,6 +5917,17 @@ enum WeekAdvancer {
     /// staffing doesn't erode across seasons (poaching/retirements/carousel
     /// moves used to leave permanent holes — only the user could hire, so by
     /// season 5+ AI player development quietly collapsed).
+    ///
+    /// Task #96 — **the bench is asked first**. This loop used to invent a coach
+    /// for every hole it found, which is what made the league's coach population
+    /// grow without bound: the three detach passes above it hand ~90 men a season
+    /// to unemployment (`checkCoordinatorPoaching` alone rolls against every
+    /// non-HC seat on all 32 staffs) and this was the pass that replaced every one
+    /// of them with a stranger. Same seats, same fill guarantee — the difference
+    /// is that "hired away by another organization" now means somebody actually
+    /// hired him. Generation stays as the fallback, so a role whose market is
+    /// genuinely empty is still filled on this advance and no team is ever left
+    /// short-staffed.
     private static func refillAIStaffVacancies(
         career: Career,
         teams: [Team],
@@ -5897,29 +5936,86 @@ enum WeekAdvancer {
         // Re-fetch: the carousel above this call moved coaches around and
         // inserted brand-new ones.
         let coaches = fetchAllCoaches(modelContext: modelContext)
+        let bench = CoachMarketEngine.availableBench(coaches)
+        // A bench pick is not written to the store until it is assigned below,
+        // and `bench` is a snapshot — without this, two clubs would both "hire"
+        // the same unemployed man on the same advance.
+        var claimed = Set<UUID>()
 
-        for team in teams where team.id != career.teamID {
+        // Fetch order is not a hiring order. This loop offers every vacancy the
+        // best man on the bench, so iterating `teams` as they came out of the
+        // store would give the earliest-indexed clubs first refusal on the whole
+        // market EVERY offseason — over a long career that is a systematic staff
+        // -quality gradient down the fetch order, with no gameplay meaning behind
+        // it. (The carousel above already avoids this by sorting its vacancies on
+        // attractiveness; a position-room opening has no such ordering, so the
+        // honest answer is a coin toss.)
+        for team in teams.shuffled() where team.id != career.teamID {
             let filledRoles = Set(coaches.filter { $0.teamID == team.id }.map(\.role))
             for role in CoachRole.allCases where !filledRoles.contains(role) {
-                guard let hire = CoachingEngine.generateCoachCandidates(role: role, count: 1).first else {
-                    continue
+                let hire: Coach
+                if let recycled = CoachMarketEngine.hireFromBench(
+                    role: role, bench: bench, excluding: claimed
+                ) {
+                    claimed.insert(recycled.id)
+                    // A demoted coordinator or a promoted position coach takes
+                    // the title of the seat he is filling — the staff screen
+                    // reads roles, not résumés.
+                    if recycled.role != role {
+                        let previousRole = recycled.role
+                        recycled.role = role
+                        // ONLY a genuine step up the ladder starts an adjustment
+                        // period. `isInAdjustmentPeriod` costs a season of AI
+                        // player development (−0.05 HC / −0.03 coordinator in
+                        // `CoachingEngine`, plus the scheme-continuity bonus),
+                        // and this pass now moves ~90 men a season: stamping
+                        // every seat change would have charged that penalty for
+                        // lateral moves and demotions too, applying a new
+                        // league-wide drag on development that the invented
+                        // stranger this man replaces never paid.
+                        if role.isPromotion(from: previousRole) {
+                            recycled.promotedInSeason = career.currentSeason
+                        }
+                        // And the seat's pay. Without this a fired head coach
+                        // taking a position-room job would carry his $16M salary
+                        // into a $650k chair and quietly distort every staff-cost
+                        // reading that sums the room.
+                        recycled.salary = LeagueGenerator.salaryForCoach(
+                            role: role,
+                            ovr: CoachingEngine.coachOverallRating(recycled),
+                            yearsExperience: recycled.yearsExperience
+                        )
+                    }
+                    // He keeps the portrait he already holds: the reservation was
+                    // never released (only a permanent exit does that), so there
+                    // is nothing to re-claim.
+                    hire = recycled
+                    CoachChurnDiag.record(CoachChurnDiag.recycled)
+                } else {
+                    guard let generated = CoachingEngine.generateCoachCandidates(
+                        role: role, count: 1
+                    ).first else { continue }
+                    // Phase 4 faces: this loop fills ~10 vacancies in one advance
+                    // from the SAME registry state, and the preview portraits it
+                    // starts from are non-reserving — so without claiming, two of
+                    // the coaches inserted here can hash to the same free face and
+                    // both keep it. Claim turns each pick into a reservation, so
+                    // the next one draws from a shorter list.
+                    generated.faceID = FaceLibrary.shared.claimFace(
+                        generated.faceID, personID: generated.id,
+                        role: .coach, age: generated.age, position: nil,
+                        gender: FacePersonGender(tag: generated.gender)
+                    )
+                    generated.careerID = activeCareerID
+                    modelContext.insert(generated)
+                    hire = generated
+                    CoachChurnDiag.record(CoachChurnDiag.generated)
                 }
+
                 hire.teamID = team.id
                 hire.hireSeasonYear = career.currentSeason
                 hire.contractYearsRemaining = Int.random(in: 2...4)
-                // Phase 4 faces: this loop fills ~10 vacancies in one advance
-                // from the SAME registry state, and the preview portraits it
-                // starts from are non-reserving — so without claiming, two of
-                // the coaches inserted here can hash to the same free face and
-                // both keep it. Claim turns each pick into a reservation, so
-                // the next one draws from a shorter list.
-                hire.faceID = FaceLibrary.shared.claimFace(
-                    hire.faceID, personID: hire.id,
-                    role: .coach, age: hire.age, position: nil,
-                    gender: FacePersonGender(tag: hire.gender)
-                )
-                hire.careerID = activeCareerID
-                modelContext.insert(hire)
+                hire.unemployedSeasons = 0
             }
         }
     }

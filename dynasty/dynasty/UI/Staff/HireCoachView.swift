@@ -40,6 +40,10 @@ struct HireCoachView: View {
     @State private var personalityFilter: String = "All"
     /// #271: Track candidates who rejected offers — shown grayed out with "Signed elsewhere"
     @State private var rejectedCandidates: Set<UUID> = []
+    /// Task #96: which rows are real out-of-work coaches rather than invented
+    /// candidates. Snapshotted when the list is built — a hire takes the man off
+    /// the bench, and the badge must not vanish from the row the user just used.
+    @State private var marketCandidateIDs: Set<UUID> = []
 
     // MARK: - Performance caches
     // Recomputed via refreshCaches() on dependency changes — avoids per-render O(n log n) sorts in body.
@@ -81,6 +85,26 @@ struct HireCoachView: View {
     /// The current coach in the role being hired for (Fix #63: comparison).
     private var currentCoach: Coach? {
         allCoaches.first { $0.teamID == teamID && $0.role == role }
+    }
+
+    /// Task #96 — REAL out-of-work coaches, listed alongside the invented ones.
+    ///
+    /// The league runs a coaching market: firings, Black Monday and poaching put
+    /// men on an unemployed bench every offseason, all 31 AI clubs hire out of it
+    /// (`CoachMarketEngine.hireFromBench`), and a man nobody calls back eventually
+    /// leaves the profession. The user could see none of it — this screen was fed
+    /// exclusively by `CoachingEngine.generateCoachCandidates`, so the one GM in
+    /// the league who could never sign a known coach was the human, and his own
+    /// coordinator, whose departure the news announced as "hired away by another
+    /// organization", was unreachable forever after.
+    ///
+    /// Exact-title only, and no mutation before the hire: a listed man's `salary`
+    /// is the going rate for THIS seat because it was set for this seat, so the
+    /// budget check on the row is honest without re-pricing a coach the user
+    /// never signs. Cross-family recycling (a demoted coordinator taking a
+    /// position room) stays an AI-side bulk mechanic.
+    private var marketCandidates: [Coach] {
+        CoachMarketEngine.availableBench(allCoaches).filter { $0.role == role }
     }
 
     // MARK: - Sort Column
@@ -316,13 +340,20 @@ struct HireCoachView: View {
                 await Task.yield()
                 let count = Int.random(in: 20...30)
                 // #267: Pass team data so candidate quality scales with budget/prestige
-                candidates = CoachingEngine.generateCoachCandidates(
+                let invented = CoachingEngine.generateCoachCandidates(
                     role: role,
                     count: count,
                     teamBudget: teamBudget,
                     teamWins: teamWins,
                     teamReputation: teamReputation
                 )
+                // Task #96: the league's actual unemployed coaches first, then
+                // the invented field. Order here is cosmetic — every visible
+                // list is re-sorted by `refreshCaches` — but it is the order the
+                // empty-state and any future "market" grouping would want.
+                let market = marketCandidates
+                marketCandidateIDs = Set(market.map(\.id))
+                candidates = market + invented
             }
             refreshCaches()
         }
@@ -729,6 +760,20 @@ struct HireCoachView: View {
                                 .padding(.vertical, 1)
                                 .background(Color.accentGold, in: RoundedRectangle(cornerRadius: 3))
                         }
+                        // Task #96: a real out-of-work coach from the league's
+                        // market — somebody the news has already talked about,
+                        // possibly a man this club lost — as opposed to an
+                        // invented candidate. Worth calling out: he has a real
+                        // record, and every AI club is bidding for him too.
+                        if marketCandidateIDs.contains(candidate.id) {
+                            Text("FREE AGENT")
+                                .font(.system(size: DSType.Size.micro, weight: .black))
+                                .foregroundStyle(Color.accentBlue)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(Color.accentBlue.opacity(0.15), in: RoundedRectangle(cornerRadius: 3))
+                                .accessibilityLabel("Free agent coach, currently out of work")
+                        }
                         // R30 Market 2.0: rival-demand badge — flame + how many
                         // other teams are pursuing this candidate.
                         let demand = CoachCarouselEngine.demand(for: candidate)
@@ -1024,28 +1069,51 @@ struct HireCoachView: View {
     private func hire(_ candidate: Coach) {
         guard candidate.salary <= remainingBudget else { return }
 
+        // Task #96: the incumbent is RELEASED, not deleted. A `Coach` row is
+        // permanent in this game — `LeagueEvent.coachID` is a live fetch by id
+        // (`EventAlertView.loadRelatedNames` reads `coach.faceID` off it), so
+        // deleting the row blanks the subject of every archived news item about
+        // him and orphans his face reservation until the next `FaceLibrary`
+        // backfill. It also threw away the man himself: replaced coaches now join
+        // the unemployed bench, where `CoachMarketEngine` can place them on
+        // another staff or, in time, retire them out of the profession — the same
+        // door every AI-fired coach goes through.
         let descriptor = FetchDescriptor<Coach>(
             predicate: #Predicate { $0.teamID == teamID }
         )
         if let existing = try? modelContext.fetch(descriptor) {
-            existing.filter { $0.role == role }.forEach { modelContext.delete($0) }
+            for outgoing in existing where outgoing.role == role && outgoing.id != candidate.id {
+                outgoing.teamID = nil
+                outgoing.contractYearsRemaining = 0
+                outgoing.unemployedSeasons = 0
+            }
         }
 
         candidate.teamID = teamID
         candidate.careerID = career.id
         candidate.hireSeasonYear = career.currentSeason
         candidate.contractYearsRemaining = 3
+        // Task #96: back in work, so his time on the bench stops counting toward
+        // `CoachMarketEngine.settleUnemployment`'s attrition roll. No-op for an
+        // invented candidate, which has never been out of work.
+        candidate.unemployedSeasons = 0
         // Phase 4 faces: a candidate list carries a NON-reserving preview
         // portrait (`CoachingEngine.generateCoachCandidates`), so every hire has
         // to claim it here. Without the claim the registry never learns the
         // face is taken and the next person drawn from the same free list — the
         // very next hire in this same wizard — can be handed the same portrait.
+        // A market coach already holds his reservation, and `claimFace` returns
+        // it unchanged when the registry names him as the holder.
         candidate.faceID = FaceLibrary.shared.claimFace(
             candidate.faceID, personID: candidate.id,
             role: .coach, age: candidate.age, position: nil,
             gender: FacePersonGender(tag: candidate.gender)
         )
-        modelContext.insert(candidate)
+        // Only an invented candidate needs inserting; a market coach is already
+        // a row in this store and re-inserting is at best a no-op.
+        if candidate.modelContext == nil {
+            modelContext.insert(candidate)
+        }
         hiredCoachID = candidate.id
 
         // R30: every hire joins the user's coaching tree.

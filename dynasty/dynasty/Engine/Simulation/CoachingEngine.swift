@@ -1608,8 +1608,20 @@ enum CoachingEngine {
     ///   - teamWins: The team's win total for the season.
     /// - Returns: Coaches currently being targeted with HC offers (may be empty).
     static func checkCoordinatorPoaching(coaches: [Coach], teamWins: Int) -> [Coach] {
-        // Only non-HC roles are eligible for poaching
-        let candidates = coaches.filter { $0.role != .headCoach && $0.role != .assistantHeadCoach }
+        // Only non-HC coaching roles are eligible for poaching.
+        //
+        // Task #96: the medical family (team doctor, physio, head trainer) used
+        // to sit in this pool and be pulled out of buildings at the same ~20 %
+        // a season as a position coach — this function's own doc says it returns
+        // the men "who may receive head-coaching offers", and a physician does
+        // not receive one. Between them they were roughly a fifth of the ~90
+        // detachments a season that fed the unbounded unemployed bench, and the
+        // one fifth with nowhere to be re-hired: `CoachRole.hiringFamilies` keeps
+        // medical seats medical, so a poached physio could only ever be replaced
+        // by an invented one.
+        let candidates = coaches.filter {
+            $0.role != .headCoach && $0.role != .assistantHeadCoach && $0.role.family != .medical
+        }
 
         // Win bonus: teams on winning records attract more HC searches
         let winBonus: Double

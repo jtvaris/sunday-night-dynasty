@@ -63,6 +63,13 @@ enum MultiSeasonSmokeTest {
         // Task #53: the OTHER half of the drift question — see `ChurnDiag`.
         ChurnDiag.reset()
         ChurnDiag.isEnabled = true
+        // Task #96: the same ledger for the coaching profession — how many seats
+        // were recycled out of the unemployed bench versus invented from nothing,
+        // and how many men left the league. This is what shows the population
+        // plateau instead of only its symptom (the draining face catalog).
+        CoachChurnDiag.reset()
+        CoachChurnDiag.isEnabled = true
+        lastCoachExitCounts = nil
         resetPyramidBaselines()
 
         // League + career bootstrap (mirrors TeamSelectionView.startCareer,
@@ -267,7 +274,7 @@ enum MultiSeasonSmokeTest {
                 // the ~31 female coaches a 0.06 hiring share produces, so
                 // `freeFemale=0` with within-gender reuse shows up here long
                 // before the male half runs out.
-                auditFaces(seasonLabel: finishedSeason, context: context)
+                auditFaces(seasonLabel: finishedSeason, userTeamID: career.teamID, context: context)
                 auditCareerScope(seasonLabel: finishedSeason, context: context)
 
                 // Wave 0 instrumentation, Wave 2 band asserts.
@@ -1265,7 +1272,7 @@ enum MultiSeasonSmokeTest {
         }
     }
 
-    private static func auditFaces(seasonLabel: Int, context: ModelContext) {
+    private static func auditFaces(seasonLabel: Int, userTeamID: UUID?, context: ModelContext) {
         let players = (try? context.fetch(FetchDescriptor<Player>())) ?? []
         let coaches = (try? context.fetch(FetchDescriptor<Coach>())) ?? []
         let audit = FaceLibrary.shared.debugAuditActiveFaces(
@@ -1285,10 +1292,123 @@ enum MultiSeasonSmokeTest {
         }
         let deadCoaches = coaches.filter { $0.isRetired }.count
         let livingFemaleCoaches = coaches.filter { !$0.isRetired && $0.gender == "female" }.count
-        print("SMOKE: faces season=\(seasonLabel) livingCoaches=\(coaches.count - deadCoaches) "
+        // Task #96 columns. `livingCoaches` is the number the whole task is
+        // about — it must plateau near 32 staffs plus a working bench, not climb
+        // — and `unemployed` / `leftLeague` are the two halves of the mechanism
+        // that makes it: how deep the bench is, and how many men the profession
+        // shed this career. `employed` is the staffing tripwire: it cannot sag
+        // below 32 × 16 minus the user's own unfilled seats, or the carousel has
+        // stopped filling staffs.
+        let living = coaches.filter { !$0.isRetired }
+        let unemployed = living.filter { $0.teamID == nil }.count
+        let leftLeague = coaches.filter { $0.isRetired && $0.departureReason == "leftLeague" }.count
+        print("SMOKE: faces season=\(seasonLabel) livingCoaches=\(living.count) "
+              + "employed=\(living.count - unemployed) unemployed=\(unemployed) "
               + "livingFemaleCoaches=\(livingFemaleCoaches) "
-              + "retiredCoaches=\(deadCoaches) livingPlayers=\(players.filter { !$0.isRetired }.count)")
+              + "retiredCoaches=\(deadCoaches) leftLeague=\(leftLeague) "
+              + "livingPlayers=\(players.filter { !$0.isRetired }.count)")
+
+        // The population COUNT plateauing is only half the question. Recycling
+        // made the bench the league's main source of coaches, so the shape of
+        // the population can go wrong while its size looks right: if hiring
+        // always preferred the most experienced man, `livingCoaches` would sit
+        // flat while the league quietly turned geriatric and then hit a
+        // retirement boom-bust that re-spikes generation and re-drains the face
+        // catalog. These columns are what makes that visible — `coachAge` and
+        // `coachAge60plus` must be roughly flat across a run, not trending.
+        if !living.isEmpty {
+            let ages = living.map(\.age).sorted()
+            let ovrs = living.map { CoachingEngine.coachOverallRating($0) }
+            let age60 = ages.filter { $0 >= 60 }.count
+            let benchAges = living.filter { $0.teamID == nil }.map(\.age)
+            let mean = { (xs: [Int]) in Double(xs.reduce(0, +)) / Double(xs.count) }
+            print(String(
+                format: "SMOKE: coachPop season=%d coachAgeAvg=%.1f coachAgeMedian=%d "
+                      + "coachAge60plus=%d (%.1f%%) coachOVRAvg=%.1f benchAgeAvg=%@",
+                seasonLabel, mean(ages), ages[ages.count / 2], age60,
+                100.0 * Double(age60) / Double(ages.count), mean(ovrs),
+                benchAges.isEmpty ? "n/a" : String(format: "%.1f", mean(benchAges))
+            ))
+        }
+
+        if let churn = CoachChurnDiag.report(seasonLabel: seasonLabel) {
+            print(churn)
+        }
+
+        // Cumulative counters cannot go backwards. Both of these are computed by
+        // scanning the whole store for a permanent flag, so a decrease is not a
+        // balance signal — it is proof that a row which had already left the
+        // league was written to again, i.e. that a "dead" coach is still being
+        // processed by an offseason pass. That is exactly the defect the
+        // `!coach.isRetired` guards in `WeekAdvancer.coachingChanges` exist to
+        // prevent, and a log showing it is a log from a different build. Assert
+        // it here so a bad build can never be mistaken for a passing gate again.
+        if let previous = lastCoachExitCounts {
+            if deadCoaches < previous.retired || leftLeague < previous.leftLeague {
+                print("SMOKE: ANOMALY season=\(seasonLabel) coachExitsWentBackwards "
+                      + "retiredCoaches=\(previous.retired)→\(deadCoaches) "
+                      + "leftLeague=\(previous.leftLeague)→\(leftLeague) — a retired coach row "
+                      + "was mutated after its exit; an offseason pass is missing an !isRetired guard")
+            }
+        }
+        lastCoachExitCounts = (retired: deadCoaches, leftLeague: leftLeague)
+
+        // Task #96 staffing tripwire. Recycling the unemployed instead of
+        // inventing a stranger must not cost a single seat: if a club can end an
+        // offseason without a head coach or without a coordinator, the population
+        // fix has been paid for out of the league's competence and the whole
+        // change is wrong.
+        // The user's own club is measured but never counted against the gate:
+        // `refillAIStaffVacancies` deliberately skips it (a human hires his own
+        // staff), so its head coach retiring at 65 leaves a real, expected hole
+        // that only the Staff screen can close. Counting it would make the
+        // tripwire cry wolf every career.
+        //
+        // ALL SIXTEEN seats are checked, not just the head coach and the
+        // coordinators. `refillAIStaffVacancies` fills `CoachRole.allCases`, so
+        // anything less than `allCases` here is a gate with holes in exactly the
+        // places the fix is most likely to break: the medical family has a
+        // ladder of its own (`CoachRole.hiringFamilies` keeps a physio out of a
+        // position room and vice versa), so a bench that runs dry for medical
+        // roles is the one case where `hireFromBench` returns nil for a whole
+        // family — and a club left permanently without a team doctor would have
+        // printed `OK` under an HC-and-coordinators-only check.
+        let teams = (try? context.fetch(FetchDescriptor<Team>())) ?? []
+        let allSeats = Set(CoachRole.allCases)
+        var shortTeams = 0
+        var missingBySeat: [CoachRole: Int] = [:]
+        var userTeamMissing: [CoachRole] = []
+        for team in teams {
+            let roles = Set(living.filter { $0.teamID == team.id }.map(\.role))
+            let missing = allSeats.subtracting(roles)
+            guard team.id != userTeamID else {
+                userTeamMissing = missing.sorted { $0.rawValue < $1.rawValue }
+                continue
+            }
+            guard !missing.isEmpty else { continue }
+            shortTeams += 1
+            for seat in missing { missingBySeat[seat, default: 0] += 1 }
+        }
+        if shortTeams > 0 {
+            let detail = missingBySeat
+                .sorted { ($0.value, $0.key.rawValue) > ($1.value, $1.key.rawValue) }
+                .map { "\($0.key.abbreviation)×\($0.value)" }
+                .joined(separator: " ")
+            print("SMOKE: ANOMALY season=\(seasonLabel) staffing aiTeamsShort=\(shortTeams)/\(max(0, teams.count - 1)) "
+                  + "unfilledSeats=[\(detail)] — the carousel/refill left an AI club short")
+        } else {
+            print("SMOKE: staffing season=\(seasonLabel) OK — every AI club has all "
+                  + "\(allSeats.count) seats filled (userTeamMissing="
+                  + (userTeamMissing.isEmpty
+                     ? "none"
+                     : userTeamMissing.map(\.abbreviation).joined(separator: ","))
+                  + ", it hires manually)")
+        }
     }
+
+    /// Previous season's cumulative coach-exit counts, for the monotonicity
+    /// tripwire in `auditFaces`. Reset at the top of every run.
+    private static var lastCoachExitCounts: (retired: Int, leftLeague: Int)?
 
     /// Position groups for the `salaryByPosition` diag (task #87 / F7). A share
     /// is only readable at group level: "RT" is one roster slot and "OL" is nine,
