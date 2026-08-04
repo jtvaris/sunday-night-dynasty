@@ -1102,7 +1102,13 @@ struct FAWeeklyView: View {
                    aiTeam.availableCap >= (decision.salary ?? fa.askingPrice) {
                     ContractEngine.signPlayerSimple(
                         player: player,
-                        years: decision.years ?? fa.desiredYears,
+                        // Task #89: the AI's fallback term is bounded by the
+                        // signing club's willingness at this age, exactly like
+                        // the bid it is standing in for.
+                        years: decision.years ?? max(1, min(
+                            fa.desiredYears,
+                            FreeAgencyEngine.contractYearsCeiling(age: fa.player.age)
+                        )),
                         annualSalary: decision.salary ?? fa.askingPrice,
                         team: aiTeam
                     )

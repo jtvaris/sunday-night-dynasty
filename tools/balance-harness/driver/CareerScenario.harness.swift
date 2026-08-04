@@ -678,10 +678,13 @@ final class CRLeague {
         player.draftedByTeamID = club.id
         player.draftSeason = season
         player.draftRound = pickNumber.map { DraftEngine.roundForPick($0) }
-        player.contractYearsRemaining = undrafted ? 3 : 4
-        player.annualSalary = undrafted
-            ? crVeteranMinimum(cap: club.salaryCap)
-            : rookieSalary(pick: pickNumber ?? 999, cap: club.salaryCap)
+        // Task #89 / F2: both branches are the SHIPPED deal now — four years on
+        // the slot curve for a drafted man, three at the undrafted rate.
+        let rookieDeal = undrafted
+            ? DraftEngine.udfaContract(salaryCap: club.salaryCap)
+            : DraftEngine.rookieContract(pickNumber: pickNumber ?? 224, salaryCap: club.salaryCap)
+        player.contractYearsRemaining = rookieDeal.years
+        player.annualSalary = max(crVeteranMinimum(cap: club.salaryCap), rookieDeal.salary)
         player.morale = 70
         DraftEngine.initializeRookieFamiliarity(
             player: player,
@@ -707,22 +710,17 @@ final class CRLeague {
     /// Rookie-scale money in thousands, so `contractYearsRemaining == 1` reads
     /// as a real contract year and an extension can be priced against market.
     ///
-    /// **Expressed as a share of the CAP since task #87 / F8.** The five figures
-    /// are the old hardcoded ones divided by the opening cap, so a season-one
-    /// class is paid exactly what it always was — but a season-thirty class is no
-    /// longer paid season-one money against a cap six times larger, which is most
-    /// of why the harness's league sat at 0.575 salary ÷ market with its clubs at
-    /// 59 % of a cap they could not get near.
+    /// **This is the SHIPPED wage scale, not a copy of it (task #89 / F2).** The
+    /// harness used to carry its own five-branch table (1-10 → $6.5M, 11-32 →
+    /// $3.8M, …) beside the app's own eleven-branch one, so the harness measured
+    /// a #1 pick at 2.45 % of cap while the game paid him 15 %. Two rookie
+    /// economies, one league — exactly the class of split-brain task #87 was
+    /// written to close. `DraftEngine.rookieContract` now comes across verbatim
+    /// through `sync_sources.sh`'s keep-list slice and is the only slot table
+    /// that exists.
     private func rookieSalary(pick: Int, cap: Int) -> Int {
-        let share: Double
-        switch pick {
-        case 1...10:   share = 6500.0 / Double(ContractEngine.openingSalaryCap)
-        case 11...32:  share = 3800.0 / Double(ContractEngine.openingSalaryCap)
-        case 33...64:  share = 1900.0 / Double(ContractEngine.openingSalaryCap)
-        case 65...105: share = 1300.0 / Double(ContractEngine.openingSalaryCap)
-        default:       share = 950.0 / Double(ContractEngine.openingSalaryCap)
-        }
-        return max(crVeteranMinimum(cap: cap), Int(share * Double(cap)))
+        max(crVeteranMinimum(cap: cap),
+            DraftEngine.rookieContract(pickNumber: pick, salaryCap: cap).salary)
     }
 
     private func openings(for club: CRClub) -> [Position: Int] {

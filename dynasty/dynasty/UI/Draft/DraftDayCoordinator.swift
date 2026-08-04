@@ -1115,6 +1115,13 @@ final class DraftDayCoordinator: ObservableObject {
         }
         player.careerID = career.id
         modelContext.insert(player)
+        // Task #89: charge the slot to the drafting club NOW. The cap sheet used
+        // to stay silent about the entire drafted class from draft night until
+        // `FreeAgencyEngine.executeNewLeagueYear`'s true-up rebuilt usage the
+        // following March — nine months in which a club's own screen understated
+        // its commitments by a whole rookie class, and in which the AI's cap-room
+        // tests (trades, camp signings) read a number that was not true.
+        teamsByID[pick.currentTeamID]?.currentCapUsage += player.annualSalary
         // He is in the league now — take him off every future prospect pool.
         // `ScoutingEngine.getUDFAPool` (the OTAs bulk fallback) filters on
         // `isDeclaringForDraft && mockDraftPickNumber == nil`, and the mock is
@@ -1343,7 +1350,7 @@ final class DraftDayCoordinator: ObservableObject {
         }
     }
 
-    /// Signs one UDFA to the user's team on a cheap 1-2 year deal (max 5).
+    /// Signs one UDFA to the user's team on a three-year minimum-tier deal (max 5).
     func signUDFA(_ prospect: CollegeProspect) {
         guard mode == .complete, !udfaStageFinished,
               let teamID = userTeamID,
@@ -1351,7 +1358,11 @@ final class DraftDayCoordinator: ObservableObject {
               !signedUDFAProspectIDs.contains(prospect.id),
               udfaPool.contains(where: { $0.id == prospect.id }) else { return }
 
-        let player = DraftEngine.convertUDFAToPlayer(prospect: prospect, teamID: teamID)
+        let player = DraftEngine.convertUDFAToPlayer(
+            prospect: prospect,
+            teamID: teamID,
+            salaryCap: teamsByID[teamID]?.salaryCap ?? ContractEngine.openingSalaryCap
+        )
         let signingSchemes = schemesByTeam[teamID]
         DraftEngine.initializeRookieFamiliarity(
             player: player,
@@ -1399,7 +1410,11 @@ final class DraftDayCoordinator: ObservableObject {
                     }
                 }
                 guard let team = assigned else { break }   // every team is full
-                let player = DraftEngine.convertUDFAToPlayer(prospect: prospect, teamID: team.id)
+                let player = DraftEngine.convertUDFAToPlayer(
+                    prospect: prospect,
+                    teamID: team.id,
+                    salaryCap: team.salaryCap
+                )
                 let aiSchemes = schemesByTeam[team.id]
                 DraftEngine.initializeRookieFamiliarity(
                     player: player,

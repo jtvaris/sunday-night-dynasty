@@ -335,13 +335,19 @@ enum DraftEngine {
         min(7, max(1, ((pickNumber - 1) / 32) + 1))
     }
 
-    /// R24: Creates a `Player` from an UNDRAFTED prospect on a cheap 1-2 year
-    /// deal. UDFAs use the same readiness-driven scaling as drafted rookies plus
-    /// the undrafted discount (see `rookieScaleFactors`), mirroring
-    /// `convertToPlayer` but without a draft pick number.
+    /// R24: Creates a `Player` from an UNDRAFTED prospect. UDFAs use the same
+    /// readiness-driven scaling as drafted rookies plus the undrafted discount
+    /// (see `rookieScaleFactors`), mirroring `convertToPlayer` but without a
+    /// draft pick number.
+    ///
+    /// The deal is ``udfaContract(salaryCap:)`` — **three years** at ~0.30 % of
+    /// cap, cap-relative. It was a flat `Int.random(in: 450...750)` on a
+    /// 1-2 year term until task #89, which is what this comment used to describe;
+    /// a one-year UDFA deal expired before the man had played a second season.
     static func convertUDFAToPlayer(
         prospect: CollegeProspect,
-        teamID: UUID
+        teamID: UUID,
+        salaryCap: Int
     ) -> Player {
         let factors = rookieScaleFactors(
             readiness: prospect.nflReadiness,
@@ -349,6 +355,7 @@ enum DraftEngine {
             potential: prospect.truePotential,
             undrafted: true
         )
+        let contract = udfaContract(salaryCap: salaryCap)
         let player = Player(
             firstName: prospect.firstName,
             lastName: prospect.lastName,
@@ -363,8 +370,8 @@ enum DraftEngine {
             personality: prospect.truePersonality,
             truePotential: prospect.truePotential,
             teamID: teamID,
-            contractYearsRemaining: Int.random(in: 1...2),
-            annualSalary: Int.random(in: 450...750)
+            contractYearsRemaining: contract.years,
+            annualSalary: contract.salary
         )
         copyProspectMetadata(from: prospect, to: player)
         return player
@@ -1177,6 +1184,29 @@ enum DraftEngine {
     /// Evaluates which positions a team needs most.
     /// Returns a dictionary of position -> multiplier (> 1.0 means higher need).
     private static func evaluateTeamNeeds(roster: [Player]) -> [Position: Double] {
+        teamNeedComponents(roster: roster).mapValues { $0.multiplier * $0.weight }
+    }
+
+    /// The two halves of a need score, kept apart.
+    ///
+    /// `evaluateTeamNeeds` multiplies them together and the product is all any
+    /// caller could read, which hid a real distinction: **`multiplier` is
+    /// evidence, `weight` is opinion.** The multiplier is a fact about this
+    /// roster — a body short of the ideal count, or a position group whose mean
+    /// grades under 70 — and sits at exactly 1.0 when the club has no problem
+    /// there at all. The weight is the league-wide positional-value ranking
+    /// (QB/DE/CB/WR/LT at 1.0, K/P at 0.3) and is the same for all 32 clubs.
+    ///
+    /// So on a full 53-man roster, where the ideal counts sum to 48 and genuine
+    /// deficits are rare, `topTeamNeeds` returns the weight-1.0 quintet
+    /// {QB, DE, CB, WR, LT} for *every club in the league* — a positional-value
+    /// table wearing a need model's clothes. That is fine for the draft board it
+    /// was written for (where "best available at a premium position" is a real
+    /// strategy) and wrong for anything that means "this club has a hole": see
+    /// ``teamNeedDeficits``.
+    private static func teamNeedComponents(
+        roster: [Player]
+    ) -> [Position: (multiplier: Double, weight: Double)] {
         // Ideal roster composition targets (starters per position).
         let idealCounts: [Position: Int] = [
             .QB: 2, .RB: 3, .FB: 1, .WR: 5, .TE: 3,
@@ -1198,7 +1228,7 @@ enum DraftEngine {
             positionOveralls[player.position, default: []].append(player.overall)
         }
 
-        var needs: [Position: Double] = [:]
+        var needs: [Position: (multiplier: Double, weight: Double)] = [:]
         for position in Position.allCases {
             let ideal = idealCounts[position] ?? 1
             let current = currentCounts[position] ?? 0
@@ -1233,62 +1263,169 @@ enum DraftEngine {
                 positionalWeight = 0.3
             }
 
-            needs[position] = multiplier * positionalWeight
+            needs[position] = (multiplier: multiplier, weight: positionalWeight)
         }
 
         return needs
     }
 
-    /// Determines rookie contract years and salary based on draft pick number.
-    /// Salaries are expressed as a percentage of the salary cap so they scale
-    /// automatically as the cap grows each season.
-    /// - 1st round: 4 years, salary scaled by pick position.
-    /// - 2nd round: 4 years, lower salary.
-    /// - 3rd-4th round: 4 years, modest salary.
-    /// - 5th-7th round: 3 years, league minimum-tier salary.
-    static func rookieContract(pickNumber: Int, salaryCap: Int) -> (years: Int, salary: Int) {
-        // Cap percentage for each draft slot tier.
-        let capPercent: Double
-        let years: Int
-
-        switch pickNumber {
-        case 1:
-            capPercent = 15.0    // ~15% of cap for #1 overall
-            years = 4
-        case 2...5:
-            capPercent = 11.0    // ~11% of cap
-            years = 4
-        case 6...10:
-            capPercent = 7.5     // ~7.5% of cap
-            years = 4
-        case 11...16:
-            capPercent = 5.3     // ~5.3% of cap
-            years = 4
-        case 17...32:
-            capPercent = 3.8     // ~3.8% of cap
-            years = 4
-        case 33...64:
-            capPercent = 1.9     // ~1.9% of cap (2nd round)
-            years = 4
-        case 65...100:
-            capPercent = 0.95    // ~0.95% of cap (3rd round)
-            years = 4
-        case 101...128:
-            capPercent = 0.57    // ~0.57% of cap (4th round)
-            years = 4
-        case 129...160:
-            capPercent = 0.38    // ~0.38% of cap (5th round)
-            years = 3
-        case 161...192:
-            capPercent = 0.34    // ~0.34% of cap (6th round)
-            years = 3
-        default:
-            capPercent = 0.28    // ~0.28% of cap (7th round)
-            years = 3
+    /// The positions where this roster has a GENUINE hole, best first.
+    ///
+    /// The deficit-only sibling of ``topTeamNeeds``, and the one a market should
+    /// read. `topTeamNeeds` ranks by `multiplier × positionalWeight`, and on a
+    /// full roster the multiplier is 1.0 nearly everywhere (ideal counts sum to
+    /// 48 against a 53-man roster), so the ranking collapses to the positional
+    /// weights and hands back the identical quintet {QB, DE, CB, WR, LT} for
+    /// every club in the league. Used as a *need* signal that is not a nudge, it
+    /// is a blanket league-wide premium on five positions: free agency's
+    /// `topNeedBonus` was multiplying the same five for all 32 clubs, and the
+    /// AI's own-core re-sign was reading "we need this position" for any
+    /// quarterback, end, corner, receiver or left tackle alive.
+    ///
+    /// This returns only positions whose EVIDENCE half clears 1.0 — a body short
+    /// of the ideal count, a group averaging under 70, or nobody there at all —
+    /// so an empty result is a real and common answer: a well-built roster has no
+    /// holes and gets no bonus. Ranking among the survivors still uses the full
+    /// score, so positional value decides WHICH holes matter most; it just no
+    /// longer invents them.
+    ///
+    /// Deterministically ordered. `topTeamNeeds` sorts a `Dictionary` on value
+    /// alone, and Swift's per-process `Dictionary` seed means equal scores — which
+    /// is exactly what a full roster produces — come back in a different order in
+    /// every run of the game. The `rawValue` tiebreak makes the same roster
+    /// return the same list twice, which a bonus this visible needs.
+    ///
+    /// ``topTeamNeeds`` is deliberately left alone: the draft room and
+    /// `WeekAdvancer.refillAIRosters` want the value ranking they were built on.
+    static func teamNeedDeficits(roster: [Player], limit: Int = 5) -> [Position] {
+        guard !roster.isEmpty else { return [] }
+        var scored: [(position: Position, score: Double)] = []
+        for (position, components) in teamNeedComponents(roster: roster) {
+            guard components.multiplier > 1.0 else { continue }
+            scored.append((position: position, score: components.multiplier * components.weight))
         }
+        scored.sort { lhs, rhs in
+            if lhs.score != rhs.score { return lhs.score > rhs.score }
+            return lhs.position.rawValue < rhs.position.rawValue
+        }
+        return scored.prefix(limit).map(\.position)
+    }
 
-        let salary = max(Int(capPercent * Double(salaryCap) / 100.0), 750)
-        return (years: years, salary: salary)
+    // MARK: - Rookie Wage Scale (task #89)
+
+    /// The rookie wage scale, as cap SHARE anchors at named draft slots.
+    ///
+    /// ## Why this is a curve and not a step table
+    ///
+    /// This used to be an eleven-branch `switch` on the pick number — a stair,
+    /// not a slope. Picks 17 and 32 were paid the same money; so were 33 and 64,
+    /// and 65 and 100. The real rookie scale is strictly monotonic per pick, and
+    /// the flat tiers had a second cost: `rookieContractBand` reads the first and
+    /// last pick of a round, so a prospect screen printed "~$5M / 4yr" for the
+    /// whole of rounds 2, 3, 5, 6 and 7 as if a round were one price.
+    ///
+    /// The LEVELS were the larger defect. Measured at a $265M cap the old table
+    /// paid #1 overall **$39.75M (15.0 % of cap)** against a real slot of
+    /// 3.9-4.3 %, and every slot through #100 ran 1.7-3.6× reality. A whole draft
+    /// class cost a club **10.4 % of cap** in year one (real: ~4-5 %), a #1 pick
+    /// was paid more than a 90-OVR quarterback in his prime and **22× his own
+    /// market value**, and `TradeValueEngine.contractMultiplier` therefore
+    /// stamped every first-rounder with the ×0.8 "overpaid contract" penalty —
+    /// the game inverted the most valuable asset class in the sport.
+    ///
+    /// The anchors below are the real NFL slot shares (2024 scale, $255.4M cap),
+    /// interpolated log-linearly between so every pick differs from its
+    /// neighbour. Cap-relative, so the scale grows with the cap the way the real
+    /// one does.
+    private static let rookieSlotAnchors: [(pick: Double, capPercent: Double)] = [
+        (1,   4.10),   // #1 overall — a real top slot, ~$10.9M at a $265M cap
+        (5,   3.05),
+        (10,  2.40),
+        (16,  1.95),
+        (32,  1.50),   // end of round 1
+        (64,  0.75),   // end of round 2
+        (100, 0.55),   // round 3
+        (160, 0.42),   // round 5
+        (224, 0.38)    // round 7 — still above the veteran minimum, as in life
+    ]
+
+    /// The veteran minimum as a cap SHARE — the same `0.28 %` the free-agent
+    /// market, the negotiation engine and ``rookieContract`` floor money at,
+    /// expressed on this table's scale so the curve below can stop there.
+    private static let veteranMinimumCapPercent = 0.28
+
+    /// Cap share of one draft slot, log-linearly interpolated across
+    /// ``rookieSlotAnchors``. Strictly decreasing per pick until it reaches the
+    /// veteran minimum.
+    ///
+    /// **Past the last anchor the curve keeps going.** It used to return #224's
+    /// share flat for every pick beyond it, which was fine while 224 was the last
+    /// pick in the draft and stopped being fine the moment compensatory picks
+    /// shipped: `CompensatoryPickEngine.applyAwards` splices the awards into the
+    /// pool and RENUMBERS the whole thing 1…N, so a normal league year runs to
+    /// ~230-256 and every pick past 224 was paid the identical #224 slot. The end
+    /// of round 7 — the one stretch of the draft where the money genuinely is
+    /// almost flat — was the only place the scale had a step left in it.
+    ///
+    /// The extension is the FINAL SEGMENT'S own slope continued: same
+    /// log-linear rate the 160 → 224 stretch decays at (−0.156 % a pick), so
+    /// there is no kink at the join, floored at the veteran minimum because no
+    /// contract in the league pays less than that. At the slope above the floor
+    /// binds around pick 419, i.e. never in practice — a 256-pick league year
+    /// ends at 0.362 %, comfortably above it — so the tail is strictly
+    /// decreasing across every draft the game can actually produce, and the floor
+    /// is there to make that a guarantee rather than an observation.
+    static func rookieSlotCapPercent(pickNumber: Int) -> Double {
+        let p = Double(max(1, pickNumber))
+        guard let first = rookieSlotAnchors.first, let last = rookieSlotAnchors.last else { return 0.38 }
+        if p <= first.pick { return first.capPercent }
+        if p >= last.pick {
+            guard rookieSlotAnchors.count >= 2 else { return last.capPercent }
+            let previous = rookieSlotAnchors[rookieSlotAnchors.count - 2]
+            let span = last.pick - previous.pick
+            guard span > 0 else { return last.capPercent }
+            let slope = (log(last.capPercent) - log(previous.capPercent)) / span
+            let extrapolated = exp(log(last.capPercent) + slope * (p - last.pick))
+            return max(veteranMinimumCapPercent, extrapolated)
+        }
+        for index in 0..<(rookieSlotAnchors.count - 1) {
+            let low = rookieSlotAnchors[index]
+            let high = rookieSlotAnchors[index + 1]
+            guard p >= low.pick, p <= high.pick else { continue }
+            let t = (p - low.pick) / (high.pick - low.pick)
+            return exp(log(low.capPercent) + t * (log(high.capPercent) - log(low.capPercent)))
+        }
+        return last.capPercent
+    }
+
+    /// Rookie contract years and salary for a draft slot.
+    ///
+    /// **Every drafted round is four years.** It used to be four for rounds 1-4
+    /// and three for 5-7, which is not the rule the league runs: all seven rounds
+    /// sign four-year deals. Undrafted free agents sign three
+    /// (``udfaContract(salaryCap:)``).
+    ///
+    /// Floored at the veteran minimum — the same `max(0.28 % · cap, 750)` the
+    /// free-agent market and the negotiation engine use — because no rookie deal
+    /// can pay less than the league minimum.
+    static func rookieContract(pickNumber: Int, salaryCap: Int) -> (years: Int, salary: Int) {
+        let capPercent = rookieSlotCapPercent(pickNumber: pickNumber)
+        let veteranMinimum = max(Int(0.0028 * Double(salaryCap)), 750)
+        let salary = max(Int(capPercent * Double(salaryCap) / 100.0), veteranMinimum)
+        return (years: 4, salary: salary)
+    }
+
+    /// The undrafted deal: three years at ~0.30 % of cap.
+    ///
+    /// This was the one piece of rookie money in the game that never became
+    /// cap-relative (task #87 / F3) — a flat `Int.random(in: 450...750)` on a
+    /// `Int.random(in: 1...2)`-year deal, so a UDFA on a $600M cap thirty seasons
+    /// in was still being paid 2026 money, and half of them expired before they
+    /// had played a second season. Real UDFA deals are three years at the
+    /// minimum-plus.
+    static func udfaContract(salaryCap: Int) -> (years: Int, salary: Int) {
+        let veteranMinimum = max(Int(0.0028 * Double(salaryCap)), 750)
+        return (years: 3, salary: max(Int(0.0030 * Double(salaryCap)), veteranMinimum))
     }
 
     /// The rookie-money BAND for a projected draft round, at a given cap —
@@ -1299,6 +1436,12 @@ enum DraftEngine {
     /// ("~$12-40M / 4yr"), which never called this engine and never moved with
     /// the cap, so the number a user read on a prospect and the number the draft
     /// wrote him were unrelated.
+    ///
+    /// Task #89: this now reports a real band. While the slot table was a step
+    /// function the two ends of rounds 2, 3, 5, 6 and 7 were the SAME number, so
+    /// the prospect screen printed "~$5M / 4yr" for a whole round as if the round
+    /// were one price; ``rookieSlotCapPercent`` is strictly decreasing per pick,
+    /// so `low < high` everywhere.
     static func rookieContractBand(round: Int, salaryCap: Int) -> (low: Int, high: Int, years: Int) {
         let clamped = min(max(round, 1), 7)
         let firstPick = (clamped - 1) * 32 + 1

@@ -228,6 +228,11 @@ enum ChurnDiag {
     static let cut = "cut"
     /// Signed out of the pool by the AI free-agent market.
     static let faSign = "faSign"
+    /// Kept off the market entirely: an AI club re-signed its own expiring
+    /// player before the league year turned (`resignAIOwnCore`, task #89).
+    /// Comes out of `expire`'s denominator, so `expire = resign + faSign +
+    /// washout + …` no longer has to hold — a retained player never expires.
+    static let resign = "resign"
     /// Signed out of the pool by the roster floor (`refillAIRosters`).
     static let refill = "refill"
     /// Generated on the spot because the pool was dry — inflow from nowhere.
@@ -236,7 +241,7 @@ enum ChurnDiag {
 #if DEBUG
 
     private static let stageOrder = [
-        expire, retire, washout, cut, faSign, refill, street,
+        expire, resign, retire, washout, cut, faSign, refill, street,
     ]
 
     /// Master switch. `record` is a no-op while this is false.

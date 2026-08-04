@@ -46,6 +46,109 @@ Tila: vaiheet 1–4 valmiit ja kaikki portit vihreinä (draft class · kehitys-r
 
 **6 · P3-pikkuviilaukset:** combine-DNP-mekaniikka · roster-listan Mental-analyysimoodi (LRN/CMP-sarakkeet) · UserDefaults-prospektiarvosanojen vuoto careerien yli · hometownState/City veteraaneille · SWIFT_NAME_POOLS-katvehuomio (uusi runtime-nimilähde → lisää listaan, ks. RELEASE_CHECKLIST).
 
+## 🎓 #89 ROOKIE-SKAALA + AI:N PALKKAUSJÄRKI -AALTO — 2026-08-04 (committoimaton)
+
+Kahden auditin (rookie wage scale · AI re-sign + FA sensibility) toteutus. Portit: `career` **36/36** · `draftclass` **32/32** · `leaguegen` **19/19** · buildi BUILD SUCCEEDED · 4 kauden smoke ajettu sekä korjatulla että baseline-buildilla (18e3ef6) vertailua varten.
+
+### 1 · Rookie-slottitaulu: porras → käyrä (`DraftEngine.rookieContract`)
+Vanha 11-haarainen `switch` oli **porras, ei rinne** (pickit 17 ja 32 samalla hinnalla, 33 ja 64 samalla, 65 ja 100 samalla) ja tasoltaan 1,7-3,6× todellisuutta. Uusi: 9 ankkuria oikeasta NFL-slottitaulusta, **log-lineaarinen interpolointi** → tiukasti laskeva joka pickillä (0 tasapeliä 1…224).
+
+| pick | ennen $k / %cap | jälkeen $k / %cap | NFL-ankkuri |
+|---|---|---|---|
+| 1 | 39 750 / **15,00 %** | **10 865 / 4,10 %** | 3,9-4,3 % |
+| 5 | 29 150 / 11,00 % | 8 082 / 3,05 % | ~3,1 % |
+| 10 | 19 875 / 7,50 % | 6 360 / 2,40 % | ~2,4 % |
+| 16 | 14 045 / 5,30 % | 5 167 / 1,95 % | ~2,0 % |
+| 32 | 10 070 / 3,80 % | 3 975 / 1,50 % | ~1,5 % |
+| 64 | 5 035 / 1,90 % (tasainen 33-64) | 1 987 / 0,750 % | ~0,75 % |
+| 100 | 2 517 / 0,95 % | 1 457 / 0,550 % | ~0,55 % |
+| 224 | 750 / 0,283 % (vetomiini) | 1 007 / 0,380 % | ~0,38 % |
+| UDFA | **450-750 $k satunnainen, 1-2 v** | **795 $k / 0,300 %, 3 v** | ~0,30 % / 3 v |
+
+- **Vuodet:** kaikki 7 kierrosta 4 vuotta (oli 4 kierroksille 1-4, 3 kierroksille 5-7); UDFA 3 vuotta.
+- **Luokan hinta:** 10,38 % → **5,71 %** capista (NFL ~4-5 %). Nominaalinen rookie-payroll 41,5 % → 23,0 %.
+- **#1/#32-suhde:** 3,9× → **2,73×** (NFL ~2,7×).
+- `rookieContractBand` antaa vihdoin oikean bändin: R2-R7 tulostivat ennen `low == high` (esim. "~$5M / 4yr" koko kierrokselle).
+- Lattiana vetomiini `max(0,28 % · cap, 750)`, ei enää paljas 750.
+
+### 2 · F2: harness-splitbrain suljettu
+`CareerScenario.harness.swift` shippasi **oman** 5-haaraisen rookie-taulunsa (1-10 → $6,5M ≈ 2,45 % capista) pelin 11-haaraisen (15 %) rinnalla. `sync_sources.sh`in keep-list tuo nyt `rookieSlotAnchors` + `rookieContract` + `udfaContract` verbatimina, ja `crRookieSalary` kutsuu niitä. Kaksi die-vahtia lisätty. `career`-portin liigan salary/market 0,711 → **0,754** (bändi 0,65-1,00).
+
+### 3 · Sopimuskello tikitti KAHDESTI liigavuodessa (KRIITTINEN)
+`WeekAdvancer` viikolla 18 vähensi jokaisen sopimuksen JA `FreeAgencyEngine.executeNewLeagueYear` teki saman maaliskuussa. Kumpaakaan ei vahdittu → **4 vuoden rookie-sopimus kattoi kaksi kautta**, 1 vuoden UDFA-sopimus vanheni ennen kuin mies pelasi kauttaan, ja franchise tag (jonka rollover ohittaa, viikko 18 ei) poltti vuoden. Viikko-18-tikki **poistettu**; liigavuoden vaihde on ainoa. Todiste: baseline-smoke `expire=1381/1466/1431` per kausi (koko liiga uusi sopimuksensa joka vuosi), korjattu `expire=134/262/442/482` → konvergoi ~500:aan.
+Sivutuotteet: `FinalPushView`in `contractYearsRemaining <= 1` -haku näyttää vihdoin OIKEAT lähtijät (ennen näytti ensi vuoden lähtijät, koska tämän vuoden olivat jo poissa); eläköitymisuutinen kertoo mistä seurasta mies jäi eläkkeelle eikä "Free Agent".
+
+### 4 · Oman ytimen etuoikeus — AI-seurat eivät koskaan jatkaneet omiaan
+`FreeAgencyStep.finalPush` on **vain käyttäjän ruutu**. Mikään ei jatkanut AI-seuran omaa 88-OVR:n kulmakiveä → hän osui vapaille markkinoille ilman minkäänlaista istuvan edun etua. Uusi `FreeAgencyEngine.resignAIOwnCore` ajetaan `executeNewLeagueYear`issä ennen vanhenemissilmukkaa: max **3/seura**, `marketAppeal >= 72` (tähdet ≥ 80 tarpeesta riippumatta), hinta = agentin ask × 0,95 (ei koskaan alle flooorin), vuodet iän kattoon asti, budjetti = cap − 15 % reserve − jäljelle jäävä palkkasumma. Uusi `ChurnDiag.resign`-ämpäri. Smokessa: `resign=38/78/60` kohorttina `ovr83-86 / age25,7-28,8` — täsmälleen oikea muoto (nuoret tähdet jäävät).
+
+### 5 · Tarve on nyt PAINO, ei pelkkä lajitteluavain
+Ennen: `simulateAIFreeAgency` jakoi seurat `needy`/`rest`-listoihin, otti `marketInterest` ensimmäistä ja arpoi voittajan lähes tasajakaumasta. `.none`-seura oli täysin kelpoinen, ja kun positio on liigalaajuisesti täynnä (WR/CB/DE normaalisti), `rest` täytti listan **cap-tilan järjestyksessä** → rikkain seura osti ylijäämä-WR:n *vaikka sillä oli jo kahdeksan*.
+Nyt: `needWeight` (critical 3,0 · high 2,0 · moderate 1,3 · none 0,25) × `DraftEngine.teamNeedDeficits`-bonus 1,5, kerrottuna olemassa olevaan `developmentAppeal`-painoon samassa `weightedPick`issä. **Ehdokaslistan jäsenyys ei muutu lainkaan**, joten #53:n churn-kalibrointi (expire/faSign/washout-määrät ja niiden ikä/OVR-keskiarvot) pysyy koskematta — vain määränpää liikkuu. Interaktiivisella polulla sama bonus rajattuna ×1,10:een (kapeampi kuin olemassa oleva satunnaisbändi).
+
+> **Korjaus (adversarial review):** aiempi väite "markkina kirjoittaa **täsmälleen** saman määrän sopimuksia" oli liian vahva. Jäsenyys on invariantti, sopimusmäärä ei: kelpoisuus arvioidaan **elävää** cap-/roster-tilaa vasten (`availableCap - reserve >= askingPrice`, `rosterSize < faRosterCeiling`), joten se kuka voittaa agentin #1 muuttaa sen kuka on kelpoinen agentille #40. Oikea muotoilu: *shortlist-jäsenyys ennallaan, sopimusmäärä likimain säilyy (järjestysriippuvainen)*.
+> Sama review osoitti että bonuksen lähde oli väärä: `topTeamNeeds` pisteyttää **kaikki** positiot `multiplier × positionalWeight`illä, ideaalimäärät summautuvat 48:aan 53:n rosteria vasten → alijäämä on harvinainen, multiplier ≈ 1,0 lähes kaikkialla ja top-5 romahtaa painon 1,0 viisikkoon {QB, DE, CB, WR, LT} **jokaisella täydellä rosterilla liigassa**. ×1,5 sille ei ole tarvemalli vaan liiganlaajuinen vakiopreemio viidelle positiolle. Uusi `DraftEngine.teamNeedDeficits` päästää läpi vain aidon alijäämän (multiplier > 1,0), lajittelee deterministisesti (score, `rawValue`) ja on nyt kolmen FA-käyttöpaikan lähde; `topTeamNeeds` jää draft-huoneelle ja `refillAIRosters`ille ennallaan.
+
+### 6 · Ikäalennus interaktiiviselle polulle + seuran vuosikatto
+- `generateAIOffers`in kierrosportti luki **paljasta `overall`ia**, joten se polku, jonka oikea ura pelaa, ajoi yhä "leikkaa nuorista, osta vanhoista" -räikkää, jonka #53 poisti bulkkimarkkinalta: 33-v/84-OVR DE sai tarjouksia kokonaisen kierroksen aiemmin kuin 26-v/79 (potentiaali 85), ja `estimateMarketValue` myi hänet vielä ~20 % halvemmalla. Portti lukee nyt `marketAppeal`ia (70,0 vs 81,7). **Viimeinen kierros pitää paljaan `overall >= 60` -lattian**, joten kukaan joka ennen sai AI-tarjouksen ei jää ilman.
+
+> **Korjaus (adversarial review):** aiempi väite "joukko on bittiä myöten sama" oli **väärä** — joukko **kasvaa**. `marketAppeal` lisää `0,45 × (pot − ovr)` kun `yearsPro <= 4`, joten 22-v / 58-OVR / 74-pot saa arvon **65,2** ja läpäisee kierroksen 5 portin (65) vaikka ei koskaan läpäissyt paljasta `overall`-porttia. Käytös on **tarkoituksellisesti säilytetty** (seurat ostavat nuorista upsidea — juuri se on ikäportin pointti), mutta väite korjataan: portti **kasvattaa** tarjouksen saavaa joukkoa nuoresta päästä, siirtää muiden sisääntulokierrosta, eikä koskaan kutista sitä, koska kierros 6 päästää yhä kaikki 60:n yli.
+- Uusi `contractYearsCeiling(age:)` (≤26 → 5 v · 27-28 → 4 · 29-30 → 3 · 31-32 → 2 · 33+ → 1) sovelletaan `min(desiredYears, katto)`ina molemmilla AI-poluilla. `Position.peakAgeRange` yltää QB:llä 35:een ja potkaisijalla 38:aan, joten "huipussaan" osti 35-vuotiaalle saman 2-4 vuoden sopimuksen kuin 27-vuotiaalle.
+
+### 7 · Cap-sheet ei enää valehtele 9 kuukautta
+`DraftDayCoordinator.completePick` ei koskaan veloittanut `currentCapUsage`ia — koko draftattu luokka oli näkymätön seuran kirjanpidossa draft-illasta seuraavan maaliskuun true-uppiin (~10 % capista ilmestyi hiljaa). Sama OTA-vaiheen bulk-UDFA-polulla (`WeekAdvancer`, ~150 sopimusta/vuosi). Molemmat veloittavat nyt.
+
+### Mitattu: 4 kauden smoke, korjattu vs baseline (18e3ef6)
+Huom: kumpikin ajo generoi OMAN satunnaisliigansa, joten lue **ajautuma kunkin ajon omasta `season=base`sta**, ei absoluuttista eroa.
+
+| mittari | baseline base→2029 | korjattu base→2029 | verdikti |
+|---|---|---|---|
+| 90+ | 2,1 → 2,8 (+0,7pp) | 1,9 → 2,8 (+0,9pp) | sama, molemmat bändissä |
+| **80+** | 19,9 → 22,4 — **ulkona kaikilla 5 lukemalla** | 17,0 → 19,9 — **bändissä 4/5** | **parempi** |
+| 75+ | 37,4 → 36,9 | 33,0 → 33,1 | molemmat bändissä |
+| sub65 | 22,9 → 18,2 | 24,0 → 20,6 | molemmat bändissä |
+| 33+ | 3,3 → 1,1 | 3,2 → 0,8 | sama |
+| yp0to3 | 52,4 → 57,6/57,8/57,8 → 48,6 | 54,0 → 59,6/63,6/64,0 → **50,1** | **huonompi siirtymässä, parempi tasapainossa** |
+| capRoom | 30,5 → 17,1 → **15,3 % (31/32, min −3,7 %)** → 15,6 % | 34,4 → 40,3 → 32,9 → **25,3 % (32/32 joka kausi)** | **parempi** |
+| kaupat | 29 · 42 · 47 · 49 | 21 · **37 · 41 · 44** | ≥30 kaudesta 2 ✓ |
+| payroll | 79,0 → 92,0 → 94,1 % | 70,9 → 64,5 → 72,2 → **79,8 %** | halvempi rookie-skaala |
+| expire/kausi | 174 · 1381 · 1466 · 1431 | 134 · 262 · 442 · **482** | kaksoistikki poissa |
+
+Churn-muoto 2029 (nuori-keskinkertainen vs vanha-hyvä): `faSign=238/ovr76,6/age26,7` vs `washout=449/ovr65,2/age26,8` — markkina ottaa saman ikäisistä ne 11 OVR:ää paremmat; `resign=60/ovr83,0/age26,2` on suppilon paras ja nuorin kohortti; `retire=51/ovr75,7/age32,5` — vanhat lähtevät eläkkeelle, eivät markkinan hylkääminä. Baseline 2029 samalla muodolla (`faSign=497/ovr75,5/age25,7` vs `washout=472/ovr64,7/age26,4`), joten **#53:n kalibrointi pitää; vain volyymi muuttui**.
+
+### 8 · Adversarial review -korjauskierros (2026-08-04, sama committoimaton aalto)
+
+Ulkopuolinen katselmus löysi kahdeksan asiaa, kaikki vahvistettu koodista. Korjattu:
+
+- **HIGH — käyttäjän re-sign oli vuoden lyhyt.** `FinalPushView`in molemmat re-sign-ovet (Quick Offer ja Contact Agent -chat) kutsuivat `applyNegotiatedDeal(.replaceContract)`ia, joka kirjoittaa `contractYearsRemaining = offer.years` — ja heti perään ajettava `executeNewLeagueYear` vähentää jokaisen ei-tagatun sopimuksen. AI-polku kompensoi (`resignAIOwnCore`: `years + 1`), käyttäjän ei: **1 vuoden re-sign vanheni saman tien ja mies näkyi LOST-tilassa seuraavalla ruudulla**, ja jokainen mittari oli vuoden liian lyhyt. Uusi `FinalPushView.applyReSignOffer` on yksi ovi molemmille poluille ja hoitaa +1:n. `applyNegotiatedDeal` jätettiin koskematta — sillä on muitakin kutsupaikkoja (kauden aikaiset jatkot), joissa rolloveria ei seuraa. Franchise tag tarkistettu: vanhenemissilmukka **ohittaa** `isFranchiseTagged`-rivit, joten tagin 1 vuosi on jo oikein; ei muutettu.
+- **HIGH — `executeNewLeagueYear` ei ollut idempotentti.** Ainoa vahti oli `NewLeagueYearView`in `@State hasExecuted`, joka kuolee näkymän mukana: ruudulta poistuminen ja paluu ajoi koko rolloverin uudestaan (tuplavähennys, korkoa korolle -capkasvu, toinen vanhenemisaalto, toinen `resignAIOwnCore`). Uusi persistoitu `Career.lastRolloverSeason` (inline-default `0` → lightweight migration, EI init-parametri) ja portti moottorin sisällä, joten se kattaa molemmat sisääntulot. Kausitunniste = **`career.currentSeason`**: `WeekAdvancer` nostaa vuotta vasta rosterCuts → regularSeason -siirtymässä, joten sama luku pysyy koko offseasonin ajan eikä voi törmätä seuraavan liigavuoden kanssa. Estetty uusinta palauttaa "ei muutosta" -yhteenvedon (cap ennen == jälkeen, 0 uutta FA:ta). **Self-heal** lisätty: `WeekAdvancer`in FA-fallback testaa nyt "onko rollover tehty tälle kaudelle" pelkän askeleen sijaan (yhä askeleeseen portitettuna), joten `finalPush → newLeagueYear` -välistä poistuminen ei enää jätä koko maaliskuuta ajamatta.
+- **MEDIUM — `resignAIOwnCore` laski lähtijän itsensä mukaan tarveindeksiin.** `RosterNeedIndex(allPlayers:)` indeksoi myös vanhenevan miehen, ja koska hän on `marketAppeal`-järjestyksessä paikkansa paras, **hänen oma OVR:nsä oli `bestOVR`** → seura luki "ei tarvetta" ja päästi ainoan aloittajatasoisen miehensä lähtemään, ellei hän ylittänyt 80:aa. Indeksi rakennetaan nyt **ilman koko vanhenevaa kohorttia**, ja jäävät lisätään takaisin sitä mukaa kun sopimukset syntyvät. Mitattu vaikutus: `resign` 60 → **70** / liigavuosi (2,3 / seura, katto 3).
+- **MEDIUM — `topTeamNeeds` romahti painon 1,0 viisikkoon.** Ks. §5:n korjauslaatikko. Uusi `DraftEngine.teamNeedDeficits` (vain aito alijäämä, deterministinen lajittelu) kolmessa FA-käyttöpaikassa; draft- ja `refillAIRosters`-polut ennallaan.
+- **MEDIUM — rookie-käyrä oli litteä pickistä 224 eteenpäin.** `CompensatoryPickEngine.applyAwards` numeroi poolin uudelleen 1…N, joten normaali liigavuosi yltää ~230-256:een ja **jokainen 224:n jälkeinen pick maksoi identtisen #224-slotin**. Nyt viimeisen segmentin oma log-lineaarinen kulmakerroin jatkuu (−0,156 %/pick, ei kulmaa liitoksessa), lattiana vetomiini 0,28 % capista. Pick 256 = 0,362 % (lattia sitoisi vasta ~419:llä). Harness-kopio päivitetty `sync_sources.sh`in keep-listan kautta (+ `veteranMinimumCapPercent`, + kaksi die-vahtia).
+- **LOW — `resignAIOwnCore`in sokeat pisteet.** (a) Kutsui `agentDemand`ia `.freeAgent`illa ja `.neutral`illa, joten `refusalVerdict` oli **rakenteellisesti aina nil** (se on extension-only-portti) eikä yksikään AI-seura voinut saada rukkasia keneltäkään. Nyt sama kutsu jonka `FinalPushView` tekee: `.extend` + seuran oikea kausi (`team.wins/losses`, per pelaaja rakennettu situation), ja `demand.isRefusing` päästää miehen markkinoille. Sivuvaikutus tarkoituksellinen: `situationBreakdown`in `isOwnClub` tekee lojaali- ja kapteenialennuksesta vihdoin todellisen AI-puolellakin. Harvinaisuusbudjetit `ContractNegotiationEngine`in sisällä koskematta. (b) Budjetoi capia vastaan myös `.sandbox`issa, jossa `simulateAIFreeAgency` pudottaa cap-suodattimet — nyt sandbox ohittaa budjetin.
+- **NIT** — `convertUDFAToPlayer`in doc väitti "cheap 1-2 year deal"; `udfaContract` kirjoittaa 3 vuotta. Korjattu.
+
+**Portit korjausten jälkeen:** buildi **BUILD SUCCEEDED** · `career` **36/36** · `leaguegen` **19/19** · `draftclass` **32/32** · 4 kauden smoke (oma satunnaisliiga, base 80+=17,4 %):
+
+| mittari | #89-ajo (base 17,0) | korjauskierros (base 17,4) | verdikti |
+|---|---|---|---|
+| capRoom | 34,4 → 40,3 → 32,9 → 25,3 (32/32 joka kausi) | 30,3 → 39,2 → 32,3 → 23,1 — **31/32 kaudella 2028, min −0,2 %** | yksi seura 0,2 % yli yhtenä kautena |
+| kaupat | 21 · 37 · 41 · 44 | 15 · **35 · 39 · 42** | ≥30 kaudesta 2 ✓ |
+| resign | 38 · 78 · 60 | 8 · 53 · 85 · **70** (ovr 83,7 / age 26,2) | **noussut, kuten pitikin** (2,3/seura) |
+| faSign vs washout 2029 | 238/ovr76,6/age26,7 vs 449/ovr65,2/age26,8 | 202/**ovr76,0**/age26,7 vs 408/**ovr64,1**/age26,7 | muoto pitää (+11,9 OVR samasta ikäluokasta) |
+| 90+ ajautuma | +0,9pp | **+1,4pp** (1,7 → 3,1) | huonompi |
+| 80+ | 17,0 → 19,9 (bändissä 4/5) | 17,4 → **21,8** (bändissä 2/5) | **huonompi** |
+| 75+ / sub65 | 33,0 → 33,1 / 24,0 → 20,6 | 35,4 → 35,3 / 23,8 → 21,8 | molemmat bändissä |
+| yp0to3 | 54,0 → 59,6/63,6/64,0 → 50,1 | 55,4 → 57,3/62,6/61,8 → **49,4** | hieman parempi |
+
+**80+/90+ -ajautuma on kirjattu, ei piiloteltu.** Mekanismi on tiedossa ja se on korjauksen #3 suora seuraus: 10 lisäretentiota liigavuodessa **83,7 OVR:n kohortista** on 10 miestä jotka eivät päädy washoutiin (`washout` 449 → 408, ja washoutin oma OVR laski 65,2 → 64,1). Sama efekti jonka #69 headroom-ero jo ajaa. **Ei viritetty tässä kierroksessa** kahdesta syystä: (1) kumpikin ajo on **yksi** satunnaisliiga ja `season=base` -hajonta tällä mittarilla on iso (kolme ajoa: 17,0 / 17,4 / 19,9), joten yhden ajon ero ei erota signaalia kohinasta; (2) ainoa nuppi joka sen kääntäisi on `ownCoreRetentionsPerClub`, ja sen laskeminen palauttaisi juuri sen bugin joka §4:ssä korjattiin. Oikea seuraava askel on **#69:n headroom-ero**, ei tämän nupin kiertäminen.
+
+### Auki tästä aallosta
+- **yp0to3 64,0 % kausina 2-3 (bändi 45-55).** Kertaluonteinen siirtymä: liiga on siemenetty vanhalla 2-tikin oletuksella, joten sopimusten yhtäkkinen täysmittaisuus kuivattaa vanhenemisputken ~3 kaudeksi (`expire` 134 → 482) ja rosterit täyttyvät rookieilla ennen kuin FA-markkina herää (`faSign` 14 → 66 → 205 → 238). Tasapainossa 50,1 % on bändin keskellä ja baselinen 48,6 %:a keskeisempi. **Ei viritetty** — UDFA-sopimuksen lyhentäminen palauttaisi epärealistisen automaattipuhdistuksen eikä siirtäisi tasapainoa.
+- **80+ 19,9 % kaudella 2029** (bändi ≤19). Baseline oli ulkona jo `season=base`ssa (19,9 %) ja päätyi 22,4 %:iin, joten tämä on **jäljelle jäänyt** osa tehtävän #69 headroom-eroa (LeagueGenerator ~2 pisteen potentiaalivara vs DraftClassBuilder 8-11), ei tämän aallon aiheuttama.
+- **Payroll-notko 64,5 % kaudella 2027.** Sopimukset kestävät, markkinalla ei ole ostettavaa, raha jää käyttämättä. Palautuu 79,8 %:iin kauteen 2029 mennessä. Jos halutaan nopeuttaa: `ownCoreRetentionsPerClub` 3 → 4-5.
+- Tehtävät **#90** (5th-year option — vaatii uuden `Player`-kentän JA offseason-päätösruudun; moottoripuoli yksin antaisi AI:lle vallan jota käyttäjä ei voi käyttää), **#91** (`TeamStance`/`GMPersona` eivät yllä FA-markkinalle; `incomingAgeMultiplier` on valmiina käyttämättä), **#92** (tarve on paino muttei suunnitelma — mikään ei varaa capia täyttämättömälle QB-aukolle; `positionGroupInfo` ei erota "ei aloittavaa QB:tä" ja "ei varamiestä").
+- `deadlineWeek=2` kaudella 2027 (bändi 5-15) — sama jakaumahavainto kuin #87:ssä, volyymi kunnossa.
+
 ## 💰 #87 SALARY SPLIT-BRAIN -AALTO — 2026-08-04 (committoimaton)
 
 Salary-realism-auditin (F1-F20) toteutus. Lähtötila: peli oli **split-brain kolmella akselilla** — roster-seeder ei katsonut `overall`ia lainkaan, kuudesta viidestätoista positiokertoimesta oli kuollutta koodia, ja markkina-arvokaavoja shippasi kolme rinnakkain.

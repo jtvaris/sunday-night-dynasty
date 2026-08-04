@@ -148,16 +148,11 @@ struct FinalPushView: View {
                         // this one has room for the structure that was actually
                         // negotiated (bonus, guarantee, no-trade clause) instead
                         // of drawing a fresh random bonus and hardcoding
-                        // `noTrade: false`.
-                        ContractEngine.applyNegotiatedDeal(
-                            player: player,
-                            team: team,
-                            offer: offer,
-                            application: .replaceContract,
-                            capMode: career.capMode,
-                            modelContext: modelContext
-                        )
-                        try? modelContext.save()
+                        // `noTrade: false`. Going through `applyReSignOffer`
+                        // rather than calling the engine directly is what keeps
+                        // the rollover compensation on BOTH doors into this
+                        // screen — see that method.
+                        applyReSignOffer(player: player, team: team, offer: offer)
                         FASigningTracker.trackSigning(player.id)
                         generateStorylinesForSigning(player: player, team: team)
                         decisions[player.id, default: PlayerDecisionState()].status = .reSignedAccepted
@@ -1065,13 +1060,51 @@ struct FinalPushView: View {
     /// without crediting the salary the club was already carrying, and in
     /// realistic mode it inserts a second `Contract` row alongside the live one.
     private func finalizeReSign(player: Player, team: Team, salary: Int, years: Int) {
-        let offer = NegotiationOffer(
-            years: years,
-            annualSalary: salary,
-            signingBonus: 0,
-            guaranteedPercent: 0,
-            noTradeClause: false
+        applyReSignOffer(
+            player: player,
+            team: team,
+            offer: NegotiationOffer(
+                years: years,
+                annualSalary: salary,
+                signingBonus: 0,
+                guaranteedPercent: 0,
+                noTradeClause: false
+            )
         )
+    }
+
+    /// **The one place a Final Push deal is written**, and the one place the
+    /// league-year rollover is compensated for.
+    ///
+    /// `applyNegotiatedDeal(.replaceContract)` writes
+    /// `contractYearsRemaining = offer.years`, and this screen is the last thing
+    /// that happens before `FreeAgencyEngine.executeNewLeagueYear`, whose expiry
+    /// loop decrements every contract in the league that is not franchise-tagged.
+    /// So a deal agreed here was silently ONE YEAR SHORT: a 1-year re-sign
+    /// expired the instant the league year turned and the man appeared as LOST on
+    /// the very next screen, having been re-signed thirty seconds earlier.
+    ///
+    /// The AI's own re-sign path has always compensated the same way — see the
+    /// `years + 1` in `FreeAgencyEngine.resignAIOwnCore`, "+1 because the expiry
+    /// loop below decrements". The user's path is the half that was missing.
+    ///
+    /// The +1 lives HERE and not inside `applyNegotiatedDeal` because that engine
+    /// call is also the in-season extension path (`PlayerDetailView`,
+    /// `CapOverviewView`, `FranchiseTagView`), where no rollover follows and the
+    /// term must land verbatim. Only Final Push runs immediately ahead of the
+    /// decrement.
+    ///
+    /// The franchise tag needs no adjustment and deliberately does not get one:
+    /// the expiry loop skips `isFranchiseTagged` rows outright
+    /// (`FreeAgencyEngine.executeNewLeagueYear`), so the single year
+    /// `applyFranchiseTag` writes survives the transition intact.
+    ///
+    /// Only `Player.contractYearsRemaining` is adjusted. In realistic mode the
+    /// `Contract` row keeps the negotiated `totalYears`, exactly as it does for
+    /// every other contract in the save — `Contract.currentYear` is never
+    /// advanced anywhere in the game, so the player row is the authority on
+    /// years left and the two were never in lockstep to begin with.
+    private func applyReSignOffer(player: Player, team: Team, offer: NegotiationOffer) {
         ContractEngine.applyNegotiatedDeal(
             player: player,
             team: team,
@@ -1080,6 +1113,7 @@ struct FinalPushView: View {
             capMode: career.capMode,
             modelContext: modelContext
         )
+        player.contractYearsRemaining += 1
         try? modelContext.save()
     }
 

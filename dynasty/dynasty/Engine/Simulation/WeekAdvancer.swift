@@ -2111,26 +2111,35 @@ enum WeekAdvancer {
                 )
             }
 
-            for player in allPlayers where player.contractYearsRemaining > 0 {
-                player.contractYearsRemaining -= 1
-                if player.contractYearsRemaining == 0 {
-                    // Contract expired: player becomes a free agent
-                    if let teamID = player.teamID, let team = teamsByID[teamID] {
-                        team.currentCapUsage -= player.annualSalary
-                    }
-                    // R23: log the departure for the compensatory-pick formula
-                    // (only contract expiries count — cuts never register here).
-                    if let formerTeamID = player.teamID {
-                        CompensatoryPickEngine.recordDeparture(
-                            playerID: player.id,
-                            formerTeamID: formerTeamID
-                        )
-                    }
-                    ChurnDiag.record(ChurnDiag.expire, player)
-                    player.teamID = nil
-                    player.annualSalary = 0
-                }
-            }
+            // Task #89 — THE CONTRACT TICK USED TO HAPPEN HERE AS WELL.
+            //
+            // This block decremented every contract in the league and expired
+            // the zeroes, and then `FreeAgencyEngine.executeNewLeagueYear` did
+            // exactly the same thing again at the March rollover. Neither was
+            // guarded, so **a contract lost two years per league year**: a
+            // four-year rookie deal covered two seasons, a one-year veteran deal
+            // expired before its owner played a snap of it, and a franchise tag
+            // (which the rollover loop skips and this one did not) burned a year
+            // it was never supposed to touch.
+            //
+            // The rollover is the correct home for the tick, and not only
+            // because one of the two had to go. The league year is what a
+            // contract is denominated in — players become free agents in March,
+            // not in the last week of December — and `FreeAgencyStep` is built
+            // around that: `finalPush` ("re-sign your own expiring players", and
+            // now `resignAIOwnCore` for the other 31 clubs) has to run while
+            // those men are still under contract to their own clubs.
+            // `FinalPushView`'s own `contractYearsRemaining <= 1` fetch was
+            // reading a roster this loop had already emptied, so the screen
+            // offered the user next year's expiries and the men actually leaving
+            // were gone before he saw them.
+            //
+            // What changes downstream: an expiring player now keeps his club and
+            // his salary through `.coachingChanges` and `.reviewRoster` — so the
+            // retirement wave says which club a man retired FROM instead of
+            // calling every one of them a free agent — and joins the market at
+            // the rollover, which is where `processWashouts`,
+            // `settleCompensatoryPicks` and the cap true-up already expect him.
         }
 
         // Transition to playoffs once all 18 regular season weeks are done.
@@ -3236,9 +3245,30 @@ enum WeekAdvancer {
             //   - FAWeeklyView (player offers + AI round signings)
             //   - simulateRemainingFA (skip button)
             //
-            // If the player skipped the entire FA phase without entering it,
-            // run the old logic as a fallback.
-            if career.freeAgencyStep == FreeAgencyStep.finalPush.rawValue {
+            // If the player skipped the FA phase, run the old logic as a
+            // fallback.
+            //
+            // The test is "has the rollover happened for this league year", not
+            // "is the flow still on its first screen". Those two agree for the
+            // common case (never entered FA at all), but they came apart in one
+            // real hole: `FinalPushView` sets the step to `.newLeagueYear` and
+            // `NewLeagueYearView` is what actually runs the rollover, so a user
+            // who left the flow between those two ran NO rollover and the old
+            // step-only condition did not catch it — contracts never ticked,
+            // nobody hit the market, and the offseason continued as if March had
+            // not happened. `Career.lastRolloverSeason` makes the miss detectable
+            // from the save, mirroring `restoreDraftClassIfNeeded`.
+            //
+            // Still gated on the step so a career that has demonstrably moved
+            // PAST the rollover (`capReview`/`signing`/`complete`) is never
+            // re-run, which is what keeps a save written before
+            // `lastRolloverSeason` existed (stamp 0) from healing something that
+            // already happened. `executeNewLeagueYear` carries its own guard on
+            // top of this one.
+            let rolloverPending = career.lastRolloverSeason < career.currentSeason
+            let step = FreeAgencyStep(rawValue: career.freeAgencyStep)
+            let beforeRollover = step == nil || step == .finalPush || step == .newLeagueYear
+            if rolloverPending, beforeRollover {
                 // Player never entered FA — auto-run everything
                 let summary = FreeAgencyEngine.executeNewLeagueYear(
                     allPlayers: allPlayers,
@@ -3266,9 +3296,11 @@ enum WeekAdvancer {
             // Phase 2 (plan §5 stage 6): the washout pass. The market has now
             // closed, so an empty `teamID` finally means what the term needs it
             // to mean — nobody signed him. Deliberately NOT part of the
-            // `.coachingChanges` retirement wave three phases back, where every
-            // expiring contract in the league (the user's own included) is
-            // still sitting at `teamID == nil` from the week-18 tick.
+            // `.coachingChanges` retirement wave three phases back: since task
+            // #89 removed the duplicate week-18 contract tick, an expiring
+            // player is still ON his club at that point and would not be seen as
+            // unsigned at all; before it, he was sitting at `teamID == nil` and
+            // would have been washed out before the market ever opened.
             processWashouts(
                 career: career,
                 allPlayers: allPlayers,
@@ -3497,7 +3529,8 @@ enum WeekAdvancer {
                         // rookie in the league.
                         let player = DraftEngine.convertUDFAToPlayer(
                             prospect: prospect,
-                            teamID: team.id
+                            teamID: team.id,
+                            salaryCap: team.salaryCap
                         )
                         DraftEngine.initializeRookieFamiliarity(
                             player: player,
@@ -3507,6 +3540,11 @@ enum WeekAdvancer {
                         )
                         player.careerID = activeCareerID
                         modelContext.insert(player)
+                        // Task #89: a signed UDFA is a cap liability like any
+                        // other. This path used to insert him and never charge
+                        // anybody, so ~150 league-wide deals were invisible on
+                        // the books until the next league-year true-up.
+                        team.currentCapUsage += player.annualSalary
                     }
                 }
 

@@ -57,6 +57,31 @@ final class Career {
     /// Current sub-step within the FA phase (stored as raw value of FreeAgencyStep).
     var freeAgencyStep: String = FreeAgencyStep.finalPush.rawValue
 
+    /// **The season whose league-year rollover has already been executed.**
+    ///
+    /// `FreeAgencyEngine.executeNewLeagueYear` is destructive and NOT idempotent
+    /// — it decrements every contract in the league, grows every club's cap,
+    /// expires a whole cohort into free agency and lets the AI re-sign its core.
+    /// Its only guard used to be `NewLeagueYearView`'s `@State hasExecuted`,
+    /// which dies with the view: backing out of the screen and re-entering it
+    /// before pressing Continue ran the entire rollover a second time — a double
+    /// decrement (every 1-year deal in the league gone), compounded cap growth, a
+    /// second expiry wave and a second `resignAIOwnCore` pass.
+    ///
+    /// A `@State` flag cannot express "this already happened to the save", so the
+    /// save carries it. `0` is "never" — every real season is positive, so a
+    /// career created before this field existed runs its next rollover exactly
+    /// once and stamps itself from then on.
+    ///
+    /// The value is `currentSeason` at the moment the rollover ran. That is the
+    /// season just COMPLETED: `WeekAdvancer` does not increment the year until
+    /// the roster-cuts → regular-season transition, so the identifier is stable
+    /// across the whole offseason (`finalPush` → `newLeagueYear` → `capReview` →
+    /// `signing` → draft → camp) and cannot collide with the next league year's.
+    ///
+    /// Inline default → SwiftData lightweight migration; never an init parameter.
+    var lastRolloverSeason: Int = 0
+
     // MARK: - FA Visits (R23)
     /// Number of free-agent facility visits hosted this FA phase (max 3).
     /// Reset when the free agency phase begins. Default value → lightweight migration.
