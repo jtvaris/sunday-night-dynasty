@@ -258,9 +258,27 @@ enum RookieClassReveal {
         let projection: PotentialLabel?
         /// The press grade the pick itself was given on draft night.
         let pressGrade: PickGrade?
+        /// Average per year of the deal he signed at the podium, in thousands.
+        let salary: Int
+        /// Years still on that deal.
+        let contractYears: Int
 
         var slotText: String {
             round > 0 ? "R\(round) · #\(pickNumber)" : "UDFA"
+        }
+
+        /// "$10.9M · 4 yrs" (task #94).
+        ///
+        /// The reveal is the first screen that puts a real number on a rookie,
+        /// and it used to put exactly one there — the OVR. What the club is
+        /// PAYING for that number belongs in the same row: a B-grade at
+        /// `$1.1M` and a B-grade at `$10.9M` are not the same draft pick.
+        ///
+        /// No cap share here, unlike `DraftRecapView`: `build` is called from
+        /// `WeekAdvancer` and `CareerShellView`, and neither hands this type a
+        /// salary cap to divide by.
+        var dealText: String {
+            "\(DraftRecapView.formatCap(salary)) · \(contractYears) yr\(contractYears == 1 ? "" : "s")"
         }
     }
 
@@ -322,7 +340,9 @@ enum RookieClassReveal {
                 overall: player.overall,
                 verdict: RookieFog.verdict(realOverall: player.overall, band: band),
                 projection: player.assessedPotential.flatMap(PotentialLabel.init(rawValue:)),
-                pressGrade: gradesByPlayer[player.id]?.publicGrade
+                pressGrade: gradesByPlayer[player.id]?.publicGrade,
+                salary: player.annualSalary,
+                contractYears: player.contractYearsRemaining
             )
         }
 
@@ -605,6 +625,11 @@ struct RookieClassRevealView: View {
                         .foregroundStyle(Color.textTertiary)
                         .lineLimit(1)
                 }
+                Text(row.dealText)
+                    .font(.system(size: 10, weight: .bold).monospacedDigit())
+                    .foregroundStyle(Color.textSecondary)
+                    .lineLimit(1)
+                    .accessibilityLabel(String(localized: "Signed for \(row.dealText)"))
                 if let projection = row.projection {
                     Label(projection.displayName, systemImage: "binoculars.fill")
                         .font(.system(size: 10, weight: .semibold))

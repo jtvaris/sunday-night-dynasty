@@ -1021,19 +1021,25 @@ struct FAWeeklyView: View {
         guard let team else { return }
 
         // Generate AI bids for all free agents this round (need-based)
+        // Task #93 F7: both of these take a `capMode` and both were letting it
+        // default to `.simple`, so a sandbox league's AI clubs bid against a cap
+        // their own signings do not respect and a realistic one priced its
+        // bidding wars on the wrong rules.
         var aiBids = FreeAgencyEngine.generateAIOffers(
             freeAgents: freeAgents,
             round: currentRound,
             allTeams: allTeams,
             allPlayers: allPlayers.isEmpty ? nil : allPlayers,
-            playerTeamID: career.teamID
+            playerTeamID: career.teamID,
+            capMode: career.capMode
         )
 
         // Process bidding wars (4+ teams on same player)
         let biddingWarInfos = FreeAgencyEngine.processBiddingWars(
             aiBids: &aiBids,
             freeAgents: freeAgents,
-            allTeams: allTeams
+            allTeams: allTeams,
+            capMode: career.capMode
         )
 
         // Process player's offers using resolvePlayerDecision
@@ -1087,21 +1093,28 @@ struct FAWeeklyView: View {
                     years: offer.years
                 ))
             } else {
-                // Rejected -- chose another team
-                rejected.append((
-                    playerName: player.fullName,
-                    position: player.position.rawValue,
-                    reason: decision.reason,
-                    chosenTeam: decision.chosenTeamName,
-                    salary: decision.salary
-                ))
-
-                // AI signs the rejected player to their chosen team
+                // Rejected -- chose another team.
+                //
+                // Task #93 F7: the signing goes through the market's own door,
+                // so the deal is written the way the active cap mode says and
+                // the club's `capReservePercent` reserve is honoured — the
+                // affordability test used to be a bare `availableCap` check that
+                // spent the reserve its own bid had respected.
+                //
+                // And that door can say NO. `processBiddingWars` escalates the
+                // winner 5-15 % above a bid that was priced inside the reserve,
+                // and every bid in a round is priced against one cap snapshot,
+                // so a club that has already signed two men this round can lose
+                // the man it just "won". The round summary is written from the
+                // RESULT, not from the intention: reporting "chose CHI" for a
+                // deal that was refused told the user his target was gone while
+                // the man was still on the board, reappearing next round.
+                var signedElsewhere = false
                 if let chosenID = decision.chosenTeamID,
-                   let aiTeam = allTeams.first(where: { $0.id == chosenID }),
-                   aiTeam.availableCap >= (decision.salary ?? fa.askingPrice) {
-                    ContractEngine.signPlayerSimple(
+                   let aiTeam = allTeams.first(where: { $0.id == chosenID }) {
+                    signedElsewhere = FreeAgencyEngine.signFreeAgentAI(
                         player: player,
+                        team: aiTeam,
                         // Task #89: the AI's fallback term is bounded by the
                         // signing club's willingness at this age, exactly like
                         // the bid it is standing in for.
@@ -1109,10 +1122,31 @@ struct FAWeeklyView: View {
                             fa.desiredYears,
                             FreeAgencyEngine.contractYearsCeiling(age: fa.player.age)
                         )),
-                        annualSalary: decision.salary ?? fa.askingPrice,
-                        team: aiTeam
+                        salary: decision.salary ?? fa.askingPrice,
+                        capMode: career.capMode,
+                        modelContext: modelContext
                     )
                 }
+
+                guard signedElsewhere else {
+                    // Nobody could afford him. He is still a free agent and the
+                    // user's offer is still on the table, which is the same
+                    // state `shoppingAround` leaves him in — so it gets the same
+                    // treatment: carried forward, reported as undecided.
+                    shoppingAround.append((
+                        playerName: player.fullName,
+                        position: player.position.rawValue
+                    ))
+                    continue
+                }
+
+                rejected.append((
+                    playerName: player.fullName,
+                    position: player.position.rawValue,
+                    reason: decision.reason,
+                    chosenTeam: decision.chosenTeamName,
+                    salary: decision.salary
+                ))
             }
         }
 
@@ -1192,15 +1226,32 @@ struct FAWeeklyView: View {
                 allPlayers: allPlayers
             )
 
+            // Task #93 F8: "wants to explore all options before committing" was
+            // computed, handed back and then ignored on this path — the same
+            // decision that keeps the USER's offer alive for another round
+            // signed the man to an AI club immediately.
+            //
+            // `resolvePlayerDecision` now only raises the flag when the user is
+            // one of the bidders, so on this all-AI pass it never fires and the
+            // guard is a rail rather than a filter. That is the point: honouring
+            // it unconditionally emptied rounds 1-2 of every contested elite
+            // free agent — the two days whose whole purpose is the opening
+            // splash — and dumped them into round 3 at `aiAggression` 0.7.
+            guard !decision.shoppingAround else { continue }
+
             if let chosenID = decision.chosenTeamID,
                let signingTeam = allTeams.first(where: { $0.id == chosenID }),
                let salary = decision.salary {
-                ContractEngine.signPlayerSimple(
+                // Task #93 F7: cap-mode-aware, reserve-respecting signing door.
+                let signed = FreeAgencyEngine.signFreeAgentAI(
                     player: fa.player,
+                    team: signingTeam,
                     years: decision.years ?? fa.desiredYears,
-                    annualSalary: salary,
-                    team: signingTeam
+                    salary: salary,
+                    capMode: career.capMode,
+                    modelContext: modelContext
                 )
+                guard signed else { continue }
 
                 signings.append((
                     playerName: fa.player.fullName,
@@ -1221,13 +1272,23 @@ struct FAWeeklyView: View {
         let allPlayers = (try? modelContext.fetch(FetchDescriptor<Player>(
             predicate: #Predicate { $0.careerID == cid }
         ))) ?? []
-        FreeAgencyEngine.simulateRemainingFA(
+        // Task #93 F7/F9: the career's cap mode reaches the market (it defaulted
+        // to `.simple` here, so a sandbox or realistic league had its bulk
+        // signings booked under simple-mode rules), and the run is stamped so
+        // `WeekAdvancer`'s mop-up cannot open the same market a second time.
+        FreeAgencyEngine.simulateRemainingFAOnce(
             allPlayers: allPlayers,
             allTeams: allTeams,
             playerTeamID: career.teamID,
-            modelContext: modelContext
+            modelContext: modelContext,
+            capMode: career.capMode,
+            career: career
         )
         career.freeAgencyStep = FreeAgencyStep.complete.rawValue
+        // The stamp is a MODEL mutation now, so it has to reach the store before
+        // the user can quit — the relaunch it defends against is the one where
+        // `WeekAdvancer`'s mop-up would otherwise open the market a second time.
+        try? modelContext.save()
     }
 
     // MARK: - Helpers

@@ -58,9 +58,18 @@ enum PracticeSquadEngine {
     static let squadSalary = 216
 
     /// Salary a poached player signs for on the ACTIVE roster, in thousands.
-    /// Matches the veteran minimum the rest of the engine uses as its floor
-    /// (`FreeAgencyEngine`'s `max(0.0028 · cap, 750)` at a $265M cap).
-    static let poachSalary = 795
+    ///
+    /// The league minimum, read from the one place it is defined
+    /// (``ContractEngine/veteranMinimum(cap:)``) at the opening cap. It used to
+    /// be a hand-typed `795` whose doc comment claimed to be that same formula
+    /// — it was not: `795` is `0.0030 × 265M` (the UDFA rate), and the veteran
+    /// minimum at a $265M cap is `750`.
+    ///
+    /// Still a constant rather than a function of the club's cap because the
+    /// two read sites in `PracticeSquadView` quote it as a plain number; making
+    /// the poach price cap-relative is a change to that screen, not to this
+    /// engine.
+    static let poachSalary = ContractEngine.veteranMinimum(cap: ContractEngine.openingSalaryCap)
 
     /// Years written onto a squad deal.
     ///

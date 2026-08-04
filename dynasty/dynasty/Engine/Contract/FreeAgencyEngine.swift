@@ -428,6 +428,26 @@ enum FreeAgencyEngine {
             player.proratedFullBaseSalary = 0
         }
 
+        // Task #90 — the fifth-year option deadline, and the first money
+        // decision of the league year.
+        //
+        // Ordering, both halves load-bearing: AFTER the proration restore (an
+        // option is priced against the honest base salary it replaces, not a
+        // deadline stub) and BEFORE `resignAIOwnCore`, whose retention budget is
+        // built from the payroll that survives this rollover — a picked-up
+        // option is precisely such a commitment, so it has to be on the books
+        // before a club decides what it can still promise its own free agents.
+        // Also, necessarily, before the expiry loop: the whole window is defined
+        // pre-decrement and `contractYearsRemaining += 1` here is what that
+        // loop's `-= 1` cancels. See `settleFifthYearOptions`.
+        settleFifthYearOptions(
+            allPlayers: allPlayers,
+            allTeams: allTeams,
+            userTeamID: playerTeamID,
+            capMode: career?.capMode ?? .simple,
+            career: career
+        )
+
         // Task #89 — the AI's own final push. Every other club gets to keep a
         // bounded number of its own expiring core before the market opens, the
         // way the user does on `FinalPushView`. Runs AFTER the proration restore
@@ -622,6 +642,96 @@ enum FreeAgencyEngine {
         )
     }
 
+    // MARK: - The market closes exactly once (task #93 F9)
+
+    /// ``simulateRemainingFA``, at most once per career league year.
+    ///
+    /// The stamp is ``Career/lastBulkMarketSeason`` — on the MODEL, not in a
+    /// static table. The three doors into the bulk market (the Skip button,
+    /// `WeekAdvancer`'s skipped-FA fallback and its mop-up) are not all reached
+    /// in one process: Skip runs the market and persists
+    /// `freeAgencyStep == .complete`, and a user who quits there and comes back
+    /// hits the mop-up on the next Advance Week with a fresh, empty process. An
+    /// in-memory guard is blind to exactly that sequence and would open the
+    /// market a second time inside one league year — a second wave of contracts
+    /// against the #53 calibration, a second helping of cap spend and a
+    /// double-counted `signingLedger`.
+    ///
+    /// A `nil` career (harness, previews) is never stamped and always runs, the
+    /// way `executeNewLeagueYear` treats one.
+    ///
+    /// Returns whether this call was the one that ran it.
+    @discardableResult
+    static func simulateRemainingFAOnce(
+        allPlayers: [Player],
+        allTeams: [Team],
+        playerTeamID: UUID?,
+        modelContext: ModelContext,
+        capMode: CapMode = .simple,
+        career: Career?
+    ) -> Bool {
+        if let career {
+            // `>=` and not `!=`, matching `executeNewLeagueYear`: the year only
+            // moves at the roster-cuts → regular-season transition, so a stamp
+            // at or past `currentSeason` means this league year is already done.
+            guard career.lastBulkMarketSeason < career.currentSeason else { return false }
+            career.lastBulkMarketSeason = career.currentSeason
+        }
+        simulateRemainingFA(
+            allPlayers: allPlayers,
+            allTeams: allTeams,
+            playerTeamID: playerTeamID,
+            modelContext: modelContext,
+            capMode: capMode
+        )
+        return true
+    }
+
+    // MARK: - One signing door for the interactive path (task #93 F7)
+
+    /// Sign a free agent to an AI club during the PLAYED free-agent rounds.
+    ///
+    /// `FAWeeklyView` used `ContractEngine.signPlayerSimple` directly in both of
+    /// its AI-vs-AI paths, which meant a real career's market ran on rules the
+    /// bulk market does not use:
+    ///
+    /// * **Cap mode was ignored.** `signPlayerSimple` always debits
+    ///   `currentCapUsage`, so a `.sandbox` league — where the cap is switched
+    ///   off by definition — still had its AI clubs charged for every signing,
+    ///   and `.realistic` never got a `Contract` row for one.
+    /// * **The reserve was ignored.** `generateAIOffers` will not BID above
+    ///   `capReservePercent`, and then the signing that resolved the bid spent
+    ///   straight through it: the whole point of task #27's reserve is that the
+    ///   draft class and the in-season refill still have to be paid for, and
+    ///   half a budget is not a budget.
+    ///
+    /// Returns whether the deal was written, so a caller can leave the man on
+    /// the market when his suitor turns out not to be able to afford him.
+    @discardableResult
+    static func signFreeAgentAI(
+        player: Player,
+        team: Team,
+        years: Int,
+        salary: Int,
+        capMode: CapMode,
+        modelContext: ModelContext
+    ) -> Bool {
+        if capMode != .sandbox {
+            let reserve = Int(Double(team.salaryCap) * capReservePercent)
+            guard team.availableCap - reserve >= salary else { return false }
+        }
+        signFreeAgent(
+            player: player,
+            team: team,
+            years: max(1, years),
+            salary: salary,
+            capMode: capMode,
+            modelContext: modelContext
+        )
+        ChurnDiag.record(ChurnDiag.faSign, player)
+        return true
+    }
+
     // MARK: - AI Free Agency Simulation
 
     /// R39 perf: per-team position-group counts + best OVR, built ONCE from a
@@ -673,11 +783,101 @@ enum FreeAgencyEngine {
                 }
             }
             if count == 0 || bestOVR < 60 { return .critical }
+            // Task #92b — "no QB1" and "no QB2" were the same answer.
+            if FreeAgencyEngine.isUnmannedStarterSlot(position: position, bestOVR: bestOVR) {
+                return .critical
+            }
             let deficit = idealCount - count
             if deficit >= 2 || (deficit >= 1 && bestOVR < 70) { return .high }
             if deficit >= 1 || bestOVR < 75 { return .moderate }
             return .none
         }
+
+        /// The club's most valuable UNMANNED position group, or `nil` if it has
+        /// none (task #92c). This is the hole the per-club reserve is held for:
+        /// one per club, critical only, ranked by the same positional-value
+        /// tiers the draft board uses so a missing quarterback outranks a
+        /// missing kicker.
+        ///
+        /// Deterministic on ties (`rawValue`), so two identical rosters reserve
+        /// for the same hole.
+        func topCriticalHole(teamID: UUID) -> Position? {
+            var best: (position: Position, priority: Double)?
+            for position in Position.allCases {
+                guard need(teamID: teamID, position: position) == .critical else { continue }
+                let priority = FreeAgencyEngine.holePriority(position)
+                if let current = best {
+                    guard priority > current.priority
+                        || (priority == current.priority && position.rawValue < current.position.rawValue)
+                    else { continue }
+                }
+                best = (position, priority)
+            }
+            return best?.position
+        }
+    }
+
+    // MARK: - Starter slots vs depth slots (task #92b)
+
+    /// The OVR the best man in a group has to reach before the club stops
+    /// treating the group as UNMANNED rather than merely thin.
+    ///
+    /// `RosterNeedIndex` counted bodies against an ideal depth chart and then
+    /// graded quality only as a tie-breaker, so "we have two quarterbacks and
+    /// the better of them is a 66" read as `.moderate` — the same answer as
+    /// "we have three good receivers and would like a fourth". A club with no
+    /// starter at a premium position is not shopping for depth, and 70 is the
+    /// line the rest of this file already uses for starter quality (the `.high`
+    /// branch below, `ownCoreAppealFloor`'s 72 after the age discount).
+    static let starterQualityOVR = 70
+
+    /// Position groups where "our best man is not a starter" is a crisis rather
+    /// than a depth problem.
+    ///
+    /// The premium tier of `DraftEngine`'s own positional-value table:
+    /// {QB, DE, CB, WR, LT}. Nothing wider.
+    ///
+    /// It was briefly widened to the whole offensive line "because
+    /// ``positionGroupInfo`` scores all five line spots as one group and the
+    /// left tackle is the one that makes the group premium" — which is the
+    /// opposite of what that reasoning implies. The group's `bestOVR` is the
+    /// same number at all five spots, so a club whose best lineman is a 69 read
+    /// `.critical` at LT **and** LG **and** C **and** RG **and** RT
+    /// simultaneously: `needWeight` 3.0 and `needMultiplier` 1.3-1.5 five times
+    /// over, in `RosterNeedIndex.need`, in `assessPositionNeed` (and therefore
+    /// in `TamperingRumorEngine`) and in `resignAIOwnCore`. Listing LT alone
+    /// makes the group premium exactly once, which is what "the left tackle is
+    /// what makes the group premium" actually means.
+    static func isPremiumGroup(_ position: Position) -> Bool {
+        switch position {
+        case .QB, .WR, .DE, .CB, .LT: return true
+        default: return false
+        }
+    }
+
+    /// Whether a group's best man leaves a starter slot genuinely unfilled.
+    /// Shared by ``RosterNeedIndex/need(teamID:position:)`` and
+    /// ``assessPositionNeed(team:position:allPlayers:)`` so the two cannot
+    /// drift apart.
+    static func isUnmannedStarterSlot(position: Position, bestOVR: Int) -> Bool {
+        bestOVR < starterQualityOVR && isPremiumGroup(position)
+    }
+
+    /// How badly a club wants THIS hole filled first, mirroring the positional
+    /// weights `DraftEngine.teamNeedComponents` ranks its deficits by.
+    static func holePriority(_ position: Position) -> Double {
+        switch position {
+        case .QB, .DE, .CB, .WR, .LT:           return 1.0
+        case .DT, .OLB, .MLB, .FS, .SS, .TE:    return 0.8
+        case .RB, .RG, .LG, .C, .RT, .FB:       return 0.6
+        case .K, .P:                            return 0.3
+        }
+    }
+
+    /// The canonical member of a position's depth group — the key everything
+    /// that reasons about GROUPS (not exact positions) is filed under.
+    static func positionGroupKey(for position: Position) -> Position {
+        positionGroupInfo(for: position).positions.first ?? position
     }
 
     // MARK: - The AI market's budget (task #27)
@@ -889,6 +1089,66 @@ enum FreeAgencyEngine {
     /// in the `weightedPick` it feeds, and a real bias everywhere else it was
     /// read as "this club needs this position".
     static let topNeedBonus = 1.5
+
+    // MARK: - Stance and persona reach the market (task #91)
+
+    /// The widest lean any single personality term may put on a club's pull in
+    /// free agency, and its reciprocal on the way down.
+    ///
+    /// **What it actually does today.** `TeamStance.incomingAgeMultiplier`
+    /// spans 0.72…1.10 (`TradeValueEngine.incomingAgeMultiplier`), so against
+    /// the `[1/1.30, 1.30] = [0.769, 1.30]` band this clamp bites exactly one
+    /// branch — a rebuilding club looking at a 31-plus veteran, 0.72 → 0.769 —
+    /// and the upper bound is unreachable. It is a RAIL, not a working knob,
+    /// and the doc used to claim otherwise ("a rebuilding club simply stops
+    /// appearing in the league at all" describes a failure the raw span never
+    /// produced).
+    ///
+    /// **Why the rail stays.** That table was written for a TRADE, where it
+    /// prices one asset against a pick chart and a 28 % discount is a
+    /// negotiating position. Here it multiplies a roulette-wheel weight that
+    /// already carries `needWeight` (0.25…3.0), `topNeedBonus` (1.5×), market
+    /// appeal (1.35×) and the settlement lean (1.43×) — a compounded ~6.7 : 1
+    /// spread across a shortlist. Widening the trade-side table for trade
+    /// reasons must not silently widen that, and 1.30 is a shade under
+    /// `needWeight`'s smallest real step, which is the property that matters:
+    /// need still outranks taste.
+    static let marketPersonalityLeanCap = 1.30
+
+    /// `TeamStance.incomingAgeMultiplier` bounded to ``marketPersonalityLeanCap``
+    /// in both directions.
+    static func boundedStanceLean(_ multiplier: Double) -> Double {
+        min(marketPersonalityLeanCap, max(1.0 / marketPersonalityLeanCap, multiplier))
+    }
+
+    /// Where in the `[floor, ask]` band a GM settles, as a bias on the uniform
+    /// draw the AI-vs-AI market has always used.
+    ///
+    /// The settlement was `floor + (ask − floor) × U(0,1)` for all 32 clubs —
+    /// the same negotiator everywhere, in a league that already models four
+    /// distinct GM archetypes with their own asking premiums, concession rates
+    /// and patience for the user's phone calls. Applied as an exponent,
+    /// `U^(1/lean)`, so it is a genuine shift of the whole distribution rather
+    /// than a clamp: the draw still spans the full band, the mass just moves.
+    ///
+    /// Bounded by construction. `E[U^(1/lean)] = lean / (1 + lean)`, so the
+    /// table below moves the average settlement from 0.500 of the band to
+    /// 0.444 (analytics) … 0.556 (aggressive) — a 1.25× spread end to end,
+    /// inside ``marketPersonalityLeanCap`` and far inside the ±15 % the agent's
+    /// own floor and ask already move between two players.
+    ///
+    /// The ordering is the trade market's, so a GM negotiates like himself in
+    /// both rooms: the aggressive GM "chases stars, pays a premium" and settles
+    /// high; the analytics GM prices everything below the chart and settles
+    /// low; the old-school GM pays the going rate.
+    static func settlementLean(_ archetype: TradeValueEngine.GMArchetype) -> Double {
+        switch archetype {
+        case .aggressive: return 1.25
+        case .oldSchool:  return 1.08
+        case .balanced:   return 1.00
+        case .analytics:  return 0.80
+        }
+    }
 
     // MARK: - Contract LENGTH is a club decision too (task #89)
 
@@ -1120,6 +1380,354 @@ enum FreeAgencyEngine {
         return retained
     }
 
+    // MARK: - Fifth-Year Option (task #90)
+
+    /// The option's price as a share of the franchise tag for the man's
+    /// position. The real CBA prices the fifth year off a positional average of
+    /// the top salaries (top-3 or top-20 depending on where he was taken and
+    /// what he has achieved); this game already computes exactly one such
+    /// number — ``ContractEngine/franchiseTagValue(position:topSalaries:)``, the
+    /// top-5 average — so the option is expressed as a discount on it rather
+    /// than as a second, parallel positional wage table that would immediately
+    /// drift away from the first.
+    ///
+    /// 0.80 puts a first-round fifth year meaningfully under the tag (that is
+    /// the whole reason a club values the option) while staying well clear of
+    /// the rookie slot it replaces, so picking a man up is a real commitment.
+    static let fifthYearOptionTagShare = 0.80
+
+    /// `marketAppeal` at which an AI club picks the option up regardless of
+    /// where his raw overall currently sits — the young riser who has not
+    /// arrived yet but plainly will. Same scale as ``ownCoreAppealFloor``.
+    static let fifthYearOptionAppealFloor = 74.0
+
+    /// Overall at which an AI club picks the option up on production alone: a
+    /// starter the club would have to replace at market price.
+    static let fifthYearOptionOverallFloor = 78
+
+    /// Rookie-deal seasons behind a man when the option question is asked. See
+    /// ``isFifthYearOptionWindow`` for the calendar trace.
+    static let fifthYearOptionYearsPro = 3
+
+    /// Contract years still on the sheet when the question is asked, read
+    /// BEFORE ``executeNewLeagueYear``'s expiry decrement. Two here becomes one
+    /// after the decrement, i.e. he is entering the final year of the deal.
+    static let fifthYearOptionContractYears = 2
+
+    /// Is this man standing in his fifth-year-option window RIGHT NOW?
+    ///
+    /// "Now" is unambiguously **before this league year's expiry decrement**:
+    /// both callers — `FinalPushView` (the offseason re-sign screen, which runs
+    /// at `FreeAgencyStep.finalPush`, ahead of the rollover) and
+    /// ``settleFifthYearOptions`` (which runs inside ``executeNewLeagueYear``
+    /// immediately before the expiry loop) — read the roster in that state, and
+    /// pricing a decision against a number that means two different things
+    /// depending on who is asking is exactly the split-brain task #89 spent its
+    /// life closing.
+    ///
+    /// ## Why these three numbers, and why the window fires exactly once
+    ///
+    /// Trace one first-rounder taken in the draft phase of the offseason that
+    /// closes season `S` (`career.currentSeason == S` there; the year does not
+    /// move until the roster-cuts → regular-season transition months later).
+    /// `convertToPlayer` gives him `yearsPro = 0`, `contractYearsRemaining = 4`
+    /// (``DraftEngine/rookieContract(pickNumber:salaryCap:)``).
+    ///
+    /// | moment                            | yearsPro | contract years |
+    /// |-----------------------------------|----------|----------------|
+    /// | drafted (offseason `S`)           | 0        | 4              |
+    /// | training camp `S` (age regression)| 1        | 4              |
+    /// | plays season `S+1`                | 1        | 4              |
+    /// | **rollover, offseason `S+1`**     | 1        | 4 → 3          |
+    /// | training camp `S+1`               | 2        | 3              |
+    /// | plays season `S+2`                | 2        | 3              |
+    /// | **rollover, offseason `S+2`**     | 2        | 3 → 2          |
+    /// | training camp `S+2`               | 3        | 2              |
+    /// | plays season `S+3`                | 3        | 2              |
+    /// | **offseason `S+3` — THE WINDOW**  | **3**    | **2** → 1      |
+    /// | plays season `S+4` (year 4)       | 4        | 1              |
+    /// | rollover, offseason `S+4`         | 4        | 1 → 0 (market) |
+    ///
+    /// `yearsPro` only ever moves at training camp (`applyAgeRegression`, the
+    /// single increment in the app), which is four phases AFTER free agency —
+    /// so it is constant across a whole offseason and is a stable name for
+    /// "which offseason is this". `contractYearsRemaining` only ever moves at
+    /// the rollover. The pair `(3, 2)` therefore holds in exactly one offseason
+    /// of a four-year rookie deal, and that offseason is the one before his
+    /// fourth and final season — the real fifth-year-option deadline. Every
+    /// other rollover in the table above misses on one term or the other.
+    ///
+    /// `fifthYearDecided` is the belt to that braces: ``settleFifthYearOptions``
+    /// stamps it on everyone still in the window at the rollover, so even a
+    /// contract shape this trace does not anticipate can only be asked once.
+    ///
+    /// Eligibility is DERIVED (``Player/isFirstRoundPick``) rather than stamped,
+    /// because `draftRound` is already written once at draft time and never
+    /// mutated — a fourth boolean would just be a copy of it that could go
+    /// stale. Known and accepted simplification: a former first-rounder who was
+    /// cut and re-signed onto an unrelated two-year deal that happens to line up
+    /// with `yearsPro == 3` reads as eligible. He is a former top-32 pick
+    /// entering the last year of a deal, so his club getting an option on him is
+    /// a small wrongness, not a broken one.
+    static func isFifthYearOptionWindow(_ player: Player) -> Bool {
+        guard player.isFirstRoundPick,
+              !player.fifthYearDecided,
+              !player.isRetired,
+              !player.isFranchiseTagged,
+              !player.isOnPracticeSquad,
+              player.teamID != nil else { return false }
+        return player.contractYearsRemaining == fifthYearOptionContractYears
+            && player.yearsPro == fifthYearOptionYearsPro
+    }
+
+    /// Every live salary in the league, grouped by position — the input
+    /// ``ContractEngine/franchiseTagValue(position:topSalaries:)`` averages its
+    /// top five of. Computed ONCE per rollover (or once per screen load) because
+    /// the alternative is a full sweep of ~1 700 players per candidate.
+    static func positionSalaryTable(allPlayers: [Player]) -> [Position: [Int]] {
+        var table: [Position: [Int]] = [:]
+        for player in allPlayers where player.annualSalary > 0 {
+            table[player.position, default: []].append(player.annualSalary)
+        }
+        return table
+    }
+
+    /// The fifth-year price for one man, in thousands.
+    ///
+    /// `.sandbox` deliberately still gets a real number. That mode switches the
+    /// CAP off, not the contract — `franchiseTagValue` answers 0 there because a
+    /// tag costs a sandbox club nothing, and writing a 0 (or a
+    /// veteran-minimum) fifth year would make the option a free superstar
+    /// rather than a switched-off constraint. The price is therefore always read
+    /// at the realistic tag, and `.sandbox` drops the AFFORDABILITY test in
+    /// ``settleFifthYearOptions`` instead — the same split ``resignAIOwnCore``
+    /// uses.
+    ///
+    /// Floored at the veteran minimum so a position nobody in the league is paid
+    /// for yet cannot produce a sub-minimum contract.
+    static func fifthYearOptionPrice(
+        player: Player,
+        salaryTable: [Position: [Int]],
+        salaryCap: Int
+    ) -> Int {
+        let tag = ContractEngine.franchiseTagValue(
+            position: player.position,
+            topSalaries: salaryTable[player.position] ?? [],
+            capMode: .realistic,
+            salaryCap: salaryCap
+        )
+        return max(
+            Int(fifthYearOptionTagShare * Double(tag)),
+            ContractEngine.veteranMinimum(cap: salaryCap)
+        )
+    }
+
+    /// **The one place a fifth year is picked up**, so the user's button and the
+    /// AI's rollover pass write the identical mutation.
+    ///
+    /// Flat-salary model, deliberately: the game carries one `annualSalary` per
+    /// contract, not a per-year schedule, so a picked-up option raises the whole
+    /// remaining deal to the option number rather than only the fifth year. The
+    /// club therefore overpays slightly in year four (option money instead of
+    /// rookie-slot money) and pays exactly right in year five. That is the
+    /// honest approximation available inside a flat-salary contract, it errs
+    /// AGAINST the club picking the option up — which is the right direction for
+    /// a decision that is supposed to be a real commitment — and it keeps every
+    /// cap read in the app (true-up, `availableCap`, the retention budget) a
+    /// single multiplication away from the truth.
+    ///
+    /// `contractYearsRemaining += 1` and NOT `= 3`: read before the decrement it
+    /// takes the sheet from 2 to 3, the expiry loop takes it back to 2, and he
+    /// plays year four and year five. Written as an increment so the one thing
+    /// this function promises — "he owes the club one more season than he did" —
+    /// survives any contract shape.
+    static func exerciseFifthYearOption(player: Player, team: Team?, price: Int) {
+        let previousSalary = player.annualSalary
+        player.contractYearsRemaining += 1
+        player.annualSalary = price
+        player.fifthYearDecided = true
+        player.fifthYearExercised = true
+        // `executeNewLeagueYear`'s true-up rebuilds usage from rostered salaries
+        // a few lines later and would reach the same number, but the user's
+        // screen reads `availableCap` the instant the button is pressed — hours
+        // of play before that rebuild — so the ledger is kept honest here too.
+        team?.currentCapUsage += price - previousSalary
+    }
+
+    /// The other answer: nothing changes. He plays out year four on rookie
+    /// money and reaches the market a year later, which is what makes the
+    /// decline the realistic outcome for most of round 1.
+    static func declineFifthYearOption(player: Player) {
+        player.fifthYearDecided = true
+        player.fifthYearExercised = false
+    }
+
+    /// One club's verdict on one option. AI-only — the user's answer comes from
+    /// `FinalPushView`.
+    ///
+    /// Two doors to yes, because a fourth-year rookie is judged on two different
+    /// things depending on what he is. `marketAppeal` carries the age discount
+    /// and the upside premium, so the 23-year-old at 74 who is still climbing
+    /// clears it; `overall` catches the man who is simply good now. Below both
+    /// the club declines — and MOST of round 1 is below both, which is the
+    /// realism the feature exists for: the mid-to-late first-round pick who did
+    /// not hit does not get a fifth year at 80 % of the franchise tag.
+    static func shouldExerciseFifthYearOption(player: Player) -> Bool {
+        marketAppeal(player) >= fifthYearOptionAppealFloor
+            || player.overall >= fifthYearOptionOverallFloor
+    }
+
+    /// Settle every outstanding fifth-year option in the league for this league
+    /// year. Returns the number of options exercised.
+    ///
+    /// Runs INSIDE ``executeNewLeagueYear``, ahead of ``resignAIOwnCore`` and
+    /// therefore ahead of the expiry loop. Both orderings are load-bearing:
+    ///
+    /// * before the expiry loop, because the whole window is defined
+    ///   pre-decrement (see ``isFifthYearOptionWindow``), and because
+    ///   `contractYearsRemaining += 1` here is what the loop's `-= 1` cancels;
+    /// * before `resignAIOwnCore`, because that function budgets a club's
+    ///   retentions against the payroll that SURVIVES the rollover
+    ///   (`contractYearsRemaining > 1`), and a picked-up option is exactly such
+    ///   a commitment. Settling first means a club that has just guaranteed
+    ///   $18M to its fourth-year corner cannot also promise that money to a
+    ///   free agent.
+    ///
+    /// The USER's club is not decided FOR him — it is only closed out. Anything
+    /// still undecided on his roster when the league year turns is a decline,
+    /// which is the same self-heal the rest of the offseason uses for a screen
+    /// the user walked away from: the deadline passed, so the answer is no.
+    @discardableResult
+    static func settleFifthYearOptions(
+        allPlayers: [Player],
+        allTeams: [Team],
+        userTeamID: UUID?,
+        capMode: CapMode = .simple,
+        career: Career? = nil
+    ) -> Int {
+        // Closure and not a bare `filter(isFifthYearOptionWindow)`: a method
+        // REFERENCE does not inherit the caller's actor isolation, so the
+        // point-free form warns (and is an error under Swift 6).
+        let candidates = allPlayers.filter { isFifthYearOptionWindow($0) }
+        guard !candidates.isEmpty else { return 0 }
+
+        var teamsByID: [UUID: Team] = [:]
+        for team in allTeams { teamsByID[team.id] = team }
+        let salaryTable = positionSalaryTable(allPlayers: allPlayers)
+
+        var exercised = 0
+        var news: [NewsItem] = []
+
+        for player in candidates {
+            guard let teamID = player.teamID, let team = teamsByID[teamID] else { continue }
+            let price = fifthYearOptionPrice(
+                player: player,
+                salaryTable: salaryTable,
+                salaryCap: team.salaryCap
+            )
+            // What the option ADDS to the books. The man is already on the
+            // roster at rookie money, so the club is only being asked for the
+            // difference — charging it the whole option number would price a
+            // decision it has partly already paid for.
+            let capDelta = price - player.annualSalary
+
+            // The user's club: never decided for, only closed out.
+            if teamID == userTeamID {
+                declineFifthYearOption(player: player)
+                news.append(fifthYearNews(
+                    player: player, team: team, price: price,
+                    exercised: false, lapsed: true, career: career
+                ))
+                continue
+            }
+
+            // `availableCap` and not the reserve-aware budget `resignAIOwnCore`
+            // builds, for two reasons. It is the brief's own test ("room after
+            // the option price stays at or above zero"), and it is the number
+            // `FinalPushView` prints in its Cap Space pill — so the AI is judged
+            // by exactly the yardstick the user is shown. Both read the ledger
+            // BEFORE this function's true-up, i.e. still carrying the league
+            // year's dead money, which makes every club look a little poorer
+            // than it will be an hour later. That pessimism is deliberate and
+            // symmetric: it pushes marginal options toward decline, which is the
+            // realistic answer for most of round 1 anyway.
+            let affordable = capMode == .sandbox || team.availableCap >= capDelta
+            guard shouldExerciseFifthYearOption(player: player), affordable else {
+                declineFifthYearOption(player: player)
+                if let item = notableFifthYearNews(
+                    player: player, team: team, price: price,
+                    exercised: false, career: career
+                ) { news.append(item) }
+                continue
+            }
+
+            exerciseFifthYearOption(player: player, team: team, price: price)
+            exercised += 1
+            ChurnDiag.record(ChurnDiag.option5, player)
+            if let item = notableFifthYearNews(
+                player: player, team: team, price: price,
+                exercised: true, career: career
+            ) { news.append(item) }
+        }
+
+        if let career, !news.isEmpty {
+            career.newsLog = news + career.newsLog
+        }
+        return exercised
+    }
+
+    /// Overall at which an option decision is league news rather than a
+    /// transaction line. The user's own club is always news regardless — it is
+    /// his roster.
+    private static let fifthYearNewsOverall = 80
+
+    private static func notableFifthYearNews(
+        player: Player,
+        team: Team,
+        price: Int,
+        exercised: Bool,
+        career: Career?
+    ) -> NewsItem? {
+        guard player.overall >= fifthYearNewsOverall else { return nil }
+        return fifthYearNews(
+            player: player, team: team, price: price,
+            exercised: exercised, lapsed: false, career: career
+        )
+    }
+
+    private static func fifthYearNews(
+        player: Player,
+        team: Team,
+        price: Int,
+        exercised: Bool,
+        lapsed: Bool,
+        career: Career?
+    ) -> NewsItem {
+        let money = "$\(String(format: "%.1f", Double(price) / 1_000.0))M"
+        let headline: String
+        let body: String
+        if exercised {
+            headline = "\(team.abbreviation) pick up \(player.fullName)'s fifth-year option"
+            body = "The \(team.fullName) have exercised the fifth-year option on \(player.position.rawValue) \(player.fullName), guaranteeing him \(money) for a fifth season. The \(player.overall)-overall former first-round pick is now under contract through the end of his option year."
+        } else if lapsed {
+            headline = "\(team.abbreviation) let \(player.fullName)'s option deadline pass"
+            body = "The \(team.fullName) declined the fifth-year option on \(player.position.rawValue) \(player.fullName), which would have cost \(money). He plays out the final year of his rookie deal and can reach free agency next spring."
+        } else {
+            headline = "\(team.abbreviation) decline \(player.fullName)'s fifth-year option"
+            body = "The \(team.fullName) will not pick up the \(money) fifth-year option on \(player.position.rawValue) \(player.fullName). The former first-round pick enters the last year of his rookie contract and is a year from the open market."
+        }
+        return NewsItem(
+            headline: headline,
+            body: body,
+            category: .contract,
+            week: career?.currentWeek ?? 0,
+            season: career?.currentSeason ?? 0,
+            relatedTeamID: team.id,
+            relatedPlayerID: player.id,
+            sentiment: exercised ? .positive : .negative
+        )
+    }
+
     /// Let AI-controlled teams sign available free agents based on need and cap room.
     /// In sandbox cap mode the cap-room filter is dropped so any team can sign anyone.
     /// R23: when `allPlayers` is provided, teams that actually NEED the position
@@ -1184,23 +1792,130 @@ enum FreeAgencyEngine {
         // onto that is not a need model at all, it is a flat league-wide premium
         // on five positions, applied to every club equally and therefore
         // cancelling out of the very comparison it was written to inform.
+        //
+        // Task #92c reads the FULL deficit list off the same call and keeps the
+        // top five for the bonus, so the two questions ("does this club have any
+        // deficit here at all" and "is this one of its five biggest") come from
+        // one ranking rather than two.
         var topNeedsByTeam: [UUID: Set<Position>] = [:]
+        var deficitPositionsByTeam: [UUID: Set<Position>] = [:]
+        // Task #91 — each club's competitive stance, computed ONCE for the whole
+        // market run. It derives from a 24-man core sort over the roster, so
+        // asking for it per free agent would be ~500 roster sorts × 32 clubs.
+        var stanceByTeam: [UUID: TradeValueEngine.TeamStance] = [:]
         if let rosterPlayers = allPlayers, !rosterPlayers.isEmpty {
             var rosterByTeam: [UUID: [Player]] = [:]
             for player in rosterPlayers {
                 guard let teamID = player.teamID, !player.isRetired else { continue }
                 rosterByTeam[teamID, default: []].append(player)
             }
+            let coreReference = TradeValueEngine.leagueCoreReference(allPlayers: rosterPlayers)
             for team in teams {
-                topNeedsByTeam[team.id] = Set(
-                    DraftEngine.teamNeedDeficits(roster: rosterByTeam[team.id] ?? [], limit: 5)
+                let roster = rosterByTeam[team.id] ?? []
+                let deficits = DraftEngine.teamNeedDeficits(
+                    roster: roster,
+                    limit: Position.allCases.count
+                )
+                deficitPositionsByTeam[team.id] = Set(deficits)
+                topNeedsByTeam[team.id] = Set(deficits.prefix(5))
+                stanceByTeam[team.id] = TradeValueEngine.stance(
+                    for: team,
+                    roster: roster,
+                    coreReference: coreReference
                 )
             }
         }
 
+        // Task #91 — the GM's own settlement bias. `forTeam` is a UUID-byte
+        // draw, but it is a draw per free agent otherwise, so it is cached with
+        // everything else the run needs per club.
+        var settlementLeanByTeam: [UUID: Double] = [:]
+        for team in teams {
+            settlementLeanByTeam[team.id] = settlementLean(
+                TradeValueEngine.GMPersona.forTeam(id: team.id).archetype
+            )
+        }
+
+        // Task #92c — the market in POSITION-GROUP order, with a cursor per
+        // group, so "what would it cost me to fill my hole at LT" is an O(1)
+        // question instead of a scan of the pool per club per agent.
+        //
+        // Sorted by PRICE, not by market appeal. The reserve answers "what must
+        // I keep back to man this slot", and the honest answer is the cheapest
+        // starter on the board, not the most expensive one: pricing it at the
+        // group's best man reserved a franchise-receiver number to fill a TE2
+        // hole and took the club out of the rest of the market for it. Two lists
+        // per group — starter-quality first, everybody as the fallback — each
+        // with a forward-only cursor, so the cheapest UNSIGNED man is still an
+        // O(1) read.
+        var groupStarterPool: [Position: [FreeAgent]] = [:]
+        var groupAnyPool: [Position: [FreeAgent]] = [:]
         for agent in sortedAgents {
+            let key = positionGroupKey(for: agent.player.position)
+            groupAnyPool[key, default: []].append(agent)
+            if agent.player.overall >= starterQualityOVR {
+                groupStarterPool[key, default: []].append(agent)
+            }
+        }
+        for key in groupAnyPool.keys {
+            groupAnyPool[key]?.sort { $0.askingPrice < $1.askingPrice }
+            groupStarterPool[key]?.sort { $0.askingPrice < $1.askingPrice }
+        }
+        var groupStarterCursor: [Position: Int] = [:]
+        var groupAnyCursor: [Position: Int] = [:]
+        func cheapestUnsigned(_ pool: [Position: [FreeAgent]], _ cursor: inout [Position: Int], _ key: Position) -> Int {
+            guard let list = pool[key] else { return 0 }
+            var index = cursor[key] ?? 0
+            while index < list.count, list[index].player.teamID != nil { index += 1 }
+            cursor[key] = index
+            return index < list.count ? list[index].askingPrice : 0
+        }
+        /// What manning `position`'s group costs at replacement level.
+        func replacementAsk(inGroupOf position: Position) -> Int {
+            let key = positionGroupKey(for: position)
+            let starter = cheapestUnsigned(groupStarterPool, &groupStarterCursor, key)
+            if starter > 0 { return starter }
+            // Nobody left in the group can start. The slot is still unmanned, so
+            // the club keeps back what the cheapest BODY costs rather than
+            // nothing at all — and 0 (empty group) still releases the reserve
+            // entirely, which is what keeps a QB-less club able to buy a QB.
+            return cheapestUnsigned(groupAnyPool, &groupAnyCursor, key)
+        }
+
+        // Task #92c — one reserve per club, memoised because a club's holes only
+        // change when it signs somebody. Invalidated on that signing below.
+        var criticalHoleByTeam: [UUID: Position?] = [:]
+        func criticalHole(_ teamID: UUID) -> Position? {
+            if let cached = criticalHoleByTeam[teamID] { return cached }
+            let hole = needIndex?.topCriticalHole(teamID: teamID)
+            criticalHoleByTeam[teamID] = hole
+            return hole
+        }
+
+        /// One free agent's turn on the market.
+        ///
+        /// - Parameter holdHoleReserves: task #92c. While true, a club that is
+        ///   already stocked at this man's position must still be able to afford
+        ///   its own unmanned starter slot after signing him. Released on the
+        ///   mop-up wave so the money can never sit dead.
+        func attemptSigning(_ agent: FreeAgent, holdHoleReserves: Bool) {
             // Skip players who were already signed this cycle
-            guard agent.player.teamID == nil else { continue }
+            guard agent.player.teamID == nil else { return }
+            let agentPosition = agent.player.position
+            let agentGroup = positionGroupKey(for: agentPosition)
+
+            // Task #92c — what this club must keep back before it may spend on
+            // THIS man. Zero unless all four hold: the reserve is armed, the club
+            // has an unmanned starter slot somewhere, that slot is not the one he
+            // would fill, and it has no deficit at his position either (a club
+            // that is genuinely short of receivers is allowed to buy a receiver).
+            func holeReserve(for team: Team) -> Int {
+                guard holdHoleReserves else { return 0 }
+                guard let hole = criticalHole(team.id) else { return 0 }
+                guard positionGroupKey(for: hole) != agentGroup else { return 0 }
+                guard deficitPositionsByTeam[team.id]?.contains(agentPosition) != true else { return 0 }
+                return replacementAsk(inGroupOf: hole)
+            }
 
             // In sandbox mode, every team is eligible regardless of cap.
             var eligibleTeams: [Team]
@@ -1214,7 +1929,8 @@ enum FreeAgencyEngine {
                         // without one the market falls back to the old cap-only
                         // rule rather than silently signing nobody.
                         let reserve = Int(Double(team.salaryCap) * capReservePercent)
-                        guard team.availableCap - reserve >= agent.askingPrice else { return false }
+                        let hole = holeReserve(for: team)
+                        guard team.availableCap - reserve - hole >= agent.askingPrice else { return false }
                         guard let needIndex else { return true }
                         return needIndex.rosterSize(teamID: team.id) < faRosterCeiling
                     }
@@ -1224,7 +1940,6 @@ enum FreeAgencyEngine {
             }
 
             // R23: need-first ordering when roster data is available.
-            let agentPosition = agent.player.position
             if let needIndex {
                 func needRank(_ team: Team) -> Int {
                     switch needIndex.need(teamID: team.id, position: agentPosition) {
@@ -1238,12 +1953,21 @@ enum FreeAgencyEngine {
                 // Teams with any need come first; ties broken by cap space order.
                 let needy = ranked.filter { $0.rank > 0 }.sorted { $0.rank > $1.rank }.map(\.team)
                 let rest = ranked.filter { $0.rank == 0 }.map(\.team)
-                eligibleTeams = needy + rest
+                // Task #92a — a club with NO need at the position is not a buyer.
+                // `needy + rest` meant the shortlist was topped up from
+                // `rest` — which is ordered by CAP SPACE — whenever fewer than
+                // `marketInterest` clubs had a hole, i.e. every time a position is
+                // well stocked league-wide (the normal case at WR, CB and DE). The
+                // richest club in the league therefore bought the ninth receiver
+                // for a room that already had eight. `rest` survives only as the
+                // fallback that keeps the man employable at all, which is what
+                // preserves the contract COUNT task #53 calibrated.
+                eligibleTeams = needy.isEmpty ? rest : needy
             }
 
             // Pick from the top interested teams (capped by marketInterest)
             let candidateCount = min(agent.marketInterest, eligibleTeams.count)
-            guard candidateCount > 0 else { continue }
+            guard candidateCount > 0 else { return }
 
             let candidates = Array(eligibleTeams.prefix(candidateCount))
 
@@ -1262,9 +1986,20 @@ enum FreeAgencyEngine {
                     if topNeedsByTeam[team.id]?.contains(agentPosition) == true {
                         weight *= topNeedBonus
                     }
+                    // Task #91 — the club's competitive cycle. A contender leans
+                    // toward the win-now veteran and a rebuilder toward the man
+                    // who will still be there when it is good again; the trade
+                    // market has priced exactly this since Wave 2 and free agency
+                    // did not consult it at all. Bounded to a nudge — need still
+                    // outranks taste (see `marketPersonalityLeanCap`).
+                    if let stance = stanceByTeam[team.id] {
+                        weight *= boundedStanceLean(
+                            stance.incomingAgeMultiplier(age: agent.player.age)
+                        )
+                    }
                     return weight
                 }
-            ) else { continue }
+            ) else { return }
 
             // The AI GM negotiates against the SAME demand model the user does:
             // he lands somewhere between the agent's floor and his opening ask,
@@ -1273,7 +2008,11 @@ enum FreeAgencyEngine {
             // less than the user's agent would ever have taken.
             let minimum = max(Int(0.0028 * Double(winningTeam.salaryCap)), 750)
             let floor = min(agent.floorPrice, agent.askingPrice)
-            let settlement = Double(floor) + Double(agent.askingPrice - floor) * Double.random(in: 0...1)
+            // Task #91 — WHERE in that band he lands is his own trait, not a
+            // league constant. See `settlementLean` for the bound.
+            let lean = settlementLeanByTeam[winningTeam.id] ?? 1.0
+            let draw = pow(Double.random(in: 0...1), 1.0 / lean)
+            let settlement = Double(floor) + Double(agent.askingPrice - floor) * draw
             let agreedSalary = max(Int(settlement), minimum)
             // Task #89: the club gets a say in the TERM as well as the price.
             // `desiredYears` is the player's wish; `contractYearsCeiling` is what
@@ -1306,6 +2045,25 @@ enum FreeAgencyEngine {
             // Keep the need index in sync with the roster change (the old
             // per-call filter saw the new teamID on the next agent too).
             needIndex?.add(position: agentPosition, overall: agent.player.overall, to: winningTeam.id)
+            // Task #92c: his club's hole board just changed.
+            criticalHoleByTeam.removeValue(forKey: winningTeam.id)
+        }
+
+        for agent in sortedAgents {
+            attemptSigning(agent, holdHoleReserves: true)
+        }
+
+        // Task #92c — the mop-up wave, with every hole reserve released.
+        //
+        // This is what stops the reserve from turning into dead money: a club
+        // that held back a left tackle's wage all market and never found one is
+        // free to spend it here. It cannot inflate the number of contracts the
+        // market writes, because the only men it can reach are the ones the wave
+        // above left unsigned — and the ONLY reason a wave-1 agent goes unsigned
+        // with clubs still holding room is the reserve itself. Cap and roster
+        // exhaustion are unchanged by this pass (both only ever tightened above).
+        for agent in sortedAgents where agent.player.teamID == nil {
+            attemptSigning(agent, holdHoleReserves: false)
         }
     }
 
@@ -1341,6 +2099,14 @@ enum FreeAgencyEngine {
 
         // Critical: no starter-quality player at the position
         if count == 0 || bestOVR < 60 {
+            return .critical
+        }
+
+        // Task #92b — same starter-slot rule as `RosterNeedIndex.need`. Kept in
+        // lockstep on purpose: `TamperingRumorEngine` prices its leaks off this
+        // function, and a rumor mill that disagrees with the market about who
+        // has a hole is a rumor mill that lies.
+        if isUnmannedStarterSlot(position: position, bestOVR: bestOVR) {
             return .critical
         }
 
@@ -1434,17 +2200,78 @@ enum FreeAgencyEngine {
 
         // Task #89 — the same draft board the bulk market reads.
         var topNeedsByTeam: [UUID: Set<Position>] = [:]
+        // Task #92c — every position the club is genuinely short at, so the hole
+        // reserve below can tell "we are stocked here" from "this is one of our
+        // five biggest holes".
+        var deficitPositionsByTeam: [UUID: Set<Position>] = [:]
+        // Task #91 — the club's competitive cycle, cached per team for the whole
+        // round exactly as the bulk market caches it for the whole run.
+        var stanceByTeam: [UUID: TradeValueEngine.TeamStance] = [:]
         if !rosterPlayers.isEmpty {
             var rosterByTeam: [UUID: [Player]] = [:]
             for player in rosterPlayers {
                 guard let teamID = player.teamID, !player.isRetired else { continue }
                 rosterByTeam[teamID, default: []].append(player)
             }
+            let coreReference = TradeValueEngine.leagueCoreReference(allPlayers: rosterPlayers)
             for team in aiTeams {
-                topNeedsByTeam[team.id] = Set(
-                    DraftEngine.teamNeedDeficits(roster: rosterByTeam[team.id] ?? [], limit: 5)
+                let roster = rosterByTeam[team.id] ?? []
+                let deficits = DraftEngine.teamNeedDeficits(
+                    roster: roster,
+                    limit: Position.allCases.count
+                )
+                deficitPositionsByTeam[team.id] = Set(deficits)
+                topNeedsByTeam[team.id] = Set(deficits.prefix(5))
+                stanceByTeam[team.id] = TradeValueEngine.stance(
+                    for: team,
+                    roster: roster,
+                    coreReference: coreReference
                 )
             }
+        }
+
+        // Task #92c — one reserve per club: its unmanned starter slot, priced at
+        // REPLACEMENT level, i.e. the cheapest man on the board who could
+        // actually start there.
+        //
+        // Not the group's best man. Pricing it at the top free agent in the
+        // group reserved a franchise number to fill a TE2 or a kicker slot and
+        // took the club out of the rest of the market for it — and after the
+        // rollover, rosters sit near 40 against ideal counts summing to 39, so
+        // `count == 0` holes are common and a large share of the league was
+        // affected at once. The cheapest starter is what the club actually has
+        // to keep back; anything more is not a plan, it is a freeze.
+        //
+        // Computed once per round rather than per bid, and RELEASED from round 5
+        // on. Round 5's OVR floor is 65 and round 6's is 60 — both below
+        // `starterQualityOVR` — so from there the board cannot fill a starter
+        // slot at all and holding money for one is holding it for nothing. (It
+        // used to release only in round 6, which meant clubs sat out five of the
+        // six rounds the user actually watches.)
+        let holdHoleReserves = round < 5
+        var holeReserveByTeam: [UUID: (position: Position, amount: Int)] = [:]
+        if holdHoleReserves, let needIndex {
+            for team in aiTeams {
+                guard let hole = needIndex.topCriticalHole(teamID: team.id) else { continue }
+                let group = Set(positionGroupInfo(for: hole).positions)
+                let unsigned = freeAgents.filter {
+                    $0.player.teamID == nil && group.contains($0.player.position)
+                }
+                let price = unsigned
+                    .filter { $0.player.overall >= starterQualityOVR }
+                    .min(by: { $0.askingPrice < $1.askingPrice })?.askingPrice
+                    ?? unsigned.min(by: { $0.askingPrice < $1.askingPrice })?.askingPrice
+                guard let price else { continue }
+                holeReserveByTeam[team.id] = (position: hole, amount: price)
+            }
+        }
+        /// What `team` must keep back before it may bid on a `position` it is
+        /// already set at. Same four conditions as the bulk market's.
+        func holeReserve(team: Team, position: Position) -> Int {
+            guard let entry = holeReserveByTeam[team.id] else { return 0 }
+            guard positionGroupKey(for: entry.position) != positionGroupKey(for: position) else { return 0 }
+            guard deficitPositionsByTeam[team.id]?.contains(position) != true else { return 0 }
+            return entry.amount
         }
 
         for fa in freeAgents {
@@ -1483,9 +2310,13 @@ enum FreeAgencyEngine {
                 // `simulateAIFreeAgency` budgeted, the user's league would still
                 // spend itself broke — the two are one market and have to price
                 // against one bank balance.
+                // Task #92c: plus whatever this club owes its own unmanned
+                // starter slot, so a rich team with no quarterback stops
+                // outbidding everybody for a fourth receiver first.
+                let hole = holeReserve(team: team, position: fa.player.position)
                 if capMode != .sandbox {
                     let reserve = Int(Double(team.salaryCap) * capReservePercent)
-                    guard team.availableCap - reserve >= fa.askingPrice else { continue }
+                    guard team.availableCap - reserve - hole >= fa.askingPrice else { continue }
                     if let needIndex, needIndex.rosterSize(teamID: team.id) >= faRosterCeiling {
                         continue
                     }
@@ -1516,6 +2347,18 @@ enum FreeAgencyEngine {
                 if topNeedsByTeam[team.id]?.contains(fa.player.position) == true {
                     needFactor *= 1.10
                 }
+                // Task #91 — the interactive half of the stance lean. This path
+                // has no shortlist to weight, so the club's appetite shows up
+                // where its appetite is actually expressed: in the money. A
+                // contender bids up the 29-year-old it wants for January; a
+                // rebuilder does not. Bounded by `marketPersonalityLeanCap`,
+                // which is narrower than the `needMultiplier` band it multiplies,
+                // so it tilts a bid and never manufactures one.
+                if let stance = stanceByTeam[team.id] {
+                    needFactor *= boundedStanceLean(
+                        stance.incomingAgeMultiplier(age: fa.player.age)
+                    )
+                }
 
                 // Combine need with round aggression
                 let salaryMultiplier = needFactor * Double.random(in: (aggression * 0.85)...(aggression * 1.05 + 0.05))
@@ -1529,9 +2372,10 @@ enum FreeAgencyEngine {
                     offeredSalary = max(rawOffer, minimum)
                 } else {
                     // 30 % of SPENDABLE room, not of nominal room — the reserve
-                    // is not the club's to bid with (task #27).
+                    // is not the club's to bid with (task #27), and neither is
+                    // the hole reserve (task #92c).
                     let reserve = Int(Double(team.salaryCap) * capReservePercent)
-                    let spendable = max(0, team.availableCap - reserve)
+                    let spendable = max(0, team.availableCap - reserve - hole)
                     let maxBid = Int(Double(spendable) * 0.30)
                     offeredSalary = max(min(rawOffer, maxBid), minimum)
                 }
@@ -1863,8 +2707,18 @@ enum FreeAgencyEngine {
             )
         }
 
-        // Check if player wants to shop around (multiple competitive offers, early rounds)
-        if allBids.count >= 2 && round <= 3 {
+        // Check if player wants to shop around (multiple competitive offers,
+        // early rounds).
+        //
+        // Task #93 F8 follow-up: only when the USER is one of the bidders.
+        // "Wants to explore all options" is a mechanic aimed at the human — it
+        // keeps his offer alive for another round instead of resolving against
+        // him immediately. Applied to an all-AI shortlist it does nothing but
+        // freeze the market: the caller that honours the flag (`FAWeeklyView`'s
+        // AI-vs-AI pass) would leave every contested elite free agent unsigned
+        // through rounds 1-2 — the two days whose entire point is the opening
+        // splash — and dump them into round 3 at `aiAggression` 0.7.
+        if playerOffer != nil && allBids.count >= 2 && round <= 3 {
             let salaries = allBids.map(\.salary).sorted(by: >)
             if salaries.count >= 2 {
                 let topOffer = salaries[0]

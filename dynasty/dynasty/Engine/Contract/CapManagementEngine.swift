@@ -84,33 +84,17 @@ enum CapManagementEngine {
     }
 
     // MARK: - Contract Year Processing
-
-    /// Advances all player contracts by one year. Players whose contracts expire
-    /// (contractYearsRemaining reaches 0) become free agents by clearing their team
-    /// assignment. Any corresponding `Contract` objects should be updated or removed
-    /// by the caller after computing dead cap impacts.
-    ///
-    /// - Parameters:
-    ///   - players: All players on the team's roster.
-    ///   - team: The team whose roster is being processed.
-    static func processContractYear(players: [Player], team: Team) {
-        for player in players {
-            guard player.teamID == team.id else { continue }
-
-            // Decrement contract length
-            player.contractYearsRemaining -= 1
-
-            if player.contractYearsRemaining <= 0 {
-                // Player becomes an unrestricted free agent
-                player.contractYearsRemaining = 0
-                player.teamID = nil
-
-                // Remove salary from cap (the player is no longer under contract)
-                team.currentCapUsage = max(0, team.currentCapUsage - player.annualSalary)
-                player.annualSalary = 0
-            }
-        }
-    }
+    //
+    // DELETED (task #94): `processContractYear(players:team:)`.
+    //
+    // A third, never-called implementation of the contract clock — it decremented
+    // `contractYearsRemaining`, released expiries and refunded the cap, i.e. it
+    // did the whole job of `FreeAgencyEngine.executeNewLeagueYear` in fifteen
+    // lines with none of its guards. It had zero call sites for its entire life
+    // and survived the single-clock rewrite (`Career.lastRolloverSeason`, which
+    // killed the duplicate week-18 tick), where it was a live landmine: anything
+    // that wired it up would have advanced every contract a second time inside
+    // one league year and silently emptied rosters.
 
     /// Calculates dead cap charge when a player is cut mid-contract.
     /// Dead cap = remaining prorated signing bonus + any guaranteed base salaries.

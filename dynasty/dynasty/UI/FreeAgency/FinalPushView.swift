@@ -11,6 +11,17 @@ enum ReSignResponse {
     case brokenOff(reason: String)
 }
 
+// MARK: - Fifth-Year Option Decision (task #90)
+
+/// What the user answered on a first-rounder's fifth-year option, and at what
+/// price. Presentation state only — the contract itself is written by
+/// `FreeAgencyEngine.exerciseFifthYearOption` / `declineFifthYearOption` the
+/// moment the button is pressed.
+enum FifthYearDecision {
+    case exercised(price: Int)
+    case declined
+}
+
 // MARK: - FinalPushView
 
 struct FinalPushView: View {
@@ -21,6 +32,26 @@ struct FinalPushView: View {
 
     @State private var team: Team?
     @State private var expiringPlayers: [Player] = []
+    /// Task #90 — the user's own first-rounders standing in their fifth-year
+    /// option window. A DIFFERENT cohort from `expiringPlayers`: those have one
+    /// contract year left, these have two, so the two lists can never overlap
+    /// and the same man is never asked about twice on one screen.
+    @State private var fifthYearCandidates: [Player] = []
+    /// The price the user paid on an option he exercised THIS session, keyed by
+    /// player — the one thing the model does not keep separately (an exercised
+    /// deal raises `annualSalary` to the option number, so it can be read back,
+    /// but only until something else touches the contract).
+    ///
+    /// The DECISION itself is never read from here. `Player.fifthYearDecided` /
+    /// `fifthYearExercised` are persisted and are the record of truth; this
+    /// dictionary used to be it, which meant leaving the screen and coming back
+    /// inside the same league year erased every answer the user had given —
+    /// `isFifthYearOptionWindow` is false once decided, so the card vanished and
+    /// the confirm alert silently dropped him from its count.
+    @State private var fifthYearPrices: [UUID: Int] = [:]
+    /// Every live salary in the league grouped by position — the franchise-tag
+    /// input the option price is a share of. Built once in `loadData`.
+    @State private var fifthYearSalaryTable: [Position: [Int]] = [:]
     @State private var allPlayers: [Player] = []
     @State private var allTeams: [Team] = []
     @State private var decisions: [UUID: PlayerDecisionState] = [:]
@@ -101,6 +132,15 @@ struct FinalPushView: View {
                             tamperingBuzzCard
                         }
 
+                        // Task #90. Placed ABOVE the expiring men on purpose:
+                        // it is a hard deadline that closes when the league year
+                        // turns, and a fifth year picked up here is money the
+                        // user has to know about before he starts bidding on
+                        // his own free agents with the same cap space.
+                        if !fifthYearCandidates.isEmpty {
+                            fifthYearOptionSection(team: team)
+                        }
+
                         if expiringPlayers.isEmpty {
                             noExpiringCard
                         } else {
@@ -128,9 +168,17 @@ struct FinalPushView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             let undecided = expiringPlayers.filter { decisions[$0.id]?.status == nil || isPending($0.id) }.count
-            Text(undecided > 0
-                 ? "\(undecided) undecided player\(undecided == 1 ? "" : "s") will hit the open market."
-                 : "All decisions made. Proceed to advance contracts.")
+            // Task #90: an unanswered option is a DECLINE, not a market entry —
+            // he stays on the roster for one more year either way — so it gets
+            // its own sentence rather than being folded into the count above.
+            let openOptions = fifthYearCandidates.filter { !$0.fifthYearDecided }.count
+            let market = undecided > 0
+                ? "\(undecided) undecided player\(undecided == 1 ? "" : "s") will hit the open market."
+                : "All decisions made. Proceed to advance contracts."
+            let options = openOptions > 0
+                ? " \(openOptions) fifth-year option\(openOptions == 1 ? "" : "s") will be declined."
+                : ""
+            Text(market + options)
         }
         .fullScreenCover(item: $negotiationPlayer) { player in
             // ContractNegotiationView supplies its own "Close" toolbar item, so
@@ -290,6 +338,221 @@ struct FinalPushView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
+    }
+
+    // MARK: - Fifth-Year Options (task #90)
+
+    /// The user's own first-rounders entering the final year of their rookie
+    /// deals. One card, one row per man, two buttons.
+    ///
+    /// Deliberately NOT a negotiation. The fifth-year option is a unilateral
+    /// club right at a price the league sets — there is no agent to call, no
+    /// counter and no refusal — so it gets a flat yes/no surface rather than the
+    /// offer ladder the expiring cards below carry.
+    private func fifthYearOptionSection(team: Team) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 10) {
+                    Image(systemName: "calendar.badge.plus")
+                        .foregroundStyle(Color.accentBlue)
+                        .font(.system(size: 15))
+                    Text("Fifth-Year Options")
+                        .font(.headline)
+                        .foregroundStyle(Color.accentBlue)
+                    Spacer()
+                    Text("\(fifthYearCandidates.count)")
+                        .font(.caption.weight(.bold).monospacedDigit())
+                        .foregroundStyle(Color.textSecondary)
+                }
+                Text("Your first-round picks are entering the last year of their rookie deals. Picking up the option adds a fifth season at 80% of the franchise tag for the position. Anything you leave undecided is declined when the league year starts.")
+                    .font(.caption)
+                    .foregroundStyle(Color.textSecondary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 14)
+            .padding(.bottom, 12)
+
+            Divider().overlay(Color.surfaceBorder.opacity(0.5))
+
+            ForEach(Array(fifthYearCandidates.enumerated()), id: \.element.id) { index, player in
+                if index > 0 {
+                    Divider().overlay(Color.surfaceBorder.opacity(0.3))
+                }
+                fifthYearOptionRow(player: player, team: team)
+            }
+        }
+        .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: DSCornerRadius.card))
+        .overlay(RoundedRectangle(cornerRadius: DSCornerRadius.card).strokeBorder(Color.surfaceBorder, lineWidth: 1))
+    }
+
+    @ViewBuilder
+    private func fifthYearOptionRow(player: Player, team: Team) -> some View {
+        let price = fifthYearOptionPrice(for: player, team: team)
+        // What the option really costs the club THIS league year: he is already
+        // carried at rookie money, so only the difference is new spending. Same
+        // arithmetic `FreeAgencyEngine.settleFifthYearOptions` charges the AI.
+        let capDelta = price - player.annualSalary
+        let affordable = career.capMode == .sandbox || team.availableCap >= capDelta
+
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                Text(player.position.rawValue)
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Color.textPrimary)
+                    .frame(width: 34)
+                    .padding(.vertical, 4)
+                    .background(positionSideColor(player.position), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(player.fullName)
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(Color.textPrimary)
+                    HStack(spacing: 8) {
+                        Text("\(player.overall) OVR")
+                            .font(.caption.weight(.semibold).monospacedDigit())
+                            .foregroundStyle(Color.forRating(player.overall))
+                        Text("Age \(player.age)")
+                            .font(.caption)
+                            .foregroundStyle(Color.textSecondary)
+                        Text(draftLine(for: player))
+                            .font(.caption2)
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                }
+
+                Spacer()
+
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(formatMillions(price))
+                        .font(.subheadline.weight(.bold).monospacedDigit())
+                        .foregroundStyle(affordable ? Color.accentGold : Color.danger)
+                    Text("OPTION YR")
+                        .font(.system(size: DSType.Size.micro, weight: .bold))
+                        .foregroundStyle(Color.textTertiary)
+                }
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(player.fullName), \(player.position.rawValue), \(player.overall) overall. Fifth-year option \(formatMillions(price)).")
+
+            if let decision = fifthYearDecision(for: player) {
+                switch decision {
+                case .exercised(let paid):
+                    decisionBanner(
+                        icon: "checkmark.seal.fill",
+                        text: "Option exercised — \(formatMillions(paid)) for a fifth season",
+                        color: .success
+                    )
+                case .declined:
+                    decisionBanner(
+                        icon: "xmark.circle.fill",
+                        text: "Option declined — plays out the final year of his rookie deal",
+                        color: .textTertiary
+                    )
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 10) {
+                        Button {
+                            exerciseFifthYear(player: player, team: team, price: price)
+                        } label: {
+                            Text("EXERCISE")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(affordable ? Color.backgroundPrimary : Color.textTertiary)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 10)
+                                .background(
+                                    affordable ? Color.accentGold : Color.backgroundTertiary,
+                                    in: RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(!affordable)
+
+                        Button {
+                            declineFifthYear(player: player)
+                        } label: {
+                            Text("DECLINE")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(Color.textSecondary)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 10)
+                                .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: DSCornerRadius.inline))
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    Text(affordable
+                         ? "Costs \(formatMillions(capDelta)) more than his rookie deal this year."
+                         : "Not enough cap room — \(formatMillions(capDelta)) needed, \(formatMillions(max(0, team.availableCap))) available.")
+                        .font(.caption2)
+                        .foregroundStyle(affordable ? Color.textTertiary : Color.danger)
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+
+    private func decisionBanner(icon: String, text: String, color: Color) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.caption)
+                .foregroundStyle(color)
+            Text(text)
+                .font(.caption)
+                .foregroundStyle(color)
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: DSCornerRadius.inline))
+    }
+
+    /// "Rd 1, Pick 14 · 2028" — why this man has an option at all.
+    private func draftLine(for player: Player) -> String {
+        var parts: [String] = ["Rd 1"]
+        if let pick = player.draftPickNumber { parts.append("Pick \(pick)") }
+        if let season = player.draftSeason { parts.append("\(season)") }
+        return parts.joined(separator: " · ")
+    }
+
+    /// The option price, from the SAME engine call the rollover uses, against
+    /// the same league-wide salary table this screen already loads. A second
+    /// hand-typed formula here is exactly the split-brain task #87 closed for
+    /// franchise-tag money.
+    private func fifthYearOptionPrice(for player: Player, team: Team) -> Int {
+        FreeAgencyEngine.fifthYearOptionPrice(
+            player: player,
+            salaryTable: fifthYearSalaryTable,
+            salaryCap: team.salaryCap
+        )
+    }
+
+    /// What the user has already answered on this man, read from the MODEL.
+    ///
+    /// `fifthYearDecided` / `fifthYearExercised` are persisted by
+    /// `FreeAgencyEngine`'s two writers, so the answer survives leaving the
+    /// screen, a relaunch and anything else — which is the whole point, since
+    /// the moment a man is decided `isFifthYearOptionWindow` stops matching him
+    /// and there is nothing else left to render the card from.
+    private func fifthYearDecision(for player: Player) -> FifthYearDecision? {
+        guard player.fifthYearDecided else { return nil }
+        guard player.fifthYearExercised else { return .declined }
+        // `exerciseFifthYearOption` writes the option number straight onto
+        // `annualSalary`, so the salary IS the price; the session cache is only
+        // there so the banner keeps quoting the exact figure the button showed.
+        return .exercised(price: fifthYearPrices[player.id] ?? player.annualSalary)
+    }
+
+    private func exerciseFifthYear(player: Player, team: Team, price: Int) {
+        FreeAgencyEngine.exerciseFifthYearOption(player: player, team: team, price: price)
+        try? modelContext.save()
+        fifthYearPrices[player.id] = price
+    }
+
+    private func declineFifthYear(player: Player) {
+        FreeAgencyEngine.declineFifthYearOption(player: player)
+        try? modelContext.save()
     }
 
     // MARK: - No Expiring
@@ -1258,6 +1521,44 @@ struct FinalPushView: View {
         allTeams = (try? modelContext.fetch(FetchDescriptor<Team>(
             predicate: #Predicate { $0.careerID == cid }
         ))) ?? []
+
+        // Task #90 — the fifth-year option board.
+        //
+        // Filtered in memory rather than in the `#Predicate`, because the window
+        // is an engine rule (`isFifthYearOptionWindow`) and a SwiftData
+        // predicate cannot call it — and a re-typed copy of that rule in a fetch
+        // is precisely how the user's screen and the rollover would come to
+        // disagree about who has an option. A roster is ~53 rows; the whole
+        // league is already in memory a few lines above anyway.
+        //
+        // A man the user has ALREADY answered for stays on the board (his
+        // `contractYearsRemaining` moved to 3 on an exercise, so the window no
+        // longer holds) — otherwise pressing Exercise would make the card
+        // vanish, which reads as a bug rather than as a confirmation.
+        //
+        // The "already answered" test is the PERSISTED pair, not a `@State`
+        // dictionary: leaving the screen and coming back inside the same league
+        // year used to wipe the board clean, so the user could not see what he
+        // had decided or that he had decided at all.
+        //
+        // `yearsPro == fifthYearOptionYearsPro` is what keeps a decided man on
+        // THIS year's board only. `fifthYearDecided` is a once-per-career
+        // stamp, but `yearsPro` moves at training camp — after this screen —
+        // so it is 3 for exactly the offseason in which the option was answered
+        // and 4 or more forever after.
+        fifthYearCandidates = allPlayers
+            .filter { $0.teamID == fetchedTeamID }
+            .filter {
+                FreeAgencyEngine.isFifthYearOptionWindow($0)
+                    || ($0.fifthYearDecided
+                        && $0.isFirstRoundPick
+                        && !$0.isRetired
+                        && $0.yearsPro == FreeAgencyEngine.fifthYearOptionYearsPro)
+            }
+            .sorted { ($0.draftPickNumber ?? 99) < ($1.draftPickNumber ?? 99) }
+        // The franchise-tag input, built once per screen load instead of once
+        // per row render: it is a sweep of every salary in the league.
+        fifthYearSalaryTable = FreeAgencyEngine.positionSalaryTable(allPlayers: allPlayers)
 
         // Owner trust — one of the five GM-standing inputs the demand model
         // reads. Absent means the owner has never reacted to anything, which

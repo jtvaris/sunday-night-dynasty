@@ -115,6 +115,20 @@ final class DraftDayCoordinator: ObservableObject {
     /// line instead of pushing a new one on top of it.
     private var activeRunBeatID: UUID?
 
+    /// The over-the-cap warning currently on the feed, same rewrite-in-place
+    /// contract as `activeRunBeatID` (task #94).
+    private var activeCapWarningBeatID: UUID?
+
+    /// Year-one money the USER's own class has cost so far tonight, in
+    /// thousands — the sum of the slots charged at his podium turns.
+    ///
+    /// Kept separately from `team.availableCap` because the two answer different
+    /// questions. The room is the club's whole position (it can already have
+    /// been in the red before a card was handed in); this is what the CLASS
+    /// added. The warning quotes both rather than blaming the class for a hole
+    /// free agency dug.
+    private var userClassCapCharge = 0
+
     /// User pick numbers whose "your marked target is still there" beat has
     /// already fired — the watch window spans several picks and the banner is
     /// worth exactly one showing per turn.
@@ -1122,6 +1136,14 @@ final class DraftDayCoordinator: ObservableObject {
         // its commitments by a whole rookie class, and in which the AI's cap-room
         // tests (trades, camp signings) read a number that was not true.
         teamsByID[pick.currentTeamID]?.currentCapUsage += player.annualSalary
+        // Task #94: charging it silently is the other half of the same bug. The
+        // draft has no affordability test and should not have one — a drafted
+        // man is signed whether the club has room or not — but the user was
+        // never told when his own class ate the room. Say it out loud.
+        if pick.currentTeamID == userTeamID {
+            userClassCapCharge += player.annualSalary
+            announceCapRoomIfOver(teamID: pick.currentTeamID, pickNumber: pick.pickNumber)
+        }
         // He is in the league now — take him off every future prospect pool.
         // `ScoutingEngine.getUDFAPool` (the OTAs bulk fallback) filters on
         // `isDeclaringForDraft && mockDraftPickNumber == nil`, and the mock is
@@ -1739,6 +1761,49 @@ final class DraftDayCoordinator: ObservableObject {
             activeRunBeatID = beat.id
             appendStoryBeat(beat)
         }
+    }
+
+    /// "You are $3.4M over the cap" — the draft room's only money warning.
+    ///
+    /// Fires on the user's own picks, after the slot has been charged, and only
+    /// while the club is actually in the red. Like the position-run beat it
+    /// REWRITES its own line rather than stacking a new one per pick, so a class
+    /// that keeps digging shows one row counting up instead of five near-copies.
+    ///
+    /// It reports what the CLASS cost separately from the club's cap position,
+    /// because they are different numbers: a club that walked in $5M over and
+    /// drafted a $3M class is $8M over, and blaming the class for all of it is
+    /// a lie the user cannot check from this screen.
+    ///
+    /// Sandbox never charges the cap, so it never warns about it.
+    ///
+    /// The beat is filed under `.reach` on purpose. `StoryBeat.Kind` is a pure
+    /// presentation token — its only consumer is `DraftTickerPanel.storyStyle`,
+    /// where `.reach` IS the warning style (amber, `exclamationmark.triangle`),
+    /// which is exactly the treatment this line wants. A dedicated case would
+    /// mean editing that switch, which is outside this task's file set.
+    private func announceCapRoomIfOver(teamID: UUID, pickNumber: Int) {
+        guard career.capMode != .sandbox, let team = teamsByID[teamID] else { return }
+
+        if let previous = activeCapWarningBeatID {
+            storyFeed.removeAll { $0.id == previous }
+            activeCapWarningBeatID = nil
+        }
+
+        let room = team.availableCap
+        guard room < 0 else { return }
+
+        let classShare = userClassCapCharge > 0
+            ? " Your class accounts for \(DraftRecapView.formatCap(userClassCapCharge)) of the commitment."
+            : ""
+        let beat = StoryBeat(
+            kind: .reach,
+            pickNumber: pickNumber,
+            headline: "You are \(DraftRecapView.formatCap(abs(room))) over the cap",
+            detail: "Every slot is charged the moment the card goes in.\(classShare) Clear the room with cuts, restructures or a trade before the new league year."
+        )
+        activeCapWarningBeatID = beat.id
+        appendStoryBeat(beat)
     }
 
     private func appendStoryBeat(_ beat: StoryBeat) {

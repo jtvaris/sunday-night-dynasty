@@ -577,6 +577,7 @@ echo "==> regenerating ContractEngineExtract.swift from repo (awk keep-list slic
 CONTRACT_OUT="$SRC_OUT/ContractEngineExtract.swift"
 cat > "$DEVANCHORS" <<'EOF'
 static let leagueAffordabilityScale
+static func veteranMinimum\(
 static func estimateMarketValue\(
 static func marketBasePercent\(
 static func naturalPositionForAttributes\(
@@ -587,6 +588,15 @@ EOF
 keeplist_slice "$CONTRACT_SOURCE" "$DEVANCHORS" "$DEVSLICE"
 verbatim_guard "$CONTRACT_SOURCE" "$DEVSLICE"
 grep -q 'basePercent \* positionMultiplier(position)' "$DEVSLICE" || die "ContractEngine slice lost the market-value formula."
+# The league minimum is a DEFINITION the sliced formula calls, not a constant the
+# grep block below can reach (it is a func, so `CONTRACT_CONSTS` cannot see it).
+# `estimateMarketValue` ends `max(Int(value), veteranMinimum(cap: salaryCap))`,
+# so a slice without the definition compiles to "cannot find 'veteranMinimum' in
+# scope" — the same class of break as task #52.
+grep -q 'static func veteranMinimum(cap: Int) -> Int' "$DEVSLICE" \
+  || die "ContractEngine slice lost veteranMinimum — estimateMarketValue's floor calls it."
+grep -q 'veteranMinimum(cap: salaryCap)' "$DEVSLICE" \
+  || die "ContractEngine slice lost estimateMarketValue's veteran-minimum floor."
 # Task #87: the cap itself, the league-year growth roll and the position-switch
 # fit floor are the file's four bare constants. They cannot be reached by a
 # keep-list anchor (a `static let` line has no braces, so the slicer would run on

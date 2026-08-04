@@ -37,6 +37,33 @@ enum ContractEngine {
     /// the smaller cap it was negotiated against.
     static let capGrowthPerSeason = (capGrowthRange.lowerBound + capGrowthRange.upperBound) / 2
 
+    /// **The league minimum salary, in thousands.** `0.28 %` of the cap, never
+    /// below `$750K`.
+    ///
+    /// The floor every price in the game bottoms out at: the free-agent market
+    /// (`estimateMarketValue`), the negotiation engine, the rookie wage scale
+    /// and the practice-squad poach all stop here. It shipped as the same
+    /// hand-typed `max(Int(0.0028 * Double(cap)), 750)` in half a dozen files,
+    /// which is how `PracticeSquadEngine.poachSalary` came to be a flat `795`
+    /// while its own doc comment claimed to be quoting this formula (795 is
+    /// `0.0030 × 265M`, the UDFA rate — the minimum at the opening cap is 750).
+    ///
+    /// One definition, cap-relative, so the floor grows with the money supply.
+    ///
+    /// `DraftEngine` keeps its own copy on purpose: those constants are synced
+    /// VERBATIM into the balance harness (`tools/balance-harness/sync_sources.sh`
+    /// dies if they move), so the draft's rookie floor must stay inline there.
+    ///
+    /// THIS definition is itself a harness anchor. `estimateMarketValue` — which
+    /// `sync_sources.sh` slices verbatim into `ContractEngineExtract.swift` —
+    /// ends by calling it, so the function has to travel with the formula or the
+    /// generated extract fails to compile on the call. Renaming or moving it
+    /// therefore means editing the anchor list in that script (it dies with a
+    /// named message rather than emitting a broken extract).
+    static func veteranMinimum(cap: Int) -> Int {
+        max(Int(0.0028 * Double(cap)), 750)
+    }
+
     // MARK: - Simple Mode
 
     /// Sign a player in simple cap mode by setting contract length, salary,
@@ -409,9 +436,8 @@ enum ContractEngine {
             value *= max(youthDiscount, 0.6)
         }
 
-        // Floor: every player is worth at least the veteran minimum (~0.28% of cap)
-        let minimum = max(Int(0.0028 * Double(salaryCap)), 750)
-        return max(Int(value), minimum)
+        // Floor: every player is worth at least the veteran minimum.
+        return max(Int(value), veteranMinimum(cap: salaryCap))
     }
 
     // MARK: - Realistic Mode

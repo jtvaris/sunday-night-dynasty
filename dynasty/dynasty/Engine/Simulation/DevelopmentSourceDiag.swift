@@ -233,6 +233,17 @@ enum ChurnDiag {
     /// Comes out of `expire`'s denominator, so `expire = resign + faSign +
     /// washout + …` no longer has to hold — a retained player never expires.
     static let resign = "resign"
+    /// Fifth-year option picked up by an AI club at the rollover
+    /// (`settleFifthYearOptions`, task #90).
+    ///
+    /// Not a churn STAGE — the man had two years left and was never going to
+    /// reach the market this league year — but it belongs on the same line for
+    /// the same reason `resign` does: it is one of the ways a club keeps its
+    /// own, and it was the one new retention mechanic in the wave with no
+    /// observable at all. Its two calibration questions ("a handful a league a
+    /// year" and "mostly good players") are exactly the n / mean-OVR pair every
+    /// other column on this line answers.
+    static let option5 = "option5"
     /// Signed out of the pool by the roster floor (`refillAIRosters`).
     static let refill = "refill"
     /// Generated on the spot because the pool was dry — inflow from nowhere.
@@ -241,7 +252,7 @@ enum ChurnDiag {
 #if DEBUG
 
     private static let stageOrder = [
-        expire, resign, retire, washout, cut, faSign, refill, street,
+        expire, resign, option5, retire, washout, cut, faSign, refill, street,
     ]
 
     /// Master switch. `record` is a no-op while this is false.

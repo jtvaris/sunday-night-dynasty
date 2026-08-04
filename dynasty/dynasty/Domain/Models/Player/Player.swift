@@ -250,6 +250,52 @@ final class Player {
     /// The draft round (1-7) derived from the overall pick number at draft time.
     var draftRound: Int? = nil
 
+    // MARK: - Fifth-Year Option (task #90)
+
+    /// Whether this man was taken in round 1 — the ONLY eligibility test the
+    /// fifth-year option has, and the reason no `fifthYearEligible` flag exists.
+    ///
+    /// `draftRound` is written once by `DraftEngine.convertToPlayer` (and by the
+    /// template importer, from a real profile) and never mutated afterwards, so
+    /// a stored eligibility boolean would be a copy of a fact the row already
+    /// holds — one more field to keep in sync and to migrate, with a real
+    /// failure mode (a save where the two disagree) and no upside.
+    ///
+    /// The pick-number fallback covers rows written before `draftRound` existed:
+    /// rounds are 32 picks wide (`DraftEngine.roundForPick`) and compensatory
+    /// awards only ever splice into rounds 3-7, so "pick 32 or better" is round
+    /// one in every draft the game can produce. UDFAs, generated veterans and
+    /// legacy rows carry neither field and read as ineligible, which is correct:
+    /// nobody drafted them in the first round.
+    var isFirstRoundPick: Bool {
+        if let round = draftRound { return round == 1 }
+        if let pick = draftPickNumber { return pick <= 32 }
+        return false
+    }
+
+    /// Whether this man's club has already answered the fifth-year question —
+    /// exercise or decline, from the user's button or from the rollover's
+    /// self-heal. The once-only latch:
+    /// `FreeAgencyEngine.isFifthYearOptionWindow` refuses anyone carrying it,
+    /// and `FreeAgencyEngine.settleFifthYearOptions` stamps it on EVERY man in
+    /// the window as the league year turns, so a skipped screen closes the
+    /// question (as a decline) instead of leaving it open forever.
+    ///
+    /// Stored property with an inline default, never an `init` parameter → safe
+    /// SwiftData lightweight migration. Every existing row reads back `false`,
+    /// and since the window also demands `yearsPro == 3` and exactly two
+    /// contract years, an old save cannot suddenly hand out options to a whole
+    /// roster of former first-rounders.
+    var fifthYearDecided: Bool = false
+
+    /// Whether the answer was yes. Pure record: the year is already on
+    /// `contractYearsRemaining` and the money on `annualSalary` the moment
+    /// `FreeAgencyEngine.exerciseFifthYearOption` runs — this is what lets a
+    /// screen say "5th year picked up" a season later, and what keeps the
+    /// question from being asked twice.
+    /// Stored property with an inline default, never an `init` parameter.
+    var fifthYearExercised: Bool = false
+
     /// TRACK B — the grade BAND the user's own scouts had on this man on draft
     /// night, e.g. `"B+"` or `"B-/A-"` (`GradeRange.displayText`, the exact
     /// vocabulary `ProspectFog` renders in the draft room).

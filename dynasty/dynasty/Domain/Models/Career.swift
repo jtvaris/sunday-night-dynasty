@@ -82,6 +82,26 @@ final class Career {
     /// Inline default → SwiftData lightweight migration; never an init parameter.
     var lastRolloverSeason: Int = 0
 
+    /// League year this save has already run the **bulk free-agent market** for.
+    ///
+    /// Task #93 F9 gave the bulk market three doors — `FAWeeklyView`'s Skip
+    /// button, `WeekAdvancer`'s skipped-FA fallback and its unconditional
+    /// mop-up — and the market is not idempotent: a second pass writes a second
+    /// wave of contracts against the same calibration, spends cap twice and
+    /// double-counts `signingLedger`. The stamp is what keeps the three doors
+    /// opening one market.
+    ///
+    /// It lives HERE and not in a static dictionary because the state it guards
+    /// against is persisted: Skip stamps `freeAgencyStep = .complete`, the user
+    /// quits, and on relaunch Advance Week reaches the mop-up with an empty
+    /// in-memory table and runs the whole market a second time in the same
+    /// league year. Exactly the failure ``lastRolloverSeason`` exists for, so it
+    /// uses exactly the same shape: `currentSeason` at the moment the market
+    /// ran, `0` for "never".
+    ///
+    /// Inline default → SwiftData lightweight migration; never an init parameter.
+    var lastBulkMarketSeason: Int = 0
+
     // MARK: - FA Visits (R23)
     /// Number of free-agent facility visits hosted this FA phase (max 3).
     /// Reset when the free agency phase begins. Default value → lightweight migration.

@@ -3278,14 +3278,37 @@ enum WeekAdvancer {
                     career: career
                 )
                 _ = summary
-
-                FreeAgencyEngine.simulateRemainingFA(
-                    allPlayers: allPlayers,
-                    allTeams: teams,
-                    playerTeamID: career.teamID,
-                    modelContext: modelContext
-                )
             }
+
+            // Task #93 F9 — the market's mop-up, and the ONLY place the bulk
+            // market is now run from this phase.
+            //
+            // It used to fire only inside the `rolloverPending` branch above,
+            // i.e. only for a career that never opened the free-agency screens
+            // at all. A career that PLAYED free agency therefore closed the
+            // market after `FAWeeklyView`'s six rounds — whose final round has a
+            // raw-60-OVR floor — so every free agent below 60 in the league went
+            // the whole offseason without a single AI bid and was handed straight
+            // to `processWashouts` below. That is a few hundred men a league
+            // year, all of them the same shape (young, cheap, unproven), leaving
+            // football for good because nobody was allowed to offer them a
+            // minimum deal.
+            //
+            // Unconditional on the step, and idempotent through
+            // `simulateRemainingFAOnce`'s per-league-year stamp: the fallback
+            // above, `FAWeeklyView`'s Skip button and this call are three doors
+            // into one market, and the stamp is what keeps them from opening it
+            // more than once. The stamp lives on `Career` (not in a static
+            // table) precisely because Skip → quit → relaunch → Advance Week
+            // reaches this line in a brand-new process.
+            FreeAgencyEngine.simulateRemainingFAOnce(
+                allPlayers: allPlayers,
+                allTeams: teams,
+                playerTeamID: career.teamID,
+                modelContext: modelContext,
+                capMode: career.capMode,
+                career: career
+            )
 
             lastNewsItems = NewsGenerator.generateOffseasonNews(
                 phase: .freeAgency,
