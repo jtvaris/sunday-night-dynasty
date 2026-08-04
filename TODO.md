@@ -46,6 +46,10 @@ Tila: vaiheet 1–4 valmiit ja kaikki portit vihreinä (draft class · kehitys-r
 
 **6 · P3-pikkuviilaukset:** combine-DNP-mekaniikka · roster-listan Mental-analyysimoodi (LRN/CMP-sarakkeet) · UserDefaults-prospektiarvosanojen vuoto careerien yli · hometownState/City veteraaneille · SWIFT_NAME_POOLS-katvehuomio (uusi runtime-nimilähde → lisää listaan, ks. RELEASE_CHECKLIST).
 
+## 🔬 8 VUODEN LIIGA-ANALYYSI — 2026-08-04 (build 2b714e7, 2 riippumatonta seediä)
+
+Kaksi 8 kauden smokea (241 advancea kumpikin, 0 hangia, ~7:45/ajo) + ristisynteesi. **Verdiktit: tiimit KYLLÄ (yksi tekstuurivika), rosterit KYLLÄ paitsi pyramidin huippu (#97), capit KYLLÄ — tervein osajärjestelmä.** Mikään ei kertaudu: 15/18 seurattua sarjaa tasaantuu kausiin 5-6 mennessä ja seedit laskeutuvat samoihin lukuihin (yp0to3 49.1/49.1 · 90+ 2.5/2.5 · capRoom 22.2/22.1 · leaguePot 81.37/81.29). Kaudella 8 liikkuu enää kaksi sarjaa: leaguePot (+0.4/v, hidastuva → #97) ja vapaat coach-kasvot (−100/v, lineaarinen → **#96, ainoa seinä**: katalogi tyhjä ~kaudella 9-10). Uudet taskit #96-#101 + #88-laajennus (positiomix-drift); watch-only: 4 vuoden FA-resonanssiaalto 2030 (vaimenee), offseasonDevelop-hiipymä k7-8, B-seedin moraalilattia (tarvitsee 3. ajon). Lokit: scratchpad an8a/an8b-sim.log.
+
 ## 🏈 #90-94 -AALTO: 5TH-YEAR OPTION + FA-VIIMEISTELY + ROOKIE-DIILI-UI — 2026-08-04
 
 Portit: `career` 36/36 · `leaguegen` 19/19 · `draftclass` 32/32 · buildi OK · 4 kauden smoke ×2: **capRoom 32/32 capin alla joka kausi molemmissa** (referenssi c7ee22c oli 31/32), kaupat ≥30 kaudesta 2, churn-muoto pitää. Adversariaalinen katselmus: 9 löydöstä (1 HIGH: `veteranMinimum`-dedup olisi rikkonut harnessin seuraavassa syncissä — keep-list + 2 die-vahtia), kaikki korjattu.
