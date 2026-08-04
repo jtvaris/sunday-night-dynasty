@@ -10,5 +10,10 @@ gen/
 # in gen_music/manifest.json and the per-take JSON sidecars.
 gen_music_raw/
 gen_music/
+# NFL-broadcast-theme rounds (generate_nfl_*.py). Same deal again: raw
+# ACE-Step returns plus their masters. The per-take JSON sidecars and the
+# round's candidates .tsv live in here too, so the whole round is replayable
+# from the seed+prompt — but none of it is worth 100+ MB of history.
+gen_nfl_*/
 raw_bundles/
 staging/

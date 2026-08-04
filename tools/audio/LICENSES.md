@@ -643,11 +643,14 @@ crowd bed and play SFX own the mix.
 
 ---
 
-## Music — round 3 (SHIPPED, current)
+## Music — round 3 (SHIPPED)
 
-**This section is authoritative for what is in the app bundle today.** Round 3
-is a restyle, not a depth pass: it changes the character of the two contexts a
-player sits in longest and leaves the other five exactly as round 2 left them.
+**This section is authoritative for the 25 `music_*.m4a` files in the bundle.**
+Round 4 (the NFL-broadcast wave, below) is purely additive — it replaced and
+retired nothing here, so every row of this section still describes a shipping
+file. Round 3 is a restyle, not a depth pass: it changes the character of the
+two contexts a player sits in longest and leaves the other five exactly as
+round 2 left them.
 Generated 2026-08-03 by `generate_music.py round3`, mastered by
 `post_music.py r3_`, checked by `verify_music.py r3_`, installed by
 `ship_music.py`.
@@ -660,11 +663,12 @@ revenue cap, no attribution string. No Stable Audio Open material was
 generated in this round.
 
 The Stability AI Community Licence obligation therefore did not grow: it still
-attaches to exactly **7 of the 25 shipped files** — the five
-`music_dashboard_loop_*` and two `music_offseason_loop_*` ambient loops, all
-carried over untouched from rounds 1-2. The **$1M annual-revenue cap applies
-to those seven**. See "⚠ Licence caveat" in the Generated SFX section; nothing
-about it changed here except that the denominator got smaller.
+attaches to exactly **seven files** — the five `music_dashboard_loop_*` and two
+`music_offseason_loop_*` ambient loops, all carried over untouched from
+rounds 1-2. The **$1M annual-revenue cap applies to those seven**. See
+"⚠ Licence caveat" in the Generated SFX section; nothing about it changed here
+except that the denominator got smaller (7 of 25 after round 3, 7 of 31 after
+round 4).
 
 **Prompt policy.** The user described the menu target by reference to a
 well-known piece of film music. That reference was deliberately **not** put
@@ -860,3 +864,156 @@ Settings sliders, both directors, and the reset path:
 Existing installs are unaffected — both directors read through
 `UserDefaults.object(forKey:)` and only fall back to the default when the key
 has never been written, so a saved value always wins.
+
+---
+
+## Music — round 4, NFL broadcast wave (SHIPPED, current)
+
+**Additive.** Nothing from rounds 1-3 was replaced, retired or re-encoded.
+Six new files join the `menu` and `dashboard` playlists alongside the five
+that were already there; the user's own listening pass decides later which
+of the eleven survive. Generated 2026-08-04 by `generate_nfl_menu.py` and
+`generate_nfl_dash.py`, mastered and scored by `post_nfl_menu.py` /
+`post_nfl_dash.py`, installed by `ship_nfl_theme.py`, reviewed on
+`review_nfl_theme.html`.
+
+### Licence position
+
+**Unchanged.** All 16 takes are `lucataco/ace-step` — Apache-2.0 upstream
+(`ACE-Step/ACE-Step-v1-3.5B`), **no revenue cap, no attribution string**, same
+pinned version as rounds 2-3
+(`280fc4f9ee507577f880a167f639c02622421d8fecf492454320311217b688f1`). No
+Stable Audio Open material was generated, so the Stability AI Community
+Licence obligation did not grow — it still attaches to exactly the same seven
+ambient loops, now 7 of 31 shipped music files.
+
+**Prompt policy — the load-bearing one for this round.** The brief was
+"NFL broadcast theme". No real broadcast theme, composer, network, or melody
+was named, quoted, hummed at, or referenced in any prompt, in any round, at
+any point. What went to the model is a list of **style words** —
+instrumentation (`heroic trumpet fanfare`, `military snare drum march`,
+`rolling timpani`), affect (`triumphant and majestic`, `americana grandeur`),
+register (`stadium sized`, `prime time television opening`), plus a tempo in
+BPM and a key. That is a genre description, not a work. All 16 prompts are
+reproduced verbatim below so this is checkable rather than asserted.
+
+| Model | Takes | GPU time | Cost @ $0.000975/s |
+|---|---|---|---|
+| `lucataco/ace-step` (menu round) | 8 | 67.4 s | $0.0657 |
+| `lucataco/ace-step` (dashboard round) | 8 | 81.1 s | $0.0791 |
+| **Total** | **16** | **148.5 s** | **≈ $0.14** |
+
+Spend cap for this pass was $3; the whole wave cost
+**$0.1448**. Rounds 1-4 together are ≈ $0.52. Replicate exposes no
+per-prediction cost field, so this is `predict_time × published L40S rate`
+summed over the prediction IDs in `gen_nfl_*/metrics.json`.
+
+### How the ship set was chosen
+
+Two rounds off one DNA, pulling in opposite directions, so they get two
+inverse scores — the same trick round 3 used, for the same reason: the brief
+states its structural requirement in words that are directly measurable, so
+the metric is the brief restated, not a substitute for taste.
+
+**Menu (`post_nfl_menu.py`)** wants an arc: a late peak, a positive
+`build_db`, a quiet intro under the still title screen, brass body in the
+200-2000 Hz band, and a tempo near the one that was ordered.
+
+**Dashboard (`post_nfl_dash.py`)** wants no arc at all: it has to sit behind
+reading a roster, so a build, a wide dynamic arc, a bright centroid or a
+late climax are each a defect, and the take is additionally scored on how far
+its centroid sits from the 717-1963 Hz band the shipped dashboard set
+already occupies.
+
+Both scores are **filters, not rankings** — round 2 established that these
+proxies do not predict what the user likes. Every deduction is printed as a
+sentence on `review_nfl_theme.html` so an ear can overrule it.
+
+| Take | Round | Lane | Score | Outcome |
+|---|---|---|---|---|
+| `nfl_menu_hybrid_gleam` | menu | hybrid | **5.0** | **shipped** `nfl_menu_hybrid_gleam` |
+| `nfl_menu_orch_fanfare` | menu | orchestral | **5.0** | **shipped** `nfl_menu_orch_fanfare` |
+| `nfl_menu_march_drive` | menu | march | **3.5** | **shipped** `nfl_menu_march_drive` |
+| `nfl_menu_march_swagger` | menu | march | **3.0** | candidate |
+| `nfl_menu_orch_noble` | menu | orchestral | **2.5** | candidate |
+| `nfl_menu_burn_legacy` | menu | slowburn | **2.0** | candidate |
+| `nfl_menu_burn_reveal` | menu | slowburn | **2.0** | candidate |
+| `nfl_menu_hybrid_pulse` | menu | hybrid | **2.0** | candidate |
+| `nfl_dash_ambient_a` | dashboard | ambient | **5.0** | **shipped** `nfl_dash_ambient_a` |
+| `nfl_dash_ambient_b` | dashboard | ambient | **5.0** | **shipped** `nfl_dash_ambient_b` |
+| `nfl_dash_strings_a` | dashboard | strings | **5.0** | **shipped** `nfl_dash_strings_a` |
+| `nfl_dash_fanfare_a` | dashboard | fanfare | **4.0** | candidate |
+| `nfl_dash_fanfare_b` | dashboard | fanfare | **4.0** | candidate |
+| `nfl_dash_lowbrass_a` | dashboard | lowbrass | **4.0** | candidate |
+| `nfl_dash_lowbrass_b` | dashboard | lowbrass | **3.5** | candidate |
+| `nfl_dash_strings_b` | dashboard | strings | **2.5** | candidate |
+
+The menu round's top 3 landed on three different lanes unprompted
+(orchestral 5.0, hybrid 5.0, march 3.5), so the variety tie-break never had
+to be applied. The dashboard round's top 3 are the only takes that scored a
+clean 5.0; two of them share the `ambient` lane, and since nothing else
+reached 5.0 there was no tie to break toward variety.
+`nfl_dash_fanfare_a` (4.0) is the one candidate that carries the actual brass
+motif on that screen and is the obvious swap-in if the ear wants more
+broadcast DNA under the roster. `nfl_menu_march_drive` ships at 3.5 despite
+22% of its energy above 4 kHz and a tempo 22 BPM under the order — it is the
+only drumline take with a late peak, and a three-track menu playlist with
+three different characters was judged worth more than a fourth orchestral one.
+
+### Round-4 takes — seed and prompt
+
+Reproducible from seed + prompt + the pinned version above. ACE-Step returns
+320 kbps MP3, so these are lossy at source and the AAC ship encode is a
+second generation — same accepted trade-off and same remedy as rounds 2-3
+(re-run the seed on a WAV-capable host if a track is ever promoted to a
+foreground role).
+
+| Take | Lane | Seed | Requested | Master | LUFS | Prompt tags |
+|---|---|---|---|---|---|---|
+| `nfl_menu_burn_legacy` | slowburn | 991106 | 116 s | 115.3 s | -16.0 | majestic orchestral build, soft string bed opening, muted trumpet motif, military snare march entering midway, timpani and low brass gathering, full heroic fanfare finish, dynasty legacy, cinematic crescendo, hushed clean opening, instrumental, no vocals, 88 BPM, G major |
+| `nfl_menu_burn_reveal` | slowburn | 991105 | 118 s | 117.9 s | -16.0 | slow burn cinematic sports anthem, quiet solo horn statement, distant snare roll growing, sustained low strings, timpani swell, brass fanfare arrives late and huge, patient build then triumphant peak, americana reverence, starts sparse and quiet, clean intro, instrumental, no vocals, 92 BPM, C major |
+| `nfl_menu_hybrid_gleam` | hybrid | 991104 | 96 s | 95.6 s | -16.0 | brass and synthesizer broadcast anthem, bright trumpet fanfare stabs, wide synth pad bed, arpeggiated synth under the orchestra, snare drum rudiments, orchestral horns, big cymbal crash, sleek and triumphant, sunday night television energy, clean intro, instrumental, no vocals, 118 BPM, A major |
+| `nfl_menu_hybrid_pulse` | hybrid | 991103 | 100 s | 99.9 s | -16.0 | hybrid orchestral electronic sports theme, heroic brass fanfare, driving analog synth bass pulse, military snare march, cinematic percussion, staccato strings, timpani hits, modern prime time broadcast package, confident and powerful, clean intro that builds fast, instrumental, no vocals, 112 BPM, D minor |
+| `nfl_menu_march_drive` | march | 991107 | 92 s | 89.2 s | -16.0 | uptempo orchestral march, marching band drumline, tight military snare rudiments, punchy brass fanfare hits, bass drum on the beat, energetic string runs, piccolo trumpet, relentless forward momentum, game day parade, stadium sized, clean intro, instrumental, no vocals, 124 BPM, F major |
+| `nfl_menu_march_swagger` | march | 991108 | 98 s | 97.0 s | -16.0 | swaggering brass march, syncopated trombone and tuba riff, snare drumline groove, trumpet fanfare answers, orchestral percussion, hand claps on the backbeat, bold and playful, prime time sports television, americana big band edge, clean intro, instrumental, no vocals, 116 BPM, C minor |
+| `nfl_menu_orch_fanfare` | orchestral | 991101 | 104 s | 102.5 s | -16.0 | epic american football broadcast theme, heroic trumpet fanfare, full orchestral brass section, military snare drum march, rolling timpani, soaring string melody, cymbal swells, triumphant and majestic, americana grandeur, stadium sized, prime time television opening, clean quiet intro then full orchestra, no synthesizers, instrumental, no vocals, 104 BPM, B flat major |
+| `nfl_menu_orch_noble` | orchestral | 991102 | 112 s | 110.1 s | -16.0 | cinematic orchestral sports anthem, noble french horn theme, answering trumpet fanfare, snare drum roll, timpani heartbeat, warm string ensemble, grand and dignified, national broadcast open, wide concert hall reverb, clean single-note intro, orchestra only, instrumental, no vocals, 96 BPM, E flat major |
+| `nfl_dash_ambient_a` | ambient | 994105 | 148 s | 145.8 s | -16.0 | ambient orchestral hybrid bed, sustained brass drone, granular string texture, deep sub pulse, soft warm synth pad, almost no percussion, one distant timpani every few bars, spacious and sombre, very slow, no melody, no build, empty stadium at night, instrumental, no vocals, 62 BPM, G minor |
+| `nfl_dash_ambient_b` | ambient | 994106 | 136 s | 132.3 s | -16.0 | cinematic ambient underscore, orchestral strings blurred into pad, low horn swell rising and falling gently, faint snare rustle, warm analog bass drone, reverb heavy, reflective and dark, unchanging intensity, no dynamic peaks, hangs in the background, americana melancholy, instrumental, no vocals, 70 BPM, E minor |
+| `nfl_dash_fanfare_a` | fanfare | 994107 | 122 s | 120.2 s | -16.0 | muted broadcast fanfare motif over a quiet bed, short three note horn figure played softly, the motif answered by low strings, military snare rolls kept low, timpani under the surface, heroic material played restrained, dignified, no big statement, no climax, constant level, sports television underscore, instrumental, no vocals, 90 BPM, B flat minor |
+| `nfl_dash_fanfare_b` | fanfare | 994108 | 96 s | 94.1 s | -16.0 | restrained brass motif underscore, cup muted trumpets, short repeating brass phrase, quiet and far back, string bed underneath, snare march roll at low volume, soft cymbal wash, americana grandeur held back, steady, never rising, no peak, thoughtful background music, instrumental, no vocals, 96 BPM, D minor |
+| `nfl_dash_lowbrass_a` | lowbrass | 994101 | 132 s | 131.5 s | -16.0 | dark cinematic sports underscore, muted low brass ostinato, trombones and tuba repeating a short figure, sustained cello bed, soft timpani heartbeat, distant military snare roll very quiet, restrained and serious, constant intensity, no build, no climax, background music under a screen, war room at night, wide but dark mix, instrumental, no vocals, 84 BPM, D minor |
+| `nfl_dash_lowbrass_b` | lowbrass | 994102 | 118 s | 118.0 s | -16.0 | understated broadcast underscore, low brass pedal tone, french horns held soft and far back, double bass ostinato, sparse snare march accents, occasional soft timpani, sombre and patient, unchanging level, never demands attention, no fanfare, americana gravitas held in reserve, instrumental, no vocals, 76 BPM, F minor |
+| `nfl_dash_strings_a` | strings | 994103 | 126 s | 125.9 s | -16.0 | cinematic string underscore, quiet staccato string ostinato, soft synth pulse underneath, warm low strings, very sparse snare tap, muted brass pad in the distance, forward motion without drama, steady and hypnotic, no swells, no build, thoughtful, prime time sports television bed, instrumental, no vocals, 92 BPM, A minor |
+| `nfl_dash_strings_b` | strings | 994104 | 144 s | 141.8 s | -16.0 | dark orchestral pulse underscore, tremolo violins held low, pizzicato bass pulse, cello counter-line, muffled timpani pulse, brushed military snare, barely audible, cold and analytical, constant dynamics, no crescendo, night broadcast, background underscore, instrumental, no vocals, 88 BPM, C minor |
+
+### Shipped set — round 4 additions
+
+Delivery format is **AAC-LC 160 kbps, 48 kHz stereo**, mastered to −16 LUFS /
+−1.5 dBTP with dead air trimmed off a measured RMS envelope — identical to
+rounds 1-3, deliberately, because these files join those playlists and a
+bitrate mismatch inside one rotation is an audible inconsistency, not a saving.
+
+| Ship name | Context | Lane | Seed | Dur | LUFS | Size |
+|---|---|---|---|---|---|---|
+| `nfl_menu_orch_fanfare.m4a` | menu | orchestral | 991101 | 102 s | -16.1 | 2.08 MB |
+| `nfl_menu_hybrid_gleam.m4a` | menu | hybrid | 991104 | 96 s | -16.1 | 2.00 MB |
+| `nfl_menu_march_drive.m4a` | menu | march | 991107 | 89 s | -16.1 | 1.82 MB |
+| `nfl_dash_ambient_a.m4a` | dashboard | ambient | 994105 | 146 s | -16.0 | 2.96 MB |
+| `nfl_dash_ambient_b.m4a` | dashboard | ambient | 994106 | 132 s | -16.0 | 2.72 MB |
+| `nfl_dash_strings_a.m4a` | dashboard | strings | 994103 | 126 s | -16.0 | 2.57 MB |
+
+**6 new files, 11.5 min, 14.14 MB.** Music folder now
+**31 files, 69.0 MB** (was 54.8 MB). That is
+4.0 MB past the 65 MB constant in `ship_music.py`, which
+was set when the bundle was a 25-file set with nothing queued for removal.
+This round is deliberately additive so the user can A/B the new tracks
+against the old ones in-game; the prune pass that follows is where the
+budget comes back.
+
+**Generated but not shipped (round 4):** `nfl_menu_orch_noble`,
+`nfl_menu_march_swagger`, `nfl_menu_hybrid_pulse`, `nfl_menu_burn_reveal`,
+`nfl_menu_burn_legacy`, `nfl_dash_fanfare_a`, `nfl_dash_fanfare_b`,
+`nfl_dash_lowbrass_a`, `nfl_dash_lowbrass_b`, `nfl_dash_strings_b` — all ten
+kept in `gen_nfl_menu/` and `gen_nfl_dash/` with their 24-bit masters, and
+all replayable from the seed + prompt above.

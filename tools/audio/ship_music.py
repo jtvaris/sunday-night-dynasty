@@ -115,6 +115,14 @@ def probe_dur(p: Path) -> float:
          "-of", "csv=p=0", str(p)], capture_output=True, text=True).stdout.strip())
 
 
+def extra_keep() -> set[str]:
+    """Files in DEST that another shipper owns and this one must not retire."""
+    other = ROOT / "shipped_nfl_theme.json"
+    if not other.exists():
+        return set()
+    return {f"{s['name']}.m4a" for s in json.loads(other.read_text())}
+
+
 def main() -> None:
     dry = "--dry-run" in sys.argv
     man = {m["stem"]: m for m in json.loads((GEN / "manifest.json").read_text())}
@@ -165,7 +173,14 @@ def main() -> None:
     # and — because Resources/ is a PBXFileSystemSynchronizedRootGroup — still
     # copied into the app. The gen_music/ masters are the archive; the bundle
     # is not.
+    # ...but this script is no longer the only one writing to DEST. The
+    # NFL-broadcast rounds ship through ship_nfl_theme.py, whose takes are not
+    # in gen_music/manifest.json and so can never appear in SHIP above. Without
+    # this keep-list the next run here would silently delete them and the menu
+    # and dashboard playlists in MusicDirector would start logging missing
+    # tracks. Each shipper owns its own set; neither retires the other's.
     keep = {f"{name}.m4a" for rows in SHIP.values() for name, _ in rows}
+    keep |= extra_keep()
     retired = sorted(p for p in DEST.glob("*.m4a") if p.name not in keep)
     for p in retired:
         print(f"  retired      {p.name:<26} {p.stat().st_size/1e6:5.2f} MB "
