@@ -489,6 +489,10 @@ enum CareerScopedDefaults {
         "userProspectGrades",
         "userProspectStars",
         "originalBoardPositions",
+        // Legacy: the second workout economy (a 10-cap counter the pro-day
+        // screen kept in parallel with `career.workoutsUsed` / 30) is gone, but
+        // the key stays on this list so deleting a save still purges the value
+        // an old save wrote. Nothing reads it.
         "personalWorkoutsUsed",
         // `WeekAdvancer.sendDraftCycleHeartbeat` — "<season>-<phase>" keys the
         // scouting department's cycle letter has already been mailed for. The

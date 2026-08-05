@@ -110,9 +110,14 @@ enum WeekAdvancer {
     static let maxLeagueTradesInSeason = 24
     static let maxLeagueTradesOffseason = 38
 
-    /// Historical mock draft snapshots, keyed by phase tag (e.g. "Mid-Season",
-    /// "Combine", "Post-FA", "Pre-Draft"). Each value is a copy of
+    /// Historical mock draft snapshots, keyed by phase tag: `"Mid-Season"`,
+    /// `"Combine"`, `"Post-Pro-Day"`, `"Pre-Draft"`. Each value is a copy of
     /// `currentMockDraft` taken right after that phase's mock was generated.
+    ///
+    /// Write through `recordMockDraftSnapshot` and never directly: since #103
+    /// this dictionary is mirrored onto `Career.mockDraftHistoryData`, so a
+    /// bare assignment here would be a snapshot that dies with the process and
+    /// a `MockDraftView` that disagrees with itself after a relaunch.
     static var mockDraftHistory: [String: [ScoutingEngine.MockDraftPick]] = [:]
 
     /// `"season-phase"` keys the draft-cycle heartbeat has already been mailed
@@ -413,6 +418,9 @@ enum WeekAdvancer {
         currentDraftClass = []
         currentMockDraft = []
         mockDraftHistory = [:]
+        // #103: every snapshot in the persisted history points at prospect IDs
+        // that are being deleted on the line above, so the blob dies with them.
+        career.mockDraftHistoryData = nil
         draftClassGenerated = false
 
         var regenerated = ScoutingEngine.generateDraftClass(careerID: career.id)
@@ -1092,6 +1100,11 @@ enum WeekAdvancer {
         currentDraftPicks = []
         currentMockDraft = []
         mockDraftHistory = [:]
+        // #103: the persisted copy goes with it. The blob's season stamp would
+        // already invalidate it (the season was incremented immediately above
+        // this call), but leaving a dead 100 kB of last cycle's mocks on the
+        // save to be re-read and discarded every launch is not a saving.
+        career.mockDraftHistoryData = nil
 
         // 6. R21: stale trade offers never survive into a new season.
         career.pendingTradeOffers = []
@@ -1122,12 +1135,12 @@ enum WeekAdvancer {
         career.workoutsUsed = 0
         career.top30VisitsUsed = 0
 
-        // 6c-1. The pro-days private-workout allowance is the same kind of
-        // per-cycle budget, but it lives in `CareerScopedDefaults` rather than on
-        // the career, and it was the one counter this reset missed — so the
-        // "(n/10 used)" line kept climbing across seasons and the button went
-        // permanently dead once ten workouts had ever been scheduled.
-        CareerScopedDefaults.set(0, "personalWorkoutsUsed")
+        // 6c-1. The second workout economy that used to be reset here — a
+        // `CareerScopedDefaults` counter capped at 10, spent by the pro-day
+        // screen through `attendProDay` while the prospect card billed
+        // `career.workoutsUsed` / 30 through `conductPersonalWorkout` — is gone
+        // (plan F7). `career.workoutsUsed` above is the only workout allowance,
+        // and it is already reset one line up.
 
         // 6c-2. R32: scouts' pro-day trip counters are per-cycle too (same
         // leak — `canAttendProDay` went permanently false after season one).
@@ -2261,7 +2274,7 @@ enum WeekAdvancer {
                 prospects: &currentDraftClass,
                 mockDraft: currentMockDraft
             )
-            mockDraftHistory["Mid-Season"] = currentMockDraft
+            recordMockDraftSnapshot("Mid-Season", career: career)
 
             // R41 drift moment 1 of 4. A regenerated mock is the market's own
             // re-read of the class; nudge the projections toward it so
@@ -3405,7 +3418,7 @@ enum WeekAdvancer {
                 prospects: &currentDraftClass,
                 mockDraft: currentMockDraft
             )
-            mockDraftHistory["Combine"] = currentMockDraft
+            recordMockDraftSnapshot("Combine", career: career)
 
             // R41 drift moment 2 of 4.
             applyMockDrift(career: career, moment: 2, modelContext: modelContext)
@@ -3571,142 +3584,38 @@ enum WeekAdvancer {
                 modelContext: modelContext
             )
 
-            // Regenerate mock draft after FA signings change team rosters/needs
-            if !currentDraftClass.isEmpty {
-                currentMockDraft = ScoutingEngine.generateMockDraft(
-                    prospects: currentDraftClass,
-                    draftPicks: currentDraftPicks,
-                    teams: teams,
-                    players: allPlayers
-                )
-                // Finding S8: the post-FA mock is the ONE moment in the cycle
-                // when 32 rosters have genuinely changed, and it was the one
-                // mock that did not rebuild team interest — so the "Hot / Warm /
-                // Cold" a user read on a prospect all spring was still keyed to
-                // the depth charts as they stood before the market opened, and
-                // a club that had just signed a starting corner was still shown
-                // chasing corners.
-                ScoutingEngine.updateTeamInterest(
-                    prospects: &currentDraftClass,
-                    teams: teams,
-                    players: allPlayers
-                )
-                ScoutingEngine.applyMockDraftToProspects(
-                    prospects: &currentDraftClass,
-                    mockDraft: currentMockDraft
-                )
-                mockDraftHistory["Post-FA"] = currentMockDraft
-
-                // R41 drift moment 3 of 4. Free agency just changed 32 teams'
-                // needs, so the mock re-read is a real information event here.
-                applyMockDrift(career: career, moment: 3, modelContext: modelContext)
-            }
+            // #103 §5.7: the post-FA mock used to be regenerated HERE, keyed
+            // `"Post-FA"`, and it was the wrong side of the calendar. Moment 3
+            // is the mock the league reads AFTER the pro-day circuit — a mock
+            // that has not seen the campus numbers is a mock about February —
+            // so the whole block moved down to the pro-days phase-ENTRY hook
+            // (`if nextPhase == .proDays`, below the switch) and the key became
+            // `"Post-Pro-Day"`. That hook fires in THIS same call, immediately
+            // after this case: free agency has reshaped 32 rosters, so
+            // `updateTeamInterest` is exactly as correct as it was; it now also
+            // reads the circuit, which runs in the same hook a few lines above
+            // it. The drift budget is unchanged: four moments, same salts, no
+            // fifth mock — and the entry hook is a whole phase away from
+            // MOMENT 4, which is the point.
 
             sendDraftCycleHeartbeat(career: career, phase: .freeAgency)
 
         case .proDays:
-            // Pro days phase — engine work happens in scouting UI
-            lastNewsItems = NewsGenerator.generateOffseasonNews(
-                phase: .proDays,
-                career: career,
-                teams: teams
-            )
-
-            // Task #78 — the league pro-day circuit. Every school holds one,
-            // and until now nothing in the app did: `simulateProDay` was
-            // written, documented and never called, so the ~40 men the combine
-            // sent home without a number carried empty cells to the draft and
-            // this phase held exactly one event. The circuit fills the numbers
-            // for everybody (public, broadcast precision) and the drift moves
-            // the board on them; `attendProDay` still buys the decimals and the
-            // filed report. Idempotent — the cohort it tests is the cohort it
-            // empties.
-            if !currentDraftClass.isEmpty,
-               let circuit = ScoutingEngine.runLeagueProDays(prospects: &currentDraftClass) {
-                lastNewsItems.append(contentsOf: NewsGenerator.proDayCircuitNews(
-                    result: circuit,
-                    season: career.currentSeason
-                ))
-                // A hand-timed number on a friendly surface is a nudge, not a
-                // shove: two rounds of headroom like the combine, but far fewer
-                // pairs, because only the late-testing cohort carries pressure.
-                let moves = ScoutingEngine.applyProjectionDrift(
-                    prospects: &currentDraftClass,
-                    pressure: ScoutingEngine.proDayPressure(
-                        currentDraftClass,
-                        cohort: circuit.cohort
-                    ),
-                    maxShift: 2,
-                    maxPairs: 12,
-                    seed: ScoutingEngine.cycleSeed(
-                        careerID: career.id,
-                        season: career.currentSeason,
-                        salt: ScoutingEngine.CycleSalt.proDayDrift
-                    )
-                )
-                if !moves.isEmpty {
-                    lastNewsItems.append(contentsOf: NewsGenerator.projectionDriftNews(
-                        moves: moves,
-                        season: career.currentSeason,
-                        limit: 2
-                    ))
-                }
-                if let message = InboxEngine.proDayCircuitMessage(
-                    result: circuit,
-                    moves: moves,
-                    dateString: InboxEngine.dateLabel(
-                        week: 0, season: career.currentSeason, phase: .proDays
-                    )
-                ) {
-                    lastInboxMessages.append(message)
-                }
-                persistDraftClass(currentDraftClass, to: modelContext)
-            }
-
-            // Task #78 — the second character wave. March is when the
-            // background checks come back.
-            applyCharacterFindingWave(
-                career: career,
-                pool: ScoutingEngine.proDayCharacterFindings,
-                salt: ScoutingEngine.CycleSalt.proDayCharacter,
-                phase: .proDays,
-                modelContext: modelContext
-            )
-
-            // R41 — pre-draft attrition. About 2 % of the declared class gets
-            // hurt between the combine and the draft: a knee in a pro-day
-            // drill, a labrum found on a recheck, a hamstring pulled running
-            // for a stopwatch. It is the most reliable thing that happens to a
-            // real class every spring, and this board used to be frozen from
-            // February to April. Deterministic per (careerID, season) and
-            // idempotent — re-entering the phase cannot injure a second wave.
-            if !currentDraftClass.isEmpty {
-                let setbacks = ScoutingEngine.applyPreDraftAttrition(
-                    prospects: &currentDraftClass,
-                    seed: ScoutingEngine.cycleSeed(
-                        careerID: career.id,
-                        season: career.currentSeason,
-                        salt: ScoutingEngine.CycleSalt.proDayAttrition
-                    )
-                )
-                if !setbacks.isEmpty {
-                    lastNewsItems.append(contentsOf: NewsGenerator.preDraftInjuryNews(
-                        setbacks: setbacks,
-                        season: career.currentSeason
-                    ))
-                    if let message = InboxEngine.preDraftAttritionMessage(
-                        setbacks: setbacks,
-                        dateString: InboxEngine.dateLabel(
-                            week: 0, season: career.currentSeason, phase: .proDays
-                        )
-                    ) {
-                        lastInboxMessages.append(message)
-                    }
-                    persistDraftClass(currentDraftClass, to: modelContext)
-                }
-            }
-
-            sendDraftCycleHeartbeat(career: career, phase: .proDays)
+            // #103 §5.7 FIXUP — this case is deliberately empty.
+            //
+            // The switch runs the CURRENT phase's engine logic BEFORE the
+            // transition, so a `case .proDays:` body executes at pro-days
+            // EXIT — the same `advanceOffseasonPhase` call that enters
+            // `.draft` and fires MOMENT 4 out of `prepareDraftOrder`. Holding
+            // the circuit, the attrition pass, the AI Top-30 sweep and MOMENT
+            // 3 here meant both public mocks landed in one week advance (the
+            // Pre-Draft mock overwrote the Post-Pro-Day one milliseconds after
+            // it was stored) and that NONE of the things the pro-day stages
+            // ask the user to read existed while he was standing in the phase.
+            //
+            // The whole block therefore lives in the phase-ENTRY hook below
+            // (`nextPhase == .proDays`). Nothing belongs at pro-days exit.
+            break
 
         case .reviewRoster:
             // Reset roster evaluation flags for the new Review Roster phase
@@ -4089,6 +3998,24 @@ enum WeekAdvancer {
             )
         }
 
+        // --- Draft-prep stage machine (#103) ---
+        //
+        // Three stamps, no reset hook. Entering the combine writes the first
+        // stage with THIS cycle's season on it, which is also what makes the
+        // pipeline reset: `Career.prepStep` reads a step stamped in an earlier
+        // cycle as `.combineReview` on its own. The other two boundaries raise a
+        // floor rather than override — a club that worked the stages forward
+        // keeps its place, one that skipped them is carried to where the phase
+        // says it must be. `career.currentPhase` is already `nextPhase` here,
+        // which is what the accessor's floor reads.
+        if nextPhase == .combine {
+            career.prepStep = .combineReview
+        } else if nextPhase == .proDays {
+            career.advancePrepStep(to: .proDayFocus)
+        } else if nextPhase == .draft {
+            career.advancePrepStep(to: .ready)
+        }
+
         // The combine is a league event on a fixed date, not a club decision:
         // open a fresh attendance window for this cycle and hold the event, so
         // the Combine tab has something in it whether or not this club sends
@@ -4097,6 +4024,190 @@ enum WeekAdvancer {
         if nextPhase == .combine {
             resetCombineWindow()
             ensureCombineRun(career: career, modelContext: modelContext)
+        }
+
+        // --- The pro-day phase, run when the club ENTERS it (#103 §5.7) ---
+        //
+        // Everything below used to sit in `case .proDays:` of the switch above,
+        // which runs the current phase's logic BEFORE the transition — i.e. at
+        // pro-days EXIT, in the same call that enters `.draft` and fires the
+        // Pre-Draft mock out of `prepareDraftOrder`. The two public mock
+        // moments therefore landed in one week advance, and the circuit, the
+        // attrition wave and the AI Top-30 sweep all published after the user
+        // had already walked past the stages that exist to read them.
+        //
+        // Here it is still "after free agency has reshaped 32 rosters" (the
+        // property MOMENT 3 depends on — `updateTeamInterest` reads the market's
+        // output), and it is now also a whole phase before MOMENT 4.
+        // `career.currentPhase` is already `nextPhase` at this point, so every
+        // `phase: .proDays` label below still reads true.
+        if nextPhase == .proDays {
+            // Pro days phase — engine work happens in scouting UI
+            lastNewsItems.append(contentsOf: NewsGenerator.generateOffseasonNews(
+                phase: .proDays,
+                career: career,
+                teams: teams
+            ))
+
+            // Task #78 — the league pro-day circuit. Every school holds one,
+            // and until now nothing in the app did: `simulateProDay` was
+            // written, documented and never called, so the ~40 men the combine
+            // sent home without a number carried empty cells to the draft and
+            // this phase held exactly one event. The circuit fills the numbers
+            // for everybody (public, broadcast precision) and the drift moves
+            // the board on them; `attendProDay` still buys the decimals and the
+            // filed report. Idempotent — the cohort it tests is the cohort it
+            // empties.
+            if !currentDraftClass.isEmpty,
+               let circuit = ScoutingEngine.runLeagueProDays(prospects: &currentDraftClass) {
+                lastNewsItems.append(contentsOf: NewsGenerator.proDayCircuitNews(
+                    result: circuit,
+                    season: career.currentSeason
+                ))
+                // A hand-timed number on a friendly surface is a nudge, not a
+                // shove: two rounds of headroom like the combine, but far fewer
+                // pairs, because only the late-testing cohort carries pressure.
+                let moves = ScoutingEngine.applyProjectionDrift(
+                    prospects: &currentDraftClass,
+                    pressure: ScoutingEngine.proDayPressure(
+                        currentDraftClass,
+                        cohort: circuit.cohort
+                    ),
+                    maxShift: 2,
+                    maxPairs: 12,
+                    seed: ScoutingEngine.cycleSeed(
+                        careerID: career.id,
+                        season: career.currentSeason,
+                        salt: ScoutingEngine.CycleSalt.proDayDrift
+                    )
+                )
+                if !moves.isEmpty {
+                    lastNewsItems.append(contentsOf: NewsGenerator.projectionDriftNews(
+                        moves: moves,
+                        season: career.currentSeason,
+                        limit: 2
+                    ))
+                }
+                if let message = InboxEngine.proDayCircuitMessage(
+                    result: circuit,
+                    moves: moves,
+                    dateString: InboxEngine.dateLabel(
+                        week: 0, season: career.currentSeason, phase: .proDays
+                    )
+                ) {
+                    lastInboxMessages.append(message)
+                }
+                persistDraftClass(currentDraftClass, to: modelContext)
+            }
+
+            // Task #78 — the second character wave. March is when the
+            // background checks come back.
+            applyCharacterFindingWave(
+                career: career,
+                pool: ScoutingEngine.proDayCharacterFindings,
+                salt: ScoutingEngine.CycleSalt.proDayCharacter,
+                phase: .proDays,
+                modelContext: modelContext
+            )
+
+            // R41 — pre-draft attrition. About 2 % of the declared class gets
+            // hurt between the combine and the draft: a knee in a pro-day
+            // drill, a labrum found on a recheck, a hamstring pulled running
+            // for a stopwatch. It is the most reliable thing that happens to a
+            // real class every spring, and this board used to be frozen from
+            // February to April. Deterministic per (careerID, season) and
+            // idempotent — re-entering the phase cannot injure a second wave.
+            if !currentDraftClass.isEmpty {
+                let setbacks = ScoutingEngine.applyPreDraftAttrition(
+                    prospects: &currentDraftClass,
+                    seed: ScoutingEngine.cycleSeed(
+                        careerID: career.id,
+                        season: career.currentSeason,
+                        salt: ScoutingEngine.CycleSalt.proDayAttrition
+                    )
+                )
+                if !setbacks.isEmpty {
+                    lastNewsItems.append(contentsOf: NewsGenerator.preDraftInjuryNews(
+                        setbacks: setbacks,
+                        season: career.currentSeason
+                    ))
+                    if let message = InboxEngine.preDraftAttritionMessage(
+                        setbacks: setbacks,
+                        dateString: InboxEngine.dateLabel(
+                            week: 0, season: career.currentSeason, phase: .proDays
+                        )
+                    ) {
+                        lastInboxMessages.append(message)
+                    }
+                    persistDraftClass(currentDraftClass, to: modelContext)
+                }
+            }
+
+            // #103 §5.8 — the other 31 clubs run their Top-30 lists too.
+            runAITop30Visits(career: career, teams: teams, modelContext: modelContext)
+
+            // #103 §5.7 — MOMENT 3, moved here from the end of `.freeAgency`,
+            // and then (fixup) out of the `case .proDays:` EXIT hook into this
+            // ENTRY hook, so that it is not fired in the same week advance as
+            // MOMENT 4 and so that "Mock 1.0" exists for the whole spring the
+            // `mockOne` stage asks the user to read it in.
+            //
+            // The mock the league actually argues about is the one that lands
+            // after the campus circuit: the tour has just moved the board (the
+            // late testers finally have numbers, the medical rechecks have run,
+            // 2 % of the class is hurt), and free agency reshaped the 32 rosters
+            // this mock reads needs off. Both halves of that are now behind us,
+            // which is what makes this a *post-tour* mock rather than a
+            // re-print of February. Key: `"Post-Pro-Day"`.
+            //
+            // Unlike the old `"Post-FA"` block this one is an EVENT — feed item
+            // plus a personnel-director letter — and it is emitted exactly once
+            // per cycle. The gate is the persisted history itself, not a
+            // process static, so a save re-entering this phase after a relaunch
+            // does not mail the same mock twice.
+            if !currentDraftClass.isEmpty {
+                restoreMockDraftHistory(from: career)
+                let isRerun = mockDraftHistory["Post-Pro-Day"] != nil
+
+                currentMockDraft = ScoutingEngine.generateMockDraft(
+                    prospects: currentDraftClass,
+                    draftPicks: currentDraftPicks,
+                    teams: teams,
+                    players: allPlayers
+                )
+                // Finding S8: this is the ONE moment in the cycle when 32
+                // rosters have genuinely changed, and it was the one mock that
+                // did not rebuild team interest — so the "Hot / Warm / Cold" a
+                // user read on a prospect all spring was still keyed to the
+                // depth charts as they stood before the market opened, and a
+                // club that had just signed a starting corner was still shown
+                // chasing corners.
+                ScoutingEngine.updateTeamInterest(
+                    prospects: &currentDraftClass,
+                    teams: teams,
+                    players: allPlayers
+                )
+                ScoutingEngine.applyMockDraftToProspects(
+                    prospects: &currentDraftClass,
+                    mockDraft: currentMockDraft
+                )
+                recordMockDraftSnapshot("Post-Pro-Day", career: career)
+
+                if !isRerun {
+                    emitMockDraftMoment(
+                        snapshot: currentMockDraft,
+                        label: "Mock 1.0",
+                        career: career,
+                        teams: teams,
+                        phase: .proDays
+                    )
+                }
+
+                // R41 drift moment 3 of 4.
+                applyMockDrift(career: career, moment: 3, modelContext: modelContext)
+            }
+
+            sendDraftCycleHeartbeat(career: career, phase: .proDays)
         }
 
         // R32: the draft order must exist BEFORE the draft phase begins —
@@ -4303,7 +4414,21 @@ enum WeekAdvancer {
             prospects: &currentDraftClass,
             mockDraft: currentMockDraft
         )
-        mockDraftHistory["Pre-Draft"] = currentMockDraft
+        restoreMockDraftHistory(from: career)
+        let isRerun = mockDraftHistory["Pre-Draft"] != nil
+        recordMockDraftSnapshot("Pre-Draft", career: career)
+
+        // #103 §5.7 — MOMENT 4 is the cycle's second and LAST public mock, and
+        // the last board event of any kind before the clock starts.
+        if !isRerun {
+            emitMockDraftMoment(
+                snapshot: currentMockDraft,
+                label: "Final Mock",
+                career: career,
+                teams: teams,
+                phase: .draft
+            )
+        }
 
         // R41 drift moment 4 of 4 — the last board move before the clock starts.
         applyMockDrift(career: career, moment: 4, modelContext: modelContext)
@@ -4324,11 +4449,15 @@ enum WeekAdvancer {
     /// and the rookie-band fallbacks, and no amount of drift can inflate the
     /// round-1 population.
     ///
-    /// News is emitted only from the loudest moment (the combine's own drift,
-    /// handled at the `.combine` hook) and from moment 4, the final pre-draft
-    /// board — the middle two move quietly, which is what a mock re-read is.
+    /// News is emitted from the two PUBLIC moments — 3 (Mock 1.0, after the
+    /// pro-day circuit) and 4 (the final pre-draft board) — plus the combine's
+    /// own separate drift at the `.combine` hook. Moments 1 and 2 move the board
+    /// quietly, which is what a mock re-read that early is. The risers and
+    /// fallers printed here are the movement half of the moment; the mock itself
+    /// is announced by `emitMockDraftMoment` at the same hook (#103 §5.7).
     ///
-    /// - Parameter moment: 1 = mid-season, 2 = combine, 3 = post-FA, 4 = pre-draft.
+    /// - Parameter moment: 1 = mid-season, 2 = combine, 3 = post-pro-day,
+    ///   4 = pre-draft.
     private static func applyMockDrift(
         career: Career,
         moment: Int,
@@ -4347,13 +4476,263 @@ enum WeekAdvancer {
             )
         )
         guard !moves.isEmpty else { return }
-        if moment == 4 {
+        if moment >= 3 {
             lastNewsItems.append(contentsOf: NewsGenerator.projectionDriftNews(
                 moves: moves,
                 season: career.currentSeason,
                 limit: 2
             ))
         }
+        persistDraftClass(currentDraftClass, to: modelContext)
+    }
+
+    // MARK: - Private: mock-draft moments + persistence (#103 §5.7)
+
+    /// The club's own board, best man first.
+    ///
+    /// The Big Board's drag order (`prospectCustomBoard`) is a
+    /// `@CareerScopedStorage` string owned by the UI layer, so the engine
+    /// cannot read it — and should not: the drag order is *seeded* from these
+    /// grades, so "our board" from an engine hook is the department's own
+    /// grades, with the men it never graded behind them in consensus order.
+    ///
+    /// Returned whole rather than as a five-man slice: `NewsGenerator` /
+    /// `InboxEngine` use the head for the disagreement lines and the rest as the
+    /// name lookup for the picks they print.
+    private static func clubBoardOrder() -> [CollegeProspect] {
+        let graded = currentDraftClass
+            .filter { $0.scoutedOverall != nil }
+            .sorted {
+                let a = $0.scoutedOverall ?? 0
+                let b = $1.scoutedOverall ?? 0
+                if a != b { return a > b }
+                return $0.id.uuidString < $1.id.uuidString
+            }
+        let ungraded = currentDraftClass
+            .filter { $0.scoutedOverall == nil }
+            .sorted {
+                let a = $0.draftProjection ?? 99
+                let b = $1.draftProjection ?? 99
+                if a != b { return a < b }
+                return $0.id.uuidString < $1.id.uuidString
+            }
+        return graded + ungraded
+    }
+
+    /// Announces one mock-draft moment: a feed item and a letter from the
+    /// personnel director. Called once per cycle per label.
+    private static func emitMockDraftMoment(
+        snapshot: [ScoutingEngine.MockDraftPick],
+        label: String,
+        career: Career,
+        teams: [Team],
+        phase: SeasonPhase
+    ) {
+        guard !snapshot.isEmpty else { return }
+        let board = clubBoardOrder()
+
+        lastNewsItems.append(contentsOf: NewsGenerator.mockDraftEvent(
+            history: snapshot,
+            label: label,
+            userBoardTop: board,
+            season: career.currentSeason
+        ))
+
+        // No club means no "our board" — a userless save still gets the feed
+        // item, which is the public half of the moment.
+        guard career.teamID != nil else { return }
+        let abbreviation = teams.first { $0.id == career.teamID }?.abbreviation
+        if let message = InboxEngine.mockDraftMessage(
+            history: snapshot,
+            label: label,
+            userBoardTop: board,
+            userTeamAbbreviation: abbreviation,
+            dateString: InboxEngine.dateLabel(
+                week: 0, season: career.currentSeason, phase: phase
+            )
+        ) {
+            lastInboxMessages.append(message)
+        }
+    }
+
+    /// Stores a snapshot under `tag` and serialises the whole history onto the
+    /// save.
+    ///
+    /// `mockDraftHistory` is a process static: before #103 it was wiped by every
+    /// app restart, so "compare Mock 1.0 with the final board" — the affordance
+    /// the four snapshots exist for — could not survive a force-quit. The blob
+    /// carries a season stamp because the history belongs to ONE draft cycle;
+    /// a stamp from an earlier cycle reads as "no history", the same trick
+    /// `Career.prepStep` uses, so no reset hook can be forgotten.
+    private static func recordMockDraftSnapshot(_ tag: String, career: Career) {
+        // Restore FIRST, always. A save relaunched mid-cycle reaches the combine
+        // hook with a cold static and a blob that already holds "Mid-Season";
+        // writing without merging would persist a one-key history and silently
+        // drop the earlier snapshot. Free after the first call — the restore is
+        // a no-op once the static is warm.
+        restoreMockDraftHistory(from: career)
+        mockDraftHistory[tag] = currentMockDraft
+        persistMockDraftHistory(to: career)
+    }
+
+    /// One `ScoutingEngine.MockDraftPick` in a form `Codable` can carry.
+    ///
+    /// A mirror rather than a conformance on the engine type: `MockDraftPick`
+    /// lives in `ScoutingEngine`, which this wave does not own, and Swift will
+    /// not synthesise `Codable` for a struct from another file's extension
+    /// anyway.
+    private struct MockPickRecord: Codable {
+        let pickNumber: Int
+        let round: Int
+        let prospectID: UUID
+        let teamAbbreviation: String
+        let teamID: UUID
+        let teamNeeds: [Position]
+        let pickRationale: String
+        let mediaComment: String
+
+        init(_ pick: ScoutingEngine.MockDraftPick) {
+            pickNumber = pick.pickNumber
+            round = pick.round
+            prospectID = pick.prospectID
+            teamAbbreviation = pick.teamAbbreviation
+            teamID = pick.teamID
+            teamNeeds = pick.teamNeeds
+            pickRationale = pick.pickRationale
+            mediaComment = pick.mediaComment
+        }
+
+        var pick: ScoutingEngine.MockDraftPick {
+            ScoutingEngine.MockDraftPick(
+                pickNumber: pickNumber,
+                round: round,
+                prospectID: prospectID,
+                teamAbbreviation: teamAbbreviation,
+                teamID: teamID,
+                teamNeeds: teamNeeds,
+                pickRationale: pickRationale,
+                mediaComment: mediaComment
+            )
+        }
+    }
+
+    private struct MockHistoryBlob: Codable {
+        let season: Int
+        let snapshots: [String: [MockPickRecord]]
+    }
+
+    /// Writes `mockDraftHistory` onto `career.mockDraftHistoryData`.
+    static func persistMockDraftHistory(to career: Career) {
+        guard !mockDraftHistory.isEmpty else {
+            career.mockDraftHistoryData = nil
+            return
+        }
+        let blob = MockHistoryBlob(
+            season: career.currentSeason,
+            snapshots: mockDraftHistory.mapValues { $0.map(MockPickRecord.init) }
+        )
+        career.mockDraftHistoryData = try? JSONEncoder().encode(blob)
+    }
+
+    /// Reloads `mockDraftHistory` from the save when the process static is cold.
+    ///
+    /// Idempotent and cheap: does nothing once the static holds this cycle's
+    /// snapshots, and drops a blob stamped with an earlier season on the floor
+    /// rather than showing last year's mocks against this year's class.
+    static func restoreMockDraftHistory(from career: Career) {
+        guard mockDraftHistory.isEmpty,
+              let data = career.mockDraftHistoryData,
+              let blob = try? JSONDecoder().decode(MockHistoryBlob.self, from: data)
+        else { return }
+        guard blob.season == career.currentSeason else {
+            career.mockDraftHistoryData = nil
+            return
+        }
+        mockDraftHistory = blob.snapshots.mapValues { $0.map(\.pick) }
+    }
+
+    // MARK: - Private: AI Top-30 visits (#103 §5.8)
+
+    /// Salt for the AI Top-30 pass. Lives here rather than in
+    /// `ScoutingEngine.CycleSalt` because this wave does not own that file; the
+    /// value is drawn from the same space and collides with nothing in it.
+    private static let aiTop30Salt: UInt64 = 0x70_3070_A1_5F
+
+    /// The other 31 clubs run their Top-30 lists too.
+    ///
+    /// `CollegeProspect.top30VisitedByTeams` was written by exactly one caller —
+    /// `ScoutingEngine.conductTop30Visit`, i.e. the user — so the "who else is
+    /// in on him" signal on a prospect card was structurally always "nobody".
+    /// Each AI club now stamps ~30 IDs off ITS OWN `AIDraftPerception` board,
+    /// which is the same lens its war room drafts from, so the clubs chasing a
+    /// man are the clubs that actually rate him.
+    ///
+    /// This is flavour plus a real competition signal and **nothing else**: no
+    /// interview is run, no report is filed, no attribute is touched, and
+    /// `DraftEngine` never reads the field — AI draft quality is bit-identical.
+    /// Deterministic per `(careerID, season)` and idempotent by construction
+    /// (the append is guarded on membership).
+    private static func runAITop30Visits(
+        career: Career,
+        teams: [Team],
+        modelContext: ModelContext
+    ) {
+        guard !currentDraftClass.isEmpty else { return }
+        let aiTeams = teams.filter { $0.id != career.teamID }
+        guard !aiTeams.isEmpty else { return }
+
+        let declared = currentDraftClass.filter { $0.isDeclaringForDraft }
+        guard declared.count >= 30 else { return }
+
+        // Cheap out if the pass already ran this cycle: every club stamps, so
+        // one club's mark on one prospect is proof of the whole pass.
+        let firstClub = aiTeams[0].id
+        if declared.contains(where: { $0.top30VisitedByTeams.contains(firstClub) }) {
+            return
+        }
+
+        var stamped = 0
+        for team in aiTeams {
+            let lens = AIDraftPerception.lens(forTeam: team.id)
+            // The club's own board: perceived level and ceiling, weighted the
+            // way a spring board is — the visit list is about who you might
+            // take, and in April that is still mostly upside.
+            let ranked = declared
+                .map { prospect -> (prospect: CollegeProspect, score: Double) in
+                    let read = AIDraftPerception.read(
+                        teamID: team.id,
+                        prospectID: prospect.id,
+                        trueOverall: prospect.trueOverall,
+                        truePotential: prospect.truePotential,
+                        lens: lens
+                    )
+                    return (prospect, read.overall * 0.6 + read.potential * 0.4)
+                }
+                .sorted {
+                    if $0.score != $1.score { return $0.score > $1.score }
+                    return $0.prospect.id.uuidString < $1.prospect.id.uuidString
+                }
+
+            // 30 men out of the top 55 of that board: a real Top-30 list is not
+            // simply the board's head — it is the head minus the men you are
+            // certain about, plus the ones you need a second look at.
+            var rng = SeededLeagueRandom(
+                seed: AIDraftPerception.pairSeed(teamID: team.id, prospectID: career.id)
+                    ^ ScoutingEngine.cycleSeed(
+                        careerID: career.id,
+                        season: career.currentSeason,
+                        salt: aiTop30Salt
+                    )
+            )
+            var pool = Array(ranked.prefix(55).map(\.prospect))
+            pool.shuffle(using: &rng)
+            for prospect in pool.prefix(30) where !prospect.top30VisitedByTeams.contains(team.id) {
+                prospect.top30VisitedByTeams.append(team.id)
+                stamped += 1
+            }
+        }
+
+        guard stamped > 0 else { return }
         persistDraftClass(currentDraftClass, to: modelContext)
     }
 

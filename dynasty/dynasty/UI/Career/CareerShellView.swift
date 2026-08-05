@@ -1413,6 +1413,25 @@ struct CareerShellView: View {
             CareerScopedDefaults.set("interviews", "scoutingPendingTab")
             shellDest = .scouting
         case .personalWorkouts:   shellDest = .scouting
+        // Draft-prep stages (#103). Each lands in the scouting hub with a
+        // pending-tab hint; the hub ignores a hint whose tab does not exist yet,
+        // so a stage whose screen arrives in a later wave opens the hub rather
+        // than a dead end.
+        case .filmStudy:
+            CareerScopedDefaults.set("film", "scoutingPendingTab")
+            shellDest = .scouting
+        case .proDayTour:
+            CareerScopedDefaults.set("proDays", "scoutingPendingTab")
+            shellDest = .scouting
+        case .workouts:
+            CareerScopedDefaults.set("workouts", "scoutingPendingTab")
+            shellDest = .scouting
+        case .top30Visits:
+            CareerScopedDefaults.set("top30", "scoutingPendingTab")
+            shellDest = .scouting
+        case .mockDraft:
+            CareerScopedDefaults.set("mockDraft", "scoutingPendingTab")
+            shellDest = .scouting
         case .developmentReport:  shellDest = .developmentReport
         case .history:            shellDest = .history
         case .draftReportCard:    shellDest = .draftReportCard
@@ -1482,6 +1501,29 @@ struct CareerShellView: View {
         for index in currentTasks.indices {
             guard currentTasks[index].status != .done else { continue }
             let task = currentTasks[index]
+
+            // Draft prep — stage-driven locking (#103).
+            //
+            // Same shape as the `FreeAgencyStep` chain below, one level up: a
+            // task belonging to a pre-draft stage the club has not reached yet is
+            // held at `.todo`, so visiting its screen cannot tick it off early.
+            // The state machine is `career.prepStep`, whose getter floors by
+            // phase — a save parked mid-offseason is never locked out of work
+            // its phase says it must already have done.
+            //
+            // REQUIRED tasks are deliberately exempt in this wave. The stage only
+            // moves forward at a stage-advance button, and those buttons ship
+            // with their screens in the UI waves; holding a required task behind
+            // a stage nothing can advance yet would make the phase permanently
+            // un-advanceable. Each stage row is promoted to `isRequired` in
+            // `TaskGenerator` by the wave that ships its screen and its skip
+            // button, and this gate then covers it with no change here.
+            if !task.isRequired,
+               let stage = DraftPrepStep.stage(forTaskKey: task.matchKey),
+               stage.order > career.prepStep.order {
+                currentTasks[index].status = .todo
+                continue
+            }
 
             // Matched on `matchKey`, not on the raw title: several titles carry a
             // live progress counter ("… (12/60 done)") and an exact-title switch
@@ -1633,7 +1675,9 @@ struct CareerShellView: View {
                 }
 
             // Pro Days — completion checks
-            case "Assign scouts to Pro Days":
+            // Stage `proDayFocus` (#103): the task carries the stage's pinned
+            // key ("Choose pro-day schools"); the predicate is unchanged.
+            case "Choose pro-day schools":
                 // Done if at least 1 pro day has been attended
                 let proCareerID = career.id
                 let proDesc = FetchDescriptor<CollegeProspect>(

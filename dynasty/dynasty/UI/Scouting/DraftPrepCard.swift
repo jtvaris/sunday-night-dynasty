@@ -96,7 +96,18 @@ struct DraftPrepCard: View {
     /// Applies a position filter to the hub's shared chips.
     var onFilterPosition: ((ProspectPositionFilter) -> Void)? = nil
 
-    @AppStorage("draftPrepCardExpanded") private var isExpanded: Bool = true
+    /// Collapsed by default.
+    ///
+    /// The card used to default to expanded and it alone ate ~180 pt at the top
+    /// of a screen whose job is a scrolling list. Collapsed it is one line of
+    /// stage progress, which is what the user actually needs at a glance; the
+    /// detail is one tap away and the preference sticks.
+    ///
+    /// A NEW key on purpose: `draftPrepCardExpanded` is already `true` in every
+    /// existing save's defaults, and `@AppStorage`'s default only applies to an
+    /// absent key — flipping the literal would have changed nothing for anybody
+    /// who has ever opened this screen.
+    @AppStorage("draftPrepCardExpandedV2") private var isExpanded: Bool = false
     /// Observed so starring a prospect on another tab re-derives the
     /// "on your board, never interviewed" rows instead of going stale.
     @ObservedObject private var userGradeStore = UserProspectGradeStore.shared
@@ -110,6 +121,16 @@ struct DraftPrepCard: View {
         max(0, maxInterviews - career.interviewsUsed)
     }
 
+    /// Focus slots **reserved** — `scout.proDayColleges`, the ledger the tour
+    /// screen fills and the stage banner counts. Not `proDaysAttended`, which
+    /// only moves once `attendProDay` has run and therefore printed "0 of 11
+    /// focus slots used" on a card sitting next to a screen showing five
+    /// schools booked.
+    private var proDayReservations: Int {
+        scouts.reduce(0) { $0 + $1.proDayColleges.count }
+    }
+
+    /// Schools the department has actually been to this cycle.
     private var proDayVisits: Int {
         scouts.reduce(0) { $0 + $1.proDaysAttended }
     }
@@ -337,6 +358,7 @@ struct DraftPrepCard: View {
                             .font(.system(size: 9))
                             .foregroundStyle(Color.textTertiary)
                             .lineLimit(1)
+                        stageProgressBar
                     }
                 }
                 Spacer()
@@ -360,16 +382,58 @@ struct DraftPrepCard: View {
         .accessibilityLabel(isExpanded ? "Collapse draft prep" : "Expand draft prep")
     }
 
+    /// Collapsed, the card is the pipeline's progress line and nothing else:
+    /// "Stage 4 of 9 — Pro Day Focus · 3 of 11 focus slots used".
     private func collapsedSummary(_ snapshot: Snapshot) -> String {
-        let cover = snapshot.coverage
-        var parts = ["Top \(cover.sampleSize): \(cover.scoutedPercent)% scouted"]
-        if interviewWindowOpen {
-            parts.append("\(career.interviewsUsed)/\(maxInterviews) interviews")
-        }
+        let step = career.prepStep
+        var parts = [
+            "Stage \(step.order + 1) of \(DraftPrepStep.allCases.count) \u{2014} \(step.displayName)",
+            stageCounter(step)
+        ]
         if !snapshot.attention.isEmpty {
             parts.append("\(snapshot.attention.count) to fix")
         }
         return parts.joined(separator: " \u{00B7} ")
+    }
+
+    /// The one number that measures the stage the club is standing in.
+    private func stageCounter(_ step: DraftPrepStep) -> String {
+        switch step {
+        case .combineReview:
+            return scoutsSentToCombine ? "scouts on site" : "combine on television"
+        case .filmStudy:
+            return "\(evaluationsUsed) of \(ScoutEvaluationBudget.slotsPerCycle) reports ordered"
+        case .interviews:
+            return "\(career.interviewsUsed) of \(maxInterviews) interviews used"
+        case .proDayFocus:
+            return "\(proDayReservations) of \(max(proDayCapacity, proDayReservations)) focus slots reserved"
+        case .workouts:
+            return "\(career.workoutsUsed) of 30 workouts used"
+        case .mockOne, .mockTwo:
+            return "league mock"
+        case .top30Visits:
+            return "\(career.top30VisitsUsed) of 30 visits hosted"
+        case .ready:
+            return "board closed"
+        }
+    }
+
+    /// One-line pipeline progress. Nine stages, filled to where the club is.
+    private var stageProgressBar: some View {
+        let total = DraftPrepStep.allCases.count
+        let done = career.prepStep.order
+        return GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Color.backgroundTertiary)
+                Capsule()
+                    .fill(Color.accentGold)
+                    .frame(width: geo.size.width * CGFloat(done) / CGFloat(max(total - 1, 1)))
+            }
+        }
+        .frame(height: 3)
+        .padding(.top, 3)
+        .accessibilityHidden(true)
     }
 
     // MARK: - Coverage
@@ -403,9 +467,9 @@ struct DraftPrepCard: View {
                 )
                 stat(
                     icon: "figure.run",
-                    value: "\(proDayVisits)/\(max(proDayCapacity, proDayVisits))",
-                    label: "Pro day visits",
-                    tint: proDayVisits > 0 ? .accentBlue : .textTertiary,
+                    value: "\(proDayReservations)/\(max(proDayCapacity, proDayReservations))",
+                    label: proDayVisits > 0 ? "Pro day slots (sent)" : "Pro day slots",
+                    tint: proDayReservations > 0 ? .accentBlue : .textTertiary,
                     detail: "\(career.top30VisitsUsed)/30 Top-30"
                 )
                 stat(
@@ -504,7 +568,7 @@ struct DraftPrepCard: View {
         case .position(let filter):
             Button {
                 onFilterPosition?(filter)
-                onSelectTab?(.bigBoard)
+                onSelectTab?(.board)
             } label: {
                 attentionRowLabel(item, prospect: nil)
             }

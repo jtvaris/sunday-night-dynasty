@@ -115,6 +115,33 @@ final class Career {
     /// Number of pre-draft Top-30 visits used this year (max 30).
     var top30VisitsUsed: Int = 0
 
+    // MARK: - Draft Prep State (#103)
+
+    /// Current stage of the pre-draft pipeline, stored as the raw value of
+    /// ``DraftPrepStep``. **Read it through ``prepStep``**, which applies the
+    /// cycle stamp and the phase floor; this is the storage, not the API.
+    ///
+    /// Inline default → SwiftData lightweight migration; never an init parameter.
+    var draftPrepStep: String = DraftPrepStep.combineReview.rawValue
+
+    /// Cycle stamp for ``draftPrepStep``.
+    ///
+    /// A step written in an earlier draft cycle reads as `.combineReview`, so
+    /// the pipeline resets with the class **without needing a reset hook in
+    /// `WeekAdvancer`** — the same trick `ScoutEvaluationBudget.thisCycle` uses
+    /// for the evaluation slots, and the same shape as ``lastRolloverSeason``.
+    /// `0` is "never stamped".
+    var draftPrepStepSeason: Int = 0
+
+    /// JSON-encoded mock-draft history (`[label: [MockDraftPick]]`).
+    ///
+    /// `WeekAdvancer.mockDraftHistory` is a process static that is wiped on
+    /// relaunch, so the "Mock 1.0 vs Final" comparison the data is shaped for
+    /// cannot survive a cold launch. Persisting it here is what makes the two
+    /// mock-draft events comparable after the app has been quit.
+    /// Optional attribute → safe lightweight migration.
+    var mockDraftHistoryData: Data? = nil
+
     // MARK: - Owner Demands (#248)
     /// Roster demands set by the owner during the review roster phase.
     /// Each string is a demand like "Upgrade QB starter" or "Improve the defense".
@@ -326,6 +353,51 @@ final class Career {
         self.legacy = LegacyTracker()
         self.coachingTree = CoachingTreeData()
         self.hcGMRelationship = CoachRelationshipEngine.HCGMRelationship()
+    }
+}
+
+// MARK: - Draft Prep Stage Bridge (#103)
+
+extension Career {
+
+    /// Where this club is in the pre-draft pipeline.
+    ///
+    /// **The only supported way to read or write the stage.** Two rules are
+    /// baked in here so no call site can forget either of them:
+    ///
+    /// 1. **Cycle stamp.** Writing stamps `draftPrepStepSeason` with the current
+    ///    season, and reading a step stamped in an earlier cycle yields
+    ///    `.combineReview`. The pipeline therefore resets with the draft class
+    ///    on its own — there is no reset hook anywhere, and there must not be.
+    /// 2. **Phase floor.** The stored step is raised to
+    ///    ``SeasonPhase/minimumPrepStep``, so a save that predates the field (or
+    ///    one that skipped straight through the combine) cannot sit in
+    ///    `.proDays` with the pro-day stage locked behind it.
+    var prepStep: DraftPrepStep {
+        get {
+            let stored = draftPrepStepSeason == currentSeason
+                ? DraftPrepStep(rawValue: draftPrepStep) ?? .combineReview
+                : .combineReview
+            let floor = currentPhase.minimumPrepStep
+            return stored.order >= floor.order ? stored : floor
+        }
+        set {
+            draftPrepStep = newValue.rawValue
+            draftPrepStepSeason = currentSeason
+        }
+    }
+
+    /// Raises the prep stage to `step` if the club is behind it, and re-stamps
+    /// the cycle either way.
+    ///
+    /// Never lowers the stage: a club that worked its way to the final mock does
+    /// not get pulled back to `.proDayFocus` by the phase boundary that carries
+    /// the slow ones forward. The unconditional re-stamp is the point of the
+    /// "either way" — it persists what the phase floor was already returning, so
+    /// an in-flight save stops relying on the floor the first time it crosses a
+    /// boundary. (Caller saves the context.)
+    func advancePrepStep(to step: DraftPrepStep) {
+        prepStep = prepStep.order >= step.order ? prepStep : step
     }
 }
 

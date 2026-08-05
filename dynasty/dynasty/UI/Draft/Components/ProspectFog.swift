@@ -315,6 +315,49 @@ enum ProspectFog {
     /// Convenience for sort closures.
     static func iqRank(_ prospect: CollegeProspect) -> Int { footballIQ(prospect).rank }
 
+    // MARK: - TAPE / MEET — the same data, un-merged
+
+    /// What the SCOUTING DEPARTMENT has on a prospect's head, off tape.
+    ///
+    /// ``footballIQ`` is a precedence function: an interview number wins and the
+    /// scouts' letter band is only the fallback. One column rendering the winner
+    /// of that race is why a board row printed `86 MEET` beside `C-/B+ TAPE` and
+    /// asked the user to compare a number with a letter down the same 40-point
+    /// strip. They are two instruments answering two different questions — what
+    /// he does on Saturdays, and what he knows in a room — so they are two reads
+    /// and two columns.
+    ///
+    /// `footballIQ` stays as the precedence function behind ``iqRank``, which is
+    /// what the board's IQ **sort** compares on — one instrument-agnostic
+    /// ordering over two columns. (Its old renderer, `ProspectIQCell`, is gone:
+    /// after the split it had zero call sites, and the draft room it was
+    /// nominally "kept for" never drew it.)
+    static func tapeRead(_ prospect: CollegeProspect) -> IQRead {
+        guard let band = tapeMentalBand(for: prospect) else {
+            return IQRead(value: nil, band: nil, source: .none)
+        }
+        return IQRead(value: nil, band: band, source: .scouts)
+    }
+
+    /// What YOUR OWN people got out of him in a room. Exact, because that is
+    /// what a meeting produces; absent until somebody has spent a slot on him.
+    static func meetRead(_ prospect: CollegeProspect) -> IQRead {
+        guard let iq = prospect.interviewFootballIQ else {
+            return IQRead(value: nil, band: nil, source: .none)
+        }
+        return IQRead(
+            value: iq,
+            band: GradeRange(grade: LetterGrade.from(numericValue: iq)),
+            source: .interview
+        )
+    }
+
+    /// Convenience for sort closures over the tape column.
+    static func tapeRank(_ prospect: CollegeProspect) -> Int { tapeRead(prospect).rank }
+
+    /// Convenience for sort closures over the meeting column.
+    static func meetRank(_ prospect: CollegeProspect) -> Int { meetRead(prospect).rank }
+
     /// The tape half of football IQ: game awareness (`AWR`) blended with how
     /// fast he absorbs a playbook (`LRN`) — the same two attributes the
     /// interview itself is built from, so the band and the number the interview
@@ -570,43 +613,52 @@ struct ProspectGradeBand: View {
     }
 }
 
-// MARK: - Football IQ cell
+// MARK: - TAPE / MEET cells
 
-/// The football-IQ read as it appears in a table column: the interview's number
-/// in blue, the scouts' letter band in gold, an em-dash when neither exists.
+/// The scouting department's tape read on a prospect's head — a gold letter
+/// band, or a dash when nobody in the building has filed on him.
 ///
-/// The sub-label names the source in four characters so the column is legible
-/// without a legend — the whole point of the cell is that the user can see, at
-/// a glance down the board, which of his sixty interview slots he has spent.
-struct ProspectIQCell: View {
+/// A dash here is a *hole in your work*, not a fogged value, which is why the
+/// column is always rendered rather than hidden when empty: the question the
+/// user scans a board asking is which men he has not done the work on.
+struct ProspectTapeCell: View {
     let prospect: CollegeProspect
     var width: CGFloat = 40
-    /// Hides the "MEET"/"TAPE" sub-label for tight rows.
-    var showsSourceLabel: Bool = true
 
     var body: some View {
-        let read = ProspectFog.footballIQ(prospect)
-        VStack(spacing: 0) {
-            Text(read.text)
-                .font(.system(size: read.isRevealed ? 11 : 9, weight: .bold).monospacedDigit())
-                .foregroundStyle(read.source.tint)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-            if showsSourceLabel {
-                Text(sourceTag(read.source))
-                    .font(.system(size: DSType.Size.micro, weight: .medium))
-                    .foregroundStyle(Color.textTertiary)
-            }
-        }
-        .frame(width: width, alignment: .center)
-        .accessibilityLabel(read.accessibilityText)
+        let read = ProspectFog.tapeRead(prospect)
+        Text(read.text)
+            .font(.system(size: 10, weight: .bold))
+            .foregroundStyle(read.source == .none ? Color.textTertiary.opacity(0.5) : Color.accentGold)
+            .lineLimit(1)
+            .minimumScaleFactor(0.65)
+            .frame(width: width, alignment: .center)
+            .accessibilityLabel(
+                read.source == .none
+                    ? "no tape read \u{2014} file a scouting report to get one"
+                    : read.accessibilityText
+            )
     }
+}
 
-    private func sourceTag(_ source: ProspectFog.IQSource) -> String {
-        switch source {
-        case .interview: return "MEET"
-        case .scouts:    return "TAPE"
-        case .none:      return ""
-        }
+/// The interview room's read — an exact number in blue, or a dash until a
+/// combine slot has been spent on him.
+struct ProspectMeetCell: View {
+    let prospect: CollegeProspect
+    var width: CGFloat = 34
+
+    var body: some View {
+        let read = ProspectFog.meetRead(prospect)
+        Text(read.text)
+            .font(.system(size: 11, weight: .bold).monospacedDigit())
+            .foregroundStyle(read.source == .none ? Color.textTertiary.opacity(0.5) : Color.accentBlue)
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .frame(width: width, alignment: .center)
+            .accessibilityLabel(
+                read.source == .none
+                    ? "not interviewed \u{2014} spend a combine slot to meet him"
+                    : read.accessibilityText
+            )
     }
 }

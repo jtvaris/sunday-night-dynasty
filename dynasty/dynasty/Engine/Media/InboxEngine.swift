@@ -1389,7 +1389,7 @@ enum InboxEngine {
         var lines: [String] = [
             "Coach,",
             "",
-            "The campus circuit is done. \(result.tested) of the men who tested in nothing at the combine have now put numbers on a board somewhere, and we have them off the wire.",
+            "The campus circuit is done. \(result.tested) men who had no number on them — combine no-shows and the whole uninvited half of the class — have now worked out at their own schools, and we have the results off the wire.",
             ""
         ]
 
@@ -1421,6 +1421,119 @@ enum InboxEngine {
             date: dateString,
             category: .scoutingReport,
             attachments: [
+                MessageAttachment(title: "Open Big Board", destination: .bigBoard)
+            ]
+        )
+    }
+
+    // MARK: - The two mock-draft moments (#103 §5.7)
+
+    /// The personnel director's read on a mock draft: here is where the league
+    /// has our board.
+    ///
+    /// The feed item (`NewsGenerator.mockDraftEvent`) is the public half of the
+    /// same moment — the top five and the loudest disagreement. This is the
+    /// private half, and it is written from the club's side of the table: what
+    /// the consensus expects US to do at our own pick, and which of the men we
+    /// have graded the league is high or low on. Nothing here is new
+    /// information about a prospect; it is the same public mock, read for what
+    /// it implies about the room we are drafting into.
+    ///
+    /// - Parameters:
+    ///   - history: the snapshot. Any order; sorted by pick number here.
+    ///   - label: "Mock 1.0" or "Final Mock".
+    ///   - userBoardTop: the club's own board, best man first — the same array
+    ///     the feed item receives (see `NewsGenerator.mockDraftEvent`).
+    ///   - userTeamAbbreviation: the club whose picks get called out. `nil`
+    ///     (no team) drops the "our pick" paragraph rather than the message.
+    static func mockDraftMessage(
+        history: [ScoutingEngine.MockDraftPick],
+        label: String,
+        userBoardTop: [CollegeProspect],
+        userTeamAbbreviation: String?,
+        dateString: String
+    ) -> InboxMessage? {
+        guard !history.isEmpty else { return nil }
+
+        let ordered = history.sorted { $0.pickNumber < $1.pickNumber }
+        let prospectByID = Dictionary(
+            userBoardTop.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        var mockRank: [UUID: Int] = [:]
+        for (index, pick) in ordered.enumerated() where mockRank[pick.prospectID] == nil {
+            mockRank[pick.prospectID] = index + 1
+        }
+
+        func describe(_ id: UUID) -> String? {
+            guard let prospect = prospectByID[id] else { return nil }
+            return "\(prospect.position.rawValue) \(prospect.fullName) (\(prospect.college))"
+        }
+
+        var lines: [String] = [
+            "Coach,",
+            "",
+            "\(label) is on every wire in the league. Here is where it has our board.",
+            ""
+        ]
+
+        // 1. What the consensus expects us to do with our own picks.
+        if let abbr = userTeamAbbreviation {
+            let ours = ordered.filter { $0.teamAbbreviation == abbr }.prefix(3)
+            if !ours.isEmpty {
+                lines.append("Us:")
+                for pick in ours {
+                    let who = describe(pick.prospectID) ?? "a name we have not graded"
+                    lines.append("- Pick \(pick.pickNumber) (round \(pick.round)): \(who)")
+                }
+                lines.append("")
+            }
+        }
+
+        // 2. The men we have graded that the league is highest and lowest on.
+        var boardSlot = 0
+        var leagueHigh: [(gap: Int, line: String)] = []
+        var leagueLow: [(gap: Int, line: String)] = []
+        for prospect in userBoardTop.prefix(40) {
+            guard prospect.scoutedOverall != nil else { continue }
+            boardSlot += 1
+            guard let league = mockRank[prospect.id] else { continue }
+            let gap = league - boardSlot
+            guard abs(gap) >= 6 else { continue }
+            let line = "- \(prospect.position.rawValue) \(prospect.fullName) (\(prospect.college)): our No. \(boardSlot), league No. \(league)"
+            if gap < 0 {
+                leagueHigh.append((gap: -gap, line: line))
+            } else {
+                leagueLow.append((gap: gap, line: line))
+            }
+        }
+        if !leagueHigh.isEmpty {
+            lines.append("They are higher on than we are:")
+            lines.append(contentsOf: leagueHigh.sorted { $0.gap > $1.gap }.prefix(3).map(\.line))
+            lines.append("")
+        }
+        if !leagueLow.isEmpty {
+            lines.append("They are lower on than we are:")
+            lines.append(contentsOf: leagueLow.sorted { $0.gap > $1.gap }.prefix(3).map(\.line))
+            lines.append("")
+        }
+        if leagueHigh.isEmpty && leagueLow.isEmpty {
+            lines.append("Our grades and the consensus are sitting on top of each other at the top of the board. That is either agreement or a room that has not looked hard enough yet.")
+            lines.append("")
+        }
+
+        lines.append("A mock is not a draft. It is thirty-two rooms guessing about thirty-one others — useful for knowing who will be gone, useless for knowing who is good.")
+        lines.append("")
+        lines.append("Player Personnel")
+
+        return InboxMessage(
+            sender: .scout(name: "Director of Player Personnel"),
+            subject: "\(label): where the league has our board",
+            body: lines.joined(separator: "\n"),
+            date: dateString,
+            category: .draftPrep,
+            attachments: [
+                MessageAttachment(title: "Open Mock Draft", destination: .mockDraft),
                 MessageAttachment(title: "Open Big Board", destination: .bigBoard)
             ]
         )

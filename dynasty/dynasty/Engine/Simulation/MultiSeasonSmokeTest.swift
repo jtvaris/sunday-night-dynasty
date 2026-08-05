@@ -378,6 +378,50 @@ enum MultiSeasonSmokeTest {
         print("SMOKE: fantasy draft complete — picks=\(pickIndex) roster min=\(sizes.min() ?? 0) max=\(sizes.max() ?? 0)")
     }
 
+    // MARK: - Draft-prep pipeline diagnostic (#103 §9.4)
+
+    /// One line, printed the moment the draft phase opens, proving that the
+    /// whole pre-draft calendar actually ran headless.
+    ///
+    /// It exists because the two things #103 moved are both invisible from the
+    /// outside: the pro-day circuit publishes numbers onto the class, and the
+    /// two public mock moments write snapshots into `mockDraftHistory`. Both
+    /// used to fire in the SAME week advance at pro-days exit — the Pre-Draft
+    /// mock overwriting the Post-Pro-Day one milliseconds after it was stored —
+    /// and nothing in the smoke could see it. `mocks=` names every snapshot
+    /// that survived to draft week; a run missing `Post-Pro-Day` or `Pre-Draft`
+    /// is the regression.
+    ///
+    /// `step=` proves the stage machine reached `Ready` (the phase floor writes
+    /// it at the draft boundary), and `tested=` proves the league circuit
+    /// covered the class rather than a combine-invitee slice of it.
+    static func reportDraftPrep(career: Career) {
+        let klass = WeekAdvancer.currentDraftClass.filter { $0.isDeclaringForDraft }
+        let timed = klass.filter { $0.position != .K && $0.position != .P }
+        let withForty = timed.filter { $0.fortyTime != nil }.count
+        let mocks = WeekAdvancer.mockDraftHistory
+            .filter { !$0.value.isEmpty }
+            .keys
+            .sorted()
+            .joined(separator: ",")
+        let hasBothPublicMocks = WeekAdvancer.mockDraftHistory["Post-Pro-Day"]?.isEmpty == false
+            && WeekAdvancer.mockDraftHistory["Pre-Draft"]?.isEmpty == false
+        print("SMOKE: diag prep season=\(career.currentSeason) step=\(career.prepStep.displayName) "
+              + "declared=\(klass.count) tested=\(withForty)/\(timed.count) "
+              + "mocks=[\(mocks.isEmpty ? "-" : mocks)]")
+        if !klass.isEmpty && !hasBothPublicMocks {
+            print("SMOKE: ANOMALY season=\(career.currentSeason) draft-prep mock moments missing — "
+                  + "expected both \"Post-Pro-Day\" (moment 3, pro-days ENTRY) and "
+                  + "\"Pre-Draft\" (moment 4, draft entry), got [\(mocks.isEmpty ? "-" : mocks)]. "
+                  + "If only one is present the two moments have collapsed into one week advance again.")
+        }
+        if !timed.isEmpty && withForty < timed.count {
+            print("SMOKE: ANOMALY season=\(career.currentSeason) pro-day circuit left "
+                  + "\(timed.count - withForty) declared men without a 40 time — "
+                  + "`runLeagueProDays` covers every declared non-specialist (plan §5.5).")
+        }
+    }
+
     // MARK: - AI draft (mirrors DraftDayCoordinator's AI path)
 
     /// Internal (not private) so the DEBUG dashboard skip can reuse it when
@@ -385,6 +429,7 @@ enum MultiSeasonSmokeTest {
     @discardableResult
     static func runAIDraft(career: Career, context: ModelContext) -> Int {
         let season = career.currentSeason
+        reportDraftPrep(career: career)
         var descriptor = FetchDescriptor<DraftPick>(
             predicate: #Predicate<DraftPick> { $0.seasonYear == season && !$0.isComplete },
             sortBy: [SortDescriptor(\.pickNumber)]

@@ -488,8 +488,11 @@ static func proDaySchoolSummaries(prospects: [CollegeProspect],
 
 // ── UI/Draft/Components/ProspectFog.swift (the F10 split) ───────────────────
 /// Today's `footballIQ` is a precedence function (interview wins, scouts
-/// fall back). These two are the SAME data, un-merged. `footballIQ` stays for
-/// the draft room's tight rows.
+/// fall back). These two are the SAME data, un-merged. `footballIQ` stays as
+/// the precedence function behind `iqRank`, which is what the board's IQ SORT
+/// compares on. Its renderer `ProspectIQCell` is DELETED (fixup): after the
+/// split it had zero call sites — the draft room it was "kept for" never drew
+/// it — so it was dead code whose doc comment asserted the opposite.
 static func tapeRead(_ prospect: CollegeProspect) -> IQRead   // .scouts | .none
 static func meetRead(_ prospect: CollegeProspect) -> IQRead   // .interview | .none
 struct ProspectTapeCell: View { let prospect: CollegeProspect; var width: CGFloat }
@@ -706,4 +709,4 @@ Run in order; every gate must be green before the wave is called done.
 6. **Grep gates** (cheap, run in CI-ish fashion):
    `personalWorkoutsUsed` → 0 hits · `ProspectListView` → 0 hits ·
    `proDayWeek` → 0 hits · `&prospects` inside `UI/Scouting/` → 0 hits ·
-   `ProspectIQCell` outside the draft room → 0 hits.
+   `ProspectIQCell` anywhere → 0 hits (the type is deleted).

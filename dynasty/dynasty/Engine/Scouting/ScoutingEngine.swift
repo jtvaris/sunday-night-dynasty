@@ -1538,11 +1538,18 @@ enum ScoutingEngine {
                 continue
             }
 
-            if prospects[i].combineInvite {
-                // Combine invitees can improve ONE drill result (athlete chooses best chance)
+            // The branch is "does he already have numbers", not "was he invited
+            // to Indianapolis". The league circuit (`runLeagueProDays`) now
+            // tests every declared man, so a non-invitee arrives here with a
+            // public line already on him — re-rolling it hand-timed would let a
+            // club that PAID to attend post a worse time than the broadcast
+            // feed did. A man with numbers improves one drill; a man without
+            // (the class never covered by the circuit) gets the hand-timed set.
+            if prospects[i].fortyTime != nil {
+                // One drill improved — the athlete picks his best chance.
                 improveOneDrill(prospect: &prospects[i], physical: phys)
             } else {
-                // Non-combine invitees: generate hand-timed results (±3% less accurate)
+                // Untested: generate hand-timed results (±3% less accurate)
                 generateHandTimedResults(prospect: &prospects[i], physical: phys, position: position)
             }
 
@@ -1557,6 +1564,113 @@ enum ScoutingEngine {
         if !scout.proDayColleges.contains(college) {
             scout.proDayColleges.append(college)
         }
+    }
+
+    // MARK: - Pro Day school list (pure)
+
+    /// One row of the pro-day school list, precomputed.
+    ///
+    /// Exists because the screen used to derive every one of these numbers
+    /// inside a computed property, on every SwiftUI body evaluation, with a
+    /// `JSONDecoder` pass over the persisted custom board behind each single
+    /// board-rank lookup (plan finding F6).
+    struct ProDaySchoolSummary: Identifiable {
+        let college: String
+        /// Men declaring for the draft out of this school.
+        let declared: Int
+        /// `userMark == .elite`.
+        let eliteCount: Int
+        /// `userMark.isBoardPositive` — elite AND target. Elite is a subset.
+        let targetedCount: Int
+        /// Men at one of the club's top-5 roster needs.
+        let needCount: Int
+        /// Highest-graded declared man at the school, for the "your #N" line.
+        let bestProspectID: UUID?
+        /// Sort key: `targeted*10 + top50*5 + need*3 + declared`.
+        let relevance: Int
+        /// A scout has this school reserved.
+        let isFocused: Bool
+        let focusedScoutName: String?
+
+        var id: String { college }
+    }
+
+    /// Builds the whole school list in ONE pass.
+    ///
+    /// PURE by contract: it takes a precomputed `boardRanks` map and never
+    /// touches `UserDefaults`, so a caller can compute it once into `@State`
+    /// instead of paying for it per row per body evaluation.
+    ///
+    /// - Parameters:
+    ///   - prospects: the draft class (filtered internally to declared men).
+    ///   - scouts: the department, read only for focus reservations.
+    ///   - teamNeeds: `DraftEngine.topTeamNeeds(roster:limit:5)`.
+    ///   - boardRanks: prospect ID → 1-based rank on the user's custom board.
+    /// - Returns: schools sorted by `relevance`, descending, name-stable.
+    static func proDaySchoolSummaries(
+        prospects: [CollegeProspect],
+        scouts: [Scout],
+        teamNeeds: Set<Position>,
+        boardRanks: [UUID: Int]
+    ) -> [ProDaySchoolSummary] {
+        // Focus reservations, indexed once. `proDayColleges` is the reservation
+        // ledger: a school lands in it when a slot is assigned, and the tour is
+        // what later turns it into an executed visit.
+        var focusByCollege: [String: String] = [:]
+        for scout in scouts {
+            for college in scout.proDayColleges where focusByCollege[college] == nil {
+                focusByCollege[college] = scout.fullName
+            }
+        }
+
+        struct Accumulator {
+            var declared = 0
+            var elite = 0
+            var targeted = 0
+            var need = 0
+            var top50 = 0
+            var bestID: UUID?
+            var bestGrade = -1
+        }
+
+        var byCollege: [String: Accumulator] = [:]
+        byCollege.reserveCapacity(128)
+
+        for prospect in prospects where prospect.isDeclaringForDraft {
+            var acc = byCollege[prospect.college] ?? Accumulator()
+            acc.declared += 1
+            let mark = prospect.userMark
+            if mark == .elite { acc.elite += 1 }
+            if mark.isBoardPositive { acc.targeted += 1 }
+            if teamNeeds.contains(prospect.position) { acc.need += 1 }
+            if let rank = boardRanks[prospect.id], rank <= 50 { acc.top50 += 1 }
+            let grade = prospect.scoutedOverall ?? 0
+            if grade > acc.bestGrade {
+                acc.bestGrade = grade
+                acc.bestID = prospect.id
+            }
+            byCollege[prospect.college] = acc
+        }
+
+        return byCollege
+            .map { college, acc in
+                ProDaySchoolSummary(
+                    college: college,
+                    declared: acc.declared,
+                    eliteCount: acc.elite,
+                    targetedCount: acc.targeted,
+                    needCount: acc.need,
+                    bestProspectID: acc.bestID,
+                    relevance: acc.targeted * 10 + acc.top50 * 5 + acc.need * 3 + acc.declared,
+                    isFocused: focusByCollege[college] != nil,
+                    focusedScoutName: focusByCollege[college]
+                )
+            }
+            .sorted {
+                $0.relevance != $1.relevance
+                    ? $0.relevance > $1.relevance
+                    : $0.college < $1.college
+            }
     }
 
     /// For combine invitees at pro day: improve their weakest drill result.
@@ -1681,12 +1795,59 @@ enum ScoutingEngine {
 
     // MARK: - Personal Workout System
 
+    /// What one private workout actually told the building — the payload the
+    /// workout modal renders.
+    ///
+    /// The workout used to be a `Void` call: it appended a 0.9-confidence report
+    /// and the user was shown an alert that said "done". The grade band moved
+    /// underneath him with no before/after, and the two most expensive things
+    /// the session buys — the scheme-fit read and the personality read — were
+    /// written into the report's notes where nothing surfaced them.
+    struct WorkoutResult: Identifiable {
+        let prospectID: UUID
+        /// Fog-safe band before the session (`nil` = nobody had filed on him).
+        let gradeBefore: GradeRange?
+        /// Fog-safe band after the report landed.
+        let gradeAfter: GradeRange?
+        /// How he fits what the coordinators run.
+        let schemeFitNote: String
+        /// The room's read on the man, when the staff got one (85 % of the time).
+        let personalityNote: String?
+        /// Position strengths and weaknesses the session surfaced.
+        let impressions: [String]
+
+        var id: UUID { prospectID }
+    }
+
+    /// Has this club already spent a private-workout slot on this man?
+    ///
+    /// The record of a private workout is the `.personalWorkout` report the
+    /// session files — that report IS the receipt, and it is the only marker
+    /// that means "worked out" and nothing else. `proDayCompleted` does NOT:
+    /// `attendProDay` flips it for every declared man at a focused school, so
+    /// using it as the workout gate made a pro-day tour silently delete the
+    /// workout stage's whole candidate list one stage later.
+    ///
+    /// One line, one authority — `WorkoutsTabView`, `ProspectDetailView` and
+    /// the board's work-up column all read this.
+    static func hasWorkedOutPrivately(_ prospect: CollegeProspect) -> Bool {
+        prospect.scoutingReports.contains { $0.phase == .personalWorkout }
+    }
+
     /// Invite a prospect for a personal workout. Highest accuracy evaluation (confidence 0.9).
     /// Generates a scout report at `.personalWorkout` phase with scheme fit evaluation.
+    ///
+    /// Returns what the session found so the caller can put it in front of the
+    /// user. The mutation itself must go through ``DraftClassMutator`` — the
+    /// canonical class is what every other surface reads.
+    @discardableResult
     static func conductPersonalWorkout(
         prospect: CollegeProspect,
         coaches: [Coach]
-    ) {
+    ) -> WorkoutResult {
+        // 0. The band the user was looking at when he spent the slot.
+        let gradeBefore = prospect.effectiveOverallGrade
+
         // 1. Generate a high-confidence scout report
         // Use the best coaching staff member's scouting ability as the basis
         let bestScoutingAbility = coaches.map { $0.scoutingAbility }.max() ?? 50
@@ -1703,14 +1864,14 @@ enum ScoutingEngine {
         // 2. Scheme fit evaluation based on coaches
         let schemeFitNotes = evaluateSchemeFit(prospect: prospect, coaches: coaches)
 
-        // 3. Personality read (very accurate in personal setting)
-        let personalityNotes: String?
-        if Int.random(in: 1...100) <= 85 {
-            personalityNotes = accuratePersonalityNote(archetype: prospect.truePersonality.archetype)
-                + " " + schemeFitNotes
-        } else {
-            personalityNotes = schemeFitNotes
-        }
+        // 3. Personality read (very accurate in personal setting). Kept as its
+        // own value so the modal can print the two instruments apart; the
+        // report's `personalityNotes` field still carries the merged string it
+        // always did.
+        let personalityRead: String? = Int.random(in: 1...100) <= 85
+            ? accuratePersonalityNote(archetype: prospect.truePersonality.archetype)
+            : nil
+        let personalityNotes: String? = personalityRead.map { $0 + " " + schemeFitNotes } ?? schemeFitNotes
 
         // 4. Generate full workout report
         let strengthNotes = generatePositionStrengths(for: prospect, accuracy: min(99, bestScoutingAbility + 15))
@@ -1741,6 +1902,19 @@ enum ScoutingEngine {
         }
 
         prospect.proDayCompleted = true
+
+        // 6. Hand the session back to the caller so the modal can show what the
+        // slot bought instead of a "done" alert.
+        let impressions = [strengthNotes, weaknessNotes]
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        return WorkoutResult(
+            prospectID: prospect.id,
+            gradeBefore: gradeBefore,
+            gradeAfter: prospect.effectiveOverallGrade,
+            schemeFitNote: schemeFitNotes,
+            personalityNote: personalityRead,
+            impressions: impressions
+        )
     }
 
     /// Evaluate how well a prospect fits the team's schemes based on coaching staff.
@@ -3585,9 +3759,21 @@ enum ScoutingEngine {
     /// not go. `attendProDay` remains the paid trip that buys the decimals, a
     /// filed `.proDay` report and the flag-disclosure step.
     ///
-    /// Idempotent by construction: the cohort is defined as "invited, declared,
-    /// no forty time", which this pass empties. Kickers and punters are excluded
-    /// — they never had drills to miss.
+    /// Idempotent by construction: the cohort is defined as "declared, no forty
+    /// time", which this pass empties. Kickers and punters are excluded — they
+    /// never had drills to miss.
+    ///
+    /// **The cohort is every declared man, not just combine invitees.** It used
+    /// to carry an extra `combineInvite` clause, which made the circuit cover
+    /// only the invitees the combine had sent home blank — so a declared
+    /// non-invitee at a school nobody focused got no numbers at all and carried
+    /// empty combine cells to the draft, while the pro-day screen told the user
+    /// (correctly, per plan §5.5/§5.8) that "every club reads every pro day off
+    /// the feed". Small-school pro days are exactly the ones scouts fly to; the
+    /// distinction the design rations is PRECISION, not existence, and that
+    /// distinction is `proDayCompleted` — still untouched here, so a club that
+    /// stayed home reads "~4.5" through `ProspectFog.combineFidelity` while the
+    /// club that travelled reads the decimal.
     ///
     /// - Returns: `nil` when there was nobody to test.
     @discardableResult
@@ -3598,8 +3784,7 @@ enum ScoutingEngine {
         let cohortIndices = prospects.indices
             .filter { index in
                 let p = prospects[index]
-                return p.combineInvite
-                    && p.isDeclaringForDraft
+                return p.isDeclaringForDraft
                     && p.position != .K && p.position != .P
                     && p.fortyTime == nil
             }

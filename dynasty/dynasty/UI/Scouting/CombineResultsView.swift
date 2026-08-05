@@ -1,7 +1,39 @@
 import SwiftUI
 import SwiftData
 
-struct CombineResultsView: View {
+// Column widths, shared by the header and the row so a label always sits
+// over its own cell. They were trimmed from ~1000 pt total to ~866 when the
+// table stopped scrolling sideways: 866 + 16 pt of list insets clears a
+// portrait iPad (1024) with room, and a landscape one comfortably.
+private enum CombineW {
+    static let mark: CGFloat = 40
+    static let rank: CGFloat = 32
+    static let name: CGFloat = 130
+    static let pos: CGFloat = 40
+    static let grade: CGFloat = 56
+    static let prod: CGFloat = 46
+    static let proj: CGFloat = 38
+    static let college: CGFloat = 88
+    static let forty: CGFloat = 54
+    static let bench: CGFloat = 52
+    static let vertical: CGFloat = 52
+    static let broad: CGFloat = 54
+    static let cone: CGFloat = 56
+    static let shuttle: CGFloat = 56
+    static let drill: CGFloat = 56
+    static let chevron: CGFloat = 16
+}
+
+/// The combine table.
+///
+/// It used to be a horizontally scrolling table nested inside a vertical one,
+/// with its title bar and its risers/fallers strip pinned above both — three
+/// scroll regions on one screen and no way for the hub's header to scroll away
+/// with the content. It is a `List` now, like every other prospect surface:
+/// the hub header is its first section, the column headers are a pinned section
+/// header, and the columns were trimmed ~130 pt so the table fits an iPad in
+/// both orientations without a sideways scroll.
+struct CombineResultsView<Header: View>: View {
     let career: Career
     let prospects: [CollegeProspect]
 
@@ -22,6 +54,9 @@ struct CombineResultsView: View {
     /// Shared with the Big Board and the Prospects list — the chips live in
     /// `ScoutingHubView` now, so a filter survives a tab switch.
     @Binding var positionFilter: ProspectPositionFilter
+
+    /// The hub's scroll-away header, rendered as this list's first section.
+    let header: () -> Header
 
     @Environment(\.modelContext) private var modelContext
     @State private var sortColumn: CombineColumn = .rank
@@ -230,63 +265,74 @@ struct CombineResultsView: View {
                         .foregroundColor(.secondary)
                 }
             } else {
-            VStack(spacing: 0) {
-                headerBar
-                    .padding(.horizontal, 20)
-                    .padding(.top, 16)
-                    .padding(.bottom, 12)
+            List {
+                // The hub header, as this list's FIRST SECTION — one scroll
+                // owner, one gesture (plan §5.4).
+                Section {
+                    header()
+                }
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
 
-                Divider()
-                    .overlay(Color.surfaceBorder)
+                Section {
+                    headerBar
+                }
+                .listRowInsets(EdgeInsets(top: 2, leading: 8, bottom: 10, trailing: 8))
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
 
                 if combineInvitees.isEmpty {
-                    emptyState
+                    Section {
+                        emptyState
+                            .frame(minHeight: 240)
+                    }
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
                 } else {
-                    // Risers & Fallers section
                     if !combineRisers.isEmpty || !combineFallers.isEmpty {
-                        risersAndFallersSection
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 10)
-
-                        Divider().overlay(Color.surfaceBorder)
+                        Section {
+                            risersAndFallersSection
+                        }
+                        .listRowInsets(EdgeInsets(top: 2, leading: 8, bottom: 10, trailing: 8))
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
                     }
 
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        VStack(spacing: 0) {
-                            columnHeaders
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 10)
-                                .background(Color.backgroundSecondary)
-
-                            Divider().overlay(Color.surfaceBorder)
-
-                            ScrollView(.vertical, showsIndicators: true) {
-                                LazyVStack(spacing: 0) {
-                                    ForEach(Array(cachedSortedProspects.enumerated()), id: \.element.id) { index, prospect in
-                                        NavigationLink(destination: ProspectDetailView(career: career, prospect: prospect)) {
-                                            combineRow(index: index + 1, prospect: prospect)
-                                                .padding(.horizontal, 16)
-                                                .padding(.vertical, 8)
-                                                .background(index % 2 == 0 ? Color.backgroundPrimary : Color.backgroundSecondary.opacity(0.5))
-                                        }
-                                        .buttonStyle(.plain)
-                                        .accessibilityElement(children: .combine)
-                                        .accessibilityHint("Tap to view prospect details")
-                                        .contextMenu {
-                                            ProspectGradeContextMenu(
-                                                prospect: prospect,
-                                                onChange: { try? modelContext.save() }
-                                            )
-                                        }
-
-                                        Divider().overlay(Color.surfaceBorder.opacity(0.5))
-                                    }
-                                }
+                    Section {
+                        ForEach(Array(cachedSortedProspects.enumerated()), id: \.element.id) { index, prospect in
+                            NavigationLink(destination: ProspectDetailView(career: career, prospect: prospect)) {
+                                combineRow(index: index + 1, prospect: prospect)
+                            }
+                            .listRowInsets(EdgeInsets(top: 5, leading: 8, bottom: 5, trailing: 8))
+                            .listRowBackground(
+                                index % 2 == 0
+                                    ? Color.backgroundPrimary
+                                    : Color.backgroundSecondary.opacity(0.5)
+                            )
+                            .accessibilityElement(children: .combine)
+                            .accessibilityHint("Tap to view prospect details")
+                            .contextMenu {
+                                ProspectGradeContextMenu(
+                                    prospect: prospect,
+                                    onChange: { try? modelContext.save() }
+                                )
                             }
                         }
+                    } header: {
+                        // `.plain` pins section headers, so the column labels
+                        // stay over their columns while the table scrolls —
+                        // which the old nested-scroll layout never managed.
+                        columnHeaders
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 6)
+                            .background(Color.backgroundSecondary)
                     }
                 }
             }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
             } // end else (not loading)
         }
         .task {
@@ -490,22 +536,23 @@ struct CombineResultsView: View {
         HStack(spacing: 0) {
             // Star column (no sort)
             Text("")
-                .frame(width: 30)
+                .frame(width: CombineW.mark)
 
-            sortableHeader("Rank", column: .rank, width: 42)
-            sortableHeader("Name", column: .name, width: 140, alignment: .leading)
-            sortableHeader("Pos", column: .position, width: 44)
-            sortableHeader("GRD", column: .grade, width: 54)
-            sortableHeader("PROD", column: .production, width: 52)
-            sortableHeader("Proj", column: .projection, width: 44)
-            sortableHeader("College", column: .college, width: 110, alignment: .leading)
-            sortableHeader("40yd", column: .fortyYard, width: 60)
-            sortableHeader("Bench", column: .bench, width: 60)
-            sortableHeader("Vert", column: .vertical, width: 60)
-            sortableHeader("Broad", column: .broadJump, width: 60)
-            sortableHeader("3-Cone", column: .threeCone, width: 66)
-            sortableHeader("Shuttle", column: .shuttle, width: 66)
-            sortableHeader("Pos Drill", column: .positionDrill, width: 66)
+            sortableHeader("Rank", column: .rank, width: CombineW.rank)
+            sortableHeader("Name", column: .name, width: CombineW.name, alignment: .leading)
+            sortableHeader("Pos", column: .position, width: CombineW.pos)
+            sortableHeader("GRD", column: .grade, width: CombineW.grade)
+            sortableHeader("PROD", column: .production, width: CombineW.prod)
+            sortableHeader("Proj", column: .projection, width: CombineW.proj)
+            sortableHeader("College", column: .college, width: CombineW.college, alignment: .leading)
+            sortableHeader("40yd", column: .fortyYard, width: CombineW.forty)
+            sortableHeader("Bench", column: .bench, width: CombineW.bench)
+            sortableHeader("Vert", column: .vertical, width: CombineW.vertical)
+            sortableHeader("Broad", column: .broadJump, width: CombineW.broad)
+            sortableHeader("3-Cone", column: .threeCone, width: CombineW.cone)
+            sortableHeader("Shuttle", column: .shuttle, width: CombineW.shuttle)
+            sortableHeader("Pos Drill", column: .positionDrill, width: CombineW.drill)
+            Spacer().frame(width: CombineW.chevron)
         }
     }
 
@@ -554,13 +601,13 @@ struct CombineResultsView: View {
                 prospect: prospect,
                 onChange: { try? modelContext.save() }
             )
-            .frame(width: 44)
+            .frame(width: CombineW.mark)
 
             // Rank
             Text("\(index)")
                 .font(.caption.weight(.semibold).monospacedDigit())
                 .foregroundStyle(Color.textSecondary)
-                .frame(width: 42)
+                .frame(width: CombineW.rank)
 
             // Name + media mention + NEED badge
             HStack(spacing: 4) {
@@ -624,15 +671,15 @@ struct CombineResultsView: View {
                         .accessibilityAddTraits(.isButton)
                 }
             }
-            .frame(width: 140, alignment: .leading)
+            .frame(width: CombineW.name, alignment: .leading)
 
             // Position
             Text(prospect.position.rawValue)
                 .font(.caption2.weight(.bold))
                 .foregroundStyle(Color.textPrimary)
-                .frame(width: 34, height: 22)
+                .frame(width: CombineW.pos - 6, height: 22)
                 .background(positionColor(for: prospect), in: RoundedRectangle(cornerRadius: 3))
-                .frame(width: 44)
+                .frame(width: CombineW.pos)
 
             // GRD column - dual grade display with refinement trend arrow
             DualGradeDisplay(
@@ -641,51 +688,51 @@ struct CombineResultsView: View {
                 scoutGradeColor: gradeDisplayColor(for: prospect),
                 trajectory: prospect.stockTrajectory
             )
-            .frame(width: 64)
+            .frame(width: CombineW.grade)
 
             // PROD column — college production tier
-            ProductionTierChip(tier: prospect.collegeProductionTier, width: 52, fontSize: 10)
+            ProductionTierChip(tier: prospect.collegeProductionTier, width: CombineW.prod, fontSize: 10)
 
             // Proj column
             Text(projectionDisplayText(for: prospect))
                 .font(.caption.weight(.medium).monospacedDigit())
                 .foregroundStyle(Color.textSecondary)
-                .frame(width: 44)
+                .frame(width: CombineW.proj)
 
             // College
             Text(prospect.college)
                 .font(.caption)
                 .foregroundStyle(Color.textSecondary)
                 .lineLimit(1)
-                .frame(width: 110, alignment: .leading)
+                .frame(width: CombineW.college, alignment: .leading)
 
             drillCell(value: ProspectFog.fortyText(prospect.fortyTime, fidelity: fidelity),
-                      tier: prospect.fortyTime.map { fortyTierForPosition($0, prospect.position) }, width: 60,
+                      tier: prospect.fortyTime.map { fortyTierForPosition($0, prospect.position) }, width: CombineW.forty,
                       percentile: showsPercentile ? prospect.fortyTime.map { drillPercentile($0, drill: .forty, prospect.position) } : nil,
                       emptyText: dash)
 
             drillCell(value: ProspectFog.benchText(prospect.benchPress, fidelity: fidelity),
-                      tier: prospect.benchPress.map { benchTier($0) }, width: 60,
+                      tier: prospect.benchPress.map { benchTier($0) }, width: CombineW.bench,
                       percentile: showsPercentile ? prospect.benchPress.map { drillPercentile(Double($0), drill: .bench, prospect.position) } : nil,
                       emptyText: benchDash)
 
             drillCell(value: ProspectFog.verticalText(prospect.verticalJump, fidelity: fidelity),
-                      tier: prospect.verticalJump.map { verticalTier($0) }, width: 60,
+                      tier: prospect.verticalJump.map { verticalTier($0) }, width: CombineW.vertical,
                       percentile: showsPercentile ? prospect.verticalJump.map { drillPercentile($0, drill: .vertical, prospect.position) } : nil,
                       emptyText: dash)
 
             drillCell(value: ProspectFog.broadJumpText(prospect.broadJump, fidelity: fidelity),
-                      tier: prospect.broadJump.map { broadTier($0) }, width: 60,
+                      tier: prospect.broadJump.map { broadTier($0) }, width: CombineW.broad,
                       percentile: showsPercentile ? prospect.broadJump.map { drillPercentile(Double($0), drill: .broad, prospect.position) } : nil,
                       emptyText: dash)
 
             drillCell(value: ProspectFog.agilityText(prospect.coneDrill, fidelity: fidelity),
-                      tier: prospect.coneDrill.map { coneTier($0) }, width: 66,
+                      tier: prospect.coneDrill.map { coneTier($0) }, width: CombineW.cone,
                       percentile: showsPercentile ? prospect.coneDrill.map { drillPercentile($0, drill: .threeCone, prospect.position) } : nil,
                       emptyText: dash)
 
             drillCell(value: ProspectFog.agilityText(prospect.shuttleTime, fidelity: fidelity),
-                      tier: prospect.shuttleTime.map { shuttleTier($0) }, width: 66,
+                      tier: prospect.shuttleTime.map { shuttleTier($0) }, width: CombineW.shuttle,
                       percentile: showsPercentile ? prospect.shuttleTime.map { drillPercentile($0, drill: .shuttle, prospect.position) } : nil,
                       emptyText: dash)
 
@@ -695,13 +742,13 @@ struct CombineResultsView: View {
             Text(drillGrade ?? dash)
                 .font(.caption.weight(.bold))
                 .foregroundStyle(drillGrade.map { PositionGradeCalculator.gradeColorForLetter($0) } ?? Color.textTertiary)
-                .frame(width: 66)
+                .frame(width: CombineW.drill)
 
             // Chevron for row navigation
             Image(systemName: "chevron.right")
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(Color.textTertiary)
-                .frame(width: 20)
+                .frame(width: CombineW.chevron)
         }
     }
 
@@ -1099,7 +1146,8 @@ struct PercentilePools {
                     draftProjection: 1
                 ),
             ],
-            positionFilter: .constant(.all)
+            positionFilter: .constant(.all),
+            header: { EmptyView() }
         )
     }
 }

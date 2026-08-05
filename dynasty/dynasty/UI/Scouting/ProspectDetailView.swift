@@ -140,6 +140,8 @@ struct ProspectDetailView: View {
     /// rookie contract at the league's ACTUAL cap (task #87 / F17).
     @State private var userTeam: Team?
     @State private var showMarkNote = false
+    /// Set by `performWorkout`; presents the shared `WorkoutResultSheet`.
+    @State private var workoutResult: ScoutingEngine.WorkoutResult?
     /// The owner's scouting pot in thousands, loaded with the scouts.
     @State private var scoutingBudget: Int = 4_000
 
@@ -217,13 +219,16 @@ struct ProspectDetailView: View {
         return career.currentPhase == .combine || career.currentPhase == .proDays
     }
 
-    /// `ProDayListView.isProDayPhase` — the hub's own pro-day/workout window.
+    /// The workout LADDER, not a phase window (plan F3 / §5.2).
+    ///
+    /// This used to be a phase test that opened on the first day of the combine
+    /// — the most rationed instrument in the pre-draft process was live before
+    /// anybody had watched a single frame of tape, which is exactly backwards.
+    /// The stage machine is the gate now: a private workout is available from
+    /// the workout stage onward, and `WorkoutsTabView` reads the same line.
     private var isWorkoutWindow: Bool {
         guard !isLiveDraftCard else { return false }
-        switch career.currentPhase {
-        case .combine, .freeAgency, .proDays, .draft: return true
-        default:                                      return false
-        }
+        return career.prepStep.order >= DraftPrepStep.workouts.order
     }
 
     /// The one sentence every blocked action prints on draft night, so a
@@ -234,8 +239,15 @@ struct ProspectDetailView: View {
         isInterviewWindow && !prospect.interviewCompleted && career.interviewsUsed < Self.maxInterviews
     }
 
+    /// One man, one private workout. The record of it is the filed
+    /// `.personalWorkout` report — NOT `proDayCompleted`, which the pro-day tour
+    /// sets for every declared man at a focused school and which therefore
+    /// blocked the workout stage on exactly the prospects the tour was for.
+    /// `WorkoutsTabView` reads the same line.
     private var canWorkout: Bool {
-        isWorkoutWindow && !prospect.proDayCompleted && career.workoutsUsed < Self.maxWorkouts
+        isWorkoutWindow
+            && !ScoutingEngine.hasWorkedOutPrivately(prospect)
+            && career.workoutsUsed < Self.maxWorkouts
     }
 
     // MARK: - Evaluation gate
@@ -329,6 +341,14 @@ struct ProspectDetailView: View {
                     showMarkNote = false
                 },
                 onCancel: { showMarkNote = false }
+            )
+        }
+        .sheet(item: $workoutResult) { result in
+            WorkoutResultSheet(
+                result: result,
+                prospect: prospect,
+                slotsUsed: career.workoutsUsed,
+                slotLimit: Self.maxWorkouts
             )
         }
     }
@@ -2143,7 +2163,7 @@ struct ProspectDetailView: View {
                         ? Self.liveDraftHint
                         : isWorkoutWindow
                             ? "All \(Self.maxWorkouts) workout slots are spent for this cycle."
-                            : "Workouts run from the combine through draft week."
+                            : "Available at the workout stage \u{2014} you are at \(career.prepStep.displayName)."
                 )
             }
 
@@ -2405,13 +2425,22 @@ struct ProspectDetailView: View {
         return "\(phase) \u{00B7} " + String(career.currentSeason)
     }
 
+    /// Same chokepoint and same modal as `WorkoutsTabView` — a workout ordered
+    /// from the card and a workout ordered from the workouts tab are one action
+    /// with one economy (`career.workoutsUsed` / 30) and one engine.
     private func performWorkout() {
-        ScoutingEngine.conductPersonalWorkout(
-            prospect: prospect,
-            coaches: coaches
-        )
+        guard canWorkout else { return }
+
+        var result: ScoutingEngine.WorkoutResult?
+        let applied = DraftClassMutator.mutate(modelContext) { klass in
+            guard let idx = klass.firstIndex(where: { $0.id == prospect.id }) else { return }
+            result = ScoutingEngine.conductPersonalWorkout(prospect: klass[idx], coaches: coaches)
+        }
+        guard applied, let result else { return }
+
         career.workoutsUsed += 1
         try? modelContext.save()
+        workoutResult = result
     }
 }
 

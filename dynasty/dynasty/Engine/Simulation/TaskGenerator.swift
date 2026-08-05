@@ -71,6 +71,17 @@ enum TaskDestination: String, Codable, CaseIterable {
     case interviewReport
     case personalWorkouts
     case developmentReport
+    // MARK: Draft-prep stages (#103)
+    /// TAPE — order film study on the board (spends evaluation slots).
+    case filmStudy
+    /// Choose the pro-day schools the department travels to.
+    case proDayTour
+    /// Private workouts with the coaching staff.
+    case workouts
+    /// Pre-draft facility visits.
+    case top30Visits
+    /// The mock-draft screen, as a league information event.
+    case mockDraft
     /// R32: League History & Hall of Fame screen.
     case history
     /// #40: Draft Report Card — hindsight draft-class grades.
@@ -508,6 +519,18 @@ enum TaskGenerator {
                 destination: .bigBoard,
                 isRequired: false
             ),
+            // Stage: filmStudy (#103). The TAPE half of the evaluation ladder,
+            // funded by the existing evaluation-slot economy — no new currency.
+            // Optional until Wave A ships the stage screen and its skip button;
+            // a required task with no surface to satisfy it is a dead career.
+            GameTask(
+                phase: .combine,
+                title: DraftPrepStep.filmStudy.requiredTaskKey ?? "Order film study on your board",
+                description: "Put the scouts on tape for the men at the top of your board. Reports cost evaluation slots.",
+                icon: "film.stack",
+                destination: .filmStudy,
+                isRequired: false
+            ),
             // Step 3: REQUIRED — unlocks after step 2
             GameTask(
                 phase: .combine,
@@ -625,14 +648,28 @@ enum TaskGenerator {
         ]
     }
 
+    /// The pro-day phase task list, keyed to the ``DraftPrepStep`` stages that
+    /// run inside it (#103).
+    ///
+    /// Titles come from ``DraftPrepStep/requiredTaskKey`` so the stage machine
+    /// and the task list cannot drift apart — the stage's advance button is
+    /// gated on finding a task with exactly that `matchKey`.
+    ///
+    /// Only the two tasks that were required before this wave are required now.
+    /// The new stage rows ship optional and Waves A/B promote them as their
+    /// screens (and their skip buttons) land: a required task the user has no
+    /// surface to satisfy would make the phase un-advanceable.
     private static func proDaysTasks(allScoutsAssigned: Bool = false) -> [GameTask] {
         [
+            // Stage: proDayFocus. Assigning a school reserves a focus slot;
+            // nothing runs until the stage's advance button sends the
+            // department out (that single execution path is Wave B).
             GameTask(
                 phase: .proDays,
-                title: "Assign scouts to Pro Days",
-                description: "Send your scouts to college pro days to evaluate prospects in their home environment.",
+                title: DraftPrepStep.proDayFocus.requiredTaskKey ?? "Choose pro-day schools",
+                description: "Every school holds a pro day and the numbers are public. Pick the ones worth the trip \u{2014} your staff buys exact times, a filed report and a closer look there.",
                 icon: "figure.run",
-                destination: .scouting,
+                destination: .proDayTour,
                 isRequired: true,
                 status: allScoutsAssigned ? .done : .todo
             ),
@@ -644,12 +681,41 @@ enum TaskGenerator {
                 destination: .scouting,
                 isRequired: true
             ),
+            // Stage: workouts.
             GameTask(
                 phase: .proDays,
-                title: "Conduct personal workouts",
+                title: DraftPrepStep.workouts.requiredTaskKey ?? "Invite prospects to work out",
                 description: "Invite top prospects for private workouts with your coaching staff.",
                 icon: "dumbbell.fill",
-                destination: .personalWorkouts,
+                destination: .workouts,
+                isRequired: false
+            ),
+            // Stage: mockOne — the post-tour mock, read as a league event.
+            GameTask(
+                phase: .proDays,
+                title: DraftPrepStep.mockOne.requiredTaskKey ?? "Read the mock",
+                description: "The first mock since the pro-day circuit. See where the league has your board \u{2014} and where it disagrees with you.",
+                icon: "doc.text",
+                destination: .mockDraft,
+                isRequired: false
+            ),
+            // Stage: top30Visits — facility visits, the last instrument before
+            // the draft.
+            GameTask(
+                phase: .proDays,
+                title: DraftPrepStep.top30Visits.requiredTaskKey ?? "Host Top-30 visits",
+                description: "Bring prospects to the facility. Thirty visits, and the rest of the league is watching who walks in.",
+                icon: "building.2.fill",
+                destination: .top30Visits,
+                isRequired: false
+            ),
+            // Stage: mockTwo — the last board event before the draft.
+            GameTask(
+                phase: .proDays,
+                title: DraftPrepStep.mockTwo.requiredTaskKey ?? "Read the final mock",
+                description: "The last mock before the draft. Compare it against Mock 1.0 and against your own board.",
+                icon: "doc.text.fill",
+                destination: .mockDraft,
                 isRequired: false
             ),
             GameTask(
@@ -1101,6 +1167,14 @@ enum TaskGenerator {
         "Conduct prospect interviews",
         "Review interview report",
     ]
+
+    /// The pre-draft pipeline's required task keys, in stage order (#103).
+    ///
+    /// Derived from ``DraftPrepStep/requiredTaskKey`` rather than typed out a
+    /// second time — this is the same class of bug `combineChain` was extracted
+    /// to kill, one step earlier: a chain that disagrees with the state machine
+    /// it is supposed to describe. Compare against ``GameTask/matchKey``.
+    static let draftPrepChain: [String] = DraftPrepStep.allCases.compactMap(\.requiredTaskKey)
 }
 
 // MARK: - Stable identity

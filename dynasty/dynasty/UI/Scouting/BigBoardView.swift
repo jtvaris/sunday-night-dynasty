@@ -1,7 +1,42 @@
 import SwiftUI
 import SwiftData
 
-struct BigBoardView: View {
+// MARK: - Board constants
+//
+// File scope rather than static members: `BigBoardView` is generic over its
+// header view, and a generic type cannot hold static stored properties.
+
+/// The user's own draft-grade options in the assessment sheet.
+private let bigBoardGradeOptions = ["none", "A+", "A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D", "F"]
+
+private let bigBoardTierNames = ["Blue Chip", "First Rounder", "Day Two (Rd 2-3)", "Day Three (Rd 4-5)", "Late Rounds (Rd 6-7)", "Priority UDFA", "Draftable"]
+private let bigBoardTierColors: [Color] = [.accentGold, .success, .accentBlue, .accentBlue.opacity(0.6), .textSecondary, .textTertiary, .textTertiary]
+private let bigBoardTierDescriptions = [
+    "Elite talent, projected Rd 1 pick",
+    "Top tier, solid Rd 1-2 projection",
+    "Quality starters, Rd 2-3 range",
+    "Developmental starters, Rd 4-5 range",
+    "Depth / special teams, Rd 6-7 range",
+    "Undrafted free agent priority",
+    "Camp bodies / long-shot prospects"
+]
+
+/// Cap on how many men of one position a single scout tier may hold.
+private let bigBoardMaxSamePositionPerTier = 4
+
+/// The one prospect list surface.
+///
+/// It used to be two: a "Prospects" tab and this one, over the same array, with
+/// the same attribute-mode picker declared once and re-hosted as `@State` in
+/// both. The board is the richer of the two — tiers, My Board, the compare
+/// tray, `.onMove` reordering, board-vs-media comparison — so the list is gone
+/// and its one unique idea, the work-up column block, is a mode here.
+///
+/// The hub's header is passed in by closure and rendered as this list's FIRST
+/// SECTION, which is what makes the whole page scroll with one gesture without
+/// nesting a `List` inside a `ScrollView` (illegal) or flattening the list into
+/// a `LazyVStack` (which would take `.onMove` with it).
+struct BigBoardView<Header: View>: View {
     let career: Career
     let prospects: [CollegeProspect]
     let teamRoster: [Player]
@@ -21,9 +56,28 @@ struct BigBoardView: View {
     /// piece of state than the board he was looking at.
     @Binding var positionFilter: ProspectPositionFilter
 
+    /// The column block the board opens on. The film-study stage opens it on
+    /// `.workup`, which is the block that answers "what work is missing".
+    var initialAttributeTab: ProspectAttributeTab = .overview
+
+    /// Film-study stage: the board IS the stage screen, and the paid evaluate
+    /// action is promoted out of the prospect card (two taps deep) into the row.
+    var isFilmStudy: Bool = false
+
+    /// The club has moved past this stage. The board stays open and read-only —
+    /// marks, notes and ordering are free and local, the priced action is not.
+    var isStageClosed: Bool = false
+
+    /// The hub's scroll-away header. Rendered as the first `Section` of the
+    /// list, never as a wrapper around it.
+    let header: () -> Header
+
     @Environment(\.modelContext) private var modelContext
     @State private var markFilter: ProspectMarkFilter = .all
     @State private var attributeTab: ProspectAttributeTab = .overview
+    /// Loaded for the film-study row action; empty everywhere else.
+    @State private var scouts: [Scout] = []
+    @State private var scoutingBudget: Int = 4_000
     @State private var showMarkedOnly: Bool = false
     @State private var editingAssessmentProspect: CollegeProspect?
     @State private var editingMarkNoteProspect: CollegeProspect?
@@ -90,7 +144,6 @@ struct BigBoardView: View {
     @CareerScopedStorage("prospectCustomBoard") private var prospectCustomBoardJSON: String = "[]"
     @CareerScopedStorage("rosterPriorities") private var rosterPrioritiesJSON: String = "{}"
 
-    private static let gradeOptions = ["none", "A+", "A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D", "F"]
 
     private var prospectOwnAssessments: [String: String] {
         (try? JSONDecoder().decode([String: String].self, from: Data(prospectOwnAssessmentsJSON.utf8))) ?? [:]
@@ -291,19 +344,143 @@ struct BigBoardView: View {
         (try? JSONDecoder().decode([String: String].self, from: Data(rosterPrioritiesJSON.utf8))) ?? [:]
     }
 
+    // MARK: - Film study (the evaluate action, promoted into the row)
+    //
+    // #79's evaluation economy, unchanged: 25 slots a cycle, 20/35/55 K rising
+    // cost, three reports a man, cycle-stamped so it resets with the class.
+    // Film study is a PRESENTATION of that spend, not a second wallet — the
+    // counters below are the same three career-scoped keys the prospect card
+    // writes, read through the same `ScoutEvaluationBudget.thisCycle` stamp.
+    //
+    // What changes is where the button is. It lived at the bottom of a prospect
+    // card's action stack, so ordering tape on twenty men was sixty taps and
+    // four screens; the stage that is *about* ordering tape needs it on the row.
+
+    @CareerScopedStorage("scoutEvaluationsUsed") private var evaluationsUsedStored: Int = 0
+    @CareerScopedStorage("scoutEvaluationSpend") private var evaluationSpendStored: Int = 0
+    @CareerScopedStorage("scoutEvaluationCycle") private var evaluationCycleStored: Int = 0
+    @CareerScopedStorage("combineTripSpend") private var combineTripSpend: Int = 0
+
+    private var evaluationsUsed: Int {
+        ScoutEvaluationBudget.thisCycle(
+            evaluationsUsedStored,
+            stampedSeason: evaluationCycleStored,
+            currentSeason: career.currentSeason
+        )
+    }
+
+    private var evaluationSpend: Int {
+        ScoutEvaluationBudget.thisCycle(
+            evaluationSpendStored,
+            stampedSeason: evaluationCycleStored,
+            currentSeason: career.currentSeason
+        )
+    }
+
+    private var evaluationSlotsLeft: Int {
+        max(0, ScoutEvaluationBudget.slotsPerCycle - evaluationsUsed)
+    }
+
+    private var remainingScoutingBudget: Int {
+        scoutingBudget
+            - scouts.reduce(0) { $0 + $1.salary }
+            - combineTripSpend
+            - evaluationSpend
+    }
+
+    /// Same ladder as the prospect card's, so a row and a card never disagree
+    /// about whether a man can be worked.
+    private func filmAvailability(for prospect: CollegeProspect) -> ScoutEvaluationAvailability {
+        guard !isStageClosed else {
+            return .windowShut(hint: "Film study closed when the department moved on.")
+        }
+        guard ScoutEvaluationBudget.isWindowOpen(career.currentPhase) else {
+            return .windowShut(hint: ScoutEvaluationBudget.windowHint(for: career.currentPhase))
+        }
+        guard !scouts.isEmpty else { return .noScouts }
+        guard prospect.scoutingReports.count < ScoutEvaluationBudget.maxReportsPerProspect else {
+            return .reportsMaxed
+        }
+        guard evaluationSlotsLeft > 0 else { return .slotsSpent }
+        let cost = ScoutEvaluationBudget.cost(existingReports: prospect.scoutingReports.count)
+        guard remainingScoutingBudget >= cost else {
+            return .cannotAfford(cost: cost, remaining: remainingScoutingBudget)
+        }
+        return .available(cost: cost, slotsLeft: evaluationSlotsLeft)
+    }
+
+    /// The scout the department would put on this man: his position specialist
+    /// first, then the most accurate eye on staff. The prospect card still lets
+    /// the user pick by hand; a board row is a bulk instrument and picking a
+    /// scout twenty times is not a decision, it is a chore.
+    private func assignedScout(for prospect: CollegeProspect) -> Scout? {
+        scouts
+            .max { lhs, rhs in
+                let l = (lhs.positionSpecialization == prospect.position ? 100 : 0) + lhs.accuracy
+                let r = (rhs.positionSpecialization == prospect.position ? 100 : 0) + rhs.accuracy
+                return l < r
+            }
+    }
+
+    /// `ProspectDetailView.currentScoutingPhase`, copied so the report a row
+    /// files carries the same confidence as one filed from the card.
+    private var currentScoutingPhase: ScoutingPhase {
+        switch career.currentPhase {
+        case .combine:                                  return .combine
+        case .freeAgency, .proDays, .draft:             return .proDay
+        case .otas, .trainingCamp, .preseason, .rosterCuts: return .personalWorkout
+        default:                                        return .collegeSeason
+        }
+    }
+
+    /// Files one report and books it against the cycle's slots and the pot.
+    ///
+    /// Every write goes through `DraftClassMutator` — the canonical class, the
+    /// SwiftData flush and the save in one call — so a report ordered from a row
+    /// survives a relaunch exactly like one ordered from the card.
+    private func orderFilmStudy(on prospect: CollegeProspect) {
+        guard case let .available(cost, _) = filmAvailability(for: prospect),
+              let scout = assignedScout(for: prospect) else { return }
+
+        let phase = currentScoutingPhase
+        let applied = DraftClassMutator.mutate(modelContext) { klass in
+            guard let index = klass.firstIndex(where: { $0.id == prospect.id }) else { return }
+            let report = ScoutingEngine.generateScoutReport(
+                scout: scout,
+                prospect: klass[index],
+                phase: phase
+            )
+            ScoutingEngine.applyReport(report: report, to: klass[index])
+        }
+        guard applied else { return }
+
+        // ORDER IS LOAD-BEARING, exactly as in `ProspectDetailView.recordEvaluation`.
+        // `evaluationsUsed` / `evaluationSpend` read through
+        // `ScoutEvaluationBudget.thisCycle`, which returns 0 while the stored
+        // stamp belongs to an earlier cycle. Stamping FIRST makes both of them
+        // start returning LAST cycle's totals, so the first film-study order of
+        // a new cycle resurrected the previous spring's spend: slots jumped
+        // 0 → 26/25, every later evaluation reported `.slotsSpent`, and the
+        // scouting pot (which also gates the combine trip) lost a full cycle.
+        // Snapshot first, stamp last.
+        let usedBefore = evaluationsUsed
+        let spendBefore = evaluationSpend
+        evaluationCycleStored = career.currentSeason
+        evaluationsUsedStored = usedBefore + 1
+        evaluationSpendStored = spendBefore + cost
+        refreshCachedBoard()
+    }
+
+    private func loadScoutingDepartment() {
+        guard let teamID = career.teamID else { return }
+        let scoutDesc = FetchDescriptor<Scout>(predicate: #Predicate { $0.teamID == teamID })
+        scouts = (try? modelContext.fetch(scoutDesc)) ?? []
+        let teamDesc = FetchDescriptor<Team>(predicate: #Predicate { $0.id == teamID })
+        scoutingBudget = (try? modelContext.fetch(teamDesc))?.first?.owner?.scoutingBudget ?? 4_000
+    }
+
     // MARK: - Tier Constants
 
-    private static let tierNames = ["Blue Chip", "First Rounder", "Day Two (Rd 2-3)", "Day Three (Rd 4-5)", "Late Rounds (Rd 6-7)", "Priority UDFA", "Draftable"]
-    private static let tierColors: [Color] = [.accentGold, .success, .accentBlue, .accentBlue.opacity(0.6), .textSecondary, .textTertiary, .textTertiary]
-    private static let tierDescriptions = [
-        "Elite talent, projected Rd 1 pick",
-        "Top tier, solid Rd 1-2 projection",
-        "Quality starters, Rd 2-3 range",
-        "Developmental starters, Rd 4-5 range",
-        "Depth / special teams, Rd 6-7 range",
-        "Undrafted free agent priority",
-        "Camp bodies / long-shot prospects"
-    ]
 
     // MARK: - Board Prospects
 
@@ -531,7 +708,6 @@ struct BigBoardView: View {
     }
 
     /// Maximum number of same-position prospects allowed per tier.
-    private static let maxSamePositionPerTier = 4
 
     /// Prospects grouped by tier, maintaining board order within each tier.
     /// Enforces position diversity: max 4 of same position per tier.
@@ -557,7 +733,7 @@ struct BigBoardView: View {
             // Check if this position already has max count in the assigned tier
             while assignedTier <= 7 {
                 let count = positionCountPerTier[assignedTier, default: [:]][pos, default: 0]
-                if count < Self.maxSamePositionPerTier {
+                if count < bigBoardMaxSamePositionPerTier {
                     break
                 }
                 assignedTier += 1
@@ -715,14 +891,76 @@ struct BigBoardView: View {
                         ? userGradeStore.getOriginalPosition(for: prospect.id)
                         : nil,
                     isSelectedForCompare: isSelectedForCompare(prospect),
+                    userTeamID: career.teamID,
                     onGradeTap: { editingAssessmentProspect = prospect }
                 )
+            }
+
+            if isFilmStudy {
+                filmStudyButton(for: prospect)
             }
         }
         .listRowBackground(Color.backgroundSecondary)
         .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 16))
         .contextMenu {
             tierContextMenu(for: prospect)
+        }
+    }
+
+    /// The film-study stage's row action: one tap orders tape on this man.
+    ///
+    /// Priced and rationed exactly as the prospect card's button is — the price
+    /// is on the button, and a blocked button says why rather than going
+    /// quietly grey.
+    @ViewBuilder
+    private func filmStudyButton(for prospect: CollegeProspect) -> some View {
+        let availability = filmAvailability(for: prospect)
+        let filed = prospect.scoutingReports.count
+        Button {
+            orderFilmStudy(on: prospect)
+        } label: {
+            VStack(spacing: 1) {
+                Image(systemName: filed >= ScoutEvaluationBudget.maxReportsPerProspect
+                      ? "checkmark.seal.fill"
+                      : "doc.text.magnifyingglass")
+                    .font(.system(size: 13))
+                Text(filmButtonCaption(availability, filed: filed))
+                    .font(.system(size: 7, weight: .heavy))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            .foregroundStyle(availability.isAvailable ? Color.accentGold : Color.textTertiary)
+            .frame(width: 38)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!availability.isAvailable)
+        .accessibilityLabel("Order film study on \(prospect.fullName)")
+        .accessibilityHint(filmAccessibilityHint(availability, filed: filed))
+    }
+
+    private func filmButtonCaption(_ availability: ScoutEvaluationAvailability, filed: Int) -> String {
+        switch availability {
+        case let .available(cost, _): return "$\(cost)K"
+        case .reportsMaxed:           return "DONE"
+        default:                      return "\(filed)/\(ScoutEvaluationBudget.maxReportsPerProspect)"
+        }
+    }
+
+    private func filmAccessibilityHint(_ availability: ScoutEvaluationAvailability, filed: Int) -> String {
+        switch availability {
+        case let .available(cost, slotsLeft):
+            return "$\(cost)K, \(slotsLeft) of \(ScoutEvaluationBudget.slotsPerCycle) evaluations left this cycle"
+        case let .windowShut(hint):
+            return hint
+        case .noScouts:
+            return "No scouts on staff \u{2014} hire one from the Scout Team tab."
+        case .slotsSpent:
+            return "All \(ScoutEvaluationBudget.slotsPerCycle) evaluations are spent this cycle."
+        case .reportsMaxed:
+            return "Three reports filed \u{2014} your department has seen everything it is going to see."
+        case let .cannotAfford(cost, remaining):
+            return "Needs $\(cost)K \u{2014} only $\(remaining)K left in the scouting budget."
         }
     }
 
@@ -823,8 +1061,6 @@ struct BigBoardView: View {
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
-            } else if scoutedProspects.isEmpty {
-                emptyState
             } else {
                 VStack(spacing: 0) {
                     // Search bar (#9)
@@ -933,17 +1169,38 @@ struct BigBoardView: View {
 
                     compareTrayBar
 
-                    // Insets MIRROR the rows' `listRowInsets` (leading 8 /
-                    // trailing 16) so each label sits over its own column.
-                    bigBoardColumnHeaders
-                        .padding(.leading, 8)
-                        .padding(.trailing, 16)
-                        .padding(.vertical, 4)
-                        .background(Color.backgroundPrimary)
+                    if !scoutedProspects.isEmpty {
+                        // Insets MIRROR the rows' `listRowInsets` (leading 8 /
+                        // trailing 16) so each label sits over its own column.
+                        bigBoardColumnHeaders
+                            .padding(.leading, 8)
+                            .padding(.trailing, 16)
+                            .padding(.vertical, 4)
+                            .background(Color.backgroundPrimary)
 
-                    Divider().overlay(Color.surfaceBorder)
+                        Divider().overlay(Color.surfaceBorder)
+                    }
 
                     List {
+                        // The hub header, as this list's FIRST SECTION. One
+                        // scroll owner, one gesture: scrolling the board scrolls
+                        // the metrics strip and the prep card off the screen
+                        // instead of leaving them parked over it.
+                        Section {
+                            header()
+                        }
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+
+                        if scoutedProspects.isEmpty {
+                            Section {
+                                emptyState
+                                    .frame(minHeight: 260)
+                            }
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                        } else {
                         recommendationsSection
                         depthAnalysisSection
                         if showBoardComparison {
@@ -1005,6 +1262,7 @@ struct BigBoardView: View {
                                 }
                             }
                         }
+                        } // end else (board has men on it)
                     }
                     .scrollContentBackground(.hidden)
                     .listStyle(.insetGrouped)
@@ -1113,6 +1371,8 @@ struct BigBoardView: View {
             recordOriginalPositions()
             loadCoaches()
             loadDraftPicks()
+            loadScoutingDepartment()
+            attributeTab = initialAttributeTab
             refreshCachedBoard()
             isLoading = false
         }
@@ -1209,6 +1469,8 @@ struct BigBoardView: View {
             switch attributeTab {
             case .overview:
                 bigBoardOverviewHeaders
+            case .workup:
+                bigBoardWorkupHeaders
             case .physical:
                 bigBoardPhysicalHeaders
             case .mental:
@@ -1217,16 +1479,31 @@ struct BigBoardView: View {
                 bigBoardPositionHeaders
             }
 
-            // Always-visible: Football IQ. Interviews used to write a number
-            // nobody could sort or scan; this is that number's column.
+            // Always-visible: TAPE and MEET, in two columns.
+            //
+            // They shared one 40-point column until this pass, because
+            // `ProspectFog.footballIQ` is a precedence function — the interview
+            // number wins and the scouts' band is the fallback — so a board row
+            // printed `86 MEET` next to `C-/B+ TAPE` and asked the user to
+            // compare a number with a letter in the same strip. Two instruments,
+            // two questions, two columns.
             HStack(spacing: 2) {
-                Text("IQ")
+                Text("TAPE")
                 InfoTooltipButton(
-                    text: "Football IQ. A blue number is your own interview's read \u{2014} exact, because you sat in the room. A gold letter band is the scouting department reading tape (awareness + learning), and a dash means nobody has done either. Interview a prospect to turn the band into a number.",
+                    text: "What your scouting department has on his head off tape \u{2014} a band off awareness and learning, and only as tight as the reports you have paid for. A dash means nobody in your building has filed on him.",
                     size: 9
                 )
             }
-            .frame(width: 40, alignment: .center)
+            .frame(width: 42, alignment: .center)
+
+            HStack(spacing: 2) {
+                Text("MEET")
+                InfoTooltipButton(
+                    text: "What your own people got out of him in a room. An exact football-IQ number, because that is what a meeting produces. A dash means you have not spent an interview slot on him.",
+                    size: 9
+                )
+            }
+            .frame(width: 38, alignment: .center)
 
             // Always-visible: value vs the user's own grade. Blank for anyone
             // he has not graded — the column is a read on HIS opinion, and
@@ -1294,6 +1571,34 @@ struct BigBoardView: View {
                 .frame(width: 32, alignment: .center)
             Text("RISK")
                 .frame(width: 64, alignment: .center)
+        }
+        .font(.system(size: 8, weight: .bold))
+        .foregroundStyle(Color.textTertiary)
+    }
+
+    /// The work-up block: what your building has actually DONE on this man.
+    ///
+    /// This is the one idea the deleted Prospects tab had that the board did
+    /// not, and it is the film-study stage's whole scan — five yes/no facts,
+    /// each of which is an instrument the user can still go and buy.
+    private var bigBoardWorkupHeaders: some View {
+        Group {
+            HStack(spacing: 2) {
+                Text("RPT")
+                InfoTooltipButton(
+                    text: "Scouting reports on file, out of the three a prospect can carry. Each one narrows his grade band.",
+                    size: 9
+                )
+            }
+            .frame(width: 34, alignment: .center)
+            Text("PDAY")
+                .frame(width: 38, alignment: .center)
+            Text("VISIT")
+                .frame(width: 38, alignment: .center)
+            Text("WORK")
+                .frame(width: 38, alignment: .center)
+            Text("FILE")
+                .frame(width: 44, alignment: .center)
         }
         .font(.system(size: 8, weight: .bold))
         .foregroundStyle(Color.textTertiary)
@@ -1713,7 +2018,7 @@ struct BigBoardView: View {
     // MARK: - Tier Header (#214)
 
     private func tierHeader(tier: Int, count: Int) -> some View {
-        let tierIndex = min(tier - 1, Self.tierNames.count - 1)
+        let tierIndex = min(tier - 1, bigBoardTierNames.count - 1)
         let tierProspects = cachedTieredBoard.first(where: { $0.tier == tier })?.prospects ?? []
         let needCount = tierProspects.filter { teamNeedPositions.contains($0.position) }.count
         let markedCount = tierProspects.filter(\.isMarked).count
@@ -1738,12 +2043,12 @@ struct BigBoardView: View {
         return VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 8) {
                 Circle()
-                    .fill(Self.tierColors[tierIndex])
+                    .fill(bigBoardTierColors[tierIndex])
                     .frame(width: 10, height: 10)
 
-                Text(Self.tierNames[tierIndex])
+                Text(bigBoardTierNames[tierIndex])
                     .font(.caption.weight(.bold))
-                    .foregroundStyle(Self.tierColors[tierIndex])
+                    .foregroundStyle(bigBoardTierColors[tierIndex])
                     .textCase(nil)
 
                 Text("\(count)")
@@ -1783,7 +2088,7 @@ struct BigBoardView: View {
                 }
             }
             // Tier description (#8)
-            Text(Self.tierDescriptions[tierIndex])
+            Text(bigBoardTierDescriptions[tierIndex])
                 .font(.system(size: 8))
                 .foregroundStyle(Color.textTertiary)
                 .textCase(nil)
@@ -1819,7 +2124,7 @@ struct BigBoardView: View {
                 Button {
                     moveProspectToTier(prospect, tier: tier)
                 } label: {
-                    Label("Move to \(Self.tierNames[tier - 1])", systemImage: "arrow.right.circle")
+                    Label("Move to \(bigBoardTierNames[tier - 1])", systemImage: "arrow.right.circle")
                 }
             }
         }
@@ -1955,10 +2260,10 @@ struct BigBoardView: View {
                 ) { onSwitchTab?(.scouts) }
 
                 emptyStateButton(
-                    title: "Browse Prospects",
-                    systemImage: "person.3",
+                    title: "Combine Numbers",
+                    systemImage: "figure.run",
                     isPrimary: scoutCount > 0
-                ) { onSwitchTab?(.prospects) }
+                ) { onSwitchTab?(.combine) }
             }
             .padding(.top, 4)
             .opacity(onSwitchTab == nil ? 0 : 1)
@@ -1969,9 +2274,9 @@ struct BigBoardView: View {
 
     private var emptyStateMessage: String {
         if scoutCount == 0 {
-            return "You have no scouts on staff, so nobody is filing reports. Hire a scout, then work the prospect list to build your board."
+            return "You have no scouts on staff, so nobody is filing reports. Hire a scout, then order film study to build your board."
         }
-        return "Scout prospects to add them to your draft board — open the prospect list and assign your scouts."
+        return "Nobody in your building has filed on this class yet. Order film study at the film-study stage \u{2014} every report you pay for puts a man on this board."
     }
 
     private func emptyStateButton(
@@ -2301,6 +2606,9 @@ struct BigBoardRowView: View {
     var valueRead: ProspectFog.ValueRead? = nil
     var originalPosition: Int? = nil
     var isSelectedForCompare: Bool = false
+    /// The user's own club — the only team whose Top-30 visit tells him
+    /// anything. `nil` outside a career (previews).
+    var userTeamID: UUID? = nil
     var onGradeTap: (() -> Void)? = nil
 
     private var isScouted: Bool { prospect.scoutedOverall != nil }
@@ -2411,6 +2719,8 @@ struct BigBoardRowView: View {
             switch attributeTab {
             case .overview:
                 boardOverviewColumns
+            case .workup:
+                boardWorkupColumns
             case .physical:
                 boardPhysicalColumns
             case .mental:
@@ -2419,8 +2729,14 @@ struct BigBoardRowView: View {
                 boardPositionColumns
             }
 
-            // Always-visible: Football IQ (fogged until somebody meets him)
-            ProspectIQCell(prospect: prospect, width: 40)
+            // Always-visible, and now TWO columns rather than one: the tape read
+            // (a gold band from your scouts) and the meeting read (an exact blue
+            // number from your interview). `ProspectIQCell` merged them behind a
+            // precedence rule and printed whichever won, which is right for the
+            // draft room's tight rows and wrong for a board the user is scanning
+            // to find the work he has not done.
+            ProspectTapeCell(prospect: prospect, width: 40)
+            ProspectMeetCell(prospect: prospect, width: 34)
 
             // Always-visible: value vs the user's own grade.
             ProspectValueChip(read: valueRead)
@@ -2472,6 +2788,76 @@ struct BigBoardRowView: View {
             boardCompactRiskBadge
                 .frame(width: 64, alignment: .center)
         }
+    }
+
+    // MARK: - Work-up Columns
+
+    /// Five facts about the WORK, not about the player: reports filed, pro day
+    /// attended, facility visit hosted, private workout run, and how far open
+    /// the medical / character file is.
+    ///
+    /// Every cell is a hole the user can still pay to close, which is why an
+    /// empty one is drawn dim rather than left blank — the question this block
+    /// answers is "who have I not done the work on".
+    private var boardWorkupColumns: some View {
+        Group {
+            Text("\(prospect.scoutingReports.count)/\(ScoutEvaluationBudget.maxReportsPerProspect)")
+                .font(.system(size: 10, weight: .bold).monospacedDigit())
+                .foregroundStyle(prospect.scoutingReports.isEmpty
+                                 ? Color.textTertiary.opacity(0.5)
+                                 : (prospect.scoutingReports.count >= 2 ? Color.success : Color.accentBlue))
+                .frame(width: 32, alignment: .center)
+
+            workupTick(prospect.proDayCompleted, tint: .success)
+                .frame(width: 34, alignment: .center)
+
+            workupTick(userTeamID.map { prospect.top30VisitedByTeams.contains($0) } ?? false,
+                       tint: .accentGold)
+                .frame(width: 34, alignment: .center)
+
+            // A private workout files a `.personalWorkout` report — that filed
+            // report IS the record of it, so the column reads the same thing
+            // `ScoutingEngine.conductPersonalWorkout` writes, through the same
+            // predicate the workout gate uses.
+            workupTick(ScoutingEngine.hasWorkedOutPrivately(prospect),
+                       tint: .accentBlue)
+                .frame(width: 34, alignment: .center)
+
+            boardFlagFileCell
+                .frame(width: 44, alignment: .center)
+        }
+    }
+
+    private func workupTick(_ done: Bool, tint: Color) -> some View {
+        Image(systemName: done ? "checkmark.circle.fill" : "circle")
+            .font(.system(size: 11))
+            .foregroundStyle(done ? tint : Color.textTertiary.opacity(0.35))
+            .accessibilityHidden(true)
+    }
+
+    /// How far open the medical / character file is, at the disclosure the user
+    /// has earned. Never its contents — that lives on the prospect card.
+    private var boardFlagFileCell: some View {
+        let total = (prospect.medicalConcerns?.count ?? 0) + (prospect.redFlags?.count ?? 0)
+        let disclosure = ProspectFog.flagDisclosure(for: prospect, userTeamID: userTeamID)
+        let text: String
+        let tint: Color
+        switch disclosure {
+        case .hidden:
+            text = "?"
+            tint = Color.textTertiary.opacity(0.5)
+        case .count:
+            text = total == 0 ? "\u{2014}" : "\(total)?"
+            tint = total == 0 ? Color.textTertiary : Color.warning
+        case .full:
+            text = total == 0 ? "CLEAN" : "\(total)"
+            tint = total == 0 ? Color.success : Color.danger
+        }
+        return Text(text)
+            .font(.system(size: 9, weight: .heavy))
+            .foregroundStyle(tint)
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
     }
 
     // MARK: - Physical Columns
@@ -2676,7 +3062,7 @@ struct BigBoardRowView: View {
 
     private var boardProjectedRoundBadge: some View {
         let displayRound = projectedRound <= 7 ? projectedRound : nil
-        let text = ProspectRowView.projectedRoundText(for: displayRound)
+        let text = ProspectRoundFormat.projectedRoundText(for: displayRound)
         let color = boardProjectedRoundColorFromRound
         return VStack(spacing: 0) {
             Text(text)
@@ -2811,7 +3197,7 @@ struct BigBoardRowView: View {
         if let preGrade = prospect.preCombineGrade,
            let currentGrade = prospect.scoutGrade,
            preGrade != currentGrade {
-            let improved = ProspectRowView.gradeRank(currentGrade) > ProspectRowView.gradeRank(preGrade)
+            let improved = ProspectRoundFormat.gradeRank(currentGrade) > ProspectRoundFormat.gradeRank(preGrade)
             Text(improved ? "\u{2191}" : "\u{2193}")
                 .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(improved ? Color.success : Color.danger)
@@ -3012,7 +3398,8 @@ enum DraftRoundHelper {
                 ),
             ],
             teamRoster: [],
-            positionFilter: .constant(.all)
+            positionFilter: .constant(.all),
+            header: { EmptyView() }
         )
     }
 }

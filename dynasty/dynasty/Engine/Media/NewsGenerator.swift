@@ -424,6 +424,104 @@ enum NewsGenerator {
         }
     }
 
+    // MARK: - The two mock-draft moments (#103 §5.7)
+
+    /// A mock draft as a public EVENT rather than a silent board update.
+    ///
+    /// The cycle runs four mocks. Two of them are things the league actually
+    /// talks about — the one that lands after the pro-day circuit ("Mock 1.0")
+    /// and the last one before the clock starts ("Final Mock") — and until #103
+    /// neither one produced a single line in the feed: `mockDraftHistory` filled
+    /// up with four snapshots nobody was ever told about. The other two moments
+    /// (mid-season, combine) stay quiet on purpose; a mock that early is a
+    /// placeholder, not news.
+    ///
+    /// The item prints three things: the top of the board, where the league has
+    /// the user's own club picking, and the loudest disagreement between the
+    /// consensus and this front office's grades. Risers and fallers are NOT
+    /// repeated here — `projectionDriftNews` already covers the movement half of
+    /// the moment and both are emitted from the same hook.
+    ///
+    /// - Parameters:
+    ///   - history: the snapshot itself. Any order; sorted by pick number here.
+    ///   - label: the name the feed prints — "Mock 1.0" or "Final Mock".
+    ///   - userBoardTop: **the user's own board, best man first.** Only its head
+    ///     drives the disagreement line, but the whole array doubles as the
+    ///     prospect lookup for the printed picks, so callers pass the class in
+    ///     board order rather than a five-man slice. Men the club has not graded
+    ///     (`scoutedOverall == nil`) are skipped by the disagreement pass — a
+    ///     department that scouted nobody has no opinion to disagree with.
+    ///   - season: cycle stamp for the feed.
+    static func mockDraftEvent(
+        history: [ScoutingEngine.MockDraftPick],
+        label: String,
+        userBoardTop: [CollegeProspect],
+        season: Int
+    ) -> [NewsItem] {
+        guard !history.isEmpty else { return [] }
+
+        let ordered = history.sorted { $0.pickNumber < $1.pickNumber }
+        let prospectByID = Dictionary(
+            userBoardTop.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        /// Where the consensus has each man — 1-based, in pick order.
+        var mockRank: [UUID: Int] = [:]
+        for (index, pick) in ordered.enumerated() where mockRank[pick.prospectID] == nil {
+            mockRank[pick.prospectID] = index + 1
+        }
+
+        func describe(_ id: UUID) -> String? {
+            guard let prospect = prospectByID[id] else { return nil }
+            return "\(prospect.position.rawValue) \(prospect.fullName) (\(prospect.college))"
+        }
+
+        // The top of the board.
+        let topLines: [String] = ordered.prefix(5).enumerated().compactMap { index, pick in
+            guard let who = describe(pick.prospectID) else { return nil }
+            return "\(index + 1). \(pick.teamAbbreviation) — \(who)"
+        }
+
+        // The loudest disagreement: the graded man whose slot on this club's
+        // board is furthest from the slot the league gives him. Restricted to
+        // the head of the board because a gap at #180 is noise, and to men the
+        // club has actually graded because a department that scouted nobody has
+        // no opinion to disagree with.
+        var boardSlot = 0
+        var widestGap = 0
+        var disagreement: String?
+        for prospect in userBoardTop.prefix(40) {
+            guard prospect.scoutedOverall != nil else { continue }
+            boardSlot += 1
+            guard let league = mockRank[prospect.id] else { continue }
+            let gap = abs(league - boardSlot)
+            guard gap >= 8, gap > widestGap else { continue }
+            widestGap = gap
+            disagreement = league > boardSlot
+                ? "We have \(prospect.position.rawValue) \(prospect.fullName) at No. \(boardSlot); the league has him going \(league)th. Either our grade is wrong or he is the value of the draft."
+                : "The league has \(prospect.position.rawValue) \(prospect.fullName) off the board at \(league); he is our No. \(boardSlot). Somebody is about to reach."
+        }
+
+        var body = "\(label) is out. "
+        if topLines.isEmpty {
+            body += "The order at the top is still being argued over."
+        } else {
+            body += "At the top of it:\n" + topLines.joined(separator: "\n")
+        }
+        if let disagreement {
+            body += "\n\nWhere we differ: " + disagreement
+        }
+
+        return [NewsItem(
+            headline: "Consensus \(label) is out",
+            body: body,
+            category: .draft,
+            week: 0,
+            season: season,
+            sentiment: .neutral
+        )]
+    }
+
     /// Spring medical attrition: the pro-day workout that ended a man's draft.
     static func preDraftInjuryNews(
         setbacks: [ScoutingEngine.PreDraftSetback],
@@ -456,8 +554,8 @@ enum NewsGenerator {
     ) -> [NewsItem] {
         guard result.tested > 0 else { return [] }
         return [NewsItem(
-            headline: "Pro-day circuit opens: \(result.tested) combine no-shows finally test",
-            body: "The campus workouts are under way. \(result.tested) prospect\(result.tested == 1 ? "" : "s") who did not run a drill in Indianapolis — rehab, medical rechecks, agents holding a client back for a friendlier surface — put numbers on the board this week. Every club gets the results off the wire; only the clubs in the building get the hand-checked sheet.",
+            headline: "Pro-day circuit opens: \(result.tested) untested prospects finally run",
+            body: "The campus workouts are under way. \(result.tested) prospect\(result.tested == 1 ? "" : "s") who had not put a number on a board — the invitees who tested in nothing in Indianapolis, and the far larger group who were never invited at all — worked out at their own schools this week. Every club gets the results off the wire; only the clubs in the building get the hand-checked sheet.",
             category: .draft,
             week: 0,
             season: season,

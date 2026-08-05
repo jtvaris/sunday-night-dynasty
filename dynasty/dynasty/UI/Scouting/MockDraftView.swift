@@ -22,12 +22,31 @@ struct MockDraftView: View {
     @State private var cachedPicksForRound: [ScoutingEngine.MockDraftPick] = []
     @State private var cachedTargetCountdown: TargetCountdownInfo? = nil
     @State private var cachedTradeDownHints: [TradeDownHint] = []
+    /// Mock 1.0 against the Final Mock — the three loudest climbs and slides.
+    @State private var cachedMockComparison: [MockMove] = []
     /// `[ProspectID: user board slot]`. Cached because it was an O(n) `firstIndex`
     /// per rendered row over a ~285-man class.
     @State private var cachedUserBoardRanks: [UUID: Int] = [:]
 
-    /// Ordered snapshot tags shown in the picker.
-    private let snapshotTags: [String] = ["Latest", "Mid-Season", "Combine", "Post-FA", "Pre-Draft"]
+    /// Ordered snapshot tags shown in the picker. `"Post-Pro-Day"` replaced
+    /// `"Post-FA"` in #103 §5.7 when the third mock moved from the end of free
+    /// agency to the far side of the pro-day circuit.
+    private let snapshotTags: [String] = ["Latest", "Mid-Season", "Combine", "Post-Pro-Day", "Pre-Draft"]
+
+    /// The two PUBLIC moments — the pair the comparison strip diffs.
+    private static let mockOneTag = "Post-Pro-Day"
+    private static let mockTwoTag = "Pre-Draft"
+
+    /// What the picker prints for a tag. The two public mocks carry the names
+    /// the feed, the inbox and the prep stages all use for them; the two quiet
+    /// ones keep their calendar tags.
+    private func snapshotLabel(_ tag: String) -> String {
+        switch tag {
+        case Self.mockOneTag: return "Mock 1.0"
+        case Self.mockTwoTag: return "Final Mock"
+        default:              return tag
+        }
+    }
 
     private var mockDraft: [ScoutingEngine.MockDraftPick] {
         if selectedSnapshot == "Latest" {
@@ -130,6 +149,9 @@ struct MockDraftView: View {
         cachedTradeHints = selectedRound == 1 ? computeTradeHints() : []
         cachedTradeDownHints = selectedRound == 1 ? computeTradeDownHints() : []
         cachedTargetCountdown = selectedRound == 1 ? computeTargetCountdown() : nil
+        // Cycle-level, not round-level: the strip diffs the two public mocks and
+        // reads the same on every round tab.
+        cachedMockComparison = computeMockComparison()
     }
 
     var body: some View {
@@ -205,6 +227,9 @@ struct MockDraftView: View {
                             }
                             .listRowBackground(Color.accentGold.opacity(0.08))
                         }
+
+                        // Mock 1.0 vs Final Mock — the spring in six rows.
+                        mockComparisonSection
 
                         // Top targets countdown summary (#5)
                         targetCountdownSection
@@ -343,7 +368,7 @@ struct MockDraftView: View {
                             selectedSnapshot = tag
                         }
                     } label: {
-                        Text(tag)
+                        Text(snapshotLabel(tag))
                             .font(.caption2.weight(isSelected ? .heavy : .semibold))
                             .foregroundStyle(snapshotLabelColor(isSelected: isSelected, hasData: hasData))
                             .padding(.horizontal, 10)
@@ -361,7 +386,7 @@ struct MockDraftView: View {
                     }
                     .buttonStyle(.plain)
                     .disabled(!hasData)
-                    .accessibilityLabel("\(tag) mock draft snapshot\(hasData ? "" : ", unavailable")")
+                    .accessibilityLabel("\(snapshotLabel(tag)) mock draft snapshot\(hasData ? "" : ", unavailable")")
                 }
             }
         }
@@ -1227,6 +1252,102 @@ struct MockDraftView: View {
         }
     }
 
+    // MARK: - Mock 1.0 vs Final Mock (#103 §5.7)
+
+    /// One prospect's slot in the first public mock against his slot in the
+    /// last one.
+    private struct MockMove: Identifiable {
+        let id: UUID
+        let name: String
+        let position: String
+        let from: Int
+        let to: Int
+        /// Positive = climbed (a smaller pick number).
+        var delta: Int { from - to }
+    }
+
+    /// The spring in one strip: who the two public mocks disagree about.
+    ///
+    /// Only the two ANNOUNCED moments are diffed — the mid-season and combine
+    /// mocks are placeholders the league never talked about, and diffing
+    /// against February would price in four months of ordinary board churn
+    /// instead of what the pro-day circuit and the pre-draft weeks did.
+    private func computeMockComparison() -> [MockMove] {
+        guard let opening = WeekAdvancer.mockDraftHistory[Self.mockOneTag], !opening.isEmpty,
+              let closing = WeekAdvancer.mockDraftHistory[Self.mockTwoTag], !closing.isEmpty
+        else { return [] }
+
+        var openingSlot: [UUID: Int] = [:]
+        for pick in opening where openingSlot[pick.prospectID] == nil {
+            openingSlot[pick.prospectID] = pick.pickNumber
+        }
+        let prospectByID = Dictionary(
+            prospects.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+
+        var moves: [MockMove] = []
+        for pick in closing {
+            guard let was = openingSlot[pick.prospectID], was != pick.pickNumber,
+                  let prospect = prospectByID[pick.prospectID]
+            else { continue }
+            moves.append(MockMove(
+                id: pick.prospectID,
+                name: prospect.fullName,
+                position: prospect.position.rawValue,
+                from: was,
+                to: pick.pickNumber
+            ))
+        }
+
+        let risers = moves.filter { $0.delta > 0 }.sorted { $0.delta > $1.delta }.prefix(3)
+        let fallers = moves.filter { $0.delta < 0 }.sorted { $0.delta < $1.delta }.prefix(3)
+        return Array(risers) + Array(fallers)
+    }
+
+    @ViewBuilder
+    private var mockComparisonSection: some View {
+        if !cachedMockComparison.isEmpty {
+            Section {
+                ForEach(cachedMockComparison) { move in
+                    HStack(spacing: 10) {
+                        Image(systemName: move.delta > 0 ? "arrow.up.right" : "arrow.down.right")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(move.delta > 0 ? Color.success : Color.warning)
+                            .frame(width: 16)
+
+                        Text(move.position)
+                            .font(.caption2.weight(.heavy))
+                            .foregroundStyle(Color.textTertiary)
+                            .frame(width: 30, alignment: .leading)
+
+                        Text(move.name)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.textPrimary)
+                            .lineLimit(1)
+
+                        Spacer(minLength: 8)
+
+                        Text("#\(String(move.from)) \u{2192} #\(String(move.to))")
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(Color.textSecondary)
+                            .monospacedDigit()
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(
+                        "\(move.position) \(move.name), \(move.delta > 0 ? "up" : "down") "
+                        + "from pick \(move.from) to pick \(move.to)"
+                    )
+                }
+            } header: {
+                Text("MOCK 1.0 \u{2192} FINAL MOCK")
+                    .font(.caption2.weight(.heavy))
+                    .foregroundStyle(Color.textSecondary)
+            }
+            .listRowBackground(Color.backgroundSecondary)
+        }
+    }
+
     // MARK: - Empty State
 
     private var emptyState: some View {
@@ -1308,6 +1429,14 @@ struct MockDraftView: View {
     }
 
     private func loadData() {
+        // #103 §5.7: `WeekAdvancer.mockDraftHistory` is a process static, so a
+        // force-quit used to empty this screen's entire snapshot picker — the
+        // one affordance four stored mocks exist for. The history is mirrored
+        // onto the save now; warm the static back up before anything reads it.
+        // Idempotent and season-stamped: a blob from an earlier draft cycle is
+        // discarded rather than shown against this year's class.
+        WeekAdvancer.restoreMockDraftHistory(from: career)
+
         let cid = career.id
         let teamDesc = FetchDescriptor<Team>(predicate: #Predicate { $0.careerID == cid })
         teams = (try? modelContext.fetch(teamDesc)) ?? []

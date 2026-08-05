@@ -5,7 +5,7 @@ struct ScoutingHubView: View {
     @Bindable var career: Career
     @Environment(\.modelContext) private var modelContext
 
-    @State private var selectedTab: ScoutingTab = .bigBoard
+    @State private var selectedTab: ScoutingTab = .board
     @State private var scouts: [Scout] = []
     @State private var prospects: [CollegeProspect] = []
     @State private var teamPlayers: [Player] = []
@@ -40,15 +40,39 @@ struct ScoutingHubView: View {
 
     private let maxScouts = 8
 
-    /// Tabs the shared position chips apply to. The others (scouts, mock draft,
-    /// draft order, pro days, next year) are not position-filtered lists, and a
-    /// chip row above them would be a control that does nothing.
+    /// Tabs the shared position chips apply to. The others are not
+    /// position-filtered lists, and a chip row above them would be a control
+    /// that does nothing.
     private var positionFilterAppliesToCurrentTab: Bool {
         switch selectedTab {
-        case .bigBoard, .prospects, .combine: return true
-        default:                              return false
+        case .board, .film, .combine: return true
+        default:                      return false
         }
     }
+
+    /// Surfaces that render `hubHeader` as their own first section. Everything
+    /// else owns a scroll this wave does not own the file for, so those tabs get
+    /// the one-line stage strip instead and the full header stays with the
+    /// surfaces that can scroll it away.
+    private var currentTabHostsHeader: Bool {
+        switch selectedTab {
+        case .board, .film, .combine: return true
+        default:                      return false
+        }
+    }
+
+    // MARK: - Body
+    //
+    // The hub is chrome and a surface, and only the chrome is pinned.
+    //
+    // It used to be a `VStack` of metrics strip → prep card → combine CTA →
+    // tab picker → position chips → `Divider` → content, with everything above
+    // the content permanently outside the scroll view: ~330 pt of fixed header
+    // over a scrolling list, which is three prospect rows on a landscape iPad.
+    // The metrics strip and the prep card moved INTO each surface's list as its
+    // first section (`ScoutingHubHeader`), the combine CTA moved into the
+    // combine tab where it is a stage action rather than hub furniture, and
+    // what is left pinned is the tab picker and the position chips — ~78 pt.
 
     var body: some View {
         ZStack {
@@ -66,39 +90,31 @@ struct ScoutingHubView: View {
                 }
             } else {
             VStack(spacing: 0) {
-                overviewMetrics
-                    .padding(.horizontal, 20)
-                    .padding(.top, 12)
-                    .padding(.bottom, 8)
-
-                DraftPrepCard(
-                    career: career,
-                    prospects: prospects,
-                    teamRoster: teamPlayers,
-                    scouts: scouts,
-                    scoutsSentToCombine: scoutsSentToCombine,
-                    scoutingBudgetRemaining: remainingScoutingBudget,
-                    evaluationsUsed: evaluationsUsed,
-                    onSelectTab: { selectedTab = $0 },
-                    onFilterPosition: { positionFilter = $0 }
-                )
-                .padding(.horizontal, 20)
-                .padding(.bottom, 8)
-
-                if career.currentPhase == .combine && selectedTab != .scouts {
-                    sendScoutsToCombineButton
-                        .padding(.horizontal, 20)
-                        .padding(.bottom, 8)
-                }
-
                 tabPicker
                     .padding(.horizontal, 20)
-                    .padding(.bottom, positionFilterAppliesToCurrentTab ? 6 : 12)
+                    .padding(.bottom, positionFilterAppliesToCurrentTab ? 4 : 8)
 
                 if positionFilterAppliesToCurrentTab {
                     positionFilterChips
                         .padding(.horizontal, 20)
-                        .padding(.bottom, 10)
+                        .padding(.bottom, 8)
+                }
+
+                if !currentTabHostsHeader {
+                    compactStageStrip
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 8)
+                }
+
+                // The three stage screens Wave B ships draw their own closed /
+                // locked banners, so the hub only chips the three it owns.
+                if let stage = selectedTab.stage,
+                   selectedTab.hasStageActions,
+                   [.combine, .film, .interviews].contains(selectedTab),
+                   stage.order < career.prepStep.order {
+                    stageCompleteChip(stage)
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 8)
                 }
 
                 Divider()
@@ -137,16 +153,27 @@ struct ScoutingHubView: View {
             // (e.g. "Review interview report" → Interviews tab).
             if let pending = CareerScopedDefaults.string("scoutingPendingTab"),
                !pending.isEmpty {
-                switch pending {
-                case "interviews": if career.currentPhase == .combine { selectedTab = .interviews }
-                case "combine":    selectedTab = .combine
-                case "bigBoard":   selectedTab = .bigBoard
-                case "prospects":  selectedTab = .prospects
-                case "proDays":    selectedTab = .proDays
-                default: break
-                }
+                // `bigBoard` / `prospects` are the two legacy hints: the tab
+                // they named is one surface now, so both land on the board.
+                let hinted: ScoutingTab? = {
+                    switch pending {
+                    case "interviews": return career.currentPhase == .combine ? .interviews : nil
+                    case "combine":    return .combine
+                    case "bigBoard", "prospects", "board": return .board
+                    case "film":       return .film
+                    case "proDays":    return .proDays
+                    case "workouts":   return .workouts
+                    case "top30":      return .top30
+                    case "mockDraft":  return .mockDraft
+                    default:           return nil
+                    }
+                }()
+                // A hint for a tab the stage machine has not opened yet is
+                // dropped rather than obeyed: the hub is the truth about what
+                // this club can reach, and a task deep-link is not an override.
+                if let hinted, visibleTabs.contains(hinted) { selectedTab = hinted }
                 CareerScopedDefaults.remove("scoutingPendingTab")
-            } else if career.currentPhase == .proDays {
+            } else if career.currentPhase == .proDays, visibleTabs.contains(.proDays) {
                 // Auto-select Pro Days tab when in proDays phase
                 selectedTab = .proDays
             }
@@ -161,128 +188,40 @@ struct ScoutingHubView: View {
             if newTab == .combine && prospects.contains(where: { $0.fortyTime != nil }) {
                 combineResultsReviewed = true
             }
+            // The two mock stages complete by being READ — there is nothing to
+            // buy and nothing to run, so opening the tab is the transition.
+            if newTab == .mockDraft {
+                if career.prepStep == .mockOne { advance(to: .top30Visits) }
+                else if career.prepStep == .mockTwo {
+                    // Record the read even though `.ready` is calendar-gated:
+                    // `advance` correctly refuses to unlock the draft room in
+                    // March, and without the stamp the stage could never show
+                    // the user that his last act of the spring registered.
+                    finalMockReadSeason = career.currentSeason
+                    advance(to: .ready)
+                }
+            }
+        }
+        .onChange(of: career.prepStep) { _, _ in
+            // A new cycle resets the pipeline (the stamp does it, with no hook),
+            // which can retract the tab the user is standing on. Fall back to
+            // the board rather than leaving him on a tab the picker no longer
+            // draws.
+            //
+            // Observe the ACCESSOR, not `draftPrepStep`: the reset is not a
+            // write to that string, it is `currentSeason` moving past
+            // `draftPrepStepSeason` (and the phase floor moving with it), so
+            // watching the raw column missed every silent reset — the picker
+            // retracted while `selectedTab` kept rendering a tab it no longer
+            // draws. `Career` is `@Model`, so reading `prepStep` here tracks all
+            // four inputs.
+            if !visibleTabs.contains(selectedTab) { selectedTab = .board }
         }
         .sheet(isPresented: $showHireScout, onDismiss: { loadData() }) {
             HireScoutSheet(career: career)
         }
         .sheet(isPresented: $showCombineReport) {
             CombineReportSheet(mentions: combineMedia)
-        }
-    }
-
-    // MARK: - Send Scouts to Combine (#258)
-
-    private var sendScoutsToCombineButton: some View {
-        Group {
-            if scoutsSentToCombine && combineResultsReviewed {
-                // State 3: scouts sent + results reviewed — show a quiet, completed banner
-                // (or hide entirely on the Combine tab to reduce noise).
-                if selectedTab != .combine {
-                    HStack(spacing: 10) {
-                        Image(systemName: "checkmark.seal.fill")
-                            .font(.title3)
-                            .foregroundStyle(Color.textSecondary)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Combine Reviewed")
-                                .font(.subheadline.weight(.bold))
-                                .foregroundStyle(Color.textPrimary)
-                            Text("Combine results have been reviewed.")
-                                .font(.caption)
-                                .foregroundStyle(Color.textTertiary)
-                        }
-                        Spacer()
-                        Button {
-                            selectedTab = .combine
-                        } label: {
-                            Text("Re-open")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(Color.accentGold)
-                        }
-                    }
-                    .padding(12)
-                    .background(Color.backgroundTertiary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
-                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.surfaceBorder, lineWidth: 1))
-                }
-            } else if scoutsSentToCombine {
-                // State 2: scouts sent, results NOT yet reviewed — actionable green banner
-                Button {
-                    selectedTab = .combine
-                } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.title3)
-                            .foregroundStyle(Color.success)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Scouts at Combine")
-                                .font(.subheadline.weight(.bold))
-                                .foregroundStyle(Color.success)
-                            Text("Results are in \u{2014} tap to review")
-                                .font(.caption)
-                                .foregroundStyle(Color.textSecondary)
-                        }
-                        Spacer()
-                        Image(systemName: "arrow.right.circle.fill")
-                            .font(.title3)
-                            .foregroundStyle(Color.success)
-                    }
-                    .padding(12)
-                    .background(Color.success.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
-                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.success.opacity(0.3), lineWidth: 1))
-                }
-                .buttonStyle(.plain)
-            } else {
-                // #22: More visually prominent CTA
-                let affordable = canAffordCombineTrip
-                Button {
-                    sendScoutsToCombine()
-                } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: "binoculars.fill")
-                            .font(.title2)
-                            .foregroundStyle(affordable ? Color.backgroundPrimary : Color.textTertiary)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Send Scouts to the NFL Combine")
-                                .font(.subheadline.weight(.bold))
-                                .foregroundStyle(affordable ? Color.backgroundPrimary : Color.textSecondary)
-                            Text(affordable
-                                 ? "\(scouts.count) scout\(scouts.count == 1 ? "" : "s") on site \u{2014} exact measurables and fresh reports on your board. $\(combineTripCost)K of $\(remainingScoutingBudget)K scouting budget."
-                                 : "Needs $\(combineTripCost)K \u{2014} only $\(remainingScoutingBudget)K left in the scouting budget. Reallocate in Owner Relations, or watch it on television.")
-                                .font(.caption)
-                                .foregroundStyle(affordable
-                                                 ? Color.backgroundPrimary.opacity(0.8)
-                                                 : Color.textTertiary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        Spacer()
-                        if affordable {
-                            Image(systemName: "arrow.right.circle.fill")
-                                .font(.title2)
-                                .foregroundStyle(Color.backgroundPrimary)
-                        }
-                    }
-                    .padding(14)
-                    .background(
-                        affordable
-                            ? AnyShapeStyle(LinearGradient(
-                                colors: [Color.success, Color.success.opacity(0.8)],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                              ))
-                            : AnyShapeStyle(Color.backgroundTertiary),
-                        in: RoundedRectangle(cornerRadius: 12)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .strokeBorder(
-                                affordable ? Color.success.opacity(0.6) : Color.surfaceBorder,
-                                lineWidth: 1.5
-                            )
-                    )
-                    .shadow(color: affordable ? Color.success.opacity(0.3) : .clear, radius: 8, y: 2)
-                }
-                .buttonStyle(.plain)
-                .disabled(!affordable)
-            }
         }
     }
 
@@ -404,13 +343,7 @@ struct ScoutingHubView: View {
         showCombineReport = true
     }
 
-    // MARK: - Overview Metrics (#223)
-
-    private var scoutCountColor: Color {
-        if scouts.count >= 6 { return .success }
-        if scouts.count >= 3 { return .accentGold }
-        return .danger
-    }
+    // MARK: - Stage machine + hub header data
 
     /// Prospects your building has actually filed on.
     ///
@@ -424,31 +357,6 @@ struct ScoutingHubView: View {
     private var scoutedPercentage: Int {
         guard !prospects.isEmpty else { return 0 }
         return Int((Double(scoutedCount) / Double(prospects.count) * 100).rounded())
-    }
-
-    /// The best man your own scouts have filed on, with the band the user is
-    /// entitled to read.
-    ///
-    /// The header used to print `"Top: Smith (OVR 87)"` — a naked overall, on
-    /// the one screen whose entire job is to sell the intel that would earn it,
-    /// while the Big Board two taps away showed the same man as "B/A-". Ranked
-    /// by `ProspectFog.Read.rank` so the ordering cannot leak the board either.
-    private var topScoutedRead: (prospect: CollegeProspect, read: ProspectFog.Read)? {
-        prospects
-            .map { (prospect: $0, read: ProspectFog.read($0)) }
-            .filter { $0.read.source == .scouts }
-            // `read.rank` is a coarse letter-grade rank, so thirty men share
-            // "B+" and `max` alone returned whichever of them the unsorted
-            // fetch happened to hand back last — the header named a different
-            // player after a relaunch. Ties break on the stored number and then
-            // on the id, exactly like `ProspectDetailView.loadPositionRank`.
-            .max { lhs, rhs in
-                if lhs.read.rank != rhs.read.rank { return lhs.read.rank < rhs.read.rank }
-                let l = lhs.prospect.scoutedOverall ?? 0
-                let r = rhs.prospect.scoutedOverall ?? 0
-                if l != r { return l < r }
-                return lhs.prospect.id.uuidString > rhs.prospect.id.uuidString
-            }
     }
 
     private var phaseLabel: String {
@@ -471,72 +379,126 @@ struct ScoutingHubView: View {
         }
     }
 
-    private var overviewMetrics: some View {
-        HStack(spacing: 0) {
-            // Scouts hired
-            metricItem(
-                icon: "person.3.fill",
-                label: "Scouts: \(scouts.count)/\(maxScouts) hired",
-                color: scoutCountColor
-            )
-
-            metricDivider
-
-            // Scouted percentage
-            metricItem(
-                icon: "doc.text.magnifyingglass",
-                label: "Scouted: \(scoutedPercentage)% of prospects",
-                color: .accentBlue
-            )
-
-            metricDivider
-
-            // Top prospect — the fogged band, never the overall.
-            if let top = topScoutedRead {
-                metricItem(
-                    icon: "star.fill",
-                    label: "Top: \(top.prospect.lastName) (\(top.read.text))",
-                    color: .accentGold
-                )
-            } else {
-                metricItem(
-                    icon: "star",
-                    label: "Top: None scouted",
-                    color: .textTertiary
-                )
-            }
-
-            metricDivider
-
-            // Current phase
-            metricItem(
-                icon: "calendar",
-                label: "Phase: \(phaseLabel)",
-                color: .textSecondary
-            )
-        }
-        .padding(.vertical, 8)
-        .padding(.horizontal, 12)
-        .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: 10))
+    private var stageGate: ScoutingStageGate {
+        ScoutingStageGate.make(
+            career: career,
+            scouts: scouts,
+            evaluationsUsed: evaluationsUsed,
+            combineResultsReviewed: combineResultsReviewed,
+            finalMockRead: finalMockRead
+        )
     }
 
-    private func metricItem(icon: String, label: String, color: Color) -> some View {
-        HStack(spacing: 5) {
-            Image(systemName: icon)
+    // MARK: - Final-mock read stamp
+    //
+    // `.mockTwo` is the one stage whose forward transition the CALENDAR owns:
+    // `.ready` belongs to `.draft`, and the Final Mock itself is printed with
+    // the draft order. Reading it is still an act, and without a record of it
+    // the last stage of the spring was a button that did nothing visible, with
+    // no chip, until the draft boundary silently cleared the stage. Same
+    // cycle-stamp trick as the evaluation ledger — a stamp from an earlier
+    // draft cycle reads as unread.
+
+    @CareerScopedStorage("draftPrepFinalMockRead") private var finalMockReadSeason: Int = 0
+
+    private var finalMockRead: Bool { finalMockReadSeason == career.currentSeason }
+
+    /// The full scroll-away header, handed to whichever surface owns the scroll.
+    private func hubHeader() -> ScoutingHubHeader {
+        ScoutingHubHeader(
+            career: career,
+            prospects: prospects,
+            teamRoster: teamPlayers,
+            scouts: scouts,
+            scoutsSentToCombine: scoutsSentToCombine,
+            scoutingBudgetRemaining: remainingScoutingBudget,
+            evaluationsUsed: evaluationsUsed,
+            scoutedPercent: scoutedPercentage,
+            phaseLabel: phaseLabel,
+            gate: stageGate,
+            onSelectTab: { selectedTab = $0 },
+            onFilterPosition: { positionFilter = $0 },
+            onAdvance: { advance(to: $0) },
+            onSkip: { advance(to: $0) }
+        )
+    }
+
+    /// Writes the next step.
+    ///
+    /// Capped by the calendar: the stage machine may run ahead of the user's
+    /// work (that is what a skip is) but never ahead of the season, or a club
+    /// still in combine week would unlock the pro-day tour. `advancePrepStep`
+    /// itself never lowers a step and re-stamps the cycle.
+    private func advance(to step: DraftPrepStep) {
+        // The cap is a CALENDAR comparison, so it has to use the calendar's
+        // order. `SeasonPhase.allCases` is declaration order — `regularSeason`
+        // sorts above `draft` in it — which made every stage skippable from
+        // November. `prepCalendarRank` ranks only the four pre-draft phases and
+        // puts everything else below the first stage.
+        guard step.phase.prepCalendarRank <= career.currentPhase.prepCalendarRank else { return }
+        career.advancePrepStep(to: step)
+        try? modelContext.save()
+    }
+
+    /// One line of pipeline, for the tabs that own a scroll this wave does not
+    /// own the file for. The full header lives inside the three that do.
+    private var compactStageStrip: some View {
+        let gate = stageGate
+        return HStack(spacing: 8) {
+            Image(systemName: "flag.checkered")
                 .font(.caption2)
-                .foregroundStyle(color)
-            Text(label)
-                .font(.caption2.weight(.medium))
+                .foregroundStyle(Color.accentGold)
+            Text("Stage \(gate.step.order + 1)/\(DraftPrepStep.allCases.count) \u{00B7} \(gate.step.displayName)")
+                .font(.caption2.weight(.bold))
                 .foregroundStyle(Color.textPrimary)
                 .lineLimit(1)
+            Text(gate.isPhaseBlocked ? gate.phaseBlockedReason : gate.requirement)
+                .font(.system(size: 10))
+                .foregroundStyle(Color.textTertiary)
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            // Advance AND skip only for the stages the hub owns the transition
+            // for. A `.open` stage's screen owns both — and for the pro-day
+            // tour the skip is destructive (it throws away every focus-slot
+            // reservation) and lives behind that screen's own confirmation
+            // alert. An unconfirmed 10 pt "Skip" drawn on top of it was one
+            // stray tap away from making the stage unrunnable for the cycle.
+            if let next = gate.next, gate.offersHeaderSkip {
+                Button("Advance") { advance(to: next) }
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(gate.isComplete ? Color.accentGold : Color.textTertiary)
+                    .disabled(!gate.isComplete)
+                Button("Skip") { advance(to: next) }
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color.textSecondary)
+                    .accessibilityLabel("Skip \(gate.step.displayName). \(gate.skipCost)")
+            }
         }
-        .frame(maxWidth: .infinity)
+        .frame(height: 26)
+        .padding(.horizontal, 10)
+        .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: 7))
     }
 
-    private var metricDivider: some View {
-        Rectangle()
-            .fill(Color.surfaceBorder)
-            .frame(width: 1, height: 16)
+    /// A stage the club has already walked past. Its screen stays open — every
+    /// earlier stage is viewable by design — and the chip says so rather than
+    /// leaving a user wondering why he is looking at last month's work.
+    private func stageCompleteChip(_ stage: DraftPrepStep) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "lock.open.fill")
+                .font(.system(size: 9))
+                .foregroundStyle(Color.textTertiary)
+            Text("\(stage.displayName.uppercased()) \u{2014} STAGE COMPLETE")
+                .font(.system(size: 9, weight: .heavy))
+                .foregroundStyle(Color.textTertiary)
+            Text("Open for review. The department has moved on to \(career.prepStep.displayName).")
+                .font(.system(size: 9))
+                .foregroundStyle(Color.textTertiary)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(Color.backgroundTertiary.opacity(0.6), in: RoundedRectangle(cornerRadius: 6))
     }
 
     // MARK: - Tab Picker
@@ -549,11 +511,15 @@ struct ScoutingHubView: View {
                     Button {
                         selectedTab = tab
                     } label: {
+                        // Tighter than it was (16/10 at `.callout`): eleven tabs
+                        // now, and this row plus the position chips is the whole
+                        // pinned budget — ~77 pt against the ~330 pt the hub used
+                        // to hold above the list.
                         Label(tab.label, systemImage: tab.icon)
-                            .font(.callout.weight(isSelected ? .bold : .semibold))
+                            .font(.subheadline.weight(isSelected ? .bold : .semibold))
                             .foregroundStyle(isSelected ? Color.backgroundPrimary : Color.textSecondary)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 10)
+                            .padding(.horizontal, 13)
+                            .padding(.vertical, 8)
                             .background(
                                 RoundedRectangle(cornerRadius: 10)
                                     .fill(isSelected ? Color.accentGold : Color.backgroundTertiary)
@@ -639,14 +605,7 @@ struct ScoutingHubView: View {
                 onFire: { fireScout($0) },
                 onSendToCombine: { sendScoutsToCombine() }
             )
-        case .prospects:
-            ProspectListView(
-                career: career,
-                prospects: prospects,
-                scoutsSentToCombine: scoutsSentToCombine,
-                positionFilter: $positionFilter
-            )
-        case .bigBoard:
+        case .board:
             BigBoardView(
                 career: career,
                 prospects: prospects,
@@ -655,7 +614,26 @@ struct ScoutingHubView: View {
                 // Empty-state CTAs need a way back into the hub's other tabs.
                 onSwitchTab: { selectedTab = $0 },
                 scoutCount: scouts.count,
-                positionFilter: $positionFilter
+                positionFilter: $positionFilter,
+                header: { hubHeader() }
+            )
+        case .film:
+            // The film-study stage screen IS the board, opened on the work-up
+            // columns with the evaluate action promoted into the row. One
+            // surface, one board order, one set of marks — a second list over
+            // the same men is the mistake this overhaul deleted.
+            BigBoardView(
+                career: career,
+                prospects: prospects,
+                teamRoster: teamPlayers,
+                scoutsSentToCombine: scoutsSentToCombine,
+                onSwitchTab: { selectedTab = $0 },
+                scoutCount: scouts.count,
+                positionFilter: $positionFilter,
+                initialAttributeTab: .workup,
+                isFilmStudy: true,
+                isStageClosed: career.prepStep.order > DraftPrepStep.filmStudy.order,
+                header: { hubHeader() }
             )
         case .combine:
             CombineResultsView(
@@ -670,7 +648,8 @@ struct ScoutingHubView: View {
                     ? { sendScoutsToCombine() }
                     : nil,
                 canAffordTrip: canAffordCombineTrip,
-                positionFilter: $positionFilter
+                positionFilter: $positionFilter,
+                header: { hubHeader() }
             )
         case .interviews:
             InterviewSelectionView(career: career)
@@ -678,8 +657,34 @@ struct ScoutingHubView: View {
             MockDraftView(career: career, prospects: prospects)
         case .draftOrder:
             DraftOrderView(career: career)
+        case .workouts:
+            WorkoutsTabView(
+                career: career,
+                prospects: prospects,
+                teamRoster: teamPlayers,
+                positionFilter: $positionFilter,
+                onRefresh: loadData
+            )
+        case .top30:
+            Top30VisitsView(
+                career: career,
+                scouts: scouts,
+                prospects: prospects,
+                teamRoster: teamPlayers,
+                onRefresh: loadData
+            )
         case .proDays:
-            ProDayListView(career: career, scouts: scouts, prospects: $prospects, teamRoster: teamPlayers, onRefresh: loadData)
+            // Wave B split `ProDayListView` into three stage screens. This case
+            // routes the existing tab at the tour; the `.workouts` and `.top30`
+            // tabs that carry `WorkoutsTabView` / `Top30VisitsView` are Wave A's
+            // `ScoutingTab` rewrite.
+            ProDayTourView(
+                career: career,
+                scouts: scouts,
+                prospects: prospects,
+                teamRoster: teamPlayers,
+                onRefresh: loadData
+            )
         case .nextYear:
             NextYearClassPreview(career: career, prospects: nextYearProspects)
         }
@@ -752,14 +757,19 @@ struct ScoutingHubView: View {
         return (try? modelContext.fetch(desc))?.first?.owner?.scoutingBudget ?? 4_000
     }
 
+    /// Tabs the club can reach, driven by the stage machine rather than by the
+    /// phase.
+    ///
+    /// A tab whose stage is AHEAD of where the club stands is absent — that is
+    /// the forced sequence, and it is why private workouts are no longer live on
+    /// the first day the class exists. A tab whose stage has PASSED stays
+    /// visible: every earlier stage is readable by design, its screen just says
+    /// so and its priced actions are shut.
     private var visibleTabs: [ScoutingTab] {
-        ScoutingTab.allCases.filter { tab in
-            switch tab {
-            case .interviews:
-                return career.currentPhase == .combine || career.currentPhase == .proDays
-            default:
-                return true
-            }
+        let reached = career.prepStep.order
+        return ScoutingTab.allCases.filter { tab in
+            guard let stage = tab.stage else { return true }
+            return stage.order <= reached
         }
     }
 
@@ -876,44 +886,93 @@ private struct CombineReportSheet: View {
 
 // MARK: - Tab Enum
 
+/// The hub's tabs, in pipeline order.
+///
+/// `prospects` is gone: it rendered the same `[CollegeProspect]` as the board,
+/// with the same attribute picker, and the board is the richer surface. Three
+/// tabs arrived with the stage machine — `film`, `workouts`, `top30` — because
+/// three instruments used to share one screen or live two taps inside a
+/// prospect card.
+///
+/// Order here is the order the picker draws, and it is the order of the
+/// pipeline: the spine first (board), then the stages, then the reference tabs.
 enum ScoutingTab: String, CaseIterable, Identifiable {
-    case scouts     = "scouts"
-    case prospects  = "prospects"
-    case bigBoard   = "bigBoard"
+    case board      = "board"
     case combine    = "combine"
+    case film       = "film"
     case interviews = "interviews"
-    case mockDraft  = "mockDraft"
-    case draftOrder = "draftOrder"
     case proDays    = "proDays"
+    case workouts   = "workouts"
+    case mockDraft  = "mockDraft"
+    case top30      = "top30"
+    case draftOrder = "draftOrder"
+    case scouts     = "scouts"
     case nextYear   = "nextYear"
 
     var id: String { rawValue }
 
     var label: String {
         switch self {
-        case .scouts:     return "Scout Team"
-        case .prospects:  return "Prospects"
-        case .bigBoard:   return "Big Board"
+        case .board:      return "Big Board"
         case .combine:    return "Combine"
+        case .film:       return "Film Study"
         case .interviews: return "Interviews"
-        case .mockDraft:  return "Mock Draft"
-        case .draftOrder: return "Draft Order"
         case .proDays:    return "Pro Days"
+        case .workouts:   return "Workouts"
+        case .mockDraft:  return "Mock Draft"
+        case .top30:      return "Top-30"
+        case .draftOrder: return "Draft Order"
+        case .scouts:     return "Scout Team"
         case .nextYear:   return "Next Yr"
         }
     }
 
     var icon: String {
         switch self {
-        case .scouts:     return "binoculars"
-        case .prospects:  return "person.3"
-        case .bigBoard:   return "list.number"
+        case .board:      return "list.number"
         case .combine:    return "figure.run"
+        case .film:       return "film"
         case .interviews: return "bubble.left.and.bubble.right"
-        case .mockDraft:  return "doc.text"
-        case .draftOrder: return "number.circle"
         case .proDays:    return "mappin.and.ellipse"
+        case .workouts:   return "figure.strengthtraining.traditional"
+        case .mockDraft:  return "doc.text"
+        case .top30:      return "building.2"
+        case .draftOrder: return "number.circle"
+        case .scouts:     return "binoculars"
         case .nextYear:   return "calendar.badge.clock"
+        }
+    }
+
+    /// The stage this tab belongs to, or `nil` for a tab that is not part of the
+    /// pipeline at all (the board, the draft order, the scout department and
+    /// next year's class are reference surfaces and are always open).
+    var stage: DraftPrepStep? {
+        switch self {
+        case .combine:    return .combineReview
+        case .film:       return .filmStudy
+        case .interviews: return .interviews
+        case .proDays:    return .proDayFocus
+        case .workouts:   return .workouts
+        case .top30:      return .top30Visits
+        // The mock is deliberately NOT stage-gated. `WeekAdvancer` runs four
+        // mocks across the year — a mid-season one in week 9, one out of the
+        // combine — and all of them are public information the moment they
+        // publish. Two of the four are *stages* (§5.7), and those complete by
+        // being read, which the hub handles when the tab is opened; hiding the
+        // screen until then would put the autumn mocks behind a gate they were
+        // never behind.
+        case .board, .mockDraft, .draftOrder, .scouts, .nextYear:
+            return nil
+        }
+    }
+
+    /// Whether the tab owns priced or rationed actions. A passed stage whose tab
+    /// has none of those (the mock) is simply a read and gets no "complete"
+    /// chip — nothing about it closes.
+    var hasStageActions: Bool {
+        switch self {
+        case .combine, .film, .interviews, .proDays, .workouts, .top30: return true
+        default: return false
         }
     }
 }
@@ -992,1690 +1051,6 @@ private struct HireScoutSheet: View {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("Cancel") { dismiss() }
                     }
-                }
-            }
-        }
-    }
-}
-
-// MARK: - Pro Day List View
-
-struct ProDayListView: View {
-    let career: Career
-    let scouts: [Scout]
-    @Binding var prospects: [CollegeProspect]
-    let teamRoster: [Player]
-    var onRefresh: () -> Void
-
-    @Environment(\.modelContext) private var modelContext
-    @CareerScopedStorage("prospectCustomBoard") private var prospectCustomBoardJSON: String = "[]"
-    @State private var expandedColleges: Set<String> = []
-    @State private var showSendScoutSheet = false
-    @State private var selectedCollege: String?
-    @State private var showProDayResults = false
-    @State private var proDayResultSummary: ProDayResultSummary?
-    @State private var showPersonalWorkouts = false
-    @State private var personalWorkoutIDs: Set<UUID> = []
-    @CareerScopedStorage("personalWorkoutsUsed") private var personalWorkoutsUsed: Int = 0
-
-    // Top-30 Visits state
-    @State private var showTop30Result = false
-    @State private var top30ResultProspectName: String = ""
-    @State private var top30ResultSummary: ScoutingEngine.Top30VisitResult?
-
-    // Focus-prospect-per-college state (Task C)
-    @State private var showFocusProspectSheet = false
-    @State private var focusCollege: String?
-
-    // MARK: - Computed Data
-
-    private var teamNeeds: Set<Position> {
-        Set(DraftEngine.topTeamNeeds(roster: teamRoster, limit: 5))
-    }
-
-    private var boardOrder: [UUID] {
-        let strings = (try? JSONDecoder().decode([String].self, from: Data(prospectCustomBoardJSON.utf8))) ?? []
-        return strings.compactMap { UUID(uuidString: $0) }
-    }
-
-    private func boardRank(for prospectID: UUID) -> Int? {
-        guard let idx = boardOrder.firstIndex(of: prospectID) else { return nil }
-        return idx + 1
-    }
-
-    /// On the pro-day screen "starred" means "a man I want" — the two positive
-    /// tiers of the ONE mark system, not the legacy flag-or-bookmark pair.
-    private func isStarred(_ prospect: CollegeProspect) -> Bool {
-        prospect.userMark.isBoardPositive
-    }
-
-    private func isTopProspect(_ prospect: CollegeProspect) -> Bool {
-        guard let rank = boardRank(for: prospect.id) else { return false }
-        return rank <= 50
-    }
-
-    private func isNeedPosition(_ prospect: CollegeProspect) -> Bool {
-        teamNeeds.contains(prospect.position)
-    }
-
-    /// Colleges grouped with rich metadata.
-    private var collegeData: [ProDayCollegeInfo] {
-        let declaring = prospects.filter { $0.isDeclaringForDraft }
-        let grouped = Dictionary(grouping: declaring) { $0.college }
-        return grouped.map { college, collegePros in
-            let hasAttended = collegePros.contains { $0.proDayCompleted }
-            let starredCount = collegePros.filter { isStarred($0) }.count
-            let topCount = collegePros.filter { isTopProspect($0) }.count
-            let needCount = collegePros.filter { isNeedPosition($0) }.count
-            let attendedScout = scouts.first { $0.proDayColleges.contains(college) }
-
-            // Position breakdown
-            let posCounts = Dictionary(grouping: collegePros) { $0.position }
-                .mapValues { $0.count }
-                .sorted { $0.value > $1.value }
-
-            // Best prospect at this school for matching
-            let bestProspect = collegePros
-                .sorted { ($0.scoutedOverall ?? 0) > ($1.scoutedOverall ?? 0) }
-                .first
-
-            // Relevance score for recommendations
-            let relevance = starredCount * 10 + topCount * 5 + needCount * 3 + collegePros.count
-
-            return ProDayCollegeInfo(
-                college: college,
-                prospects: collegePros.sorted { ($0.scoutedOverall ?? 0) > ($1.scoutedOverall ?? 0) },
-                hasAttended: hasAttended,
-                attendedScoutName: attendedScout?.fullName,
-                starredCount: starredCount,
-                topCount: topCount,
-                needCount: needCount,
-                positionBreakdown: posCounts,
-                bestProspect: bestProspect,
-                relevanceScore: relevance
-            )
-        }
-        .sorted { $0.relevanceScore > $1.relevanceScore }
-    }
-
-    private var recommendedColleges: [ProDayCollegeInfo] {
-        collegeData.filter { !$0.hasAttended && $0.relevanceScore > 5 }.prefix(5).map { $0 }
-    }
-
-    private var totalAssigned: Int {
-        scouts.reduce(0) { $0 + $1.proDaysAttended }
-    }
-
-    private var totalCapacity: Int {
-        scouts.reduce(0) { $0 + $1.maxProDays }
-    }
-
-    private var availableScouts: [Scout] {
-        scouts.filter { $0.canAttendProDay }
-    }
-
-    private var isProDayPhase: Bool {
-        career.currentPhase == .combine || career.currentPhase == .proDays || career.currentPhase == .draft || career.currentPhase == .freeAgency
-    }
-
-    // MARK: - Top-30 Visits Helpers (Task B)
-
-    /// Average accuracy of all scouts on the staff. Used as `interviewerQuality`
-    /// for Top-30 visits. Defaults to 60 if no scouts present.
-    private var avgScoutAccuracy: Int {
-        guard !scouts.isEmpty else { return 60 }
-        let total = scouts.reduce(0) { $0 + $1.accuracy }
-        return total / scouts.count
-    }
-
-    /// Whether the user's team has already used a Top-30 visit on a prospect.
-    private func hasTop30Visited(_ prospect: CollegeProspect) -> Bool {
-        guard let teamID = career.teamID else { return false }
-        return prospect.top30VisitedByTeams.contains(teamID)
-    }
-
-    /// Recommended Top-30 candidates: top 10 prospects this team hasn't visited
-    /// yet, ranked by starred (mustHave) -> need position -> top-50 board rank.
-    private var top30Recommendations: [CollegeProspect] {
-        prospects
-            .filter { $0.isDeclaringForDraft && !hasTop30Visited($0) }
-            .sorted { a, b in
-                let aStar = isStarred(a) ? 1 : 0
-                let bStar = isStarred(b) ? 1 : 0
-                if aStar != bStar { return aStar > bStar }
-
-                let aNeed = isNeedPosition(a) ? 1 : 0
-                let bNeed = isNeedPosition(b) ? 1 : 0
-                if aNeed != bNeed { return aNeed > bNeed }
-
-                let aTop = isTopProspect(a) ? 1 : 0
-                let bTop = isTopProspect(b) ? 1 : 0
-                if aTop != bTop { return aTop > bTop }
-
-                return (a.scoutedOverall ?? 0) > (b.scoutedOverall ?? 0)
-            }
-            .prefix(10)
-            .map { $0 }
-    }
-
-    // MARK: - Pro Day Calendar Helpers (Task C)
-
-    /// Stable week-in-cycle tag (1...5) derived deterministically from college name hash.
-    private func proDayWeek(for college: String) -> Int {
-        // Use absolute value of stable hash to avoid negatives.
-        let h = abs(college.unicodeScalars.reduce(into: 0) { $0 = $0 &* 31 &+ Int($1.value) })
-        return (h % 5) + 1
-    }
-
-    // MARK: - Scout-School Matching
-
-    private func bestScoutFor(college: String) -> (scout: Scout, reason: String)? {
-        let collegePros = prospects.filter { $0.college == college && $0.isDeclaringForDraft }
-        guard !collegePros.isEmpty else { return nil }
-
-        // Find the best prospect position at this school
-        let posCounts = Dictionary(grouping: collegePros) { $0.position }.mapValues { $0.count }
-        let topPosition = posCounts.max { $0.value < $1.value }?.key
-
-        // Find a scout specializing in that position
-        for scout in availableScouts {
-            if let spec = scout.positionSpecialization, spec == topPosition {
-                let bestAtPos = collegePros.filter { $0.position == spec }
-                    .sorted { ($0.scoutedOverall ?? 0) > ($1.scoutedOverall ?? 0) }
-                    .first
-                let prospectName = bestAtPos?.fullName ?? "prospects"
-                return (scout, "\(scout.fullName) (\(spec.rawValue) specialist) for \(prospectName)")
-            }
-        }
-
-        // Fallback: highest accuracy scout
-        if let best = availableScouts.max(by: { $0.accuracy < $1.accuracy }) {
-            return (best, "\(best.fullName) (highest accuracy: \(best.accuracy))")
-        }
-        return nil
-    }
-
-    // MARK: - Body
-
-    var body: some View {
-        if !isProDayPhase {
-            VStack(spacing: 16) {
-                Image(systemName: "calendar.badge.clock")
-                    .font(.system(size: 44))
-                    .foregroundStyle(Color.textTertiary)
-                Text("Pro Days Not Available Yet")
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(Color.textPrimary)
-                Text("Pro Days are available during the Combine and Draft phases.")
-                    .font(.subheadline)
-                    .foregroundStyle(Color.textSecondary)
-                    .multilineTextAlignment(.center)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if scouts.isEmpty {
-            VStack(spacing: 16) {
-                Image(systemName: "person.slash")
-                    .font(.system(size: 44))
-                    .foregroundStyle(Color.textTertiary)
-                Text("No Scouts Available")
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(Color.textPrimary)
-                Text("Hire scouts to send them to Pro Days.")
-                    .font(.subheadline)
-                    .foregroundStyle(Color.textSecondary)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-            List {
-                // Info banner (Task 7)
-                Section {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "info.circle.fill")
-                                .foregroundStyle(Color.accentGold)
-                            Text("Pro Day Benefits")
-                                .font(.caption.weight(.bold))
-                                .foregroundStyle(Color.accentGold)
-                        }
-                        Text("Pro Days reveal: updated measurables, position-specific drills, injury/medical checks, and private workout results. Reports improve scouting accuracy by 10-15%.")
-                            .font(.caption)
-                            .foregroundStyle(Color.textSecondary)
-                    }
-                }
-                .listRowBackground(Color.backgroundSecondary)
-
-                // Capacity counter (Task 8)
-                Section {
-                    HStack(spacing: 12) {
-                        Image(systemName: "gauge.with.needle")
-                            .font(.title3)
-                            .foregroundStyle(Color.accentBlue)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Assignment Capacity")
-                                .font(.caption.weight(.bold))
-                                .foregroundStyle(Color.textPrimary)
-                            Text("\(scouts.count) scouts \u{2192} \(totalCapacity) max Pro Days | \(totalAssigned)/\(totalCapacity) assigned")
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(Color.textSecondary)
-                        }
-                        Spacer()
-
-                        // Capacity bar
-                        GeometryReader { geo in
-                            let progress = totalCapacity > 0 ? CGFloat(totalAssigned) / CGFloat(totalCapacity) : 0
-                            ZStack(alignment: .leading) {
-                                RoundedRectangle(cornerRadius: 3)
-                                    .fill(Color.backgroundTertiary)
-                                RoundedRectangle(cornerRadius: 3)
-                                    .fill(progress > 0.8 ? Color.danger : Color.accentGold)
-                                    .frame(width: geo.size.width * progress)
-                            }
-                        }
-                        .frame(width: 60, height: 6)
-                    }
-                }
-                .listRowBackground(Color.backgroundSecondary)
-
-                // Scout Availability (Task 1, 2, 11)
-                Section {
-                    ForEach(scouts) { scout in
-                        proDayScoutCard(scout)
-                    }
-                } header: {
-                    HStack {
-                        Text("Scout Availability")
-                        Spacer()
-                        Text("\(availableScouts.count) available")
-                            .font(.caption2)
-                            .foregroundStyle(Color.textTertiary)
-                    }
-                }
-                .listRowBackground(Color.backgroundSecondary)
-
-                // Top-30 Visits Pre-Draft (Task B)
-                top30VisitsSection
-
-                // Recommended Schools (Task 5, 6, 10)
-                if !recommendedColleges.isEmpty {
-                    Section {
-                        ForEach(recommendedColleges, id: \.college) { info in
-                            recommendedSchoolRow(info)
-                        }
-
-                        if !availableScouts.isEmpty {
-                            Button {
-                                sendAllRecommended()
-                            } label: {
-                                HStack(spacing: 8) {
-                                    Image(systemName: "paperplane.circle.fill")
-                                        .font(.body)
-                                    Text("Send All Recommended")
-                                        .font(.caption.weight(.bold))
-                                    Spacer()
-                                    Text("\(min(availableScouts.count, recommendedColleges.filter { !$0.hasAttended }.count)) assignments")
-                                        .font(.caption2)
-                                        .foregroundStyle(Color.backgroundPrimary.opacity(0.8))
-                                }
-                                .foregroundStyle(Color.backgroundPrimary)
-                                .padding(.vertical, 6)
-                                .padding(.horizontal, 10)
-                                .background(Color.accentGold, in: RoundedRectangle(cornerRadius: 8))
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    } header: {
-                        Label("Recommended", systemImage: "star.circle.fill")
-                            .foregroundStyle(Color.accentGold)
-                    }
-                    .listRowBackground(Color.backgroundSecondary)
-                }
-
-                // All Schools grouped by Pro Day calendar week (Task 3, 4, 9, 12, 13, C)
-                let weekGroups = Dictionary(grouping: collegeData) { proDayWeek(for: $0.college) }
-                ForEach(weekGroups.keys.sorted(), id: \.self) { week in
-                    Section {
-                        ForEach(weekGroups[week] ?? [], id: \.college) { info in
-                            proDaySchoolCard(info)
-                        }
-                    } header: {
-                        HStack {
-                            Text("WEEK \(week)")
-                                .font(.caption.weight(.heavy))
-                                .foregroundStyle(Color.accentGold)
-                            Spacer()
-                            Text("\((weekGroups[week] ?? []).count) school\((weekGroups[week] ?? []).count == 1 ? "" : "s")")
-                                .font(.caption2)
-                                .foregroundStyle(Color.textTertiary)
-                        }
-                    }
-                    .listRowBackground(Color.backgroundSecondary)
-                }
-
-                // Task 9: "Send Scouts to Pro Days" confirmation + results
-                if totalAssigned > 0 && proDayResultSummary == nil {
-                    Section {
-                        Button {
-                            executeProDays()
-                        } label: {
-                            HStack(spacing: 10) {
-                                Image(systemName: "paperplane.circle.fill")
-                                    .font(.title3)
-                                    .foregroundStyle(Color.backgroundPrimary)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("Send Scouts to Pro Days")
-                                        .font(.subheadline.weight(.bold))
-                                        .foregroundStyle(Color.backgroundPrimary)
-                                    Text("\(totalAssigned) assignment\(totalAssigned == 1 ? "" : "s") ready")
-                                        .font(.caption)
-                                        .foregroundStyle(Color.backgroundPrimary.opacity(0.8))
-                                }
-                                Spacer()
-                                Image(systemName: "arrow.right.circle.fill")
-                                    .font(.title3)
-                                    .foregroundStyle(Color.backgroundPrimary)
-                            }
-                            .padding(12)
-                            .background(Color.accentGold, in: RoundedRectangle(cornerRadius: 10))
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .listRowBackground(Color.clear)
-                    .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
-                }
-
-                // Task 9: Pro Day results summary
-                if let summary = proDayResultSummary {
-                    Section {
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack(spacing: 8) {
-                                Image(systemName: "checkmark.seal.fill")
-                                    .font(.title3)
-                                    .foregroundStyle(Color.success)
-                                Text("Pro Day Results")
-                                    .font(.subheadline.weight(.bold))
-                                    .foregroundStyle(Color.success)
-                            }
-                            Text("\(summary.prospectsEvaluated) prospects evaluated across \(summary.schoolsVisited) schools")
-                                .font(.caption)
-                                .foregroundStyle(Color.textSecondary)
-                            if !summary.keyFindings.isEmpty {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    ForEach(summary.keyFindings, id: \.self) { finding in
-                                        HStack(spacing: 4) {
-                                            Image(systemName: "star.fill")
-                                                .font(.system(size: DSType.Size.micro))
-                                                .foregroundStyle(Color.accentGold)
-                                            Text(finding)
-                                                .font(.caption2)
-                                                .foregroundStyle(Color.textPrimary)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        .padding(.vertical, 4)
-                    }
-                    .listRowBackground(Color.success.opacity(0.08))
-                }
-
-                // Task 10: Personal Workouts section
-                if career.currentPhase == .proDays || career.currentPhase == .combine {
-                    Section {
-                        Button {
-                            showPersonalWorkouts = true
-                        } label: {
-                            HStack(spacing: 10) {
-                                Image(systemName: "dumbbell.fill")
-                                    .font(.body)
-                                    .foregroundStyle(Color.accentBlue)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("Personal Workouts")
-                                        .font(.subheadline.weight(.semibold))
-                                        .foregroundStyle(Color.textPrimary)
-                                    Text("Schedule private workouts with up to 10 prospects (\(personalWorkoutsUsed)/10 used)")
-                                        .font(.caption)
-                                        .foregroundStyle(Color.textSecondary)
-                                }
-                                Spacer()
-                                Image(systemName: "chevron.right")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(Color.textTertiary)
-                            }
-                        }
-                        .buttonStyle(.plain)
-                    } header: {
-                        Label("Private Workouts", systemImage: "dumbbell.fill")
-                    }
-                    .listRowBackground(Color.backgroundSecondary)
-                }
-            }
-            .scrollContentBackground(.hidden)
-            .listStyle(.insetGrouped)
-            .sheet(isPresented: $showSendScoutSheet) {
-                if let college = selectedCollege {
-                    ProDaySendScoutSheet(
-                        college: college,
-                        scouts: scouts,
-                        prospects: prospects.filter { $0.college == college && $0.isDeclaringForDraft },
-                        bestMatch: bestScoutFor(college: college),
-                        onSend: { scout in
-                            sendScoutToProDay(scout: scout, college: college)
-                            showSendScoutSheet = false
-                        },
-                        onCancel: { showSendScoutSheet = false }
-                    )
-                }
-            }
-            .sheet(isPresented: $showPersonalWorkouts) {
-                PersonalWorkoutSheet(
-                    prospects: prospects.filter { $0.isDeclaringForDraft && !$0.proDayCompleted },
-                    selectedIDs: $personalWorkoutIDs,
-                    workoutsUsed: personalWorkoutsUsed,
-                    onConduct: { ids in
-                        conductPersonalWorkouts(prospectIDs: ids)
-                        showPersonalWorkouts = false
-                    }
-                )
-            }
-            .sheet(isPresented: $showFocusProspectSheet) {
-                if let college = focusCollege {
-                    FocusProspectSheet(
-                        college: college,
-                        prospects: prospects.filter { $0.college == college && $0.isDeclaringForDraft },
-                        onSelect: { prospect in
-                            focusProspect(prospect)
-                            showFocusProspectSheet = false
-                        },
-                        onCancel: { showFocusProspectSheet = false }
-                    )
-                }
-            }
-            .alert(
-                "Top-30 Visit: \(top30ResultProspectName)",
-                isPresented: $showTop30Result,
-                presenting: top30ResultSummary
-            ) { _ in
-                Button("Done", role: .cancel) { }
-            } message: { result in
-                let medical = result.medicalConcerns.isEmpty ? "No new concerns" : result.medicalConcerns.joined(separator: ", ")
-                let workout = result.workoutImpressions.joined(separator: ", ")
-                let fitPct = Int((result.teamFitScore * 100).rounded())
-                Text("Football IQ: \(result.footballIQRevised)\nMedical: \(medical)\nWorkout: \(workout)\nTeam Fit: \(fitPct)%")
-            }
-        }
-    }
-
-    // MARK: - Top-30 Visits Section (Task B)
-
-    @ViewBuilder
-    private var top30VisitsSection: some View {
-        let used = career.top30VisitsUsed
-        let limit = 30
-        let remaining = max(0, limit - used)
-        let recs = top30Recommendations
-
-        Section {
-            // Explanation row
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 6) {
-                    Image(systemName: "house.fill")
-                        .foregroundStyle(Color.accentGold)
-                        .font(.caption)
-                    Text("Bring a prospect to your facility")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.textPrimary)
-                }
-                Text("Deep evaluation: interview, focused workout, medical check. Limited to 30 per cycle.")
-                    .font(.caption2)
-                    .foregroundStyle(Color.textSecondary)
-            }
-            .padding(.vertical, 2)
-
-            if recs.isEmpty {
-                Text("No remaining recommended candidates — every priority prospect already received a visit.")
-                    .font(.caption2)
-                    .foregroundStyle(Color.textTertiary)
-                    .padding(.vertical, 4)
-            } else {
-                ForEach(recs) { prospect in
-                    top30ProspectRow(prospect, disabled: used >= limit)
-                }
-            }
-        } header: {
-            HStack {
-                Label("TOP-30 VISITS", systemImage: "person.crop.circle.badge.checkmark")
-                    .foregroundStyle(Color.accentGold)
-                Spacer()
-                Text("\(used) / 30 used \u{2022} \(remaining) left")
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(used >= limit ? Color.danger : Color.textSecondary)
-            }
-        }
-        .listRowBackground(Color.backgroundSecondary)
-    }
-
-    private func top30ProspectRow(_ prospect: CollegeProspect, disabled: Bool) -> some View {
-        HStack(spacing: 8) {
-            // Position chip
-            Text(prospect.position.rawValue)
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(Color.textPrimary)
-                .frame(width: 28, height: 18)
-                .background(positionColor(prospect.position), in: RoundedRectangle(cornerRadius: 3))
-
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 4) {
-                    Text(prospect.fullName)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.textPrimary)
-                        .lineLimit(1)
-                    if isStarred(prospect) {
-                        Image(systemName: "star.fill")
-                            .font(.system(size: DSType.Size.micro))
-                            .foregroundStyle(Color.accentGold)
-                    }
-                }
-                HStack(spacing: 6) {
-                    if let ovr = prospect.scoutedOverall {
-                        Text("OVR \(ovr)")
-                            .font(.system(size: 9, weight: .bold).monospacedDigit())
-                            .foregroundStyle(Color.textSecondary)
-                    }
-                    if let proj = prospect.draftProjection {
-                        Text("Rd \(projectedRound(proj))")
-                            .font(.system(size: 9))
-                            .foregroundStyle(Color.textTertiary)
-                    }
-                    if isNeedPosition(prospect) {
-                        Text("NEED")
-                            .font(.system(size: DSType.Size.micro, weight: .black))
-                            .foregroundStyle(Color.danger)
-                    }
-                }
-            }
-
-            Spacer()
-
-            Button {
-                scheduleTop30Visit(prospect)
-            } label: {
-                Text("Schedule Visit")
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(disabled ? Color.textTertiary : Color.backgroundPrimary)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(disabled ? Color.backgroundTertiary : Color.accentGold, in: RoundedRectangle(cornerRadius: 6))
-            }
-            .buttonStyle(.plain)
-            .disabled(disabled)
-        }
-        .padding(.vertical, 2)
-    }
-
-    /// Schedule + execute a Top-30 visit for the given prospect via the scouting engine.
-    private func scheduleTop30Visit(_ prospect: CollegeProspect) {
-        guard let teamID = career.teamID else { return }
-        guard career.top30VisitsUsed < 30 else { return }
-
-        // Mutate the prospect inside the canonical draft class so persistence sticks.
-        var localClass = WeekAdvancer.currentDraftClass
-        guard let idx = localClass.firstIndex(where: { $0.id == prospect.id }) else { return }
-
-        let leadScout = scouts.max(by: { $0.accuracy < $1.accuracy })
-        let result = ScoutingEngine.conductTop30Visit(
-            prospect: &localClass[idx],
-            visitingTeamID: teamID,
-            interviewerQuality: avgScoutAccuracy,
-            interviewerName: leadScout.map { "Scout \($0.fullName)" } ?? "Scouting Staff",
-            occasionLabel: "Top-30 Visit \u{00B7} " + String(career.currentSeason)
-        )
-
-        career.top30VisitsUsed += 1
-
-        // Sync + persist.
-        WeekAdvancer.currentDraftClass = localClass
-        WeekAdvancer.persistDraftClass(localClass, to: modelContext)
-        try? modelContext.save()
-
-        top30ResultProspectName = prospect.fullName
-        top30ResultSummary = result
-        showTop30Result = true
-
-        onRefresh()
-    }
-
-    // MARK: - Focus Prospect (Task C)
-
-    /// Marks the chosen prospect `target` on the ONE mark system, so the rest
-    /// of the scouting flow — the board, the prep card, the combine trip —
-    /// surfaces him as a high-priority focus. This used to write `prospectFlag`
-    /// directly, which the star store and the board's own bookmark set never saw.
-    private func focusProspect(_ prospect: CollegeProspect) {
-        // Mutate the canonical draft class instance.
-        var localClass = WeekAdvancer.currentDraftClass
-        guard let idx = localClass.firstIndex(where: { $0.id == prospect.id }) else { return }
-        localClass[idx].setUserMark(.target)
-
-        WeekAdvancer.currentDraftClass = localClass
-        WeekAdvancer.persistDraftClass(localClass, to: modelContext)
-        try? modelContext.save()
-        onRefresh()
-    }
-
-    // MARK: - Execute Pro Days (Task 9)
-
-    /// CRITICAL FIX: actually run the scouting engine for every scout-college assignment,
-    /// then sync mutated prospects back to `WeekAdvancer.currentDraftClass` and persist
-    /// to SwiftData so reports + drill improvements survive an app restart.
-    private func executeProDays() {
-        // Pull the canonical, full draft class so we mutate the source-of-truth.
-        var localProspects = WeekAdvancer.currentDraftClass
-
-        var findings: [String] = []
-        var schoolsVisited = 0
-        var prospectsEvaluated = 0
-
-        // For each scout × college pair, run the engine if any prospect at that
-        // college has not yet had a Pro Day. This is idempotent: if all prospects
-        // at the college are already `proDayCompleted`, the engine call is skipped.
-        for scout in scouts {
-            for college in scout.proDayColleges {
-                let needsRun = localProspects.contains { p in
-                    p.college == college && p.isDeclaringForDraft && !p.proDayCompleted
-                }
-                guard needsRun else { continue }
-
-                ScoutingEngine.attendProDay(
-                    scout: scout,
-                    college: college,
-                    prospects: &localProspects
-                )
-            }
-        }
-
-        // Build the result summary off the fresh, mutated prospect list.
-        let assignedColleges = Set(scouts.flatMap { $0.proDayColleges })
-        schoolsVisited = assignedColleges.count
-        for college in assignedColleges {
-            let collegePros = localProspects.filter { $0.college == college && $0.isDeclaringForDraft }
-            prospectsEvaluated += collegePros.count
-            for p in collegePros {
-                if let ovr = p.scoutedOverall, ovr >= 80 {
-                    findings.append("\(p.fullName) (\(p.position.rawValue)) impressed at \(college) pro day")
-                }
-            }
-        }
-
-        // Sync back to in-memory source-of-truth and persist to SwiftData.
-        WeekAdvancer.currentDraftClass = localProspects
-        WeekAdvancer.persistDraftClass(localProspects, to: modelContext)
-        try? modelContext.save()
-
-        proDayResultSummary = ProDayResultSummary(
-            schoolsVisited: schoolsVisited,
-            prospectsEvaluated: prospectsEvaluated,
-            keyFindings: Array(findings.prefix(5))
-        )
-
-        // Refresh hub state so prospect/scout views pick up changes.
-        onRefresh()
-    }
-
-    // MARK: - Personal Workouts (Task 10)
-
-    private func conductPersonalWorkouts(prospectIDs: Set<UUID>) {
-        for id in prospectIDs {
-            guard let idx = prospects.firstIndex(where: { $0.id == id }) else { continue }
-            // Personal workout reveals more detailed physical + mental attributes
-            let prospect = prospects[idx]
-            let bestScout = scouts.max(by: { $0.accuracy < $1.accuracy })
-            if let scout = bestScout {
-                ScoutingEngine.attendProDay(
-                    scout: scout,
-                    college: prospect.college,
-                    prospects: &prospects
-                )
-            }
-            prospect.proDayCompleted = true
-        }
-        personalWorkoutsUsed += prospectIDs.count
-        try? modelContext.save()
-        onRefresh()
-    }
-
-    // MARK: - Scout Card (Task 1, 2, 11)
-
-    private func proDayScoutCard(_ scout: Scout) -> some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                // Specialty icon
-                ZStack {
-                    Circle()
-                        .fill(scout.canAttendProDay ? Color.accentGold.opacity(0.15) : Color.backgroundTertiary)
-                        .frame(width: 36, height: 36)
-                    Image(systemName: specialtyIcon(for: scout))
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(scout.canAttendProDay ? Color.accentGold : Color.textTertiary)
-                }
-
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(scout.fullName)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(Color.textPrimary)
-                        Text(scout.specialtyLabel)
-                            .font(.caption2.weight(.medium))
-                            .foregroundStyle(Color.accentBlue)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.accentBlue.opacity(0.12), in: Capsule())
-                    }
-
-                    HStack(spacing: 8) {
-                        // Accuracy bar
-                        HStack(spacing: 4) {
-                            Text("ACC")
-                                .font(.system(size: 9, weight: .bold))
-                                .foregroundStyle(Color.textTertiary)
-                            proDayAccuracyBar(value: scout.accuracy)
-                            Text("\(scout.accuracy)")
-                                .font(.caption2.monospacedDigit().weight(.medium))
-                                .foregroundStyle(accuracyColor(scout.accuracy))
-                        }
-
-                        Text("\u{2022}")
-                            .font(.caption2)
-                            .foregroundStyle(Color.textTertiary)
-
-                        Text("\(scout.proDaysAttended)/\(scout.maxProDays) Pro Days")
-                            .font(.caption2.monospacedDigit())
-                            .foregroundStyle(scout.proDaysAttended >= scout.maxProDays ? Color.danger : Color.textSecondary)
-                    }
-                }
-
-                Spacer()
-
-                // Status indicator
-                if scout.proDaysAttended >= scout.maxProDays {
-                    Text("FULL")
-                        .font(.system(size: 9, weight: .black))
-                        .foregroundStyle(Color.danger)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(Color.danger.opacity(0.12), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
-                } else {
-                    Text("\(scout.maxProDays - scout.proDaysAttended) LEFT")
-                        .font(.system(size: 9, weight: .black))
-                        .foregroundStyle(Color.success)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(Color.success.opacity(0.12), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
-                }
-            }
-
-            // Show assigned colleges (Task 2)
-            if !scout.proDayColleges.isEmpty {
-                HStack(spacing: 4) {
-                    Image(systemName: "arrow.right")
-                        .font(.system(size: 9))
-                        .foregroundStyle(Color.accentGold)
-                    Text(scout.proDayColleges.joined(separator: ", "))
-                        .font(.caption2)
-                        .foregroundStyle(Color.textSecondary)
-                        .lineLimit(1)
-                    Spacer()
-                }
-                .padding(.top, 6)
-                .padding(.leading, 46)
-            }
-        }
-        .padding(.vertical, 4)
-    }
-
-    private func proDayAccuracyBar(value: Int) -> some View {
-        GeometryReader { geo in
-            let pct = CGFloat(min(max(value, 0), 100)) / 100.0
-            ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(Color.backgroundTertiary)
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(accuracyColor(value))
-                    .frame(width: geo.size.width * pct)
-            }
-        }
-        .frame(width: 40, height: 4)
-    }
-
-    /// Unified onto `Color.forRating` — see the twin below, which banded scout
-    /// accuracy at 80/70 while this one used 75/55.
-    private func accuracyColor(_ value: Int) -> Color {
-        Color.forRating(value)
-    }
-
-    private func specialtyIcon(for scout: Scout) -> String {
-        if let pos = scout.positionSpecialization {
-            switch pos.side {
-            case .offense:      return "sportscourt.fill"
-            case .defense:      return "shield.fill"
-            case .specialTeams: return "figure.run"
-            }
-        }
-        if let focus = scout.focusAttribute {
-            return focus.icon
-        }
-        return scout.scoutRole.isChief ? "star.fill" : "binoculars.fill"
-    }
-
-    // MARK: - Recommended School Row (Task 5, 6)
-
-    private func recommendedSchoolRow(_ info: ProDayCollegeInfo) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Image(systemName: "sparkles")
-                    .font(.caption)
-                    .foregroundStyle(Color.accentGold)
-                Text(info.college)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Color.textPrimary)
-                Spacer()
-                schoolBadges(info)
-            }
-
-            // Why recommended
-            VStack(alignment: .leading, spacing: 2) {
-                if let best = info.bestProspect, let rank = boardRank(for: best.id) {
-                    Text("Has your #\(rank) ranked prospect: \(best.fullName)")
-                        .font(.caption2)
-                        .foregroundStyle(Color.accentGold)
-                }
-                if info.starredCount > 0 {
-                    Text("\(info.starredCount) starred prospect\(info.starredCount == 1 ? "" : "s")")
-                        .font(.caption2)
-                        .foregroundStyle(Color.accentGold)
-                }
-                if info.needCount > 0 {
-                    Text("\(info.needCount) at need position\(info.needCount == 1 ? "" : "s")")
-                        .font(.caption2)
-                        .foregroundStyle(Color.danger)
-                }
-            }
-
-            // Smart scout recommendation (Task 6)
-            if let match = bestScoutFor(college: info.college), !info.hasAttended {
-                HStack(spacing: 4) {
-                    Image(systemName: "lightbulb.fill")
-                        .font(.system(size: 9))
-                        .foregroundStyle(Color.accentGold.opacity(0.8))
-                    Text("Send \(match.reason)")
-                        .font(.caption2.italic())
-                        .foregroundStyle(Color.textTertiary)
-                }
-            }
-        }
-        .padding(.vertical, 2)
-    }
-
-    // MARK: - School Card (Task 3, 4, 9, 12, 13)
-
-    private func proDaySchoolCard(_ info: ProDayCollegeInfo) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Header row: tappable to expand
-            Button {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    if expandedColleges.contains(info.college) {
-                        expandedColleges.remove(info.college)
-                    } else {
-                        expandedColleges.insert(info.college)
-                    }
-                }
-            } label: {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 8) {
-                        // Expand/collapse chevron
-                        Image(systemName: expandedColleges.contains(info.college) ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(Color.textTertiary)
-                            .frame(width: 14)
-
-                        Text(info.college)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(Color.textPrimary)
-
-                        schoolBadges(info)
-
-                        Spacer()
-
-                        // Attended status (Task 13)
-                        if info.hasAttended {
-                            HStack(spacing: 4) {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundStyle(Color.success)
-                                    .font(.caption)
-                                if let scoutName = info.attendedScoutName {
-                                    Text(scoutName)
-                                        .font(.caption2.weight(.medium))
-                                        .foregroundStyle(Color.success)
-                                } else {
-                                    Text("Attended")
-                                        .font(.caption2.weight(.medium))
-                                        .foregroundStyle(Color.success)
-                                }
-                            }
-                        } else if availableScouts.isEmpty {
-                            Text("No scouts available")
-                                .font(.caption2)
-                                .foregroundStyle(Color.textTertiary)
-                        } else {
-                            Button {
-                                selectedCollege = info.college
-                                showSendScoutSheet = true
-                            } label: {
-                                Label("Send Scout", systemImage: "paperplane.fill")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(Color.accentGold)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-
-                    // Position breakdown (Task 12) + Pro Day week tag (Task C)
-                    HStack(spacing: 6) {
-                        // Week tag (e.g. "W3")
-                        Text("W\(proDayWeek(for: info.college))")
-                            .font(.system(size: 9, weight: .black))
-                            .foregroundStyle(Color.accentBlue)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 1)
-                            .background(Color.accentBlue.opacity(0.12), in: RoundedRectangle(cornerRadius: 3))
-
-                        Text("\(info.prospects.count) prospect\(info.prospects.count == 1 ? "" : "s")")
-                            .font(.caption2)
-                            .foregroundStyle(Color.textSecondary)
-
-                        if !info.positionBreakdown.isEmpty {
-                            Text("\u{2022}")
-                                .font(.caption2)
-                                .foregroundStyle(Color.textTertiary)
-                            Text(info.positionBreakdown.prefix(4).map { "\($0.value) \($0.key.rawValue)" }.joined(separator: ", ") + (info.positionBreakdown.count > 4 ? ", +\(info.positionBreakdown.dropFirst(4).map(\.value).reduce(0, +)) other" : ""))
-                                .font(.caption2)
-                                .foregroundStyle(Color.textTertiary)
-                                .lineLimit(1)
-                        }
-
-                        // Big Board integration (Task 9)
-                        let boardCount = info.prospects.filter { boardRank(for: $0.id) != nil && (boardRank(for: $0.id) ?? 999) <= 50 }.count
-                        if boardCount > 0 {
-                            Text("\u{2022}")
-                                .font(.caption2)
-                                .foregroundStyle(Color.textTertiary)
-                            Text("\(boardCount) on Board top-50")
-                                .font(.caption2)
-                                .foregroundStyle(Color.success)
-                        }
-                    }
-                    .padding(.leading, 22)
-
-                    // Summary: starred, top, need (Task 4)
-                    if info.starredCount > 0 || info.topCount > 0 || info.needCount > 0 {
-                        HStack(spacing: 8) {
-                            if info.starredCount > 0 {
-                                HStack(spacing: 2) {
-                                    Image(systemName: "star.fill")
-                                        .font(.system(size: DSType.Size.micro))
-                                        .foregroundStyle(Color.accentGold)
-                                    Text("\(info.starredCount) starred")
-                                        .font(.system(size: 10, weight: .medium))
-                                        .foregroundStyle(Color.accentGold)
-                                }
-                            }
-                            if info.topCount > 0 {
-                                HStack(spacing: 2) {
-                                    Image(systemName: "trophy.fill")
-                                        .font(.system(size: DSType.Size.micro))
-                                        .foregroundStyle(Color.success)
-                                    Text("\(info.topCount) top-50")
-                                        .font(.system(size: 10, weight: .medium))
-                                        .foregroundStyle(Color.success)
-                                }
-                            }
-                            if info.needCount > 0 {
-                                HStack(spacing: 2) {
-                                    Text("NEED")
-                                        .font(.system(size: DSType.Size.micro, weight: .black))
-                                        .foregroundStyle(Color.danger)
-                                    Text("\(info.needCount)")
-                                        .font(.system(size: 10, weight: .medium))
-                                        .foregroundStyle(Color.danger)
-                                }
-                            }
-                        }
-                        .padding(.leading, 22)
-                    }
-                }
-            }
-            .buttonStyle(.plain)
-            .accessibilityHint(expandedColleges.contains(info.college) ? "Collapse college details" : "Expand college details")
-
-            // Focus prospect (Task C) — picks one prospect from this school as a high-priority focus.
-            if info.prospects.count > 1 {
-                HStack(spacing: 6) {
-                    Spacer()
-                    Button {
-                        focusCollege = info.college
-                        showFocusProspectSheet = true
-                    } label: {
-                        Label("Focus prospect", systemImage: "scope")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(Color.accentBlue)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color.accentBlue.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
-                    }
-                    .buttonStyle(.plain)
-                }
-                .padding(.top, 4)
-                .padding(.leading, 22)
-            }
-
-            // Expanded prospect list (Task 3)
-            if expandedColleges.contains(info.college) {
-                Divider()
-                    .padding(.vertical, 6)
-                    .overlay(Color.surfaceBorder)
-
-                ForEach(info.prospects) { prospect in
-                    proDayProspectRow(prospect)
-                }
-            }
-        }
-        .padding(.vertical, 4)
-    }
-
-    // MARK: - Badges
-
-    private func schoolBadges(_ info: ProDayCollegeInfo) -> some View {
-        HStack(spacing: 4) {
-            if info.starredCount > 0 {
-                Image(systemName: "star.fill")
-                    .font(.system(size: 9))
-                    .foregroundStyle(Color.accentGold)
-            }
-            if info.topCount > 0 {
-                Text("TOP")
-                    .font(.system(size: DSType.Size.micro, weight: .black))
-                    .foregroundStyle(Color.success)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 1)
-                    .background(Color.success.opacity(0.12), in: RoundedRectangle(cornerRadius: 3))
-            }
-            if info.needCount > 0 {
-                Text("NEED")
-                    .font(.system(size: DSType.Size.micro, weight: .black))
-                    .foregroundStyle(Color.danger)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 1)
-                    .background(Color.danger.opacity(0.12), in: RoundedRectangle(cornerRadius: 3))
-            }
-        }
-    }
-
-    // MARK: - Prospect Row (Task 3)
-
-    private func proDayProspectRow(_ prospect: CollegeProspect) -> some View {
-        HStack(spacing: 8) {
-            // Board rank
-            if let rank = boardRank(for: prospect.id) {
-                Text("#\(rank)")
-                    .font(.system(size: 10, weight: .heavy).monospacedDigit())
-                    .foregroundStyle(rank <= 10 ? Color.accentGold : Color.textTertiary)
-                    .frame(width: 28, alignment: .trailing)
-            } else {
-                Text("--")
-                    .font(.system(size: 10, weight: .medium).monospacedDigit())
-                    .foregroundStyle(Color.textTertiary)
-                    .frame(width: 28, alignment: .trailing)
-            }
-
-            // Position badge
-            Text(prospect.position.rawValue)
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(Color.textPrimary)
-                .frame(width: 28, height: 18)
-                .background(positionColor(prospect.position), in: RoundedRectangle(cornerRadius: 3))
-
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 4) {
-                    Text(prospect.fullName)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(Color.textPrimary)
-                        .lineLimit(1)
-                    if isStarred(prospect) {
-                        Image(systemName: "star.fill")
-                            .font(.system(size: DSType.Size.micro))
-                            .foregroundStyle(Color.accentGold)
-                    }
-                }
-                HStack(spacing: 4) {
-                    if let grade = prospect.effectiveOverallGrade {
-                        Text(grade.displayText)
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(gradeColor(grade.displayText))
-                    }
-                    if let proj = prospect.draftProjection {
-                        Text("Rd \(projectedRound(proj))")
-                            .font(.system(size: 9))
-                            .foregroundStyle(Color.textTertiary)
-                    }
-                    // College production tier
-                    ProductionMicroLabel(tier: prospect.collegeProductionTier)
-                }
-            }
-
-            Spacer()
-
-            // Need/top indicators
-            HStack(spacing: 4) {
-                if isNeedPosition(prospect) {
-                    Text("NEED")
-                        .font(.system(size: DSType.Size.micro, weight: .black))
-                        .foregroundStyle(Color.danger)
-                        .padding(.horizontal, 3)
-                        .padding(.vertical, 1)
-                        .background(Color.danger.opacity(0.12), in: RoundedRectangle(cornerRadius: 2))
-                }
-                if isTopProspect(prospect) {
-                    Text("TOP")
-                        .font(.system(size: DSType.Size.micro, weight: .black))
-                        .foregroundStyle(Color.success)
-                        .padding(.horizontal, 3)
-                        .padding(.vertical, 1)
-                        .background(Color.success.opacity(0.12), in: RoundedRectangle(cornerRadius: 2))
-                }
-            }
-        }
-        .padding(.vertical, 2)
-        .padding(.leading, 22)
-    }
-
-    // MARK: - Helpers
-
-    private func positionColor(_ position: Position) -> Color {
-        switch position.side {
-        case .offense:      return .accentBlue
-        case .defense:      return .danger
-        case .specialTeams: return .accentGold
-        }
-    }
-
-    private func gradeColor(_ grade: String) -> Color {
-        PositionGradeCalculator.gradeColorForLetter(grade)
-    }
-
-    private func projectedRound(_ pick: Int) -> String {
-        switch pick {
-        case 1...32:    return "1"
-        case 33...64:   return "2"
-        case 65...100:  return "3"
-        case 101...140: return "4"
-        case 141...180: return "5"
-        case 181...224: return "6"
-        default:        return "7"
-        }
-    }
-
-    // MARK: - Actions
-
-    private func sendScoutToProDay(scout: Scout, college: String) {
-        ScoutingEngine.attendProDay(
-            scout: scout,
-            college: college,
-            prospects: &prospects
-        )
-        try? modelContext.save()
-        onRefresh()
-    }
-
-    private func sendBestScout(to college: String) {
-        if let match = bestScoutFor(college: college) {
-            sendScoutToProDay(scout: match.scout, college: college)
-        } else if let first = availableScouts.first {
-            sendScoutToProDay(scout: first, college: college)
-        }
-    }
-
-    private func sendAllRecommended() {
-        let unattended = recommendedColleges.filter { !$0.hasAttended }
-        var scoutsLeft = availableScouts
-
-        for info in unattended {
-            guard !scoutsLeft.isEmpty else { break }
-
-            // Try to find best matching scout
-            let collegePros = prospects.filter { $0.college == info.college && $0.isDeclaringForDraft }
-            let topPos = Dictionary(grouping: collegePros) { $0.position }.max { $0.value.count < $1.value.count }?.key
-
-            var chosenIdx: Int?
-            if let pos = topPos {
-                chosenIdx = scoutsLeft.firstIndex { $0.positionSpecialization == pos }
-            }
-            if chosenIdx == nil {
-                chosenIdx = scoutsLeft.indices.max(by: { scoutsLeft[$0].accuracy < scoutsLeft[$1].accuracy })
-            }
-            guard let idx = chosenIdx else { break }
-
-            let scout = scoutsLeft[idx]
-            sendScoutToProDay(scout: scout, college: info.college)
-            scoutsLeft.remove(at: idx)
-        }
-    }
-}
-
-// MARK: - Pro Day College Info
-
-private struct ProDayCollegeInfo {
-    let college: String
-    let prospects: [CollegeProspect]
-    let hasAttended: Bool
-    let attendedScoutName: String?
-    let starredCount: Int
-    let topCount: Int
-    let needCount: Int
-    let positionBreakdown: [(key: Position, value: Int)]
-    let bestProspect: CollegeProspect?
-    let relevanceScore: Int
-}
-
-// MARK: - Pro Day Result Summary (Task 9)
-
-private struct ProDayResultSummary {
-    let schoolsVisited: Int
-    let prospectsEvaluated: Int
-    let keyFindings: [String]
-}
-
-// MARK: - Focus Prospect Sheet (Task C)
-
-/// Sheet that lets the user pick one prospect from a college as the focus
-/// of that Pro Day visit. Selecting a prospect marks them `mustHave`.
-private struct FocusProspectSheet: View {
-    let college: String
-    let prospects: [CollegeProspect]
-    let onSelect: (CollegeProspect) -> Void
-    let onCancel: () -> Void
-
-    private var sortedProspects: [CollegeProspect] {
-        prospects.sorted { ($0.scoutedOverall ?? 0) > ($1.scoutedOverall ?? 0) }
-    }
-
-    var body: some View {
-        NavigationStack {
-            ZStack {
-                Color.backgroundPrimary.ignoresSafeArea()
-                List {
-                    Section {
-                        Text("Pick one prospect from \(college) to focus your scouting on. They'll be marked as a must-have priority.")
-                            .font(.caption)
-                            .foregroundStyle(Color.textSecondary)
-                    }
-                    .listRowBackground(Color.backgroundSecondary)
-
-                    Section("Prospects") {
-                        ForEach(sortedProspects) { prospect in
-                            Button {
-                                onSelect(prospect)
-                            } label: {
-                                HStack(spacing: 10) {
-                                    Text(prospect.position.rawValue)
-                                        .font(.system(size: 10, weight: .bold))
-                                        .foregroundStyle(Color.textPrimary)
-                                        .frame(width: 30, height: 20)
-                                        .background(
-                                            RoundedRectangle(cornerRadius: 3)
-                                                .fill(prospect.position.side == .offense ? Color.accentBlue.opacity(0.25) : Color.danger.opacity(0.25))
-                                        )
-
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(prospect.fullName)
-                                            .font(.subheadline.weight(.semibold))
-                                            .foregroundStyle(Color.textPrimary)
-                                        HStack(spacing: 6) {
-                                            if let ovr = prospect.scoutedOverall {
-                                                Text("OVR \(ovr)")
-                                                    .font(.caption2.monospacedDigit())
-                                                    .foregroundStyle(Color.textSecondary)
-                                            }
-                                            if let proj = prospect.draftProjection {
-                                                Text("Rd \(proj)")
-                                                    .font(.caption2)
-                                                    .foregroundStyle(Color.textTertiary)
-                                            }
-                                            ProspectMarkChip(mark: prospect.userMark)
-                                        }
-                                    }
-
-                                    Spacer()
-
-                                    Image(systemName: "chevron.right")
-                                        .font(.caption.weight(.semibold))
-                                        .foregroundStyle(Color.textTertiary)
-                                }
-                            }
-                            .buttonStyle(.plain)
-                            .listRowBackground(Color.backgroundSecondary)
-                        }
-                    }
-                }
-                .scrollContentBackground(.hidden)
-                .listStyle(.insetGrouped)
-            }
-            .navigationTitle("Focus Prospect")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarColorScheme(.dark, for: .navigationBar)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { onCancel() }
-                }
-            }
-        }
-    }
-}
-
-// MARK: - Send Scout to Pro Day Sheet (Tasks 1-6)
-
-private struct ProDaySendScoutSheet: View {
-    let college: String
-    let scouts: [Scout]
-    let prospects: [CollegeProspect]
-    let bestMatch: (scout: Scout, reason: String)?
-    let onSend: (Scout) -> Void
-    let onCancel: () -> Void
-
-    @State private var selectedScoutID: UUID?
-
-    private var sortedScouts: [Scout] {
-        scouts.sorted { $0.scoutRole.sortOrder < $1.scoutRole.sortOrder }
-    }
-
-    /// Determines if a scout is recommended for this school's prospect pool.
-    private func isRecommended(_ scout: Scout) -> Bool {
-        guard let spec = scout.positionSpecialization else { return false }
-        return prospects.contains { $0.position == spec }
-    }
-
-    /// Unified onto `Color.forRating` — see the twin above.
-    private func accuracyColor(_ value: Int) -> Color {
-        Color.forRating(value)
-    }
-
-    var body: some View {
-        NavigationStack {
-            ZStack {
-                Color.backgroundPrimary.ignoresSafeArea()
-
-                VStack(spacing: 0) {
-                    // Scout list
-                    List {
-                        Section("Select a Scout") {
-                            ForEach(sortedScouts) { scout in
-                                let isFull = !scout.canAttendProDay
-                                let isRec = isRecommended(scout) || bestMatch?.scout.id == scout.id
-
-                                Button {
-                                    if !isFull {
-                                        selectedScoutID = scout.id
-                                    }
-                                } label: {
-                                    HStack(spacing: 10) {
-                                        // Radio button / checkmark
-                                        Image(systemName: selectedScoutID == scout.id ? "checkmark.circle.fill" : "circle")
-                                            .font(.system(size: 18))
-                                            .foregroundStyle(selectedScoutID == scout.id ? Color.accentGold : (isFull ? Color.textTertiary.opacity(0.3) : Color.textTertiary))
-
-                                        VStack(alignment: .leading, spacing: 3) {
-                                            HStack(spacing: 6) {
-                                                Text(scout.fullName)
-                                                    .font(.subheadline.weight(.semibold))
-                                                    .foregroundStyle(isFull ? Color.textTertiary : Color.textPrimary)
-
-                                                Text(scout.specialtyLabel)
-                                                    .font(.caption2.weight(.medium))
-                                                    .foregroundStyle(isFull ? Color.textTertiary : Color.accentBlue)
-                                                    .padding(.horizontal, 6)
-                                                    .padding(.vertical, 2)
-                                                    .background(Color.accentBlue.opacity(isFull ? 0.05 : 0.12), in: Capsule())
-
-                                                if isRec && !isFull {
-                                                    Text("Recommended")
-                                                        .font(.system(size: 9, weight: .bold))
-                                                        .foregroundStyle(Color.success)
-                                                        .padding(.horizontal, 6)
-                                                        .padding(.vertical, 2)
-                                                        .background(Color.success.opacity(0.12), in: Capsule())
-                                                }
-                                            }
-
-                                            HStack(spacing: 8) {
-                                                HStack(spacing: 3) {
-                                                    Text("Accuracy:")
-                                                        .font(.caption2)
-                                                        .foregroundStyle(Color.textTertiary)
-                                                    Text("\(scout.accuracy)")
-                                                        .font(.caption2.weight(.bold).monospacedDigit())
-                                                        .foregroundStyle(accuracyColor(scout.accuracy))
-                                                }
-
-                                                Text("\(scout.proDaysAttended)/\(scout.maxProDays)")
-                                                    .font(.caption2.weight(.semibold).monospacedDigit())
-                                                    .foregroundStyle(isFull ? Color.danger : Color.textSecondary)
-                                            }
-                                        }
-
-                                        Spacer()
-
-                                        if isFull {
-                                            Text("FULL")
-                                                .font(.system(size: 9, weight: .black))
-                                                .foregroundStyle(Color.danger)
-                                                .padding(.horizontal, 6)
-                                                .padding(.vertical, 3)
-                                                .background(Color.danger.opacity(0.12), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
-                                        }
-                                    }
-                                }
-                                .disabled(isFull)
-                                .opacity(isFull ? 0.5 : 1.0)
-                                .listRowBackground(Color.backgroundSecondary)
-                                .accessibilityLabel("\(scout.fullName)\(selectedScoutID == scout.id ? ", selected" : "")\(isFull ? ", schedule full" : "")")
-                            }
-                        }
-
-                        // Prospects at this school
-                        Section("\(college) Prospects") {
-                            ForEach(prospects.sorted(by: { ($0.scoutedOverall ?? 0) > ($1.scoutedOverall ?? 0) })) { prospect in
-                                HStack(spacing: 8) {
-                                    Text(prospect.position.rawValue)
-                                        .font(.system(size: 10, weight: .bold))
-                                        .foregroundStyle(Color.textPrimary)
-                                        .frame(width: 28, height: 18)
-                                        .background(
-                                            RoundedRectangle(cornerRadius: 3)
-                                                .fill(prospect.position.side == .offense ? Color.accentBlue.opacity(0.25) : Color.danger.opacity(0.25))
-                                        )
-
-                                    Text(prospect.fullName)
-                                        .font(.caption.weight(.medium))
-                                        .foregroundStyle(Color.textPrimary)
-                                        .lineLimit(1)
-
-                                    Spacer()
-
-                                    Text(prospect.overallGradeDisplay)
-                                        .font(.caption.weight(.bold))
-                                        .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(prospect.overallGradeDisplay))
-
-                                    if let proj = prospect.draftProjection {
-                                        Text("Rd \(proj)")
-                                            .font(.caption2)
-                                            .foregroundStyle(Color.textTertiary)
-                                    }
-                                }
-                                .listRowBackground(Color.backgroundSecondary)
-                            }
-                        }
-                    }
-                    .scrollContentBackground(.hidden)
-                    .listStyle(.insetGrouped)
-
-                    // Send button
-                    Button {
-                        if let id = selectedScoutID, let scout = scouts.first(where: { $0.id == id }) {
-                            onSend(scout)
-                        }
-                    } label: {
-                        Text(selectedScoutID == nil ? "Select a Scout" : "Send Scout to \(college)")
-                            .font(.subheadline.weight(.bold))
-                            .foregroundStyle(selectedScoutID == nil ? Color.textTertiary : Color.backgroundPrimary)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 14)
-                            .background(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .fill(selectedScoutID == nil ? Color.backgroundTertiary : Color.accentGold)
-                            )
-                    }
-                    .disabled(selectedScoutID == nil)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                }
-            }
-            .navigationTitle("\(college) Pro Day")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarColorScheme(.dark, for: .navigationBar)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { onCancel() }
-                }
-            }
-        }
-    }
-}
-
-// MARK: - Personal Workout Sheet (Task 10)
-
-private struct PersonalWorkoutSheet: View {
-    let prospects: [CollegeProspect]
-    @Binding var selectedIDs: Set<UUID>
-    let workoutsUsed: Int
-    let onConduct: (Set<UUID>) -> Void
-
-    @Environment(\.dismiss) private var dismiss
-    @State private var localSelection: Set<UUID> = []
-
-    private let maxWorkouts = 10
-
-    private var remaining: Int {
-        max(0, maxWorkouts - workoutsUsed)
-    }
-
-    private var sortedProspects: [CollegeProspect] {
-        prospects.sorted { ($0.scoutedOverall ?? 0) > ($1.scoutedOverall ?? 0) }
-    }
-
-    var body: some View {
-        NavigationStack {
-            ZStack {
-                Color.backgroundPrimary.ignoresSafeArea()
-
-                VStack(spacing: 0) {
-                    // Info banner
-                    HStack(spacing: 8) {
-                        Image(systemName: "dumbbell.fill")
-                            .foregroundStyle(Color.accentBlue)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Private Workouts")
-                                .font(.subheadline.weight(.bold))
-                                .foregroundStyle(Color.textPrimary)
-                            Text("Reveals detailed physical and mental attributes. \(localSelection.count)/\(remaining) selected.")
-                                .font(.caption)
-                                .foregroundStyle(Color.textSecondary)
-                        }
-                        Spacer()
-                    }
-                    .padding(12)
-                    .background(Color.backgroundSecondary)
-
-                    List {
-                        ForEach(sortedProspects) { prospect in
-                            let isSelected = localSelection.contains(prospect.id)
-                            let canSelect = isSelected || localSelection.count < remaining
-
-                            Button {
-                                if isSelected {
-                                    localSelection.remove(prospect.id)
-                                } else if canSelect {
-                                    localSelection.insert(prospect.id)
-                                }
-                            } label: {
-                                HStack(spacing: 8) {
-                                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                                        .font(.system(size: 16))
-                                        .foregroundStyle(isSelected ? Color.accentBlue : Color.textTertiary)
-
-                                    Text(prospect.position.rawValue)
-                                        .font(.system(size: 10, weight: .bold))
-                                        .foregroundStyle(Color.textPrimary)
-                                        .frame(width: 28, height: 18)
-                                        .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 3))
-
-                                    VStack(alignment: .leading, spacing: 1) {
-                                        Text(prospect.fullName)
-                                            .font(.caption.weight(.semibold))
-                                            .foregroundStyle(Color.textPrimary)
-                                        Text(prospect.college)
-                                            .font(.caption2)
-                                            .foregroundStyle(Color.textTertiary)
-                                    }
-
-                                    Spacer()
-
-                                    Text(prospect.overallGradeDisplay)
-                                        .font(.caption.weight(.bold))
-                                        .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(prospect.overallGradeDisplay))
-                                }
-                            }
-                            .buttonStyle(.plain)
-                            .opacity(canSelect || isSelected ? 1.0 : 0.4)
-                            .listRowBackground(Color.backgroundSecondary)
-                            .accessibilityLabel("\(prospect.fullName), \(prospect.position.rawValue), \(prospect.college), grade \(prospect.overallGradeDisplay)\(isSelected ? ", selected" : "")")
-                            .accessibilityHint(isSelected ? "Tap to deselect" : (canSelect ? "Tap to select for interview" : "Selection limit reached"))
-                        }
-                    }
-                    .scrollContentBackground(.hidden)
-                    .listStyle(.insetGrouped)
-
-                    Button {
-                        onConduct(localSelection)
-                    } label: {
-                        Text(localSelection.isEmpty ? "Select Prospects" : "Conduct \(localSelection.count) Workout\(localSelection.count == 1 ? "" : "s")")
-                            .font(.subheadline.weight(.bold))
-                            .foregroundStyle(localSelection.isEmpty ? Color.textTertiary : Color.backgroundPrimary)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 14)
-                            .background(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .fill(localSelection.isEmpty ? Color.backgroundTertiary : Color.accentBlue)
-                            )
-                    }
-                    .disabled(localSelection.isEmpty)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                }
-            }
-            .navigationTitle("Personal Workouts")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarColorScheme(.dark, for: .navigationBar)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
                 }
             }
         }

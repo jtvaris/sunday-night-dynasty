@@ -211,6 +211,12 @@ extension TaskDestination {
         case .franchiseTag:         return "Franchise Tag"
         case .interviewReport:      return "Interview Report"
         case .personalWorkouts:     return "Personal Workouts"
+        // Draft-prep stages (#103)
+        case .filmStudy:            return "Film Study"
+        case .proDayTour:           return "Pro Day Tour"
+        case .workouts:             return "Private Workouts"
+        case .top30Visits:          return "Top-30 Visits"
+        case .mockDraft:            return "Mock Draft"
         case .developmentReport:    return "Development Report"
         case .history:              return "League History"
         case .draftReportCard:      return "Draft Report Card"
