@@ -1,29 +1,81 @@
 import SwiftUI
 import SwiftData
 
+// MARK: - Cap Compliance Workspace (#102)
+//
+// **The remediation half of the cap design.** Prevention lives in the free
+// agency offer sheet (outstanding offers reserve cap, and an offer that does not
+// fit is hard-blocked). Going over the cap is still possible through every other
+// door — the draft class charge, a fifth-year option, a trade, a legacy save,
+// and the acceptance-time backstop where a signing that breaches completes and
+// flags compliance. This screen is what the user does about it.
+//
+// The shape is deliberate: one banner that states the debt in dollars, and then
+// a list of PLAYERS ranked by how much room each of them can free, with the
+// three real levers on every row.
+//
+// | lever | what it is | who decides |
+// |---|---|---|
+// | Release | cut him, eat the acceleration | `CapManagementEngine.releaseCapSplit` / `.applyRelease` — the one authority on a release, dead money and all |
+// | Restructure | base salary above the veteran minimum converted to signing bonus and prorated | `ContractEngine.restructureQuote` / `.executeRestructure` |
+// | Renegotiate | ask him to take less, in the Contact Agent chat | consent from `ContractNegotiationEngine.payCutVerdict`, the money from `ContractEngine.applyPayCut` |
+//
+// **This file computes no cap money.** Every number on it comes out of an
+// engine; the screen's whole job is to rank the options and show the honest
+// second number next to each of them — the dead money on a release, the
+// future-year charges on a restructure, the morale on a pay cut. A workspace
+// that showed only the relief would be a machine for making next year's problem.
+
 struct CapComplianceView: View {
 
     let career: Career
 
+    /// Why the user is on this screen.
+    ///
+    /// The free-agency step and the in-season compliance gate are the same
+    /// workspace with different exits — one leads into the signing period, the
+    /// other back to the week the required task interrupted. Defaulted to the
+    /// free-agency gate so the two existing call sites (`CareerShellView`,
+    /// `CareerDashboardView`) are unchanged.
+    var context: Context = .freeAgencyGate
+
+    enum Context {
+        /// `FreeAgencyStep.capReview` — get legal, then open the market.
+        case freeAgencyGate
+        /// Deep-linked from the week-advance block. No FA button; the exit is
+        /// simply being compliant again.
+        case weekAdvanceGate
+    }
+
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
 
     @State private var team: Team?
     @State private var players: [Player] = []
-    @State private var showCutConfirm: Player?
-    @State private var showRestructureConfirm: Player?
     /// Detailed deals for this club, so a release prices a real `Contract`
     /// where one exists instead of always using the engine's proxy.
     @State private var contractsByPlayer: [UUID: Contract] = [:]
 
-    private var isOverCap: Bool {
-        guard let team else { return false }
-        return team.currentCapUsage > team.salaryCap
-    }
+    @State private var releaseTarget: Player?
+    @State private var restructureTarget: Player?
+    @State private var negotiationTarget: Player?
+    /// Set when an agent answers a pay-cut ask with "then release him" — the
+    /// workspace puts the Release lever in front of the user rather than leaving
+    /// him to work out what just happened.
+    @State private var releaseDemandName: String?
+
+    // MARK: - Cap State
+
+    private var isOverCap: Bool { capOverage > 0 }
 
     private var capOverage: Int {
-        guard let team else { return 0 }
+        guard let team, career.capMode != .sandbox else { return 0 }
         return max(0, team.currentCapUsage - team.salaryCap)
     }
+
+    /// Cap rules are off in sandbox — the workspace is readable, but there is
+    /// nothing to comply with and no gate to clear.
+    private var enforcesCap: Bool { career.capMode != .sandbox }
 
     var body: some View {
         ZStack {
@@ -31,12 +83,15 @@ struct CapComplianceView: View {
 
             if let team {
                 ScrollView {
-                    VStack(spacing: 24) {
-                        capStatusCard(team: team)
-                        rosterListCard(team: team)
-                        enterFAButton
+                    VStack(spacing: DSSpacing.lg) {
+                        complianceBanner(team: team)
+                        leverListCard(team: team)
+                        if context == .freeAgencyGate {
+                            enterFAButton
+                        }
                     }
-                    .padding(24)
+                    .padding(DSSpacing.lg)
+                    .frame(maxWidth: DSLayout.wideMeasure)
                     .frame(maxWidth: .infinity)
                 }
             } else {
@@ -44,69 +99,117 @@ struct CapComplianceView: View {
                     .tint(Color.accentGold)
             }
         }
-        .navigationTitle("Roster & Cap Review")
-        .navigationBarTitleDisplayMode(.large)
+        .navigationTitle("Cap Compliance")
+        .navigationBarTitleDisplayMode(.inline)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .task { loadData() }
-        .alert("Cut Player?", isPresented: .init(
-            get: { showCutConfirm != nil },
-            set: { if !$0 { showCutConfirm = nil } }
+        .alert("Release Player?", isPresented: .init(
+            get: { releaseTarget != nil },
+            set: { if !$0 { releaseTarget = nil } }
         )) {
-            if let player = showCutConfirm {
-                Button("Cut \(player.fullName)", role: .destructive) {
-                    cutPlayer(player)
+            if let player = releaseTarget {
+                Button("Release \(player.fullName)", role: .destructive) {
+                    releasePlayer(player)
                 }
                 Button("Cancel", role: .cancel) {}
             }
         } message: {
-            if let player = showCutConfirm {
+            if let player = releaseTarget {
                 // One number, from the engine that books the release (#68) —
                 // simple mode used to be told it got the whole salary back.
                 let split = releaseSplit(for: player)
-                Text("Release \(player.fullName). Cap savings: \(formatMillions(split.capSavings)). Dead cap hit: \(formatMillions(split.deadCap)).")
+                Text("Releasing \(player.fullName) frees \(formatMillions(split.capSavings)) of cap space and leaves \(formatMillions(split.deadCap)) of dead money on your books this year.")
             }
         }
-        .alert("Restructure Contract?", isPresented: .init(
-            get: { showRestructureConfirm != nil },
-            set: { if !$0 { showRestructureConfirm = nil } }
+        .alert("He wants his release", isPresented: .init(
+            get: { releaseDemandName != nil },
+            set: { if !$0 { releaseDemandName = nil } }
         )) {
-            if let player = showRestructureConfirm {
-                Button("Restructure") {
-                    restructurePlayer(player)
-                }
-                Button("Cancel", role: .cancel) {}
-            }
+            Button("OK", role: .cancel) {}
         } message: {
-            if let player = showRestructureConfirm {
-                let savings = Int(Double(player.annualSalary) * 0.5)
-                Text("Convert \(formatMillions(savings)) of \(player.fullName)'s salary to bonus, saving cap space this year but spreading it to future years.")
+            Text("\(releaseDemandName ?? "He") would rather test the market than take a cut. The Release lever on his row is still open to you.")
+        }
+        .sheet(item: $restructureTarget) { player in
+            RestructureQuoteSheet(
+                player: player,
+                quote: restructureQuote(for: player),
+                onConfirm: { applyRestructure(player) }
+            )
+        }
+        .fullScreenCover(item: $negotiationTarget) { player in
+            // ContractNegotiationView supplies its own "Close" toolbar item, so
+            // the wrapper must NOT add a second one.
+            NavigationStack {
+                ContractNegotiationView(
+                    player: player,
+                    negotiationType: .payCut,
+                    teamCapSpace: max(0, team?.availableCap ?? 0),
+                    onPayCutAgreed: { newSalary, moraleDelta in
+                        applyPayCut(player: player, newSalary: newSalary, moraleDelta: moraleDelta)
+                    },
+                    onReleaseDemanded: {
+                        releaseDemandName = player.firstName
+                    }
+                )
             }
         }
     }
 
-    // MARK: - Cap Status Card
+    // MARK: - Compliance Banner
 
-    private func capStatusCard(team: Team) -> some View {
+    /// **"You are $X over."** The one sentence the whole screen exists to answer,
+    /// stated in dollars rather than as a percentage — a GM fixes a number, not
+    /// a ratio.
+    private func complianceBanner(team: Team) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Header
-            HStack(spacing: 10) {
+            HStack(spacing: DSSpacing.xs) {
                 Image(systemName: isOverCap ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
                     .foregroundStyle(isOverCap ? Color.danger : Color.success)
                     .font(.system(size: 15))
-                Text(isOverCap ? "OVER THE CAP" : "Under the Cap")
+                Text(isOverCap ? "OVER THE CAP" : "Cap Compliant")
                     .font(.headline)
                     .foregroundStyle(isOverCap ? Color.danger : Color.success)
                 Spacer()
+                if !enforcesCap {
+                    Text("SANDBOX")
+                        .font(.system(size: 9, weight: .black))
+                        .foregroundStyle(Color.textPrimary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.backgroundTertiary, in: Capsule())
+                }
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, DSSpacing.md)
             .padding(.top, 14)
-            .padding(.bottom, 10)
+            .padding(.bottom, DSSpacing.sm)
 
             Divider().overlay(Color.surfaceBorder)
 
-            VStack(spacing: 12) {
+            VStack(spacing: DSSpacing.sm) {
+                if isOverCap {
+                    HStack(alignment: .firstTextBaseline, spacing: DSSpacing.xs) {
+                        Text("You are")
+                            .font(.subheadline)
+                            .foregroundStyle(Color.textSecondary)
+                        Text(formatMillions(capOverage))
+                            .font(.system(size: 34, weight: .black).monospacedDigit())
+                            .foregroundStyle(Color.danger)
+                        Text("over the salary cap")
+                            .font(.subheadline)
+                            .foregroundStyle(Color.textSecondary)
+                        Spacer()
+                    }
+                    Text(context == .weekAdvanceGate
+                         ? "The league will not let you play another week until you are legal. Use the levers below."
+                         : "You must be under the cap before free agency opens. Use the levers below.")
+                        .font(.caption)
+                        .foregroundStyle(Color.danger)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
                 // Cap bar
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: DSSpacing.xxs + 2) {
                     HStack {
                         Text("Cap Usage")
                             .font(.caption)
@@ -132,28 +235,17 @@ struct CapComplianceView: View {
                     .frame(height: 10)
                 }
 
-                // Stats
                 HStack(spacing: 0) {
                     capStat(label: "Salary Cap", value: formatMillions(team.salaryCap), color: .accentGold)
                     capStat(label: "Used", value: formatMillions(team.currentCapUsage), color: isOverCap ? .danger : .textPrimary)
-                    capStat(label: "Available", value: formatMillions(team.availableCap), color: team.availableCap >= 0 ? .success : .danger)
-                }
-
-                if isOverCap {
-                    HStack(spacing: 8) {
-                        Image(systemName: "exclamationmark.octagon.fill")
-                            .foregroundStyle(Color.danger)
-                        Text("You must cut or restructure players to get \(formatMillions(capOverage)) under the cap before entering free agency.")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(Color.danger)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .padding(12)
-                    .background(Color.danger.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
-                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.danger.opacity(0.4), lineWidth: 1))
+                    capStat(
+                        label: isOverCap ? "Over By" : "Available",
+                        value: formatMillions(isOverCap ? capOverage : team.availableCap),
+                        color: isOverCap ? .danger : .success
+                    )
                 }
             }
-            .padding(16)
+            .padding(DSSpacing.md)
         }
         .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: 14))
         .overlay(
@@ -163,7 +255,7 @@ struct CapComplianceView: View {
     }
 
     private func capStat(label: String, value: String, color: Color) -> some View {
-        VStack(spacing: 4) {
+        VStack(spacing: DSSpacing.xxs) {
             Text(value)
                 .font(.system(size: 18, weight: .bold).monospacedDigit())
                 .foregroundStyle(color)
@@ -176,56 +268,49 @@ struct CapComplianceView: View {
         .frame(maxWidth: .infinity)
     }
 
-    // MARK: - Roster List
+    // MARK: - Lever List
 
-    private func rosterListCard(team: Team) -> some View {
+    /// One player, one row, three levers — ordered by the biggest number the club
+    /// could actually free from him.
+    ///
+    /// Ranked by BEST AVAILABLE saving rather than by salary, which is the whole
+    /// difference between a workspace and a roster list: the biggest contract on
+    /// the books is frequently the worst one to touch, because a bonus-heavy deal
+    /// can cost more to cut than to keep (`ReleaseCapSplit.capSavings` goes
+    /// negative, and the row says so).
+    private func leverListCard(team: Team) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 10) {
-                Image(systemName: "person.3.fill")
+            HStack(spacing: DSSpacing.xs) {
+                Image(systemName: "slider.horizontal.3")
                     .foregroundStyle(Color.accentGold)
                     .font(.system(size: 15))
-                Text("Roster — Sorted by Salary")
+                Text("Levers — Ranked by Cap Freed")
                     .font(.headline)
                     .foregroundStyle(Color.accentGold)
                 Spacer()
+                Text("\(rankedPlayers.count) players")
+                    .font(.caption2)
+                    .foregroundStyle(Color.textTertiary)
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, DSSpacing.md)
             .padding(.top, 14)
-            .padding(.bottom, 10)
+            .padding(.bottom, DSSpacing.sm)
 
             Divider().overlay(Color.surfaceBorder)
 
-            // Column headers
-            HStack {
-                Text("Player")
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                Text("OVR")
-                    .frame(width: 40)
-                Text("Yrs")
-                    .frame(width: 30)
-                Text("Salary")
-                    .frame(width: 60)
-                if career.capMode == .realistic {
-                    Text("Dead $")
-                        .frame(width: 50)
-                }
-                Text("Actions")
-                    .frame(width: 110)
-            }
-            .font(.caption2.weight(.bold))
-            .foregroundStyle(Color.textTertiary)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 6)
-
-            Divider().overlay(Color.surfaceBorder)
-
-            ForEach(Array(players.enumerated()), id: \.element.id) { index, player in
-                playerRow(player: player)
-
-                if index < players.count - 1 {
-                    Divider()
-                        .overlay(Color.surfaceBorder.opacity(0.5))
-                        .padding(.horizontal, 8)
+            if rankedPlayers.isEmpty {
+                Text("No players under contract.")
+                    .font(.caption)
+                    .foregroundStyle(Color.textTertiary)
+                    .padding(DSSpacing.md)
+            } else {
+                ForEach(Array(rankedPlayers.enumerated()), id: \.element.id) { index, player in
+                    leverRow(player: player)
+                    if index < rankedPlayers.count - 1 {
+                        Divider()
+                            .overlay(Color.surfaceBorder.opacity(0.5))
+                            .padding(.horizontal, DSSpacing.xs)
+                    }
                 }
             }
         }
@@ -233,139 +318,148 @@ struct CapComplianceView: View {
         .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.surfaceBorder, lineWidth: 1))
     }
 
-    private func playerRow(player: Player) -> some View {
-        HStack {
-            // Name + position
-            HStack(spacing: 6) {
+    private func leverRow(player: Player) -> some View {
+        let split = releaseSplit(for: player)
+        let quote = restructureQuote(for: player)
+
+        return VStack(alignment: .leading, spacing: DSSpacing.xs) {
+            // Identity + what he costs
+            HStack(spacing: DSSpacing.xs) {
                 Text(player.position.rawValue)
                     .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(Color.textPrimary)
-                    .frame(width: 26)
+                    .frame(width: 28)
                     .padding(.vertical, 2)
-                    .background(positionSideColor(player.position), in: RoundedRectangle(cornerRadius: 3))
+                    .background(positionSideColor(player.position), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
                 Text(player.fullName)
-                    .font(.caption)
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Color.textPrimary)
                     .lineLimit(1)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            Text("\(player.overall)")
-                .font(.caption.weight(.semibold).monospacedDigit())
-                .foregroundStyle(Color.forRating(player.overall))
-                .frame(width: 40)
-
-            Text("\(player.contractYearsRemaining)")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(player.contractYearsRemaining <= 1 ? Color.warning : Color.textSecondary)
-                .frame(width: 30)
-
-            Text(formatMillions(player.annualSalary))
-                .font(.caption.weight(.semibold).monospacedDigit())
-                .foregroundStyle(Color.textPrimary)
-                .frame(width: 60)
-
-            if career.capMode == .realistic {
-                let deadCap = estimateDeadCap(player: player)
-                Text(formatMillions(deadCap))
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(deadCap > 5000 ? Color.danger : Color.textTertiary)
-                    .frame(width: 50)
-            }
-
-            // Actions
-            HStack(spacing: 6) {
-                Button {
-                    showCutConfirm = player
-                } label: {
-                    Text("Cut")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(Color.danger)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(Color.danger.opacity(0.1), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
-                }
-                .buttonStyle(.plain)
-
-                if career.capMode == .realistic {
-                    Button {
-                        showRestructureConfirm = player
-                    } label: {
-                        Text("Restruct.")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(Color.accentGold)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 3)
-                            .background(Color.accentGold.opacity(0.1), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
-                    }
-                    .buttonStyle(.plain)
+                Text("\(player.overall)")
+                    .font(.caption.weight(.bold).monospacedDigit())
+                    .foregroundStyle(Color.forRating(player.overall))
+                Text("Age \(player.age)")
+                    .font(.caption2)
+                    .foregroundStyle(Color.textTertiary)
+                Spacer()
+                VStack(alignment: .trailing, spacing: 1) {
+                    Text("\(formatMillions(player.annualSalary))/yr")
+                        .font(.caption.weight(.bold).monospacedDigit())
+                        .foregroundStyle(Color.textPrimary)
+                    Text("\(player.contractYearsRemaining) yr\(player.contractYearsRemaining == 1 ? "" : "s") left")
+                        .font(.system(size: 9).monospacedDigit())
+                        .foregroundStyle(player.contractYearsRemaining <= 1 ? Color.warning : Color.textTertiary)
                 }
             }
-            .frame(width: 110)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-    }
 
-    // MARK: - Enter FA Button
-
-    private var enterFAButton: some View {
-        VStack(spacing: 8) {
-            Button {
-                career.freeAgencyStep = FreeAgencyStep.signing.rawValue
-                career.freeAgencyRound = 1
-            } label: {
-                HStack(spacing: 10) {
-                    Image(systemName: "person.badge.plus")
-                        .font(.title3)
-                    Text("Enter Free Agency")
-                        .font(.headline)
+            // The three levers, each labelled with its own honest number.
+            HStack(spacing: DSSpacing.xs) {
+                leverButton(
+                    title: "Release",
+                    headline: split.capSavings >= 0
+                        ? "+\(formatMillions(split.capSavings))"
+                        : formatMillions(split.capSavings),
+                    footnote: "\(formatMillions(split.deadCap)) dead",
+                    tint: split.capSavings > 0 ? Color.danger : Color.textTertiary,
+                    enabled: true
+                ) {
+                    releaseTarget = player
                 }
-                .foregroundStyle(isOverCap ? Color.textTertiary : Color.backgroundPrimary)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 16)
-                .background(isOverCap ? Color.backgroundTertiary : Color.accentGold, in: RoundedRectangle(cornerRadius: 14))
-            }
-            .buttonStyle(.plain)
-            .disabled(isOverCap)
 
-            if isOverCap {
-                Text("Must be under the salary cap to enter free agency")
-                    .font(.caption)
-                    .foregroundStyle(Color.danger)
+                leverButton(
+                    title: "Restructure",
+                    headline: quote.map { "+\(formatMillions($0.immediateRelief))" } ?? "—",
+                    footnote: quote.map { "+\(formatMillions($0.proratedPerYear))/yr later" } ?? "Not available",
+                    tint: quote != nil ? Color.accentGold : Color.textTertiary,
+                    enabled: quote != nil
+                ) {
+                    restructureTarget = player
+                }
+
+                leverButton(
+                    title: "Renegotiate",
+                    headline: "Ask",
+                    footnote: "His call",
+                    tint: Color.accentBlue,
+                    enabled: true
+                ) {
+                    negotiationTarget = player
+                }
             }
         }
+        .padding(.horizontal, DSSpacing.md)
+        .padding(.vertical, DSSpacing.sm)
     }
 
-    // MARK: - Actions
-
-    private func cutPlayer(_ player: Player) {
-        guard let team else { return }
-        // ONE authority (#68) — and cap-mode aware, which `cutPlayerSimple`
-        // never was: a sandbox release must not credit a cap it never charged.
-        CapManagementEngine.applyRelease(
-            player: player,
-            team: team,
-            contract: contractsByPlayer[player.id],
-            capMode: career.capMode,
-            leagueYearRemaining: leagueYearRemaining,
-            modelContext: modelContext
-        )
-        loadData()
+    private func leverButton(
+        title: String,
+        headline: String,
+        footnote: String,
+        tint: Color,
+        enabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            VStack(spacing: 1) {
+                Text(title)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(enabled ? tint : Color.textTertiary)
+                Text(headline)
+                    .font(.caption.weight(.bold).monospacedDigit())
+                    .foregroundStyle(enabled ? Color.textPrimary : Color.textTertiary)
+                Text(footnote)
+                    .font(.system(size: 9))
+                    .foregroundStyle(Color.textTertiary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, DSSpacing.xs)
+            .background(
+                (enabled ? tint : Color.textTertiary).opacity(enabled ? 0.10 : 0.05),
+                in: RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                    .strokeBorder((enabled ? tint : Color.surfaceBorder).opacity(0.35), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
     }
 
-    private func restructurePlayer(_ player: Player) {
-        // Convert 50% of current salary to bonus (spreads to future years)
-        let convertAmount = Int(Double(player.annualSalary) * 0.5)
-        let yearsLeft = max(player.contractYearsRemaining, 1)
-        // Immediate cap relief = converted amount minus prorated spread
-        let proratedPerYear = convertAmount / yearsLeft
-        let capRelief = convertAmount - proratedPerYear
+    // MARK: - Ranking
 
-        player.annualSalary -= capRelief
-        team?.currentCapUsage -= capRelief
-        loadData()
+    /// Every man under contract, ordered by the biggest number he can free.
+    private var rankedPlayers: [Player] {
+        players
+            .filter { $0.annualSalary > 0 }
+            .sorted { lhs, rhs in
+                let l = bestSaving(for: lhs)
+                let r = bestSaving(for: rhs)
+                if l != r { return l > r }
+                return lhs.annualSalary > rhs.annualSalary
+            }
     }
+
+    /// The best this-year relief available from one player, across the levers
+    /// that do not need his consent.
+    ///
+    /// The pay cut is deliberately excluded from the ranking: what it frees
+    /// depends on a number the user has not chosen yet and on an answer the man
+    /// has not given, and ranking on a figure nobody has agreed to would put the
+    /// screen's most speculative lever at the top of its list.
+    private func bestSaving(for player: Player) -> Int {
+        let release = releaseSplit(for: player).capSavings
+        let restructure = restructureQuote(for: player)?.immediateRelief ?? 0
+        return max(release, restructure)
+    }
+
+    // MARK: - Engine Adapters
+    //
+    // The whole surface where this screen touches the cap engines, kept in one
+    // block on purpose: if the engine's spelling moves, exactly these four
+    // functions change and nothing else on the screen does.
 
     /// The share of the league year still unpaid, for the release split (#26).
     private var leagueYearRemaining: Double {
@@ -384,10 +478,107 @@ struct CapComplianceView: View {
         )
     }
 
-    /// Dead cap from the one engine authority (#68). This was a fifth private
-    /// formula — 40 % of remaining total value — that no cut path ever booked.
-    private func estimateDeadCap(player: Player) -> Int {
-        releaseSplit(for: player).deadCap
+    /// The club's cap ceiling — every engine call that prices a floor needs it.
+    private var salaryCap: Int { team?.salaryCap ?? ContractEngine.openingSalaryCap }
+
+    /// What a restructure would do to this man's cap charge, and why not when it
+    /// cannot. The verdict carries its own refusal sentence, so the screen never
+    /// invents a reason of its own.
+    private func restructureVerdict(for player: Player) -> ContractEngine.RestructureVerdict {
+        ContractEngine.restructureQuote(
+            player: player,
+            contract: contractsByPlayer[player.id],
+            capMode: career.capMode,
+            salaryCap: salaryCap
+        )
+    }
+
+    private func restructureQuote(for player: Player) -> ContractEngine.RestructureQuote? {
+        restructureVerdict(for: player).quote
+    }
+
+    // MARK: - Actions
+
+    private func releasePlayer(_ player: Player) {
+        guard let team else { return }
+        // ONE authority (#68) — and cap-mode aware, which the old
+        // `cutPlayerSimple` never was: a sandbox release must not credit a cap
+        // it never charged.
+        CapManagementEngine.applyRelease(
+            player: player,
+            team: team,
+            contract: contractsByPlayer[player.id],
+            capMode: career.capMode,
+            leagueYearRemaining: leagueYearRemaining,
+            modelContext: modelContext
+        )
+        releaseTarget = nil
+        loadData()
+    }
+
+    private func applyRestructure(_ player: Player) {
+        ContractEngine.executeRestructure(
+            player: player,
+            team: team,
+            contract: contractsByPlayer[player.id],
+            capMode: career.capMode,
+            salaryCap: salaryCap
+        )
+        try? modelContext.save()
+        restructureTarget = nil
+        loadData()
+    }
+
+    /// Books an agreed pay cut through the one engine that books pay cuts.
+    ///
+    /// The chat owns the man's CONSENT and the persona-scaled morale number; the
+    /// four-ledger write — team total, `annualSalary` (which the league-year
+    /// true-up rebuilds from), the detailed row's current-year base, and the
+    /// morale itself — is `ContractEngine.applyPayCut`'s. Doing any of it here
+    /// would be a second place a pay cut is booked, which is the shape of bug
+    /// #68 spent a wave closing.
+    private func applyPayCut(player: Player, newSalary: Int, moraleDelta: Int) {
+        ContractEngine.applyPayCut(
+            player: player,
+            team: team,
+            contract: contractsByPlayer[player.id],
+            capMode: career.capMode,
+            salaryCap: salaryCap,
+            newAnnualSalary: newSalary,
+            moraleDelta: moraleDelta
+        )
+        try? modelContext.save()
+        loadData()
+    }
+
+    // MARK: - Enter FA
+
+    private var enterFAButton: some View {
+        VStack(spacing: DSSpacing.xs) {
+            Button {
+                career.freeAgencyStep = FreeAgencyStep.signing.rawValue
+                career.freeAgencyRound = 1
+            } label: {
+                HStack(spacing: DSSpacing.xs) {
+                    Image(systemName: "person.badge.plus")
+                        .font(.title3)
+                    Text("Enter Free Agency")
+                        .font(.headline)
+                }
+                .foregroundStyle(isOverCap ? Color.textTertiary : Color.backgroundPrimary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, DSSpacing.md)
+                .background(isOverCap ? Color.backgroundTertiary : Color.accentGold, in: RoundedRectangle(cornerRadius: 14))
+            }
+            .buttonStyle(.plain)
+            .disabled(isOverCap)
+
+            if isOverCap {
+                Text("Must be under the salary cap to enter free agency")
+                    .font(.caption)
+                    .foregroundStyle(Color.danger)
+            }
+        }
     }
 
     // MARK: - Helpers
@@ -402,11 +593,10 @@ struct CapComplianceView: View {
 
     private func formatMillions(_ thousands: Int) -> String {
         let millions = Double(thousands) / 1000.0
-        if millions >= 1.0 {
+        if abs(millions) >= 1.0 {
             return String(format: "$%.1fM", millions)
-        } else {
-            return "$\(thousands)K"
         }
+        return "$\(thousands)K"
     }
 
     // MARK: - Data Loading
@@ -419,7 +609,7 @@ struct CapComplianceView: View {
 
         guard let fetchedTeamID = team?.id else { return }
         var playerDesc = FetchDescriptor<Player>(
-            predicate: #Predicate { $0.teamID == fetchedTeamID }
+            predicate: #Predicate<Player> { $0.teamID == fetchedTeamID }
         )
         playerDesc.sortBy = [SortDescriptor(\.annualSalary, order: .reverse)]
         players = (try? modelContext.fetch(playerDesc)) ?? []
@@ -429,5 +619,205 @@ struct CapComplianceView: View {
         )
         let contracts = (try? modelContext.fetch(contractDesc)) ?? []
         contractsByPlayer = Dictionary(contracts.map { ($0.playerID, $0) }, uniquingKeysWith: { first, _ in first })
+    }
+}
+
+// MARK: - Restructure Quote Sheet
+
+/// **The restructure, priced honestly.**
+///
+/// A restructure is the only lever on the workspace that costs nothing today and
+/// everything later, which makes it the one the user will reach for first and
+/// the one most likely to bury him. So the sheet is built around the SECOND
+/// number: this year's relief is stated once, and the future-year charges it
+/// creates are stated year by year underneath it. Nothing is hidden behind a
+/// disclosure, because a charge the user has to tap to see is a charge he will
+/// not see.
+struct RestructureQuoteSheet: View {
+
+    let player: Player
+    let quote: ContractEngine.RestructureQuote?
+    let onConfirm: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color.backgroundPrimary.ignoresSafeArea()
+
+                ScrollView {
+                    VStack(spacing: DSSpacing.md) {
+                        if let quote {
+                            headerCard(quote: quote)
+                            mechanicsCard(quote: quote)
+                            futureCard(quote: quote)
+                            confirmButton
+                        } else {
+                            Text("\(player.fullName)'s contract cannot be restructured. A restructure needs at least two years left on the deal and base salary above the veteran minimum to convert.")
+                                .font(.subheadline)
+                                .foregroundStyle(Color.textSecondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(DSSpacing.md)
+                                .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: 14))
+                        }
+                    }
+                    .padding(DSSpacing.lg)
+                    .frame(maxWidth: DSLayout.contentMeasure)
+                    .frame(maxWidth: .infinity)
+                }
+            }
+            .navigationTitle("Restructure")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                        .foregroundStyle(Color.textSecondary)
+                }
+            }
+        }
+    }
+
+    private func headerCard(quote: ContractEngine.RestructureQuote) -> some View {
+        VStack(alignment: .leading, spacing: DSSpacing.xs) {
+            Text(player.fullName)
+                .font(.title3.weight(.bold))
+                .foregroundStyle(Color.textPrimary)
+            Text("\(player.position.rawValue)  ·  \(player.overall) OVR  ·  \(quote.yearsRemaining) year\(quote.yearsRemaining == 1 ? "" : "s") remaining")
+                .font(.caption)
+                .foregroundStyle(Color.textSecondary)
+
+            Divider().overlay(Color.surfaceBorder).padding(.vertical, DSSpacing.xxs)
+
+            HStack(alignment: .firstTextBaseline, spacing: DSSpacing.xs) {
+                Text("Frees")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.textSecondary)
+                Text(formatMillions(quote.immediateRelief))
+                    .font(.system(size: 32, weight: .black).monospacedDigit())
+                    .foregroundStyle(Color.success)
+                Text("this year")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.textSecondary)
+                Spacer()
+            }
+        }
+        .padding(DSSpacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.surfaceBorder, lineWidth: 1))
+    }
+
+    private func mechanicsCard(quote: ContractEngine.RestructureQuote) -> some View {
+        VStack(alignment: .leading, spacing: DSSpacing.xs) {
+            Text("What Happens")
+                .font(.headline)
+                .foregroundStyle(Color.accentGold)
+            row("Base salary converted", formatMillions(quote.convertedAmount), .textPrimary)
+            row("Spread across", "\(quote.yearsRemaining) years", .textPrimary)
+            row("New proration per year", formatMillions(quote.proratedPerYear), .textPrimary)
+            Divider().overlay(Color.surfaceBorder)
+            row("Cap hit before", formatMillions(quote.currentCapHit), .textSecondary)
+            row("Cap hit after", formatMillions(quote.newCapHit), .success)
+            Text("\(player.firstName) is paid exactly the same money — it just arrives as a signing bonus, and the cap charge for it is spread over the years left on the deal. He has no say in it, and it costs him nothing.")
+                .font(.caption2)
+                .foregroundStyle(Color.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, DSSpacing.xxs)
+        }
+        .padding(DSSpacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.surfaceBorder, lineWidth: 1))
+    }
+
+    /// **The bill.** Every future year this move adds to, and what a release
+    /// would cost after it — the two things a restructure quietly makes worse.
+    private func futureCard(quote: ContractEngine.RestructureQuote) -> some View {
+        VStack(alignment: .leading, spacing: DSSpacing.xs) {
+            HStack(spacing: DSSpacing.xxs + 2) {
+                Image(systemName: "calendar.badge.exclamationmark")
+                    .font(.caption)
+                    .foregroundStyle(Color.warning)
+                Text("What It Costs Later")
+                    .font(.headline)
+                    .foregroundStyle(Color.warning)
+                Spacer()
+            }
+
+            // Year by year, not as one lump: `futureYearCapHit` is what he
+            // costs in EACH remaining season afterwards, and a GM who only sees
+            // a total will not feel the shape of it.
+            if quote.yearsRemaining <= 1 {
+                Text("No future years are affected.")
+                    .font(.caption)
+                    .foregroundStyle(Color.textTertiary)
+            } else {
+                ForEach(1..<quote.yearsRemaining, id: \.self) { offset in
+                    row(
+                        "Year +\(offset)",
+                        "\(formatMillions(quote.futureYearCapHit))  (+\(formatMillions(quote.proratedPerYear)))",
+                        .warning
+                    )
+                }
+            }
+
+            Divider().overlay(Color.surfaceBorder)
+            row(
+                "Total added later",
+                "+\(formatMillions(quote.proratedPerYear * max(0, quote.yearsRemaining - 1)))",
+                .warning
+            )
+            row("Dead money if cut after", formatMillions(quote.deadMoneyAdded), .danger)
+
+            Text("Restructuring buys room now by borrowing it from years you have not played yet, and it makes him more expensive to release. Use it on players you intend to keep.")
+                .font(.caption2)
+                .foregroundStyle(Color.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, DSSpacing.xxs)
+        }
+        .padding(DSSpacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.warning.opacity(0.3), lineWidth: 1))
+    }
+
+    private var confirmButton: some View {
+        Button {
+            onConfirm()
+            dismiss()
+        } label: {
+            HStack(spacing: DSSpacing.xs) {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                Text("Restructure Contract")
+                    .font(.headline)
+            }
+            .foregroundStyle(Color.backgroundPrimary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14)
+            .background(Color.accentGold, in: RoundedRectangle(cornerRadius: DSCornerRadius.card))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func row(_ label: String, _ value: String, _ color: Color) -> some View {
+        HStack {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(Color.textSecondary)
+            Spacer()
+            Text(value)
+                .font(.caption.weight(.bold).monospacedDigit())
+                .foregroundStyle(color)
+        }
+    }
+
+    private func formatMillions(_ thousands: Int) -> String {
+        let millions = Double(thousands) / 1000.0
+        if abs(millions) >= 1.0 {
+            return String(format: "$%.1fM", millions)
+        }
+        return "$\(thousands)K"
     }
 }

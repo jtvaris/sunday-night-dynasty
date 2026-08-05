@@ -155,6 +155,57 @@ final class Player {
     /// Default-value attribute → safe lightweight migration.
     var proratedFullBaseSalary: Int = 0
 
+    // MARK: - Restructure Ledger (cap-compliance wave)
+    //
+    // A restructure converts base salary the club owes THIS year into signing
+    // bonus prorated over the years still on the deal: instant relief now, a
+    // charge in every remaining year, and dead money if the man is cut before
+    // the proration runs out. That is three facts about the FUTURE, and the game
+    // has nowhere else to keep them.
+    //
+    // WHY THE PLAYER ROW AND NOT `Contract`. `Contract.currentYear` is never
+    // advanced anywhere in the game (see `FinalPushView.applyReSignOffer`) —
+    // `Player.contractYearsRemaining` is the authority on years left — so a
+    // restructure booked into `Contract.signingBonus` could never age: it would
+    // prorate over the deal's ORIGINAL length forever and its dead money would
+    // never expire. These three fields are the honest version, they are the same
+    // shape as `proratedFullBaseSalary` above (a receipt the league-year
+    // rollover reads and tears up), and they work in simple mode too, where no
+    // `Contract` row exists at all.
+    //
+    // All three are default-value stored properties → safe lightweight migration.
+
+    /// Base salary converted into bonus by a restructure in the CURRENT league
+    /// year, in thousands. `FreeAgencyEngine.executeNewLeagueYear` adds it back
+    /// to `annualSalary` at the rollover and clears it: the relief was for one
+    /// year and one year only.
+    var restructureReliefK: Int = 0
+
+    /// Per-year signing-bonus proration created by restructures, in thousands.
+    /// Already folded into `annualSalary` (so the cap ledger and every screen
+    /// that reads a salary see it), and charged again as dead money if the
+    /// player is released before ``restructureCarryYears`` runs out.
+    var restructureProrationK: Int = 0
+
+    /// League years the ``restructureProrationK`` charge still has to run,
+    /// INCLUDING the current one. Decremented once per rollover; at zero the
+    /// proration comes back off `annualSalary` and the ledger resets.
+    var restructureCarryYears: Int = 0
+
+    /// Whether this player is carrying restructured money — the cheap test the
+    /// rollover and the dead-money split both start from.
+    var hasRestructuredMoney: Bool {
+        restructureProrationK > 0 && restructureCarryYears > 0
+    }
+
+    /// Signing-bonus acceleration a release would trigger on top of whatever the
+    /// original deal already carries, in thousands. This is what makes a
+    /// restructured-then-cut player expensive, and it is why the lever is a
+    /// choice rather than free money (task #68's dead-money booking).
+    var restructureDeadMoney: Int {
+        max(0, restructureProrationK) * max(0, restructureCarryYears)
+    }
+
     /// Whether this player has been franchise-tagged for the current season.
     var isFranchiseTagged: Bool
 

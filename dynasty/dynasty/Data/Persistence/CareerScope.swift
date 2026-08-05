@@ -522,6 +522,17 @@ enum CareerScopedDefaults {
         // reason: a new career must not open with somebody else's disgruntled
         // star already on the block.
         "tradeRequestSeasons",
+        // `PayCutRegistry` — who has already answered the pay-cut question this
+        // league year, and whose "then release me" has already been charged its
+        // morale. Career state: a new save must not open with the previous
+        // one's veterans already settled, or unable to be asked at all.
+        "payCutSettledSeasons",
+        "payCutReleaseDemandSeasons",
+        // `CommittedCapLedger.defaultsKey` — cap the user has promised through
+        // outstanding free-agency offers but not yet spent. Career money state,
+        // so a deleted save must not hand a new career somebody else's
+        // commitments and silently shrink its cap room.
+        "committedCapReservations",
     ]
 
     /// Every read of a key above goes through `CareerScopedDefaults.scopedKey`

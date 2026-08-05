@@ -11,6 +11,9 @@ struct PlayerContractView: View {
 
     @State private var showExtensionSheet = false
     @State private var showCutAlert = false
+    /// #102 — the two cap-relief levers.
+    @State private var showRestructureSheet = false
+    @State private var showPayCutChat = false
     @State private var team: Team?
     /// This player's detailed deal, when one exists. Realistic-mode signings
     /// mint a `Contract`; everyone else is priced off `annualSalary` by the
@@ -55,6 +58,27 @@ struct PlayerContractView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(cutAlertMessage)
+        }
+        .sheet(isPresented: $showRestructureSheet) {
+            RestructureQuoteSheet(
+                player: player,
+                quote: restructureQuote,
+                onConfirm: { applyRestructure() }
+            )
+        }
+        .fullScreenCover(isPresented: $showPayCutChat) {
+            // The chat supplies its own "Close" toolbar item — the wrapper must
+            // NOT add a second one.
+            NavigationStack {
+                ContractNegotiationView(
+                    player: player,
+                    negotiationType: .payCut,
+                    teamCapSpace: max(0, team?.availableCap ?? 0),
+                    onPayCutAgreed: { newSalary, moraleDelta in
+                        applyPayCut(newSalary: newSalary, moraleDelta: moraleDelta)
+                    }
+                )
+            }
         }
     }
 
@@ -138,12 +162,43 @@ struct PlayerContractView: View {
 
     private var actionsSection: some View {
         Section("Actions") {
-            if let team {
+            // Every action below needs a club to act for; each engine call reads
+            // `team` itself, so this is a presence gate rather than a binding.
+            if team != nil {
                 Button {
                     showExtensionSheet = true
                 } label: {
                     Label("Extend Contract", systemImage: "signature")
                         .foregroundStyle(Color.accentGold)
+                }
+
+                // #102 — the two cap-relief levers, on the screen that already
+                // owns this man's contract. Same engines the Cap Compliance
+                // workspace uses; this is the per-player door to them.
+                if let quote = restructureQuote {
+                    Button {
+                        showRestructureSheet = true
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Label("Restructure Contract", systemImage: "arrow.triangle.2.circlepath")
+                                .foregroundStyle(Color.accentGold)
+                            Text("Frees \(formatMillions(quote.immediateRelief)) now, adds \(formatMillions(quote.proratedPerYear)) to each of the \(max(0, quote.yearsRemaining - 1)) years after this one")
+                                .font(.caption2)
+                                .foregroundStyle(Color.textTertiary)
+                        }
+                    }
+                }
+
+                Button {
+                    showPayCutChat = true
+                } label: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Label("Ask for Pay Cut", systemImage: "bubble.left.and.text.bubble.right")
+                            .foregroundStyle(Color.accentBlue)
+                        Text("His agent decides. A refusal is possible, and asking costs goodwill.")
+                            .font(.caption2)
+                            .foregroundStyle(Color.textTertiary)
+                    }
                 }
 
                 Button(role: .destructive) {
@@ -154,6 +209,49 @@ struct PlayerContractView: View {
             }
         }
         .listRowBackground(Color.backgroundSecondary)
+    }
+
+    // MARK: - Cap Levers (#102)
+
+    private var salaryCap: Int { team?.salaryCap ?? ContractEngine.openingSalaryCap }
+
+    /// What a restructure would do to this deal, or `nil` when he is not a
+    /// candidate. The engine is the authority; this screen only renders it.
+    private var restructureQuote: ContractEngine.RestructureQuote? {
+        ContractEngine.restructureQuote(
+            player: player,
+            contract: contract,
+            capMode: career.capMode,
+            salaryCap: salaryCap
+        ).quote
+    }
+
+    private func applyRestructure() {
+        ContractEngine.executeRestructure(
+            player: player,
+            team: team,
+            contract: contract,
+            capMode: career.capMode,
+            salaryCap: salaryCap
+        )
+        try? modelContext.save()
+        loadTeam()
+    }
+
+    /// Books an agreed pay cut through the engine that books pay cuts — see
+    /// `CapComplianceView.applyPayCut` for why nothing is written here directly.
+    private func applyPayCut(newSalary: Int, moraleDelta: Int) {
+        ContractEngine.applyPayCut(
+            player: player,
+            team: team,
+            contract: contract,
+            capMode: career.capMode,
+            salaryCap: salaryCap,
+            newAnnualSalary: newSalary,
+            moraleDelta: moraleDelta
+        )
+        try? modelContext.save()
+        loadTeam()
     }
 
     private var realisticCapSection: some View {

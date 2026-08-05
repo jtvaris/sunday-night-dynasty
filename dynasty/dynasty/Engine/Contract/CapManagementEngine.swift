@@ -273,7 +273,24 @@ enum CapManagementEngine {
 
         // Never let the accelerated bonus exceed the money actually left on the
         // deal — a runaway charge would make the AI market unsolvable.
-        let deadCap = max(0, min(rawDead, salary * years))
+        let clampedDead = max(0, min(rawDead, salary * years))
+
+        // Restructured money accelerates too (cap-compliance wave, task #68).
+        //
+        // A restructure converted base salary into signing bonus and spread it
+        // across the years still on the deal; every unpaid slice of it comes due
+        // the moment the man leaves. Without this the lever would be free — take
+        // the relief in March, cut him in August, never pay the proration — which
+        // is exactly the "restructure is a cheat code" failure the real cap
+        // prevents. Added OUTSIDE the clamp above on purpose: that clamp bounds
+        // the ORIGINAL deal's bonus against the salary still owed on it, and the
+        // restructure charge is separately bounded by construction (`p × N` can
+        // never exceed the base that was converted, which was itself capped at
+        // this year's base salary less the veteran minimum).
+        //
+        // Sandbox never books the relief, so it must never book the charge; the
+        // early return above has already covered it.
+        let deadCap = clampedDead + max(0, player.restructureDeadMoney)
         let proratedPerYear = deadCap / years
 
         let base = max(0, salary - proratedPerYear)
@@ -443,6 +460,13 @@ enum CapManagementEngine {
         player.annualSalary = 0
         player.contractYearsRemaining = 0
         player.proratedFullBaseSalary = 0
+        // The restructure receipt is spent: its acceleration was just charged
+        // into `split.deadCap` above and booked against the club that paid it.
+        // Leaving it on the row would follow the man to his next employer and
+        // charge a second club for a bonus it never wrote.
+        player.restructureReliefK = 0
+        player.restructureProrationK = 0
+        player.restructureCarryYears = 0
         player.isHoldingOut = false
         player.isFranchiseTagged = false
         player.trainingFocusArea = nil
@@ -560,5 +584,353 @@ enum CapManagementEngine {
         case .sandbox:
             return 0
         }
+    }
+
+    // MARK: - Cap Compliance (cap-compliance wave)
+
+    /// Whether a club's books are legal, and by how much they are not.
+    ///
+    /// Deliberately DERIVED from `Team` on every read rather than stored on the
+    /// career. A stored "you are non-compliant" flag is a latch, and a latch is
+    /// the one way a cap gate can brick a save: any path that clears the overage
+    /// without clearing the flag (a rollover true-up, a trade, an incentive that
+    /// did not land, a legacy save loaded into a newer build) leaves the user
+    /// permanently blocked with nothing on screen to fix. Derived state cannot
+    /// do that — the moment the club is under the cap the gate is gone.
+    struct CapComplianceStatus: Equatable {
+
+        /// `Team.availableCap` — negative when the club is over.
+        let capRoom: Int
+
+        /// How far over, in thousands. Zero when compliant.
+        let overage: Int
+
+        /// False in sandbox, where the cap is switched off by definition.
+        let isEnforced: Bool
+
+        var isCompliant: Bool { !isEnforced || overage == 0 }
+    }
+
+    /// Reads one club's compliance state.
+    static func complianceStatus(team: Team?, capMode: CapMode) -> CapComplianceStatus {
+        guard let team, capMode != .sandbox else {
+            return CapComplianceStatus(capRoom: 0, overage: 0, isEnforced: false)
+        }
+        let room = team.availableCap
+        return CapComplianceStatus(
+            capRoom: room,
+            overage: max(0, -room),
+            isEnforced: true
+        )
+    }
+
+    /// Whether the league checks a club's books in this phase.
+    ///
+    /// The window opens at the league year and stays open. Before the rollover
+    /// the club is still carrying LAST year's contracts against last year's cap
+    /// — `FreeAgencyEngine.executeNewLeagueYear` has not yet grown the cap, aged
+    /// off the dead money or emptied the expiring deals — so an overage measured
+    /// in `.superBowl` or `.reviewRoster` is an artefact of a season that has
+    /// already been played, not a debt anybody can be asked to settle. Blocking
+    /// there would also be a genuine deadlock: the ONE thing that fixes it is
+    /// the rollover, and the rollover is on the other side of the block.
+    ///
+    /// Everything from free agency onward is inside the new league year and is
+    /// checked, the regular season included — a club that trades its way over
+    /// the cap in November is as illegal as one that signs its way over in
+    /// March.
+    ///
+    /// `.freeAgency` is conditional on the rollover having actually run
+    /// (`Career.lastRolloverSeason`), because the phase spans both sides of it:
+    /// Final Push happens on the old books, `capReview` onward on the new ones.
+    static func isComplianceWindow(phase: SeasonPhase, hasRolledOver: Bool) -> Bool {
+        switch phase {
+        case .proBowl, .superBowl, .coachingChanges, .reviewRoster, .combine:
+            return false
+        case .freeAgency:
+            return hasRolledOver
+        case .proDays, .draft, .otas, .trainingCamp, .preseason,
+             .rosterCuts, .regularSeason, .tradeDeadline, .playoffs:
+            return true
+        }
+    }
+
+    /// One way out of an overage, priced.
+    ///
+    /// The workspace ranks these by ``savings`` and shows the cost beside it,
+    /// because the whole decision is a trade between cap now and consequences
+    /// later — a release that frees $8M and books $14M of dead money is a
+    /// different proposition from a restructure that frees $6M and adds $2M to
+    /// each of the next three years, and a list that showed only the savings
+    /// column would make them look identical.
+    struct ComplianceLever: Identifiable, Equatable {
+
+        enum Kind: String, Equatable {
+            case release
+            case restructure
+        }
+
+        let playerID: UUID
+        let playerName: String
+        let position: Position
+        let overall: Int
+        let kind: Kind
+
+        /// Cap freed in the CURRENT league year, in thousands. **Signed**: a
+        /// release whose acceleration outruns its relief has negative savings
+        /// and is not a way out at all, which the workspace has to be able to
+        /// say out loud rather than quietly offer as a fix.
+        let savings: Int
+
+        /// Dead money the move books this year (release), or adds to a future
+        /// cut (restructure).
+        let deadMoney: Int
+
+        /// What the club pays for it in EACH remaining year. Zero for a
+        /// release — its whole cost is the dead money above.
+        let futureAnnualCharge: Int
+
+        /// Years the future charge runs for.
+        let futureYears: Int
+
+        var id: String { "\(kind.rawValue)-\(playerID.uuidString)" }
+
+        /// Whether this lever actually moves the club toward compliance.
+        var isEffective: Bool { savings > 0 }
+    }
+
+    /// Every lever the club has, ranked by cap freed this year.
+    ///
+    /// Both kinds are priced by the engines that would execute them —
+    /// ``releaseCapSplit`` and `ContractEngine.restructureQuote` — so the number
+    /// on the row is the number the button delivers. Nothing here mutates.
+    ///
+    /// **RENEGOTIATE is deliberately absent.** A pay cut is a conversation, not
+    /// a lever: the player can refuse, and what he would accept is
+    /// `ContractNegotiationEngine`'s persona model to decide, not this
+    /// function's to guess. The workspace links to the Contact Agent chat for
+    /// it; a ranked row promising savings the player has not agreed to would be
+    /// a plan the user cannot execute.
+    static func complianceLevers(
+        players: [Player],
+        contractsByPlayer: [UUID: Contract],
+        capMode: CapMode,
+        salaryCap: Int,
+        leagueYearRemaining: Double = 1.0
+    ) -> [ComplianceLever] {
+        guard capMode != .sandbox else { return [] }
+
+        var levers: [ComplianceLever] = []
+        levers.reserveCapacity(players.count * 2)
+
+        for player in players {
+            let contract = contractsByPlayer[player.id]
+
+            let split = releaseCapSplit(
+                player: player,
+                contract: contract,
+                capMode: capMode,
+                leagueYearRemaining: leagueYearRemaining
+            )
+            levers.append(ComplianceLever(
+                playerID: player.id,
+                playerName: player.fullName,
+                position: player.position,
+                overall: player.overall,
+                kind: .release,
+                savings: split.capSavings,
+                deadMoney: split.deadCap,
+                futureAnnualCharge: 0,
+                futureYears: 0
+            ))
+
+            if case .available(let quote) = ContractEngine.restructureQuote(
+                player: player,
+                contract: contract,
+                capMode: capMode,
+                salaryCap: salaryCap
+            ) {
+                levers.append(ComplianceLever(
+                    playerID: player.id,
+                    playerName: player.fullName,
+                    position: player.position,
+                    overall: player.overall,
+                    kind: .restructure,
+                    savings: quote.immediateRelief,
+                    deadMoney: quote.deadMoneyAdded,
+                    futureAnnualCharge: quote.proratedPerYear,
+                    futureYears: max(0, quote.yearsRemaining - 1)
+                ))
+            }
+        }
+
+        return levers.sorted { lhs, rhs in
+            if lhs.savings != rhs.savings { return lhs.savings > rhs.savings }
+            // Stable tie-break so two identical rows do not swap between reads.
+            return lhs.id < rhs.id
+        }
+    }
+
+    /// The most cap a single lever can free, in thousands. `0` when the club has
+    /// no move that helps at all.
+    static func bestLeverSavings(_ levers: [ComplianceLever]) -> Int {
+        max(0, levers.first?.savings ?? 0)
+    }
+
+    /// **The anti-deadlock guarantee.**
+    ///
+    /// True when at least one lever frees cap. A club whose every contract is so
+    /// bonus-heavy that releasing anybody COSTS more than keeping him, and whose
+    /// deals are all in their final year so nothing can be restructured, has no
+    /// legal way back under the cap this league year — and the honest answer to
+    /// that is that the league does not get to freeze the save until March. The
+    /// gate lifts, the workspace still shows the overage, and the rollover's
+    /// task-#27 true-up (which rebuilds every club's usage from rostered
+    /// salaries and ages dead money off) resolves it.
+    ///
+    /// This is not a loophole worth exploiting: reaching it requires a roster on
+    /// which no man can be cut for a gain, which is a roster that has already
+    /// cost the user everything the gate would have made him pay.
+    static func canSelfHeal(_ levers: [ComplianceLever]) -> Bool {
+        levers.contains { $0.isEffective }
+    }
+
+    // MARK: - Restructure Façade
+
+    /// The restructure quote, re-exported under the cap engine's name.
+    ///
+    /// The lever is IMPLEMENTED in `ContractEngine` — that is where a contract's
+    /// base salary, its signing bonus and the veteran minimum live, and putting
+    /// the arithmetic anywhere else would have meant a second opinion about what
+    /// a contract is. But every other cap operation the screens reach for is
+    /// spelled `CapManagementEngine.something` (`releaseCapSplit`, `applyRelease`,
+    /// `leagueYearRemaining`, `complianceLevers`), so the two forwarders below
+    /// let a cap screen keep one import and one vocabulary. They add no logic
+    /// and can never disagree with the authority, because they ARE the authority
+    /// called with different labels.
+    typealias RestructureQuote = ContractEngine.RestructureQuote
+
+    /// ``ContractEngine/restructureQuote(player:contract:capMode:salaryCap:amount:)``,
+    /// flattened to an Optional for call sites that only care whether the lever
+    /// exists.
+    ///
+    /// - Parameter salaryCap: the club's CURRENT cap, which sets the veteran
+    ///   minimum the conversion floor is measured from. Defaults to the opening
+    ///   cap for callers that have not loaded a `Team` yet; since the cap only
+    ///   ever grows, that default understates the floor slightly (a ~$200K
+    ///   difference by season five on a multi-million-dollar conversion) and so
+    ///   errs toward offering the lever rather than hiding it. Pass the real cap
+    ///   wherever the team is in hand.
+    static func restructureQuote(
+        player: Player,
+        contract: Contract?,
+        capMode: CapMode,
+        salaryCap: Int = ContractEngine.openingSalaryCap
+    ) -> RestructureQuote? {
+        ContractEngine.restructureQuote(
+            player: player,
+            contract: contract,
+            capMode: capMode,
+            salaryCap: salaryCap
+        ).quote
+    }
+
+    /// ``ContractEngine/executeRestructure(player:team:contract:capMode:salaryCap:amount:moraleBonus:)``,
+    /// with the salary cap read off the club and an optional save.
+    ///
+    /// - Parameter modelContext: saved when supplied, so a screen that applies
+    ///   the lever and then navigates away cannot lose the relief it just
+    ///   showed the user.
+    @discardableResult
+    static func executeRestructure(
+        player: Player,
+        team: Team?,
+        contract: Contract?,
+        capMode: CapMode,
+        modelContext: ModelContext? = nil
+    ) -> RestructureQuote? {
+        let applied = ContractEngine.executeRestructure(
+            player: player,
+            team: team,
+            contract: contract,
+            capMode: capMode,
+            salaryCap: team?.salaryCap ?? ContractEngine.openingSalaryCap
+        )
+        if applied != nil, let modelContext {
+            try? modelContext.save()
+        }
+        return applied
+    }
+
+    // MARK: - AI Symmetry (cap-compliance wave)
+
+    /// Restructures an AI club back under the cap, and stops the instant it is.
+    ///
+    /// **Why the AI needs this at all.** The gate the user is about to live
+    /// under is a rule of the league, not a rule about the user, and a league
+    /// where 31 clubs may carry an illegal cap sheet while one may not is not a
+    /// simulation of anything. The rollover's task-#27 true-up already rebuilds
+    /// every club's usage from rostered salary, so an AI club can still come out
+    /// of March over the cap — a fifth-year option picked up on top of a payroll
+    /// that had grown into the ceiling, an incentive that landed, a deadline
+    /// rental restored to its full base (#45).
+    ///
+    /// **Why RESTRUCTURE ONLY.** Releases are roster churn, and roster churn is
+    /// the calibrated quantity in task #53 — an AI compliance pass that cut
+    /// players would move the league's churn shape, the free-agent pool's
+    /// denominator and the development numbers that hang off both, to fix a
+    /// bookkeeping problem. A restructure moves money and nobody's job.
+    ///
+    /// **Why it cannot move the market (task #93's reserve discipline).** It
+    /// stops at compliance — `availableCap == 0` at best — and the AI free-agent
+    /// budget is `availableCap − 15 % of the cap` (`FreeAgencyEngine.capReservePercent`).
+    /// A club healed to exactly zero room is still far below its reserve and
+    /// still signs nobody. The pass buys legality, never spending power.
+    ///
+    /// Returns the cap freed, in thousands (0 = nothing to do, or nothing legal
+    /// left to do).
+    @discardableResult
+    static func selfHealCapCompliance(
+        team: Team,
+        players: [Player],
+        contractsByPlayer: [UUID: Contract],
+        capMode: CapMode,
+        salaryCap: Int
+    ) -> Int {
+        guard capMode != .sandbox else { return 0 }
+        guard team.availableCap < 0 else { return 0 }
+
+        // Biggest relief first, so the fewest contracts are touched. Sorted once
+        // and walked, rather than re-ranked per step: the quote for a player who
+        // has not been restructured yet does not change when a different player
+        // is, so a stable single pass is both cheaper and deterministic.
+        let candidates = players
+            .compactMap { player -> (Player, ContractEngine.RestructureQuote)? in
+                guard case .available(let quote) = ContractEngine.restructureQuote(
+                    player: player,
+                    contract: contractsByPlayer[player.id],
+                    capMode: capMode,
+                    salaryCap: salaryCap
+                ) else { return nil }
+                return (player, quote)
+            }
+            .sorted { $0.1.immediateRelief > $1.1.immediateRelief }
+
+        var freed = 0
+        for (player, _) in candidates {
+            guard team.availableCap < 0 else { break }
+            let applied = ContractEngine.executeRestructure(
+                player: player,
+                team: team,
+                contract: contractsByPlayer[player.id],
+                capMode: capMode,
+                salaryCap: salaryCap,
+                // An AI club's own accountant asking for a signature is not a
+                // moment of goodwill the way a user's GM offering it is.
+                moraleBonus: 0
+            )
+            freed += applied?.immediateRelief ?? 0
+        }
+        return freed
     }
 }

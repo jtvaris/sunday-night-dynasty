@@ -103,6 +103,12 @@ struct FAWeeklyView: View {
     @State private var showBiddingUpdates = false
     @State private var instantSigningMessage: String?
     @State private var showInstantSigning = false
+    /// #102 — the ledger refused an offer at submit time. Carries the ledger's
+    /// own refusal sentence so the block is never silent.
+    @State private var capBlockMessage: String?
+    /// #102 F10 — a completed signing that put the club over the cap. The
+    /// backstop's verdict, surfaced at signing time instead of being discarded.
+    @State private var capBreachViolation: WeekAdvancer.CapComplianceViolation?
     @State private var allPlayers: [Player] = []
 
     // FA Drama Phase 5 — Milestone signing sheet
@@ -192,6 +198,41 @@ struct FAWeeklyView: View {
             nowTick = Date()
             refreshOutbidEvents()
         }
+        // #102 — the committed-cap ledger refused this offer. Never silent: the
+        // ledger's own sentence, so the block reads the same wherever it fires.
+        .alert(
+            "Not Enough Available Cap",
+            isPresented: Binding(
+                get: { capBlockMessage != nil },
+                set: { if !$0 { capBlockMessage = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) { capBlockMessage = nil }
+        } message: {
+            Text(capBlockMessage ?? "")
+        }
+        // #102 F10 — the ACCEPTANCE-time backstop, spoken. A deal that was
+        // accepted always completes (see `FreeAgencyEngine.SigningOutcome`), so
+        // the only question is when the club finds out it is now illegal. Same
+        // violation and same league-office letter the week-advance gate uses,
+        // said the moment the pen goes down rather than at the next advance.
+        .alert(
+            "Over the Salary Cap",
+            isPresented: Binding(
+                get: { capBreachViolation != nil },
+                set: { if !$0 { capBreachViolation = nil } }
+            ),
+            presenting: capBreachViolation
+        ) { _ in
+            Button("OK", role: .cancel) { capBreachViolation = nil }
+        } message: { violation in
+            Text(
+                "That signing puts your club \(CommittedCapLedger.money(violation.overage)) over the cap. "
+                + "The deal stands — but no week can be advanced until the books balance. "
+                + "Release, restructure or renegotiate on the Cap Overview; the largest single saving "
+                + "on your roster right now is \(CommittedCapLedger.money(violation.bestLeverSavings))."
+            )
+        }
         .sheet(item: $selectedFA) { fa in
             if let team {
                 if let milestone = MilestoneTracker.activeMilestones(
@@ -209,7 +250,7 @@ struct FAWeeklyView: View {
                         milestone: milestone,
                         onSign: { years, multiplier in
                             let salary = max(Int(Double(fa.askingPrice) * multiplier), 750)
-                            FreeAgencyEngine.signFreeAgent(
+                            let outcome = FreeAgencyEngine.signFreeAgent(
                                 player: fa.player,
                                 team: team,
                                 years: years,
@@ -217,6 +258,7 @@ struct FAWeeklyView: View {
                                 capMode: career.capMode,
                                 modelContext: modelContext
                             )
+                            reportSigningOutcome(outcome)
                             FASigningTracker.trackSigning(fa.player.id)
                             markVisitConverted(fa.player.id)
                             generateStorylinesForSigning(player: fa.player, team: team)
@@ -233,7 +275,18 @@ struct FAWeeklyView: View {
                         offensiveScheme: teamOffensiveScheme,
                         defensiveScheme: teamDefensiveScheme,
                         hostedVisit: visitedPlayerIDs.contains(fa.player.id),
+                        // #102: every OTHER outstanding offer reserves cap. This
+                        // man's own standing offer is excluded — re-opening the
+                        // sheet to raise a bid must not price the bid it replaces.
+                        pendingReserved: pendingReservedCap(excluding: fa.player.id),
                         onSubmit: { salary, years in
+                        // #102 — the ledger has the last word. The sheet's own
+                        // hard block already refuses an unaffordable offer, but
+                        // the ledger is the authority and it is what the week
+                        // gate reads, so the offer is booked THERE first and
+                        // simply does not happen if it is refused.
+                        guard reserveOffer(player: fa.player, salary: salary, years: years) else { return }
+
                         // Check for instant signing (big overpay on Day 1)
                         let instantResult = FreeAgencyEngine.checkInstantSigning(
                             offeredSalary: salary,
@@ -243,8 +296,10 @@ struct FAWeeklyView: View {
 
                         switch instantResult {
                         case .signedImmediately, .coinFlipSigned:
-                            // Player signs immediately -- too good to refuse
-                            FreeAgencyEngine.signFreeAgent(
+                            // Player signs immediately -- too good to refuse.
+                            // `signFreeAgent` releases the reservation it just
+                            // took: the promise has become a contract.
+                            let outcome = FreeAgencyEngine.signFreeAgent(
                                 player: fa.player,
                                 team: team,
                                 years: years,
@@ -252,6 +307,7 @@ struct FAWeeklyView: View {
                                 capMode: career.capMode,
                                 modelContext: modelContext
                             )
+                            reportSigningOutcome(outcome)
                             FASigningTracker.trackSigning(fa.player.id)
                             markVisitConverted(fa.player.id)
                             generateStorylinesForSigning(player: fa.player, team: team)
@@ -412,13 +468,29 @@ struct FAWeeklyView: View {
                 }
                 Spacer()
                 if let team {
-                    VStack(alignment: .trailing, spacing: 2) {
-                        Text("Cap Space")
-                            .font(.system(size: 9))
-                            .foregroundStyle(Color.textTertiary)
-                        Text(formatMillions(team.availableCap))
-                            .font(.caption.weight(.bold).monospacedDigit())
-                            .foregroundStyle(team.availableCap > 0 ? Color.success : Color.danger)
+                    // #102 — the reservation ledger in the market header. Three
+                    // numbers because the middle one is the point: an outstanding
+                    // offer is money the club has already promised, and a header
+                    // that only shows Cap Room invites the user to promise it
+                    // again to somebody else.
+                    HStack(spacing: 12) {
+                        headerCapStat(
+                            label: "Cap Room",
+                            value: formatMillions(team.availableCap),
+                            color: team.availableCap > 0 ? Color.textPrimary : Color.danger
+                        )
+                        if reservesCap && pendingReservedCap() > 0 {
+                            headerCapStat(
+                                label: "Pending",
+                                value: "−\(formatMillions(pendingReservedCap()))",
+                                color: Color.warning
+                            )
+                        }
+                        headerCapStat(
+                            label: "Available",
+                            value: formatMillions(availableCapAfterOffers),
+                            color: availableCapAfterOffers > 0 ? Color.success : Color.danger
+                        )
                     }
                 }
             }
@@ -605,7 +677,7 @@ struct FAWeeklyView: View {
 
                 Button {
                     // Withdraw offer
-                    myOffers.removeValue(forKey: update.playerID)
+                    dropOffer(update.playerID)
                     biddingUpdates.removeAll { $0.playerID == update.playerID }
                 } label: {
                     Text("Withdraw")
@@ -638,28 +710,291 @@ struct FAWeeklyView: View {
         }
     }
 
+    // MARK: - Cap Reservation Ledger (#102)
+
+    /// Cap rules are off in sandbox — nothing is reserved and nothing is blocked.
+    private var reservesCap: Bool { career.capMode != .sandbox }
+
+    /// **The reservation ledger, read.**
+    ///
+    /// `CommittedCapLedger` is the authority and it is PERSISTED, not derived
+    /// from `myOffers`: a promise has to survive the user backing out of the
+    /// screen, and the week-advance gate has to be able to see it from a
+    /// different part of the app. `myOffers` remains this screen's working set
+    /// for resolving the round; the ledger is what the money means.
+    ///
+    /// - Parameter excludingPlayerID: a player whose standing offer should NOT
+    ///   count. Re-opening the sheet on a man the club has already bid for is an
+    ///   EDIT of that bid, so pricing it against itself would make every raise
+    ///   illegal.
+    private func capAvailability(excludingPlayerID: UUID? = nil) -> CommittedCapLedger.Availability {
+        CommittedCapLedger.availability(
+            team: team,
+            careerID: career.id,
+            season: career.currentSeason,
+            capMode: career.capMode,
+            excludingPlayerID: excludingPlayerID
+        )
+    }
+
+    /// Cap the club's outstanding offers have already spoken for, in thousands
+    /// per year.
+    private func pendingReservedCap(excluding playerID: UUID? = nil) -> Int {
+        capAvailability(excludingPlayerID: playerID).committed
+    }
+
+    /// **What this offer will really cost, per year** — the engine's own
+    /// projection, not the dial.
+    ///
+    /// #102 F5. A realistic deal for a 28-year-old opens 15 % above the average
+    /// and carries a prorated signing bonus on top, so reserving `salary`
+    /// under-reserved every veteran signing by exactly the difference: $12M of
+    /// room, three $4M offers to 30-year-olds, all three reserved 12 000, all
+    /// three accepted, ~15 000 charged — through the very door this ledger
+    /// exists to hold shut. `ContractEngine.projectedCapHit` builds the contract
+    /// `FreeAgencyEngine.signFreeAgent` will write and reads its `capHit`, so
+    /// there is one formula and the promise is the price.
+    private func projectedCharge(player: Player, salary: Int, years: Int) -> Int {
+        ContractEngine.projectedCapHit(
+            playerID: player.id,
+            annualSalary: salary,
+            years: years,
+            playerAge: player.age,
+            capMode: career.capMode
+        )
+    }
+
+    /// Cap Room minus everything already promised — the number every offer in
+    /// this round is actually measured against.
+    private var availableCapAfterOffers: Int { capAvailability().available }
+
+    /// Books one outstanding offer. Returns false when the ledger refused it,
+    /// in which case the offer must NOT be recorded anywhere else either.
+    ///
+    /// **A refusal is spoken.** The offer sheet's own hard block catches the
+    /// ordinary case, but it prices against the `pendingReserved` it was handed
+    /// when it opened — and the ledger is the authority, checked at submit time
+    /// against the club's live books. When those two disagree (a bidding war
+    /// resolved behind the sheet, a signing that moved cap usage, a stale sheet)
+    /// the ledger wins, and dropping the offer without a word would look exactly
+    /// like a dead button. `CommittedCapLedger.blockMessage` is the one sentence
+    /// every offer surface refuses in, so it is what the user is shown.
+    @discardableResult
+    private func reserveOffer(player: Player, salary: Int, years: Int) -> Bool {
+        let outcome = CommittedCapLedger.reserve(
+            playerID: player.id,
+            playerName: player.fullName,
+            // #102 F5 — the PROJECTED charge, not the dial. `Reservation`'s own
+            // doc has always said this field is "the per-year cap charge the
+            // offer would create if accepted"; until now free agency handed it
+            // the base salary.
+            annualCapHit: projectedCharge(player: player, salary: salary, years: years),
+            // The terms as the user typed them, so a rehydrated offer goes back
+            // on the dial at the bid he made rather than at what it costs.
+            baseSalary: salary,
+            years: years,
+            team: team,
+            careerID: career.id,
+            season: career.currentSeason,
+            capMode: career.capMode
+        )
+        if case .blocked(_, _, let message) = outcome {
+            capBlockMessage = message
+            return false
+        }
+        return true
+    }
+
+    /// **The acceptance-time backstop, reported** (#102 F10).
+    ///
+    /// `FreeAgencyEngine.signFreeAgent` is documented as always COMPLETING an
+    /// accepted deal and reporting the breach instead of voiding a contract the
+    /// user was waiting on — and then every call site in the game threw the
+    /// report away, so a club that signed its way over the cap heard nothing
+    /// until the next Advance Week refused it. The verdict is re-derived through
+    /// `WeekAdvancer.userCapComplianceViolation`, i.e. through the gate's own
+    /// precheck, so the alert and the block can never disagree: it returns nil
+    /// outside the compliance window, in sandbox, and — the anti-deadlock rule —
+    /// for a club holding no lever that frees any cap, none of which is a state
+    /// the user should be warned about.
+    private func reportSigningOutcome(_ outcome: FreeAgencyEngine.SigningOutcome) {
+        guard outcome.breachedCap else { return }
+        guard let violation = WeekAdvancer.userCapComplianceViolation(
+            career: career,
+            modelContext: modelContext
+        ) else { return }
+
+        capBreachViolation = violation
+        let letter = WeekAdvancer.capComplianceInboxMessage(
+            violation,
+            season: career.currentSeason,
+            phase: career.currentPhase
+        )
+        // The process-global staging channel every out-of-shell producer posts
+        // through; `CareerShellView.collectInboxMessages` drains it on the way
+        // back out. Deduped against both books so a run of signings leaves one
+        // letter rather than one per contract.
+        let alreadyFiled = career.inbox.contains { $0.subject == letter.subject }
+            || WeekAdvancer.lastInboxMessages.contains { $0.subject == letter.subject }
+        if !alreadyFiled {
+            WeekAdvancer.lastInboxMessages.append(letter)
+        }
+    }
+
+    /// Drops an offer from BOTH books at once. Every place an offer stops being
+    /// outstanding — withdrawn, outbid, signed, declined — goes through here, so
+    /// the working set and the ledger cannot diverge.
+    private func dropOffer(_ playerID: UUID) {
+        myOffers.removeValue(forKey: playerID)
+        CommittedCapLedger.release(playerID: playerID, careerID: career.id)
+    }
+
+    /// **Reconciles the two books on every load, in that order: prune, then
+    /// rehydrate.**
+    ///
+    /// The reason this has to exist at all is that the two halves have different
+    /// lifetimes. `myOffers` is `@State` — it dies the moment the user taps
+    /// through to the roster and comes back, or backgrounds the app — while the
+    /// ledger is careerID-scoped `UserDefaults` and survives everything. Without
+    /// a reconcile the asymmetry is a one-way leak: the reservations stay,
+    /// shrinking Available and hard-blocking legitimate offers, while the chips
+    /// that could withdraw them are gone with the working set. A GM would be
+    /// locked out of his own cap room by offers the screen no longer admits to
+    /// having made.
+    ///
+    /// 1. **Prune.** `CommittedCapLedger.prune` drops every row for a player who
+    ///    is no longer on the open market — signed elsewhere, retired, gone —
+    ///    and every row stamped with an earlier league year. This is the file's
+    ///    own documented defence #2, and until now nothing called it.
+    /// 2. **Rehydrate.** Whatever survives is a live promise, so it goes back
+    ///    into `myOffers` where the pending bar can render it and the user can
+    ///    take it back. Existing entries win: an offer edited this session is
+    ///    fresher than the row that seeded it.
+    private func reconcileReservations() {
+        guard reservesCap else { return }
+
+        let openIDs = Set(
+            freeAgents
+                .filter { $0.player.teamID == nil }
+                .map(\.player.id)
+        )
+        CommittedCapLedger.prune(
+            careerID: career.id,
+            season: career.currentSeason,
+            openPlayerIDs: openIDs
+        )
+
+        for row in CommittedCapLedger.reservations(
+            careerID: career.id,
+            season: career.currentSeason
+        ) where myOffers[row.playerID] == nil {
+            myOffers[row.playerID] = ContractOffer(
+                playerID: row.playerID,
+                // The bid, not the charge (#102 F5) — `offeredSalary` falls back
+                // to the charge for rows written before the two diverged.
+                salary: row.offeredSalary,
+                years: row.years
+            )
+        }
+    }
+
+    /// The market is closed — nothing outstanding can become a contract any
+    /// more, so nothing may keep reserving room. Defence #3 from the ledger's
+    /// own doc, and the reason a finished free agency hands the club its cap
+    /// back instead of carrying phantom promises into the draft.
+    private func closeReservations() {
+        CommittedCapLedger.clearAll(careerID: career.id)
+        myOffers.removeAll()
+    }
+
+    private func headerCapStat(label: String, value: String, color: Color) -> some View {
+        VStack(alignment: .trailing, spacing: 2) {
+            Text(label)
+                .font(.system(size: 9))
+                .foregroundStyle(Color.textTertiary)
+            Text(value)
+                .font(.caption.weight(.bold).monospacedDigit())
+                .foregroundStyle(color)
+        }
+    }
+
     // MARK: - Pending Offers Bar
 
+    /// The outstanding offers, each with the room it is holding and a way to let
+    /// that room go. **Withdrawing releases the reservation** — the promise is
+    /// the only thing making the money unavailable, so taking the promise back
+    /// has to hand it straight back.
     @ViewBuilder
     private var pendingOffersBar: some View {
         if !myOffers.isEmpty {
-            HStack(spacing: 8) {
-                Image(systemName: "doc.text.fill")
-                    .font(.caption)
-                    .foregroundStyle(Color.accentGold)
-                Text("\(myOffers.count) pending offer\(myOffers.count == 1 ? "" : "s")")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Color.accentGold)
-                Spacer()
-                let totalCost = myOffers.values.reduce(0) { $0 + $1.salary }
-                Text("Total: \(formatMillions(totalCost))/yr")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(Color.textSecondary)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Image(systemName: "doc.text.fill")
+                        .font(.caption)
+                        .foregroundStyle(Color.accentGold)
+                    Text("\(myOffers.count) pending offer\(myOffers.count == 1 ? "" : "s")")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.accentGold)
+                    Spacer()
+                    let totalCost = myOffers.values.reduce(0) { $0 + $1.salary }
+                    Text(reservesCap
+                         ? "Reserving \(formatMillions(totalCost))/yr"
+                         : "Total: \(formatMillions(totalCost))/yr")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(Color.textSecondary)
+                }
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(pendingOfferRows, id: \.offer.id) { row in
+                            pendingOfferChip(name: row.name, offer: row.offer)
+                        }
+                    }
+                }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
             .background(Color.accentGold.opacity(0.08))
         }
+    }
+
+    /// Offers resolved to names, in a stable order so the chips do not shuffle
+    /// under the user's finger between renders.
+    private var pendingOfferRows: [(name: String, offer: ContractOffer)] {
+        myOffers.values
+            .map { offer in
+                let name = freeAgents.first { $0.player.id == offer.playerID }?.player.fullName
+                    ?? allPlayers.first { $0.id == offer.playerID }?.fullName
+                    ?? "Unknown"
+                return (name: name, offer: offer)
+            }
+            .sorted { $0.offer.salary > $1.offer.salary }
+    }
+
+    private func pendingOfferChip(name: String, offer: ContractOffer) -> some View {
+        HStack(spacing: 6) {
+            Text(name)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Color.textPrimary)
+                .lineLimit(1)
+            Text("\(formatMillions(offer.salary))/yr × \(offer.years)")
+                .font(.system(size: 10).monospacedDigit())
+                .foregroundStyle(Color.textTertiary)
+            Button {
+                dropOffer(offer.playerID)
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.danger)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Withdraw offer to \(name)")
+            .accessibilityHint("Releases \(formatMillions(offer.salary)) of reserved cap.")
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Color.backgroundSecondary, in: Capsule())
+        .overlay(Capsule().strokeBorder(Color.surfaceBorder, lineWidth: 1))
     }
 
     // MARK: - Position Filter
@@ -1075,7 +1410,7 @@ struct FAWeeklyView: View {
 
             if decision.accepted {
                 // Signed with us
-                FreeAgencyEngine.signFreeAgent(
+                let outcome = FreeAgencyEngine.signFreeAgent(
                     player: player,
                     team: team,
                     years: offer.years,
@@ -1083,6 +1418,7 @@ struct FAWeeklyView: View {
                     capMode: career.capMode,
                     modelContext: modelContext
                 )
+                reportSigningOutcome(outcome)
                 FASigningTracker.trackSigning(player.id)
                 markVisitConverted(player.id)
                 generateStorylinesForSigning(player: player, team: team)
@@ -1150,14 +1486,17 @@ struct FAWeeklyView: View {
             }
         }
 
-        // Remove signed/rejected players from offers; keep shopping-around offers
-        let shoppingIDs = Set(shoppingAround.map { _ -> UUID? in nil }) // we keep all myOffers for shopping players
+        // Remove signed/rejected players from offers; keep shopping-around ones.
+        // (A `shoppingIDs` set used to be built here from a map that produced
+        //  nothing but `nil`, was never read, and is gone with #102's move to
+        //  `dropOffer` — the names below are the real test.)
         for (playerID, _) in myOffers {
             let isShoppingAround = freeAgents
                 .first(where: { $0.player.id == playerID })
                 .map { fa in shoppingAround.contains(where: { $0.playerName == fa.player.fullName }) } ?? false
             if !isShoppingAround {
-                myOffers.removeValue(forKey: playerID)
+                // #102: the promise is over — the reservation goes with it.
+                dropOffer(playerID)
             }
         }
 
@@ -1197,6 +1536,9 @@ struct FAWeeklyView: View {
 
         if currentRound >= 6 {
             career.freeAgencyStep = FreeAgencyStep.complete.rawValue
+            // #102: the market is shut. Nothing outstanding can become a
+            // contract, so nothing may keep reserving room.
+            closeReservations()
         } else {
             career.freeAgencyRound += 1
         }
@@ -1285,6 +1627,9 @@ struct FAWeeklyView: View {
             career: career
         )
         career.freeAgencyStep = FreeAgencyStep.complete.rawValue
+        // #102: skipping the rest of free agency closes the market too — the
+        // reservations behind the skipped rounds can never be collected.
+        closeReservations()
         // The stamp is a MODEL mutation now, so it has to reach the store before
         // the user can quit — the relaunch it defends against is the one where
         // `WeekAdvancer`'s mop-up would otherwise open the market a second time.
@@ -1390,6 +1735,10 @@ struct FAWeeklyView: View {
             ?? teamCoaches.first(where: { $0.role == .headCoach })?.offensiveScheme
         teamDefensiveScheme = teamCoaches.first(where: { $0.role == .defensiveCoordinator })?.defensiveScheme
             ?? teamCoaches.first(where: { $0.role == .headCoach })?.defensiveScheme
+
+        // #102 — LAST, because it needs the finished market: the prune half
+        // decides what is still collectable by asking who is still on it.
+        reconcileReservations()
     }
 
     /// FA Drama: generate storyline events (revenge tour, hometown, coach reunion,

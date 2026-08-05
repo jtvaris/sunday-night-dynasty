@@ -73,6 +73,7 @@ struct CapOverviewView: View {
             ScrollView {
                 VStack(spacing: 24) {
                     if let team {
+                        overCapBanner(team: team)
                         capSummaryCard(team: team)
                         capBarCard(team: team)
                         deadMoneyCard(team: team)
@@ -128,6 +129,64 @@ struct CapOverviewView: View {
                     }
                 )
             }
+        }
+    }
+
+    // MARK: - Over-Cap Banner (#102)
+
+    /// The debt, stated at the top of the screen, with the door to the workspace
+    /// that fixes it.
+    ///
+    /// It sits ABOVE the summary card rather than inside it because being over
+    /// the cap is not a statistic — it is a blocking condition with a required
+    /// action, and a GM who is illegal should not have to read three cards to
+    /// find that out. Absent entirely when the club is compliant, and in sandbox,
+    /// where there is nothing to be over.
+    @ViewBuilder
+    private func overCapBanner(team: Team) -> some View {
+        // From the engine, not re-derived here. `CapManagementEngine.complianceStatus`
+        // is what the week-advance gate and the required task both read, and a
+        // banner that computed its own overage could tell the user he is legal
+        // on the very screen the gate just sent him to.
+        let status = CapManagementEngine.complianceStatus(team: team, capMode: career.capMode)
+        let overage = status.overage
+
+        if !status.isCompliant, overage > 0 {
+            NavigationLink {
+                CapComplianceView(career: career, context: .weekAdvanceGate)
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 20))
+                        .foregroundStyle(Color.danger)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("You are \(formatMillions(overage)) over the cap")
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(Color.danger)
+                        Text("Release, restructure or renegotiate to get legal.")
+                            .font(.caption)
+                            .foregroundStyle(Color.textSecondary)
+                    }
+                    Spacer()
+                    Text("FIX IT")
+                        .font(.system(size: 11, weight: .black))
+                        .foregroundStyle(Color.backgroundPrimary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Color.danger, in: Capsule())
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.danger)
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity)
+                .background(Color.danger.opacity(0.10), in: RoundedRectangle(cornerRadius: 14))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .strokeBorder(Color.danger.opacity(0.45), lineWidth: 2)
+                )
+            }
+            .buttonStyle(.plain)
         }
     }
 

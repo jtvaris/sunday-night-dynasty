@@ -71,6 +71,13 @@ struct CareerShellView: View {
     /// over-limit roster. Presented as an alert, cleared on dismissal.
     @State private var pendingRosterLimit: WeekAdvancer.RosterLimitViolation?
 
+    /// Set when `performShellAdvance` refuses to advance a club that is over the
+    /// salary cap (#102, the GATE half of the cap-compliance design). Presented
+    /// as an alert whose primary action deep-links to the workspace that fixes
+    /// it, and cleared on dismissal — the violation is DERIVED on every advance,
+    /// so nothing latches and getting legal is the only exit needed.
+    @State private var pendingCapCompliance: WeekAdvancer.CapComplianceViolation?
+
     /// TRACK B — the draft class the fog is about to come off, assembled when
     /// the calendar crosses into training camp (`WeekAdvancer` arms the
     /// once-per-season flag; this presents it). `nil` at every other moment.
@@ -158,6 +165,32 @@ struct CareerShellView: View {
             Text(
                 "You're carrying \(violation.rosterCount) players. The season opens with a "
                 + "\(violation.ceiling)-man active roster — release \(violation.excess) more before advancing."
+            )
+        }
+        // #102 — the cap gate. Same shape as the roster gate above and for the
+        // same reason: the advance mutates a season's worth of state and cannot
+        // report a refusal halfway through, so the refusal is a precheck and the
+        // alert is its voice. "Fix the Cap" lands on the Cap Overview, whose
+        // over-cap banner is the door to the compliance workspace.
+        .alert(
+            "Over the Salary Cap",
+            isPresented: Binding(
+                get: { pendingCapCompliance != nil },
+                set: { if !$0 { pendingCapCompliance = nil } }
+            ),
+            presenting: pendingCapCompliance
+        ) { violation in
+            Button("Fix the Cap") {
+                pendingCapCompliance = nil
+                navigationPath.append(ShellDestination.capOverview)
+            }
+            Button("Cancel", role: .cancel) { pendingCapCompliance = nil }
+        } message: { violation in
+            Text(
+                "Your club is \(CommittedCapLedger.money(violation.overage)) over the cap. "
+                + "Release, restructure or renegotiate until the books balance — no week can be "
+                + "advanced while you are over. The largest single saving on your roster right now "
+                + "is \(CommittedCapLedger.money(violation.bestLeverSavings))."
             )
         }
         .alert("Quit to Main Menu?", isPresented: $showQuitConfirmation) {
@@ -510,6 +543,30 @@ struct CareerShellView: View {
         ) {
             pendingRosterLimit = violation
             let letter = WeekAdvancer.rosterLimitInboxMessage(violation, season: career.currentSeason)
+            if !inboxMessages.contains(where: { $0.subject == letter.subject }) {
+                inboxMessages.append(letter)
+                persistInbox()
+            }
+            return
+        }
+
+        // #102 cap gate. Refuse the advance while the club's books are illegal
+        // inside the league's compliance window — the third pillar of the wave,
+        // after PREVENTION (`CommittedCapLedger`) and REMEDIATION
+        // (`CapComplianceView`). `userCapComplianceViolation` returns nil in
+        // sandbox, outside the window, when compliant, and — the anti-deadlock
+        // rule — when the club holds no lever that frees any cap at all, so a
+        // save can never be bricked by this block.
+        if let violation = WeekAdvancer.userCapComplianceViolation(
+            career: career,
+            modelContext: modelContext
+        ) {
+            pendingCapCompliance = violation
+            let letter = WeekAdvancer.capComplianceInboxMessage(
+                violation,
+                season: career.currentSeason,
+                phase: career.currentPhase
+            )
             if !inboxMessages.contains(where: { $0.subject == letter.subject }) {
                 inboxMessages.append(letter)
                 persistInbox()

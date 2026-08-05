@@ -317,7 +317,59 @@ enum TaskGenerator {
             isRequired: false,
             status: .done
         )
-        return [banner] + phaseTasks
+        return [banner] + capComplianceTasks(phase: phase, career: career, team: team) + phaseTasks
+    }
+
+    // MARK: - Cap Compliance (cap-compliance wave)
+
+    /// The required task a club over the salary cap carries, in every phase the
+    /// league is looking.
+    ///
+    /// **A cross-phase OVERLAY, not a phase task.** Being over the cap is not
+    /// something that happens during free agency — it is a state of the club's
+    /// books that persists until somebody fixes it, and the fix has to be
+    /// reachable from wherever the user happens to be. So it is emitted
+    /// alongside `phaseTasks` rather than inside any of them, and it sits
+    /// directly under the group banner because a required task nobody scrolls to
+    /// is a required task nobody does.
+    ///
+    /// **Derived from `team`, which the caller already passes.** Deliberately
+    /// NOT a new `generateTasks` parameter: the shell would have to compute and
+    /// thread the overage, and until it did the gate would exist in the engine
+    /// and be invisible in the game. Reading it off `Team.availableCap` here
+    /// means the task appears the moment the condition is true, in every save,
+    /// with no call site changed.
+    ///
+    /// The task is shown whenever the club is over inside the window, INCLUDING
+    /// the fully-guaranteed corner where `WeekAdvancer.userCapComplianceViolation`
+    /// declines to block (see its anti-deadlock rule). Telling the user his books
+    /// are illegal costs nothing; refusing to let him play does, so only the
+    /// refusal is conditional on there being a way out.
+    private static func capComplianceTasks(
+        phase: SeasonPhase,
+        career: Career,
+        team: Team?
+    ) -> [GameTask] {
+        let status = CapManagementEngine.complianceStatus(team: team, capMode: career.capMode)
+        guard !status.isCompliant else { return [] }
+        guard CapManagementEngine.isComplianceWindow(
+            phase: phase,
+            hasRolledOver: career.lastRolloverSeason >= career.currentSeason
+        ) else { return [] }
+
+        let over = CommittedCapLedger.money(status.overage)
+        return [
+            GameTask(
+                phase: phase,
+                title: "Get under the salary cap",
+                description: "Your club is \(over) over the cap. Release, restructure or "
+                    + "renegotiate contracts until the books balance — no week can be "
+                    + "advanced while you are over.",
+                icon: "exclamationmark.triangle.fill",
+                destination: .capOverview,
+                isRequired: true
+            )
+        ]
     }
 
     // MARK: - Phase-Specific Task Lists

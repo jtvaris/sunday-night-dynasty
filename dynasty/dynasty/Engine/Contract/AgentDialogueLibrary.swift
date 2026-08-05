@@ -166,6 +166,12 @@ enum DialogueSite: String {
     case yearsPushback
     case lingering
     case gmOffer
+    /// The front office asking a man under contract to take less (#102).
+    case payCutAsk
+    case payCutAccept
+    case payCutCounter
+    case payCutRefuse
+    case payCutRelease
 }
 
 // MARK: - Selector
@@ -1216,5 +1222,111 @@ enum AgentDialogueLibrary {
             : ["We've moved. Take another look.",
                "Here's a revised offer.",
                "We've had another go at it. See what you think."]
+    }
+
+    // MARK: - Pay Cut (#102)
+    //
+    // The one conversation in this file where the CLUB is asking for money back.
+    // The pools are voice-only — no desire weave — for the same reason the
+    // endings are: what a man wants out of a contract stops being the argument
+    // the moment the argument is whether he keeps the one he has. The axis that
+    // does matter here is his LEVERAGE, and the engine has already priced that
+    // into which pool gets asked for.
+
+    /// The front office making the ask. Blunt on purpose: dressing a pay cut up
+    /// is how a club turns a bad afternoon into a grudge.
+    static func payCutAsk(playerFirst: String, ctx: Ctx) -> [String] {
+        ["I'll be straight with you — we're up against the cap and we need help. Would \(playerFirst) come down to \(ctx.offerPerYear)?",
+         "We're asking, not telling: \(ctx.offerPerYear) this year. It keeps the roster around him intact.",
+         "Cap's tight. \(ctx.offerPerYear) is the number that fixes it. What does \(playerFirst) say?",
+         "This isn't about what he's worth. It's about what we can carry. \(ctx.offerPerYear)?"]
+    }
+
+    /// He signs the reduction.
+    static func payCutAccept(voice: AgentVoice, ctx: Ctx) -> [String] {
+        switch voice {
+        case .shark:
+            return ["Fine. \(ctx.offerPerYear), and you owe him one — I'll be collecting.",
+                    "He'll do it. Not because it's fair, because he wants to win here. Remember that in March.",
+                    "\(ctx.offerPerYear). Done. Don't mistake it for a habit."]
+        case .professional:
+            return ["We'll take \(ctx.offerPerYear). He'd rather fix the roster than argue about the difference.",
+                    "That works. \(ctx.offerPerYear), and we consider the matter closed.",
+                    "Agreed at \(ctx.offerPerYear). He asked me to say he's doing it for the locker room."]
+        case .friendly:
+            return ["Oh, he'll say yes — he already said yes before I called you. \(ctx.offerPerYear).",
+                    "He loves it there. \(ctx.offerPerYear) and let's never speak of it again.",
+                    "You caught him in a good mood, and he likes the group. \(ctx.offerPerYear)."]
+        case .oldSchool:
+            return ["A man takes a cut for a team he believes in. \(ctx.offerPerYear). He believes in yours.",
+                    "\(ctx.offerPerYear). He's played long enough to know what a cap is.",
+                    "He'll sign it. And he'll expect to be treated like a man who signed it."]
+        }
+    }
+
+    /// He will come down — but not that far.
+    static func payCutCounter(voice: AgentVoice, ctx: Ctx) -> [String] {
+        switch voice {
+        case .shark:
+            return ["No. \(ctx.askPerYear) is where this ends, and you're lucky to get that.",
+                    "You asked for a haircut and reached for the scalp. \(ctx.askPerYear).",
+                    "\(ctx.askPerYear). Not a dollar under, and I'd stop talking now."]
+        case .professional:
+            return ["That's past what he can justify. \(ctx.askPerYear) is the number we'd sign.",
+                    "We'll help, but within reason: \(ctx.askPerYear).",
+                    "\(ctx.askPerYear) works. Below that he's better off testing the market and we both know it."]
+        case .friendly:
+            return ["He wants to help, he really does — but not that much. \(ctx.askPerYear)?",
+                    "Meet him halfway and we're all still friends. \(ctx.askPerYear).",
+                    "That's a big ask, love. \(ctx.askPerYear) and he'll sign it this afternoon."]
+        case .oldSchool:
+            return ["There's a cut and there's a robbery. \(ctx.askPerYear) is the cut.",
+                    "He'll give you something. Not that. \(ctx.askPerYear).",
+                    "\(ctx.askPerYear). I've told him not to go under it, and he listens to me."]
+        }
+    }
+
+    /// The deal is the deal.
+    static func payCutRefuse(voice: AgentVoice, ctx: Ctx) -> [String] {
+        switch voice {
+        case .shark:
+            return ["No. You signed it, you carry it.",
+                    "Your cap, your problem. He's not funding it.",
+                    "Absolutely not. Go and find the money somewhere it belongs."]
+        case .professional:
+            return ["We're going to decline. \(ctx.playerFirst) is being paid what the market says he's worth.",
+                    "No — that contract isn't the reason you're over. Look at the ones that are.",
+                    "He'll play the deal he signed. That's the answer."]
+        case .friendly:
+            return ["I'd love to help you out. I can't ask him this one, I'm sorry.",
+                    "He'd do a lot for that club. Not this. Not this year.",
+                    "That's a no, and it's a kind no — he isn't your cap problem."]
+        case .oldSchool:
+            return ["A contract is a contract. He honored his half; honor yours.",
+                    "No. And I'd think hard before asking a man like him twice.",
+                    "He turned up every Sunday for that money. He keeps it."]
+        }
+    }
+
+    /// "Then release him." What a star says when the ask stops being negotiable.
+    static func payCutRelease(voice: AgentVoice, ctx: Ctx) -> [String] {
+        switch voice {
+        case .shark:
+            return ["That's not a pay cut, that's a mugging. Release him. He'll have a better offer by Friday.",
+                    "If that's your number, cut him. I'll have three clubs on the phone before the paperwork clears.",
+                    "You've just told me what you think of him. Release him and find out what the league thinks."]
+        case .professional:
+            return ["If the club genuinely can't carry the contract, then release him. That's the honest version of this call.",
+                    "We won't be signing that. If you need the room that badly, take the dead money and let him go.",
+                    "That number isn't a negotiation. Release him — he'll be fine, and so will you."]
+        case .friendly:
+            return ["Oh, I don't think you meant that. If you did — let him go. Kindly, and today.",
+                    "That's hurt him, that has. If it's really the number, release him and we'll part well.",
+                    "He'd rather be cut than told he's worth that. Please just release him."]
+        case .oldSchool:
+            return ["Then release the man. Don't insult him on the way out.",
+                    "Cut him. I've seen clubs do worse, but not to better people.",
+                    "If that's where you are, do it properly: release him and shake his hand."]
+        }
     }
 }

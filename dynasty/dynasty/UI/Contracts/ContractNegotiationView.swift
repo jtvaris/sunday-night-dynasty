@@ -43,6 +43,25 @@ struct ContractNegotiationView: View {
     let teamCapSpace: Int
     var onDealCompleted: ((NegotiationOffer) -> Void)?
 
+    /// **The pay-cut payoff** (#102). Called with the agreed per-year salary and
+    /// the persona-scaled morale consequence, both in the moment the agent
+    /// consents.
+    ///
+    /// A separate hook from ``onDealCompleted`` rather than a one-year
+    /// `NegotiationOffer` through the same door, because the two are different
+    /// transactions: a signing ADDS a contract, a pay cut REPRICES the one that
+    /// exists. The host calls `ContractEngine.applyPayCut` — the one place a pay
+    /// cut is booked — and passes `moraleDelta` straight through, which is why
+    /// this screen writes no morale of its own on the pay-cut path: the engine's
+    /// `applyPayCut` already does it, and doing it here as well would charge the
+    /// man twice for one bad afternoon.
+    var onPayCutAgreed: ((_ newSalary: Int, _ moraleDelta: Int) -> Void)?
+
+    /// The client answered a pay-cut ask with "then release me". Lets the host
+    /// (the Cap Compliance workspace) put the Release lever in front of the user
+    /// instead of leaving him to work out what just happened.
+    var onReleaseDemanded: (() -> Void)?
+
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
 
@@ -77,6 +96,15 @@ struct ContractNegotiationView: View {
     @State private var enabledIncentiveIDs: Set<String> = []
     @State private var showIncentives = false
 
+    // Pay-cut composer state (#102). One dial — the new per-year number — because
+    // a pay cut has exactly one term to argue about. `payCutSettled` latches once
+    // the man has signed, so the composer cannot ask him twice for the same year.
+    @State private var payCutSalary: Int = 0
+    @State private var payCutSettled = false
+    /// The last answer, kept so the release demand can stay on screen under the
+    /// composer instead of scrolling away with the transcript.
+    @State private var payCutLastOutcome: ContractNegotiationEngine.PayCutOutcome?
+
     private let salaryStep = 500
     private let bonusStep = 500
     private let guaranteedStep = 5
@@ -92,7 +120,14 @@ struct ContractNegotiationView: View {
             VStack(spacing: 0) {
                 playerHeader
                 chatArea
-                if isNegotiationActive {
+                if isPayCut {
+                    // One dial, not five. A pay cut has a single term.
+                    if isNegotiationActive && !payCutSettled {
+                        payCutComposer
+                    } else {
+                        closingBar
+                    }
+                } else if isNegotiationActive {
                     offerBuilder
                 } else {
                     closingBar
@@ -659,6 +694,201 @@ struct ContractNegotiationView: View {
         .background(Color.backgroundSecondary)
     }
 
+    // MARK: - Pay Cut Composer (#102)
+
+    private var isPayCut: Bool { negotiationType == .payCut }
+
+    /// The floor the dial cannot go under: the veteran minimum, from the engine
+    /// that every other salary floor in the game comes from.
+    private var payCutFloor: Int {
+        ContractNegotiationEngine.veteranMinimum(salaryCap: salaryCap)
+    }
+
+    /// The ceiling: what he is paid today. Asking for MORE is an extension, and
+    /// that conversation has its own door.
+    private var payCutCeiling: Int { max(payCutFloor, player.annualSalary) }
+
+    /// This year's cap relief the ask would buy.
+    private var payCutSavings: Int { max(0, player.annualSalary - payCutSalary) }
+
+    /// **The renegotiation composer.** One number, what it saves, and what the
+    /// man is actually worth — the three facts a GM needs to know whether he is
+    /// asking for help or asking for a favour he will pay for later.
+    ///
+    /// The market line is shown UNCONDITIONALLY, and that is the design: a pay
+    /// cut is only signable where the player could not get the same money
+    /// elsewhere, so hiding his market would make the lever a guessing game
+    /// rather than a judgement. What stays hidden is his personal floor — that
+    /// is what the agent is for.
+    private var payCutComposer: some View {
+        VStack(spacing: 12) {
+            Rectangle()
+                .fill(Color.surfaceBorder)
+                .frame(height: 1)
+
+            refusalBanner
+            payCutOutcomeBanner
+
+            VStack(spacing: 10) {
+                builderRow(
+                    label: "New Salary",
+                    value: formatMillions(payCutSalary),
+                    valueColor: .accentGold
+                ) {
+                    stepperButton(systemImage: "minus") {
+                        payCutSalary = max(payCutFloor, payCutSalary - salaryStep)
+                    }
+                    .disabled(payCutSalary <= payCutFloor)
+                } plus: {
+                    stepperButton(systemImage: "plus") {
+                        payCutSalary = min(payCutCeiling, payCutSalary + salaryStep)
+                    }
+                    .disabled(payCutSalary >= payCutCeiling)
+                }
+
+                Slider(
+                    value: Binding(
+                        get: { Double(payCutSalary) },
+                        set: { payCutSalary = max(payCutFloor, min(payCutCeiling, Int(($0 / Double(salaryStep)).rounded()) * salaryStep)) }
+                    ),
+                    in: Double(payCutFloor)...Double(max(payCutFloor + salaryStep, payCutCeiling)),
+                    step: Double(salaryStep)
+                )
+                .tint(Color.accentGold)
+            }
+
+            VStack(spacing: 4) {
+                HStack {
+                    Text("Current: \(formatMillions(player.annualSalary))/yr")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(Color.textSecondary)
+                    Spacer()
+                    Text("Saves \(formatMillions(payCutSavings)) this year")
+                        .font(.caption.weight(.bold).monospacedDigit())
+                        .foregroundStyle(payCutSavings > 0 ? Color.success : Color.textTertiary)
+                }
+                HStack(spacing: 6) {
+                    Image(systemName: "chart.line.uptrend.xyaxis")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textTertiary)
+                    Text(payCutMarketNote)
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                }
+            }
+            .padding(.horizontal, 4)
+
+            HStack(spacing: 12) {
+                Button {
+                    submitPayCut()
+                } label: {
+                    Text("Ask for Pay Cut")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(Color.backgroundPrimary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(payCutSavings > 0 ? Color.accentGold : Color.textTertiary)
+                        )
+                }
+                .disabled(payCutSavings <= 0)
+                .accessibilityHint(payCutSavings <= 0
+                                   ? "Disabled: move the dial below his current salary first."
+                                   : "Asks \(player.firstName)'s agent to take \(formatMillions(payCutSalary)) per year.")
+
+                Button {
+                    dismiss()
+                } label: {
+                    Text("Leave It")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(Color.textSecondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+                        )
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(Color.backgroundSecondary)
+    }
+
+    /// Where the dial sits against what the league would pay him.
+    private var payCutMarketNote: String {
+        let market = liveDemand.marketValue
+        let delta = payCutSalary - market
+        if delta >= 0 {
+            return "Market for a \(player.overall) OVR \(player.position.rawValue) is \(formatMillions(market))/yr — you're still at or above it."
+        }
+        let pct = market > 0 ? Int((Double(-delta) / Double(market) * 100).rounded()) : 0
+        return "Market for a \(player.overall) OVR \(player.position.rawValue) is \(formatMillions(market))/yr — this asks him to play \(pct)% under it."
+    }
+
+    /// The standing answer, kept under the composer so a release demand does not
+    /// scroll away with the transcript.
+    @ViewBuilder
+    private var payCutOutcomeBanner: some View {
+        switch payCutLastOutcome {
+        case .demandsRelease:
+            payCutBanner(
+                icon: "person.crop.circle.badge.xmark",
+                color: .danger,
+                title: "He wants his release",
+                body: "\(player.firstName) would rather test the market than fund the club's cap. Release him from the Cap Compliance workspace, or leave the contract alone."
+            )
+        case .countered(let perYear):
+            payCutBanner(
+                icon: "arrow.left.arrow.right",
+                color: .warning,
+                title: "He'll go to \(formatMillions(perYear))",
+                body: "That is his floor. Set the dial there and ask again, or walk away from it."
+            )
+        case .refused:
+            payCutBanner(
+                icon: "hand.raised.fill",
+                color: .warning,
+                title: "He said no",
+                body: "You can ask again with a softer number. Whether he listens is his agent's call."
+            )
+        case .accepted, .none:
+            EmptyView()
+        }
+    }
+
+    private func payCutBanner(icon: String, color: Color, title: String, body: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 11))
+                    .foregroundStyle(color)
+                Text(title)
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(color)
+                Spacer()
+            }
+            Text(body)
+                .font(.caption2)
+                .foregroundStyle(Color.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(color.opacity(0.10))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .strokeBorder(color.opacity(0.30), lineWidth: 1)
+                )
+        )
+    }
+
     // MARK: - Offer Builder
 
     private var offerBuilder: some View {
@@ -1214,6 +1444,24 @@ struct ContractNegotiationView: View {
 
         loadContext()
 
+        // **A pay-cut talk never touches the thread store.**
+        //
+        // `NegotiationThreadStore` keys one thread per player per save, with no
+        // room for the type — so resuming here would hand a pay-cut composer the
+        // club's live EXTENSION transcript, and committing would overwrite it.
+        // Neither is acceptable, and widening the store's key is a shared-model
+        // change this screen has no business making.
+        //
+        // Nothing is lost by keeping it in memory: a pay cut is one question
+        // with one answer, not a multi-round position that has to survive the
+        // sheet. What DOES persist is the only thing that matters — the reduced
+        // salary and the morale, both booked by `ContractEngine.applyPayCut`.
+        if isPayCut {
+            openNewThread()
+            restorePayCutSettlement()
+            return
+        }
+
         // An existing conversation from THIS league year is resumed verbatim —
         // EXCEPT a refusal the man has since changed his mind about. A stance is
         // a mood, and freezing the verdict in the transcript meant a player
@@ -1241,6 +1489,27 @@ struct ContractNegotiationView: View {
         }
 
         openNewThread()
+    }
+
+    /// **The pay-cut latch, restored from the save** (#102 F9).
+    ///
+    /// The transcript is deliberately in-memory (see `loadIfNeeded`), so the
+    /// ONE fact that has to outlive the sheet is carried separately: whether
+    /// this man has already given his answer this league year. Without it,
+    /// dismissing and reopening handed the user a live composer on a player who
+    /// had already signed a reduced deal — the same year's cap savings offered
+    /// twice — which is exactly what `payCutSettled` was introduced to prevent
+    /// and exactly what `@State` cannot do.
+    private func restorePayCutSettlement() {
+        guard PayCutRegistry.isSettled(playerID: player.id, season: season) else { return }
+        payCutSettled = true
+        guard var live = thread else { return }
+        live.append(NegotiationThreadMessage(
+            sender: .system,
+            text: "\(player.fullName) already agreed to a reduced salary this league year. His camp will not revisit it until the new league year.",
+            round: live.round
+        ))
+        commit(live)
     }
 
     /// Turns a refused thread back into a live negotiation, in place.
@@ -1351,7 +1620,7 @@ struct ContractNegotiationView: View {
             playerName: player.fullName,
             agentName: agentName,
             persona: agentPersona,
-            typeRaw: negotiationType == .extend ? "extend" : "freeAgent",
+            typeRaw: threadTypeRaw,
             season: season
         )
         let sel = selector(for: newThread, round: 0)
@@ -1416,12 +1685,20 @@ struct ContractNegotiationView: View {
         // 3. He'll talk. The engine prices the ask; the agent says it out loud.
         let ask = opening.offer
 
-        newThread.openingAsk = NegotiationOfferSnapshot(ask)
-        newThread.pendingAgentOffer = NegotiationOfferSnapshot(ask)
+        // A pay-cut call opens with NO offer card and NO standing agent offer:
+        // nobody has asked the club for anything, and rendering the extension
+        // ask he would have wanted underneath "I know why you're calling" would
+        // quote a raise in a conversation about a reduction. The demand is still
+        // computed — the market value it carries is what the composer prices
+        // against — it simply is not spoken as an offer.
+        if !isPayCut {
+            newThread.openingAsk = NegotiationOfferSnapshot(ask)
+            newThread.pendingAgentOffer = NegotiationOfferSnapshot(ask)
+        }
         newThread.append(NegotiationThreadMessage(
             sender: .agent,
             text: openerText(demand: opening.demand, ask: ask, sel: sel),
-            offer: NegotiationOfferSnapshot(ask),
+            offer: isPayCut ? nil : NegotiationOfferSnapshot(ask),
             round: 0,
             // The engine's own opening frame, not a second copy of the rule.
             tone: opening.demand.personaTone
@@ -1453,17 +1730,45 @@ struct ContractNegotiationView: View {
         if isReopen {
             return AgentDialogue.reopener(voice: agentVoice, desire: want, ctx: ctx, sel: sel)
         }
+        // A pay-cut call has no ask to open with — the CLUB is about to ask. The
+        // agent picks up knowing why the phone rang, which is the engine's own
+        // opening copy for this type.
+        if isPayCut {
+            return ContractNegotiationEngine.generateOpeningDemand(
+                player: player,
+                negotiationType: .payCut,
+                salaryCap: salaryCap,
+                situation: negotiationSituation,
+                standing: gmStanding
+            ).message
+        }
         return AgentDialogue.opener(
             voice: agentVoice,
             desire: want,
-            isExtension: negotiationType == .extend,
+            isExtension: negotiationType.isOwnClub,
             ctx: ctx,
             sel: sel
         )
     }
 
+    /// The transcript's own discriminator. `NegotiationType` is not `Codable`,
+    /// so the thread stores the string — see `NegotiationThread.typeRaw`.
+    private var threadTypeRaw: String {
+        switch negotiationType {
+        case .extend:    return "extend"
+        case .freeAgent: return "freeAgent"
+        case .payCut:    return "payCut"
+        }
+    }
+
     /// Pre-fills the composer slightly below the ask and prices the clause menu.
     private func primeComposer(from ask: NegotiationOffer) {
+        // The pay-cut dial opens at his MARKET, not at a fraction of his ask:
+        // market is the number a cut can realistically land on, so the composer
+        // starts at the reasonable request and lets the user push from there.
+        if isPayCut {
+            payCutSalary = max(payCutFloor, min(payCutCeiling, liveDemand.marketValue))
+        }
         offerYears = ask.years
         offerSalary = roundToStep(Int(Double(ask.annualSalary) * 0.85))
         offerBonus = roundToStep(Int(Double(ask.signingBonus) * 0.75))
@@ -1511,6 +1816,16 @@ struct ContractNegotiationView: View {
 
     /// Puts the composer back where a resumed conversation left it.
     private func restoreBuilder(from existing: NegotiationThread) {
+        // A pay-cut thread has no standing offer to restore from — the dial is
+        // the whole composer. The settled latch comes from `PayCutRegistry`
+        // rather than from the thread's status (#102 F9): a pay-cut transcript
+        // never reaches the store, so `existing.status` could not be the source
+        // of truth here and this branch is only reachable defensively at all.
+        if isPayCut {
+            payCutSettled = PayCutRegistry.isSettled(playerID: player.id, season: season)
+            payCutSalary = max(payCutFloor, min(payCutCeiling, liveDemand.marketValue))
+            return
+        }
         // A refused thread has neither a standing counter nor an opening ask —
         // nobody ever put a number on the table. It still has a live composer,
         // so it is primed off the demand model instead of left on the defaults.
@@ -1667,6 +1982,126 @@ struct ContractNegotiationView: View {
         commit(live, sel: sel)
     }
 
+    // MARK: - Pay Cut (#102)
+
+    /// **One pay-cut ask, start to finish.**
+    ///
+    /// The shape mirrors ``submitCounterOffer`` deliberately — the club's line,
+    /// the engine's verdict, the agent's answer, one commit — because it is the
+    /// same conversation with the money pointing the other way. What it does NOT
+    /// do is run a bid loop: there is no standing counter to accept, no patience
+    /// meter to spend and no walk-away, because a pay cut is a question with an
+    /// answer rather than a negotiation with a midpoint. Ask again with a
+    /// different number and you get a different answer; that is the whole loop.
+    ///
+    /// **The cap write is the host's.** This function moves the man's morale and
+    /// his `annualSalary` is left alone here: `onPayCutAgreed` hands the agreed
+    /// number to the surface that knows which `Contract` row backs him and which
+    /// ledger to charge. A chat that reached into `Team.currentCapUsage` would be
+    /// a fifth place that books cap money, which is the exact class of split #68
+    /// spent a wave closing.
+    private func submitPayCut() {
+        guard var live = thread, live.status.acceptsOffers, !payCutSettled else { return }
+        guard payCutSalary < player.annualSalary else { return }
+
+        // #102 F7 — a refusing camp is not a free suggestion box.
+        //
+        // `NegotiationStatus.acceptsOffers` is deliberately true for `.refused`
+        // (a front office is always allowed to table something), and
+        // `submitCounterOffer` pays for that privilege by forking into
+        // `pester`: the ask ratchets, the ledger books an insult, the man loses
+        // morale and the agent's answers sharpen. This screen shipped the same
+        // permission with none of the price, so a client who had declined to
+        // negotiate could be asked to take a pay cut every round of the season
+        // for nothing. Same fork, same consequences — the money pointing the
+        // other way does not make the phone call less unwelcome.
+        if live.status == .refused {
+            pester(&live, payCutAsk: payCutSalary)
+            return
+        }
+
+        live.round += 1
+        let round = live.round
+        let sel = selector(for: live, round: round)
+
+        let verdict = ContractNegotiationEngine.payCutVerdict(
+            player: player,
+            demand: liveDemand,
+            currentSalary: player.annualSalary,
+            proposedSalary: payCutSalary,
+            salaryCap: salaryCap
+        )
+
+        // The club's line quotes the number on the dial; the agent's quotes the
+        // engine's counter where there is one. Both come out of one `Context`,
+        // so the transcript can never disagree with itself.
+        var ctx = baseContext()
+        ctx.offerPerYear = formatMillions(payCutSalary)
+        ctx.askPerYear = formatMillions(verdict.concessionFloor)
+
+        live.append(NegotiationThreadMessage(
+            sender: .you,
+            text: AgentDialogue.payCutAskLine(playerFirst: player.firstName, ctx: ctx, sel: sel),
+            round: round
+        ))
+        live.append(NegotiationThreadMessage(
+            sender: .agent,
+            text: AgentDialogue.payCutAnswerLine(
+                voice: agentVoice, outcome: verdict.outcome, ctx: ctx, sel: sel
+            ),
+            round: round,
+            tone: verdict.tone
+        ))
+
+        payCutLastOutcome = verdict.outcome
+
+        switch verdict.outcome {
+        case .accepted:
+            live.append(NegotiationThreadMessage(
+                sender: .system,
+                text: "\(player.fullName) agreed to a reduced salary — \(formatMillions(payCutSalary))/yr, freeing \(formatMillions(verdict.savings)) of cap space this year.",
+                round: round,
+                isSignedCard: true
+            ))
+            live.status = .signed
+            live.closeToneRaw = verdict.tone.rawValue
+            payCutSettled = true
+            // #102 F9 — the latch outlives the sheet. `@State` alone let a
+            // dismiss-and-reopen sell the same year's savings twice.
+            PayCutRegistry.recordSettled(playerID: player.id, season: season)
+
+            // A cut he consented to still stings, and the roster keeps showing
+            // it. The morale itself is written by `ContractEngine.applyPayCut`
+            // through the host — see `onPayCutAgreed` for why this path does not
+            // touch `player.morale` directly.
+            if !live.moraleApplied {
+                live.moraleApplied = true
+                live.lingeringNote = "Took a pay cut to keep the roster together. He'll remember who asked."
+            }
+            onPayCutAgreed?(payCutSalary, verdict.moraleDelta)
+
+        case .demandsRelease:
+            // The ask is the insult, whether or not the club follows through —
+            // but ONCE per league year (#102 F9). The charge used to be re-run
+            // on every reopen of the sheet, so closing and reopening a demanded
+            // release was a −12 morale button the user could hold down.
+            if PayCutRegistry.chargeReleaseDemand(playerID: player.id, season: season) {
+                player.morale = max(1, min(100, player.morale + ContractNegotiationEngine.payCutReleaseDemandMoraleCost))
+                try? modelContext.save()
+            }
+            onReleaseDemanded?()
+
+        case .countered(let perYear):
+            // Put his floor on the dial so the next ask is one tap away.
+            payCutSalary = max(payCutFloor, min(payCutCeiling, perYear))
+
+        case .refused:
+            break
+        }
+
+        commit(live, sel: sel)
+    }
+
     // MARK: - Pestering
 
     /// An offer tabled at a client who has already declined to negotiate.
@@ -1682,9 +2117,27 @@ struct ContractNegotiationView: View {
     ///
     /// The cap gate still applies. An offer the club cannot fit is not a
     /// legitimate way to annoy somebody.
-    private func pester(_ live: inout NegotiationThread) {
-        let gmOffer = builderOffer
-        guard !exceedsCap(gmOffer) else { return }
+    ///
+    /// - Parameter payCutAsk: set when the thing being tabled is a pay-cut ask
+    ///   rather than a contract offer (#102 F7). A pay cut has one term, no
+    ///   offer card and — because it only ever LOWERS the club's charge — no cap
+    ///   gate to clear; everything after the club's own line is identical,
+    ///   which is the point of routing it through here instead of writing the
+    ///   ratchet a second time.
+    private func pester(_ live: inout NegotiationThread, payCutAsk: Int? = nil) {
+        let gmOffer: NegotiationOffer
+        if let payCutAsk {
+            gmOffer = NegotiationOffer(
+                years: max(1, player.contractYearsRemaining),
+                annualSalary: payCutAsk,
+                signingBonus: 0,
+                guaranteedPercent: 0,
+                noTradeClause: false
+            )
+        } else {
+            gmOffer = builderOffer
+            guard !exceedsCap(gmOffer) else { return }
+        }
 
         let attempt = (live.pesterCount ?? 0) + 1
         live.pesterCount = attempt
@@ -1692,12 +2145,24 @@ struct ContractNegotiationView: View {
         let round = live.round
         let sel = selector(for: live, round: round)
 
-        live.append(NegotiationThreadMessage(
-            sender: .you,
-            text: AgentDialogue.gmOfferLine(round: round, playerFirst: player.firstName, sel: sel),
-            offer: NegotiationOfferSnapshot(gmOffer),
-            round: round
-        ))
+        if let payCutAsk {
+            var ctx = baseContext()
+            ctx.offerPerYear = formatMillions(payCutAsk)
+            live.append(NegotiationThreadMessage(
+                sender: .you,
+                text: AgentDialogue.payCutAskLine(
+                    playerFirst: player.firstName, ctx: ctx, sel: sel
+                ),
+                round: round
+            ))
+        } else {
+            live.append(NegotiationThreadMessage(
+                sender: .you,
+                text: AgentDialogue.gmOfferLine(round: round, playerFirst: player.firstName, sel: sel),
+                offer: NegotiationOfferSnapshot(gmOffer),
+                round: round
+            ))
+        }
 
         // The engine owns the consequence; this only chooses the words. Note
         // that `previousAgentOffer` is the GM's own offer here — a refusing camp
@@ -1965,6 +2430,9 @@ struct ContractNegotiationView: View {
         if let sel { updated.lastLineIndex = sel.lastIndex }
         thread = updated
         scrollTarget = updated.messages.last?.id
+        // Pay-cut talks stay in memory — see `loadIfNeeded` for why writing one
+        // would clobber the player's extension transcript.
+        guard !isPayCut else { return }
         if let careerID = player.careerID {
             NegotiationThreadStore.upsert(updated, careerID: careerID)
         }

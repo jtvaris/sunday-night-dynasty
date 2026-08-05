@@ -646,6 +646,197 @@ enum WeekAdvancer {
         )
     }
 
+    // MARK: - Cap Compliance Gate (cap-compliance wave)
+
+    /// A club that is over the salary cap when the league is looking.
+    ///
+    /// The second half of the wave's design: prevention stops the user promising
+    /// money he does not have (`CommittedCapLedger`), remediation gives him the
+    /// levers to get back under (`CapManagementEngine.complianceLevers`), and
+    /// this is the reason he has to use them. Without a gate, "you are $9M over
+    /// the cap" is a colour on a card.
+    struct CapComplianceViolation {
+        /// How far over, in thousands.
+        let overage: Int
+        let salaryCap: Int
+        let currentCapUsage: Int
+        /// Whether any lever the club holds actually frees cap — see
+        /// ``CapManagementEngine/canSelfHeal(_:)``. A violation is only ever
+        /// RETURNED when this is true (the anti-deadlock rule), and it is
+        /// carried so the caller can say so.
+        let canSelfHeal: Bool
+        /// The single biggest move available, in thousands — the workspace's
+        /// headline ("the largest saving on your roster is $6.1M").
+        let bestLeverSavings: Int
+    }
+
+    /// Read-only precheck for the shell to run BEFORE `advanceWeek`, exactly the
+    /// shape of ``userRosterLimitViolation(career:modelContext:)`` next door and
+    /// for the same reason: the advance mutates a season's worth of state and
+    /// cannot report a refusal halfway through, so the decision belongs to the
+    /// caller.
+    ///
+    /// Returns `nil` — advance freely — in every one of these cases:
+    ///
+    /// * **Sandbox.** The cap is switched off by definition; the mode exists so
+    ///   a user can build any roster he likes, and a cap gate would be the one
+    ///   rule it was supposed to remove.
+    /// * **Outside the compliance window.** See
+    ///   `CapManagementEngine.isComplianceWindow(phase:hasRolledOver:)`: before
+    ///   the league year turns, the club is carrying last season's contracts
+    ///   against last season's cap and the ONLY thing that fixes it is the
+    ///   rollover — which is on the far side of the block. Gating there would be
+    ///   a true deadlock rather than a task.
+    /// * **Compliant.** Obviously.
+    /// * **Nothing left to sell.** The club is over, but every release costs
+    ///   more than it saves and nothing can be restructured. See
+    ///   `CapManagementEngine.canSelfHeal` — a gate with no key is a bricked
+    ///   save, and the rollover's true-up will resolve it in March.
+    static func userCapComplianceViolation(
+        career: Career,
+        modelContext: ModelContext
+    ) -> CapComplianceViolation? {
+
+        let capMode = career.capMode
+        guard capMode != .sandbox else { return nil }
+
+        guard CapManagementEngine.isComplianceWindow(
+            phase: career.currentPhase,
+            hasRolledOver: career.lastRolloverSeason >= career.currentSeason
+        ) else { return nil }
+
+        guard let teamID = career.teamID else { return nil }
+        let teamDescriptor = FetchDescriptor<Team>(
+            predicate: #Predicate<Team> { $0.id == teamID }
+        )
+        guard let team = try? modelContext.fetch(teamDescriptor).first else { return nil }
+
+        let status = CapManagementEngine.complianceStatus(team: team, capMode: capMode)
+        guard !status.isCompliant else { return nil }
+
+        // Only now — after the cheap guards — is it worth loading a roster.
+        let rosterDescriptor = FetchDescriptor<Player>(
+            predicate: #Predicate<Player> { $0.teamID == teamID }
+        )
+        let roster = (try? modelContext.fetch(rosterDescriptor)) ?? []
+        let contractDescriptor = FetchDescriptor<Contract>(
+            predicate: #Predicate<Contract> { $0.teamID == teamID }
+        )
+        let contracts = (try? modelContext.fetch(contractDescriptor)) ?? []
+        let contractsByPlayer = Dictionary(
+            contracts.map { ($0.playerID, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+
+        let levers = CapManagementEngine.complianceLevers(
+            players: roster,
+            contractsByPlayer: contractsByPlayer,
+            capMode: capMode,
+            salaryCap: team.salaryCap,
+            leagueYearRemaining: CapManagementEngine.leagueYearRemaining(
+                phase: career.currentPhase,
+                week: career.currentWeek
+            )
+        )
+
+        guard CapManagementEngine.canSelfHeal(levers) else { return nil }
+
+        return CapComplianceViolation(
+            overage: status.overage,
+            salaryCap: team.salaryCap,
+            currentCapUsage: team.currentCapUsage,
+            canSelfHeal: true,
+            bestLeverSavings: CapManagementEngine.bestLeverSavings(levers)
+        )
+    }
+
+    /// The league office's letter about the overage, so a blocked advance leaves
+    /// a record in the mailbox rather than only a dismissed alert.
+    static func capComplianceInboxMessage(
+        _ violation: CapComplianceViolation,
+        season: Int,
+        phase: SeasonPhase
+    ) -> InboxMessage {
+        let over = CommittedCapLedger.money(violation.overage)
+        let best = CommittedCapLedger.money(violation.bestLeverSavings)
+        return InboxMessage(
+            sender: .leagueOffice,
+            subject: "Cap not compliant — \(over) over",
+            body: "Your club's cap sheet shows \(CommittedCapLedger.money(violation.currentCapUsage)) "
+                + "committed against a \(CommittedCapLedger.money(violation.salaryCap)) cap — \(over) over the limit. "
+                + "Every club must be cap-compliant to conduct league business. "
+                + "Release, restructure or renegotiate until you are under; the largest single saving "
+                + "available on your roster right now is \(best). "
+                + "No week may be advanced until the books balance.",
+            date: "\(TaskGenerator.phaseInfo(for: phase).name), Season \(season)",
+            category: .leagueNotice,
+            actionRequired: true,
+            actionDestination: .capOverview
+        )
+    }
+
+    // MARK: - AI Cap Compliance Sweep (cap-compliance wave)
+
+    /// Restructures any AI club that is over the cap back under it, once per
+    /// advance.
+    ///
+    /// **Why it is not enough to do this in March.** `CapManagementEngine.selfHealCapCompliance`
+    /// was wired into the league-year rollover only, which healed the books at
+    /// the one moment of the year they were least likely to be broken — the
+    /// rollover has just grown the cap, aged off dead money and emptied every
+    /// expiring deal. What actually puts an AI club under water happens
+    /// afterwards: the rookie class charged at the draft, a deadline rental
+    /// restored to full base (#45), a fifth-year option, an incentive that hit.
+    /// All of those sat illegal for a full league year, which the multi-season
+    /// smoke reports as `diag capRoom underCap=31/32`.
+    ///
+    /// **Cheap by construction.** The only unconditional work is one `Team`
+    /// fetch — already the smallest table in the store — and an integer test per
+    /// club. A roster and its contracts are loaded ONLY for a club actually over
+    /// the cap, which in a healthy league is no clubs at all.
+    ///
+    /// **The user's club is never touched.** Deciding which contract pays for an
+    /// overage is the whole point of the compliance workspace; healing it for
+    /// him would delete the decision and the gate that forces it.
+    ///
+    /// Restructure-only, for the reason `selfHealCapCompliance` documents at
+    /// length: releases are roster churn, and churn is the calibrated quantity
+    /// in task #53. A restructure moves money and nobody's job, and it stops at
+    /// `availableCap == 0` — far below the AI free-agent reserve (#93), so it
+    /// buys legality and never spending power.
+    private static func sweepAICapCompliance(career: Career, modelContext: ModelContext) {
+        let capMode = career.capMode
+        guard capMode != .sandbox else { return }
+
+        let teams = (try? modelContext.fetch(FetchDescriptor<Team>())) ?? []
+        let overCap = teams.filter { $0.id != career.teamID && $0.availableCap < 0 }
+        guard !overCap.isEmpty else { return }
+
+        let overIDs = Set(overCap.map(\.id))
+        let allPlayers = (try? modelContext.fetch(FetchDescriptor<Player>())) ?? []
+        var rosterByTeam: [UUID: [Player]] = [:]
+        for player in allPlayers {
+            guard let teamID = player.teamID, overIDs.contains(teamID) else { continue }
+            rosterByTeam[teamID, default: []].append(player)
+        }
+
+        let allContracts = (try? modelContext.fetch(FetchDescriptor<Contract>())) ?? []
+        let contractsByPlayer = Dictionary(
+            allContracts.map { ($0.playerID, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+
+        for team in overCap {
+            CapManagementEngine.selfHealCapCompliance(
+                team: team,
+                players: rosterByTeam[team.id] ?? [],
+                contractsByPlayer: contractsByPlayer,
+                capMode: capMode,
+                salaryCap: team.salaryCap
+            )
+        }
+    }
+
     /// - Parameters:
     ///   - career: The active `Career` object (mutated in place).
     ///   - modelContext: SwiftData context used to fetch and persist `Game` and `Team` objects.
@@ -689,6 +880,19 @@ enum WeekAdvancer {
         // The live-game injury exemption never outlives the advance it was
         // registered for (consumed by the regular-season injury pass above).
         liveGameInjuryTeamIDs = []
+
+        // Cap-compliance wave — the other 31 clubs settle their books, every
+        // week. AFTER the phase hook above, because the hook is what puts them
+        // over: a draft class charged in April, a deadline rental in November,
+        // a fifth-year option, an incentive that landed.
+        //
+        // `FreeAgencyEngine.executeNewLeagueYear` already runs this pass at the
+        // March rollover, and that was the ONLY place it ran — so anything
+        // charged after March sat illegal until the following March, and the
+        // smoke's `diag capRoom` duly reported clubs under water at season end.
+        // The user is gated on his books EVERY week (`userCapComplianceViolation`);
+        // the league cannot be checked once a year and still be the same league.
+        sweepAICapCompliance(career: career, modelContext: modelContext)
 
         // R29: persist this advance's headlines (newest first) so the News
         // screen has real content that survives app restarts. `lastNewsItems`
@@ -5879,14 +6083,39 @@ enum WeekAdvancer {
 
     /// R32: the AI side of final cutdown day. Every AI roster above the
     /// 53-man ceiling releases its lowest-rated players into the free-agent
-    /// pool (mirroring the contract-expiry bookkeeping: cap freed, salary
-    /// zeroed, no comp-pick credit — cuts never earn comp picks).
+    /// pool.
+    ///
+    /// **One release door** (#102 F8). This loop used to hand-roll the whole
+    /// transaction — credit the full salary back, blank the row, clear the three
+    /// restructure fields — which made it a SECOND definition of what cutting a
+    /// man costs, and a cheaper one than the user's. `CapManagementEngine.applyRelease`
+    /// books the signing-bonus acceleration (`tradeCapSplit`'s `deadCap`,
+    /// including `Player.restructureDeadMoney`) against the club that paid it;
+    /// this loop wiped that receipt without ever charging for it, so an AI front
+    /// office could convert base salary into bonus in March and cut the man in
+    /// August for free while the user's identical move cost him dead money. A
+    /// lever that is free for 31 clubs and priced for one is not a lever, it is
+    /// a handicap.
+    ///
+    /// Everything else `applyRelease` does — the §5.1 `cutByTeamID` / `cutAt`
+    /// stamp the practice-squad refill and the Revenge Tour storyline read, the
+    /// holdout and training-assignment clear — is exactly what this loop wrote
+    /// by hand, so routing through it is field-for-field identical apart from
+    /// the charge. `modelContext` is nil by the function's own documented
+    /// contract for this path (AI cutdown), and `leagueYearRemaining` is the
+    /// league's, so a cutdown-day release relieves the whole base the way an
+    /// offseason release should.
     private static func trimAIRosters(
         career: Career,
         teams: [Team],
         allPlayers: [Player]
     ) {
         let rosterCeiling = 53
+        let capMode = career.capMode
+        let leagueYearRemaining = CapManagementEngine.leagueYearRemaining(
+            phase: career.currentPhase,
+            week: career.currentWeek
+        )
         for team in teams where team.id != career.teamID {
             let roster = allPlayers
                 .filter { $0.teamID == team.id && !$0.isRetired }
@@ -5895,20 +6124,13 @@ enum WeekAdvancer {
 
             for player in roster.suffix(roster.count - rosterCeiling) {
                 ChurnDiag.record(ChurnDiag.cut, player)
-                team.currentCapUsage -= player.annualSalary
-                player.teamID = nil
-                player.annualSalary = 0
-                player.contractYearsRemaining = 0
-                player.isHoldingOut = false
-                player.trainingFocusArea = nil
-                player.trainingPosition = nil
-                // §5.1: stamp the release. Until practice squads existed nothing
-                // recorded WHO cut an AI player — only the user's cut flow and
-                // waiver claims wrote this — so `PracticeSquadEngine.fillSquads`
-                // had no way to honour "own cuts first", and the Revenge Tour
-                // storyline only ever fired for players the user released.
-                player.cutByTeamID = team.id
-                player.cutAt = .now
+                CapManagementEngine.applyRelease(
+                    player: player,
+                    team: team,
+                    contract: nil,
+                    capMode: capMode,
+                    leagueYearRemaining: leagueYearRemaining
+                )
             }
         }
     }

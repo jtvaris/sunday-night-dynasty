@@ -201,11 +201,41 @@ enum FreeAgencyEngine {
 
     // MARK: - Signing
 
+    /// What a completed signing did to the club's books.
+    ///
+    /// **The acceptance-time backstop** (cap-compliance wave). Committed cap
+    /// (`CommittedCapLedger`) stops the user PROMISING more than he has, but it
+    /// cannot be the only defence, because not every signing arrives through an
+    /// offer that was reserved: a bidding war can be resolved at a number the
+    /// club last quoted a round ago, a legacy save carries no reservations at
+    /// all, and the draft class, a fifth-year option and a trade all charge the
+    /// cap without ever passing through free agency.
+    ///
+    /// So the deal always COMPLETES — a player who accepted an offer signs it,
+    /// full stop; a game that silently voided an accepted contract would be
+    /// lying about the one moment the user was waiting for — and the breach is
+    /// reported instead. From there the compliance workspace and the week-advance
+    /// gate take over: the club is over the cap, it is told so, and it cannot
+    /// advance the week until it is not.
+    struct SigningOutcome {
+        /// The per-year cap charge the deal created, in thousands.
+        let capCharge: Int
+        /// Whether the club is over the cap AFTER the signing.
+        let breachedCap: Bool
+        /// How far over, in thousands. Zero when compliant.
+        let overage: Int
+    }
+
     /// Sign a free agent to a team. Works in all cap modes.
     /// - Simple: writes annual salary into team cap usage.
     /// - Realistic: builds a full Contract with escalating/front-loaded structure.
     /// - Sandbox: stamps the player onto the roster but skips any cap accounting,
     ///   so the team can sign unlimited players regardless of cap room.
+    ///
+    /// Returns the ``SigningOutcome`` — the charge, and whether it put the club
+    /// over the cap. Discardable so the AI paths, which check affordability
+    /// BEFORE they call (`signFreeAgentAI`), stay unchanged.
+    @discardableResult
     static func signFreeAgent(
         player: Player,
         team: Team,
@@ -213,7 +243,9 @@ enum FreeAgencyEngine {
         salary: Int,
         capMode: CapMode,
         modelContext: ModelContext
-    ) {
+    ) -> SigningOutcome {
+        let usageBefore = team.currentCapUsage
+
         switch capMode {
         case .simple:
             ContractEngine.signPlayerSimple(
@@ -224,14 +256,25 @@ enum FreeAgencyEngine {
             )
 
         case .realistic:
-            // Build a realistic contract with proper salary structure
+            // Build a realistic contract with proper salary structure.
+            //
+            // #102 F5 — the bonus is the STABLE draw, not a fresh random one, so
+            // `ContractEngine.projectedCapHit` (what the reservation ledger
+            // holds when the offer goes out) and `contract.capHit` (what this
+            // line charges when it is accepted) are the same number. The band it
+            // is drawn from is unchanged; only its unpredictability is gone, and
+            // an unpredictable charge is precisely what made the promise
+            // unreservable.
             let contract = ContractEngine.buildRealisticContract(
                 playerID: player.id,
                 teamID: team.id,
                 annualSalary: salary,
                 years: years,
                 playerAge: player.age,
-                noTrade: false
+                noTrade: false,
+                signingBonus: ContractEngine.stableSigningBonus(
+                    playerID: player.id, annualSalary: salary
+                )
             )
 
             contract.careerID = player.careerID ?? team.careerID
@@ -249,6 +292,20 @@ enum FreeAgencyEngine {
             player.annualSalary = salary
             player.teamID = team.id
         }
+
+        // A signed deal is no longer a promise — whatever this man's offer was
+        // reserving, the contract now charges for real. Releasing the row here
+        // rather than at the call site means every signing door closes the
+        // commitment, including the ones that resolve a bidding war without the
+        // offer screen ever being reopened.
+        CommittedCapLedger.release(playerID: player.id, careerID: player.careerID)
+
+        let status = CapManagementEngine.complianceStatus(team: team, capMode: capMode)
+        return SigningOutcome(
+            capCharge: team.currentCapUsage - usageBefore,
+            breachedCap: !status.isCompliant,
+            overage: status.overage
+        )
     }
 
     // MARK: - FA Drama Storyline Event Generation
@@ -428,6 +485,58 @@ enum FreeAgencyEngine {
             player.proratedFullBaseSalary = 0
         }
 
+        // Cap-compliance wave — the restructure bill comes due.
+        //
+        // Sits immediately after the #45 proration restore and for exactly the
+        // same reason: both are receipts for a discount that was only ever good
+        // for one league year, both have to be torn up before anything else
+        // reads `annualSalary`, and both MUST run ahead of the task-#27 cap
+        // true-up further down, which rebuilds every club's `currentCapUsage`
+        // by summing that field. Restore late and the true-up banks the relief
+        // permanently — which is precisely how a restructure would turn into
+        // free money.
+        //
+        // Two motions, in order:
+        //
+        //   1. `restructureReliefK` — base salary converted this year — goes
+        //      back onto the books. The club got ONE year of relief.
+        //   2. the carry clock ticks. While it runs, `restructureProrationK`
+        //      stays folded into `annualSalary` (that is the price of the
+        //      relief, charged in every remaining year); when it reaches zero
+        //      the slice comes off and the ledger resets.
+        //
+        // Net effect on a 3-year, $10M deal restructured at $9.25M: $3.8M this
+        // year, $13.1M in each of the next two, $10M again after that. The club
+        // saved $6.2M and paid $3.1M twice for it.
+        for player in allPlayers where player.restructureReliefK > 0 || player.restructureCarryYears > 0 {
+            let stillEmployed = player.teamID != nil
+                && player.contractYearsRemaining > 0
+                && !player.isRetired
+
+            guard stillEmployed else {
+                // Cut, retired or otherwise gone: `applyRelease` already charged
+                // the acceleration to the club that owed it. Clear the receipt
+                // so it cannot resurface on a later contract.
+                player.restructureReliefK = 0
+                player.restructureProrationK = 0
+                player.restructureCarryYears = 0
+                continue
+            }
+
+            if player.restructureReliefK > 0 {
+                player.annualSalary += player.restructureReliefK
+                player.restructureReliefK = 0
+            }
+
+            if player.restructureCarryYears > 0 {
+                player.restructureCarryYears -= 1
+                if player.restructureCarryYears == 0 {
+                    player.annualSalary = max(0, player.annualSalary - player.restructureProrationK)
+                    player.restructureProrationK = 0
+                }
+            }
+        }
+
         // Task #90 — the fifth-year option deadline, and the first money
         // decision of the league year.
         //
@@ -496,6 +605,13 @@ enum FreeAgencyEngine {
                 ChurnDiag.record(ChurnDiag.expire, player)
                 player.teamID = nil
                 player.annualSalary = 0
+                // The deal is over, so the restructure it carried is over too —
+                // the tick above already charged this league year's slice, and a
+                // free agent must not walk into his next contract with the
+                // previous club's acceleration still attached to him.
+                player.restructureReliefK = 0
+                player.restructureProrationK = 0
+                player.restructureCarryYears = 0
             }
         }
 
@@ -557,6 +673,39 @@ enum FreeAgencyEngine {
         for team in allTeams {
             guard let charge = incentiveChargeByTeam[team.id], charge > 0 else { continue }
             team.currentCapUsage += charge
+        }
+
+        // Cap-compliance wave — the other 31 clubs settle their own books.
+        //
+        // LAST, because it has to see the finished ledger: the true-up above and
+        // the incentive charge above that are both inputs to "is this club
+        // legal", and healing before either would be healing against a number
+        // that is about to change. The user's club is deliberately excluded —
+        // the whole point of the compliance workspace is that HE decides which
+        // contract pays for it. See `CapManagementEngine.selfHealCapCompliance`
+        // for why this is restructure-only and why it cannot move the market.
+        let capMode = career?.capMode ?? .simple
+        if capMode != .sandbox {
+            var rosterByTeam: [UUID: [Player]] = [:]
+            for player in allPlayers {
+                guard let teamID = player.teamID, teamID != playerTeamID else { continue }
+                rosterByTeam[teamID, default: []].append(player)
+            }
+            let contractDescriptor = FetchDescriptor<Contract>()
+            let allContracts = (try? modelContext.fetch(contractDescriptor)) ?? []
+            let contractsByPlayer = Dictionary(
+                allContracts.map { ($0.playerID, $0) },
+                uniquingKeysWith: { first, _ in first }
+            )
+            for team in allTeams where team.id != playerTeamID {
+                CapManagementEngine.selfHealCapCompliance(
+                    team: team,
+                    players: rosterByTeam[team.id] ?? [],
+                    contractsByPlayer: contractsByPlayer,
+                    capMode: capMode,
+                    salaryCap: team.salaryCap
+                )
+            }
         }
 
         let capAfter = playerTeam?.currentCapUsage ?? 0

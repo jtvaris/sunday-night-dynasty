@@ -587,6 +587,80 @@ enum ContractEngine {
         )
     }
 
+    // MARK: - Projected Cap Charge (cap-compliance wave, #102 F5)
+
+    /// The signing bonus a free-agent deal for this man will carry — **stable**,
+    /// so the number a reservation holds and the number the contract charges are
+    /// the same number.
+    ///
+    /// ``realisticSigningBonus`` rolls `Double.random` on every call, which is
+    /// fine for a club that writes a deal once and never re-prices it and fatal
+    /// for anything that has to QUOTE the deal before it exists. The bonus band
+    /// is 20 points wide (40-60 % of first-year salary on a big contract), so a
+    /// projection built from a second random draw could miss the real charge by
+    /// a fifth of the bonus — which on a three-year deal is real money and, in
+    /// the direction that matters, money the club promised and did not reserve.
+    /// Seeded off the player id exactly like ``ContractDemand``'s ask (see
+    /// ``signingBonus(annualSalary:draw:)``), the draw is a pure function of the
+    /// man and the terms, and quote == charge by construction.
+    static func stableSigningBonus(playerID: UUID, annualSalary: Int) -> Int {
+        signingBonus(annualSalary: annualSalary, draw: stableUnitDraw(playerID))
+    }
+
+    /// **What a signing at these terms will actually charge the cap, per year.**
+    ///
+    /// The hole this closes (#102 F5): free agency reserved the SALARY while
+    /// `FreeAgencyEngine.signFreeAgent` charged `Contract.capHit` — a realistic
+    /// deal for a 28-year-old opens 15 % above the average
+    /// (``frontLoadedBaseSalaries``) and carries a prorated signing bonus on top.
+    /// Three $4M offers against $12M of room therefore reserved $12M and charged
+    /// about $15M, walking the club straight through the door the reservation
+    /// ledger exists to hold shut.
+    ///
+    /// **Not a second formula.** The projection is the contract: it calls
+    /// ``buildRealisticContract`` — the function `signFreeAgent` writes the deal
+    /// with — and reads `Contract.capHit` off the result. The row is never
+    /// inserted into a `ModelContext`, so nothing is persisted; it exists for the
+    /// length of this call purely so the quote cannot drift from the charge when
+    /// the structure changes. Simple and sandbox charge the flat salary, which is
+    /// what their signing paths do (`signPlayerSimple`, and sandbox's no-op).
+    static func projectedCapHit(
+        playerID: UUID,
+        annualSalary: Int,
+        years: Int,
+        playerAge: Int,
+        capMode: CapMode
+    ) -> Int {
+        let salary = Swift.max(0, annualSalary)
+        guard capMode == .realistic else { return salary }
+        let contract = buildRealisticContract(
+            playerID: playerID,
+            teamID: UUID(),
+            annualSalary: salary,
+            years: Swift.max(1, years),
+            playerAge: playerAge,
+            noTrade: false,
+            signingBonus: stableSigningBonus(playerID: playerID, annualSalary: salary)
+        )
+        return contract.capHit
+    }
+
+    /// A deterministic 0…1 draw from a player id. FNV-1a over the uuid bytes,
+    /// the same shape `ContractNegotiationEngine.unitDraw` uses for the agent's
+    /// ask, kept here so this file's own pricing does not have to reach into the
+    /// negotiation engine's private helpers.
+    static func stableUnitDraw(_ id: UUID, salt: UInt64 = 0x5CA1) -> Double {
+        let b = id.uuid
+        let bytes = [b.0, b.1, b.2, b.3, b.4, b.5, b.6, b.7,
+                     b.8, b.9, b.10, b.11, b.12, b.13, b.14, b.15]
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325 ^ salt
+        for byte in bytes {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x1000_0000_01b3
+        }
+        return Double(hash % 10_000) / 10_000.0
+    }
+
     // MARK: - Negotiated Deal Execution
 
     /// What a signed negotiation does to the deal that was already there.
@@ -659,6 +733,38 @@ enum ContractEngine {
         // disagree about what a signing changed.
         let previousCharge = contract?.capHit ?? player.annualSalary
 
+        // **The restructure receipt is settled here** (#102 F6).
+        //
+        // Everything below rewrites `annualSalary`, `contractYearsRemaining` and
+        // the `Contract` row, and the three restructure fields used to survive
+        // all of it. Two live bugs came out of that, both of them free money in
+        // the club's favour and both of them silent:
+        //
+        // 1. `FreeAgencyEngine.executeNewLeagueYear` does
+        //    `annualSalary += restructureReliefK` at the next rollover, on
+        //    WHATEVER salary the row is carrying by then. Extend a man who was
+        //    restructured at $9.25M on a $15M deal and March books him at
+        //    $26.2M — a raise nobody negotiated, charged against a contract that
+        //    never contained the converted money.
+        // 2. `restructureDeadMoney` kept accelerating a bonus the rewritten row
+        //    no longer contains, so a later cut charged the club twice for it.
+        //
+        // The settlement is `applyRelease`'s: the unpaid proration accelerates
+        // into THIS year's books as dead money. That is the NFL answer and it is
+        // the honest one — the club converted base into bonus and owes the
+        // converted money whether the man re-signs, is traded or is cut; only
+        // the timing was ever in question. `restructureDeadMoney` is
+        // `proration × carryYears`, i.e. the current year's slice plus every
+        // remaining one, which is exactly what `previousCharge` is about to stop
+        // charging: the slice is folded into `annualSalary` (and, where a row
+        // exists, into `baseSalary[currentYear]` — see `executeRestructure`),
+        // so removing the old charge and adding the acceleration nets the same
+        // way a release does.
+        let restructureSettlement = max(0, player.restructureDeadMoney)
+        player.restructureReliefK = 0
+        player.restructureProrationK = 0
+        player.restructureCarryYears = 0
+
         let years: Int = {
             switch application {
             case .extendExisting: return max(0, player.contractYearsRemaining) + offer.years
@@ -706,45 +812,422 @@ enum ContractEngine {
             }
         }
 
-        // Sandbox deliberately keeps no ledger — see `signPlayerSandbox`.
+        // Sandbox deliberately keeps no ledger — see `signPlayerSandbox`. The
+        // restructure acceleration rides on the same line for the same reason it
+        // rides on `applyRelease`'s: sandbox never booked the relief, so it must
+        // never book the charge.
         if capMode != .sandbox, let team {
-            team.currentCapUsage += newCharge - previousCharge
+            team.currentCapUsage += newCharge - previousCharge + restructureSettlement
         }
 
         return newCharge
     }
 
-    /// Restructure a contract by converting this year's base salary into
-    /// signing bonus. Lowers the current cap hit but spreads cost to later years.
-    /// Returns a new Contract value with updated figures.
-    static func restructureContract(contract: Contract) -> Contract {
-        guard contract.currentYear < contract.baseSalary.count else { return contract }
+    // MARK: - Restructure (cap-compliance wave, REMEDIATION lever 2)
+    //
+    // DELETED here: `restructureContract(contract:)`. It converted 80 % of the
+    // current base into bonus and returned a **value copy** of the row — no
+    // caller, no cap ledger, no `Player`, no dead money, and since
+    // `Contract.currentYear` never advances it prorated over the deal's original
+    // length forever. The two functions below replace it: one prices the lever,
+    // one applies it, and both book every consequence.
 
-        let currentBase = contract.baseSalary[contract.currentYear]
+    /// The least number of contract years a restructure needs to be legal.
+    ///
+    /// Two, and the reason is arithmetic rather than taste: with one year left
+    /// the proration has nowhere to go — `A / 1 = A` comes straight back onto
+    /// this year's cap and the relief is exactly zero. Anything the UI let the
+    /// user press in that state would be a button that does nothing.
+    static let restructureMinimumYears = 2
 
-        // Convert 80% of the current base salary to signing bonus
-        let convertedAmount = Int(Double(currentBase) * 0.8)
-        let remainingBase = currentBase - convertedAmount
+    /// Morale the player gains from a restructure. Small and positive by
+    /// design: the money is guaranteed earlier and none of it is lost, so an
+    /// agent consents as a matter of routine — but it is still his club asking
+    /// him for a favour, and the goodwill is worth something.
+    static let restructureMoraleBonus = 2
 
-        var updatedSalaries = contract.baseSalary
-        updatedSalaries[contract.currentYear] = remainingBase
+    /// What a restructure would do, priced without doing it.
+    struct RestructureQuote: Equatable {
 
-        let updatedBonus = contract.signingBonus + convertedAmount
+        let playerID: UUID
 
-        return Contract(
-            id: contract.id,
-            playerID: contract.playerID,
-            teamID: contract.teamID,
-            totalYears: contract.totalYears,
-            currentYear: contract.currentYear,
-            baseSalary: updatedSalaries,
-            signingBonus: updatedBonus,
-            guaranteedMoney: contract.guaranteedMoney,
-            isVoidYears: contract.isVoidYears,
-            voidYearsCount: contract.voidYearsCount,
-            noTradeClause: contract.noTradeClause,
-            franchiseTagged: contract.franchiseTagged
+        /// Base salary converted into signing bonus, in thousands (`A`).
+        let convertedAmount: Int
+
+        /// The per-year slice that conversion creates, in thousands (`A / N`).
+        let proratedPerYear: Int
+
+        /// Cap freed in the CURRENT league year, in thousands (`A − A/N`). This
+        /// is the number the compliance workspace ranks levers by.
+        let immediateRelief: Int
+
+        /// Years still on the deal, from `Player.contractYearsRemaining` (`N`).
+        let yearsRemaining: Int
+
+        /// The club's charge for this man before the restructure.
+        let currentCapHit: Int
+
+        /// His charge for the rest of THIS league year afterwards.
+        let newCapHit: Int
+
+        /// His charge in every remaining year afterwards — the price of the
+        /// relief, and the number that has to be on screen next to it.
+        let futureYearCapHit: Int
+
+        /// Dead money the restructure adds if he is released before the
+        /// proration runs out (`A/N × N`). Booked through
+        /// `Player.restructureDeadMoney` (task #68).
+        let deadMoneyAdded: Int
+    }
+
+    /// Why a restructure is not on the table, phrased for the user.
+    enum RestructureVerdict: Equatable {
+        case available(RestructureQuote)
+        case unavailable(String)
+
+        var quote: RestructureQuote? {
+            if case .available(let q) = self { return q }
+            return nil
+        }
+    }
+
+    /// Prices the restructure lever for one player.
+    ///
+    /// **The model.** A restructure converts base salary the club owes this year
+    /// into signing bonus, and a signing bonus prorates evenly across the years
+    /// still on the deal:
+    ///
+    /// ```
+    /// A   = convertible base           (everything above the veteran minimum)
+    /// N   = player.contractYearsRemaining
+    /// p   = A / N                      this year's slice, and every later year's
+    /// relief   = A − p                 cap freed NOW
+    /// newHit   = capHit − relief       what he costs for the rest of this year
+    /// laterHit = capHit + p            what he costs in each remaining year
+    /// dead     = p × N                 acceleration if he is cut (task #68)
+    /// ```
+    ///
+    /// The veteran minimum is the floor because a club cannot convert salary it
+    /// is legally obliged to pay in cash — and because a player left at $0 base
+    /// would read as unpaid on every screen in the game.
+    ///
+    /// **`N` comes from the player row, not from `Contract`.** `Contract.currentYear`
+    /// is never advanced anywhere in the game, so a contract-derived "years left"
+    /// would be the deal's original length in year four as surely as in year one,
+    /// and the proration would be a fiction that got cheaper the longer you
+    /// waited. `Player.contractYearsRemaining` is the authority the expiry loop
+    /// itself decrements.
+    ///
+    /// - Parameter amount: convert less than the maximum. Clamped to
+    ///   `0…convertible`; `nil` converts everything above the minimum, which is
+    ///   what the compliance workspace wants when it is ranking levers by relief.
+    static func restructureQuote(
+        player: Player,
+        contract: Contract?,
+        capMode: CapMode,
+        salaryCap: Int,
+        amount: Int? = nil
+    ) -> RestructureVerdict {
+
+        guard capMode != .sandbox else {
+            return .unavailable("The salary cap is off in Sandbox mode — there is nothing to restructure for.")
+        }
+        guard player.teamID != nil else {
+            return .unavailable("\(player.fullName) is not under contract.")
+        }
+
+        let years = player.contractYearsRemaining
+        guard years >= restructureMinimumYears else {
+            return .unavailable(
+                "\(player.fullName) has \(years == 1 ? "1 year" : "\(years) years") left. "
+                + "A restructure needs at least \(restructureMinimumYears) years to prorate the money over."
+            )
+        }
+
+        // The cap charge the club is carrying, read with the same precedence
+        // `CapOverviewView.capHit(for:)` and `applyNegotiatedDeal` read it with,
+        // so no two surfaces can disagree about what this man costs.
+        let capHit = contract?.capHit ?? player.annualSalary
+
+        // What can legally be moved: this year's BASE, less the league minimum.
+        // With a detailed row that is the row's own number; without one (simple
+        // mode, and every player the game never minted a `Contract` for) the
+        // only base the game knows is `annualSalary`.
+        let currentBase: Int = {
+            guard let contract, contract.currentYear < contract.baseSalary.count else {
+                return player.annualSalary
+            }
+            // Bounded by the cap UNIT. `Team.currentCapUsage` is charged in
+            // `annualSalary` and rebuilt from it at every rollover (the task-#27
+            // true-up), while the row's base is its own number; converting more
+            // base than the salary carries would let `executeRestructure` clamp
+            // `annualSalary` at zero and still credit the club the full relief —
+            // cap room it was never charged, accepted as legal by the compliance
+            // gate and taken back by the next true-up. Inert wherever the two
+            // agree, which is every player with no `Contract` row. Unifying them
+            // is task #87's work.
+            return Swift.min(contract.baseSalary[contract.currentYear], Swift.max(0, player.annualSalary))
+        }()
+
+        let floor = veteranMinimum(cap: salaryCap)
+        let convertible = max(0, currentBase - floor)
+        guard convertible > 0 else {
+            return .unavailable(
+                "\(player.fullName) is already at the veteran minimum — there is no base salary left to convert."
+            )
+        }
+
+        let converted = Swift.min(convertible, Swift.max(0, amount ?? convertible))
+        guard converted > 0 else {
+            return .unavailable("Nothing to convert.")
+        }
+
+        let prorated = converted / years
+        let relief = converted - prorated
+        guard relief > 0 else {
+            return .unavailable("The amount is too small to free any cap this year.")
+        }
+
+        return .available(RestructureQuote(
+            playerID: player.id,
+            convertedAmount: converted,
+            proratedPerYear: prorated,
+            immediateRelief: relief,
+            yearsRemaining: years,
+            currentCapHit: capHit,
+            newCapHit: capHit - relief,
+            futureYearCapHit: capHit + prorated,
+            deadMoneyAdded: prorated * years
+        ))
+    }
+
+    /// Applies a restructure and books every consequence of it.
+    ///
+    /// Four ledgers move together, and the reason each one has to is spelled out
+    /// because getting any of them wrong turns the lever into free money:
+    ///
+    /// 1. **`team.currentCapUsage −= relief`** — the club's books. This is the
+    ///    point of the exercise.
+    /// 2. **`player.annualSalary −= relief`** — the cap UNIT. `Team.currentCapUsage`
+    ///    is charged in `annualSalary` and, crucially, REBUILT from it at every
+    ///    league-year rollover (`FreeAgencyEngine.executeNewLeagueYear`'s task-#27
+    ///    true-up). A restructure that moved only the team total would be undone
+    ///    by the next March, and a restructure that moved only the salary would
+    ///    free no cap this year.
+    /// 3. **`contract.baseSalary[currentYear] −= relief`** where a detailed row
+    ///    exists — so `Contract.capHit` moves by exactly what the ledger moved
+    ///    by. `CapOverviewView` derives its Dead Money card from
+    ///    `currentCapUsage − Σ capHit`; if the row did not follow, a restructure
+    ///    would show up on that card as `relief` of phantom dead money.
+    ///    Deliberately `−relief` and NOT `−converted` + `signingBonus += …`: the
+    ///    row prorates its bonus over `totalYears`, and `totalYears ≠ N` for any
+    ///    deal past its first season, so booking the conversion into the row's
+    ///    own bonus field would charge a different number than the one the club
+    ///    just saved. The economics live on the player row instead (4).
+    /// 4. **`player.restructureReliefK / ProrationK / CarryYears`** — the receipt.
+    ///    `restructureReliefK` is added back to `annualSalary` at the next
+    ///    rollover (the relief was for ONE year, exactly like the #45 midseason
+    ///    proration restore that sits beside it); `restructureProrationK` stays
+    ///    folded into the salary for `restructureCarryYears` league years and is
+    ///    charged as dead money by `CapManagementEngine.tradeCapSplit` if he is
+    ///    cut first (task #68).
+    ///
+    /// **Consent is not rolled for.** A restructure gives the player the same
+    /// money sooner and more of it guaranteed; no agent in football turns that
+    /// down. The morale bump is the whole social cost, and making it
+    /// deterministic keeps the compliance workspace's ranked lever list honest —
+    /// a lever the user can be refused after pressing is not a plan.
+    ///
+    /// Returns the quote that was applied, or `nil` if the lever was not legal.
+    @discardableResult
+    static func executeRestructure(
+        player: Player,
+        team: Team?,
+        contract: Contract?,
+        capMode: CapMode,
+        salaryCap: Int,
+        amount: Int? = nil,
+        moraleBonus: Int = restructureMoraleBonus
+    ) -> RestructureQuote? {
+
+        guard case .available(let quote) = restructureQuote(
+            player: player,
+            contract: contract,
+            capMode: capMode,
+            salaryCap: salaryCap,
+            amount: amount
+        ) else { return nil }
+
+        let relief = quote.immediateRelief
+
+        player.annualSalary = Swift.max(0, player.annualSalary - relief)
+        team?.currentCapUsage = Swift.max(0, (team?.currentCapUsage ?? 0) - relief)
+
+        if let contract, contract.currentYear < contract.baseSalary.count {
+            var rows = contract.baseSalary
+            rows[contract.currentYear] = Swift.max(0, rows[contract.currentYear] - relief)
+            contract.baseSalary = rows
+        }
+
+        // The receipt. `+=` on the first two because a club can restructure the
+        // same man twice in one league year (or in successive ones) and every
+        // slice is still owed; `max` on the horizon because the LONGEST live
+        // proration governs — erring toward charging a slice one year too long
+        // rather than one year too short, which is the safe direction for a
+        // ledger that gates the week advance.
+        player.restructureReliefK += quote.convertedAmount
+        player.restructureProrationK += quote.proratedPerYear
+        player.restructureCarryYears = Swift.max(player.restructureCarryYears, quote.yearsRemaining)
+
+        if moraleBonus != 0 {
+            player.morale = Swift.max(1, Swift.min(100, player.morale + moraleBonus))
+        }
+
+        return quote
+    }
+
+    // MARK: - Pay Cut (cap-compliance wave, REMEDIATION lever 3)
+
+    /// What a pay-cut ask would do, priced without asking.
+    struct PayCutQuote: Equatable {
+        let playerID: UUID
+        /// The club's charge for this man today.
+        let currentCapHit: Int
+        /// What it would be after the cut.
+        let proposedCapHit: Int
+        /// Cap freed this year, in thousands. Never negative — a "cut" that
+        /// pays more is a raise and belongs in the extension flow.
+        let capSavings: Int
+        /// 0…1 — how deep the ask is. The agent prices insult off this.
+        let cutFraction: Double
+        /// The floor the ask cannot go below.
+        let veteranMinimum: Int
+        /// Whether the proposal is legal at all (above the minimum, and a cut).
+        let isValid: Bool
+    }
+
+    /// Prices a pay-cut proposal.
+    ///
+    /// The chat owns whether the player SAYS YES — persona, morale, standing and
+    /// the dialogue library are `ContractNegotiationEngine`'s business. This
+    /// function owns only what the money does, so both sides of that
+    /// conversation are quoting the same arithmetic.
+    static func payCutQuote(
+        player: Player,
+        contract: Contract?,
+        capMode: CapMode,
+        salaryCap: Int,
+        proposedAnnualSalary: Int
+    ) -> PayCutQuote {
+        let capHit = contract?.capHit ?? player.annualSalary
+        let floor = veteranMinimum(cap: salaryCap)
+        let proposed = Swift.max(floor, proposedAnnualSalary)
+
+        // **Savings are measured in the cap UNIT, the display in cap hit.**
+        //
+        // `contract.capHit` is base plus prorated bonus and is the honest answer
+        // to "what does this man cost", which is what belongs on screen. But
+        // `Team.currentCapUsage` is charged in `annualSalary` and REBUILT from
+        // it at every league-year rollover (`FreeAgencyEngine.executeNewLeagueYear`'s
+        // task-#27 true-up), and the two only coincide for a player with no
+        // `Contract` row — the common case, since rows are minted only for
+        // realistic-mode signings. Pricing the relief off the larger number
+        // would credit the club cap it was never charged: `applyPayCut` clamps
+        // `annualSalary` at zero while subtracting the full figure from the
+        // team total, the compliance gate reads the club as legal, and the next
+        // true-up takes it all back. `bookable` is the ceiling that cannot
+        // happen, and it is inert wherever the two agree.
+        //
+        // It also makes this function agree with the Contact Agent chat, which
+        // prices its dial and its verdict off `player.annualSalary` — one
+        // conversation must not quote two different savings.
+        //
+        // Unifying the two salaries for real is task #87's work, not this call's.
+        let bookable = Swift.max(0, player.annualSalary)
+        let savings = Swift.max(0, Swift.min(capHit, bookable) - proposed)
+        let fraction = capHit > 0 ? Double(savings) / Double(capHit) : 0
+
+        return PayCutQuote(
+            playerID: player.id,
+            currentCapHit: capHit,
+            proposedCapHit: capHit - savings,
+            capSavings: savings,
+            cutFraction: fraction,
+            veteranMinimum: floor,
+            isValid: capMode != .sandbox && savings > 0 && player.teamID != nil
         )
+    }
+
+    /// The morale hit a pay cut of this depth lands, before persona.
+    ///
+    /// Linear in the depth of the cut and capped at −20: a 10 % trim off a big
+    /// number is a shrug (−2), halving a man's pay is a grievance (−10), and
+    /// taking him to the minimum is the worst day of his professional life
+    /// (−20). The Contact Agent chat scales this by persona and standing — it
+    /// owns the SOCIAL half of the transaction — which is why this is a
+    /// suggestion the caller may override rather than a value baked into
+    /// ``applyPayCut``.
+    static func payCutMoraleDelta(cutFraction: Double) -> Int {
+        let clamped = Swift.min(1.0, Swift.max(0.0, cutFraction))
+        return -Int((clamped * 20.0).rounded())
+    }
+
+    /// Applies an AGREED pay cut. **The one place a pay cut is booked.**
+    ///
+    /// Same four-ledger discipline as ``executeRestructure``: the team total,
+    /// the salary the true-up rebuilds from, the detailed row's current-year
+    /// base so `Contract.capHit` cannot drift from the ledger, and the morale
+    /// consequence. Nothing is written unless the quote is valid, so a caller
+    /// that forgot to check cannot half-apply a deal.
+    ///
+    /// Term is untouched by design: a pay cut moves money, not years. An ask
+    /// that also changes the length of the deal is an EXTENSION and goes through
+    /// `applyNegotiatedDeal`, which rewrites the whole structure.
+    ///
+    /// - Parameter moraleDelta: the persona-scaled consequence the chat decided
+    ///   on. Defaults to ``payCutMoraleDelta(cutFraction:)`` for callers that
+    ///   have no persona layer (the compliance workspace's plain ask).
+    @discardableResult
+    static func applyPayCut(
+        player: Player,
+        team: Team?,
+        contract: Contract?,
+        capMode: CapMode,
+        salaryCap: Int,
+        newAnnualSalary: Int,
+        moraleDelta: Int? = nil
+    ) -> PayCutQuote? {
+
+        let quote = payCutQuote(
+            player: player,
+            contract: contract,
+            capMode: capMode,
+            salaryCap: salaryCap,
+            proposedAnnualSalary: newAnnualSalary
+        )
+        guard quote.isValid else { return nil }
+
+        // Already bounded by the cap unit — see `payCutQuote`.
+        let savings = quote.capSavings
+
+        player.annualSalary = Swift.max(0, player.annualSalary - savings)
+        team?.currentCapUsage = Swift.max(0, (team?.currentCapUsage ?? 0) - savings)
+
+        if let contract, contract.currentYear < contract.baseSalary.count {
+            var rows = contract.baseSalary
+            rows[contract.currentYear] = Swift.max(0, rows[contract.currentYear] - savings)
+            contract.baseSalary = rows
+            // A pay cut cannot leave a guarantee larger than the deal it sits
+            // on — the player agreed to give the money up, guaranteed or not.
+            contract.guaranteedMoney = Swift.min(contract.guaranteedMoney, contract.totalValue)
+        }
+
+        let delta = moraleDelta ?? payCutMoraleDelta(cutFraction: quote.cutFraction)
+        if delta != 0 {
+            player.morale = Swift.max(1, Swift.min(100, player.morale + delta))
+        }
+
+        return quote
     }
 
     /// Cut a player in realistic mode. Returns the dead-cap hit the team absorbs.
@@ -828,13 +1311,25 @@ enum ContractEngine {
     ) {
         let previousSalary = player.annualSalary
 
+        // #102 F6, symmetric with `applyNegotiatedDeal`. The tag OVERWRITES
+        // `annualSalary`, so a restructured man carries the same two hazards
+        // through it: the rollover would add `restructureReliefK` on top of the
+        // tag number, and `restructureDeadMoney` would keep accelerating a bonus
+        // the tag year does not contain. Settle the receipt into this year's
+        // books — the converted money is owed either way — and clear it.
+        let restructureSettlement = max(0, player.restructureDeadMoney)
+        player.restructureReliefK = 0
+        player.restructureProrationK = 0
+        player.restructureCarryYears = 0
+
         player.contractYearsRemaining = 1
         player.annualSalary = tagValue
         player.isFranchiseTagged = true
         player.morale = max(0, player.morale - 10)
 
-        // Update team cap: remove old salary, add new tag salary
-        team.currentCapUsage = team.currentCapUsage - previousSalary + tagValue
+        // Update team cap: remove old salary, add new tag salary, book whatever
+        // proration the old deal still owed.
+        team.currentCapUsage = team.currentCapUsage - previousSalary + tagValue + restructureSettlement
     }
 
     /// Cap-mode-aware franchise-tag application. In sandbox mode the tag is free
@@ -854,6 +1349,11 @@ enum ContractEngine {
             player.annualSalary = 0
             player.isFranchiseTagged = true
             player.morale = max(0, player.morale - 10)
+            // Sandbox books no cap, so there is nothing to accelerate — but the
+            // receipt must still not survive onto a salary it does not describe.
+            player.restructureReliefK = 0
+            player.restructureProrationK = 0
+            player.restructureCarryYears = 0
         }
     }
 

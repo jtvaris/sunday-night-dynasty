@@ -491,6 +491,41 @@ enum AgentDialogue {
         sel.pick(.gmOffer, key: round <= 1 ? "open" : "again",
                  from: AgentDialogueLibrary.gmOffer(round: round, playerFirst: playerFirst))
     }
+
+    // MARK: Pay cut (#102)
+
+    /// The front office asking for money back. `ctx.offerPerYear` is the number
+    /// the composer currently has, so the sentence and the ask card agree.
+    static func payCutAskLine(playerFirst: String, ctx: Context, sel: DialogueSelector) -> String {
+        sel.pick(.payCutAsk, from: AgentDialogueLibrary.payCutAsk(playerFirst: playerFirst, ctx: ctx))
+    }
+
+    /// The agent's answer to a pay-cut ask.
+    ///
+    /// One entry point per verdict rather than a tone switch, because the four
+    /// answers are four different SPEECH ACTS — a counter names a number, a
+    /// release demand names a transaction — and folding them into one pool by
+    /// tone is how a "no" ends up quoting a figure it never offered.
+    ///
+    /// `ctx.askPerYear` carries the agent's counter where there is one, matching
+    /// every other counter site in this file.
+    static func payCutAnswerLine(
+        voice: AgentVoice,
+        outcome: ContractNegotiationEngine.PayCutOutcome,
+        ctx: Context,
+        sel: DialogueSelector
+    ) -> String {
+        switch outcome {
+        case .accepted:
+            return sel.pick(.payCutAccept, from: AgentDialogueLibrary.payCutAccept(voice: voice, ctx: ctx))
+        case .countered:
+            return sel.pick(.payCutCounter, from: AgentDialogueLibrary.payCutCounter(voice: voice, ctx: ctx))
+        case .refused:
+            return sel.pick(.payCutRefuse, from: AgentDialogueLibrary.payCutRefuse(voice: voice, ctx: ctx))
+        case .demandsRelease:
+            return sel.pick(.payCutRelease, from: AgentDialogueLibrary.payCutRelease(voice: voice, ctx: ctx))
+        }
+    }
 }
 
 // MARK: - Negotiation Lock Registry (R22)

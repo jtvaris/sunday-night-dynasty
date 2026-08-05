@@ -245,6 +245,27 @@ enum TradeEngine {
         player.annualSalary = split.salaryAssumed
         player.teamID = newTeam.id
 
+        // Cap-compliance wave — the restructure receipt stays with the seller.
+        //
+        // Paired change for `CapManagementEngine.tradeCapSplit`, which now
+        // accelerates restructured money into `split.deadCap`: every unpaid
+        // slice of the conversion has just been charged to `oldTeam`, exactly
+        // like the signing bonus zeroed on the contract row below and for the
+        // same reason — it must not be chargeable twice.
+        //
+        // The `proratedFullBaseSalary` receipt is written above from the
+        // player's CURRENT salary, which still has the restructure proration
+        // folded into it. Netting the proration out here is what stops the
+        // buyer restoring a second club's conversion at the next rollover and
+        // paying for it for the rest of the deal.
+        if player.restructureProrationK > 0, player.proratedFullBaseSalary > 0 {
+            player.proratedFullBaseSalary =
+                max(0, player.proratedFullBaseSalary - player.restructureProrationK)
+        }
+        player.restructureReliefK = 0
+        player.restructureProrationK = 0
+        player.restructureCarryYears = 0
+
         // Contract re-point (finding S3): the row followed nobody before, so the
         // new team's contract screens showed an empty deal and a later cut
         // priced dead money against the wrong franchise. The bonus is zeroed

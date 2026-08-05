@@ -104,6 +104,26 @@ enum NegotiationOutcome {
 enum NegotiationType {
     case extend    // Extending current player's contract
     case freeAgent // Signing a free agent
+    /// **Asking a man already under contract to take less.** The cap-compliance
+    /// lever, not a third way to buy a player.
+    ///
+    /// It is a `NegotiationType` rather than a separate screen because
+    /// everything around the ask is identical to an extension: it is the club's
+    /// own player, the same agent takes the call, the same refusal model decides
+    /// whether he is at the table at all, and the same transcript records it.
+    /// What differs is only the direction of the money, and that lives in
+    /// ``ContractNegotiationEngine/payCutVerdict(player:demand:currentSalary:proposedSalary:situation:)``
+    /// — a consent model, not a bid/counter loop.
+    ///
+    /// **Every economic branch treats `payCut` exactly as `extend`.** The demand
+    /// model's `isOwnClub` and its refusal gate both test `!= .freeAgent` for
+    /// that reason: a pay-cut conversation must price the man identically to the
+    /// extension conversation it is an alternative to, or the workspace would
+    /// quote one market value and the Contact Agent chat another.
+    case payCut
+
+    /// True for both conversations the club has with its OWN player.
+    var isOwnClub: Bool { self != .freeAgent }
 }
 
 // MARK: - GM Standing & Negotiation Factor
@@ -641,7 +661,7 @@ enum ContractNegotiationEngine {
         //
         // The band is absolute: never under the veteran minimum, never outside
         // 0.75-1.60× market whatever the multipliers stack up to.
-        let minimum = max(Int(0.0028 * Double(salaryCap)), 750)
+        let minimum = veteranMinimum(salaryCap: salaryCap)
         let banded = Swift.min(Double(market) * 1.60, Swift.max(Double(market) * 0.75, raw))
         // Every lowball this conversation has already absorbed rides on top of
         // the band: the insult premium is charged ABOVE the market, which is the
@@ -656,7 +676,7 @@ enum ContractNegotiationEngine {
         // for. The refusal model is therefore an extension-only gate, and living
         // here rather than at the call site is what stops one surface from
         // asking a question another surface answers differently.
-        let refusal = negotiationType == .extend
+        let refusal = negotiationType.isOwnClub
             ? refusalVerdict(player: player, situation: situation, gm: gm)
             : nil
         let proveIt = wantsProveItDeal(player: player, situation: situation)
@@ -842,7 +862,7 @@ enum ContractNegotiationEngine {
         situation: NegotiationSituation,
         gm: GMAdjustment
     ) -> ContractDemand.SituationBreakdown {
-        let isOwnClub = negotiationType == .extend
+        let isOwnClub = negotiationType.isOwnClub
 
         // Who represents him. The persona factors are the R22 ones, expressed
         // as deltas so they read on the same scale as everything below.
@@ -1496,6 +1516,250 @@ enum ContractNegotiationEngine {
         )
     }
 
+    // MARK: - Pay Cut (cap-compliance lever)
+
+    /// The veteran minimum, in thousands — the floor no negotiated salary may go
+    /// under.
+    ///
+    /// A one-line forward to ``ContractEngine/veteranMinimum(cap:)``, which is
+    /// the harness-anchored definition. It exists at all because
+    /// ``demand(player:negotiationType:salaryCap:situation:standing:insultCount:)``
+    /// had the constant inline as a local `minimum`, and the pay-cut model needs
+    /// the same floor by name. Two literals for "the least a man can be paid" is
+    /// precisely the class of split the #87 wave existed to end.
+    static func veteranMinimum(salaryCap: Int) -> Int {
+        ContractEngine.veteranMinimum(cap: salaryCap)
+    }
+
+    /// What a pay-cut ask is answered with.
+    ///
+    /// Deliberately NOT ``NegotiationOutcome``: a pay cut is a yes/no question
+    /// about one number, not a bid/counter loop that can walk away or break off
+    /// for the offseason. Reusing the four-way outcome would have made every
+    /// downstream `switch` claim to handle states this conversation cannot enter.
+    enum PayCutOutcome: Equatable {
+        /// He signs the reduction as asked.
+        case accepted
+        /// He will go down, but only to `perYear` — the club's ask went past his
+        /// floor and he says where the floor is.
+        case countered(perYear: Int)
+        /// No. The deal is the deal.
+        case refused
+        /// "If you can't pay him, release him." A star asked to fund the club's
+        /// mistake would rather test the market — the answer the design brief
+        /// names for exactly this case.
+        case demandsRelease
+    }
+
+    /// **The pay-cut consent model.** One graded ask, in the shape the chat needs.
+    ///
+    /// The shape of the answer, and why:
+    ///
+    /// | who | what happens |
+    /// |---|---|
+    /// | veteran carrying an ABOVE-market deal | accepts down to roughly his real market, with a morale cost |
+    /// | anyone asked to go BELOW his market | counters at his floor rather than refusing outright |
+    /// | 85+ OVR whose deal is at or under market | refuses — he is not the club's cap problem |
+    /// | 85+ OVR pushed more than a third under market | demands his release |
+    ///
+    /// **Leverage is the whole model.** A cut is only signable when the player
+    /// could not get the same money elsewhere, so the pivot is
+    /// `proposedSalary` against ``ContractDemand/marketValue`` — never against
+    /// what he is currently paid. A man on $18M whose market is $6M has no
+    /// leverage and every agent knows it; a man on $18M whose market is $20M is
+    /// being asked to donate, and no agent signs that.
+    ///
+    /// Persona moves the floor, it does not decide the answer: a loyalist will
+    /// go a little under his market for a club that has treated him well, a
+    /// hardliner will not go a cent under it, and a deal-maker sits between.
+    ///
+    /// Nothing here is a roll. The same ask gets the same answer every time it
+    /// is made, which is what lets the workspace preview a lever and the chat
+    /// deliver it without the two disagreeing.
+    struct PayCutVerdict {
+        let outcome: PayCutOutcome
+        /// The frame the answer is spoken in — what the bubble and the chip key
+        /// off, same as every other agent line.
+        let tone: AgentToneKey
+        /// Morale the player loses if the club goes through with the ask. Signed
+        /// (always ≤ 0). A cut he consents to still stings; one he refused and
+        /// the club never applied costs nothing, which is why the caller applies
+        /// this only on ``PayCutOutcome/accepted``.
+        let moraleDelta: Int
+        /// The lowest per-year number he would sign, in thousands. The counter
+        /// when there is one, and the honest answer to "how far can I push this"
+        /// for every other outcome.
+        let concessionFloor: Int
+        /// The unadjusted market for the man — what the floor is measured from.
+        let marketValue: Int
+        /// This year's cap relief the club books if he signs, in thousands.
+        let savings: Int
+
+        var isAccepted: Bool { outcome == .accepted }
+    }
+
+    /// Grade one pay-cut ask.
+    ///
+    /// - Parameters:
+    ///   - demand: the SAME demand the extension conversation would use — this
+    ///     is a `.payCut` type, so `isOwnClub` is on and the refusal gate has
+    ///     already run. A refusing client answers every pay-cut ask with
+    ///     `.refused`, whatever the number: a man who will not talk about more
+    ///     money is certainly not discussing less.
+    ///   - currentSalary: what the club is charged for him today, in thousands.
+    ///   - proposedSalary: the club's ask, in thousands.
+    static func payCutVerdict(
+        player: Player,
+        demand: ContractDemand,
+        currentSalary: Int,
+        proposedSalary: Int,
+        salaryCap: Int
+    ) -> PayCutVerdict {
+
+        let market = max(1, demand.marketValue)
+        let minimum = veteranMinimum(salaryCap: salaryCap)
+        let current = max(0, currentSalary)
+        let proposed = max(minimum, proposedSalary)
+        let savings = max(0, current - proposed)
+
+        // How far under his own market this agent will go for this club. A
+        // loyalist has a relationship to spend; a hardliner has none to spend.
+        let personaGive: Double = {
+            switch demand.persona {
+            case .hardliner:   return 0.00
+            case .cooperative: return 0.06
+            case .loyalist:    return 0.12
+            }
+        }()
+
+        // Morale is the other half of leverage: a man who likes it here signs a
+        // number a man who is already unhappy would not.
+        let moraleGive: Double = {
+            switch player.morale {
+            case ..<40:   return -0.06
+            case 40..<55: return -0.03
+            case 55..<70: return 0.0
+            case 70..<85: return 0.03
+            default:      return 0.06
+            }
+        }()
+
+        // An aging player with a short deal left has fewer places to go. This is
+        // small on purpose — it is a nudge, not a second market model.
+        let ageGive = player.age >= 32 ? 0.04 : (player.age <= 25 ? -0.03 : 0.0)
+
+        let give = max(0.0, personaGive + moraleGive + ageGive)
+        let floor = max(minimum, Int(Double(market) * (1.0 - give)))
+
+        // A client who is not at the table is not at this table either.
+        guard !demand.isRefusing else {
+            return PayCutVerdict(
+                outcome: .refused, tone: .refusing, moraleDelta: 0,
+                concessionFloor: floor, marketValue: market, savings: 0
+            )
+        }
+
+        // A star whose contract is not the problem. `starGate` is the tier where
+        // a man can credibly say "release me and watch who signs me by Friday"
+        // — and mean it.
+        let isStar = player.overall >= payCutStarGate
+        let isAboveMarket = current > Int(Double(market) * 1.05)
+
+        if isStar && !isAboveMarket {
+            // Pushed hard enough and he stops arguing about the number.
+            if proposed < Int(Double(market) * payCutReleaseDemandRatio) {
+                return PayCutVerdict(
+                    outcome: .demandsRelease, tone: .insulted,
+                    moraleDelta: payCutReleaseDemandMoraleCost,
+                    concessionFloor: floor, marketValue: market, savings: 0
+                )
+            }
+            return PayCutVerdict(
+                outcome: .refused, tone: .hardline, moraleDelta: 0,
+                concessionFloor: floor, marketValue: market, savings: 0
+            )
+        }
+
+        // Asking for MORE than he is on is not a pay cut; the composer should
+        // never send it, and if it does it is simply declined.
+        guard proposed < current else {
+            return PayCutVerdict(
+                outcome: .refused, tone: .professional, moraleDelta: 0,
+                concessionFloor: floor, marketValue: market, savings: 0
+            )
+        }
+
+        if proposed >= floor {
+            // He signs. What it costs him is how far under his market he has
+            // been talked, scaled so a token trim is nearly free and a walk all
+            // the way to the floor is felt.
+            let depth = Double(market - proposed) / Double(market)
+            let scaled = Int((max(0.0, depth) * payCutMoraleSpan).rounded())
+            let delta = -min(payCutMaxMoraleCost, payCutBaseMoraleCost + scaled)
+            return PayCutVerdict(
+                outcome: .accepted,
+                tone: proposed >= market ? .professional : .hardline,
+                moraleDelta: delta,
+                concessionFloor: floor, marketValue: market, savings: savings
+            )
+        }
+
+        // Below his floor but still a real conversation: he names his number.
+        // A hardliner's counter is his market to the cent, which is what makes
+        // "who represents him" worth knowing before the call.
+        //
+        // UNLESS his floor is already at or above what the club pays him — a man
+        // on a below-market deal has nothing to give back, and `min(current,
+        // floor)` would have him "counter" at the exact salary he is on. The
+        // chat renders that as "He'll go to $12.0M. That is his floor — set the
+        // dial there and ask again", and at that number the Ask button is
+        // disabled because it saves nothing: a loop with no exit and no
+        // explanation. The honest answer is the one the money already gives.
+        guard floor < current else {
+            return PayCutVerdict(
+                outcome: .refused, tone: .professional, moraleDelta: 0,
+                concessionFloor: floor, marketValue: market, savings: 0
+            )
+        }
+
+        let counter = min(current, floor)
+        return PayCutVerdict(
+            outcome: .countered(perYear: counter),
+            tone: proposed < Int(Double(floor) * insultRatio) ? .insulted : .professional,
+            moraleDelta: 0,
+            concessionFloor: counter, marketValue: market,
+            savings: max(0, current - counter)
+        )
+    }
+
+    // MARK: Pay-cut tuning
+
+    /// OVR at which a man can answer a pay-cut ask with "then release me" and be
+    /// right. Deliberately below ``ringChaserOverallGate`` (88): refusing to
+    /// fund the club's cap mistake takes far less standing than refusing to play
+    /// for it at all.
+    static let payCutStarGate = 85
+
+    /// How far under his market a star has to be pushed before the answer stops
+    /// being "no" and becomes "release me". Two thirds of market is the point
+    /// where the club is no longer negotiating, it is asking for a donation.
+    static let payCutReleaseDemandRatio = 0.67
+
+    /// The relationship cost of asking a star to fund the club's cap problem.
+    /// Charged whether or not the club follows through — the ask is the insult.
+    static let payCutReleaseDemandMoraleCost = -12
+
+    /// Morale a consented cut costs before depth is priced in.
+    static let payCutBaseMoraleCost = 2
+
+    /// Morale points spread across "cut to market" → "cut to the floor".
+    static let payCutMoraleSpan = 40.0
+
+    /// Ceiling on the morale cost of a cut the man agreed to. A pay cut is a bad
+    /// day, not a trade request — the club that keeps him has to be able to keep
+    /// coaching him.
+    static let payCutMaxMoraleCost = 10
+
     // MARK: - Evaluate Counter Offer (chat surface)
 
     /// One graded round, in the shape a chat layer needs.
@@ -1670,6 +1934,15 @@ enum ContractNegotiationEngine {
                 "\(name) has several teams interested. To bring him to your organization, we'd need \(offer.years) years at \(salaryM)/year with \(bonusM) up front.",
                 "The market for \(name) is strong. We're looking for \(totalM) total over \(offer.years) years with \(offer.guaranteedPercent)% guaranteed.",
                 "\(name) is excited about the opportunity here, but the numbers need to be right. \(offer.years) years, \(salaryM) per, \(bonusM) signing bonus."
+            ]
+            return messages.randomElement()!
+        case .payCut:
+            // A pay-cut call never opens with an ask — the CLUB is asking. This
+            // is the agent picking up, knowing why the phone rang.
+            let messages = [
+                "I know why you're calling. Before you say the number: \(name) signed that deal in good faith, and he's played to it.",
+                "Cap trouble is the club's problem, not \(name)'s. But I'll listen — tell me what you need.",
+                "We can have this conversation. It has to be worth having, though — \(name) isn't giving money back for nothing."
             ]
             return messages.randomElement()!
         }
@@ -2032,5 +2305,89 @@ enum TradeRequestRegistry {
 
     private static func write(_ t: [String: Int]) {
         UserDefaults.standard.set(t, forKey: key)
+    }
+}
+
+// MARK: - Pay Cut Registry (cap-compliance wave, #102 F9)
+
+/// Which men have already answered the pay-cut question this league year, and
+/// which of those answers has already been paid for.
+///
+/// **The hole this closes.** `ContractNegotiationView.payCutSettled` is `@State`
+/// and a pay-cut talk deliberately never reaches `NegotiationThreadStore` (one
+/// thread per player per save, no room for the type — writing one would clobber
+/// the club's live extension transcript). Between them that meant the latch died
+/// with the sheet: dismiss, reopen, and the composer was live again on a man who
+/// had already taken his cut, while `demandsRelease` re-applied its −12 morale
+/// on every single reopen. A conversation you can restart until you like the
+/// answer is not a conversation, and a morale charge you can farm by tapping
+/// Close is a bug the user is rewarded for finding.
+///
+/// Two tables, both `[playerID: seasonYear]`, both careerID-scoped
+/// `UserDefaults` in the `ProveItRegistry` / `TradeRequestRegistry` shape and
+/// both listed in `CareerScopedDefaults.keys`. Season-stamped rather than a bare
+/// flag because the question genuinely reopens in March: a new league year is a
+/// new set of books and a new conversation.
+enum PayCutRegistry {
+
+    /// He signed a reduced deal — the composer stays closed for the rest of the
+    /// league year.
+    static let settledKey = "payCutSettledSeasons"
+
+    /// His camp answered "then release me" and the club has already been
+    /// charged the morale for asking.
+    static let releaseDemandKey = "payCutReleaseDemandSeasons"
+
+    // MARK: - Settled
+
+    static func isSettled(playerID: UUID, season: Int) -> Bool {
+        table(settledKey)[playerID.uuidString] == season
+    }
+
+    static func recordSettled(playerID: UUID, season: Int) {
+        var t = table(settledKey)
+        t[playerID.uuidString] = season
+        write(t, settledKey)
+    }
+
+    // MARK: - Release demand
+
+    /// Books the release-demand morale charge, once per man per league year.
+    /// Returns `false` when this season's charge has already been applied, so
+    /// the caller can skip the morale write rather than re-apply it.
+    @discardableResult
+    static func chargeReleaseDemand(playerID: UUID, season: Int) -> Bool {
+        var t = table(releaseDemandKey)
+        guard t[playerID.uuidString] != season else { return false }
+        t[playerID.uuidString] = season
+        write(t, releaseDemandKey)
+        return true
+    }
+
+    // MARK: - Lifecycle
+
+    /// Forgets a man entirely — he was released, retired or traded away, and a
+    /// new club has to be able to ask him the question itself.
+    static func clear(playerID: UUID) {
+        for base in [settledKey, releaseDemandKey] {
+            var t = table(base)
+            guard t.removeValue(forKey: playerID.uuidString) != nil else { continue }
+            write(t, base)
+        }
+    }
+
+    static func reset() {
+        for base in [settledKey, releaseDemandKey] {
+            UserDefaults.standard.removeObject(forKey: CareerScopedDefaults.scopedKey(base))
+        }
+    }
+
+    private static func table(_ base: String) -> [String: Int] {
+        UserDefaults.standard
+            .dictionary(forKey: CareerScopedDefaults.scopedKey(base)) as? [String: Int] ?? [:]
+    }
+
+    private static func write(_ t: [String: Int], _ base: String) {
+        UserDefaults.standard.set(t, forKey: CareerScopedDefaults.scopedKey(base))
     }
 }

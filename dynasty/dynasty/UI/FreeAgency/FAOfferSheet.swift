@@ -13,6 +13,20 @@ struct FAOfferSheet: View {
     var offensiveScheme: OffensiveScheme? = nil
     var defensiveScheme: DefensiveScheme? = nil
     var hostedVisit: Bool = false
+
+    /// **Cap already spoken for by this club's OTHER outstanding offers** (#102),
+    /// in thousands per year.
+    ///
+    /// An offer is a promise. Until the round resolves, the club does not know
+    /// whether it is buying the man — so the room behind it is not spendable, and
+    /// the screen must not say it is. Before this existed, a club with $12M of
+    /// room could table four $10M offers, every one of them "affordable" against
+    /// the same $12M, and then discover on decision day that it had signed three
+    /// of them.
+    ///
+    /// Defaulted so the older call sites (and previews) compile unchanged; the
+    /// live FA screen passes the real sum of `myOffers`.
+    var pendingReserved: Int = 0
     let onSubmit: (Int, Int) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -286,11 +300,52 @@ struct FAOfferSheet: View {
         }
     }
 
+    // MARK: - Cap Room / Pending / Available (#102)
+
+    /// Cap rules are off in sandbox, so nothing is reserved and nothing blocks.
+    private var enforcesCap: Bool { career.capMode != .sandbox }
+
+    /// Room the club could spend if it had no offers out.
+    private var capRoom: Int { team.availableCap }
+
+    /// **Room this offer may actually use.** Cap Room minus everything the club
+    /// has already promised elsewhere this round.
+    private var availableCap: Int {
+        enforcesCap ? capRoom - pendingReserved : capRoom
+    }
+
+    /// **What the dial actually charges, per year** (#102 F5).
+    ///
+    /// In realistic mode a deal is not its average: a veteran's base opens 15 %
+    /// above it and a prorated signing bonus rides on top, so every cap line on
+    /// this card used to understate what the club was promising — and so did the
+    /// ledger behind it. `ContractEngine.projectedCapHit` builds the very
+    /// contract `signFreeAgent` will write, so this screen, the reservation and
+    /// the charge are one number.
+    private var projectedCharge: Int {
+        ContractEngine.projectedCapHit(
+            playerID: player.id,
+            annualSalary: offerSalary,
+            years: offerYears,
+            playerAge: player.age,
+            capMode: career.capMode
+        )
+    }
+
+    /// The offer does not fit behind the club's outstanding promises.
+    private var exceedsAvailable: Bool {
+        enforcesCap && projectedCharge > availableCap
+    }
+
+    /// How far over the line the dial currently sits.
+    private var overBy: Int { max(0, projectedCharge - availableCap) }
+
     // MARK: - Cap Impact (live recalculation as slider moves)
 
     private var capImpactCard: some View {
-        let remaining = team.availableCap - offerSalary
-        let capPct = team.salaryCap > 0 ? Double(offerSalary) / Double(team.salaryCap) : 0
+        let charge = projectedCharge
+        let remaining = availableCap - charge
+        let capPct = team.salaryCap > 0 ? Double(charge) / Double(team.salaryCap) : 0
         let usagePct = max(0, min(1, capPct))
         let barColor: Color = {
             if remaining < 0 { return .danger }
@@ -322,39 +377,90 @@ struct FAOfferSheet: View {
             .frame(height: 8)
             .animation(.easeOut(duration: 0.15), value: offerSalary)
 
-            HStack {
-                Text("Current Available:")
-                    .font(.caption)
-                    .foregroundStyle(Color.textTertiary)
-                Spacer()
-                Text(formatMillions(team.availableCap))
-                    .font(.caption.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(Color.textPrimary)
+            // The reservation ledger, as arithmetic the user can follow:
+            // Cap Room − Pending offers = Available. Three lines rather than one
+            // "available" number, because the whole point is that the second line
+            // exists — a club that cannot see what it has promised will promise
+            // it again.
+            capLine(label: "Cap Room", value: formatMillions(capRoom), color: .textPrimary)
+            // The gap between the bid and its charge is the front-loaded base
+            // plus the prorated bonus (#102 F5). Shown only when it exists, so a
+            // simple/sandbox save reads exactly as it always has.
+            if charge != offerSalary {
+                capLine(
+                    label: "Cap Charge (yr 1)",
+                    value: formatMillions(charge),
+                    color: .warning
+                )
             }
-            HStack {
-                Text("After Signing:")
-                    .font(.caption)
-                    .foregroundStyle(Color.textTertiary)
-                Spacer()
-                Text(formatMillions(remaining))
-                    .font(.caption.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(remaining >= 0 ? Color.success : Color.danger)
+            if enforcesCap && pendingReserved > 0 {
+                capLine(
+                    label: "Pending Offers",
+                    value: "−\(formatMillions(pendingReserved))",
+                    color: .warning
+                )
+                Divider().overlay(Color.surfaceBorder)
             }
+            capLine(
+                label: "Available",
+                value: formatMillions(availableCap),
+                color: availableCap >= 0 ? .success : .danger,
+                emphasised: true
+            )
+            capLine(
+                label: "After Signing:",
+                value: formatMillions(remaining),
+                color: remaining >= 0 ? .success : .danger
+            )
 
             // Multi-year total commitment
-            HStack {
-                Text("Total Commitment (\(offerYears)yr):")
-                    .font(.caption)
-                    .foregroundStyle(Color.textTertiary)
-                Spacer()
-                Text(formatMillions(offerSalary * offerYears))
-                    .font(.caption.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(Color.textPrimary)
+            capLine(
+                label: "Total Commitment (\(offerYears)yr):",
+                value: formatMillions(offerSalary * offerYears),
+                color: .textPrimary
+            )
+
+            if exceedsAvailable {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.octagon.fill")
+                        .font(.caption)
+                        .foregroundStyle(Color.danger)
+                    Text(pendingReserved > 0
+                         ? "Over Available by \(formatMillions(overBy)). Your outstanding offers already reserve \(formatMillions(pendingReserved)) — withdraw one or lower this number."
+                         : "Over Available by \(formatMillions(overBy)). Free up cap room before you table this.")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(Color.danger)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
+                .padding(10)
+                .background(Color.danger.opacity(0.10), in: RoundedRectangle(cornerRadius: DSCornerRadius.inline))
+                .overlay(
+                    RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                        .strokeBorder(Color.danger.opacity(0.4), lineWidth: 1)
+                )
             }
         }
         .padding(16)
         .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.surfaceBorder, lineWidth: 1))
+    }
+
+    private func capLine(
+        label: String,
+        value: String,
+        color: Color,
+        emphasised: Bool = false
+    ) -> some View {
+        HStack {
+            Text(label)
+                .font(emphasised ? .caption.weight(.semibold) : .caption)
+                .foregroundStyle(emphasised ? Color.textSecondary : Color.textTertiary)
+            Spacer()
+            Text(value)
+                .font(.caption.weight(emphasised ? .bold : .semibold).monospacedDigit())
+                .foregroundStyle(color)
+        }
     }
 
     // MARK: - Comparable Recent Signings
@@ -478,22 +584,43 @@ struct FAOfferSheet: View {
 
     // MARK: - Submit
 
+    /// **The hard block** (#102). An offer that does not fit behind the club's
+    /// outstanding promises cannot be tabled at all — the button is disabled and
+    /// says why, rather than letting the user find out on decision day that he
+    /// signed three men with one pile of money.
     private var submitButton: some View {
-        Button {
-            onSubmit(offerSalary, offerYears)
-            dismiss()
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "signature")
-                Text("Submit Offer")
-                    .font(.headline)
+        VStack(spacing: 8) {
+            Button {
+                guard !exceedsAvailable else { return }
+                onSubmit(offerSalary, offerYears)
+                dismiss()
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: exceedsAvailable ? "nosign" : "signature")
+                    Text(exceedsAvailable ? "Exceeds Available Cap" : "Submit Offer")
+                        .font(.headline)
+                }
+                .foregroundStyle(exceedsAvailable ? Color.textTertiary : Color.backgroundPrimary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+                .background(
+                    exceedsAvailable ? Color.backgroundTertiary : Color.accentGold,
+                    in: RoundedRectangle(cornerRadius: 12)
+                )
             }
-            .foregroundStyle(Color.backgroundPrimary)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
-            .background(Color.accentGold, in: RoundedRectangle(cornerRadius: 12))
+            .buttonStyle(.plain)
+            .disabled(exceedsAvailable)
+            .accessibilityHint(exceedsAvailable
+                               ? "Disabled: this offer is \(formatMillions(overBy)) over your available cap."
+                               : "Tables this offer. It reserves \(formatMillions(offerSalary)) of cap until the round resolves.")
+
+            if !exceedsAvailable && enforcesCap {
+                Text("Tabling this reserves \(formatMillions(offerSalary))/yr until the round resolves.")
+                    .font(.caption2)
+                    .foregroundStyle(Color.textTertiary)
+                    .multilineTextAlignment(.center)
+            }
         }
-        .buttonStyle(.plain)
     }
 
     // MARK: - Helpers
