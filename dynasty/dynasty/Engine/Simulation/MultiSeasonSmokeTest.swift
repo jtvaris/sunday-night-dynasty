@@ -406,9 +406,26 @@ enum MultiSeasonSmokeTest {
             .joined(separator: ",")
         let hasBothPublicMocks = WeekAdvancer.mockDraftHistory["Post-Pro-Day"]?.isEmpty == false
             && WeekAdvancer.mockDraftHistory["Pre-Draft"]?.isEmpty == false
+        // #104: the stage machine is now a floor over three sources (stored
+        // stamp, phase, evidence), and the case ORDER changed (interviews moved
+        // ahead of film study). `stage=` prints the stored string next to the
+        // resolved step so a run where the two disagree is visible, and
+        // `prep=` prints the per-stage counters `DraftPrepProgress` derives —
+        // the same numbers the process view draws.
+        let progress = DraftPrepProgress(
+            career: career,
+            prospects: WeekAdvancer.currentDraftClass,
+            scouts: []
+        )
+        let counters = progress.stages
+            .filter(\.isCounted)
+            .map { "\($0.step.rawValue)=\($0.done)/\($0.total)" }
+            .joined(separator: " ")
         print("SMOKE: diag prep season=\(career.currentSeason) step=\(career.prepStep.displayName) "
+              + "stage=\(career.draftPrepStep)@\(career.draftPrepStepSeason) "
+              + "reach=\(progress.reach.rawValue) satisfied=\(progress.satisfiedStageCount)/\(DraftPrepStep.allCases.count) "
               + "declared=\(klass.count) tested=\(withForty)/\(timed.count) "
-              + "mocks=[\(mocks.isEmpty ? "-" : mocks)]")
+              + "mocks=[\(mocks.isEmpty ? "-" : mocks)] prep=[\(counters)]")
         if !klass.isEmpty && !hasBothPublicMocks {
             print("SMOKE: ANOMALY season=\(career.currentSeason) draft-prep mock moments missing — "
                   + "expected both \"Post-Pro-Day\" (moment 3, pro-days ENTRY) and "

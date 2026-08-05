@@ -131,7 +131,8 @@ struct ProspectDetailView: View {
     @Environment(\.modelContext) private var modelContext
     @State private var scouts: [Scout] = []
     @State private var coaches: [Coach] = []
-    @State private var showSendScout = false
+    /// The one sheet this card can have open. See ``CardSheet``.
+    @State private var activeSheet: CardSheet?
     @State private var showInterviewResult = false
     @State private var interviewResult: (personality: PersonalityArchetype, footballIQ: Int, characterNotes: [String])?
     @State private var positionRank: Int?
@@ -139,9 +140,7 @@ struct ProspectDetailView: View {
     /// The user's club, for the one thing this screen needs money for: pricing a
     /// rookie contract at the league's ACTUAL cap (task #87 / F17).
     @State private var userTeam: Team?
-    @State private var showMarkNote = false
     /// Set by `performWorkout`; presents the shared `WorkoutResultSheet`.
-    @State private var workoutResult: ScoutingEngine.WorkoutResult?
     /// The owner's scouting pot in thousands, loaded with the scouts.
     @State private var scoutingBudget: Int = 4_000
 
@@ -318,38 +317,68 @@ struct ProspectDetailView: View {
                 DraftIntel.refreshConsensusBoard(for: WeekAdvancer.currentDraftClass)
             }
         }
-        .sheet(isPresented: $showSendScout) {
-            SendScoutSheet(
-                prospect: prospect,
-                scouts: scouts,
-                scoutingPhase: currentScoutingPhase,
-                cost: ScoutEvaluationBudget.cost(existingReports: prospect.scoutingReports.count),
-                slotsLeft: evaluationSlotsLeft,
-                budgetRemaining: remainingScoutingBudget,
-                onFiled: { recordEvaluation(cost: $0) }
-            )
+        // ONE sheet modifier.
+        //
+        // This view carried THREE on the same node — two `.sheet(isPresented:)`
+        // plus this `.sheet(item:)`. SwiftUI honours one per view and the last
+        // written wins, so flipping `showSendScout` or `showMarkNote` presented
+        // the WORKOUT-RESULT builder with no result: an empty card. The evaluate
+        // button on a prospect's page opened nothing, which is the prospect-card
+        // half of "film study could not be assigned to anyone" (B3), and the
+        // note editor was dead the same way.
+        .sheet(item: $activeSheet) { sheet in
+            switch sheet {
+            case .sendScout:
+                SendScoutSheet(
+                    prospect: prospect,
+                    scouts: scouts,
+                    scoutingPhase: currentScoutingPhase,
+                    cost: ScoutEvaluationBudget.cost(existingReports: prospect.scoutingReports.count),
+                    slotsLeft: evaluationSlotsLeft,
+                    budgetRemaining: remainingScoutingBudget,
+                    onFiled: { recordEvaluation(cost: $0) }
+                )
+            case .markNote:
+                ProspectMarkNoteSheet(
+                    prospectName: prospect.fullName,
+                    initialNote: prospect.userMarkNote,
+                    onSave: { note in
+                        // Writing a note on an unmarked man puts him on the board
+                        // rather than stranding the text on a prospect nothing tracks.
+                        prospect.setUserMark(prospect.isMarked ? prospect.userMark : .target, note: note)
+                        try? modelContext.save()
+                        activeSheet = nil
+                    },
+                    onCancel: { activeSheet = nil }
+                )
+            case let .workoutResult(result):
+                WorkoutResultSheet(
+                    result: result,
+                    prospect: prospect,
+                    slotsUsed: career.workoutsUsed,
+                    slotLimit: Self.maxWorkouts
+                )
+            }
         }
-        .sheet(isPresented: $showMarkNote) {
-            ProspectMarkNoteSheet(
-                prospectName: prospect.fullName,
-                initialNote: prospect.userMarkNote,
-                onSave: { note in
-                    // Writing a note on an unmarked man puts him on the board
-                    // rather than stranding the text on a prospect nothing tracks.
-                    prospect.setUserMark(prospect.isMarked ? prospect.userMark : .target, note: note)
-                    try? modelContext.save()
-                    showMarkNote = false
-                },
-                onCancel: { showMarkNote = false }
-            )
-        }
-        .sheet(item: $workoutResult) { result in
-            WorkoutResultSheet(
-                result: result,
-                prospect: prospect,
-                slotsUsed: career.workoutsUsed,
-                slotLimit: Self.maxWorkouts
-            )
+    }
+
+    /// The card's single sheet slot — one enum makes "two sheets at once"
+    /// unrepresentable instead of silently resolved in favour of whichever
+    /// modifier happened to be written last.
+    enum CardSheet: Identifiable {
+        /// Put a scout on this man — the priced evaluation.
+        case sendScout
+        /// Edit the note attached to this man's board mark.
+        case markNote
+        /// The result of a private workout that just ran.
+        case workoutResult(ScoutingEngine.WorkoutResult)
+
+        var id: String {
+            switch self {
+            case .sendScout:     return "sendScout"
+            case .markNote:      return "markNote"
+            case .workoutResult: return "workoutResult"
+            }
         }
     }
 
@@ -369,7 +398,7 @@ struct ProspectDetailView: View {
             .listRowBackground(Color.backgroundSecondary)
 
             Button {
-                showMarkNote = true
+                activeSheet = .markNote
             } label: {
                 HStack(alignment: .top, spacing: 10) {
                     Image(systemName: "note.text")
@@ -2022,7 +2051,7 @@ struct ProspectDetailView: View {
             : "Send Scout to Evaluate"
 
         Button {
-            showSendScout = true
+            activeSheet = .sendScout
         } label: {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: "magnifyingglass")
@@ -2196,7 +2225,7 @@ struct ProspectDetailView: View {
                 ProspectMarkMenu(
                     prospect: prospect,
                     onChange: { try? modelContext.save() },
-                    onEditNote: { showMarkNote = true }
+                    onEditNote: { activeSheet = .markNote }
                 )
             } label: {
                 let mark = prospect.userMark
@@ -2440,7 +2469,7 @@ struct ProspectDetailView: View {
 
         career.workoutsUsed += 1
         try? modelContext.save()
-        workoutResult = result
+        activeSheet = .workoutResult(result)
     }
 }
 

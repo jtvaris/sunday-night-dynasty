@@ -19,6 +19,10 @@ struct Top30VisitsView: View {
     let scouts: [Scout]
     let prospects: [CollegeProspect]
     let teamRoster: [Player]
+    /// Whether the club may work this stage, decided ONCE by
+    /// ``DraftPrepProgress/canAct(_:)`` and handed down — the same predicate the
+    /// hub's process bar draws this stage's puck from.
+    let canAct: Bool
     var onRefresh: () -> Void
 
     @Environment(\.modelContext) private var modelContext
@@ -40,9 +44,7 @@ struct Top30VisitsView: View {
     // MARK: - Stage
 
     private var stage: DraftPrepStep { career.prepStep }
-    private var isStageLocked: Bool { stage.order < DraftPrepStep.top30Visits.order }
-    private var isStageClosed: Bool { stage.order > DraftPrepStep.top30Visits.order }
-    private var canAct: Bool { !isStageLocked && !isStageClosed }
+    private var isStageLocked: Bool { !canAct }
 
     private var used: Int { career.top30VisitsUsed }
     private var remaining: Int { max(0, Self.visitLimit - used) }
@@ -103,7 +105,6 @@ struct Top30VisitsView: View {
 
     private var visitList: some View {
         List {
-            explainerSection
             searchSection
             candidateSection
             if canAct { advanceSection }
@@ -139,34 +140,11 @@ struct Top30VisitsView: View {
         .listRowBackground(Color.backgroundSecondary)
     }
 
-    private var explainerSection: some View {
-        Section {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 6) {
-                    Image(systemName: "house.fill")
-                        .foregroundStyle(Color.accentGold)
-                        .font(.caption)
-                    Text("Bring a prospect to your facility")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.textPrimary)
-                    Spacer()
-                    if isStageClosed {
-                        Text("CLOSED")
-                            .font(.system(size: 9, weight: .black))
-                            .foregroundStyle(Color.textTertiary)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 3)
-                            .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
-                    }
-                }
-                Text("A deep interview, a focused workout for what you run, and your own medical staff on him. Thirty visits a cycle, league rule.")
-                    .font(.caption2)
-                    .foregroundStyle(Color.textSecondary)
-            }
-            .padding(.vertical, 2)
-        }
-        .listRowBackground(Color.backgroundSecondary)
-    }
+    // Explainer deleted: the hub pins ONE canonical `DraftPrepStageExplainer`
+    // above every stage screen — what the stage reveals on a prospect, what it
+    // costs, and its DONE / CURRENT / LOCKED state. A second hand-written
+    // version inside the list said the same thing in different words and cost a
+    // section of scroll.
 
     private var candidateSection: some View {
         Section {

@@ -18,6 +18,11 @@ struct WorkoutsTabView: View {
     let prospects: [CollegeProspect]
     let teamRoster: [Player]
     @Binding var positionFilter: ProspectPositionFilter
+    /// Whether the club may work this stage, decided ONCE by
+    /// ``DraftPrepProgress/canAct(_:)`` and handed down — the same predicate the
+    /// hub's process bar draws this stage's puck from, so an `.open` cell can
+    /// never lead to a screen of dead Invite buttons.
+    let canAct: Bool
     var onRefresh: () -> Void
 
     @Environment(\.modelContext) private var modelContext
@@ -53,9 +58,7 @@ struct WorkoutsTabView: View {
     // MARK: - Stage
 
     private var stage: DraftPrepStep { career.prepStep }
-    private var isStageLocked: Bool { stage.order < DraftPrepStep.workouts.order }
-    private var isStageClosed: Bool { stage.order > DraftPrepStep.workouts.order }
-    private var canAct: Bool { !isStageLocked && !isStageClosed }
+    private var isStageLocked: Bool { !canAct }
 
     private var used: Int { career.workoutsUsed }
     private var remaining: Int { max(0, Self.maxWorkouts - used) }
@@ -137,7 +140,6 @@ struct WorkoutsTabView: View {
 
     private var workoutList: some View {
         List {
-            explainerSection
             controlsSection
             rowsSection
             if canAct { advanceSection }
@@ -146,34 +148,11 @@ struct WorkoutsTabView: View {
         .listStyle(.insetGrouped)
     }
 
-    private var explainerSection: some View {
-        Section {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 6) {
-                    Image(systemName: "dumbbell.fill")
-                        .font(.caption)
-                        .foregroundStyle(Color.accentBlue)
-                    Text("Your building, your coaches, one man")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.textPrimary)
-                    Spacer()
-                    if isStageClosed {
-                        Text("CLOSED")
-                            .font(.system(size: 9, weight: .black))
-                            .foregroundStyle(Color.textTertiary)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 3)
-                            .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
-                    }
-                }
-                Text("The most accurate read in the game: your coordinators run him through what they actually call. Thirty a cycle.")
-                    .font(.caption2)
-                    .foregroundStyle(Color.textSecondary)
-            }
-            .padding(.vertical, 2)
-        }
-        .listRowBackground(Color.backgroundSecondary)
-    }
+    // Explainer deleted: the hub pins ONE canonical `DraftPrepStageExplainer`
+    // above every stage screen — what the stage reveals on a prospect, what it
+    // costs, and its DONE / CURRENT / LOCKED state. A second hand-written
+    // version inside the list said the same thing in different words and cost a
+    // section of scroll.
 
     private var controlsSection: some View {
         Section {

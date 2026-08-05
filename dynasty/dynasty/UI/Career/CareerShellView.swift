@@ -1498,30 +1498,43 @@ struct CareerShellView: View {
         let players = (try? modelContext.fetch(playerDescriptor)) ?? []
         let rosterCount = players.count
 
+        // Draft prep — ONE authority for every stage task (#104).
+        //
+        // Built once per refresh and consulted below instead of the per-stage
+        // predicates this function used to carry. Those predicates were a second
+        // copy of the hub's, keyed off different state, and the two disagreed in
+        // both directions: "Choose pro-day schools" was completed from
+        // `proDayCompleted` (an EXECUTION, written only after the tour has run)
+        // while the hub's READY chip read reservations, and
+        // "Order film study on your board" had no case here at all, so it could
+        // never be completed by anything the user did. Same struct, same
+        // numbers, one answer.
+        let prepProgress = draftPrepProgress()
+
         for index in currentTasks.indices {
             guard currentTasks[index].status != .done else { continue }
             let task = currentTasks[index]
 
-            // Draft prep — stage-driven locking (#103).
+            // Draft prep — stage-driven completion AND locking.
             //
-            // Same shape as the `FreeAgencyStep` chain below, one level up: a
-            // task belonging to a pre-draft stage the club has not reached yet is
-            // held at `.todo`, so visiting its screen cannot tick it off early.
-            // The state machine is `career.prepStep`, whose getter floors by
-            // phase — a save parked mid-offseason is never locked out of work
-            // its phase says it must already have done.
-            //
-            // REQUIRED tasks are deliberately exempt in this wave. The stage only
-            // moves forward at a stage-advance button, and those buttons ship
-            // with their screens in the UI waves; holding a required task behind
-            // a stage nothing can advance yet would make the phase permanently
-            // un-advanceable. Each stage row is promoted to `isRequired` in
-            // `TaskGenerator` by the wave that ships its screen and its skip
-            // button, and this gate then covers it with no change here.
-            if !task.isRequired,
-               let stage = DraftPrepStep.stage(forTaskKey: task.matchKey),
-               stage.order > career.prepStep.order {
-                currentTasks[index].status = .todo
+            // `isSatisfied` completes it, `unlocked` locks it, and the counter is
+            // re-stamped on the title every pass. The list itself is only rebuilt
+            // on a PHASE change (`regenerateTasks` guards on
+            // `lastGeneratedPhase`), so without this restamp the "(12/60
+            // interviews)" the generator wrote at the top of the phase would sit
+            // there unchanged all spring while the process bar counted up.
+            if let stage = DraftPrepStep.stage(forTaskKey: task.matchKey) {
+                let row = prepProgress[stage]
+                currentTasks[index].title = (row.isCounted && row.done > 0)
+                    ? "\(task.matchKey) (\(row.done)/\(row.total) \(row.unit))"
+                    : task.matchKey
+                if row.isSatisfied {
+                    currentTasks[index].status = .done
+                } else if !row.unlocked {
+                    // Ahead of the club's reach: visiting the screen must not
+                    // tick it off early.
+                    currentTasks[index].status = .todo
+                }
                 continue
             }
 
@@ -1573,28 +1586,11 @@ struct CareerShellView: View {
                     currentTasks[index].status = .done
                 }
 
-            case "Review Combine results":
-                // Unlocked once the combine has actually been held. It used to
-                // be gated on "scouts sent", but the combine is a league event
-                // now: attending buys precision, not access, so a GM who watched
-                // it on television still has results to review — and a save that
-                // never had results at all could not clear the step either way.
-                let combineHeld = WeekAdvancer.currentDraftClass.contains { $0.fortyTime != nil }
-                if !combineHeld {
-                    currentTasks[index].status = .todo
-                } else if CareerScopedDefaults.bool("combineResultsReviewed") {
-                    currentTasks[index].status = .done
-                }
-
-            case "Conduct prospect interviews":
-                // Locked until combine results reviewed
-                let resultsReviewed = currentTasks.first(where: { $0.matchKey == "Review Combine results" })?.status == .done
-                if !resultsReviewed {
-                    currentTasks[index].status = .todo
-                } else if career.interviewsUsed > 0 {
-                    // Player has conducted at least one interview
-                    currentTasks[index].status = .done
-                }
+            // "Review Combine results" and "Conduct prospect interviews" used to
+            // live here with hand-written predicates. They are `DraftPrepStep`
+            // stages, so the block above owns them now — including the
+            // combine-held test, which `DraftPrepProgress` folds into
+            // `.combineReview`'s satisfaction.
 
             case "Review interview report":
                 // Locked until interviews conducted
@@ -1674,18 +1670,15 @@ struct CareerShellView: View {
                     }
                 }
 
-            // Pro Days — completion checks
-            // Stage `proDayFocus` (#103): the task carries the stage's pinned
-            // key ("Choose pro-day schools"); the predicate is unchanged.
-            case "Choose pro-day schools":
-                // Done if at least 1 pro day has been attended
-                let proCareerID = career.id
-                let proDesc = FetchDescriptor<CollegeProspect>(
-                    predicate: #Predicate { $0.careerID == proCareerID && $0.proDayCompleted == true }
-                )
-                if let count = try? modelContext.fetch(proDesc).count, count > 0 {
-                    currentTasks[index].status = .done
-                }
+            // Pro Days — completion checks.
+            //
+            // "Choose pro-day schools" used to be completed here from
+            // `proDayCompleted == true`, i.e. from the tour having RUN. The
+            // stage asks the user to *reserve* schools and the tour is the
+            // transition out of it, so the task could only tick after the stage
+            // it belonged to had closed. `DraftPrepProgress` counts the
+            // reservations (`scout.proDayColleges`) and the block above applies
+            // it, so the row ticks when the user books a school.
 
             case "Review Pro Day results":
                 // Done if visited scouting after pro days attended
@@ -1876,7 +1869,33 @@ struct CareerShellView: View {
             ownerSatisfaction: ownerSatisfaction,
             isDraftComplete: draftAlreadyRun,
             interviewsDone: career.interviewsUsed,
-            allScoutsAssignedToProDays: proDayDone
+            allScoutsAssignedToProDays: proDayDone,
+            prepProgress: draftPrepProgress()
+        )
+    }
+
+    /// The draft-prep authority, built for the task list.
+    ///
+    /// `TaskGenerator` has taken a `prepProgress:` since #104 and **nothing in
+    /// the app ever passed one**, so every per-stage completion and every live
+    /// counter in that file was dead code: `progress?[step]` was always `nil`,
+    /// every stage task shipped `.todo`, and the process bar and the left bar
+    /// went on printing different answers for the same work — the exact split
+    /// the struct exists to close.
+    ///
+    /// Cheap enough to build on every completion refresh: the draft class is
+    /// already in memory (`WeekAdvancer.currentDraftClass`) and the only fetch
+    /// is the club's own scouts, which the pro-day focus ledger lives on.
+    private func draftPrepProgress() -> DraftPrepProgress {
+        let scouts: [Scout] = {
+            guard let teamID = career.teamID else { return [] }
+            let descriptor = FetchDescriptor<Scout>(predicate: #Predicate { $0.teamID == teamID })
+            return (try? modelContext.fetch(descriptor)) ?? []
+        }()
+        return DraftPrepProgress(
+            career: career,
+            prospects: WeekAdvancer.currentDraftClass,
+            scouts: scouts
         )
     }
 

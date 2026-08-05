@@ -9,12 +9,14 @@ struct ScoutingHubView: View {
     @State private var scouts: [Scout] = []
     @State private var prospects: [CollegeProspect] = []
     @State private var teamPlayers: [Player] = []
-    @State private var showHireScout = false
+    /// The hub's single sheet slot. See ``HubSheet``.
+    @State private var activeHubSheet: HubSheet?
     @State private var nextYearProspects: [ScoutingEngine.NextYearProspect] = []
-    @State private var showCombineReport = false
     @State private var combineMedia: [ScoutingEngine.CombineMediaMention] = []
-    @CareerScopedStorage("scoutsSentToCombine") private var scoutsSentToCombine = false
-    @CareerScopedStorage("combineResultsReviewed") private var combineResultsReviewed = false
+    @CareerScopedStorage(DraftPrepProgress.Key.scoutsSentToCombine)
+    private var scoutsSentToCombine = false
+    @CareerScopedStorage(DraftPrepProgress.Key.combineResultsReviewed)
+    private var combineResultsReviewed = false
     /// Scouting budget already committed to this cycle's combine trip, in
     /// thousands. Reset by `WeekAdvancer` when the combine window opens.
     @CareerScopedStorage("combineTripSpend") private var combineTripSpend: Int = 0
@@ -50,29 +52,26 @@ struct ScoutingHubView: View {
         }
     }
 
-    /// Surfaces that render `hubHeader` as their own first section. Everything
-    /// else owns a scroll this wave does not own the file for, so those tabs get
-    /// the one-line stage strip instead and the full header stays with the
-    /// surfaces that can scroll it away.
-    private var currentTabHostsHeader: Bool {
-        switch selectedTab {
-        case .board, .film, .combine: return true
-        default:                      return false
-        }
-    }
-
     // MARK: - Body
     //
-    // The hub is chrome and a surface, and only the chrome is pinned.
+    // PROCESS VIEW. The hub is four layers of pinned chrome over one surface:
     //
-    // It used to be a `VStack` of metrics strip → prep card → combine CTA →
-    // tab picker → position chips → `Divider` → content, with everything above
-    // the content permanently outside the scroll view: ~330 pt of fixed header
-    // over a scrolling list, which is three prospect rows on a landscape iPad.
-    // The metrics strip and the prep card moved INTO each surface's list as its
-    // first section (`ScoutingHubHeader`), the combine CTA moved into the
-    // combine tab where it is a stage action rather than hub furniture, and
-    // what is left pinned is the tab picker and the position chips — ~78 pt.
+    //   1. the pipeline           — every stage, in calendar order, with its
+    //                               state and its own count of work
+    //   2. the reference tabs     — the five surfaces that are not stages
+    //   3. the stage explainer    — what this stage reveals, what it costs
+    //   4. the advance bar        — the transition, with its requirement
+    //
+    // What it replaced was a flat strip of eleven equal tabs that HID every
+    // stage the club had not reached. That is one control doing three jobs
+    // badly: it said nothing about order, nothing about progress, and it
+    // deleted the screens a user was looking for rather than explaining them —
+    // which is the whole of the "pro days completely unavailable" and "film
+    // study could not be assigned" bug pair.
+    //
+    // The metrics strip and the prep card still live INSIDE each surface's list
+    // as its first section (`ScoutingHubHeader`), which is what keeps one scroll
+    // owner per screen and one gesture.
 
     var body: some View {
         ZStack {
@@ -90,37 +89,20 @@ struct ScoutingHubView: View {
                 }
             } else {
             VStack(spacing: 0) {
-                tabPicker
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, positionFilterAppliesToCurrentTab ? 4 : 8)
-
-                if positionFilterAppliesToCurrentTab {
-                    positionFilterChips
-                        .padding(.horizontal, 20)
-                        .padding(.bottom, 8)
-                }
-
-                if !currentTabHostsHeader {
-                    compactStageStrip
-                        .padding(.horizontal, 20)
-                        .padding(.bottom, 8)
-                }
-
-                // The three stage screens Wave B ships draw their own closed /
-                // locked banners, so the hub only chips the three it owns.
-                if let stage = selectedTab.stage,
-                   selectedTab.hasStageActions,
-                   [.combine, .film, .interviews].contains(selectedTab),
-                   stage.order < career.prepStep.order {
-                    stageCompleteChip(stage)
-                        .padding(.horizontal, 20)
-                        .padding(.bottom, 8)
-                }
+                processChrome
 
                 Divider()
                     .overlay(Color.surfaceBorder)
 
                 tabContent
+
+                // Layer 4: the transition. It used to be a 12 pt greyed button
+                // inside the Big Board's scroll-away header — the single most
+                // important control on the screen, parked where a 350-row list
+                // scrolled it out of existence.
+                if showsAdvanceBar {
+                    advanceBar
+                }
             }
             } // end else (not loading)
         }
@@ -130,7 +112,7 @@ struct ScoutingHubView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 if scouts.count < maxScouts {
-                    Button { showHireScout = true } label: {
+                    Button { activeHubSheet = .hireScout } label: {
                         Image(systemName: "person.badge.plus")
                     }
                     .tint(Color.accentGold)
@@ -157,7 +139,11 @@ struct ScoutingHubView: View {
                 // they named is one surface now, so both land on the board.
                 let hinted: ScoutingTab? = {
                     switch pending {
-                    case "interviews": return career.currentPhase == .combine ? .interviews : nil
+                    // No longer phase-gated: an earlier stage is never shut, so
+                    // a task that points at the interview room can always open
+                    // it. Refusing the hint outside the combine is what made a
+                    // REQUIRED task deep-link into nothing.
+                    case "interviews": return .interviews
                     case "combine":    return .combine
                     case "bigBoard", "prospects", "board": return .board
                     case "film":       return .film
@@ -168,14 +154,17 @@ struct ScoutingHubView: View {
                     default:           return nil
                     }
                 }()
-                // A hint for a tab the stage machine has not opened yet is
-                // dropped rather than obeyed: the hub is the truth about what
-                // this club can reach, and a task deep-link is not an override.
-                if let hinted, visibleTabs.contains(hinted) { selectedTab = hinted }
+                // Every tab is reachable now — the process bar draws the locked
+                // ones with the sentence that opens them instead of deleting
+                // them — so a hint is simply obeyed.
+                if let hinted { selectedTab = hinted }
                 CareerScopedDefaults.remove("scoutingPendingTab")
-            } else if career.currentPhase == .proDays, visibleTabs.contains(.proDays) {
-                // Auto-select Pro Days tab when in proDays phase
-                selectedTab = .proDays
+            } else {
+                // PROCESS VIEW: the hub opens on where the club actually IS.
+                // It used to open on the Big Board every time, which is a
+                // reference surface — the user had to work out for himself
+                // which of eleven tabs was this week's job.
+                selectedTab = currentStageTab
             }
             isLoading = false
         }
@@ -188,41 +177,77 @@ struct ScoutingHubView: View {
             if newTab == .combine && prospects.contains(where: { $0.fortyTime != nil }) {
                 combineResultsReviewed = true
             }
-            // The two mock stages complete by being READ — there is nothing to
-            // buy and nothing to run, so opening the tab is the transition.
+            // Both mock stages complete by being READ — there is nothing to buy
+            // and nothing to run — so opening the tab IS the act, and the act is
+            // RECORDED before the stage moves.
+            //
+            // Recording it matters more than moving: `.ready` is calendar-gated,
+            // so `advance` correctly refuses to unlock the draft room in March,
+            // and without the stamp the last stage of the spring was a button
+            // that visibly did nothing, forever. Both stamps are read by
+            // `DraftPrepProgress` and by `Career.derivedPrepStepFloor`, so they
+            // are also what heals a save whose stage string is stale.
             if newTab == .mockDraft {
-                if career.prepStep == .mockOne { advance(to: .top30Visits) }
-                else if career.prepStep == .mockTwo {
-                    // Record the read even though `.ready` is calendar-gated:
-                    // `advance` correctly refuses to unlock the draft room in
-                    // March, and without the stamp the stage could never show
-                    // the user that his last act of the spring registered.
-                    finalMockReadSeason = career.currentSeason
-                    advance(to: .ready)
+                // Stamp whichever mock the club may ACT in, not only the one it
+                // is standing in. A mock stage the process bar draws `.open` —
+                // the common case, since `reach` opens the next room as soon as
+                // the current stage is satisfied — would otherwise be a room the
+                // user walks into and out of with nothing recorded, and the
+                // cell would still read "Not read" after he read it.
+                let progress = prepProgress
+                if progress.canAct(.mockOne) { mockOneReadSeason = career.currentSeason }
+                if progress.canAct(.mockTwo) { finalMockReadSeason = career.currentSeason }
+                switch career.prepStep {
+                case .mockOne: advance(to: .top30Visits)
+                case .mockTwo: advance(to: .ready)
+                default:       break
                 }
             }
         }
-        .onChange(of: career.prepStep) { _, _ in
-            // A new cycle resets the pipeline (the stamp does it, with no hook),
-            // which can retract the tab the user is standing on. Fall back to
-            // the board rather than leaving him on a tab the picker no longer
-            // draws.
+        .onChange(of: career.prepStep) { oldStep, newStep in
+            // Advancing carries the user forward with the process rather than
+            // leaving him on the stage he just finished. He can walk back into
+            // it — every done stage stays open — but the default after a
+            // transition is the work that is now in front of him.
             //
-            // Observe the ACCESSOR, not `draftPrepStep`: the reset is not a
-            // write to that string, it is `currentSeason` moving past
-            // `draftPrepStepSeason` (and the phase floor moving with it), so
-            // watching the raw column missed every silent reset — the picker
-            // retracted while `selectedTab` kept rendering a tab it no longer
-            // draws. `Career` is `@Model`, so reading `prepStep` here tracks all
-            // four inputs.
-            if !visibleTabs.contains(selectedTab) { selectedTab = .board }
+            // Observe the ACCESSOR, not `draftPrepStep`: a new cycle resets the
+            // pipeline with no hook at all — it is `currentSeason` moving past
+            // `draftPrepStepSeason` (and the phase floor moving with it) — so
+            // watching the raw column missed every silent reset. `Career` is
+            // `@Model`, so reading `prepStep` here tracks all four inputs.
+            //
+            // Never from a reference surface. `.mockOne` and `.mockTwo` both
+            // transition the instant the Mock Draft tab opens, and that tab is
+            // also a permanent reference screen: bouncing the user off it would
+            // mean the one act the stage asks for — reading the mock — is the
+            // one thing he never gets to do.
+            guard newStep != oldStep, !Self.referenceTabs.contains(selectedTab) else { return }
+            if selectedTab == ScoutingTab.forStage(oldStep) {
+                selectedTab = ScoutingTab.forStage(newStep)
+            }
         }
-        .sheet(isPresented: $showHireScout, onDismiss: { loadData() }) {
-            HireScoutSheet(career: career)
+        // ONE sheet modifier for the whole hub.
+        //
+        // These were two stacked `.sheet(isPresented:)` on the same view, and
+        // SwiftUI honours only the last: `showHireScout` flipped, and what the
+        // runtime presented was the COMBINE REPORT builder — with no mentions,
+        // so an empty card. "Hire Scout" was a button that opened nothing. Same
+        // defect, same shape, as the pro-day Reserve button (B1).
+        .sheet(item: $activeHubSheet, onDismiss: { loadData() }) { sheet in
+            switch sheet {
+            case .hireScout:     HireScoutSheet(career: career)
+            case .combineReport: CombineReportSheet(mentions: combineMedia)
+            }
         }
-        .sheet(isPresented: $showCombineReport) {
-            CombineReportSheet(mentions: combineMedia)
-        }
+    }
+
+    /// The one sheet the hub can have open. An enum rather than two booleans, so
+    /// "two sheets presented at once" is unrepresentable rather than silently
+    /// resolved in favour of whichever modifier was written last.
+    enum HubSheet: String, Identifiable {
+        case hireScout
+        case combineReport
+        var id: String { rawValue }
     }
 
     // MARK: - Combine Trip Economics
@@ -340,7 +365,7 @@ struct ScoutingHubView: View {
         combineTripSpend += combineTripCost
         scoutsSentToCombine = true
         loadData()
-        showCombineReport = true
+        activeHubSheet = .combineReport
     }
 
     // MARK: - Stage machine + hub header data
@@ -380,13 +405,7 @@ struct ScoutingHubView: View {
     }
 
     private var stageGate: ScoutingStageGate {
-        ScoutingStageGate.make(
-            career: career,
-            scouts: scouts,
-            evaluationsUsed: evaluationsUsed,
-            combineResultsReviewed: combineResultsReviewed,
-            finalMockRead: finalMockRead
-        )
+        ScoutingStageGate.make(progress: prepProgress, career: career)
     }
 
     // MARK: - Final-mock read stamp
@@ -399,9 +418,11 @@ struct ScoutingHubView: View {
     // cycle-stamp trick as the evaluation ledger — a stamp from an earlier
     // draft cycle reads as unread.
 
-    @CareerScopedStorage("draftPrepFinalMockRead") private var finalMockReadSeason: Int = 0
+    @CareerScopedStorage(DraftPrepProgress.Key.mockOneRead)
+    private var mockOneReadSeason: Int = 0
 
-    private var finalMockRead: Bool { finalMockReadSeason == career.currentSeason }
+    @CareerScopedStorage(DraftPrepProgress.Key.mockTwoRead)
+    private var finalMockReadSeason: Int = 0
 
     /// The full scroll-away header, handed to whichever surface owns the scroll.
     private func hubHeader() -> ScoutingHubHeader {
@@ -415,11 +436,8 @@ struct ScoutingHubView: View {
             evaluationsUsed: evaluationsUsed,
             scoutedPercent: scoutedPercentage,
             phaseLabel: phaseLabel,
-            gate: stageGate,
             onSelectTab: { selectedTab = $0 },
-            onFilterPosition: { positionFilter = $0 },
-            onAdvance: { advance(to: $0) },
-            onSkip: { advance(to: $0) }
+            onFilterPosition: { positionFilter = $0 }
         )
     }
 
@@ -440,105 +458,174 @@ struct ScoutingHubView: View {
         try? modelContext.save()
     }
 
-    /// One line of pipeline, for the tabs that own a scroll this wave does not
-    /// own the file for. The full header lives inside the three that do.
-    private var compactStageStrip: some View {
+    // MARK: - Process view: stage cells, selection, transition
+
+    /// The five surfaces that are not part of the pipeline. Always open, always
+    /// in the same place, never mixed into the calendar strip.
+    private static let referenceTabs: [ScoutingTab] =
+        [.board, .mockDraft, .draftOrder, .scouts, .nextYear]
+
+    /// The tab whose screen belongs to the stage the club is standing in.
+    ///
+    /// Not `selectedTab.stage`: the two mock stages route to `.mockDraft`, which
+    /// is deliberately NOT stage-gated (four mocks print across the year and all
+    /// of them are public the moment they publish), so it carries no `stage` of
+    /// its own and the reverse lookup has to come from the step.
+    private var currentStageTab: ScoutingTab { ScoutingTab.forStage(career.prepStep) }
+
+    /// The stage the selected tab is showing, or `nil` on a reference surface.
+    private var selectedStage: DraftPrepStep? {
+        // `.mockDraft` is a reference surface AND the screen for two stages. It
+        // reads as a stage only while the club is standing in one of them.
+        if selectedTab == .mockDraft {
+            return [.mockOne, .mockTwo].contains(career.prepStep) ? career.prepStep : nil
+        }
+        return selectedTab.stage
+    }
+
+    // MARK: - Progress
+    //
+    // ONE authority. `DraftPrepProgress` owns every counter, every
+    // "is this stage satisfied", and every lock sentence, and it is the same
+    // struct the required-task chain reads — which is the whole point: the
+    // shipped build had the hub's `ScoutingStageGate` holding one copy of those
+    // predicates and `CareerShellView` holding another, keyed off different
+    // state, and that split is what left "Send Scouts to Combine — Required"
+    // burning red next to a department standing in Indianapolis.
+    //
+    // Built once per body pass rather than per call site: it walks a ~350-man
+    // class to prove the combine was held, and this screen re-evaluates on every
+    // `@State` touch.
+
+    private var prepProgress: DraftPrepProgress {
+        DraftPrepProgress(career: career, prospects: prospects, scouts: scouts)
+    }
+
+    /// How the process bar draws a stage.
+    ///
+    /// Keyed off what the club has DONE, never off where the pipeline pointer
+    /// happens to sit. It used to be `step.order < current.order → .done`, and
+    /// because `Career.prepStep` is a *floor* — it can be raised by the phase or
+    /// by an unrelated ledger — that drew green checkmarks on stages whose own
+    /// counter read "Not read" and whose required task was still red in the left
+    /// bar. A tick is a claim about work; only `isSatisfied` may make it.
+    private func stageState(
+        _ step: DraftPrepStep,
+        progress: DraftPrepProgress
+    ) -> DraftPrepStageCell.State {
+        if step == progress.current { return .current }
+        if progress[step].isSatisfied { return .done }
+        // Everything the club may work right now — the stages behind it, which
+        // never shut, and the next room, which `reach` opens the moment the
+        // current stage is satisfied. `.open` is a promise that the screen
+        // underneath has live buttons, and `DraftPrepProgress.canAct` is the
+        // same predicate those buttons read.
+        return progress[step].unlocked ? .open : .locked
+    }
+
+    // MARK: - Process chrome
+    //
+    // Four layers, ~120 pt pinned, and every one of them says something the
+    // eleven-tab picker could not: where you are, what is left, what this stage
+    // buys, and how you leave it. Built as one function rather than inline in
+    // `body` so `DraftPrepProgress` is constructed ONCE per pass — it walks the
+    // draft class, and this screen re-evaluates on every `@State` touch.
+
+    private var processChrome: some View {
+        let progress = prepProgress
+        let stage = selectedStage
+        return VStack(spacing: 0) {
+            // Layer 1: the pipeline itself. Every stage in calendar order, each
+            // carrying its state and its own count of work, none ever hidden.
+            DraftPrepProcessBar(
+                cells: DraftPrepStep.allCases
+                    .sorted { $0.order < $1.order }
+                    .map { step in
+                        DraftPrepStageCell(
+                            step: step,
+                            state: stageState(step, progress: progress),
+                            stage: progress[step]
+                        )
+                    },
+                selected: stage,
+                onSelect: { selectStage($0) }
+            )
+            .padding(.horizontal, 12)
+            .padding(.bottom, 4)
+
+            // Layer 2: the surfaces that are not stages at all. Splitting them
+            // out is what lets layer 1 read as a calendar — the board and the
+            // department used to sit between two dated stages in the same strip.
+            ScoutingReferenceTabRow(
+                tabs: Self.referenceTabs,
+                selected: selectedTab,
+                onSelect: { selectedTab = $0 }
+            )
+            .padding(.horizontal, 20)
+            .padding(.bottom, positionFilterAppliesToCurrentTab ? 4 : 6)
+
+            if positionFilterAppliesToCurrentTab {
+                positionFilterChips
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 6)
+            }
+
+            // Layer 3: what this stage buys and what it costs. One card, same
+            // shape on every stage screen, collapsible and remembered per stage.
+            if let stage {
+                DraftPrepStageExplainer(
+                    step: stage,
+                    state: stageState(stage, progress: progress),
+                    counterText: progress[stage].counter,
+                    lockReason: progress[stage].lockReason ?? "",
+                    requirement: stage == progress.current ? stageGate.requirement : ""
+                )
+                .padding(.horizontal, 16)
+                .padding(.bottom, 6)
+            }
+        }
+    }
+
+    /// Selecting a stage cell selects that stage's screen.
+    ///
+    /// A locked stage is selectable on purpose. The shipped wizard *hid* every
+    /// unreached stage, which is how "pro days completely unavailable" and "film
+    /// study could not be assigned to anyone" both happened to the same user in
+    /// the same hour: the screens were not broken, they had been deleted from
+    /// under him with no trace and no explanation. Now they open, say what they
+    /// are, and say what opens them.
+    private func selectStage(_ step: DraftPrepStep) {
+        selectedTab = ScoutingTab.forStage(step)
+    }
+
+    /// Whether the hub draws the transition itself.
+    ///
+    /// Only for the stages the HUB owns the transition for. A `.open` stage's
+    /// screen owns its own advance — and it has to, because for the pro-day tour
+    /// the transition IS the batch action that spends the focus-slot
+    /// reservations. Two advance buttons over one destructive transition is how
+    /// a stray tap threw those reservations away in the shipped build.
+    private var showsAdvanceBar: Bool {
+        guard selectedTab == currentStageTab else { return false }
+        if case .advance = stageGate.action { return true }
+        return false
+    }
+
+    /// The pinned transition for the stage the club is standing in.
+    private var advanceBar: some View {
         let gate = stageGate
-        return HStack(spacing: 8) {
-            Image(systemName: "flag.checkered")
-                .font(.caption2)
-                .foregroundStyle(Color.accentGold)
-            Text("Stage \(gate.step.order + 1)/\(DraftPrepStep.allCases.count) \u{00B7} \(gate.step.displayName)")
-                .font(.caption2.weight(.bold))
-                .foregroundStyle(Color.textPrimary)
-                .lineLimit(1)
-            Text(gate.isPhaseBlocked ? gate.phaseBlockedReason : gate.requirement)
-                .font(.system(size: 10))
-                .foregroundStyle(Color.textTertiary)
-                .lineLimit(1)
-            Spacer(minLength: 4)
-            // Advance AND skip only for the stages the hub owns the transition
-            // for. A `.open` stage's screen owns both — and for the pro-day
-            // tour the skip is destructive (it throws away every focus-slot
-            // reservation) and lives behind that screen's own confirmation
-            // alert. An unconfirmed 10 pt "Skip" drawn on top of it was one
-            // stray tap away from making the stage unrunnable for the cycle.
-            if let next = gate.next, gate.offersHeaderSkip {
-                Button("Advance") { advance(to: next) }
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(gate.isComplete ? Color.accentGold : Color.textTertiary)
-                    .disabled(!gate.isComplete)
-                Button("Skip") { advance(to: next) }
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Color.textSecondary)
-                    .accessibilityLabel("Skip \(gate.step.displayName). \(gate.skipCost)")
-            }
-        }
-        .frame(height: 26)
-        .padding(.horizontal, 10)
-        .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: 7))
-    }
-
-    /// A stage the club has already walked past. Its screen stays open — every
-    /// earlier stage is viewable by design — and the chip says so rather than
-    /// leaving a user wondering why he is looking at last month's work.
-    private func stageCompleteChip(_ stage: DraftPrepStep) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: "lock.open.fill")
-                .font(.system(size: 9))
-                .foregroundStyle(Color.textTertiary)
-            Text("\(stage.displayName.uppercased()) \u{2014} STAGE COMPLETE")
-                .font(.system(size: 9, weight: .heavy))
-                .foregroundStyle(Color.textTertiary)
-            Text("Open for review. The department has moved on to \(career.prepStep.displayName).")
-                .font(.system(size: 9))
-                .foregroundStyle(Color.textTertiary)
-                .lineLimit(1)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .background(Color.backgroundTertiary.opacity(0.6), in: RoundedRectangle(cornerRadius: 6))
-    }
-
-    // MARK: - Tab Picker
-
-    private var tabPicker: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(visibleTabs) { tab in
-                    let isSelected = selectedTab == tab
-                    Button {
-                        selectedTab = tab
-                    } label: {
-                        // Tighter than it was (16/10 at `.callout`): eleven tabs
-                        // now, and this row plus the position chips is the whole
-                        // pinned budget — ~77 pt against the ~330 pt the hub used
-                        // to hold above the list.
-                        Label(tab.label, systemImage: tab.icon)
-                            .font(.subheadline.weight(isSelected ? .bold : .semibold))
-                            .foregroundStyle(isSelected ? Color.backgroundPrimary : Color.textSecondary)
-                            .padding(.horizontal, 13)
-                            .padding(.vertical, 8)
-                            .background(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .fill(isSelected ? Color.accentGold : Color.backgroundTertiary)
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .strokeBorder(isSelected ? Color.clear : Color.surfaceBorder, lineWidth: 1)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-        .mask(
-            HStack(spacing: 0) {
-                Color.white
-                LinearGradient(colors: [.white, .clear], startPoint: .leading, endPoint: .trailing)
-                    .frame(width: 24)
-            }
+        return DraftPrepAdvanceBar(
+            stepName: gate.step.displayName,
+            nextName: gate.next?.displayName,
+            requirement: gate.requirement,
+            skipCost: gate.skipCost,
+            isComplete: gate.isComplete,
+            isBlocked: gate.isPhaseBlocked,
+            blockedReason: gate.phaseBlockedReason,
+            ownsTransition: true,
+            onAdvance: { if let next = gate.next { advance(to: next) } },
+            onSkip: { if let next = gate.next { advance(to: next) } },
+            onOpen: { if case let .open(tab, _) = gate.action { selectedTab = tab } }
         )
     }
 
@@ -591,6 +678,11 @@ struct ScoutingHubView: View {
 
     @ViewBuilder
     private var tabContent: some View {
+        // ONE progress value for the whole surface. Every stage screen's
+        // "may I act" is `DraftPrepProgress.canAct`, the same predicate the
+        // process bar draws its `.open` puck from — so a cell that invites a tap
+        // can never land on a screen whose buttons are dead.
+        let progress = prepProgress
         switch selectedTab {
         case .scouts:
             ScoutTeamView(
@@ -601,7 +693,9 @@ struct ScoutingHubView: View {
                 prospects: prospects,
                 scoutingBudget: fetchScoutingBudget(),
                 combineTripSpend: combineTripSpend,
-                onHire: { showHireScout = true },
+                evaluationSpend: evaluationSpend,
+                canSendToCombine: career.currentPhase == .combine,
+                onHire: { activeHubSheet = .hireScout },
                 onFire: { fireScout($0) },
                 onSendToCombine: { sendScoutsToCombine() }
             )
@@ -632,7 +726,14 @@ struct ScoutingHubView: View {
                 positionFilter: $positionFilter,
                 initialAttributeTab: .workup,
                 isFilmStudy: true,
-                isStageClosed: career.prepStep.order > DraftPrepStep.filmStudy.order,
+                // Shut only while the stage is LOCKED. `career.prepStep !=
+                // .filmStudy` was the shipped test and it is B3 exactly: the
+                // step is a floor, so a save that reached the pro days had the
+                // film screen bolted shut for the rest of the spring with a
+                // REQUIRED task pointing at it. `canAct` keeps every stage the
+                // club has reached workable and only refuses the ones ahead of
+                // its reach.
+                isStageClosed: !progress.canAct(.filmStudy),
                 header: { hubHeader() }
             )
         case .combine:
@@ -652,7 +753,7 @@ struct ScoutingHubView: View {
                 header: { hubHeader() }
             )
         case .interviews:
-            InterviewSelectionView(career: career)
+            InterviewSelectionView(career: career, canAct: progress.canAct(.interviews))
         case .mockDraft:
             MockDraftView(career: career, prospects: prospects)
         case .draftOrder:
@@ -663,6 +764,7 @@ struct ScoutingHubView: View {
                 prospects: prospects,
                 teamRoster: teamPlayers,
                 positionFilter: $positionFilter,
+                canAct: progress.canAct(.workouts),
                 onRefresh: loadData
             )
         case .top30:
@@ -671,6 +773,7 @@ struct ScoutingHubView: View {
                 scouts: scouts,
                 prospects: prospects,
                 teamRoster: teamPlayers,
+                canAct: progress.canAct(.top30Visits),
                 onRefresh: loadData
             )
         case .proDays:
@@ -683,6 +786,7 @@ struct ScoutingHubView: View {
                 scouts: scouts,
                 prospects: prospects,
                 teamRoster: teamPlayers,
+                canAct: progress.canAct(.proDayFocus),
                 onRefresh: loadData
             )
         case .nextYear:
@@ -755,22 +859,6 @@ struct ScoutingHubView: View {
         guard let teamID = career.teamID else { return 4_000 }
         let desc = FetchDescriptor<Team>(predicate: #Predicate { $0.id == teamID })
         return (try? modelContext.fetch(desc))?.first?.owner?.scoutingBudget ?? 4_000
-    }
-
-    /// Tabs the club can reach, driven by the stage machine rather than by the
-    /// phase.
-    ///
-    /// A tab whose stage is AHEAD of where the club stands is absent — that is
-    /// the forced sequence, and it is why private workouts are no longer live on
-    /// the first day the class exists. A tab whose stage has PASSED stays
-    /// visible: every earlier stage is readable by design, its screen just says
-    /// so and its priced actions are shut.
-    private var visibleTabs: [ScoutingTab] {
-        let reached = career.prepStep.order
-        return ScoutingTab.allCases.filter { tab in
-            guard let stage = tab.stage else { return true }
-            return stage.order <= reached
-        }
     }
 
     private func fireScout(_ scout: Scout) {
@@ -973,6 +1061,26 @@ enum ScoutingTab: String, CaseIterable, Identifiable {
         switch self {
         case .combine, .film, .interviews, .proDays, .workouts, .top30: return true
         default: return false
+        }
+    }
+
+    /// The screen a stage of the pipeline lives on.
+    ///
+    /// The inverse of ``stage``, and it has to be written out rather than
+    /// derived from it: two stages share the Mock Draft screen, and `.ready` has
+    /// no screen of its own at all — the board is what a club with a closed book
+    /// looks at while it waits for the clock.
+    static func forStage(_ step: DraftPrepStep) -> ScoutingTab {
+        switch step {
+        case .combineReview: return .combine
+        case .interviews:    return .interviews
+        case .filmStudy:     return .film
+        case .proDayFocus:   return .proDays
+        case .workouts:      return .workouts
+        case .mockOne:       return .mockDraft
+        case .top30Visits:   return .top30
+        case .mockTwo:       return .mockDraft
+        case .ready:         return .board
         }
     }
 }

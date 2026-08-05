@@ -11,6 +11,16 @@ struct ScoutTeamView: View {
     /// Non-salary spend already committed this cycle (the combine trip), in
     /// thousands. Comes out of the same pot as scout salaries.
     var combineTripSpend: Int = 0
+    /// Per-prospect evaluation spend committed this cycle, in thousands.
+    ///
+    /// It was missing, so this screen's "remaining" was a DIFFERENT number from
+    /// the hub's `remainingScoutingBudget` — two affordability verdicts over one
+    /// purchase. That split is half of B2: the row said the trip was affordable
+    /// and `sendScoutsToCombine`'s own guard disagreed and returned.
+    var evaluationSpend: Int = 0
+    /// `false` outside the combine window: the trip is a one-phase offer, and a
+    /// live button for it in March is a tap that cannot do anything.
+    var canSendToCombine: Bool = true
     let onHire: () -> Void
     let onFire: (Scout) -> Void
     let onSendToCombine: () -> Void
@@ -25,13 +35,20 @@ struct ScoutTeamView: View {
     }
 
     private var remainingScoutBudget: Int {
-        scoutingBudget - totalScoutSalary - combineTripSpend
+        scoutingBudget - totalScoutSalary - combineTripSpend - evaluationSpend
+    }
+
+    /// Price, purse and — when the purse is short — the sentence that says so.
+    /// ONE quote, shared with every other surface that offers the trip.
+    private var tripQuote: ScoutingEngine.CombineTripQuote {
+        ScoutingEngine.combineTripQuote(
+            scoutCount: scouts.count,
+            remainingBudget: remainingScoutBudget
+        )
     }
 
     /// Cost of the combine trip, in thousands. Same authority the hub uses.
-    private var combineTripCost: Int {
-        ScoutingEngine.combineTripCost(scoutCount: scouts.count)
-    }
+    private var combineTripCost: Int { tripQuote.cost }
 
     private var formattedTotalSalary: String {
         if totalScoutSalary >= 1000 {
@@ -195,32 +212,57 @@ struct ScoutTeamView: View {
                 .background(Color.success.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
                 .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.success.opacity(0.3), lineWidth: 1))
             } else {
+                // **B2's root cause.** This row shipped with no `disabled` and
+                // no affordability input at all: it stayed gold and live, ran
+                // `onSendToCombine()`, hit `sendScoutsToCombine`'s own
+                // `guard canAfford else { return }` and did NOTHING — no state
+                // change, no alert, no sheet — on the one action a REQUIRED task
+                // was pointing at. A control that cannot act must look dead and
+                // say why, in the same sentence.
+                let blockedReason: String? = canSendToCombine
+                    ? tripQuote.blockedReason
+                    : "The department can only travel during the combine."
+                let live = blockedReason == nil
                 Button {
                     onSendToCombine()
                 } label: {
                     HStack(spacing: 10) {
-                        Image(systemName: "binoculars.fill")
+                        Image(systemName: live ? "binoculars.fill" : "lock.fill")
                             .font(.title3)
-                            .foregroundStyle(Color.accentGold)
+                            .foregroundStyle(live ? Color.accentGold : Color.textTertiary)
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Send Scouts to the NFL Combine")
                                 .font(.subheadline.weight(.bold))
-                                .foregroundStyle(Color.textPrimary)
-                            Text("\(scouts.count) scout\(scouts.count == 1 ? "" : "s") on site \u{2014} exact measurables instead of the broadcast's rounded numbers. $\(combineTripCost)K from the scouting budget.")
+                                .foregroundStyle(live ? Color.textPrimary : Color.textTertiary)
+                            Text(blockedReason
+                                 ?? "\(scouts.count) scout\(scouts.count == 1 ? "" : "s") on site \u{2014} exact measurables instead of the broadcast's rounded numbers. $\(combineTripCost)K from the scouting budget.")
                                 .font(.caption)
-                                .foregroundStyle(Color.textSecondary)
+                                .foregroundStyle(live ? Color.textSecondary : Color.warning)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         Spacer()
-                        Image(systemName: "arrow.right.circle.fill")
-                            .font(.title3)
-                            .foregroundStyle(Color.accentGold)
+                        if live {
+                            Image(systemName: "arrow.right.circle.fill")
+                                .font(.title3)
+                                .foregroundStyle(Color.accentGold)
+                        }
                     }
                     .padding(12)
-                    .background(Color.accentGold.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
-                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.accentGold.opacity(0.3), lineWidth: 1))
+                    .background(
+                        live ? Color.accentGold.opacity(0.1) : Color.backgroundTertiary.opacity(0.5),
+                        in: RoundedRectangle(cornerRadius: 10)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .strokeBorder(
+                                live ? Color.accentGold.opacity(0.3) : Color.surfaceBorder,
+                                lineWidth: 1
+                            )
+                    )
                 }
                 .buttonStyle(.plain)
+                .disabled(!live)
+                .accessibilityHint(blockedReason ?? "Costs $\(combineTripCost)K from the scouting budget.")
             }
         }
     }

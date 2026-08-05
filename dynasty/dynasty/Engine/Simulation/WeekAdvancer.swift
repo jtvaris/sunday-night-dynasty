@@ -333,12 +333,19 @@ enum WeekAdvancer {
 
     /// Opens a fresh combine window for the new cycle.
     ///
-    /// These three keys are career-scoped but NOT season-scoped, and nothing
-    /// cleared them at rollover — which is why the send-scouts button never came
-    /// back after season 1.
+    /// These keys are career-scoped but NOT season-scoped, and nothing cleared
+    /// them at rollover — which is why the send-scouts button never came back
+    /// after season 1.
+    ///
+    /// `interviewReportReviewed` joined the list in #104 for the same reason,
+    /// one stage further on: it was written once, in season 1, and never
+    /// cleared, so from season 2 the REQUIRED "Review interview report" task
+    /// auto-completed against a report for a draft class that no longer existed.
+    /// Every key the prep reads is named in `DraftPrepProgress.Key`.
     private static func resetCombineWindow() {
-        CareerScopedDefaults.set(false, "scoutsSentToCombine")
-        CareerScopedDefaults.set(false, "combineResultsReviewed")
+        CareerScopedDefaults.set(false, DraftPrepProgress.Key.scoutsSentToCombine)
+        CareerScopedDefaults.set(false, DraftPrepProgress.Key.combineResultsReviewed)
+        CareerScopedDefaults.set(false, DraftPrepProgress.Key.interviewReportReviewed)
         CareerScopedDefaults.set(0, "combineTripSpend")
     }
 
@@ -4014,6 +4021,19 @@ enum WeekAdvancer {
             career.advancePrepStep(to: .proDayFocus)
         } else if nextPhase == .draft {
             career.advancePrepStep(to: .ready)
+        }
+
+        // #104: crossing any prep boundary also PERSISTS whatever the accessor
+        // was already returning — the phase floor and the evidence floor
+        // (`Career.derivedPrepStepFloor`, built from the club's own per-cycle
+        // ledgers). Reading through a floor forever is how a migrated save stays
+        // migrated: it never writes, so the stored string keeps disagreeing with
+        // the screen and any code that touches `draftPrepStep` directly reads a
+        // stage the club left weeks ago. One idempotent write per boundary
+        // settles it. `advancePrepStep` never lowers, so this cannot walk a club
+        // backwards.
+        if [.combine, .freeAgency, .proDays, .draft].contains(nextPhase) {
+            career.advancePrepStep(to: career.prepStep)
         }
 
         // The combine is a league event on a fixed date, not a club decision:

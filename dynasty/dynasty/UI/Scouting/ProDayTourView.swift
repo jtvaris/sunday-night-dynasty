@@ -28,6 +28,17 @@ struct ProDayTourView: View {
     let scouts: [Scout]
     let prospects: [CollegeProspect]
     let teamRoster: [Player]
+    /// Whether the club may work this stage, decided ONCE by
+    /// ``DraftPrepProgress/canAct(_:)`` and handed down.
+    ///
+    /// It used to be derived here from `career.prepStep`, which is a floor and
+    /// therefore says nothing reliable about what is workable: the screen shut
+    /// itself the moment the phase floor moved the club past `.proDayFocus`
+    /// (B1, "pro days completely unavailable — could not select schools at
+    /// all") and stayed shut while the hub still offered the tab. The hub draws
+    /// the stage's puck from the same predicate, so an inviting cell and a live
+    /// screen are now the same fact.
+    let canAct: Bool
     var onRefresh: () -> Void
 
     @Environment(\.modelContext) private var modelContext
@@ -53,11 +64,35 @@ struct ProDayTourView: View {
     // MARK: - Screen state
 
     @State private var expandedColleges: Set<String> = []
-    @State private var showScoutSheet = false
-    @State private var sheetCollege: String?
+    /// The one sheet this screen can have open, and which school it is about.
+    ///
+    /// **This screen used to carry TWO `.sheet(isPresented:)` modifiers on the
+    /// same view.** SwiftUI honours exactly one per view: the later modifier
+    /// wins, so tapping Reserve flipped `showScoutSheet`, the runtime presented
+    /// the OTHER sheet's builder, `focusCollege` was `nil`, its `if let` produced
+    /// nothing — and the user got an empty grey card over the school list, with
+    /// no scout picker and no way to book anybody.
+    ///
+    /// That is bug B1 exactly: *"pro days completely unavailable — could not
+    /// select schools at all."* The stage was never the problem; the button
+    /// opened a blank sheet. One `.sheet(item:)` over one enum makes the case
+    /// unrepresentable.
+    private enum ActiveSheet: Identifiable {
+        /// Pick which scout travels to this school.
+        case reserveScout(college: String)
+        /// Pick a man at this school to mark as a target.
+        case markTarget(college: String)
+
+        var id: String {
+            switch self {
+            case let .reserveScout(college): return "scout:\(college)"
+            case let .markTarget(college):   return "target:\(college)"
+            }
+        }
+    }
+
+    @State private var activeSheet: ActiveSheet?
     @State private var tourResult: ProDayTourResult?
-    @State private var showFocusProspectSheet = false
-    @State private var focusCollege: String?
     @State private var showSkipConfirm = false
     @State private var showAllSchools = false
 
@@ -66,9 +101,7 @@ struct ProDayTourView: View {
     // MARK: - Stage
 
     private var stage: DraftPrepStep { career.prepStep }
-    private var isStageLocked: Bool { stage.order < DraftPrepStep.proDayFocus.order }
-    private var isStageClosed: Bool { stage.order > DraftPrepStep.proDayFocus.order }
-    private var canAct: Bool { !isStageLocked && !isStageClosed }
+    private var isStageLocked: Bool { !canAct }
 
     // MARK: - Focus slots
 
@@ -112,8 +145,14 @@ struct ProDayTourView: View {
             }
         }
         .task { refresh() }
-        .sheet(isPresented: $showScoutSheet) { scoutSheet }
-        .sheet(isPresented: $showFocusProspectSheet) { focusSheet }
+        // ONE sheet modifier. Two of them on the same view is how Reserve came
+        // to open an empty card (B1) — see `ActiveSheet`.
+        .sheet(item: $activeSheet) { sheet in
+            switch sheet {
+            case let .reserveScout(college): scoutSheet(college: college)
+            case let .markTarget(college):   focusSheet(college: college)
+            }
+        }
         .alert("Go in on tape?", isPresented: $showSkipConfirm) {
             Button("Skip the circuit", role: .destructive) { advanceStage(runTour: false) }
             Button("Cancel", role: .cancel) { }
@@ -124,7 +163,6 @@ struct ProDayTourView: View {
 
     private var tourList: some View {
         List {
-            realismBanner
             focusSlotGauge
             departmentSection
             if !recommended.isEmpty && canAct { recommendedSection }
@@ -136,38 +174,13 @@ struct ProDayTourView: View {
         .listStyle(.insetGrouped)
     }
 
-    // MARK: - Banner
-
-    private var realismBanner: some View {
-        Section {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 8) {
-                    Image(systemName: "antenna.radiowaves.left.and.right")
-                        .foregroundStyle(Color.accentGold)
-                    Text("How the circuit works")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(Color.accentGold)
-                    Spacer()
-                    if isStageClosed {
-                        closedChip
-                    }
-                }
-                Text("Every club reads every pro day off the feed. Sending your own people buys exact decimals, a filed report and a face-to-face at the schools you pick \u{2014} and nowhere else.")
-                    .font(.caption)
-                    .foregroundStyle(Color.textSecondary)
-            }
-        }
-        .listRowBackground(Color.backgroundSecondary)
-    }
-
-    private var closedChip: some View {
-        Text("CLOSED")
-            .font(.system(size: 9, weight: .black))
-            .foregroundStyle(Color.textTertiary)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
-    }
+    // MARK: - Banner (deleted)
+    //
+    // The "how the circuit works" banner and its CLOSED chip are now the hub's
+    // one canonical `DraftPrepStageExplainer`, pinned above every stage screen
+    // with the same shape and the same DONE / CURRENT / LOCKED chip. A second
+    // hand-written version inside the list said the same thing in different
+    // words and cost a section of scroll.
 
     // MARK: - Focus slots
 
@@ -444,8 +457,7 @@ struct ProDayTourView: View {
             }
         } else if canAct && slotsLeft > 0 {
             Button {
-                sheetCollege = info.college
-                showScoutSheet = true
+                activeSheet = .reserveScout(college: info.college)
             } label: {
                 Label("Reserve", systemImage: "scope")
                     .font(.caption.weight(.semibold))
@@ -454,6 +466,14 @@ struct ProDayTourView: View {
             .buttonStyle(.plain)
         } else if canAct {
             Text("No slots left")
+                .font(.caption2)
+                .foregroundStyle(Color.textTertiary)
+        } else {
+            // The chain used to end here with NOTHING drawn: an unreserved
+            // school on a shut stage got a blank action slot — no button, no
+            // reason, just a row that ignored taps. A closed door has to look
+            // like a door.
+            Text("Stage closed")
                 .font(.caption2)
                 .foregroundStyle(Color.textTertiary)
         }
@@ -473,8 +493,7 @@ struct ProDayTourView: View {
             HStack {
                 Spacer()
                 Button {
-                    focusCollege = info.college
-                    showFocusProspectSheet = true
+                    activeSheet = .markTarget(college: info.college)
                 } label: {
                     Label("Mark a target here", systemImage: "target")
                         .font(.caption2.weight(.semibold))
@@ -614,36 +633,33 @@ struct ProDayTourView: View {
 
     // MARK: - Sheets
 
-    @ViewBuilder
-    private var scoutSheet: some View {
-        if let college = sheetCollege {
-            ProDayFocusScoutSheet(
-                college: college,
-                scouts: scouts,
-                prospects: prospectsByCollege[college] ?? [],
-                bestMatch: bestScoutFor(college: college),
-                onReserve: { scout in
-                    reserveFocus(scout: scout, college: college)
-                    showScoutSheet = false
-                },
-                onCancel: { showScoutSheet = false }
-            )
-        }
+    /// Takes the college as an argument rather than reading `@State`: the enum
+    /// carries it, so there is no window in which the sheet is presented and the
+    /// school it is about is `nil`.
+    private func scoutSheet(college: String) -> some View {
+        ProDayFocusScoutSheet(
+            college: college,
+            scouts: scouts,
+            prospects: prospectsByCollege[college] ?? [],
+            bestMatch: bestScoutFor(college: college),
+            onReserve: { scout in
+                reserveFocus(scout: scout, college: college)
+                activeSheet = nil
+            },
+            onCancel: { activeSheet = nil }
+        )
     }
 
-    @ViewBuilder
-    private var focusSheet: some View {
-        if let college = focusCollege {
-            ProDayMarkTargetSheet(
-                college: college,
-                prospects: prospectsByCollege[college] ?? [],
-                onSelect: { prospect in
-                    markTarget(prospect)
-                    showFocusProspectSheet = false
-                },
-                onCancel: { showFocusProspectSheet = false }
-            )
-        }
+    private func focusSheet(college: String) -> some View {
+        ProDayMarkTargetSheet(
+            college: college,
+            prospects: prospectsByCollege[college] ?? [],
+            onSelect: { prospect in
+                markTarget(prospect)
+                activeSheet = nil
+            },
+            onCancel: { activeSheet = nil }
+        )
     }
 
     // MARK: - Actions

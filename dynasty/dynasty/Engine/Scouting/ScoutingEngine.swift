@@ -3368,11 +3368,65 @@ enum ScoutingEngine {
     ///
     /// Travel, a week of hotels and the analytics contractor who turns the
     /// stopwatch sheet into percentiles — it scales with how many people go,
-    /// because a bigger department gets more of the board covered. Against the
-    /// default $4.0M scouting pot this is roughly 8–15 %, i.e. a real line item
-    /// next to scout salaries rather than a rounding error.
+    /// because a bigger department gets more of the board covered.
+    ///
+    /// **Re-priced in #104, down from `300 + 40n` ($620K for a full department).**
+    /// The old figure was written against the *nominal* $4.0M scouting pot, but
+    /// the pot is not what the trip is bought out of: scout salaries come out of
+    /// the same money first. A club that filled all eight scout jobs at market
+    /// rate — which the staff screen's auto-hire does by design — was left with
+    /// about $190K, so the FULLEST department in the league was the one that
+    /// could never attend, while a two-man shop could. The cost rose with
+    /// headcount exactly as the money available fell with it.
+    ///
+    /// The trip is now a travel line, not a second salary bill: it is reachable
+    /// from what a fully-staffed department has left, and the money that
+    /// actually rations the spring is salaries and per-prospect evaluations
+    /// (`ScoutEvaluationBudget`, $20-55K a report, 25 a cycle).
     static func combineTripCost(scoutCount: Int) -> Int {
-        300 + 40 * max(0, min(8, scoutCount))
+        60 + 10 * max(0, min(8, scoutCount))
+    }
+
+    /// Everything a surface needs to draw the combine-trip CTA: the price, what
+    /// is left to pay it with, and — when it cannot be paid — the sentence that
+    /// says so.
+    ///
+    /// **One gate, one quote (#104).** The trip had two entry points with one
+    /// affordability rule between them: `CombineResultsView` was handed
+    /// `canAffordTrip` and greyed its button correctly, while the Scout Team
+    /// tab's gold "Send Scouts to the NFL Combine" row was handed neither the
+    /// verdict nor a `disabled` modifier — so it stayed live, ran
+    /// `sendScoutsToCombine()`, hit that function's own `guard canAfford else
+    /// { return }` and did nothing at all. A tap with no state change, no alert
+    /// and no sheet, on the one task the phase was gated on. Any surface that
+    /// offers the trip reads this.
+    struct CombineTripQuote {
+        /// Price in thousands.
+        let cost: Int
+        /// Scouting pot left after salaries and spend already committed.
+        let remaining: Int
+
+        var canAfford: Bool { remaining >= cost }
+
+        /// Why the button is dead, or `nil` when it is live. A disabled control
+        /// that does not say why is the bug this type exists to stop repeating.
+        var blockedReason: String? {
+            guard !canAfford else { return nil }
+            return "Not enough scouting budget \u{2014} the trip costs $\(cost)K and $\(max(0, remaining))K is left after salaries."
+        }
+    }
+
+    /// Quotes the combine trip against what the department can actually spend.
+    ///
+    /// - Parameters:
+    ///   - scoutCount: how many scouts travel.
+    ///   - remainingBudget: the owner's scouting pot minus scout salaries and
+    ///     any discretionary spend already committed this cycle.
+    static func combineTripQuote(scoutCount: Int, remainingBudget: Int) -> CombineTripQuote {
+        CombineTripQuote(
+            cost: combineTripCost(scoutCount: scoutCount),
+            remaining: remainingBudget
+        )
     }
 
     /// Rebuilds the combine media digest from what is stored on the prospects.

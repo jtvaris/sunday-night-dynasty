@@ -5,6 +5,17 @@ import SwiftData
 /// After conducting interviews, reveals personality, football IQ, and character notes.
 struct InterviewSelectionView: View {
     let career: Career
+    /// Whether the club may spend an interview slot right now.
+    ///
+    /// This screen is the one stage surface that shipped with NO stage guard at
+    /// all, which is what let a locked stage be worked from a task deep-link —
+    /// and a worked stage raises `Career.derivedPrepStepFloor`, so one interview
+    /// conducted out of turn stepped the whole pipeline over `.combineReview`
+    /// and drew it as passed. The hub decides with
+    /// ``DraftPrepProgress/canAct(_:)``; every stage screen asks the same
+    /// question of the same struct. Defaults to `true` so a preview or a future
+    /// non-hub entry point is not silently dead.
+    var canAct: Bool = true
     @Environment(\.modelContext) private var modelContext
 
     @State private var selectedProspectIDs: Set<UUID> = []
@@ -692,26 +703,31 @@ struct InterviewSelectionView: View {
     // MARK: - #15: Conduct button - properly disabled when count is 0
 
     private var conductButton: some View {
-        Button {
+        // A dead control that does not say why is the bug this whole wave is
+        // about, so the locked case states its reason on the button itself.
+        let blocked = selectedProspectIDs.isEmpty || !canAct
+        return Button {
             conductInterviews()
         } label: {
             HStack(spacing: 8) {
-                Image(systemName: "bubble.left.and.bubble.right.fill")
+                Image(systemName: canAct ? "bubble.left.and.bubble.right.fill" : "lock.fill")
                     .font(.system(size: 14, weight: .bold))
-                Text(selectedProspectIDs.isEmpty
-                    ? "Select Prospects to Interview"
-                    : "Conduct \(selectedProspectIDs.count) Interview\(selectedProspectIDs.count == 1 ? "" : "s")")
+                Text(!canAct
+                     ? "The interview room opens at that stage"
+                     : (selectedProspectIDs.isEmpty
+                        ? "Select Prospects to Interview"
+                        : "Conduct \(selectedProspectIDs.count) Interview\(selectedProspectIDs.count == 1 ? "" : "s")"))
                     .font(.system(size: 15, weight: .bold))
             }
-            .foregroundStyle(selectedProspectIDs.isEmpty ? Color.textTertiary : Color.backgroundPrimary)
+            .foregroundStyle(blocked ? Color.textTertiary : Color.backgroundPrimary)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 14)
             .background(
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(selectedProspectIDs.isEmpty ? Color.backgroundTertiary.opacity(0.5) : Color.accentGold)
+                    .fill(blocked ? Color.backgroundTertiary.opacity(0.5) : Color.accentGold)
             )
         }
-        .disabled(selectedProspectIDs.isEmpty)
+        .disabled(blocked)
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
     }
@@ -779,6 +795,9 @@ struct InterviewSelectionView: View {
     }
 
     private func conductInterviews() {
+        // Belt and braces behind the disabled button: spending a slot writes
+        // `career.interviewsUsed`, which is evidence the stage machine reads.
+        guard canAct else { return }
         var results: [InterviewResult] = []
         let room = interviewer
 

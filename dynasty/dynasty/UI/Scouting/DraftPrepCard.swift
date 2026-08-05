@@ -112,7 +112,11 @@ struct DraftPrepCard: View {
     /// "on your board, never interviewed" rows instead of going stale.
     @ObservedObject private var userGradeStore = UserProspectGradeStore.shared
 
-    private let maxInterviews = 60
+    /// The cycle rations live on ``DraftPrepProgress`` now. Four screens each
+    /// carried a private `let maxInterviews = 60`, which is how the prep card,
+    /// the stage banner and the required task could each print a different
+    /// denominator for the same sixty slots.
+    private var maxInterviews: Int { DraftPrepProgress.interviewSlots }
     private let topSliceSize = 100
 
     // MARK: - Derived state
@@ -218,6 +222,9 @@ struct DraftPrepCard: View {
     private struct Snapshot {
         let coverage: DraftIntel.BoardCoverage
         let attention: [AttentionItem]
+        /// The stage ledger, built once here so the card's collapsed line and
+        /// the hub's process bar print the same counter for the same stage.
+        let progress: DraftPrepProgress
     }
 
     private func makeSnapshot() -> Snapshot {
@@ -227,7 +234,11 @@ struct DraftPrepCard: View {
             scouted: topSlice.filter { !$0.scoutingReports.isEmpty }.count,
             interviewed: topSlice.filter(\.interviewCompleted).count
         )
-        return Snapshot(coverage: coverage, attention: attentionItems(topSlice: topSlice))
+        return Snapshot(
+            coverage: coverage,
+            attention: attentionItems(topSlice: topSlice),
+            progress: DraftPrepProgress(career: career, prospects: prospects, scouts: scouts)
+        )
     }
 
     private func attentionItems(topSlice: [CollegeProspect]) -> [AttentionItem] {
@@ -385,37 +396,21 @@ struct DraftPrepCard: View {
     /// Collapsed, the card is the pipeline's progress line and nothing else:
     /// "Stage 4 of 9 — Pro Day Focus · 3 of 11 focus slots used".
     private func collapsedSummary(_ snapshot: Snapshot) -> String {
-        let step = career.prepStep
+        let progress = snapshot.progress
+        let step = progress.current
         var parts = [
             "Stage \(step.order + 1) of \(DraftPrepStep.allCases.count) \u{2014} \(step.displayName)",
-            stageCounter(step)
+            // `DraftPrepProgress`'s own counter string. This used to be a
+            // hand-rolled switch with its own denominators ("of 30 workouts",
+            // "of 60 interviews"), i.e. a fifth place the same numbers were
+            // written down and could drift.
+            progress[step].counter,
+            "\(progress.satisfiedStageCount) of \(DraftPrepStep.allCases.count) stages done"
         ]
         if !snapshot.attention.isEmpty {
             parts.append("\(snapshot.attention.count) to fix")
         }
         return parts.joined(separator: " \u{00B7} ")
-    }
-
-    /// The one number that measures the stage the club is standing in.
-    private func stageCounter(_ step: DraftPrepStep) -> String {
-        switch step {
-        case .combineReview:
-            return scoutsSentToCombine ? "scouts on site" : "combine on television"
-        case .filmStudy:
-            return "\(evaluationsUsed) of \(ScoutEvaluationBudget.slotsPerCycle) reports ordered"
-        case .interviews:
-            return "\(career.interviewsUsed) of \(maxInterviews) interviews used"
-        case .proDayFocus:
-            return "\(proDayReservations) of \(max(proDayCapacity, proDayReservations)) focus slots reserved"
-        case .workouts:
-            return "\(career.workoutsUsed) of 30 workouts used"
-        case .mockOne, .mockTwo:
-            return "league mock"
-        case .top30Visits:
-            return "\(career.top30VisitsUsed) of 30 visits hosted"
-        case .ready:
-            return "board closed"
-        }
     }
 
     /// One-line pipeline progress. Nine stages, filled to where the club is.
@@ -470,7 +465,7 @@ struct DraftPrepCard: View {
                     value: "\(proDayReservations)/\(max(proDayCapacity, proDayReservations))",
                     label: proDayVisits > 0 ? "Pro day slots (sent)" : "Pro day slots",
                     tint: proDayReservations > 0 ? .accentBlue : .textTertiary,
-                    detail: "\(career.top30VisitsUsed)/30 Top-30"
+                    detail: "\(career.top30VisitsUsed)/\(DraftPrepProgress.top30Slots) Top-30"
                 )
                 stat(
                     icon: "magnifyingglass",

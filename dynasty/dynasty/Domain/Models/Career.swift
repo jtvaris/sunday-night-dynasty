@@ -373,18 +373,89 @@ extension Career {
     ///    ``SeasonPhase/minimumPrepStep``, so a save that predates the field (or
     ///    one that skipped straight through the combine) cannot sit in
     ///    `.proDays` with the pro-day stage locked behind it.
+    /// 3. **Evidence floor (#104).** The stored step is also raised to whatever
+    ///    the club has demonstrably already DONE — see ``derivedPrepStepFloor``.
+    ///    The phase floor alone was too coarse for the save the bug report came
+    ///    from: a career created before the stage machine existed carries
+    ///    `draftPrepStepSeason == 0`, so every stage it had actually worked read
+    ///    as `.combineReview` and the whole pipeline replayed from the top —
+    ///    except in `.proDays`, where the phase floor jumped it straight to
+    ///    `.proDayFocus` and the two combine stages it skipped were reported as
+    ///    "the department has moved on".
     var prepStep: DraftPrepStep {
         get {
             let stored = draftPrepStepSeason == currentSeason
                 ? DraftPrepStep(rawValue: draftPrepStep) ?? .combineReview
                 : .combineReview
-            let floor = currentPhase.minimumPrepStep
+            let phaseFloor = currentPhase.minimumPrepStep
+            let evidence = derivedPrepStepFloor
+            let floor = phaseFloor.order >= evidence.order ? phaseFloor : evidence
             return stored.order >= floor.order ? stored : floor
         }
         set {
             draftPrepStep = newValue.rawValue
             draftPrepStepSeason = currentSeason
         }
+    }
+
+    /// The stage this club's own ledgers prove it has already reached.
+    ///
+    /// **Self-healing migration.** Nothing about the stored step is trusted: the
+    /// per-cycle counters (`interviewsUsed`, `workoutsUsed`, `top30VisitsUsed`,
+    /// the evaluation ledger, the two mock stamps) are written by the actions
+    /// themselves, so they are the truth about where the club stands whether or
+    /// not the stage string ever got written. A save from before #103, a save
+    /// whose stamp is a cycle old, and a save whose stage string was written
+    /// under the v1 case order all land in the same place: on the last stage
+    /// they can prove they worked.
+    ///
+    /// Three rules keep this honest:
+    ///
+    /// * **It only ever raises.** It is a floor, never a clamp — a club that
+    ///   walked the stages forward without spending anything keeps its place.
+    /// * **It never runs ahead of the season** (``SeasonPhase/maximumPrepStep``).
+    ///   The counters are zeroed at kickoff, not at each phase, so in February a
+    ///   club still carries last spring's workouts; without the ceiling that
+    ///   would derive a combine-week club into the pro-day stages.
+    /// * **It only reads the OPEN career's scoped defaults.** `CareerScopedDefaults`
+    ///   resolves its keys against `WeekAdvancer.activeCareerID`, so for any
+    ///   other `Career` row (the save list, a preview) the default-backed
+    ///   evidence is another save's and is skipped. The SwiftData counters on
+    ///   `self` are always safe and are read either way.
+    var derivedPrepStepFloor: DraftPrepStep {
+        var floor = DraftPrepStep.combineReview
+        func raise(_ step: DraftPrepStep) {
+            if step.order > floor.order { floor = step }
+        }
+
+        // Counters that live on this row — always this career's.
+        if interviewsUsed > 0    { raise(.interviews) }
+        if workoutsUsed > 0      { raise(.workouts) }
+        if top30VisitsUsed > 0   { raise(.top30Visits) }
+
+        // Ledgers that live in the scoped defaults — only for the open save.
+        //
+        // **Film reports are deliberately NOT evidence.** They spend
+        // `ScoutEvaluationBudget` slots, and that button is not part of the
+        // pipeline: `ProspectDetailView` offers it from `.coachingChanges`
+        // onward and the plain Big Board routes into the same sheet. One $20K
+        // evaluation bought off the reference board in combine week would
+        // otherwise derive the club into `.filmStudy` — stepping over
+        // `.combineReview` and `.interviews`, both of which then draw as passed
+        // while their required tasks are still red in the left bar. The stage's
+        // own satisfaction still reads the ledger (`DraftPrepProgress`), so a
+        // club that has genuinely filed its reports still finds the stage
+        // ticked and its successor open; it just does not get *moved* by a
+        // purchase made outside the process.
+        if WeekAdvancer.activeCareerID == id {
+            let mockOne: Int? = CareerScopedDefaults.value(DraftPrepProgress.Key.mockOneRead)
+            if mockOne == currentSeason { raise(.mockOne) }
+            let mockTwo: Int? = CareerScopedDefaults.value(DraftPrepProgress.Key.mockTwoRead)
+            if mockTwo == currentSeason { raise(.mockTwo) }
+        }
+
+        let ceiling = currentPhase.maximumPrepStep
+        return floor.order <= ceiling.order ? floor : ceiling
     }
 
     /// Raises the prep stage to `step` if the club is behind it, and re-stamps

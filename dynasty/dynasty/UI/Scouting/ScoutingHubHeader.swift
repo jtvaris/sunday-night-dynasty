@@ -62,19 +62,21 @@ struct ScoutingStageGate {
         return false
     }
 
-    /// Evaluations the department has to have ordered before the film-study
-    /// stage counts as worked rather than skipped.
-    static let filmStudyThreshold = 8
-
-    static func make(
-        career: Career,
-        scouts: [Scout],
-        evaluationsUsed: Int,
-        combineResultsReviewed: Bool,
-        finalMockRead: Bool
-    ) -> ScoutingStageGate {
-        let step = career.prepStep
+    /// Builds the gate for the stage the club is standing in.
+    ///
+    /// **`isComplete` is no longer computed here.** It is
+    /// `DraftPrepProgress.Stage.isSatisfied`, the one predicate the required
+    /// task in the left bar, the process bar's tick and this button all read.
+    /// The shipped build had this function holding one copy of those tests and
+    /// `CareerShellView`'s completion switch holding another, keyed off
+    /// different state — which is exactly how "Send Scouts to Combine —
+    /// Required" stayed red forever while the department was in Indianapolis.
+    /// What is left here is what belongs to the *view*: the requirement
+    /// sentence, the price of skipping, and who owns the transition.
+    static func make(progress: DraftPrepProgress, career: Career) -> ScoutingStageGate {
+        let step = progress.current
         let next = step.next
+        let row = progress[step]
 
         // A stage whose successor belongs to a later phase cannot be advanced
         // out of: the pro days are not open in combine week, and free agency
@@ -92,7 +94,7 @@ struct ScoutingStageGate {
                 // wait, not in a button: the Final Mock is printed with the
                 // draft order, which is a league event on a fixed date.
                 return step == .mockTwo
-                    ? "The final mock is printed with the draft order — the room opens in draft week."
+                    ? "The final mock is printed with the draft order \u{2014} the room opens in draft week."
                     : "The draft room opens in draft week."
             default:       return "Not yet on the calendar."
             }
@@ -101,7 +103,7 @@ struct ScoutingStageGate {
         let action: Action = {
             guard let next else { return .none }
             switch step {
-            case .combineReview, .filmStudy, .interviews:
+            case .combineReview, .interviews, .filmStudy:
                 return .advance(next: next)
             case .proDayFocus:  return .open(tab: .proDays, next: next)
             case .workouts:     return .open(tab: .workouts, next: next)
@@ -112,60 +114,55 @@ struct ScoutingStageGate {
             }
         }()
 
-        let complete: Bool
         let requirement: String
         let skipCost: String
 
         switch step {
         case .combineReview:
-            complete = combineResultsReviewed
-            requirement = "Open the Combine tab and read the numbers."
+            requirement = row.isSatisfied
+                ? "Numbers read. The spring is yours."
+                : "Open the Combine tab and read the numbers."
             skipCost = "You go into the spring on the broadcast's rounded times."
-        case .filmStudy:
-            complete = evaluationsUsed >= filmStudyThreshold
-            requirement = "Order film study on \(filmStudyThreshold) men \u{2014} \(evaluationsUsed) of \(filmStudyThreshold) reports filed."
-            skipCost = "Your board stays the media's board: no reports, no bands of your own."
         case .interviews:
-            complete = career.interviewsUsed > 0
-            requirement = "Put at least one prospect in a room."
+            requirement = row.isSatisfied
+                ? "\(row.counter) used. Advance when you are done in the room."
+                : "Put at least one prospect in a room \u{2014} \(row.counter)."
             skipCost = "Nobody in the building has met this class \u{2014} the MEET column stays empty."
+        case .filmStudy:
+            requirement = "Order film study on \(DraftPrepProgress.filmStudyThreshold) men \u{2014} \(row.counter)."
+            skipCost = "Your board stays the media's board: no reports, no bands of your own."
         case .proDayFocus:
             // RESERVATIONS, not executions. `scout.proDayColleges` is the ledger
             // the tour screen fills and the advance button spends;
             // `proDaysAttended` is written by `attendProDay`, i.e. only *after*
             // the tour has run — by which point the stage has already closed.
-            // Gating on it meant the READY chip was structurally unreachable and
-            // the banner asked for something it could not see the user do.
-            let reserved = scouts.reduce(0) { $0 + $1.proDayColleges.count }
-            complete = reserved > 0
-            requirement = reserved > 0
-                ? "\(reserved) school\(reserved == 1 ? "" : "s") reserved \u{2014} send the department out from the Pro Days tab."
+            requirement = row.isSatisfied
+                ? "\(row.counter) reserved \u{2014} send the department out from the Pro Days tab."
                 : "Reserve at least one school for the department."
             skipCost = "Every pro-day number you get is the broadcast's \u{2014} no decimals, no reports."
         case .workouts:
-            complete = career.workoutsUsed > 0
-            requirement = "Work at least one prospect out privately."
+            requirement = row.isSatisfied
+                ? "\(row.counter) run."
+                : "Work at least one prospect out privately \u{2014} \(row.counter)."
             skipCost = "The highest-fidelity look in the game goes unspent."
         case .mockOne:
-            complete = false
             requirement = "Read where the league has your board."
             skipCost = "You will not see the consensus move before the visits."
         case .top30Visits:
-            complete = career.top30VisitsUsed > 0
-            requirement = "Host at least one prospect at the facility."
+            requirement = row.isSatisfied
+                ? "\(row.counter) hosted."
+                : "Host at least one prospect at the facility \u{2014} \(row.counter)."
             skipCost = "Medical and character files stay half-open on men you never brought in."
         case .mockTwo:
             // The only stage whose forward transition the calendar owns: `.ready`
             // is draft week. Reading it is still a real act, so it is recorded —
             // otherwise the last stage of the spring was a button that visibly
             // did nothing, forever, with no chip and no acknowledgement.
-            complete = finalMockRead
-            requirement = finalMockRead
+            requirement = row.isSatisfied
                 ? "Read. The room opens on the clock."
                 : "Read the last mock the league has printed."
             skipCost = "You walk into the room without the last read on the market."
         case .ready:
-            complete = true
             requirement = "The board is closed. Draft."
             skipCost = ""
         }
@@ -173,7 +170,7 @@ struct ScoutingStageGate {
         return ScoutingStageGate(
             step: step,
             action: action,
-            isComplete: complete,
+            isComplete: row.isSatisfied,
             requirement: requirement,
             skipCost: skipCost,
             isPhaseBlocked: blocked,
@@ -211,17 +208,12 @@ struct ScoutingHubHeader: View {
     /// Share of the class this club has filed a report on, computed by the hub.
     let scoutedPercent: Int
     let phaseLabel: String
-    let gate: ScoutingStageGate
     var onSelectTab: (ScoutingTab) -> Void
     var onFilterPosition: (ProspectPositionFilter) -> Void
-    /// Writes the next step. `nil` disables the primary button entirely.
-    var onAdvance: (DraftPrepStep) -> Void
-    var onSkip: (DraftPrepStep) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             metricsStrip
-            stageBanner
             DraftPrepCard(
                 career: career,
                 prospects: prospects,
@@ -258,10 +250,10 @@ struct ScoutingHubHeader: View {
                 .frame(width: 1, height: 14)
             metricItem(icon: "calendar", label: phaseLabel, color: .textSecondary)
             Spacer(minLength: 0)
-            Text("\(gate.step.order + 1)/\(DraftPrepStep.allCases.count)")
-                .font(.system(size: 10, weight: .heavy).monospacedDigit())
-                .foregroundStyle(Color.textTertiary)
-                .accessibilityLabel("Stage \(gate.step.order + 1) of \(DraftPrepStep.allCases.count)")
+            Text("\(career.prepStep.order + 1)/\(DraftPrepStep.allCases.count)")
+                .font(.system(size: DSType.Size.micro, weight: .heavy).monospacedDigit())
+                .foregroundStyle(Color.textTertiaryReadable)
+                .accessibilityLabel("Stage \(career.prepStep.order + 1) of \(DraftPrepStep.allCases.count)")
         }
         .frame(height: 28)
         .padding(.horizontal, 12)
@@ -280,112 +272,13 @@ struct ScoutingHubHeader: View {
         }
     }
 
-    // MARK: - Stage banner
-
-    private var stageBanner: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Image(systemName: "flag.checkered")
-                    .font(.caption)
-                    .foregroundStyle(Color.accentGold)
-                Text(gate.step.displayName.uppercased())
-                    .font(.caption.weight(.heavy))
-                    .foregroundStyle(Color.accentGold)
-                if gate.isComplete && gate.next != nil {
-                    Text("READY")
-                        .font(.system(size: 8, weight: .heavy))
-                        .foregroundStyle(Color.backgroundPrimary)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(Capsule().fill(Color.success))
-                }
-                Spacer(minLength: 0)
-            }
-
-            Text(gate.isPhaseBlocked ? gate.phaseBlockedReason : gate.requirement)
-                .font(.system(size: 11))
-                .foregroundStyle(Color.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            if gate.next != nil {
-                HStack(spacing: 8) {
-                    primaryButton
-                    skipButton
-                    Spacer(minLength: 0)
-                }
-            }
-        }
-        .padding(10)
-        .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(Color.accentGold.opacity(0.25), lineWidth: 1)
-        )
-    }
-
-    @ViewBuilder
-    private var primaryButton: some View {
-        switch gate.action {
-        case let .advance(next):
-            let enabled = gate.isComplete && !gate.isPhaseBlocked
-            Button {
-                onAdvance(next)
-            } label: {
-                stageButtonLabel("Advance \u{2014} \(next.displayName)", enabled: enabled)
-            }
-            .buttonStyle(.plain)
-            .disabled(!enabled)
-            .accessibilityHint(enabled ? gate.requirement : (gate.isPhaseBlocked ? gate.phaseBlockedReason : gate.requirement))
-        case let .open(tab, _):
-            Button {
-                onSelectTab(tab)
-            } label: {
-                stageButtonLabel("Open \(tab.label)", enabled: true)
-            }
-            .buttonStyle(.plain)
-        case .none:
-            EmptyView()
-        }
-    }
-
-    @ViewBuilder
-    private var skipButton: some View {
-        if let next = gate.next, gate.offersHeaderSkip {
-            Button {
-                onSkip(next)
-            } label: {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Skip this stage")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Color.textSecondary)
-                    Text(gate.skipCost)
-                        .font(.system(size: 9))
-                        .foregroundStyle(Color.textTertiary)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 8))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(Color.surfaceBorder, lineWidth: 1)
-                )
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Skip \(gate.step.displayName). \(gate.skipCost)")
-        }
-    }
-
-    private func stageButtonLabel(_ text: String, enabled: Bool) -> some View {
-        Text(text)
-            .font(.system(size: 12, weight: .bold))
-            .foregroundStyle(enabled ? Color.backgroundPrimary : Color.textTertiary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                enabled ? Color.accentGold : Color.backgroundTertiary,
-                in: RoundedRectangle(cornerRadius: 8)
-            )
-    }
+    // MARK: - Stage banner (deleted)
+    //
+    // The banner — stage name, requirement, Advance, Skip — lived here, i.e.
+    // inside the FIRST SECTION of a 350-row list. Everything it said is now in
+    // the hub's pinned chrome: the process bar draws the stage and its state,
+    // the explainer card draws what the stage buys, and `DraftPrepAdvanceBar`
+    // draws the transition where a transition belongs. Four copies of the same
+    // pipeline (banner, compact strip, prep-card summary, tab picker) collapsed
+    // into one.
 }

@@ -892,6 +892,7 @@ struct BigBoardView<Header: View>: View {
                         : nil,
                     isSelectedForCompare: isSelectedForCompare(prospect),
                     userTeamID: career.teamID,
+                    hidesPositionBadge: positionFilter != .all,
                     onGradeTap: { editingAssessmentProspect = prospect }
                 )
             }
@@ -1162,7 +1163,7 @@ struct BigBoardView<Header: View>: View {
                         .accessibilityLabel("Board order actions")
                     }
                     .padding(.horizontal, 16)
-                    .padding(.vertical, 6)
+                    .padding(.vertical, 4)
                     .background(Color.backgroundPrimary)
 
                     bigBoardAttributeTabPicker
@@ -1175,7 +1176,7 @@ struct BigBoardView<Header: View>: View {
                         bigBoardColumnHeaders
                             .padding(.leading, 8)
                             .padding(.trailing, 16)
-                            .padding(.vertical, 4)
+                            .padding(.vertical, 3)
                             .background(Color.backgroundPrimary)
 
                         Divider().overlay(Color.surfaceBorder)
@@ -1415,7 +1416,7 @@ struct BigBoardView<Header: View>: View {
                                 .fontWeight(.medium)
                         }
                         .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
+                        .padding(.vertical, 5)
                         .foregroundStyle(attributeTab == tab ? Color.backgroundPrimary : Color.textSecondary)
                         .background(
                             attributeTab == tab ? Color.accentBlue : Color.backgroundTertiary,
@@ -1433,7 +1434,7 @@ struct BigBoardView<Header: View>: View {
                 }
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 6)
+            .padding(.vertical, 4)
         }
         .background(Color.backgroundPrimary)
     }
@@ -1446,13 +1447,17 @@ struct BigBoardView<Header: View>: View {
             // Leading star-button column (44 pt): unlabelled, but in every row.
             Spacer().frame(width: 44)
 
-            // Rank
+            // Rank. The "/350" denominator that used to print under every one
+            // of these numbers is gone — same value on every row, at 6 pt.
             Text("#")
-                .frame(width: 28, alignment: .center)
+                .frame(width: 24, alignment: .center)
 
-            // POS
-            Text("POS")
-                .frame(width: 36, alignment: .center)
+            // POS — drawn only when the rows draw it, i.e. when the hub's
+            // position chips are NOT already scoping the board to one group.
+            if positionFilter == .all {
+                Text("POS")
+                    .frame(width: 36, alignment: .center)
+            }
 
             // Portrait column — unlabelled, but reserved so the header keeps
             // matching the row (30 pt `PersonFaceView` + 6 pt leading padding).
@@ -2609,32 +2614,41 @@ struct BigBoardRowView: View {
     /// The user's own club — the only team whose Top-30 visit tells him
     /// anything. `nil` outside a career (previews).
     var userTeamID: UUID? = nil
+    /// Drops the per-row position badge while the hub's position chips are
+    /// scoping the board to one group.
+    var hidesPositionBadge: Bool = false
     var onGradeTap: (() -> Void)? = nil
 
     private var isScouted: Bool { prospect.scoutedOverall != nil }
 
     var body: some View {
         HStack(spacing: 0) {
-            // Rank number with counter (#13) and manual move indicator
+            // Rank, and the movement badge when the user has hand-moved him.
+            //
+            // The "/350" denominator under every rank is gone: it was the same
+            // number on all 350 rows, printed at 6 pt — below the legibility
+            // floor — and it forced this column into a two-line stack that set
+            // the row's height. The board size belongs in the header, not on
+            // every row of it.
             VStack(spacing: 0) {
                 Text("\(rank)")
-                    .font(.caption.weight(.heavy).monospacedDigit())
+                    .font(.system(size: DSType.Size.caption, weight: .heavy).monospacedDigit())
                     .foregroundStyle(manualMoveRankColor)
                 if let orig = originalPosition, orig != rank {
                     let movedUp = rank < orig
-                    Text("\(movedUp ? "\u{2191}" : "\u{2193}") #\(orig)")
+                    Text("\(movedUp ? "\u{2191}" : "\u{2193}")\(orig)")
                         .font(.system(size: 8, weight: .semibold).monospacedDigit())
-                        .foregroundStyle(movedUp ? Color.success : Color.danger)
-                } else if totalCount > 0 {
-                    Text("/\(totalCount)")
-                        .font(.system(size: 6).monospacedDigit())
-                        .foregroundStyle(Color.textTertiary)
+                        .foregroundStyle(movedUp ? Color.success : Color.dangerText)
                 }
             }
-            .frame(width: 28, alignment: .center)
+            .frame(width: 24, alignment: .center)
 
-            // Position badge
-            boardPositionBadge
+            // Position badge — dropped while a position filter is on. The chips
+            // above the list already say "QB", and repeating it on every row of
+            // a QB-only board is 36 pt of column spent on a constant.
+            if !hidesPositionBadge {
+                boardPositionBadge
+            }
 
             // Portrait (30 pt — same height as the row's two text lines, so
             // board rows keep their current density).
@@ -2642,11 +2656,10 @@ struct BigBoardRowView: View {
                 .padding(.leading, 6)
 
             // Name column (compact)
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 4) {
                     Text(prospect.fullName)
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
+                        .font(.system(size: DSType.Size.body, weight: .semibold))
                         .foregroundStyle(Color.textPrimary)
                         .lineLimit(1)
 
@@ -2664,19 +2677,15 @@ struct BigBoardRowView: View {
                     }
 
                     UserGradeBadge(prospectID: prospect.id)
-
-                    // Value pick indicator (#14)
-                    if isValuePick {
-                        Text("Value")
-                            .font(.system(size: 7, weight: .bold))
-                            .foregroundStyle(Color.backgroundPrimary)
-                            .padding(.horizontal, 3)
-                            .padding(.vertical, 1)
-                            .background(Color.success, in: RoundedRectangle(cornerRadius: 2))
-                    }
                 }
 
-                // Compact sub-info icons
+                // Compact sub-info icons.
+                //
+                // Two chips left this line. The green "Value" badge duplicated
+                // the VAL column two inches to the right — same fact, two
+                // encodings, one of them a word — and the newspaper glyph said
+                // only "a combine mention exists", which the CMB badge's own
+                // performance tint already carries.
                 HStack(spacing: 4) {
                     // Prep state: reports filed / room taken / numbers measured.
                     // Three fixed slots, dimmed when empty — the icons used to
@@ -2696,17 +2705,12 @@ struct BigBoardRowView: View {
                     }
                     // Is he even in this draft? (S11)
                     ProspectDeclarationChip(prospect: prospect)
-                    if let mention = prospect.combineMediaMention, !mention.isEmpty {
-                        Image(systemName: "newspaper.fill")
-                            .font(.system(size: 7))
-                            .foregroundStyle(boardMediaColor(for: prospect))
-                    }
 
                     // #6: Current starter comparison
                     if let comparison = starterComparison {
                         Text(comparison)
                             .font(.system(size: 7, weight: .semibold))
-                            .foregroundStyle(comparison.hasPrefix("+") ? Color.success : comparison.contains("Depth") ? Color.danger : Color.textTertiary)
+                            .foregroundStyle(comparison.hasPrefix("+") ? Color.success : comparison.contains("Depth") ? Color.dangerText : Color.textTertiaryReadable)
                     }
                 }
             }
@@ -2758,7 +2762,10 @@ struct BigBoardRowView: View {
                 .font(.system(size: 10))
                 .frame(width: 22)
         }
-        .padding(.vertical, 4)
+        // 4 → 2. With the rank column back to one line, the 30 pt portrait is
+        // the row's height floor, so this is 4 pt off every row of a 350-row
+        // list — roughly one extra prospect per screen on its own.
+        .padding(.vertical, 2)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityDescription)
     }
@@ -3234,7 +3241,11 @@ struct BigBoardRowView: View {
         let overall = prospect.overallGradeDisplay
         let mark = prospect.isMarked ? ", marked \(prospect.userMark.label)" : ""
         let value = valueRead.flatMap { $0.isMeaningful ? ", \($0.label)" : nil } ?? ""
-        return "Rank \(rank), \(prospect.fullName), \(prospect.position.rawValue), \(prospect.college), overall \(overall)\(mark)\(value)"
+        // `totalCount` is spoken here rather than printed on the row: VoiceOver
+        // has no column headers to fall back on, so "rank 12 of 350" is the one
+        // place the denominator still earns its keep.
+        let of = totalCount > 0 ? " of \(totalCount)" : ""
+        return "Rank \(rank)\(of), \(prospect.fullName), \(prospect.position.rawValue), \(prospect.college), overall \(overall)\(mark)\(value)"
     }
 
     /// Combine performance color based on physical attributes and drill results (#7)
@@ -3248,14 +3259,10 @@ struct BigBoardRowView: View {
         return Color.danger                           // Weak combine
     }
 
-    private func boardMediaColor(for prospect: CollegeProspect) -> Color {
-        guard let mention = prospect.combineMediaMention else { return Color.textTertiary }
-        if mention.contains("Standout") { return Color.success }
-        if mention.contains("Riser") { return Color.accentGold }
-        if mention.contains("Faller") { return Color.danger }
-        if mention.contains("Surprise") { return Color.accentBlue }
-        return Color.textSecondary
-    }
+    // `boardMediaColor` deleted with the newspaper glyph it tinted. The glyph
+    // said "a combine mention exists" and nothing else; the mention's direction
+    // is already on the row twice — as the CMB badge's performance tint and as
+    // the stock-trajectory arrow inside the OVR cell.
 }
 
 // MARK: - #9: Big Board Sort Enum

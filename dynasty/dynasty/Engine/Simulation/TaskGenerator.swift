@@ -6,7 +6,12 @@ import Foundation
 struct GameTask: Identifiable, Codable, Equatable {
     let id: UUID
     let phase: SeasonPhase
-    let title: String
+    /// Mutable so a live counter can be re-stamped in place ("… (12/60
+    /// interviews)"). The list is only rebuilt on a PHASE change, so a title
+    /// frozen at generation time meant the draft-prep counters in the left bar
+    /// stopped moving the moment the user did any work. `matchKey` strips the
+    /// suffix, so nothing that keys off a task is affected.
+    var title: String
     let description: String
     let icon: String          // SF Symbol name
     let destination: TaskDestination
@@ -248,8 +253,9 @@ enum TaskGenerator {
         ownerSatisfaction: Int = 50,
         isDraftComplete: Bool = false,
         interviewsDone: Int = 0,
-        interviewsMax: Int = 60,
-        allScoutsAssignedToProDays: Bool = false
+        interviewsMax: Int = DraftPrepProgress.interviewSlots,
+        allScoutsAssignedToProDays: Bool = false,
+        prepProgress: DraftPrepProgress? = nil
     ) -> [GameTask] {
         let phaseTasks: [GameTask]
         switch phase {
@@ -265,11 +271,18 @@ enum TaskGenerator {
                 playerIsHC: career.role == .gmAndHeadCoach
             )
         case .combine:
-            phaseTasks = combineTasks(interviewsDone: interviewsDone, interviewsMax: interviewsMax)
+            phaseTasks = combineTasks(
+                interviewsDone: interviewsDone,
+                interviewsMax: interviewsMax,
+                prepProgress: prepProgress
+            )
         case .freeAgency:
             phaseTasks = freeAgencyTasks(hasExpiringContracts: hasExpiringContracts)
         case .proDays:
-            phaseTasks = proDaysTasks(allScoutsAssigned: allScoutsAssignedToProDays)
+            phaseTasks = proDaysTasks(
+                allScoutsAssigned: allScoutsAssignedToProDays,
+                prepProgress: prepProgress
+            )
         case .reviewRoster:
             phaseTasks = reviewRosterTasks()
         case .draft:
@@ -487,28 +500,77 @@ enum TaskGenerator {
         return tasks
     }
 
-    private static func combineTasks(interviewsDone: Int = 0, interviewsMax: Int = 60) -> [GameTask] {
-        let interviewTitle = interviewsDone > 0
-            ? "Conduct prospect interviews (\(interviewsDone)/\(interviewsMax) done)"
-            : "Conduct prospect interviews"
-        return [
-            // Step 1: REQUIRED — must complete before step 2 unlocks
+    /// Decorates a ``DraftPrepStep``'s task with its live counter and completes
+    /// it from ``DraftPrepProgress`` — the one authority on whether the stage's
+    /// action has actually been performed (#104).
+    ///
+    /// The title always starts with `step.requiredTaskKey`, so `GameTask
+    /// .matchKey` (which strips the ` (…)` suffix) keeps matching the stage
+    /// table no matter what counter is appended.
+    private static func stageTask(
+        _ step: DraftPrepStep,
+        description: String,
+        icon: String,
+        destination: TaskDestination,
+        isRequired: Bool,
+        progress: DraftPrepProgress?,
+        fallbackCounter: String? = nil
+    ) -> GameTask {
+        let key = step.requiredTaskKey ?? step.displayName
+        let row = progress?[step]
+        let counter: String? = {
+            if let row, row.isCounted, row.done > 0 { return "\(row.done)/\(row.total) \(row.unit)" }
+            return progress == nil ? fallbackCounter : nil
+        }()
+        return GameTask(
+            phase: step.phase,
+            title: counter.map { "\(key) (\($0))" } ?? key,
+            description: description,
+            icon: icon,
+            destination: destination,
+            isRequired: isRequired,
+            status: (row?.isSatisfied ?? false) ? .done : .todo
+        )
+    }
+
+    private static func combineTasks(
+        interviewsDone: Int = 0,
+        interviewsMax: Int = DraftPrepProgress.interviewSlots,
+        prepProgress: DraftPrepProgress? = nil
+    ) -> [GameTask] {
+        [
+            // The combine trip. **Optional, deliberately (#104/B2.)**
+            //
+            // It was REQUIRED, and it is the one prep action the club can be
+            // priced out of: the trip is bought out of the same scouting pot the
+            // department's salaries have already drawn on, so a club that filled
+            // all eight scout jobs could not afford the flight — and the red
+            // "Required" chip therefore stayed on the timeline forever, with no
+            // action anywhere in the app able to clear it.
+            //
+            // It also should never have been required. The combine is a league
+            // event on a fixed date (`WeekAdvancer.ensureCombineRun`): sending
+            // your own people buys PRECISION, not access, which is exactly why
+            // "Review Combine results" below was de-gated from it. A GM who
+            // watches it on television has a complete, if rounded, results sheet
+            // and a perfectly playable spring.
             GameTask(
                 phase: .combine,
                 title: "Send scouts to Combine",
-                description: "Set scout focus and deploy your scouting staff to evaluate prospects.",
+                description: "Buy exact times and filed reports in Indianapolis. Skip it and you read the same numbers off the broadcast, rounded.",
                 icon: "binoculars.fill",
                 destination: .scouting,
-                isRequired: true
+                isRequired: false
             ),
-            // Step 2: REQUIRED — unlocks after step 1, blocks step 3
-            GameTask(
-                phase: .combine,
-                title: "Review Combine results",
+            // Stage 1: combineReview — REQUIRED. Satisfied by opening the tab on
+            // a class that has numbers.
+            stageTask(
+                .combineReview,
                 description: "Study 40-yard times, bench press, and drill results. Check media reactions.",
                 icon: "chart.bar.fill",
                 destination: .scouting,
-                isRequired: true
+                isRequired: true,
+                progress: prepProgress
             ),
             // Optional: Update board between reviews
             GameTask(
@@ -519,28 +581,19 @@ enum TaskGenerator {
                 destination: .bigBoard,
                 isRequired: false
             ),
-            // Stage: filmStudy (#103). The TAPE half of the evaluation ladder,
-            // funded by the existing evaluation-slot economy — no new currency.
-            // Optional until Wave A ships the stage screen and its skip button;
-            // a required task with no surface to satisfy it is a dead career.
-            GameTask(
-                phase: .combine,
-                title: DraftPrepStep.filmStudy.requiredTaskKey ?? "Order film study on your board",
-                description: "Put the scouts on tape for the men at the top of your board. Reports cost evaluation slots.",
-                icon: "film.stack",
-                destination: .filmStudy,
-                isRequired: false
-            ),
-            // Step 3: REQUIRED — unlocks after step 2
-            GameTask(
-                phase: .combine,
-                title: interviewTitle,
+            // Stage 2: interviews — REQUIRED. **Now ahead of film study** (#104):
+            // the widest, cheapest net comes first, and tape is ordered on the
+            // men the room actually liked.
+            stageTask(
+                .interviews,
                 description: "Select and interview up to \(interviewsMax) prospects. Reveals personality, football IQ, and character.",
                 icon: "bubble.left.and.bubble.right.fill",
                 destination: .scouting,
-                isRequired: true
+                isRequired: true,
+                progress: prepProgress,
+                fallbackCounter: interviewsDone > 0 ? "\(interviewsDone)/\(interviewsMax) interviews" : nil
             ),
-            // Step 4: REQUIRED — unlocks after interviews conducted
+            // REQUIRED — unlocks once interviews have been conducted.
             GameTask(
                 phase: .combine,
                 title: "Review interview report",
@@ -548,6 +601,22 @@ enum TaskGenerator {
                 icon: "doc.text.magnifyingglass",
                 destination: .interviewReport,
                 isRequired: true
+            ),
+            // Stage 3: filmStudy. The TAPE half of the evaluation ladder, funded
+            // by the existing evaluation-slot economy — no new currency.
+            //
+            // Stays OPTIONAL: the stage spends money, and a club whose scouting
+            // pot is gone must still be able to advance its offseason. It is
+            // completable now (it never was — the shell's completion switch had
+            // no case for it at all), because `DraftPrepProgress` satisfies it
+            // at `filmStudyThreshold` reports filed.
+            stageTask(
+                .filmStudy,
+                description: "Put the scouts on tape for the men at the top of your board. \(DraftPrepProgress.filmStudyThreshold) reports is a worked stage; each one costs an evaluation slot.",
+                icon: "film.stack",
+                destination: .filmStudy,
+                isRequired: false,
+                progress: prepProgress
             ),
         ]
     }
@@ -659,20 +728,27 @@ enum TaskGenerator {
     /// The new stage rows ship optional and Waves A/B promote them as their
     /// screens (and their skip buttons) land: a required task the user has no
     /// surface to satisfy would make the phase un-advanceable.
-    private static func proDaysTasks(allScoutsAssigned: Bool = false) -> [GameTask] {
+    private static func proDaysTasks(
+        allScoutsAssigned: Bool = false,
+        prepProgress: DraftPrepProgress? = nil
+    ) -> [GameTask] {
         [
             // Stage: proDayFocus. Assigning a school reserves a focus slot;
             // nothing runs until the stage's advance button sends the
             // department out (that single execution path is Wave B).
-            GameTask(
-                phase: .proDays,
-                title: DraftPrepStep.proDayFocus.requiredTaskKey ?? "Choose pro-day schools",
+            //
+            // `allScoutsAssigned` is the pre-#104 fallback for callers that have
+            // no progress to hand; when progress is present it is the authority,
+            // and it counts RESERVATIONS (`scout.proDayColleges`) rather than
+            // executions, so the task ticks the moment the user books a school.
+            stageTask(
+                .proDayFocus,
                 description: "Every school holds a pro day and the numbers are public. Pick the ones worth the trip \u{2014} your staff buys exact times, a filed report and a closer look there.",
                 icon: "figure.run",
                 destination: .proDayTour,
                 isRequired: true,
-                status: allScoutsAssigned ? .done : .todo
-            ),
+                progress: prepProgress
+            ).completed(if: prepProgress == nil && allScoutsAssigned),
             GameTask(
                 phase: .proDays,
                 title: "Review Pro Day results",
@@ -682,41 +758,41 @@ enum TaskGenerator {
                 isRequired: true
             ),
             // Stage: workouts.
-            GameTask(
-                phase: .proDays,
-                title: DraftPrepStep.workouts.requiredTaskKey ?? "Invite prospects to work out",
+            stageTask(
+                .workouts,
                 description: "Invite top prospects for private workouts with your coaching staff.",
                 icon: "dumbbell.fill",
                 destination: .workouts,
-                isRequired: false
+                isRequired: false,
+                progress: prepProgress
             ),
             // Stage: mockOne — the post-tour mock, read as a league event.
-            GameTask(
-                phase: .proDays,
-                title: DraftPrepStep.mockOne.requiredTaskKey ?? "Read the mock",
+            stageTask(
+                .mockOne,
                 description: "The first mock since the pro-day circuit. See where the league has your board \u{2014} and where it disagrees with you.",
                 icon: "doc.text",
                 destination: .mockDraft,
-                isRequired: false
+                isRequired: false,
+                progress: prepProgress
             ),
             // Stage: top30Visits — facility visits, the last instrument before
             // the draft.
-            GameTask(
-                phase: .proDays,
-                title: DraftPrepStep.top30Visits.requiredTaskKey ?? "Host Top-30 visits",
+            stageTask(
+                .top30Visits,
                 description: "Bring prospects to the facility. Thirty visits, and the rest of the league is watching who walks in.",
                 icon: "building.2.fill",
                 destination: .top30Visits,
-                isRequired: false
+                isRequired: false,
+                progress: prepProgress
             ),
             // Stage: mockTwo — the last board event before the draft.
-            GameTask(
-                phase: .proDays,
-                title: DraftPrepStep.mockTwo.requiredTaskKey ?? "Read the final mock",
+            stageTask(
+                .mockTwo,
                 description: "The last mock before the draft. Compare it against Mock 1.0 and against your own board.",
                 icon: "doc.text.fill",
                 destination: .mockDraft,
-                isRequired: false
+                isRequired: false,
+                progress: prepProgress
             ),
             GameTask(
                 phase: .proDays,
@@ -1154,15 +1230,24 @@ enum TaskGenerator {
         incompleteRequiredCount(in: tasks) == 0
     }
 
-    /// The combine's four required steps, in the order they unlock.
+    /// The combine's required steps, in the order they unlock. Each one is
+    /// LOCKED until its predecessor is `.done`.
     ///
     /// Declared once here because three separate screens used to carry their own
     /// copy of this array (`TimelineTasksPanel.isTaskLocked`,
     /// `CareerDashboardView.isHeroTaskLocked`, and the shell's completion pass),
     /// and each compared against `task.title` — which the generator is free to
     /// decorate with a progress counter. Compare against `GameTask.matchKey`.
+    ///
+    /// **"Send scouts to Combine" is no longer the head of this chain (#104).**
+    /// It used to be, and because the combine trip is bought out of a scouting
+    /// pot the department's salaries have usually already emptied, a club that
+    /// could not afford the flight had the ENTIRE combine phase locked behind a
+    /// purchase it could never make: results unreviewable, interviews
+    /// unreachable, the report unreadable, and a red "Required" chip with no
+    /// action anywhere in the app able to clear it. The trip is optional
+    /// precision (`combineTasks`), so it gates nothing.
     static let combineChain: [String] = [
-        "Send scouts to Combine",
         "Review Combine results",
         "Conduct prospect interviews",
         "Review interview report",
@@ -1194,5 +1279,15 @@ extension GameTask {
     var matchKey: String {
         guard let paren = title.range(of: " (") else { return title }
         return String(title[title.startIndex..<paren.lowerBound])
+    }
+
+    /// Returns this task marked `.done` when `condition` holds, unchanged
+    /// otherwise. Lets a task literal stay a literal while a caller-supplied
+    /// fallback predicate still completes it.
+    func completed(if condition: Bool) -> GameTask {
+        guard condition, status != .done else { return self }
+        var copy = self
+        copy.status = .done
+        return copy
     }
 }
