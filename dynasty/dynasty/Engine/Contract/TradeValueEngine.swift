@@ -1059,7 +1059,11 @@ enum TradeValueEngine {
         allPicks: [DraftPick],
         currentSeason: Int,
         contracts: [Contract] = [],
-        week: Int = 0
+        week: Int = 0,
+        /// The counter this GM already has on the table, if any — the same
+        /// argument `respond` takes, and passed for the same reason: he signs
+        /// what he asked for, so the preview has to say so too (G7).
+        standingCounter: TradeProposal? = nil
     ) -> PartnerVerdict {
         let view = marketView(
             team: aiTeam, allPlayers: allPlayers, season: currentSeason, week: week
@@ -1068,6 +1072,9 @@ enum TradeValueEngine {
             proposal: proposal, view: view, allPlayers: allPlayers, contracts: contracts
         ) != nil {
             return .hangUp
+        }
+        if let standingCounter, sameAssets(proposal, standingCounter) {
+            return .likeIt
         }
 
         let (gives, gets) = aiPerspectiveValues(
@@ -1161,7 +1168,16 @@ enum TradeValueEngine {
         /// go on (`concessionTarget`). Accept, insult and hard-blocker paths are
         /// round-blind on purpose — preview ≡ outcome (G7) is the verdict
         /// matching the outcome, and `partnerVerdict` has no round to pass.
-        round: Int = 1
+        round: Int = 1,
+        /// The counter this GM already has on the table in this conversation
+        /// (`TradeNegotiationThread.pendingCounter`), if any.
+        ///
+        /// Task #150: a man signs what he asked for. Re-pricing his own standing
+        /// demand is what let an UNCHANGED, fully complying package come back
+        /// with a HIGHER ask — his week-to-week asking noise moves, and the
+        /// package-decay ladder re-ranks the assets he himself added, so the
+        /// deal he authored no longer cleared the bar he authored it against.
+        standingCounter: TradeProposal? = nil
     ) -> AIResponse {
         let view = marketView(
             team: aiTeam, allPlayers: allPlayers, season: currentSeason, week: week
@@ -1174,6 +1190,11 @@ enum TradeValueEngine {
             enforceTalkLock: rememberLowballs
         ) {
             return .rejected(reason: blocker)
+        }
+
+        // Compliance beats arithmetic: the package he demanded IS a deal.
+        if let standingCounter, sameAssets(proposal, standingCounter) {
+            return .accepted
         }
 
         let (gives, gets) = aiPerspectiveValues(
@@ -1192,7 +1213,21 @@ enum TradeValueEngine {
         }
 
         if ratio < view.persona.insultCutoff {
-            if rememberLowballs {
+            // #151: WHY he is hanging up decides what he says. An offer can fall
+            // under the insult line from either direction — the usual lowball,
+            // or a package so bloated that the decay ladder and the roster-spot
+            // charge eat it (sixteen bodies for one man). Reading the raw chart
+            // gap tells the two apart, and it must, because "his ask is far
+            // above what is on the table" is simply false when the user just
+            // pushed thirty times the value across the desk.
+            let raw = proposalValues(
+                proposal: proposal, allPlayers: allPlayers, allPicks: allPicks,
+                currentSeason: currentSeason
+            )
+            let isOverpay = isSuspiciousOverpay(proposal: proposal, raw: raw)
+            if rememberLowballs, !isOverpay {
+                // An overpay is not a lowball. Scarring the relationship for it
+                // would freeze a GM out over an offer that was too GENEROUS.
                 let strikes = TradeTalkRegistry.addStrike(
                     season: currentSeason, teamID: aiTeam.id
                 )
@@ -1203,7 +1238,9 @@ enum TradeValueEngine {
                     return .rejected(reason: "\(view.abbreviation) hang up again — and \(view.persona.name) says the price just went up.")
                 }
             }
-            return .rejected(reason: insultReason(view: view))
+            return .rejected(reason: isOverpay
+                ? overpayReason(view: view)
+                : insultReason(view: view))
         }
 
         // Between the insult line and the accept bar → counter-offer.
@@ -1219,6 +1256,56 @@ enum TradeValueEngine {
             return .countered(counter.proposal, message: counter.message)
         }
         return .rejected(reason: "\(view.abbreviation) want more than you can offer right now.")
+    }
+
+    /// True when a package that failed the value test failed it by being TOO
+    /// BIG rather than too small (#151).
+    ///
+    /// Two tells, either one is enough — but BOTH require the raw gap to run the
+    /// proposer's way, because the whole point is telling an overpay from a
+    /// lowball and four spare parts for a star is a lowball with a body count:
+    /// - the raw Jimmy Johnson gap runs his way by half again, which is the
+    ///   number every screen in the game quotes, or
+    /// - the deal hands the AI three more bodies than it sends back while still
+    ///   being worth at least as much, which is the shape (`rosterSpotPenalty`)
+    ///   that pushes a genuine overpay under the insult line in the first place.
+    static func isSuspiciousOverpay(
+        proposal: TradeProposal,
+        raw: (sendingValue: Int, receivingValue: Int)
+    ) -> Bool {
+        guard raw.sendingValue > raw.receivingValue else { return false }
+        let bodySurplus = proposal.sendingPlayers.count - proposal.receivingPlayers.count
+        if bodySurplus >= 3 { return true }
+        return raw.sendingValue >= Int(Double(raw.receivingValue) * 1.5)
+    }
+
+    /// Brush-off for a package that is too GENEROUS to be believed — an
+    /// overpay, not a lowball. A front office that is handed far more than it
+    /// asked for does not celebrate; it wonders what it is being handed, and
+    /// counts the lockers it would have to empty to take delivery.
+    private static func overpayReason(view: GMMarketView) -> String {
+        switch view.persona.archetype {
+        case .oldSchool:
+            return "\(view.abbreviation) hang up — \(view.persona.name) says that's far more than he asked for, and a pile that size is somebody else's problem, not a bargain."
+        case .balanced:
+            return "\(view.abbreviation) hang up — it's well past their asking price, and \(view.persona.name) has nowhere to put that many bodies."
+        case .analytics:
+            return "\(view.abbreviation) hang up — \(view.persona.name) says a package that far over the ask is a red flag: he'd be cutting most of it inside a week."
+        case .aggressive:
+            return "\(view.abbreviation) hang up — \(view.persona.name) doesn't want your roster, he wants the one piece that helps him."
+        }
+    }
+
+    /// True when two proposals move exactly the same assets between exactly the
+    /// same clubs. Order-blind (a counter rebuilds its arrays) and `id`-blind (a
+    /// re-sent package is a new `TradeProposal` value).
+    static func sameAssets(_ lhs: TradeProposal, _ rhs: TradeProposal) -> Bool {
+        lhs.offeringTeamID == rhs.offeringTeamID
+            && lhs.receivingTeamID == rhs.receivingTeamID
+            && Set(lhs.sendingPlayers) == Set(rhs.sendingPlayers)
+            && Set(lhs.receivingPlayers) == Set(rhs.receivingPlayers)
+            && Set(lhs.sendingPicks) == Set(rhs.sendingPicks)
+            && Set(lhs.receivingPicks) == Set(rhs.receivingPicks)
     }
 
     /// Persona-flavoured brush-off for an offer below the insult line.
@@ -1333,6 +1420,24 @@ enum TradeValueEngine {
     /// One counter aimed at `target`:
     /// 1) ask for one more of the user's picks, else
     /// 2) pull the smallest AI asset out of the deal.
+    ///
+    /// TASK #150 — every candidate is re-priced as a WHOLE PACKAGE before it is
+    /// offered, never as "the gap, minus this asset's sticker price".
+    ///
+    /// The old arithmetic was `deficit = gives × target − gets`, satisfied by the
+    /// first spare pick whose standalone `pickValue` covered it. But this GM does
+    /// not value a side linearly: `sideValue` sorts the assets and taxes every
+    /// one after the best (`packageDecay`), and `rosterSpotPenalty` charges him
+    /// for each extra body. So the pick he asked for arrived worth less than its
+    /// sticker — and it pushed every asset already in the package one rung
+    /// further down the ladder. The user complied to the letter, the re-priced
+    /// package still missed the bar, and the GM countered AGAIN with a bigger
+    /// ask: 435 points became 473 for handing him exactly what he demanded. A
+    /// negotiation that hardens when you agree with it is not a negotiation.
+    ///
+    /// Re-ranking the candidate package answers it exactly: whatever this
+    /// returns clears `target` in the same chair `respond` will judge it from, so
+    /// a complying reply is an acceptance and the ask can only walk downward.
     private static func counterOffer(
         proposal: TradeProposal,
         view: GMMarketView,
@@ -1343,8 +1448,43 @@ enum TradeValueEngine {
         allPlayers: [Player],
         allPicks: [DraftPick]
     ) -> (proposal: TradeProposal, message: String)? {
-        let deficit = Int(Double(gives) * target) - gets
-        guard deficit > 0 else { return nil }
+        guard gives > 0, Double(gets) < Double(gives) * target else { return nil }
+
+        let playerLookup = Dictionary(uniqueKeysWithValues: allPlayers.map { ($0.id, $0) })
+        let pickLookup   = Dictionary(uniqueKeysWithValues: allPicks.map   { ($0.id, $0) })
+
+        // Raw (undecayed) asset values for both sides of the table, from the AI's
+        // chair. The ladder is re-applied from scratch per candidate below — a
+        // package's worth is not the sum of its parts.
+        let givesPlayers = proposal.receivingPlayers.compactMap { playerLookup[$0] }
+        let givesPicks   = proposal.receivingPicks.compactMap   { pickLookup[$0] }
+        let getsPlayers  = proposal.sendingPlayers.compactMap   { playerLookup[$0] }
+        let getsPicks    = proposal.sendingPicks.compactMap     { pickLookup[$0] }
+
+        let getsRaw = getsPlayers.map { view.incomingPlayerValue($0) }
+            + getsPicks.map { view.pickValue($0) }
+
+        /// `GMMarketView.sideValue`'s ladder, applied to raw values already in hand.
+        func laddered(_ raw: [Double]) -> Double {
+            raw.sorted(by: >)
+                .enumerated()
+                .reduce(0.0) { total, entry in
+                    total + entry.element * max(0.20, 1.0 - view.persona.packageDecay * Double(entry.offset))
+                }
+        }
+        /// What the AI nets from an incoming side, roster spots charged.
+        func netGets(_ raw: [Double], incomingPlayers: Int, outgoingPlayers: Int) -> Double {
+            max(0, laddered(raw) - view.rosterSpotPenalty(
+                incomingPlayers: incomingPlayers, outgoingPlayers: outgoingPlayers
+            ))
+        }
+
+        let outgoingCount = givesPlayers.count
+        let incomingCount = getsPlayers.count
+        let currentGives = laddered(
+            givesPlayers.map { view.outgoingPlayerValue($0) } + givesPicks.map { view.pickValue($0) }
+        )
+        guard currentGives > 0 else { return nil }
 
         // Option 1: request an additional pick from the offering team. Priced in
         // the AI's currency (its chart lean decides how much a 2029 third is
@@ -1359,7 +1499,12 @@ enum TradeValueEngine {
             }
             .sorted { view.pickValue($0) < view.pickValue($1) }
 
-        if let addition = candidatePicks.first(where: { view.pickValue($0) >= Double(deficit) }) {
+        // Cheapest pick that carries the WHOLE re-ranked package over the target.
+        if let addition = candidatePicks.first(where: { candidate in
+            let raw = getsRaw + [view.pickValue(candidate)]
+            return netGets(raw, incomingPlayers: incomingCount, outgoingPlayers: outgoingCount)
+                >= currentGives * target
+        }) {
             var counter = proposal
             counter.sendingPicks.append(addition.id)
             let label = "\(addition.seasonYear) round \(addition.round) pick"
@@ -1370,32 +1515,36 @@ enum TradeValueEngine {
         }
 
         // Option 2: AI removes its smallest outgoing asset instead.
-        let playerLookup = Dictionary(uniqueKeysWithValues: allPlayers.map { ($0.id, $0) })
-        let pickLookup   = Dictionary(uniqueKeysWithValues: allPicks.map   { ($0.id, $0) })
-
-        var removables: [(id: UUID, isPlayer: Bool, value: Int, label: String)] = []
-        for id in proposal.receivingPlayers {
-            guard let player = playerLookup[id] else { continue }
-            removables.append((id, true, Int(view.outgoingPlayerValue(player)), player.fullName))
+        var removables: [(id: UUID, isPlayer: Bool, value: Double, label: String)] = []
+        for player in givesPlayers {
+            removables.append((player.id, true, view.outgoingPlayerValue(player), player.fullName))
         }
-        for id in proposal.receivingPicks {
-            guard let pick = pickLookup[id] else { continue }
+        for pick in givesPicks {
             removables.append((
-                id, false,
-                Int(view.pickValue(pick)),
+                pick.id, false,
+                view.pickValue(pick),
                 "their \(pick.seasonYear) round \(pick.round) pick"
             ))
         }
 
-        // The removal has to clear the same ratio the deficit was priced at, less
-        // the two points of headroom `target` carries — otherwise the two options
-        // would answer to different bars and the cheaper one would leak through.
-        let removalBar = target - 0.02
+        // Both options answer the SAME bar now that both are priced the same way
+        // — the old `target - 0.02` fudge existed only because the removal branch
+        // was estimating `gives - value` off a ladder it never re-ran, and a
+        // removal that merely reaches the accept bar would fail on re-submission
+        // the moment the noise moved a thousandth.
         let viable = removables
             .filter { candidate in
-                let newGives = gives - candidate.value
+                let remaining = removables
+                    .filter { $0.id != candidate.id }
+                    .map(\.value)
+                let newGives = laddered(remaining)
                 guard newGives > 0 else { return false }
-                return Double(gets) / Double(newGives) >= removalBar
+                let newGets = netGets(
+                    getsRaw,
+                    incomingPlayers: incomingCount,
+                    outgoingPlayers: candidate.isPlayer ? outgoingCount - 1 : outgoingCount
+                )
+                return newGets >= newGives * target
             }
             .sorted { $0.value < $1.value }
 
@@ -1540,6 +1689,38 @@ enum TradeValueEngine {
         }
         if receivingCount > maxRoster {
             errors.append("\(receiving.abbreviation) roster would exceed \(maxRoster) players.")
+        }
+
+        // Positional integrity — the rule the body count never was (task #151).
+        //
+        // A head count cannot see the shape of what left. Sixteen men can go out
+        // of a squad in one package and leave it "legal" on numbers while it no
+        // longer has a centre, a kicker or a second corner; and in the emptied
+        // offseason windows, where the floor is deliberately 28, a head count is
+        // barely a rule at all. `lastManReason` already refuses to let a GM sell
+        // his only body at a position, but it lives in `hardBlocker` and only
+        // ever looked at the AI's side — so the user could strip his OWN roster
+        // bare and nothing said a word. This is that rule, made symmetric, and
+        // applied to the whole package rather than one player at a time.
+        for (team, out, incoming) in [
+            (offering, sendingPlayers, receivingPlayers),
+            (receiving, receivingPlayers, sendingPlayers)
+        ] {
+            let outIDs = Set(out.map(\.id))
+            var afterByPosition: [Position: Int] = [:]
+            for player in allPlayers
+            where player.teamID == team.id && !player.isRetired && !outIDs.contains(player.id) {
+                afterByPosition[player.position, default: 0] += 1
+            }
+            for player in incoming where !player.isRetired {
+                afterByPosition[player.position, default: 0] += 1
+            }
+            let stripped = out
+                .map(\.position)
+                .filter { (starterSlots[$0] ?? 0) >= 1 && (afterByPosition[$0] ?? 0) == 0 }
+            for position in Set(stripped).sorted(by: { $0.rawValue < $1.rawValue }) {
+                errors.append("\(team.abbreviation) would be left without a single \(position.rawValue) — that squad can't line up.")
+            }
         }
 
         // Salary-cap check (skipped entirely in sandbox mode). Uses the same
@@ -2772,7 +2953,7 @@ enum TradeValueEngine {
     /// cap itself), for a reason that is not a rule anywhere.
     static let offseasonRosterCeiling = 90
 
-    /// Roster FLOOR the market validates against in an offseason window.
+    /// Roster FLOOR the market validates against in an EMPTIED offseason window.
     ///
     /// The mirror problem, and the one that actually bit: between the last game
     /// and free agency every expiring contract empties a locker, so AI rosters
@@ -2781,9 +2962,45 @@ enum TradeValueEngine {
     /// those windows exist for. There is no minimum roster rule in a real March.
     static let offseasonRosterFloor = 28
 
+    /// Roster floor once the league year has been RESTOCKED.
+    ///
+    /// Task #151: the 28 above was measured on the hollow windows (the last game
+    /// through free agency) and then applied to every non-regular-season phase —
+    /// seven months in which it is not a rule anybody could hit honestly. By the
+    /// pro days free agency has already refilled the average club toward the
+    /// mid-40s (`FreeAgencyEngine`'s own target is 46 = 53 − a draft class), and
+    /// from the draft on the class and the UDFA wave put everyone in the 80s. A
+    /// floor that cannot bind is not a floor, which is a large part of why a
+    /// package gutting a squad passed validation without a word. Once the lockers
+    /// are filling again the club has to stay a playable football team — the same
+    /// number the regular season asks for, and still well under the post-FA
+    /// roster it is measured against, so nothing that could sell before is
+    /// stopped from selling now.
+    static let restockedRosterFloor = 40
+
+    /// True for the offseason phases in which contracts have expired and rosters
+    /// legitimately run thin — everything from the final whistle up to and
+    /// including free agency itself, which is the window they refill in.
+    static func isHollowRosterPhase(_ phase: SeasonPhase) -> Bool {
+        switch phase {
+        case .proBowl, .superBowl, .coachingChanges, .reviewRoster, .combine, .freeAgency:
+            return true
+        default:
+            return false
+        }
+    }
+
     /// The bounds to validate against in this window.
     static func rosterBounds(for window: MarketWindow) -> (floor: Int, ceiling: Int) {
-        window.isInSeason ? (40, 75) : (offseasonRosterFloor, offseasonRosterCeiling)
+        switch window {
+        case .week, .deadline:
+            return (40, 75)
+        case .offseason(let phase):
+            return (
+                isHollowRosterPhase(phase) ? offseasonRosterFloor : restockedRosterFloor,
+                offseasonRosterCeiling
+            )
+        }
     }
 
     /// Whether a club has room for an AI-vs-AI acquisition, slack included.

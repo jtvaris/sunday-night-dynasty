@@ -8,6 +8,10 @@ struct PickSheetView: View {
     /// through this so a stray tap can't burn a pick instantly.
     @State private var pendingProspect: CollegeProspect? = nil
 
+    /// The slot the confirmation was raised for. The confirm belongs to THAT
+    /// turn — see `DraftDayCoordinator.selectProspect(_:forPickNumber:)`.
+    @State private var pendingPickNumber: Int? = nil
+
     // MARK: - Browsing the board (search + scope + depth)
 
     /// Which board the list is showing. The media's order is the default —
@@ -39,15 +43,32 @@ struct PickSheetView: View {
     private var showDraftConfirm: Binding<Bool> {
         Binding(
             get: { pendingProspect != nil },
-            set: { if !$0 { pendingProspect = nil } }
+            set: { if !$0 { clearPendingProspect() } }
         )
+    }
+
+    /// Raises the confirmation for one man and FREEZES the pick clock while it
+    /// is up (task #146). The clock used to run under this alert, so a user
+    /// reading the card could be overridden mid-decision — the auto-pick filed
+    /// somebody else and the confirm tap landed on a slot that was already gone.
+    private func askToDraft(_ prospect: CollegeProspect) {
+        pendingProspect = prospect
+        pendingPickNumber = coordinator.currentPick?.pickNumber
+        coordinator.setPickConfirmationOpen(true)
+    }
+
+    private func clearPendingProspect() {
+        pendingProspect = nil
+        pendingPickNumber = nil
+        coordinator.setPickConfirmationOpen(false)
     }
 
     /// Commits the confirmed pick.
     private func draftPendingProspect() {
         guard let prospect = pendingProspect else { return }
-        pendingProspect = nil
-        coordinator.selectProspect(prospect)
+        let pickNumber = pendingPickNumber
+        clearPendingProspect()
+        coordinator.selectProspect(prospect, forPickNumber: pickNumber)
         dismiss()
     }
 
@@ -175,10 +196,14 @@ struct PickSheetView: View {
                 presenting: pendingProspect
             ) { prospect in
                 Button("Draft \(prospect.lastName)") { draftPendingProspect() }
-                Button("Cancel", role: .cancel) { pendingProspect = nil }
+                Button("Cancel", role: .cancel) { clearPendingProspect() }
             } message: { prospect in
                 Text("\(prospect.position.rawValue) \(prospect.firstName) \(prospect.lastName) — \(ProspectFog.read(prospect).labelledText) · \(prospect.college)")
             }
+            // The hold is released here as well as on every exit path above: a
+            // sheet torn down while the alert is up (the clock was stopped by
+            // something else, the room advanced) must not leave it frozen.
+            .onDisappear { coordinator.setPickConfirmationOpen(false) }
             // Presented from here rather than from `DraftDayView` because this
             // sheet is already up when the user is on the clock, and one view
             // can only present one sheet at a time.
@@ -400,7 +425,7 @@ struct PickSheetView: View {
                 if isPickingCompare {
                     toggleCompare(prospect)
                 } else {
-                    pendingProspect = prospect
+                    askToDraft(prospect)
                 }
             } label: {
                 prospectRowContent(prospect)
@@ -622,7 +647,7 @@ struct PickSheetView: View {
 
     private func positionPick(_ prospect: CollegeProspect, position: Position) -> some View {
         Button {
-            pendingProspect = prospect
+            askToDraft(prospect)
         } label: {
             VStack(alignment: .leading, spacing: 2) {
                 Text(position.rawValue)

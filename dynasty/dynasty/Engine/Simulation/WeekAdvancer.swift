@@ -5629,17 +5629,33 @@ enum WeekAdvancer {
     /// 3 is worth re-reading in week 8, because the man on the other end has a
     /// deadline too.
     ///
-    /// Three outcomes per thread, checked in this order:
+    /// Four outcomes per thread, checked in this order:
     /// - WALK AWAY — the GM has stopped taking calls (the Wave 2 talk lock), or
     ///   the conversation has gone quiet for longer than his persona's patience.
     /// - SWEETEN — he re-prices the package one round further down his concession
     ///   curve (task #36), leaves a standing counter and mails a note.
-    /// - HOLD — most weeks. Nothing is written, so the thread rolls again next
-    ///   week.
+    /// - HOLD — he does not move the package, but he says so: a line in the
+    ///   transcript, and a warning once he is one week from walking away.
+    /// - (nothing) — only for a thread that is not his turn at all.
     ///
-    /// The one-move-per-thread-per-week cap is `lastActivityWeek < week`: a
-    /// conversation the user worked THIS week is the user's turn, and a GM who
-    /// has already moved this week is done until the next advance.
+    /// TASK #150b — the gate and the silence were both wrong.
+    ///
+    /// The cap was `lastActivityWeek < week`, and `week` here is the week being
+    /// PLAYED (`career.currentWeek` before the increment). So a package sent in
+    /// week 3 carried `lastActivityWeek == 3`, the pass that ran on that same
+    /// advance skipped it, and the earliest the GM could answer was the advance
+    /// AFTER the next one — one whole week of guaranteed silence before a
+    /// comeback roll that most weeks fails anyway (18-40 % base). Reproduced:
+    /// leave a round-3 thread open, advance, get nothing. `<=` makes the first
+    /// advance after the user's line his turn, which is what "he works the phones
+    /// between games" has to mean.
+    ///
+    /// And a GM who decides not to move now SAYS not moving. Silence is
+    /// indistinguishable from a dead thread — the exact defect task #39 set out
+    /// to fix, reintroduced by the `continue` on a failed roll and on a rejection.
+    /// A hold deliberately does NOT touch `lastActivityWeek`: that field is the
+    /// clock his patience runs on, so resetting it on a line that changed nothing
+    /// would mean a thread could never expire.
     ///
     /// In-season only, deliberately. The offseason market runs per PHASE, not per
     /// week (`runOffseasonTradeMarket` is handed a frozen `career.currentWeek`),
@@ -5656,7 +5672,7 @@ enum WeekAdvancer {
     ) -> Int {
         let stored = career.tradeThreads
         let hasMovable = stored.contains {
-            $0.status == .open && $0.season == season && $0.lastActivityWeek < week
+            $0.status == .open && $0.season == season && $0.lastActivityWeek <= week
         }
         guard hasMovable else { return 0 }
         guard TradeValueEngine.isTradeWindowOpen(
@@ -5678,7 +5694,7 @@ enum WeekAdvancer {
         for (index, thread) in stored.enumerated() {
             guard thread.status == .open,
                   thread.season == season,
-                  thread.lastActivityWeek < week else { continue }
+                  thread.lastActivityWeek <= week else { continue }
             // A thread is always written from the user's chair, so the AI is the
             // receiving side — the shape `TradeValueEngine.respond` assumes.
             guard let partner = teamsByID[thread.partnerTeamID],
@@ -5738,17 +5754,59 @@ enum WeekAdvancer {
                 continue
             }
 
-            // 2. Does he pick up the phone this week?
+            let silentWeeks = max(0, week - thread.lastActivityWeek)
+            // How many more weeks of silence this thread survives (1b above).
+            let weeksLeft = identity.patience - silentWeeks
+
+            /// Nothing changed hands — but he answers the phone anyway.
+            ///
+            /// `lastActivityWeek` deliberately stays put: it is the clock his
+            /// patience runs on (1b above), so a line that moved nothing must not
+            /// reset it, or a thread could never expire. The same sentence is
+            /// never repeated back to back either — a GM saying the identical
+            /// thing four weeks running is noise, not an answer, and the copy
+            /// changes by itself once he is one week from walking.
+            func hold(_ text: String) {
+                var line = text
+                if weeksLeft <= 1 {
+                    line += " He won't sit on it much longer — one more quiet week and he's moving on."
+                }
+                guard updated.messages.last?.text != line else { return }
+                updated.messages.append(TradeThreadMessage(
+                    sender: .gm, text: line, round: updated.round
+                ))
+                threads[index] = updated
+                moved += 1
+            }
+
+            // 2. The ball is in the USER's court: his own counter is on the
+            // table and unanswered. He does not re-price his own demand (that
+            // was the #150a ratchet); he waits, and says he is waiting.
+            if let pending = thread.pendingCounter,
+               TradeValueEngine.sameAssets(pending, thread.proposal) {
+                hold("\(identity.name) checked in — \(partner.abbreviation) are still where they left it, and the offer he made stands.")
+                continue
+            }
+
+            // 3. Does he pick up the phone with something NEW this week?
             guard Int.random(in: 1...100) <= comebackChance(
                 identity: identity,
-                silentWeeks: week - thread.lastActivityWeek,
+                silentWeeks: silentWeeks,
                 week: week
-            ) else { continue }
+            ) else {
+                hold("\(identity.name) called — nothing has changed on their end, and the package as it stands still isn't enough.")
+                continue
+            }
 
             // `rememberLowballs: false`: this is the AI's own move on a package
             // the user is not re-sending. A strike here would punish him for
             // sitting still, and could lock a GM out over a conversation the user
             // never touched.
+            //
+            // `week: thread.openedWeek` (task #150c): a conversation is priced at
+            // ONE asking mood for its whole life. Re-drawing `askNoise` every
+            // advance is what made an untouched package read "They like it" one
+            // week and "on the fence" the next.
             let response = TradeValueEngine.respond(
                 to: thread.proposal,
                 aiTeam: partner,
@@ -5756,7 +5814,7 @@ enum WeekAdvancer {
                 allPicks: activePicks,
                 currentSeason: season,
                 contracts: contracts,
-                week: week,
+                week: thread.openedWeek,
                 rememberLowballs: false,
                 round: thread.round + 1
             )
@@ -5772,8 +5830,8 @@ enum WeekAdvancer {
                 ))
 
             case .accepted:
-                // The week moved the market his way (needs, stance, the weekly
-                // asking noise) — the package on the table now clears his bar.
+                // The concession curve walked far enough down (task #36) that the
+                // package already on the table clears his bar.
                 updated.round += 1
                 updated.lastActivityWeek = week
                 updated.pendingCounter = thread.proposal
@@ -5784,9 +5842,10 @@ enum WeekAdvancer {
                     round: updated.round
                 ))
 
-            case .rejected:
-                // Nothing he can put together this week. The thread stays live
-                // and rolls again after the next game.
+            case .rejected(let reason):
+                // Nothing he can put together this week — which is still an
+                // answer, and the user gets to read it.
+                hold(reason)
                 continue
             }
 

@@ -1698,7 +1698,19 @@ enum GameSimulator {
         defensePlayers: [SimPlayer],
         into accumulator: inout [UUID: PlayerGameStats]
     ) {
-        let qb = offensePlayers.first { $0.position == .QB }
+        // #149: the passer and the kicker are the men the play-by-play actually
+        // featured, i.e. the BEST at the position — never `first`.
+        //
+        // `PlaySimulator.findQB` and `FieldUnit.offense` both say it out loud:
+        // "roster order is arbitrary". These arrays come from an unsorted
+        // SwiftData fetch (`Team.currentRoster()`), so `first { $0.position == .QB }`
+        // could be the third-stringer — and then every passing yard, touchdown
+        // and interception in the game landed on a man who never took a snap,
+        // while rushing/receiving/defense (credited from the sim's own named
+        // `keyOffensePlayerID` / `keyDefensePlayerID`) stayed correct. That is
+        // exactly the split seen in the postseason columns: QB GP 2 / 0 yards
+        // next to a full RB line.
+        let qb = startingPlayer(at: .QB, in: offensePlayers)
         let rbs = offensePlayers.filter { $0.position == .RB || $0.position == .FB }
         let receivers = offensePlayers.filter {
             $0.position == .WR || $0.position == .TE || $0.position == .RB
@@ -1710,7 +1722,7 @@ enum GameSimulator {
         let linebackers = defensePlayers.filter {
             $0.position == .MLB || $0.position == .OLB
         }
-        let kicker = offensePlayers.first { $0.position == .K }
+        let kicker = startingPlayer(at: .K, in: offensePlayers)
 
         // The sim names the exact target/carrier on most plays
         // (keyOffensePlayerID); crediting HIM keeps the box score aligned
@@ -1848,6 +1860,16 @@ enum GameSimulator {
                 break
             }
         }
+    }
+
+    /// The man the play-by-play treats as the starter at `position`: best
+    /// overall, exactly the rule `PlaySimulator.findQB` and `FieldUnit.offense`
+    /// apply when they decide who is on the field. Box-score credit for a
+    /// position the sim does not name per play (the passer, the kicker) has to
+    /// use the SAME rule, or the stat line and the play feed describe two
+    /// different players (#149).
+    static func startingPlayer(at position: Position, in players: [SimPlayer]) -> SimPlayer? {
+        players.filter { $0.position == position }.max { $0.overall < $1.overall }
     }
 
     /// Selects a player from the array with slight randomness so that touches

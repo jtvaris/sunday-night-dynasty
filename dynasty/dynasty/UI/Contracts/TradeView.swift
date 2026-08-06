@@ -883,8 +883,44 @@ struct TradeView: View {
         case .wantMore:
             return "\(opener) He wants a real piece added — a starter or early-round capital."
         case .hangUp:
-            return "\(opener) Not a conversation yet: his ask is far above what is on the table."
+            // #151: a hang-up has two directions and they need opposite words.
+            // The usual one is a lowball — his ask really is above the table. The
+            // other is an overpay so lopsided that the package decay and the
+            // roster-spot charge eat it: sixteen bodies for one man reads as an
+            // insult from the AI's chair while the user is watching himself push
+            // thirty times the chart value across the desk. Telling him his offer
+            // is too SMALL at that moment is simply a lie, so the branch is
+            // chosen by the sign of the gap the screen is already showing.
+            return "\(opener) \(hangUpDetail(partner: partner))"
         }
+    }
+
+    /// The second half of a hang-up line, chosen by which way the value gap runs.
+    private func hangUpDetail(partner: Team) -> String {
+        guard let myTeam = playerTeam else {
+            return "Not a conversation yet: his ask is far above what is on the table."
+        }
+        let proposal = TradeProposal(
+            offeringTeamID: myTeam.id,
+            receivingTeamID: partner.id,
+            sendingPlayers: Array(mySelectedPlayers),
+            receivingPlayers: Array(theirSelectedPlayers),
+            sendingPicks: Array(mySelectedPicks),
+            receivingPicks: Array(theirSelectedPicks)
+        )
+        let raw = TradeValueEngine.proposalValues(
+            proposal: proposal,
+            allPlayers: allPlayers,
+            allPicks: allPicks,
+            currentSeason: career.currentSeason
+        )
+        guard TradeValueEngine.isSuspiciousOverpay(proposal: proposal, raw: raw) else {
+            return "Not a conversation yet: his ask is far above what is on the table."
+        }
+        if mySelectedPlayers.count - theirSelectedPlayers.count >= 3 {
+            return "Not a conversation: that is far more than he asked for, and he has nowhere to put that many bodies."
+        }
+        return "Not a conversation: that is far more than he asked for, and a package that lopsided makes him wonder what he is missing."
     }
 
     /// Willingness preview derived from the same 5-step verdict the AI uses

@@ -131,30 +131,64 @@ struct DraftDayView: View {
             }
             .ignoresSafeArea()
         }
-        .sheet(isPresented: Binding(
-            get: { coord.mode == .userPick },
-            set: { _ in }
-        )) {
-            PickSheetView(coordinator: coord)
-                .interactiveDismissDisabled()
-        }
-        .sheet(isPresented: Binding(
-            get: { coord.pendingRoundRecap != nil },
-            set: { _ in }
-        )) {
-            if let recap = coord.pendingRoundRecap {
+        // ONE sheet for the whole room (task #153a). Three `.sheet` modifiers
+        // used to be stacked on this ZStack — the exact trap their own comments
+        // warned about — and two of them drove their presentation off a computed
+        // getter with a `set: { _ in }` no-op. SwiftUI writes
+        // `false` through that binding when it dismisses; a setter that throws
+        // the write away leaves the getter still saying `true`, so the sheet
+        // re-presents on the next body pass — and the clock republished
+        // `clockSeconds` once a second, guaranteeing one. That is why
+        // "Continue Draft" took three to eight taps to stick.
+        //
+        // Now: one `.sheet(item:)`, one priority order, and a setter that
+        // actually clears the state a system dismissal reports.
+        .sheet(item: Binding(
+            get: { activeModal(coord) },
+            set: { newValue in
+                guard newValue == nil else { return }
+                if coord.pendingRoundRecap != nil {
+                    coord.dismissRoundRecap()
+                } else if coord.isTradeUpBoardOpen {
+                    coord.closeTradeUpBoard()
+                }
+            }
+        )) { modal in
+            switch modal {
+            case .roundRecap(let recap):
                 RoundRecapSheet(coordinator: coord, recap: recap)
+            case .userPick:
+                PickSheetView(coordinator: coord)
+                    .interactiveDismissDisabled()
+            case .tradeUpBoard:
+                TradeUpBoardSheet(coordinator: coord)
             }
         }
-        // The move-up call sheet, presented from the war room / big board while
-        // an AI club is on the clock. Two `.sheet` modifiers on one view cannot
-        // both present, so the on-the-clock case is presented from INSIDE
-        // `PickSheetView` instead — same coordinator state, one sheet each.
-        .sheet(isPresented: Binding(
-            get: { coord.isTradeUpBoardOpen && coord.mode != .userPick },
-            set: { if !$0 { coord.closeTradeUpBoard() } }
-        )) {
-            TradeUpBoardSheet(coordinator: coord)
+    }
+
+    /// The one modal the room may raise, in priority order: a round recap the
+    /// user owes an answer to, then his own turn, then the move-up call sheet.
+    ///
+    /// The move-up sheet is presented from INSIDE `PickSheetView` when he is on
+    /// the clock (one view, one sheet), which is why it ranks last here.
+    private enum DraftModal: Identifiable {
+        case roundRecap(RoundRecapData)
+        case userPick
+        case tradeUpBoard
+
+        var id: String {
+            switch self {
+            case .roundRecap(let recap): return "roundRecap-\(recap.round)"
+            case .userPick:              return "userPick"
+            case .tradeUpBoard:          return "tradeUpBoard"
+            }
         }
+    }
+
+    private func activeModal(_ coord: DraftDayCoordinator) -> DraftModal? {
+        if let recap = coord.pendingRoundRecap { return .roundRecap(recap) }
+        if coord.mode == .userPick { return .userPick }
+        if coord.isTradeUpBoardOpen { return .tradeUpBoard }
+        return nil
     }
 }

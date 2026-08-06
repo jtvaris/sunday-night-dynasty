@@ -139,6 +139,10 @@ struct CareerDashboardView: View {
     /// the scouting hub.
     @State private var prepProgress: DraftPrepProgress?
     @State private var draftClassScoutedPercent: Int = 0
+    /// The draft-phase hero's live read of the board. Same cache contract as
+    /// `prepProgress` above: it walks the class and the pick order, so it is
+    /// built by `refreshDraftPrepCache()` rather than on every body pass.
+    @State private var draftHero: DraftHeroState?
 
     /// Tracks which Position-Grades letter is currently showing its explainer popover.
     /// Encoded as "<group>:S" or "<group>:D" (e.g. "QB:S" for QB starter grade).
@@ -4332,6 +4336,9 @@ struct CareerDashboardView: View {
     private func refreshDraftPrepCache() {
         prepProgress = buildPrepProgress()
         draftClassScoutedPercent = computeDraftClassScoutedPercent()
+        // Only while the room is open — outside the draft phase the card is not
+        // rendered and the walk would be pure cost.
+        draftHero = career.currentPhase == .draft ? buildDraftHeroState() : nil
     }
 
     /// The stage's work in button voice, plus the scouting-hub tab it lives on.
@@ -4435,14 +4442,83 @@ struct CareerDashboardView: View {
     // Every row it drew was a literal ("12 / 30 visits used", "8 colleges",
     // "+11%") and its CTA ignored the pro-day rations entirely.
 
+    /// The draft-phase hero.
+    ///
+    /// Every row on this card was a literal, and the worst of them named three
+    /// real NFL quarterbacks (task #147) — through and after a draft sitting at
+    /// pick #31 it read "Round 1 · Pick 14 / #14 (3 picks away) / Williams ·
+    /// Daniels · Maye". Real players must never ship in generated content.
+    ///
+    /// It now reads the live board off the same in-memory sources the Draft tile
+    /// and the scouting hub use: `WeekAdvancer.currentDraftPicks` for the order
+    /// and the user's own board (`UserDraftBoard`) for the targets. Everything
+    /// printed is a name, a position and a slot — public information; no grade,
+    /// no `trueOverall`. When there is no live board to read (a save that
+    /// reaches the phase before the order exists) the card says so instead of
+    /// inventing specifics.
     private var draftHeroCard: some View {
-        phaseCardBase(icon: "pencil.and.list.clipboard", accent: .draftStealGold) {
-            heroHeader("Draft · Round 1 · Pick 14")
-            heroStatRow("Your next pick", value: "#14 (3 picks away)")
-            heroStatRow("Top targets", value: "Williams · Daniels · Maye")
-            heroStatRow("Trade offers", value: "2 active")
+        let state = draftHero ?? buildDraftHeroState()
+        return phaseCardBase(icon: "pencil.and.list.clipboard", accent: .draftStealGold) {
+            heroHeader(state.header)
+            heroStatRow("Your next pick", value: state.nextPick)
+            if let targets = state.targets {
+                heroStatRow(state.targetsLabel, value: targets)
+            }
+            heroStatRow("Picks left tonight", value: state.picksRemaining)
             heroActionLink(title: "Enter Draft", destination: .draft)
         }
+    }
+
+    /// What the draft hero prints, built once per load (see `draftHero`).
+    struct DraftHeroState {
+        let header: String
+        let nextPick: String
+        let targetsLabel: String
+        let targets: String?
+        let picksRemaining: String
+    }
+
+    private func buildDraftHeroState() -> DraftHeroState {
+        let picks = WeekAdvancer.currentDraftPicks
+            .filter { $0.seasonYear == career.currentSeason }
+            .sorted { $0.pickNumber < $1.pickNumber }
+        let remaining = picks.filter { !$0.isComplete }
+        let onClock = remaining.first
+
+        let header: String = {
+            guard let onClock else {
+                return picks.isEmpty
+                    ? "Draft Day"
+                    : "Draft complete · \(picks.count) picks in"
+            }
+            return "Draft · Round \(onClock.round) · Pick \(onClock.pickNumber)"
+        }()
+
+        let userNext = remaining.first { $0.currentTeamID == career.teamID }
+        let userRemaining = remaining.filter { $0.currentTeamID == career.teamID }.count
+        let nextPick: String = {
+            guard let userNext else { return "No picks remaining" }
+            let away = remaining.filter { $0.pickNumber < userNext.pickNumber }.count
+            if away == 0 { return "#\(userNext.pickNumber) — you are on the clock" }
+            return "#\(userNext.pickNumber) (\(away == 1 ? "1 pick" : "\(away) picks") away)"
+        }()
+
+        // Men still on the board: `completePick` clears `isDeclaringForDraft` as
+        // each card goes in, so the declared set IS the live pool.
+        let available = WeekAdvancer.currentDraftClass.filter(\.isDeclaringForDraft)
+        let marked = DraftIntel.markedTargets(in: available)
+        let pool = marked.isEmpty ? UserDraftBoard.sorted(available) : marked
+        let targets = pool.prefix(3)
+            .map { "\($0.position.rawValue) \($0.lastName)" }
+            .joined(separator: " · ")
+
+        return DraftHeroState(
+            header: header,
+            nextPick: nextPick,
+            targetsLabel: marked.isEmpty ? "Top of your board" : "Your marked targets",
+            targets: targets.isEmpty ? nil : targets,
+            picksRemaining: userRemaining == 1 ? "1 of yours" : "\(userRemaining) of yours"
+        )
     }
 
     /// Next league year's room: the projected cap less what is actually

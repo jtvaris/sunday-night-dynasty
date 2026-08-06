@@ -65,6 +65,19 @@ struct TradeNegotiationView: View {
     @State private var scrollTarget: UUID?
     @State private var didLoad = false
 
+    /// The calendar slot this conversation is PRICED at (task #150c).
+    ///
+    /// `TradeValueEngine.askNoise` re-draws a GM's hidden asking mood every week,
+    /// by design — it stops the accept bar being solvable by arithmetic. Inside a
+    /// LIVE conversation that same re-draw made an untouched package read "They
+    /// like it" one week and "They're on the fence" the next, which reads as a
+    /// bug however deterministic it is: the user changed nothing and the answer
+    /// moved. Pinning every read in an open thread to the week it OPENED gives
+    /// the GM one mood for one negotiation, and the mood still differs between
+    /// GMs, between conversations and between league years. A fresh package (no
+    /// thread yet) prices at today, which is the same number.
+    private var pricingWeek: Int { thread?.openedWeek ?? career.currentWeek }
+
     // MARK: - Body
 
     var body: some View {
@@ -371,7 +384,8 @@ struct TradeNegotiationView: View {
                 allPicks: allPicks,
                 currentSeason: career.currentSeason,
                 contracts: allContracts,
-                week: career.currentWeek
+                week: pricingWeek,
+                standingCounter: thread?.pendingCounter
             )
         }
         let values = proposal.map {
@@ -660,11 +674,14 @@ struct TradeNegotiationView: View {
             allPicks: allPicks,
             currentSeason: career.currentSeason,
             contracts: allContracts,
-            week: career.currentWeek,
+            // Task #150c: one asking mood per conversation — see `pricingWeek`.
+            week: pricingWeek,
             // Task #36: the round the user's line just landed in drives the GM's
             // concession curve — his first counter holds near the opening ask,
             // every further one walks toward the bar he signs at.
-            round: updated.round
+            round: updated.round,
+            // Task #150a: if this IS the package he demanded, he signs it.
+            standingCounter: baseThread.pendingCounter
         )
 
         switch response {

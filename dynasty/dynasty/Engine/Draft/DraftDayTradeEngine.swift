@@ -72,6 +72,15 @@ enum DraftDayTradeEngine {
     /// the pick it buys — above this the "offer" is a gift and reads as a bug.
     static let offerValueCeiling = 1.45
 
+    /// How many of the falling men an AI club is allowed to be shopping for
+    /// (see `aiVsAiSwap`).
+    static let fallingWindow = 6
+
+    /// How far past his own ceiling a buyer will go when the only packages his
+    /// board can build overshoot the seller's ask. Draft-weekend move-ups are
+    /// paid in whole picks, not in chart points.
+    static let swapOvershootSlack = 1.12
+
     // MARK: - Assets
 
     /// One tradable thing on draft night. Players joined picks in Wave 4:
@@ -610,7 +619,16 @@ enum DraftDayTradeEngine {
         guard !onClock.isComplete, onClock.currentTeamID != userTeamID else { return nil }
         guard let seller = board.seat(onClock.currentTeamID) else { return nil }
 
-        // Who is falling? A prospect ranked comfortably ahead of this slot.
+        // Who is falling? The best few prospects ranked comfortably ahead of
+        // this slot — not just the single best.
+        //
+        // Reading only `falling.first` is why an entire 234-pick draft could go
+        // by without one AI-vs-AI swap (task #148a): the AI board and the media
+        // board are ordered differently, so the top of the *media* board tends
+        // to hold the same handful of men nobody's scorer rates all night. If no
+        // club behind needed that one position, every roll of the night died on
+        // the same line. A war room jumps the queue for whoever is falling that
+        // it wants, not for the board's #1 specifically.
         let falling = board.availableProspects
             .compactMap { prospect -> (prospect: CollegeProspect, rank: Int)? in
                 guard let rank = board.publicBoardRanks[prospect.id] else { return nil }
@@ -618,7 +636,8 @@ enum DraftDayTradeEngine {
                 return (prospect, rank)
             }
             .sorted { $0.rank < $1.rank }
-        guard let slider = falling.first else { return nil }
+            .prefix(fallingWindow)
+        guard !falling.isEmpty else { return nil }
 
         let candidates = partnerCandidates(
             after: onClock,
@@ -630,8 +649,10 @@ enum DraftDayTradeEngine {
         for candidate in candidates.shuffled() {
             guard candidate.teamID != onClock.currentTeamID,
                   let buyer = board.seat(candidate.teamID) else { continue }
-            // He has to actually want the man who is falling.
-            guard buyer.needs.severity(slider.prospect.position) >= 0.22 else { continue }
+            // He has to actually want one of the men who are falling.
+            guard let slider = falling.first(where: {
+                buyer.needs.severity($0.prospect.position) >= 0.22
+            }) else { continue }
             guard maxMoveUpPremium(buyer: buyer) >= 1.0 else { continue }
 
             guard let package = buildPayment(
@@ -646,9 +667,19 @@ enum DraftDayTradeEngine {
             // Seller's bar…
             let offered = packageValue(package, seat: seller, incoming: true)
             guard offered >= seller.pickValue(onClock) * moveUpPremium(seller: seller) else { continue }
-            // …and the buyer's ceiling.
+            // …and the buyer's ceiling, plus the slack a whole-pick package
+            // forces on him. Both bars are ratios against the same chart value,
+            // so a seller asking 1.07× and a balanced buyer capped at 1.06×
+            // could never trade at ALL — and a package is assembled out of whole
+            // picks, so even a feasible pair has to overshoot the ask to clear
+            // it. Pricing the buyer to the point closed a window the sport keeps
+            // open: the club moving up in April is the one that overpays.
             let cost = packageValue(package, seat: buyer, incoming: false)
-            guard cost <= buyer.pickValue(onClock) * maxMoveUpPremium(buyer: buyer) else { continue }
+            let ceiling = max(
+                maxMoveUpPremium(buyer: buyer),
+                moveUpPremium(seller: seller) * swapOvershootSlack
+            )
+            guard cost <= buyer.pickValue(onClock) * ceiling else { continue }
 
             let buyerValue = publicValue(package, currentSeason: board.currentSeason)
             let sellerValue = TradeValueEngine.pickTradeValue(pick: onClock, currentSeason: board.currentSeason)
@@ -756,14 +787,27 @@ enum DraftDayTradeEngine {
             : picksOnly
     }
 
-    /// Greedy-descending fill, then a prune pass that drops every asset the
-    /// package turns out not to need — the difference between "here is my
-    /// first and my second" and "here is my entire draft".
+    /// The cheapest package that covers the ask, searched exhaustively to three
+    /// assets; the greedy-descending fill is the fallback for the bridge case.
+    ///
+    /// The greedy fill alone was a real bug (task #148b). It opens with the most
+    /// valuable thing on the shelf and stops the moment the running total clears
+    /// the ask, so a user holding a future first paid THAT first for every slot
+    /// he called about: the move-up sheet quoted "2027 R1, 800 pts" for pick #55
+    /// (350 chart points) and the identical package for #62 (284). A price that
+    /// does not move with the thing being bought is not a price. Three assets is
+    /// where the search stops because that is `standardPackageCap` — beyond it
+    /// the ask is a first-round bridge, where "everything you have" IS the
+    /// answer and the greedy pass is the right shape.
     private static func assemble(
         priced: [(asset: Asset, value: Double)],
         required: Double,
         cap: Int
     ) -> (assets: [Asset], value: Double, covered: Bool) {
+        if let minimal = cheapestCoveringPackage(priced: priced, required: required, cap: cap) {
+            return minimal
+        }
+
         var chosen: [(asset: Asset, value: Double)] = []
         for entry in priced {
             guard chosen.count < cap else { break }
@@ -779,12 +823,59 @@ enum DraftDayTradeEngine {
         }
 
         let total = valueOf(chosen)
-        let anchorFloor = min(
+        let anchorOK = (chosen.map(\.value).max() ?? 0) >= anchorFloor(required: required)
+        return (chosen.map(\.asset), total, total >= required && anchorOK)
+    }
+
+    /// Depth of the exhaustive minimum-overpay search.
+    private static let minimalSearchDepth = 3
+
+    /// Smallest total that still clears `required` and the anchor rule, over
+    /// every combination of up to `minimalSearchDepth` assets. `nil` when
+    /// nothing that small covers the ask.
+    private static func cheapestCoveringPackage(
+        priced: [(asset: Asset, value: Double)],
+        required: Double,
+        cap: Int
+    ) -> (assets: [Asset], value: Double, covered: Bool)? {
+        let depth = min(cap, minimalSearchDepth)
+        guard depth >= 1, !priced.isEmpty else { return nil }
+        let floor = anchorFloor(required: required)
+        // Descending, so the first combination found at a given total is also
+        // the one with the biggest anchor in it.
+        let pool = priced.sorted { $0.value > $1.value }
+        var best: (assets: [Asset], value: Double)?
+
+        func consider(_ combo: [(asset: Asset, value: Double)]) {
+            let total = valueOf(combo)
+            guard total >= required else { return }
+            guard (combo.map(\.value).max() ?? 0) >= floor else { return }
+            if let current = best, current.value <= total { return }
+            best = (combo.map(\.asset), total)
+        }
+
+        for i in pool.indices {
+            consider([pool[i]])
+            guard depth >= 2 else { continue }
+            for j in pool.indices where j > i {
+                consider([pool[i], pool[j]])
+                guard depth >= 3 else { continue }
+                for k in pool.indices where k > j {
+                    consider([pool[i], pool[j], pool[k]])
+                }
+            }
+        }
+
+        guard let best else { return nil }
+        return (best.assets, best.value, true)
+    }
+
+    /// The biggest single asset a package has to contain — see `anchorShare`.
+    private static func anchorFloor(required: Double) -> Double {
+        min(
             required * anchorShare,
             Double(PickValueChart.points(forPick: anchorCeilingPick))
         )
-        let anchorOK = (chosen.map(\.value).max() ?? 0) >= anchorFloor
-        return (chosen.map(\.asset), total, total >= required && anchorOK)
     }
 
     private static func valueOf(_ chosen: [(asset: Asset, value: Double)]) -> Double {

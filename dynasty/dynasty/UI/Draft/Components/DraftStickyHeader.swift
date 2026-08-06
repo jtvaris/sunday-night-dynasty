@@ -6,7 +6,7 @@ struct DraftStickyHeader: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DSSpacing.xs) {
             HStack {
-                Text("ROUND \(coordinator.currentRound) — Pick \(roundRelativePick()) / 32  ·  Overall \(coordinator.currentPick?.pickNumber ?? 0)")
+                Text("ROUND \(coordinator.currentRound) — Pick \(roundSlot.index) / \(roundSlot.total)  ·  Overall \(coordinator.currentPick?.pickNumber ?? 0)")
                     .font(.caption.weight(.bold))
                     .foregroundStyle(Color.textSecondary)
                 Spacer()
@@ -30,7 +30,19 @@ struct DraftStickyHeader: View {
     private var userNextPickInfo: some View {
         let picksAway = coordinator.picksUntilUserPick
         let pulse = picksAway > 0 && picksAway <= 3
-        return Text("Your next pick: #\(nextUserPickNumber()) (\(picksAway) picks away) • \(coordinator.userPicksRemaining) remaining")
+        // `picksUntilUserPick` returns -1 and `nextUserPickNumber` returns nil
+        // once his card count is spent, which the old format string printed
+        // literally: "Your next pick: #0 (-1 picks away)" after the last pick of
+        // the draft (task #153d). No turns left is its own sentence.
+        let text: String = {
+            guard let next = nextUserPickNumber(), picksAway >= 0 else {
+                return "No picks remaining"
+            }
+            if picksAway == 0 { return "You are on the clock — #\(next)" }
+            let away = picksAway == 1 ? "1 pick away" : "\(picksAway) picks away"
+            return "Your next pick: #\(next) (\(away)) • \(coordinator.userPicksRemaining) remaining"
+        }()
+        return Text(text)
             .font(.callout.weight(.semibold))
             .foregroundStyle(pulse ? Color.draftStealGold : Color.textSecondary)
     }
@@ -67,9 +79,21 @@ struct DraftStickyHeader: View {
         return max(0.12, min(0.62, raw))
     }
 
-    private func roundRelativePick() -> Int {
-        guard let pick = coordinator.currentPick else { return 0 }
-        return pick.pickNumber - (pick.round - 1) * 32
+    /// Where the pick on the clock sits INSIDE its own round, and how many picks
+    /// that round actually holds.
+    ///
+    /// Both used to be derived from a hardcoded 32 (`pickNumber - (round-1)*32`,
+    /// over a literal "/ 32"), which a round carrying compensatory selections —
+    /// or any slot the draft-order builder added — overruns: the header read
+    /// "ROUND 4 — Pick 34 / 32" (task #153c). Counted off the real order instead,
+    /// which is already sorted by pick number.
+    private var roundSlot: (index: Int, total: Int) {
+        guard let pick = coordinator.currentPick else {
+            return (0, DraftIntel.picksPerRound)
+        }
+        let inRound = coordinator.picks.filter { $0.round == pick.round }
+        let index = inRound.firstIndex { $0.id == pick.id }.map { $0 + 1 } ?? 1
+        return (index, max(index, inRound.count))
     }
 
     private var onTheClockText: some View {
@@ -100,10 +124,10 @@ struct DraftStickyHeader: View {
             .foregroundStyle(urgent ? Color.draftClockUrgent : Color.textPrimary)
     }
 
-    private func nextUserPickNumber() -> Int {
-        guard let teamID = coordinator.userTeamID else { return 0 }
+    private func nextUserPickNumber() -> Int? {
+        guard let teamID = coordinator.userTeamID else { return nil }
         return coordinator.picks
             .dropFirst(coordinator.currentPickIndex)
-            .first(where: { $0.currentTeamID == teamID })?.pickNumber ?? 0
+            .first(where: { $0.currentTeamID == teamID })?.pickNumber
     }
 }

@@ -172,6 +172,37 @@ final class DraftDayCoordinator: ObservableObject {
     /// One trade-down search per pick — prevents re-rolling the dice.
     private var tradeDownSearchedPickNumber: Int?
 
+    // MARK: - Pick-slot claim (task #146)
+
+    /// Slots a card has already been handed in for tonight.
+    ///
+    /// The write path is idempotent per slot: whoever gets there first owns the
+    /// pick and every later writer no-ops. Without it the pick clock and the
+    /// user's own confirmation were two writers racing for one `DraftPick` row,
+    /// and the loser's selection silently replaced the winner's — the user
+    /// confirmed a name, the expiry auto-pick had already filed a different one,
+    /// and the board showed the AI's man under the user's team.
+    private var claimedPickNumbers: Set<Int> = []
+
+    /// True while a modal the user is answering is on screen — the confirm-pick
+    /// alert, or a round recap. The clock does not tick under it.
+    ///
+    /// This is the other half of the same defect. The confirm alert is raised
+    /// from the pick sheet and the 120 s clock kept running behind it, so at any
+    /// speed above 1× a user reading the card could be overridden mid-decision:
+    /// the tap landed on `selectProspect` after the slot had already been filed
+    /// by `DraftEngine.aiMakePick`, and `guard isUserOnClock` swallowed it.
+    /// A decision the game asked for is not a decision the clock may take back.
+    private var isPickConfirmationOpen = false
+
+    /// Nothing may run the pick clock down while the user owes an answer.
+    var isClockHeld: Bool { isPickConfirmationOpen || pendingRoundRecap != nil }
+
+    /// The pick sheet reports its confirm alert opening and closing.
+    func setPickConfirmationOpen(_ open: Bool) {
+        isPickConfirmationOpen = open
+    }
+
     /// Slot the AI-vs-AI market has already been rolled for.
     private var swapRolledPickNumber: Int?
 
@@ -498,9 +529,18 @@ final class DraftDayCoordinator: ObservableObject {
 
     // MARK: - User pick
 
-    func selectProspect(_ prospect: CollegeProspect) {
+    /// The user hands in a card.
+    ///
+    /// `forPickNumber` is the slot the confirmation was raised for. Passing it
+    /// makes the confirm belong to a specific turn: a stale tap that somehow
+    /// arrives after the board has moved on cannot spend the NEXT pick on a name
+    /// chosen for the last one. The claim happens before anything is written —
+    /// the clock task is cancelled first, then the slot is taken.
+    func selectProspect(_ prospect: CollegeProspect, forPickNumber pickNumber: Int? = nil) {
         guard isUserOnClock, let pick = currentPick else { return }
-        completePick(pick: pick, prospect: prospect, isUserPick: true)
+        if let pickNumber, pick.pickNumber != pickNumber { return }
+        clockTask?.cancel()
+        guard completePick(pick: pick, prospect: prospect, isUserPick: true) else { return }
         advance()
     }
 
@@ -1047,30 +1087,34 @@ final class DraftDayCoordinator: ObservableObject {
     }
 
     private func tickClock(forUser: Bool) {
+        // A modal the user owes an answer to is open (confirm-pick alert, round
+        // recap): the clock waits for him rather than deciding for him (#146).
+        guard !isClockHeld else { return }
         clockSeconds = max(0, clockSeconds - 1)
-        if clockSeconds == 0 {
-            clockTask?.cancel()
-            if forUser {
-                // Owner override: AI picks for the user using BPA logic.
-                // `DraftEngine.aiMakePick` traps on an empty board, and the user
-                // cannot select from one either, so an exhausted pool must skip
-                // the pick instead of running the clock into a `fatalError`.
-                if let pick = currentPick,
-                   let team = teamsByID[pick.currentTeamID],
-                   !availableProspects.isEmpty {
-                    let roster = rosters[pick.currentTeamID] ?? []
-                    let chosen = DraftEngine.aiMakePick(
-                        team: team,
-                        availableProspects: availableProspects,
-                        teamRoster: roster
-                    )
-                    completePick(pick: pick, prospect: chosen, isUserPick: false, ownerOverride: true)
-                }
-                advance()
-            } else {
-                aiMakePickForCurrent()
-                advance()
+        guard clockSeconds == 0 else { return }
+        clockTask?.cancel()
+        // The slot may already have been filed by the other writer (the user's
+        // confirm). Expiry then has nothing to do — and must NOT advance a
+        // second time, which would skip the next club's turn entirely.
+        guard let pick = currentPick, !claimedPickNumbers.contains(pick.pickNumber) else { return }
+        if forUser {
+            // Owner override: AI picks for the user using BPA logic.
+            // `DraftEngine.aiMakePick` traps on an empty board, and the user
+            // cannot select from one either, so an exhausted pool must skip
+            // the pick instead of running the clock into a `fatalError`.
+            if let team = teamsByID[pick.currentTeamID], !availableProspects.isEmpty {
+                let roster = rosters[pick.currentTeamID] ?? []
+                let chosen = DraftEngine.aiMakePick(
+                    team: team,
+                    availableProspects: availableProspects,
+                    teamRoster: roster
+                )
+                completePick(pick: pick, prospect: chosen, isUserPick: false, ownerOverride: true)
             }
+            advance()
+        } else {
+            aiMakePickForCurrent()
+            advance()
         }
     }
 
@@ -1087,12 +1131,19 @@ final class DraftDayCoordinator: ObservableObject {
         completePick(pick: pick, prospect: chosen, isUserPick: false)
     }
 
+    /// Writes one card. Returns `false` when the slot was already filed, so the
+    /// caller knows not to advance the board a second time (task #146).
+    @discardableResult
     private func completePick(
         pick: DraftPick,
         prospect: CollegeProspect,
         isUserPick: Bool,
         ownerOverride: Bool = false
-    ) {
+    ) -> Bool {
+        // One writer per slot, whoever gets here first.
+        guard !claimedPickNumbers.contains(pick.pickNumber), !pick.isComplete else { return false }
+        claimedPickNumbers.insert(pick.pickNumber)
+
         // Convert prospect → Player
         let player = DraftEngine.convertToPlayer(
             prospect: prospect,
@@ -1289,6 +1340,7 @@ final class DraftDayCoordinator: ObservableObject {
         announceMarkedTargetIfNeeded()
 
         try? modelContext.save()
+        return true
     }
 
     /// "Your ELITE-marked target is still on the board, N picks to yours."
@@ -1500,7 +1552,11 @@ final class DraftDayCoordinator: ObservableObject {
         }()
         let recap = RoundRecapBuilder.build(
             round: round,
-            allPickResults: allPickResults,
+            // The builder's contract: "the caller should filter the global
+            // stream by round before passing in". It never did, so "YOUR PICKS
+            // THIS ROUND" grew every card the user had taken all night and
+            // "Steal Of The Round" ranked the whole draft (task #153b).
+            allPickResults: allPickResults.filter { $0.round == round },
             userTeamID: teamID,
             beforeReputation: beforeRep,
             afterReputation: rep
@@ -1554,6 +1610,10 @@ final class DraftDayCoordinator: ObservableObject {
             let roundAfter = currentPick?.round ?? roundBefore
             if roundAfter != roundBefore {
                 triggerRoundRecap(forRound: roundBefore)
+                // The recap is a stop point, exactly like a ringing phone above:
+                // the fast-forward must not keep burning cards underneath a
+                // modal the user is reading (task #153a).
+                break
             }
         }
         if currentPickIndex >= picks.count {
@@ -1666,36 +1726,49 @@ final class DraftDayCoordinator: ObservableObject {
     /// anything (`bigDrop`, `positionRun`) so the saved story matches what the
     /// user watched. Everything here is read off values the pick already
     /// produced — no second opinion on the board, no new evaluation.
+    /// How far off the public board a card has to land before the feed calls it
+    /// a steal or a reach. Twelve slots is roughly a third of a round — below
+    /// that, two boards ordering the same band differently explains the gap.
+    private static let boardBeatSlots = 12
+
     private func recordStoryBeats(for result: PickResult, prospect: CollegeProspect, pick: DraftPick) {
         let name = Self.shortName(result.playerName)
         let boardRank = publicBoardRanks[prospect.id]
-        // Same number the grade was computed from, so the line never argues
-        // with the chip printed next to it.
-        let valueDelta = DraftIntel.pickValueDelta(
-            for: prospect,
-            pickNumber: result.pickNumber,
-            consensusRank: boardRank
-        )
+        // Where the PUBLIC CONSENSUS BOARD had him against where he actually
+        // went: positive = he lasted past his slot, negative = he came off ahead
+        // of it. One measure for both halves of the line (task #153e).
+        //
+        // The beats used to be gated on the pick GRADE and then print a board
+        // rank, which are two different opinions of the same card:
+        // `pickValueDelta` grades against the media's WINDOW (a mock slot, or
+        // the whole round band the media claimed), the printed number is the
+        // board's ordering inside that band. A round-1 card could therefore read
+        // "REACH — consensus #163" purely because the AI's board and the media's
+        // board sort a round band differently, which is drift, not a story. So
+        // the beat now measures what it quotes, and only fires when the gap is
+        // wide enough to be a genuine deviation rather than ranking noise.
+        let boardDelta = boardRank.map { result.pickNumber - $0 }
 
-        // 1) Value beats — the grade the pick was just given.
+        // 1) Value beats — the grade the pick was given, confirmed by the board.
         switch result.grade {
         case .stealAPlus, .hofTrack:
-            appendStoryBeat(StoryBeat(
-                kind: .steal,
-                pickNumber: result.pickNumber,
-                headline: "\(result.teamAbbrev) steal \(result.position.rawValue) \(name)",
-                detail: boardRank.map { "Consensus board had him #\($0); he went at #\(result.pickNumber)." }
-                    ?? "Value the rest of the room let slide."
-            ))
+            if let boardRank, let boardDelta, boardDelta >= Self.boardBeatSlots {
+                appendStoryBeat(StoryBeat(
+                    kind: .steal,
+                    pickNumber: result.pickNumber,
+                    headline: "\(result.teamAbbrev) steal \(result.position.rawValue) \(name)",
+                    detail: "Consensus board had him #\(boardRank); he lasted to #\(result.pickNumber) — \(boardDelta) slots of value."
+                ))
+            }
         case .reach, .bigReach:
-            appendStoryBeat(StoryBeat(
-                kind: .reach,
-                pickNumber: result.pickNumber,
-                headline: "\(result.teamAbbrev) reach for \(result.position.rawValue) \(name)",
-                detail: valueDelta < 0
-                    ? "Consensus board had him #\(boardRank ?? result.pickNumber) — taken \(-valueDelta) picks ahead of it."
-                    : "Nobody else had him this high."
-            ))
+            if let boardRank, let boardDelta, boardDelta <= -Self.boardBeatSlots {
+                appendStoryBeat(StoryBeat(
+                    kind: .reach,
+                    pickNumber: result.pickNumber,
+                    headline: "\(result.teamAbbrev) reach for \(result.position.rawValue) \(name)",
+                    detail: "Consensus board had him #\(boardRank) — taken \(-boardDelta) slots ahead of it."
+                ))
+            }
         default:
             if result.isGem {
                 appendStoryBeat(StoryBeat(
