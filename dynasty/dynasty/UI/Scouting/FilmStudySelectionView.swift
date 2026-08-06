@@ -337,7 +337,12 @@ struct FilmStudySelectionView<Board: View>: View {
     }
 
     /// Whether one more man fits inside both limits.
+    ///
+    /// `canAct` is part of the answer (#119 review F6): without it the shut
+    /// stage handed out a fully live order surface — 25 ticks, a $700K footer
+    /// — and only the run bar at the bottom admitted nothing could be bought.
     private func canAdd(_ prospect: CollegeProspect) -> Bool {
+        guard canAct else { return false }
         guard hasRoom(prospect) else { return false }
         guard selectedIDs.count < evaluationSlotsLeft else { return false }
         return selectedSpend + nextReportCost(prospect) <= remainingScoutingBudget
@@ -387,6 +392,17 @@ struct FilmStudySelectionView<Board: View>: View {
         }
         if selectedIDs.isEmpty {
             return "Select Prospects to Put on Tape"
+        }
+        // The ledger can move UNDER a standing selection — the combine trip
+        // and the card's own order both spend this pot — so the bar must
+        // re-answer against live money, not against what was true at tick
+        // time. Without these the bar promised 12 reports, filed 7, and said
+        // nothing about the other five (#119 review F4).
+        if selectedIDs.count > evaluationSlotsLeft {
+            return "\(selectedIDs.count) selected — only \(evaluationSlotsLeft) evaluation\(evaluationSlotsLeft == 1 ? "" : "s") left"
+        }
+        if selectedSpend > remainingScoutingBudget {
+            return "Order costs $\(selectedSpend)K — only $\(remainingScoutingBudget)K left"
         }
         return nil
     }
@@ -486,6 +502,13 @@ struct FilmStudySelectionView<Board: View>: View {
         // The hub owns the position chips, so the filter moves from OUTSIDE this
         // view and the cached lists have to follow it.
         .onChange(of: positionFilter) { _, _ in refreshList() }
+        // The Board surface files reports of its own (`BigBoardView
+        // .orderFilmStudy` writes the same ledger), so coming back to the
+        // order surface on stale caches mis-priced every row the board had
+        // already bought (#119 review F1).
+        .onChange(of: surface) { _, newSurface in
+            if newSurface == .order { refreshList() }
+        }
     }
 
     private var loadingView: some View {
@@ -864,9 +887,14 @@ struct FilmStudySelectionView<Board: View>: View {
                                 .font(.system(size: DSType.Size.micro, weight: .semibold))
                                 .foregroundStyle(Color.success)
                         } else if !selectable {
-                            Text(selectedIDs.count >= evaluationSlotsLeft
-                                 ? "No slots left in this order"
-                                 : "Over budget at $\(cost)K")
+                            // Most-binding reason first: a shut stage blocks
+                            // every row, so blaming the budget for it sent the
+                            // user chasing money he did not need to find.
+                            Text(!canAct
+                                 ? "Stage is not open yet"
+                                 : (selectedIDs.count >= evaluationSlotsLeft
+                                    ? "No slots left in this order"
+                                    : "Over budget at $\(cost)K"))
                                 .font(.system(size: DSType.Size.micro, weight: .semibold))
                                 .foregroundStyle(Color.warning)
                         }
