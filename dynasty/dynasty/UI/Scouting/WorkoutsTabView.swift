@@ -334,7 +334,12 @@ struct WorkoutsTabView: View {
             Text("Workouts Have Not Opened")
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(Color.textPrimary)
-            Text("Private workouts run after the pro-day circuit \u{2014} you bring a man in once you know who is worth the trip. You are at: \(stage.displayName).")
+            // The flavour is this screen's; the WAIT is `DraftPrepProgress`'s,
+            // so the workout room, the tour and the visit book name the same
+            // phase. The old line promised the circuit "after the combine" and
+            // never mentioned free agency, which is the phase actually in the
+            // way (#123).
+            Text("You bring a man in once you know who is worth the trip. \(DraftPrepProgress.screenLockMessage(for: .workouts, phase: career.currentPhase, current: stage))")
                 .font(.subheadline)
                 .foregroundStyle(Color.textSecondary)
                 .multilineTextAlignment(.center)

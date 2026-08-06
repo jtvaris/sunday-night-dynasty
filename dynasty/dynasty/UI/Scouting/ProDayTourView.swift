@@ -138,7 +138,18 @@ struct ProDayTourView: View {
                 emptyState(
                     icon: "lock.fill",
                     title: "Pro Days Have Not Opened",
-                    message: "The circuit runs after the combine. You are at: \(stage.displayName)."
+                    // One sentence, one source: `DraftPrepProgress` owns every
+                    // "why is this shut" line in the prep. The hand-written one
+                    // this replaces said "The circuit runs after the combine",
+                    // which is true and useless — free agency runs between the
+                    // two, so a user who advanced once found the tour still shut
+                    // and no screen in the app naming the phase he was waiting
+                    // on (#123).
+                    message: DraftPrepProgress.screenLockMessage(
+                        for: .proDayFocus,
+                        phase: career.currentPhase,
+                        current: stage
+                    )
                 )
             } else {
                 tourList

@@ -263,7 +263,8 @@ struct ProspectMarkNoteSheet: View {
 // MARK: - Context Menu for Mark & Grade
 
 /// Reusable context-menu content: the unified mark tier first (it is the
-/// verdict), then the GM's own draft grade.
+/// verdict), then the GM's own draft grade, then the work a surface can start
+/// on him without leaving the list.
 ///
 /// The star toggle that used to head this menu is gone — the mark replaced it,
 /// and `setUserMark` keeps the star store written for whatever still reads it.
@@ -271,6 +272,18 @@ struct ProspectGradeContextMenu: View {
     let prospect: CollegeProspect
     var onChange: (() -> Void)? = nil
     var onEditNote: (() -> Void)? = nil
+    /// Optional hook for "Conduct Interview", shown only when supplied.
+    ///
+    /// **The menu knows nothing about the interview economy on purpose.** An
+    /// interview is rationed twice over — a 60-slot cycle allowance and a window
+    /// that is combine week only — and each surface runs it through its own
+    /// flow (the interview room batches a selection; a prospect card spends one
+    /// slot on one man). A menu that tried to own the gate would need the
+    /// career, the slot ledger and the phase, and would still have nowhere to
+    /// put the result. So the caller decides whether the action exists at all:
+    /// pass a closure when the surface can honestly run it, pass nothing and the
+    /// item is not drawn (#116).
+    var onInterview: (() -> Void)? = nil
     @ObservedObject private var store = UserProspectGradeStore.shared
 
     var body: some View {
@@ -300,6 +313,15 @@ struct ProspectGradeContextMenu: View {
             }
         } label: {
             Label("Set My Grade", systemImage: "star.square")
+        }
+
+        // The work, under the opinions. Same icon the hub's Interviews tab
+        // carries, so the long-press and the tab read as the same instrument.
+        if let onInterview {
+            Divider()
+            Button(action: onInterview) {
+                Label("Conduct Interview", systemImage: "bubble.left.and.bubble.right")
+            }
         }
     }
 }

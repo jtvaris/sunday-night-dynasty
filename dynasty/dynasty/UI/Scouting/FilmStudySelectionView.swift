@@ -103,6 +103,14 @@ struct FilmStudySelectionView<Board: View>: View {
     /// Next-report price per prospect. Keyed by ID so the selection footer costs
     /// O(selected) — at most 25 — instead of O(class).
     @State private var costByID: [UUID: Int] = [:]
+    /// Chargeable reports per prospect, from the same one walk that prices them.
+    ///
+    /// `scoutingReports` is a DECODED stored property: every `chargeableReports`
+    /// call pays for a JSON decode. The row asked for it three times over
+    /// (`reportsOnFile`, `hasRoom`, `nextReportCost` inside `canAdd`) and the
+    /// work-up column block asks again, so the count is cached beside the price
+    /// and every reader goes through ``reportsOnFile``.
+    @State private var reportsByID: [UUID: Int] = [:]
     /// The cycle's filed reports, rebuilt from what is stamped on the prospects.
     @State private var filedCache: [FilmStudyReportEntry] = []
     /// The lowest next-report price anywhere in the class that still has room.
@@ -112,6 +120,13 @@ struct FilmStudySelectionView<Board: View>: View {
     // MARK: - Screen state
 
     @State private var selectedIDs: Set<UUID> = []
+    /// Which block of columns the list renders, driven by the shared mode chips.
+    ///
+    /// Opens on `.workup` because that is the block this stage is about — who
+    /// have I not put tape on — and it is the same block the tab's Board surface
+    /// opens on (`initialAttributeTab: .workup`), so switching surfaces does not
+    /// switch the question.
+    @State private var mode: ProspectAttributeTab = .workup
     /// The one sheet this screen can have open. See ``FilmStudySheet``.
     @State private var activeSheet: FilmStudySheet?
     /// Which of the tab's two surfaces is showing. The order screen is primary;
@@ -257,8 +272,10 @@ struct FilmStudySelectionView<Board: View>: View {
     /// the one the money uses would mean a row reading "0/3" over a $35K price.
     /// Whether THIS regime has ordered tape on him is a different question, and
     /// it is answered by ``hasOwnFilmReport`` in the filed-report list.
+    /// Reads the cache `refreshList` builds, and falls back to the live decode
+    /// for a man the cache has not seen (a prospect outside the filtered class).
     private func reportsOnFile(_ prospect: CollegeProspect) -> Int {
-        ScoutEvaluationBudget.chargeableReports(prospect)
+        reportsByID[prospect.id] ?? ScoutEvaluationBudget.chargeableReports(prospect)
     }
 
     private func hasRoom(_ prospect: CollegeProspect) -> Bool {
@@ -578,7 +595,126 @@ struct FilmStudySelectionView<Board: View>: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
             }
+
+            // The way OUT of a bought-out cycle. Without it the steady state is
+            // a dead end: the report is the tab, the run bar is gone, and the
+            // only forward control is a bar the hub pins on a DIFFERENT tab.
+            advanceStageButton
         }
+    }
+
+    // MARK: - Stage advance
+    //
+    // The stage transition ONLY — never the phase advance, which belongs to the
+    // calendar and to `ScoutingHubView`.
+    //
+    // Shaped exactly like `WorkoutsTabView.advanceStage`: gated on the same
+    // `canAct` the whole screen is, writes `Career.advancePrepStep(to:)` with
+    // the successor `DraftPrepStep.next` names, saves, and refreshes.
+
+    /// Whether the hub is already pinning `DraftPrepAdvanceBar` under this tab.
+    ///
+    /// `ScoutingHubView.showsAdvanceBar` draws it whenever the selected tab IS
+    /// the current stage's tab, and film study is an `.advance` stage — so a
+    /// club standing in `.filmStudy` already has that control a few points below
+    /// this one. Two gold bars over one transition is #118 wearing a different
+    /// label, so this one stands down when the hub's is up.
+    private var hubPinsAdvanceBar: Bool { career.prepStep == .filmStudy }
+
+    /// The stage this button writes, or `nil` when there is nothing to write.
+    ///
+    /// Two clamps, and both of them are the pipeline's own rules rather than
+    /// this screen's:
+    ///
+    /// * **The season is a ceiling.** `SeasonPhase.maximumPrepStep` is the
+    ///   furthest stage a club standing in this phase may hold, and in combine
+    ///   week that is `.filmStudy` itself — the pro-day circuit is not on the
+    ///   calendar yet, which is exactly why `ScoutingStageGate` blocks the hub's
+    ///   own bar there. So in the combine the advance lands ON film study (the
+    ///   club is now standing in the stage it has been working, and the hub
+    ///   takes the transition from here); in the pro-day window it lands on
+    ///   `.filmStudy.next`.
+    /// * **It has to move something.** `Career.advancePrepStep` never lowers, so
+    ///   a target at or behind the club's stage is a dead control — and a dead
+    ///   control that does not say why is the bug this whole wave is about.
+    ///   `nil` hides the button instead of greying it.
+    private var advanceTarget: DraftPrepStep? {
+        guard let next = DraftPrepStep.filmStudy.next else { return nil }
+        let ceiling = career.currentPhase.maximumPrepStep
+        let target = next.order <= ceiling.order ? next : ceiling
+        return target.order > career.prepStep.order ? target : nil
+    }
+
+    /// Shown only when the club may act in this stage (the same
+    /// `DraftPrepProgress.canAct(.filmStudy)` every control on this screen is
+    /// gated on), the cycle has nothing left to buy, the hub is not already
+    /// drawing the transition, and the write would actually move the pipeline.
+    ///
+    /// `cycleIsSpent` is what makes this an *ending* rather than a shortcut: it
+    /// is true in both of the tab's dead ends — the bought-out steady state, and
+    /// the list whose run bar can only say "nothing you can still afford". While
+    /// slots and money remain there is work to do here and the run bar is the
+    /// thing to look at.
+    private var showsAdvanceStage: Bool {
+        canAct && cycleIsSpent && !hubPinsAdvanceBar && advanceTarget != nil
+    }
+
+    @ViewBuilder
+    private var advanceStageButton: some View {
+        if showsAdvanceStage, let target = advanceTarget {
+            VStack(alignment: .leading, spacing: 4) {
+                // When the calendar clamped the target, say so: the user is
+                // being moved onto film study rather than past it, and the
+                // reason is the season, not anything he failed to do.
+                if target == .filmStudy {
+                    Text("The pro-day circuit opens with the pro-day window \u{2014} this closes the combine block.")
+                        .font(.system(size: DSType.Size.micro, weight: .semibold))
+                        .foregroundStyle(Color.textTertiaryReadable)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Button { advanceStage() } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.title3)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Complete Film Study \u{2014} Advance")
+                                .font(.subheadline.weight(.bold))
+                            Text(filedCache.isEmpty
+                                 ? "No tape ordered this cycle \u{2014} \(target.displayName) next"
+                                 : (filedCache.count == 1
+                                    ? "1 report filed \u{2014} \(target.displayName) next"
+                                    : "\(filedCache.count) reports filed \u{2014} \(target.displayName) next"))
+                                .font(.caption)
+                                .opacity(0.85)
+                        }
+                        Spacer()
+                        Image(systemName: "arrow.right.circle.fill")
+                            .font(.title3)
+                    }
+                    .foregroundStyle(Color.backgroundPrimary)
+                    .padding(12)
+                    .background(Color.accentGold, in: RoundedRectangle(cornerRadius: 10))
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Moves the club on to \(target.displayName)")
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+        }
+    }
+
+    /// The STAGE transition, and only that — the phase advance belongs to the
+    /// calendar and to the hub.
+    ///
+    /// Every guard the button applied is re-applied here, exactly as
+    /// `WorkoutsTabView.advanceStage` re-applies its own: `prepStep` is a floor
+    /// the whole pre-draft UI reads, and writing a pro-day stage in combine week
+    /// would open five tabs the season has not reached.
+    private func advanceStage() {
+        guard canAct, let target = advanceTarget else { return }
+        career.advancePrepStep(to: target)
+        try? modelContext.save()
+        refreshList()
     }
 
     // MARK: - Header
@@ -701,6 +837,23 @@ struct FilmStudySelectionView<Board: View>: View {
         VStack(spacing: 0) {
             listActionBar
 
+            // The board's view modes, on the order screen. This list used to be
+            // one frozen five-column set — POS / NAME / TAPE / RPTS / NEXT —
+            // while the board one tap away could be asked five different
+            // questions about the same men, which made the batch surface the
+            // information-poor way to do the same job.
+            //
+            // The hub owns the position chips (`showsPositionChips: false`), so
+            // the binding here is inert: passing a live one would be a second
+            // position filter over a list the hub already scopes.
+            ProspectListControls(
+                positionFilter: .constant(.all),
+                mode: $mode,
+                modes: ProspectAttributeTab.allCases,
+                showsPositionChips: false,
+                background: Color.backgroundTertiary.opacity(0.4)
+            )
+
             ScrollView {
                 LazyVStack(spacing: 0) {
                     tableHeader
@@ -728,6 +881,14 @@ struct FilmStudySelectionView<Board: View>: View {
             }
 
             runBar
+
+            // "Nothing more affordable": the slots or the pot are gone but no
+            // report has been filed this cycle, so the steady-state report is
+            // not what renders — the list is, with a run bar that can only say
+            // no. That is the other dead end this stage had, and it gets the
+            // same way out. (`showsAdvanceStage` carries the `cycleIsSpent`
+            // test, so this draws nothing while there is still tape to buy.)
+            advanceStageButton
         }
     }
 
@@ -817,13 +978,22 @@ struct FilmStudySelectionView<Board: View>: View {
         .padding(.top, 4)
     }
 
+    /// Column labels. The leading four and the trailing three are PINNED — the
+    /// checkbox, the man, and what a report on him costs are the same question
+    /// in every mode — and the block between them follows the mode chips.
     private var tableHeader: some View {
         HStack(spacing: 0) {
             Color.clear.frame(width: 22)
             Text("POS").frame(width: 36, alignment: .center)
+            // Portrait column: unlabelled, but reserved so the header keeps
+            // matching the row (30 pt `PersonFaceView` + 6 pt leading padding).
+            Color.clear.frame(width: 36)
             Text("NAME")
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.leading, 6)
+
+            ProspectColumns.headers(mode: mode)
+
             Text("TAPE").frame(width: 46, alignment: .center)
             Text("RPTS").frame(width: 38, alignment: .center)
             Text("NEXT").frame(width: 48, alignment: .trailing)
@@ -836,6 +1006,24 @@ struct FilmStudySelectionView<Board: View>: View {
 
     // MARK: - Row
 
+    /// What a column block needs that lives on this SCREEN rather than on the
+    /// prospect.
+    ///
+    /// `knowsSchemeFit` / `knowsNeeds` are both false: the order screen loads
+    /// scouts and a budget, not coordinators and a roster, and a FIT cell that
+    /// defaulted to "Fair" here would be a fabricated verdict rather than a
+    /// missing one. `reportCount` is the cached chargeable count so the work-up
+    /// block's RPT cell and this row's own RPTS column cannot print two
+    /// different numbers for the same man.
+    private func columnContext(filed: Int) -> ProspectColumnContext {
+        ProspectColumnContext(
+            knowsSchemeFit: false,
+            knowsNeeds: false,
+            userTeamID: career.teamID,
+            reportCount: filed
+        )
+    }
+
     private func prospectRow(_ prospect: CollegeProspect) -> some View {
         let isSelected = selectedIDs.contains(prospect.id)
         let filed = reportsOnFile(prospect)
@@ -843,9 +1031,10 @@ struct FilmStudySelectionView<Board: View>: View {
         let selectable = isSelected || canAdd(prospect)
         let cost = nextReportCost(prospect)
         // Everything printed here is fogged: the tape band comes from
-        // `ProspectFog.tapeRead`, the projection is the media's round, and there
-        // is no numeric attribute anywhere on the row.
-        let tape = ProspectFog.tapeRead(prospect)
+        // `ProspectFog.tapeRead`, the mode block from `ProspectColumns` (fogged
+        // measurables, scouted grade bands, work the club has actually done),
+        // the projection is the media's round, and there is no raw attribute
+        // anywhere on the row.
 
         return Button {
             toggle(prospect)
@@ -858,57 +1047,39 @@ struct FilmStudySelectionView<Board: View>: View {
                                      : (maxed ? Color.success : Color.textTertiary))
                     .frame(width: 22)
 
-                Text(prospect.position.rawValue)
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(Color.textPrimary)
-                    .frame(width: 32, height: 20)
-                    .background(RoundedRectangle(cornerRadius: 3).fill(positionColor(prospect.position)))
-                    .frame(width: 36)
+                ProspectSelectionPositionBadge(position: prospect.position)
 
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 4) {
-                        Text(prospect.fullName)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(Color.textPrimary)
-                            .lineLimit(1)
-                        ProspectMarkChip(mark: prospect.userMark)
-                    }
-                    HStack(spacing: 5) {
-                        Text(prospect.college)
-                            .font(.system(size: DSType.Size.micro))
-                            .foregroundStyle(Color.textTertiary)
-                            .lineLimit(1)
-                        if let proj = prospect.draftProjection {
-                            Text("Rd\(proj)")
-                                .font(.system(size: DSType.Size.micro, weight: .semibold).monospacedDigit())
-                                .foregroundStyle(Color.textTertiary)
-                        }
-                        // A blocked row must say WHY on the row, not go quietly grey.
-                        if maxed {
-                            Text("3 reports filed \u{2014} nothing left to see")
-                                .font(.system(size: DSType.Size.micro, weight: .semibold))
-                                .foregroundStyle(Color.success)
-                        } else if !selectable {
-                            // Most-binding reason first: a shut stage blocks
-                            // every row, so blaming the budget for it sent the
-                            // user chasing money he did not need to find.
-                            Text(!canAct
-                                 ? "Stage is not open yet"
-                                 : (selectedIDs.count >= evaluationSlotsLeft
-                                    ? "No slots left in this order"
-                                    : "Over budget at $\(cost)K"))
-                                .font(.system(size: DSType.Size.micro, weight: .semibold))
-                                .foregroundStyle(Color.warning)
-                        }
+                // Portrait + name + mark + my grade over college · projected
+                // round — the board row's identity block, shared.
+                ProspectRowIdentity(prospect: prospect) {
+                    // A blocked row must say WHY on the row, not go quietly grey.
+                    if maxed {
+                        Text("3 reports filed \u{2014} nothing left to see")
+                            .font(.system(size: DSType.Size.micro, weight: .semibold))
+                            .foregroundStyle(Color.success)
+                    } else if !selectable {
+                        // Most-binding reason first: a shut stage blocks
+                        // every row, so blaming the budget for it sent the
+                        // user chasing money he did not need to find.
+                        Text(!canAct
+                             ? "Stage is not open yet"
+                             : (selectedIDs.count >= evaluationSlotsLeft
+                                ? "No slots left in this order"
+                                : "Over budget at $\(cost)K"))
+                            .font(.system(size: DSType.Size.micro, weight: .semibold))
+                            .foregroundStyle(Color.warning)
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.leading, 6)
 
-                Text(tape.text)
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(tape.source == .none ? Color.textTertiary : Color.accentGold)
-                    .frame(width: 46, alignment: .center)
+                ProspectColumns.cells(
+                    for: prospect,
+                    mode: mode,
+                    context: columnContext(filed: filed)
+                )
+
+                // PINNED regardless of mode: the tape read the money buys, and
+                // what the next report on him costs.
+                ProspectTapeCell(prospect: prospect, width: 46)
 
                 Text("\(filed)/\(ScoutEvaluationBudget.maxReportsPerProspect)")
                     .font(.system(size: 11, weight: .semibold).monospacedDigit())
@@ -952,13 +1123,9 @@ struct FilmStudySelectionView<Board: View>: View {
         return "\(filed) of \(ScoutEvaluationBudget.maxReportsPerProspect) reports on file. Next report $\(cost)K."
     }
 
-    private func positionColor(_ position: Position) -> Color {
-        switch position.side {
-        case .offense:      return Color.accentGold.opacity(0.25)
-        case .defense:      return Color.accentBlue.opacity(0.25)
-        case .specialTeams: return Color.textTertiary.opacity(0.25)
-        }
-    }
+    // `positionColor` moved to `ProspectSelectionPositionBadge` in
+    // `ProspectListControls.swift` — the interview list carried a byte-identical
+    // copy of the same three cases.
 
     // MARK: - Run bar
 
@@ -1109,12 +1276,22 @@ struct FilmStudySelectionView<Board: View>: View {
         // still worth ordering on — the two facts every row and the steady-state
         // test need, computed once instead of per render.
         var costs: [UUID: Int] = [:]
+        var filed: [UUID: Int] = [:]
         var cheapest: Int?
         for prospect in prospects {
-            let cost = nextReportCost(prospect)
+            // The ONE decode per man per refresh. Everything downstream —
+            // the price, the RPTS column, the work-up block's RPT cell, the
+            // affordability test — reads these two maps.
+            let existing = ScoutEvaluationBudget.chargeableReports(prospect)
+            let cost = ScoutEvaluationBudget.cost(existingReports: existing)
+            filed[prospect.id] = existing
             costs[prospect.id] = cost
-            if hasRoom(prospect), cheapest == nil || cost < cheapest! { cheapest = cost }
+            if existing < ScoutEvaluationBudget.maxReportsPerProspect,
+               cheapest == nil || cost < cheapest! {
+                cheapest = cost
+            }
         }
+        reportsByID = filed
         costByID = costs
         cheapestWorkableCost = cheapest
         filedCache = computeFiledEntries()

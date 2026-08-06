@@ -19,6 +19,10 @@ struct InterviewSelectionView: View {
     @Environment(\.modelContext) private var modelContext
 
     @State private var selectedProspectIDs: Set<UUID> = []
+    /// Which block of columns the list renders, driven by the shared mode chips.
+    /// Opens on `.overview` — the same block the Big Board opens on, and the one
+    /// that answers "who is worth a slot" before you have met anybody.
+    @State private var mode: ProspectAttributeTab = .overview
     @State private var prospects: [CollegeProspect] = []
     @State private var showResults = false
     @State private var interviewResults: [InterviewResult] = []
@@ -45,12 +49,24 @@ struct InterviewSelectionView: View {
         max(0, maxInterviews - career.interviewsUsed)
     }
 
-    private var teamNeeds: [Position] {
-        DraftEngine.topTeamNeeds(roster: teamRoster, limit: 5)
-    }
+    /// The club's five biggest holes, by rank, computed ONCE per load.
+    ///
+    /// `teamNeeds` used to re-run `DraftEngine.topTeamNeeds` on every access and
+    /// every row asked `teamNeedPositions.contains(...)`, so scrolling a 300-man
+    /// list re-ranked a 53-man roster once per row. The NEED column added a
+    /// second per-row caller, which is what made the walk worth caching.
+    /// `loadTeamData()` is the one writer.
+    @State private var needRankByPosition: [Position: Int] = [:]
 
     private var teamNeedPositions: Set<Position> {
-        Set(teamNeeds)
+        Set(needRankByPosition.keys)
+    }
+
+    /// The board's NEED vocabulary — "High" for the two biggest holes, "Med" for
+    /// the rest of the top five, "Set" for a group that is stocked.
+    private func needLevel(for position: Position) -> String {
+        guard let rank = needRankByPosition[position] else { return "Set" }
+        return rank < 2 ? "High" : "Med"
     }
 
     /// Read only to migrate the legacy bookmark set onto the unified mark.
@@ -402,6 +418,24 @@ struct InterviewSelectionView: View {
             .padding(.vertical, 6)
             .background(Color.backgroundTertiary.opacity(0.4))
 
+            // The board's view modes, on the interview room's list. The list
+            // shipped with one frozen column set while the board a tab away
+            // could be asked five different questions about the same men — and
+            // the two questions this stage is actually about (what does the
+            // department already have on his head, and what did he run) were
+            // both on the board and neither here.
+            //
+            // The position binding is inert on purpose: this screen's own
+            // Filter menu owns its position filter, and a second visible chip
+            // row would be a third opinion of the same list.
+            ProspectListControls(
+                positionFilter: .constant(.all),
+                mode: $mode,
+                modes: ProspectAttributeTab.allCases,
+                showsPositionChips: false,
+                background: Color.backgroundTertiary.opacity(0.4)
+            )
+
             ScrollView {
                 LazyVStack(spacing: 0) {
                     // #82: Explanation banner
@@ -491,26 +525,35 @@ struct InterviewSelectionView: View {
 
     // MARK: - Table Header (#78)
 
+    /// Column labels. The leading five and the trailing three are PINNED — the
+    /// mark, the checkbox, the man, what a room would tell you about him and
+    /// what he costs you in risk are the same questions in every mode — and the
+    /// block between them follows the mode chips.
     private var tableHeader: some View {
         HStack(spacing: 0) {
-            // Checkbox placeholder
+            // Mark button + checkbox placeholders.
+            Color.clear.frame(width: 36)
             Color.clear.frame(width: 22)
 
             Text("POS")
                 .frame(width: 36, alignment: .center)
+            // Portrait column — unlabelled, reserved so the header keeps
+            // matching the row (30 pt `PersonFaceView` + 6 pt leading padding).
+            Color.clear.frame(width: 36)
             Text("NAME")
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.leading, 6)
-            Text("OVR")
-                .frame(width: 50, alignment: .center)
-            Text("PROD")
-                .frame(width: 46, alignment: .center)
-            Text("RD")
-                .frame(width: 32, alignment: .center)
+
+            // Risk is pinned in this list's own trailing block, so the Overview
+            // block drops its copy rather than printing the fact twice.
+            ProspectColumns.headers(mode: mode, context: ProspectColumnContext(includesRisk: false))
+
+            Text("MEET")
+                .frame(width: 34, alignment: .center)
             Text("RISK")
                 .frame(width: 48, alignment: .center)
-            // Space for badges
-            Color.clear.frame(width: 72)
+            Text("OVR")
+                .frame(width: 50, alignment: .center)
         }
         .font(.system(size: 9, weight: .heavy))
         .foregroundStyle(Color.textTertiary)
@@ -535,6 +578,21 @@ struct InterviewSelectionView: View {
         if isNeed && ovr >= median { return .must }
         if isNeed || ovr >= median { return .should }
         return .optional
+    }
+
+    /// What a column block needs that lives on this SCREEN rather than on the
+    /// prospect: the coordinators' scheme verdict and the club's own holes.
+    /// Both are loaded here, so both are answered; RISK is dropped because this
+    /// list pins it in its own trailing column.
+    private func columnContext(for prospect: CollegeProspect) -> ProspectColumnContext {
+        ProspectColumnContext(
+            schemeFit: schemeFitLabel(for: prospect),
+            knowsSchemeFit: !coaches.isEmpty,
+            needLevel: needLevel(for: prospect.position),
+            knowsNeeds: !teamRoster.isEmpty,
+            includesRisk: false,
+            userTeamID: career.teamID
+        )
     }
 
     private func prospectRow(_ prospect: CollegeProspect) -> some View {
@@ -565,124 +623,59 @@ struct InterviewSelectionView: View {
                             .foregroundStyle(isSelected ? Color.accentGold : Color.textTertiary)
                             .frame(width: 22)
 
-                    // POS badge
-                    Text(prospect.position.rawValue)
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(Color.textPrimary)
-                        .frame(width: 32, height: 20)
-                        .background(RoundedRectangle(cornerRadius: 3).fill(positionColor(prospect.position)))
-                        .frame(width: 36)
+                    ProspectSelectionPositionBadge(position: prospect.position)
 
-                    // NAME + sub-info
-                    VStack(alignment: .leading, spacing: 1) {
-                        HStack(spacing: 4) {
-                            Text("\(prospect.firstName) \(prospect.lastName)")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(Color.textPrimary)
-                                .lineLimit(1)
-
-                            ProspectMarkChip(mark: prospect.userMark)
-
-                            UserGradeBadge(prospectID: prospect.id)
+                    // Portrait + name + mark + my grade over college · projected
+                    // round — the board row's identity block, shared.
+                    //
+                    // The old sub-line printed `fortyTime` and `verticalJump`
+                    // raw: exact decimals for a club that may never have sent
+                    // anybody to Indianapolis. Those numbers are the Physical
+                    // block's now, where `ProspectFog.combineFidelity` decides
+                    // whether the user gets "4.52" or "~4.5".
+                    ProspectRowIdentity(prospect: prospect) {
+                        // #20: how much the department has on him.
+                        if prospect.scoutReportCount > 0 {
+                            Text(prospect.scoutConfidenceDots)
+                                .font(.system(size: DSType.Size.micro))
+                                .foregroundStyle(prospect.scoutReportCount >= 3 ? Color.success : Color.textTertiary)
                         }
-
-                        // Sub-info line: scouted status, combine numbers
-                        HStack(spacing: 4) {
-                            // #20: Scouted status
-                            if prospect.scoutReportCount > 0 {
-                                Text(prospect.scoutConfidenceDots)
-                                    .font(.system(size: DSType.Size.micro))
-                                    .foregroundStyle(prospect.scoutReportCount >= 3 ? Color.success : Color.textTertiary)
-                            }
-
-                            // #21: Combine summary inline
-                            if let forty = prospect.fortyTime {
-                                Text(String(format: "%.2f", forty))
-                                    .font(.system(size: DSType.Size.micro, weight: .semibold).monospacedDigit())
-                                    .foregroundStyle(Color.textTertiary)
-                            }
-                            if let vert = prospect.verticalJump {
-                                Text("\(String(format: "%.0f", vert))\"")
-                                    .font(.system(size: DSType.Size.micro, weight: .semibold).monospacedDigit())
-                                    .foregroundStyle(Color.textTertiary)
-                            }
-
-                            if prospect.interviewCompleted {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .font(.system(size: DSType.Size.micro))
-                                    .foregroundStyle(Color.success)
-                            }
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.leading, 6)
-
-                    // #14: OVR grade with dual grade display
-                    DualGradeDisplay(
-                        prospectID: prospect.id,
-                        scoutGradeText: prospect.overallGradeDisplay,
-                        scoutGradeColor: PositionGradeCalculator.gradeColorForLetter(prospect.overallGradeDisplay)
-                    )
-                    .frame(width: 50, alignment: .center)
-
-                    // College production tier
-                    ProductionTierChip(tier: prospect.collegeProductionTier, width: 46)
-
-                    // Draft projection as round
-                    if let proj = prospect.draftProjection {
-                        Text("Rd\(proj)")
-                            .font(.system(size: 10, weight: .semibold).monospacedDigit())
-                            .foregroundStyle(Color.textSecondary)
-                            .frame(width: 32, alignment: .center)
-                    } else {
-                        Color.clear.frame(width: 32)
-                    }
-
-                    // #18: Bust risk preview
-                    let risk = prospect.riskLevel
-                    if risk != .unknown {
-                        let bgColor: Color = {
-                            switch risk {
-                            case .boomOrBust:  return .danger
-                            case .highCeiling: return .accentBlue
-                            case .safePick:    return .success
-                            case .unknown:     return .textTertiary
-                            }
-                        }()
-                        Text(risk == .boomOrBust ? "B/B" : risk == .highCeiling ? "Ceil" : "Safe")
-                            .font(.system(size: DSType.Size.micro, weight: .bold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 2)
-                            .background(bgColor.opacity(0.85), in: RoundedRectangle(cornerRadius: 3))
-                            .frame(width: 48, alignment: .center)
-                    } else {
-                        Color.clear.frame(width: 48)
-                    }
-
-                    // Badges
-                    HStack(spacing: 3) {
-                        // #12: NEED badge - larger
+                        // #12: the NEED badge lives on the name line rather than
+                        // in a trailing column, so it survives a mode switch —
+                        // the NEED *column* only exists in the Overview block.
                         if isNeed {
                             Text("NEED")
                                 .font(.system(size: DSType.Size.micro, weight: .heavy))
                                 .foregroundStyle(.white)
                                 .padding(.horizontal, 5)
-                                .padding(.vertical, 2)
+                                .padding(.vertical, 1)
                                 .background(Capsule().fill(Color.success))
                         }
-
-                        // #12: Scheme fit with clear label
-                        if let fit = schemeFitLabel(for: prospect) {
-                            Text("Fit: \(fit)")
-                                .font(.system(size: DSType.Size.micro, weight: .heavy))
-                                .foregroundStyle(schemeFitColor(fit))
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 2)
-                                .background(Capsule().fill(schemeFitColor(fit).opacity(0.15)))
-                        }
                     }
-                    .frame(width: 72, alignment: .trailing)
+
+                    ProspectColumns.cells(
+                        for: prospect,
+                        mode: mode,
+                        context: columnContext(for: prospect)
+                    )
+
+                    // PINNED regardless of mode — this room's own questions.
+                    //
+                    // MEET is the interview read (`ProspectFog.meetRead`): a
+                    // dash is a slot not yet spent, which on a screen for
+                    // spending slots is the single most useful column there is.
+                    ProspectMeetCell(prospect: prospect, width: 34)
+
+                    // #18: bust risk preview.
+                    ProspectRiskBadge(risk: prospect.riskLevel)
+                        .frame(width: 48, alignment: .center)
+
+                    // #14: OVR — the fogged band, widened by the department's
+                    // confidence, exactly as the Big Board's OVR column reads
+                    // it. This used to print `overallGradeDisplay`, i.e. the raw
+                    // stored range, which is TIGHTER than the department's
+                    // actual certainty.
+                    ProspectScoutBandCell(prospect: prospect, width: 50)
                 }
                 .padding(.vertical, 6)
                 .padding(.horizontal, 4)
@@ -955,6 +948,13 @@ struct InterviewSelectionView: View {
 
         let coachDesc = FetchDescriptor<Coach>(predicate: #Predicate { $0.teamID == teamID })
         coaches = (try? modelContext.fetch(coachDesc)) ?? []
+
+        // ONE ranking pass per load — see `needRankByPosition`.
+        var ranks: [Position: Int] = [:]
+        for (index, position) in DraftEngine.topTeamNeeds(roster: teamRoster, limit: 5).enumerated() {
+            ranks[position] = index
+        }
+        needRankByPosition = ranks
     }
 
     /// Returns the numeric OVR value for sorting/comparison.
@@ -981,22 +981,10 @@ struct InterviewSelectionView: View {
         return nil
     }
 
-    private func schemeFitColor(_ fit: String) -> Color {
-        switch fit {
-        case "Good": return Color.success
-        case "Fair": return Color.warning
-        case "Poor": return Color.danger
-        default: return Color.textTertiary
-        }
-    }
-
-    private func positionColor(_ position: Position) -> Color {
-        switch position.side {
-        case .offense: return Color.accentGold.opacity(0.25)
-        case .defense: return Color.accentBlue.opacity(0.25)
-        case .specialTeams: return Color.textTertiary.opacity(0.25)
-        }
-    }
+    // `schemeFitColor` and `positionColor` are gone: the FIT cell is
+    // `ProspectColumns`' now (one tint table, shared with the board) and the
+    // POS chip is `ProspectSelectionPositionBadge`, which the film-study list
+    // carried a byte-identical copy of.
 
 }
 

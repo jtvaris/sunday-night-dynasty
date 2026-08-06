@@ -125,18 +125,32 @@ struct DraftPrepProgress {
             return isCounted ? "\(done)/\(total) \(unit)" : (isSatisfied ? "Done" : "Not read")
         }
 
-        /// "Opens at combine" — what a calendar-locked stage says in place of a
+        /// "Combine week" — WHEN a calendar-locked stage opens, in place of a
         /// counter, short enough for the process bar's 92 pt cell.
+        ///
+        /// Two rules, both learned from a shipped build:
+        ///
+        /// * **It names the phase that has to pass, not the stage.** "Opens at
+        ///   pro days" over the pro-day cell said only that the pro days open
+        ///   when the pro days open. The fact a user in combine week actually
+        ///   needs is that FREE AGENCY comes first — `prepCalendarRank` is
+        ///   combine 1, free agency 2, pro days 3, so the circuit is two phase
+        ///   advances away, not one (#123).
+        /// * **It fits the cell.** The bar draws this at micro size under
+        ///   `lineLimit(1)` + `minimumScaleFactor(0.75)`, so past ~14 characters
+        ///   it shrinks to unreadable. The sentence version lives in
+        ///   ``lockReason`` / ``DraftPrepProgress/opensSentence(for:)``, which
+        ///   the stage explainer has room for.
         ///
         /// One table, read by both the bar's sub-label and ``counter``, so the
         /// strip and the Draft Prep card cannot describe the same wait with two
         /// different sentences.
         var waitLabel: String {
             switch step.phase {
-            case .combine:  return "Opens at combine"
-            case .proDays:  return "Opens at pro days"
-            case .draft:    return "Opens draft week"
-            default:        return "Not on calendar"
+            case .combine:  return "Combine week"
+            case .proDays:  return "After FA"
+            case .draft:    return "Draft week"
+            default:        return "Not scheduled"
             }
         }
 
@@ -228,12 +242,7 @@ struct DraftPrepProgress {
                         if calendarRank == 0 {
                             return DraftPrepProgress.calendarClosedReason(for: s)
                         }
-                        switch s.phase {
-                        case .combine:  return "Opens at the combine."
-                        case .proDays:  return "Opens when the pro-day circuit does."
-                        case .draft:    return "The draft room opens in draft week."
-                        default:        return "Not yet on the calendar."
-                        }
+                        return DraftPrepProgress.opensSentence(for: s)
                     }
                     guard let previous = s.previous else { return "Not open yet." }
                     return "Finish or skip \(previous.displayName) first."
@@ -290,10 +299,11 @@ struct DraftPrepProgress {
     /// autumn.
     ///
     /// Kept apart from the in-window sentences because the situation differs in
-    /// kind. In combine week "Opens when the pro-day circuit does." is a note
-    /// about the NEXT room, and the club is standing in one. Outside the window
-    /// the club is between nothing: the building is shut, and the events these
-    /// stages read from are league events the phase hook runs on its own.
+    /// kind. In combine week "The pro-day circuit opens after free agency." is a
+    /// note about a room further down the corridor, and the club is standing in
+    /// one. Outside the window the club is between nothing: the building is
+    /// shut, and the events these stages read from are league events the phase
+    /// hook runs on its own.
     ///
     /// So the copy has to do two jobs the old one-clause version did neither of:
     /// say that the event has not happened, and say that nothing on this screen
@@ -307,10 +317,56 @@ struct DraftPrepProgress {
         case .interviews, .filmStudy:
             return "The pre-draft window has not opened. This stage starts in combine week \u{2014} advance the calendar to get there."
         case .proDayFocus, .workouts, .mockOne, .top30Visits, .mockTwo:
-            return "The pre-draft window has not opened. This stage starts on the pro-day circuit, after the combine."
+            return "The pre-draft window has not opened. The pro-day circuit opens after free agency \u{2014} advance the calendar to get there."
         case .ready:
             return "The draft room opens in draft week."
         }
+    }
+
+    /// **WHEN a stage's phase arrives, in one sentence.** The one place the app
+    /// is allowed to answer "why is this shut?" with a date.
+    ///
+    /// The pro-day answer is the whole point of this table. Every surface used
+    /// to say some version of *"after the combine"* / *"when the pro-day circuit
+    /// does"*, and both are useless to the user standing in combine week: free
+    /// agency runs between the two (`SeasonPhase.prepCalendarRank` — combine 1,
+    /// free agency 2, pro days 3), so a club that advances once lands in the
+    /// market with the circuit still bolted shut. Naming free agency is the only
+    /// version of the sentence that tells him how far away it is (#123).
+    static func opensSentence(for step: DraftPrepStep) -> String {
+        switch step.phase {
+        case .combine:  return "Opens at the combine."
+        case .proDays:  return "The pro-day circuit opens after free agency."
+        case .draft:    return "The draft room opens in draft week."
+        default:        return "Not yet on the calendar."
+        }
+    }
+
+    /// The sentence a stage SCREEN prints over its lock — the pro-day tour, the
+    /// workout room, the visit book.
+    ///
+    /// Built from the two facts every stage screen already has to hand (the
+    /// club's phase and the stage it is standing in) and from the same table the
+    /// process bar reads, so the strip, the explainer and the locked screen
+    /// cannot tell three stories about one wait.
+    ///
+    /// The two locks get different sentences because they ask for different
+    /// things. A CALENDAR lock is a phase the user has to advance out of, so it
+    /// names the phase he is in — printing his prep STAGE there is what shipped,
+    /// and "You are at: Film Study" over a pro-day screen answers a question
+    /// nobody asked. A PIPELINE lock is a stage in front of him, so it names
+    /// that instead: the calendar has nothing left to say about it.
+    static func screenLockMessage(
+        for step: DraftPrepStep,
+        phase: SeasonPhase,
+        current: DraftPrepStep
+    ) -> String {
+        let calendarLocked = phase.prepCalendarRank == 0
+            || phase.prepCalendarRank < step.phase.prepCalendarRank
+        guard calendarLocked else {
+            return "You are at: \(current.displayName) \u{2014} finish or skip it and this opens."
+        }
+        return "\(opensSentence(for: step)) You are at: \(phase.displayName)."
     }
 
     // MARK: - Lookup

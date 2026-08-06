@@ -1805,9 +1805,22 @@ enum ScoutingEngine {
     /// written into the report's notes where nothing surfaced them.
     struct WorkoutResult: Identifiable {
         let prospectID: UUID
-        /// Fog-safe band before the session (`nil` = nobody had filed on him).
+        /// The prospect's **stored** overall band before the session, straight
+        /// off `CollegeProspect.effectiveOverallGrade` (`nil` = nobody had filed
+        /// on him).
+        ///
+        /// Deliberately the stored range and not the fogged one: `ProspectFog`
+        /// is a UI type (`UI/Draft/Components/ProspectFog.swift`) and the engine
+        /// does not reach up into the UI layer. The stored range reads a little
+        /// more certain than the department actually is, which is honest for a
+        /// before → after pair rendered side by side — both halves come off the
+        /// same ruler, so the delta is exact — and the callers that print a band
+        /// on its own already re-fog: `WorkoutReportEntry.init(filed:report:)`
+        /// rebuilds a saved batch card from `ProspectFog.read`, and every board
+        /// row goes through `ProspectGradeBand`.
         let gradeBefore: GradeRange?
-        /// Fog-safe band after the report landed.
+        /// The stored band after the report landed — same ruler as
+        /// ``gradeBefore``, see its note.
         let gradeAfter: GradeRange?
         /// How he fits what the coordinators run.
         let schemeFitNote: String
@@ -1840,17 +1853,33 @@ enum ScoutingEngine {
     /// Returns what the session found so the caller can put it in front of the
     /// user. The mutation itself must go through ``DraftClassMutator`` — the
     /// canonical class is what every other surface reads.
+    ///
+    /// The session files a FULL report: overall letter, potential label, all
+    /// eight mental keys and the whole position block, applied through
+    /// ``applyReport`` like every other instrument. It used to file only the two
+    /// numeric grades and the prose notes, so the most expensive and most
+    /// rationed look in the game (30 slots a cycle) left the prospect card's
+    /// Mental Attributes and Position Skills grids exactly as dark as it found
+    /// them — and, because it never reached `applyGradeBasedFields`, could not
+    /// even narrow the overall band it reported a before → after on.
     @discardableResult
     static func conductPersonalWorkout(
         prospect: CollegeProspect,
         coaches: [Coach]
     ) -> WorkoutResult {
-        // 0. The band the user was looking at when he spent the slot.
+        // 0. The band the user was looking at when he spent the slot. Stored,
+        // not fogged — see `WorkoutResult.gradeBefore`.
         let gradeBefore = prospect.effectiveOverallGrade
 
         // 1. Generate a high-confidence scout report
         // Use the best coaching staff member's scouting ability as the basis
         let bestScoutingAbility = coaches.map { $0.scoutingAbility }.max() ?? 50
+
+        // The session's accuracy basis: the best eye in the building plus the
+        // +15 that having the man in your own facility, on your own field, for a
+        // whole day is worth. One value drives the prose notes AND the attribute
+        // grades, so the card can never disagree with the paragraph beside it.
+        let workoutAccuracy = min(99, bestScoutingAbility + 15)
 
         // Create a virtual "scout" with high accuracy for the workout evaluation
         let errorRange = max(1, Int(8.0 * (1.0 - Double(bestScoutingAbility) / 100.0)))
@@ -1874,8 +1903,47 @@ enum ScoutingEngine {
         let personalityNotes: String? = personalityRead.map { $0 + " " + schemeFitNotes } ?? schemeFitNotes
 
         // 4. Generate full workout report
-        let strengthNotes = generatePositionStrengths(for: prospect, accuracy: min(99, bestScoutingAbility + 15))
-        let weaknessNotes = generatePositionWeaknesses(for: prospect, accuracy: min(99, bestScoutingAbility + 15))
+        let strengthNotes = generatePositionStrengths(for: prospect, accuracy: workoutAccuracy)
+        let weaknessNotes = generatePositionWeaknesses(for: prospect, accuracy: workoutAccuracy)
+
+        // 4b. The attribute grades the slot actually buys, off the SAME two
+        // generators every filed report uses — no bespoke workout math, so a
+        // session can never grade a man on a different ruler than his tape did.
+        //
+        // What the generators control is where the observation LANDS, not how
+        // wide the stored band is: band width is `applyGradeBasedFields`'
+        // progressive-confidence ladder and is the same for every instrument.
+        // So "highest fidelity" here means the best-centred observation on that
+        // shared ladder, which is exactly what confidence 0.9 should buy.
+        //
+        // POSITION SKILLS are the session's specialty: the whole afternoon is
+        // position drills run by the man's own position coach with nobody else
+        // on the field. They take both narrowing steps `noiseSteps` offers — the
+        // position-specialist step and the focus step — so at any staff whose
+        // best eye clears ~35 the observation is dead on the true grade. Nothing
+        // else in the build reads a man's hands that well.
+        //
+        // MENTAL is the full eight keys at plain report fidelity (specialist
+        // step, no focus step): from ~60 that is still a zero-noise read, i.e.
+        // no worse than the best scout in the league files. The workout IS a
+        // filed report by the coaching staff and every filed report grades all
+        // eight, so it writes all eight — but the extra mental step stays the
+        // interview's, because a whiteboard and forty minutes of questions read
+        // a man's head better than a field session does
+        // (`interviewRevealedMentalKeys`).
+        let mentalGrades = generateMentalGrades(
+            mental: prospect.trueMental,
+            learning: prospect.trueLearning,
+            competitiveness: prospect.trueCompetitiveness,
+            accuracy: workoutAccuracy,
+            positionSpec: true
+        )
+        let positionGrades = generatePositionSkillGrades(
+            attributes: prospect.truePositionAttributes,
+            accuracy: workoutAccuracy,
+            positionSpec: true,
+            physicalFocus: true
+        )
 
         let report = ScoutingReport(
             prospectID: prospect.id,
@@ -1888,23 +1956,41 @@ enum ScoutingEngine {
             strengthNotes: strengthNotes,
             weaknessNotes: weaknessNotes,
             personalityNotes: personalityNotes,
-            confidenceLevel: 0.9
+            confidenceLevel: 0.9,
+            mentalGrades: mentalGrades,
+            positionSkillGrades: positionGrades,
+            overallLetterGrade: LetterGrade.from(numericValue: scoutedOverall),
+            potentialLabel: PotentialLabel.from(
+                potential: prospect.truePotential,
+                noise: max(0, 3 - (workoutAccuracy / 30))
+            )
         )
 
-        // 5. Apply report
-        prospect.scoutingReports.append(report)
+        // 5. Apply the report through the one writer set.
+        //
+        // `applyReport` appends it, re-picks the best-confidence report for the
+        // legacy numeric fields, and — the half this function used to hand-roll
+        // and drop — runs `applyGradeBasedFields`, which is the only thing in the
+        // build that narrows `scoutedOverallGrade` and writes
+        // `scoutedMentalGrades` / `scoutedPositionGrades`. Filing through it is
+        // what makes the session show up on the prospect card at all.
+        applyReport(report: report, to: prospect)
 
-        // Update best scouted values
-        if let bestReport = prospect.scoutingReports.max(by: { $0.confidenceLevel < $1.confidenceLevel }) {
-            prospect.scoutedOverall = bestReport.overallGrade
-            prospect.scoutedPotential = bestReport.potentialGrade
-            prospect.scoutGrade = LetterGrade.from(numericValue: bestReport.overallGrade).rawValue
+        // `applyReport`'s personality roll is the generic 70 % one every filed
+        // report gets. A private session is sharper than that, and the modal is
+        // about to print the read: when the staff got one (the 85 % roll above),
+        // pin the card to the same answer so the two cannot contradict each
+        // other on the same screen. When they did not, the generic roll stands.
+        if personalityRead != nil {
+            prospect.scoutedPersonality = prospect.truePersonality.archetype
         }
 
         prospect.proDayCompleted = true
 
         // 6. Hand the session back to the caller so the modal can show what the
-        // slot bought instead of a "done" alert.
+        // slot bought instead of a "done" alert. Both bands are the STORED range
+        // on the same ruler — see `WorkoutResult.gradeBefore` for why the engine
+        // does not fog them here.
         let impressions = [strengthNotes, weaknessNotes]
             .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         return WorkoutResult(

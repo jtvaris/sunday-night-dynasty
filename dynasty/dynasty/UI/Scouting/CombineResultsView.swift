@@ -395,7 +395,11 @@ struct CombineResultsView<Header: View>: View {
                                 // The hub already draws one chip bar above this
                                 // whole tab. Two identical rows stacked would be
                                 // a worse bug than the missing control was.
-                                showsPositionChips: false
+                                showsPositionChips: false,
+                                // This strip sits inside a pinned section header
+                                // drawn on secondary — the primary default drew
+                                // a two-tone seam straight across it (#116).
+                                background: Color.backgroundSecondary
                             )
 
                             Divider().overlay(Color.surfaceBorder)
@@ -704,9 +708,12 @@ struct CombineResultsView<Header: View>: View {
         Group {
             staticHeader("TAPE", width: CombineW.tape)
             staticHeader("MEET", width: CombineW.meet)
-            ForEach(ProspectFog.mentalKeys, id: \.self) { key in
-                staticHeader(key, width: CombineW.band)
-            }
+            // ONE span over the eight bands, the way `positionHeaders` spans the
+            // skill block. `ProspectGradeBandCell` already prints its own key
+            // under the grade, so a per-column header printed AWR/DEC/WRK/… a
+            // second time — two labels deep in a 26 pt column, both squeezed by
+            // `minimumScaleFactor`, saying the same word twice (#116).
+            staticHeader("MENTAL BANDS", width: CombineW.band * CGFloat(ProspectFog.mentalKeys.count))
         }
     }
 
@@ -1038,12 +1045,19 @@ struct CombineResultsView<Header: View>: View {
     /// can still pay to close, which is why they are drawn dim rather than
     /// blank — and the last one is the interview, the slot this week is for.
     private func workupCells(prospect: CollegeProspect) -> some View {
-        Group {
-            Text("\(prospect.scoutingReports.count)/\(ScoutEvaluationBudget.maxReportsPerProspect)")
+        // The RPT cell is a CAP counter — n of three — so it counts the same
+        // reports the cap and the price ladder do: the ones this regime bought.
+        // Counting `scoutingReports.count` printed 1/3 on every man carrying the
+        // inherited "Previous Staff" baseline, i.e. a third of his allowance
+        // spent before the user had ordered anything, against a board row and a
+        // film surface that both said 0/3 (#122).
+        let reports = ScoutEvaluationBudget.chargeableReports(prospect)
+        return Group {
+            Text("\(reports)/\(ScoutEvaluationBudget.maxReportsPerProspect)")
                 .font(.system(size: 10, weight: .bold).monospacedDigit())
-                .foregroundStyle(prospect.scoutingReports.isEmpty
+                .foregroundStyle(reports == 0
                                  ? Color.textTertiary.opacity(0.5)
-                                 : (prospect.scoutingReports.count >= 2 ? Color.success : Color.accentBlue))
+                                 : (reports >= 2 ? Color.success : Color.accentBlue))
                 .frame(width: CombineW.reports)
 
             ProspectWorkTick(done: prospect.proDayCompleted, tint: .success)

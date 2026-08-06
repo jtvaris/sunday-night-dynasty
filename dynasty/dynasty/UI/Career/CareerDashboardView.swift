@@ -48,8 +48,42 @@ struct CareerDashboardView: View {
     @State private var previousSeasonRecord: String?
     @State private var previousSeasonYear: Int?
 
-    /// Game summary sheet after advancing a week.
-    @State private var showGameSummary = false
+    // MARK: Sheets
+
+    /// **The one sheet this screen can have open.**
+    ///
+    /// This view used to carry THREE `.sheet(isPresented:)` modifiers plus a
+    /// `.sheet(item:)` on a single modifier chain — game summary, injury
+    /// report, position battle, coaching-staff review. SwiftUI honours exactly
+    /// one sheet per view: the last modifier on the chain wins, so a button
+    /// that flips an earlier flag gets the LAST builder presented, that
+    /// builder's `if let` finds nothing, and the user is handed an empty card.
+    /// That is bug B1 from `ProDayTourView` verbatim (`ActiveSheet` there is
+    /// the same shape, for the same reason). One `.sheet(item:)` over one enum
+    /// makes the case unrepresentable.
+    private enum ActiveSheet: Identifiable {
+        /// Box score after a week advance or a coached game.
+        case gameSummary
+        /// Medical report — the Injuries quick chip and the Injuries tile.
+        case injuryReport
+        /// Camp position battle detail.
+        case positionBattle(PositionBattle)
+        /// Confirmation step before the `.coachingChanges` phase advance.
+        case coachingStaffReview
+
+        var id: String {
+            switch self {
+            case .gameSummary:                return "gameSummary"
+            case .injuryReport:               return "injuryReport"
+            case let .positionBattle(battle): return "battle:\(battle.id.uuidString)"
+            case .coachingStaffReview:        return "coachingStaffReview"
+            }
+        }
+    }
+
+    @State private var activeSheet: ActiveSheet?
+
+    /// Game summary payload, resolved before `activeSheet` is set.
     @State private var lastGameResult: GameSimulator.GameResult?
     @State private var lastHomeTeam: Team?
 
@@ -82,11 +116,12 @@ struct CareerDashboardView: View {
     /// Pulsing animation state for advance button guidance
     @State private var advancePulse = false
 
-    /// Coaching staff review sheet (shown during coachingChanges phase advance)
-    @State private var showCoachingStaffReview = false
-    /// Medical report sheet, opened by the Injuries quick chip and tile.
-    @State private var showInjuryReport = false
     @State private var allCoaches: [Coach] = []
+    /// The club's scouting department. Loaded by `refreshStaffTile` (which
+    /// already fetches it for the staff budget) and read by the Path to the
+    /// Draft hero card, whose `DraftPrepProgress` counts pro-day focus slots
+    /// off `scout.proDayColleges` / `scout.maxProDays`.
+    @State private var scouts: [Scout] = []
 
     /// Tracks which Position-Grades letter is currently showing its explainer popover.
     /// Encoded as "<group>:S" or "<group>:D" (e.g. "QB:S" for QB starter grade).
@@ -99,8 +134,6 @@ struct CareerDashboardView: View {
     /// Unresolved camp position battles involving the user's roster. Real rows
     /// from `PositionBattleTracker` — the tile used to hard-code "0 active".
     @State private var openPositionBattles: [PositionBattle] = []
-    /// Battle whose detail sheet is presented.
-    @State private var selectedBattle: PositionBattle?
 
     /// #106: false until the first appear. `.task` owns the opening load; every
     /// later appear (popping back from staff, cap, scouting…) reloads instead,
@@ -266,9 +299,9 @@ struct CareerDashboardView: View {
         // present another copy on top of it, and the user then had to dismiss a
         // stack of identical sheets before anything could happen.
         if career.currentPhase == .coachingChanges {
-            guard !showCoachingStaffReview else { return }
+            if case .coachingStaffReview = activeSheet { return }
             loadCoaches()
-            showCoachingStaffReview = true
+            activeSheet = .coachingStaffReview
             return
         }
 
@@ -289,7 +322,7 @@ struct CareerDashboardView: View {
                 lastHomeTeam = home
                 lastAwayTeam = away
                 lastGameWeather = playedGame.map { GameWeather.forGame(id: $0.id, week: $0.week, homeTeamAbbreviation: teamsByID[$0.homeTeamID]?.abbreviation) }
-                showGameSummary = true
+                activeSheet = .gameSummary
             }
             loadAllData()
         }
@@ -367,7 +400,7 @@ struct CareerDashboardView: View {
 
         // Give the cover dismissal a beat before presenting the sheet.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
-            if lastGameResult != nil { showGameSummary = true }
+            if lastGameResult != nil { activeSheet = .gameSummary }
         }
     }
 
@@ -399,7 +432,14 @@ struct CareerDashboardView: View {
 
     private func loadCoaches() {
         guard let teamID = career.teamID else { return }
-        let descriptor = FetchDescriptor<Coach>(predicate: #Predicate { $0.teamID == teamID })
+        // Scoped to the open save as well as the club: `teamID` alone matches
+        // every career's copy of that franchise, so a second save's staff
+        // could walk into this one's review sheet. Same idiom as
+        // `allTeamsDescriptor` in `loadAllDataBody`.
+        let cid = career.id
+        let descriptor = FetchDescriptor<Coach>(
+            predicate: #Predicate { $0.careerID == cid && $0.teamID == teamID }
+        )
         allCoaches = (try? modelContext.fetch(descriptor)) ?? []
     }
 
@@ -458,17 +498,51 @@ struct CareerDashboardView: View {
                 hasAppearedOnce = true
             }
         }
-        .sheet(isPresented: $showGameSummary) {
-            if let result = lastGameResult, let home = lastHomeTeam, let away = lastAwayTeam {
-                NavigationStack {
-                    GameSummaryView(
-                        boxScore: result.boxScore,
-                        homeTeam: home,
-                        awayTeam: away,
-                        playerStats: result.playerStats,
-                        weather: lastGameWeather
-                    )
+        // ONE sheet modifier for the whole screen. See ``ActiveSheet`` — four
+        // presentations used to hang off this one chain and only the last of
+        // them was guaranteed to be the one SwiftUI presented.
+        .sheet(item: $activeSheet) { sheet in
+            switch sheet {
+            case .gameSummary:
+                if let result = lastGameResult, let home = lastHomeTeam, let away = lastAwayTeam {
+                    NavigationStack {
+                        GameSummaryView(
+                            boxScore: result.boxScore,
+                            homeTeam: home,
+                            awayTeam: away,
+                            playerStats: result.playerStats,
+                            weather: lastGameWeather
+                        )
+                    }
                 }
+
+            // Injuries quick chip / Injuries tile → the medical report, not the
+            // plain roster Overview. Presented as a sheet so it reads the same
+            // here as it does from the Roster screen's medical toolbar button.
+            case .injuryReport:
+                InjuryReportView(players: players, career: career)
+
+            // Position Battles tile → the real battle, not a dead roster jump.
+            case let .positionBattle(battle):
+                PositionBattleSheet(
+                    battle: battle,
+                    competitors: competitors(for: battle)
+                )
+
+            case .coachingStaffReview:
+                CoachingStaffReviewSheet(
+                    career: career,
+                    coaches: allCoaches,
+                    players: players,
+                    onConfirm: {
+                        activeSheet = nil
+                        confirmCoachingAdvance()
+                    },
+                    onCancel: {
+                        activeSheet = nil
+                    }
+                )
+                .presentationDetents([.large])
             }
         }
         .fullScreenCover(item: $coachedSession) { session in
@@ -504,19 +578,6 @@ struct CareerDashboardView: View {
             launchCoachedGame.wrappedValue = false
             startCoachedGame()
         }
-        // Injuries quick chip / Injuries tile → the medical report, not the
-        // plain roster Overview. Presented as a sheet so it reads the same here
-        // as it does from the Roster screen's medical toolbar button.
-        .sheet(isPresented: $showInjuryReport) {
-            InjuryReportView(players: players, career: career)
-        }
-        // Position Battles tile → the real battle, not a dead roster jump.
-        .sheet(item: $selectedBattle) { battle in
-            PositionBattleSheet(
-                battle: battle,
-                competitors: competitors(for: battle)
-            )
-        }
         // Advance-with-unplayed-game guard rail.
         .confirmationDialog(
             skipGameConfirmTitle,
@@ -527,21 +588,6 @@ struct CareerDashboardView: View {
             Button("Cancel", role: .cancel) { }
         } message: {
             Text("You haven't coached this game yet. Advancing plays it for you and the result is final.")
-        }
-        .sheet(isPresented: $showCoachingStaffReview) {
-            CoachingStaffReviewSheet(
-                career: career,
-                coaches: allCoaches,
-                players: players,
-                onConfirm: {
-                    showCoachingStaffReview = false
-                    confirmCoachingAdvance()
-                },
-                onCancel: {
-                    showCoachingStaffReview = false
-                }
-            )
-            .presentationDetents([.large])
         }
         .overlay(alignment: .bottom) {
             if let event = latestHardKnocksEvent,
@@ -1238,7 +1284,7 @@ struct CareerDashboardView: View {
     private func quickActionButton(_ action: QuickAction) -> some View {
         Button {
             if action.opensInjuryReport {
-                showInjuryReport = true
+                activeSheet = .injuryReport
             } else {
                 onTaskSelected(action.destination)
             }
@@ -1515,7 +1561,7 @@ struct CareerDashboardView: View {
                         .foregroundStyle(Color.accentGold)
                     ForEach(openPositionBattles.prefix(3), id: \.id) { battle in
                         Button {
-                            selectedBattle = battle
+                            activeSheet = .positionBattle(battle)
                         } label: {
                             positionBattleRow(battle)
                         }
@@ -1620,7 +1666,7 @@ struct CareerDashboardView: View {
         Button {
             // Same destination as the Injuries quick chip — the medical report,
             // not the plain roster.
-            showInjuryReport = true
+            activeSheet = .injuryReport
         } label: {
             DashboardTile(icon: "cross.case.fill", title: "Injuries") {
                 VStack(alignment: .leading, spacing: 4) {
@@ -3539,7 +3585,15 @@ struct CareerDashboardView: View {
     private func refreshStaffTile() {
         guard let teamID = career.teamID else { return }
 
-        let coachDescriptor = FetchDescriptor<Coach>(predicate: #Predicate { $0.teamID == teamID })
+        // Both descriptors are scoped to the open save as well as the club.
+        // `teamID` alone matches EVERY career's copy of that franchise — a
+        // second save's staff would land in this one's headcount, budget and
+        // pro-day focus ledger. Same `careerID` clause `allTeamsDescriptor` in
+        // `loadAllDataBody` already carries.
+        let cid = career.id
+        let coachDescriptor = FetchDescriptor<Coach>(
+            predicate: #Predicate { $0.careerID == cid && $0.teamID == teamID }
+        )
         let coaches = (try? modelContext.fetch(coachDescriptor)) ?? []
         allCoaches = coaches
         coachCount = coaches.count
@@ -3556,9 +3610,15 @@ struct CareerDashboardView: View {
         let coachSalaryUsed = coaches
             .filter { !medicalRoles.contains($0.role) }
             .reduce(0) { $0 + $1.salary }
-        let scoutDescriptor = FetchDescriptor<Scout>(predicate: #Predicate { $0.teamID == teamID })
+        let scoutDescriptor = FetchDescriptor<Scout>(
+            predicate: #Predicate { $0.careerID == cid && $0.teamID == teamID }
+        )
         let fetchedScouts = (try? modelContext.fetch(scoutDescriptor)) ?? []
         scoutCount = fetchedScouts.count
+        // Handed to `DraftPrepProgress` by the Path to the Draft hero card;
+        // re-assigned here so popping back from the scouting hub (which runs
+        // `refreshStaffTile` via `.onAppear`) re-evaluates the card.
+        scouts = fetchedScouts
         coachingBudgetTotal = budgetTotal
         coachingBudgetRemaining = budgetTotal - coachSalaryUsed
 
@@ -3868,12 +3928,15 @@ struct CareerDashboardView: View {
             regularSeasonHeroCard
         case .playoffs:
             playoffsHeroCard
-        case .combine:
-            combineHeroCard
+        // #123a: the two phases the draft-prep pipeline actually runs in share
+        // ONE card, because the action it offers comes from the prep state
+        // machine and not from the phase. (`.freeAgency` keeps its own card —
+        // the market has its own step machine and `DraftPrepStep.phase`
+        // deliberately excludes it. `.draft` keeps its own — the room is open.)
+        case .combine, .proDays:
+            pathToDraftHeroCard
         case .freeAgency:
             faHeroCard
-        case .proDays:
-            proDaysHeroCard
         case .draft:
             draftHeroCard
         case .coachingChanges, .reviewRoster:
@@ -4118,28 +4181,186 @@ struct CareerDashboardView: View {
         }
     }
 
-    private var combineHeroCard: some View {
-        // Once scouts have been sent to the combine, the next action is interviews —
-        // not re-sending scouts. The CTA shifts to "Review Combine" or "Interviews".
-        let scoutsSent = tasks.contains { $0.title == "Send scouts to Combine" && $0.status == .done }
-        let resultsReviewed = tasks.contains { $0.title == "Review Combine results" && $0.status == .done }
+    // MARK: Path to the Draft (#123a)
 
-        let ctaTitle: String
-        if !scoutsSent {
-            ctaTitle = "Send Scouts"
-        } else if !resultsReviewed {
-            ctaTitle = "Review Combine"
-        } else {
-            ctaTitle = "Conduct Interviews"
-        }
+    /// The pre-draft hero card, for `.combine` and `.proDays`.
+    ///
+    /// **Named after the journey, not the phase**, because what it offers comes
+    /// from the draft-prep state machine (``DraftPrepProgress``) rather than
+    /// from `career.currentPhase`. The phase and the class's scouted share drop
+    /// to the subtitle.
+    ///
+    /// What it replaces: `combineHeroCard` titled itself "NFL Combine · 42%
+    /// scouted" — a literal — invented a top prospect and a riser count, and
+    /// derived its CTA from two `tasks` title lookups. A task is *done* the
+    /// moment one interview is conducted and never notices the other 59 slots,
+    /// so the card printed "Conduct Interviews →" forever: after the ration was
+    /// spent it pointed at a room with nothing left to buy, and it never once
+    /// offered the advance that was the club's actual next move.
+    /// `proDaysHeroCard` was the same card with four different literals.
+    private var pathToDraftHeroCard: some View {
+        let progress = prepProgress
+        let stage = progress[progress.current]
+        // Is there still something to DO in this stage? A counted stage is
+        // workable until its ration is gone — one interview satisfies the
+        // required task, 59 unspent slots is still work. An uncounted stage
+        // (a read: the combine review, the two mocks) is finished the moment
+        // it is satisfied. A calendar-locked stage is nobody's next move.
+        let hasWorkLeft = stage.unlocked
+            && (stage.isCounted ? stage.done < stage.total : !stage.isSatisfied)
 
-        return phaseCardBase(icon: "figure.run", accent: .accentGold) {
-            heroHeader("NFL Combine · 42% scouted")
-            heroStatRow("Top prospect", value: "T. Hanneman (QB) · OVR 88")
-            heroStatRow("Risers today", value: "5")
-            heroStatRow("Scouts deployed", value: "\(scoutCount) / \(max(scoutCount, 6))")
-            heroActionLink(title: ctaTitle, destination: .scouting)
+        return phaseCardBase(icon: "flag.checkered", accent: .accentGold) {
+            heroHeader("Path to the Draft")
+            Text("\(career.currentPhase.displayName) \u{00B7} \(draftClassScoutedPercent)% scouted")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color.textSecondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+
+            heroStatRow("Current stage", value: stage.step.displayName)
+            heroStatRow("Progress", value: stage.counter)
+            heroStatRow("Stages worked",
+                        value: "\(progress.satisfiedStageCount) / \(progress.stages.count)")
+
+            if hasWorkLeft, let action = draftPrepStageAction(for: stage.step) {
+                // The stage still has room: ONE button, naming the work, deep
+                // linked to the hub tab that surface lives on.
+                heroPrimaryButton(title: action.title) {
+                    openScoutingHub(tab: action.tab)
+                }
+            } else {
+                // Ration spent (or the stage is a read that has been read):
+                // the board, and the move the sidebar's Advance would make.
+                HStack(spacing: DSSpacing.sm) {
+                    heroSecondaryButton(title: "Show Prospects") {
+                        openScoutingHub(tab: "board")
+                    }
+                    if let nextPhase = nextPreDraftPhaseName {
+                        heroPrimaryButton(title: "Advance to \(nextPhase)",
+                                          enabled: canAdvance) {
+                            // The SAME action the sidebar's Advance runs —
+                            // guard rails, coaching-budget gate and all. There
+                            // is exactly one advance path on this screen.
+                            performAdvance()
+                        }
+                    }
+                }
+                if !canAdvance {
+                    Text(isBlockedByCoachingBudget
+                         ? "Staff budget is overspent \u{2014} fix it before advancing."
+                         : "Finish the required tasks in the left panel to advance.")
+                        .font(.caption)
+                        .foregroundStyle(Color.textTertiary)
+                }
+            }
         }
+    }
+
+    /// The draft-prep state machine, built exactly the way `CareerShellView`
+    /// builds it for the task list — one authority, one set of counters.
+    ///
+    /// Costs no fetch of its own: the class is already in memory
+    /// (`WeekAdvancer.currentDraftClass`, the same source the Scouting tile
+    /// reads) and the department comes off `refreshStaffTile`'s scout fetch.
+    private var prepProgress: DraftPrepProgress {
+        DraftPrepProgress(
+            career: career,
+            prospects: WeekAdvancer.currentDraftClass,
+            scouts: scouts
+        )
+    }
+
+    /// Share of this cycle's class with a filed scouting report.
+    ///
+    /// Counted off `scoutingReports` rather than `scoutedOverall` so this card
+    /// and the scouting hub's own header mean the same thing by "scouted".
+    private var draftClassScoutedPercent: Int {
+        let draftClass = WeekAdvancer.currentDraftClass
+        guard !draftClass.isEmpty else { return 0 }
+        let scouted = draftClass.filter { !$0.scoutingReports.isEmpty }.count
+        return Int((Double(scouted) / Double(draftClass.count) * 100).rounded())
+    }
+
+    /// The stage's work in button voice, plus the scouting-hub tab it lives on.
+    ///
+    /// `nil` for `.ready`, which is the draft room rather than a stage with
+    /// something to buy.
+    private func draftPrepStageAction(for step: DraftPrepStep) -> (title: String, tab: String)? {
+        switch step {
+        case .combineReview: return ("Review Combine Results", "combine")
+        case .interviews:    return ("Conduct Interviews", "interviews")
+        case .filmStudy:     return ("Order Film Study", "film")
+        case .proDayFocus:   return ("Choose Pro-Day Schools", "proDays")
+        case .workouts:      return ("Invite Prospects to Work Out", "workouts")
+        case .mockOne:       return ("Read Mock 1.0", "mockDraft")
+        case .top30Visits:   return ("Host Top-30 Visits", "top30")
+        case .mockTwo:       return ("Read the Final Mock", "mockDraft")
+        case .ready:         return nil
+        }
+    }
+
+    /// Opens the scouting hub on a named tab.
+    ///
+    /// `scoutingPendingTab` is the hint `ScoutingHubView` reads in its `.task`
+    /// and clears; set it exactly the way `CareerShellView.handleTaskNavigation`
+    /// sets it for the stage task destinations, then push the hub. A hint whose
+    /// tab does not exist is ignored by the hub, so this can never dead-end.
+    private func openScoutingHub(tab: String) {
+        CareerScopedDefaults.set(tab, "scoutingPendingTab")
+        onTaskSelected(.scouting)
+    }
+
+    /// The phase the sidebar's Advance button would move to, named the way the
+    /// sidebar names it.
+    ///
+    /// Read off `SeasonPhaseGroup.preDraft.subPhases` — the pre-draft calendar,
+    /// in order — so this card cannot drift from the real phase order, and
+    /// through `TimelineTasksPanel.phaseName` so it cannot drift from the
+    /// sidebar's wording either.
+    private var nextPreDraftPhaseName: String? {
+        let window = SeasonPhaseGroup.preDraft.subPhases
+        guard let i = window.firstIndex(of: career.currentPhase),
+              i + 1 < window.count else { return nil }
+        return TimelineTasksPanel.phaseName(window[i + 1])
+    }
+
+    /// Gold primary capsule — the shape `heroActionLink` draws, over an
+    /// arbitrary action rather than a plain push.
+    @ViewBuilder
+    private func heroPrimaryButton(
+        title: String,
+        enabled: Bool = true,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Text(title)
+                    .font(.subheadline.weight(.bold))
+                Image(systemName: "arrow.right")
+                    .font(.subheadline.weight(.bold))
+            }
+            .foregroundStyle(enabled ? Color.backgroundPrimary : Color.textTertiary)
+            .padding(.horizontal, DSSpacing.md)
+            .padding(.vertical, 8)
+            .background(enabled ? Color.accentGold : Color.backgroundTertiary, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+    }
+
+    /// Tinted secondary capsule — same shape the regular-season card's "Game
+    /// Plan" button uses.
+    @ViewBuilder
+    private func heroSecondaryButton(title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(Color.accentGold)
+                .padding(.horizontal, DSSpacing.md)
+                .padding(.vertical, 8)
+                .background(Color.accentGold.opacity(0.14), in: Capsule())
+        }
+        .buttonStyle(.plain)
     }
 
     private var faHeroCard: some View {
@@ -4153,15 +4374,9 @@ struct CareerDashboardView: View {
         }
     }
 
-    private var proDaysHeroCard: some View {
-        phaseCardBase(icon: "graduationcap.fill", accent: .accentGold) {
-            heroHeader("Pro Days · 12 / 30 visits used")
-            heroStatRow("Top scouts assigned", value: "8 colleges")
-            heroStatRow("Workouts this week", value: "4")
-            heroStatRow("Insights gained", value: "+11%")
-            heroActionLink(title: "Schedule", destination: .scouting)
-        }
-    }
+    // `proDaysHeroCard` is gone: `.proDays` renders `pathToDraftHeroCard` now.
+    // Every row it drew was a literal ("12 / 30 visits used", "8 colleges",
+    // "+11%") and its CTA ignored the pro-day rations entirely.
 
     private var draftHeroCard: some View {
         phaseCardBase(icon: "pencil.and.list.clipboard", accent: .draftStealGold) {

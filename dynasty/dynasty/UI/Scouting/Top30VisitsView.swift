@@ -284,7 +284,11 @@ struct Top30VisitsView: View {
             Text("The Visit Book Is Not Open")
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(Color.textPrimary)
-            Text("Facility visits are the last instrument before the draft. You are at: \(stage.displayName).")
+            // Same shared wait sentence the tour and the workout room print —
+            // the visit book sits on the pro-day side of the calendar too, and
+            // "You are at: Film Study." on its own never said which phase the
+            // user was waiting on (#123).
+            Text("Facility visits are the last instrument before the draft. \(DraftPrepProgress.screenLockMessage(for: .top30Visits, phase: career.currentPhase, current: stage))")
                 .font(.subheadline)
                 .foregroundStyle(Color.textSecondary)
                 .multilineTextAlignment(.center)
