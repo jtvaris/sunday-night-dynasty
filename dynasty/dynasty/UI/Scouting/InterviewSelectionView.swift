@@ -158,11 +158,17 @@ struct InterviewSelectionView: View {
                     loadProspects()
                 }
             } else if remainingSlots == 0 && hasCompletedInterviews {
-                // All slots used and we have data — render the saved report directly.
-                InterviewReportView(results: completedInterviewResults) {
-                    CareerScopedDefaults.set(true, "interviewReportReviewed")
-                    loadProspects()
-                }
+                // All slots used and we have data — the report IS this tab's
+                // steady state, so no "Complete Review" bar: dismissing would
+                // just re-render this same screen (#118).
+                InterviewReportView(
+                    results: completedInterviewResults,
+                    onDismiss: {
+                        CareerScopedDefaults.set(true, "interviewReportReviewed")
+                        loadProspects()
+                    },
+                    showsCompleteCTA: false
+                )
             } else if remainingSlots == 0 {
                 // Edge case: slots used but no data (legacy save). Show empty state.
                 allInterviewsUsedView
@@ -1064,6 +1070,13 @@ struct InterviewResult: Identifiable {
 struct InterviewReportView: View {
     let results: [InterviewResult]
     let onDismiss: () -> Void
+    /// The gold "Complete Review" bar only earns its place when dismissing
+    /// actually goes somewhere — after a just-run batch it returns to the
+    /// selection list. In the all-slots-spent steady state the report IS the
+    /// tab, `onDismiss` re-renders the same screen, and the bar read as a
+    /// required action weeks after the stage was behind the club (#118).
+    /// Reading is still recorded by `onAppear` either way.
+    var showsCompleteCTA: Bool = true
 
     @Environment(\.modelContext) private var modelContext
 
@@ -1109,27 +1122,29 @@ struct InterviewReportView: View {
             }
 
             // Task 15: Complete Review button with clarity
-            Button {
-                // Mark the "Review interview report" dashboard task as reviewed.
-                CareerScopedDefaults.set(true, "interviewReportReviewed")
-                onDismiss()
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 14, weight: .bold))
-                    Text("Complete Review \u{2192} Return to Scouting Hub")
-                        .font(.system(size: 14, weight: .bold))
+            if showsCompleteCTA {
+                Button {
+                    // Mark the "Review interview report" dashboard task as reviewed.
+                    CareerScopedDefaults.set(true, "interviewReportReviewed")
+                    onDismiss()
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 14, weight: .bold))
+                        Text("Complete Review \u{2192} Return to Interviews")
+                            .font(.system(size: 14, weight: .bold))
+                    }
+                    .foregroundStyle(Color.backgroundPrimary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color.accentGold)
+                    )
                 }
-                .foregroundStyle(Color.backgroundPrimary)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(Color.accentGold)
-                )
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
         }
         .onAppear {
             // Viewing the report itself counts as "reviewing" — guarantees the
