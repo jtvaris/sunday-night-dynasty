@@ -51,6 +51,12 @@ struct BigBoardView<Header: View>: View {
     /// ("Hire Scouts" → Scout Team, "Browse Prospects" → Prospects). Optional so
     /// standalone call sites and previews can omit it.
     var onSwitchTab: ((ScoutingTab) -> Void)?
+    /// Hands one man to the interview room (#125). Supplied by the hub ONLY when
+    /// the room is honestly open — `DraftPrepProgress.canAct(.interviews)` plus
+    /// slots left on the 60-a-cycle ration — so the board never has to know the
+    /// interview economy and a row can never offer an action the room would
+    /// refuse. `nil` here means the menu item is not drawn at all.
+    var onInterview: ((CollegeProspect) -> Void)?
     /// Number of scouts currently on staff — drives the empty state's copy
     /// (0 scouts is a different problem from 8 scouts and an unscouted class).
     var scoutCount: Int = 0
@@ -2055,7 +2061,13 @@ struct BigBoardView<Header: View>: View {
                 try? modelContext.save()
                 refreshCachedBoard()
             },
-            onEditNote: { editingMarkNoteProspect = prospect }
+            onEditNote: { editingMarkNoteProspect = prospect },
+            // Only for a man nobody has been in a room with — the rest of the
+            // gate (window, stage, slots) is the hub's, and it withholds the
+            // closure entirely when any of it is shut.
+            onInterview: (onInterview != nil && !prospect.interviewCompleted)
+                ? { onInterview?(prospect) }
+                : nil
         )
         Divider()
         Button {

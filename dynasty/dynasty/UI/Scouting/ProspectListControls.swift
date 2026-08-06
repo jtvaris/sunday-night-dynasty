@@ -654,12 +654,10 @@ struct ProspectColumnContext {
     /// Build it once per screen (`PercentilePools(prospects:)` is a full sort of
     /// the class) and hold it in `@State`, never per row.
     ///
-    /// The type lives in `CombineResultsView.swift` today, next to the table
-    /// that grew it. It is deliberately NOT copied here: a second percentile
-    /// implementation is a second answer to "what did he run, relative to his
-    /// position", and the whole point of this file is that there is one. It
-    /// wants lifting into a file of its own in the sweep that moves the combine
-    /// table onto these cells.
+    /// The type lives in `ProspectPercentiles.swift` — one implementation, four
+    /// readers. A second percentile implementation would be a second answer to
+    /// "what did he run, relative to his position", and the whole point of this
+    /// file is that there is one.
     var percentilePools: PercentilePools? = nil
     /// Pins the scouted OVR band as the FIRST column of the block, beside the
     /// name, rather than leaving it at the trailing edge.

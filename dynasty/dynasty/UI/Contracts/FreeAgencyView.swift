@@ -679,14 +679,11 @@ struct FreeAgencyView: View {
         return .textSecondary
     }
 
+    /// The starter comparison's letters read the ONE ladder. Ranking by
+    /// `LetterGrade.rank` gave the B tier gold where every roster and board
+    /// screen paints it blue, folded `A+` in with `A`, and dropped D in with F.
     private func rowGradeColor(_ grade: LetterGrade) -> Color {
-        switch grade.rank {
-        case 10...12: return .success
-        case 7...9:   return .accentGold
-        case 4...6:   return .warning
-        case 2...3:   return .danger
-        default:      return .danger
-        }
+        Color.forGrade(grade)
     }
 
     // MARK: - Motivation Badge (Task 3)

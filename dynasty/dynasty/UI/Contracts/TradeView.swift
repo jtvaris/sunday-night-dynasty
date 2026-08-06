@@ -1403,13 +1403,11 @@ struct TradeView: View {
         )
     }
 
+    /// The trade ledger's letters read the ONE ladder. Its own switch painted B
+    /// gold and folded `A+` in with `A`, so the best trade this screen can grade
+    /// looked no different from a merely good one and a `D` looked like an `F`.
     private func historyGradeColor(_ grade: String) -> Color {
-        switch grade {
-        case "A+", "A": return .success
-        case "B": return .accentGold
-        case "C": return .warning
-        default: return .danger
-        }
+        Color.forGrade(grade)
     }
 
     private func recordCompletedTrade(
@@ -2081,14 +2079,11 @@ struct TradeView: View {
         return .textSecondary
     }
 
+    /// The upgrade comparison's letters read the ONE ladder. Ranking by
+    /// `LetterGrade.rank` gave the B tier gold where every roster and board
+    /// screen paints it blue, and dropped D in with F.
     private func rowGradeColor(_ grade: LetterGrade) -> Color {
-        switch grade.rank {
-        case 10...12: return .success
-        case 7...9:   return .accentGold
-        case 4...6:   return .warning
-        case 2...3:   return .danger
-        default:      return .danger
-        }
+        Color.forGrade(grade)
     }
 
     private func formatMillions(_ thousands: Int) -> String {

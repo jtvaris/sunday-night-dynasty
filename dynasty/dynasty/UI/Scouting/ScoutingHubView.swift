@@ -47,6 +47,11 @@ struct ScoutingHubView: View {
     /// into a reference surface. Reset by nothing: walking back is one tap.
     @State private var lastStageTab: ScoutingTab?
 
+    /// The man a board row sent to the interview room (#125), ticked on arrival
+    /// and cleared the moment the user leaves the room — otherwise walking back
+    /// in a week later would re-tick a name he never asked for again.
+    @State private var interviewFocusProspectID: UUID?
+
     /// Read only to migrate the legacy bookmark set onto the unified mark.
     @CareerScopedStorage("prospectWatchlist") private var hubProspectWatchlistJSON: String = "[]"
 
@@ -215,6 +220,9 @@ struct ScoutingHubView: View {
             // The switcher's stage segment follows the room the user was last
             // in, so stepping onto the board and back is one tap each way.
             if Self.stageTabs.contains(newTab) { lastStageTab = newTab }
+            // A board row's interview hand-off is spent the moment the room is
+            // built; leaving clears it so a later visit opens on a clean slate.
+            if newTab != .interviews { interviewFocusProspectID = nil }
             // The fold state belongs to the SURFACE, but the flag is one piece of
             // hub state shared across all of them (two screens fold their own
             // blocks with it). `ScoutingInsightsSection` resolves the new
@@ -982,6 +990,23 @@ struct ScoutingHubView: View {
 
     // MARK: - Tab Content
 
+    /// The board's route into the interview room, or `nil` when there is no
+    /// honest one (#125).
+    ///
+    /// The gate is the hub's, not the board's: `canAct` is the same predicate
+    /// the room's own Conduct button reads, and the stage counter IS the 60-slot
+    /// ration (`done`/`total` for `.interviews`). A board row therefore never
+    /// offers a meeting the room would refuse, and nothing about the interview
+    /// economy has to be restated on the board.
+    private func interviewJump(_ progress: DraftPrepProgress) -> ((CollegeProspect) -> Void)? {
+        let stage = progress[.interviews]
+        guard stage.unlocked, stage.done < stage.total else { return nil }
+        return { prospect in
+            interviewFocusProspectID = prospect.id
+            selectedTab = .interviews
+        }
+    }
+
     @ViewBuilder
     private var tabContent: some View {
         // ONE progress value for the whole surface. Every stage screen's
@@ -1013,6 +1038,7 @@ struct ScoutingHubView: View {
                 scoutsSentToCombine: scoutsSentToCombine,
                 // Empty-state CTAs need a way back into the hub's other tabs.
                 onSwitchTab: { selectedTab = $0 },
+                onInterview: interviewJump(progress),
                 scoutCount: scouts.count,
                 positionFilter: $positionFilter,
                 // #130: the metrics strip and the prep card moved into the hub's
@@ -1051,6 +1077,7 @@ struct ScoutingHubView: View {
                     teamRoster: teamPlayers,
                     scoutsSentToCombine: scoutsSentToCombine,
                     onSwitchTab: { selectedTab = $0 },
+                    onInterview: interviewJump(progress),
                     scoutCount: scouts.count,
                     positionFilter: $positionFilter,
                     initialAttributeTab: .workup,
@@ -1085,7 +1112,11 @@ struct ScoutingHubView: View {
                 header: { EmptyView() }
             )
         case .interviews:
-            InterviewSelectionView(career: career, canAct: progress.canAct(.interviews))
+            InterviewSelectionView(
+                career: career,
+                canAct: progress.canAct(.interviews),
+                focusProspectID: interviewFocusProspectID
+            )
         case .mockDraft:
             MockDraftView(career: career, prospects: prospects)
         case .draftOrder:

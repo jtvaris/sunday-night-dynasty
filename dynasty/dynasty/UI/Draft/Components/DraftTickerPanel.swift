@@ -188,13 +188,12 @@ struct DraftTickerPanel: View {
             .clipShape(RoundedRectangle(cornerRadius: 3))
     }
 
+    /// The ticker's grade chip reads the ONE ladder. Its own switch painted A
+    /// gold and B green — the two colours the board gives A+ and A — so the same
+    /// letter changed meaning between the board and the pick that took him off
+    /// it, and `A+` / `D` had no rung of their own at all.
     private func scoutGradeColor(_ label: String) -> Color {
-        switch label.first {
-        case "A": return .draftStealGold
-        case "B": return .success
-        case "C": return .warning
-        default:  return .danger
-        }
+        Color.forGrade(label)
     }
 
     // MARK: - Story feed

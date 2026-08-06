@@ -16,6 +16,9 @@ struct InterviewSelectionView: View {
     /// question of the same struct. Defaults to `true` so a preview or a future
     /// non-hub entry point is not silently dead.
     var canAct: Bool = true
+    /// The man a board row asked for, ticked on arrival. `nil` for a plain visit
+    /// to the tab — see the `.task` that consumes it.
+    var focusProspectID: UUID? = nil
     @Environment(\.modelContext) private var modelContext
 
     @State private var selectedProspectIDs: Set<UUID> = []
@@ -212,6 +215,15 @@ struct InterviewSelectionView: View {
                 watchlistIDs: legacyWatchlistIDs
             )
             if migrated > 0 { try? modelContext.save() }
+            // Arrived from a board row's "Conduct Interview": open with the man
+            // the user long-pressed already ticked, so the Conduct button is one
+            // tap away rather than a scroll through 300 rows (#125). Only if he
+            // is still selectable — an already-interviewed man is filtered out
+            // of this list and would tick nothing.
+            if let focusProspectID,
+               selectableProspects.contains(where: { $0.id == focusProspectID }) {
+                selectedProspectIDs = [focusProspectID]
+            }
             isLoading = false
         }
     }
@@ -707,9 +719,28 @@ struct InterviewSelectionView: View {
         .contextMenu {
             ProspectGradeContextMenu(
                 prospect: prospect,
-                onChange: { try? modelContext.save() }
+                onChange: { try? modelContext.save() },
+                // The room's own flow, on one man: batching is the default, but
+                // a user who long-presses the name he came here for should not
+                // have to tick him, scroll to the bar and tap Conduct. Same
+                // chokepoint, same slot arithmetic — `conductInterviews(on:)`.
+                // The closure is `nil` — and the menu item therefore absent —
+                // whenever the Conduct button would be dead (#125).
+                onInterview: canInterviewNow
+                    ? { conductInterviews(on: [prospect.id]) }
+                    : nil
             )
         }
+    }
+
+    /// Whether a single-man shortcut may spend a slot right now.
+    ///
+    /// The two predicates the Conduct button already reads, and nothing else:
+    /// `canAct` is `DraftPrepProgress.canAct(.interviews)` handed down by the
+    /// hub, and `remainingSlots` is the 60-a-cycle ration. Every row this list
+    /// draws is already `!interviewCompleted` — that is the list's own filter.
+    private var canInterviewNow: Bool {
+        canAct && remainingSlots > 0
     }
 
     // MARK: - #15: Conduct button - properly disabled when count is 0
@@ -719,7 +750,7 @@ struct InterviewSelectionView: View {
         // about, so the locked case states its reason on the button itself.
         let blocked = selectedProspectIDs.isEmpty || !canAct
         return Button {
-            conductInterviews()
+            conductInterviews(on: selectedProspectIDs)
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: canAct ? "bubble.left.and.bubble.right.fill" : "lock.fill")
@@ -806,14 +837,19 @@ struct InterviewSelectionView: View {
         return "\(phase) \u{00B7} " + String(career.currentSeason)
     }
 
-    private func conductInterviews() {
+    /// Runs the room on a set of men and shows the report.
+    ///
+    /// Takes the ids rather than reading `selectedProspectIDs` so the row's
+    /// "Conduct Interview" shortcut (#125) is the SAME call the Conduct button
+    /// makes, on a set of one — one engine call, one slot ledger, one report.
+    private func conductInterviews(on ids: Set<UUID>) {
         // Belt and braces behind the disabled button: spending a slot writes
         // `career.interviewsUsed`, which is evidence the stage machine reads.
-        guard canAct else { return }
+        guard canAct, !ids.isEmpty else { return }
         var results: [InterviewResult] = []
         let room = interviewer
 
-        for prospectID in selectedProspectIDs {
+        for prospectID in ids {
             guard let prospect = prospects.first(where: { $0.id == prospectID }) else { continue }
 
             // One interview engine, one set of rules. This view used to run its
@@ -849,7 +885,7 @@ struct InterviewSelectionView: View {
         }
 
         // Update career
-        career.interviewsUsed += selectedProspectIDs.count
+        career.interviewsUsed += ids.count
 
         // The revealed grade bands live on the draft class, which is held in
         // `WeekAdvancer` rather than fetched — push them through so the board
@@ -1650,23 +1686,15 @@ struct InterviewReportView: View {
         }
     }
 
+    /// Football-IQ and interview letters read the ONE ladder. These were two
+    /// byte-identical switches that painted B gold where the board next door
+    /// paints it blue, gave D the same red as F, and dimmed F to 80 % opacity —
+    /// so the worst grade in the room was the quietest thing on the row.
     private func iqGradeColor(_ grade: String) -> Color {
-        switch grade {
-        case "A": return Color.success
-        case "B": return Color.accentGold
-        case "C": return Color.warning
-        case "D": return Color.danger
-        default:  return Color.danger.opacity(0.8) // F
-        }
+        Color.forGrade(grade)
     }
 
     private func interviewGradeColor(_ grade: String) -> Color {
-        switch grade {
-        case "A": return Color.success
-        case "B": return Color.accentGold
-        case "C": return Color.warning
-        case "D": return Color.danger
-        default:  return Color.danger.opacity(0.8)
-        }
+        Color.forGrade(grade)
     }
 }

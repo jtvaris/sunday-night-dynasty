@@ -1708,14 +1708,12 @@ struct ProspectDetailView: View {
         return "F"
     }
 
+    /// The interview block's letters read the ONE ladder. Its own switch shifted
+    /// the whole scale one rung warm — A gold, B green — so the same letter on
+    /// the same man was a different colour on the card than in the room that
+    /// produced it, and D shared F's red.
     private func interviewDetailGradeColor(_ grade: String) -> Color {
-        switch grade {
-        case "A": return .accentGold
-        case "B": return .success
-        case "C": return .warning
-        case "D": return .danger
-        default:  return .danger
-        }
+        Color.forGrade(grade)
     }
 
     private func personalityDetailBadgeColor(_ p: PersonalityArchetype) -> Color {
@@ -2399,9 +2397,7 @@ struct ProspectDetailView: View {
     }
 
     private func detailGradeColor(_ grade: LetterGrade) -> Color {
-        // Aligned with the unified 5-tier palette so colors match across the app:
-        // A+ → bright green, A/A- → green, B → blue, C → yellow, D/F → red.
-        PositionGradeCalculator.gradeColorForLetter(grade.rawValue)
+        Color.forGrade(grade)
     }
 
     private func potentialLabelColor(_ label: PotentialLabel) -> Color {
