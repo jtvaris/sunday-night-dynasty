@@ -47,6 +47,11 @@ struct Top30VisitsView: View {
     /// hub's process bar draws this stage's puck from.
     let canAct: Bool
     var onRefresh: () -> Void
+    /// Hands one man to the interview room (#137), exactly as the Big Board's
+    /// rows do. Supplied by the hub only when the room is honestly open, so this
+    /// list never has to know the interview economy; `nil` and the menu item is
+    /// not drawn at all.
+    var onInterview: ((CollegeProspect) -> Void)? = nil
 
     @Environment(\.modelContext) private var modelContext
     @CareerScopedStorage("prospectCustomBoard") private var prospectCustomBoardJSON: String = "[]"
@@ -611,7 +616,11 @@ struct Top30VisitsView: View {
         .contextMenu {
             ProspectGradeContextMenu(
                 prospect: prospect,
-                onChange: { try? modelContext.save() }
+                onChange: { try? modelContext.save() },
+                onInterview: ProspectGradeContextMenu.interviewAction(
+                    for: prospect,
+                    jump: onInterview
+                )
             )
         }
     }

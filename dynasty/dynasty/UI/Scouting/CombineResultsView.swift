@@ -122,6 +122,15 @@ struct CombineResultsView<Header: View>: View {
     /// collapsed is the shape of every "the button was not there" report.
     var insightsExpanded: Bool = true
 
+    /// Hands one man to the interview room (#137), exactly as the Big Board's
+    /// rows do.
+    ///
+    /// Supplied by the hub ONLY when the room is honestly open — the stage
+    /// unlocked and slots left on the cycle's ration — so this table never has
+    /// to know the interview economy and a row can never offer a meeting the
+    /// room would refuse. `nil` here and the menu item is not drawn at all.
+    var onInterview: ((CollegeProspect) -> Void)? = nil
+
     /// The hub's scroll-away header, rendered as this list's first section.
     let header: () -> Header
 
@@ -376,7 +385,11 @@ struct CombineResultsView<Header: View>: View {
                             .contextMenu {
                                 ProspectGradeContextMenu(
                                     prospect: prospect,
-                                    onChange: { try? modelContext.save() }
+                                    onChange: { try? modelContext.save() },
+                                    onInterview: ProspectGradeContextMenu.interviewAction(
+                                        for: prospect,
+                                        jump: onInterview
+                                    )
                                 )
                             }
                         }

@@ -73,6 +73,13 @@ struct ScoutingHubView: View {
         }
     }
 
+    /// Whether the HUB draws the chip row, as opposed to the surface hosting it
+    /// on its own table. See the layer-4 comment in ``processChrome`` — the Big
+    /// Board takes it (`hostsPositionChips`), everything else leaves it here.
+    private var hostsPositionFilterChips: Bool {
+        positionFilterAppliesToCurrentTab && selectedTab != .board
+    }
+
     // MARK: - Body
     //
     // PROCESS VIEW, re-stacked (#130). Four layers of pinned chrome over one
@@ -636,9 +643,24 @@ struct ScoutingHubView: View {
         return .tools
     }
 
-    /// "<season>-<phase>" — the token that re-arms one free Insights expansion.
+    /// "<career>-<season>-<phase>" — the token that re-arms one free Insights
+    /// expansion.
+    ///
+    /// **The career id is load-bearing.** `ScoutingInsightsDefaults`' two keys
+    /// (`scoutInsightsOpen_<surface>` / `scoutInsightsSeen_<surface>`) are plain
+    /// `UserDefaults`, not `@CareerScopedStorage`, and they are not on
+    /// `CareerScopedDefaults.keys` either — so deleting a save leaves them
+    /// behind and the next career inherits them. With a bare "<season>-<phase>"
+    /// token that is not a cosmetic leak: a new career started in the same
+    /// league year and phase reads a seen-token that MATCHES, spends the one
+    /// free expansion it never had, and falls through to the previous career's
+    /// `openPreference`. That is exactly the reported symptom — the Big Board
+    /// and Class Depth opened expanded on their first visit while the combine
+    /// surface, the one block a player is most likely to have folded away once,
+    /// opened shut. Scoping the TOKEN rather than the keys re-arms every surface
+    /// for every career without a migration, and leaves the stale rows inert.
     private var insightsPhaseToken: String {
-        "\(career.currentSeason)-\(career.currentPhase.rawValue)"
+        "\(career.id.uuidString)-\(career.currentSeason)-\(career.currentPhase.rawValue)"
     }
 
     // MARK: - Progress
@@ -765,13 +787,18 @@ struct ScoutingHubView: View {
             // would follow the user onto the combine.
             .id(selectedTab.rawValue)
             .padding(.horizontal, 12)
-            .padding(.bottom, positionFilterAppliesToCurrentTab ? 6 : 8)
+            .padding(.bottom, hostsPositionFilterChips ? 6 : 8)
 
             // Layer 4: the shared filter, LAST, so it sits on the table rather
             // than between two blocks of prose. The table's own controls (mode
             // chips, search, sortable column labels) are pinned inside its list
             // header directly underneath, and the two read as one strip.
-            if positionFilterAppliesToCurrentTab {
+            //
+            // The Big Board is the exception and hosts the row itself: it is the
+            // one surface whose controls are a stack ABOVE its list rather than
+            // inside its list header, so a chip row pinned here would be four
+            // controls away from the table it filters (#142).
+            if hostsPositionFilterChips {
                 positionFilterChips
                     .padding(.horizontal, 16)
                     .padding(.bottom, 6)
@@ -950,47 +977,15 @@ struct ScoutingHubView: View {
 
     // MARK: - Position Filter Chips (shared by Big Board / Prospects / Combine)
 
+    /// The shared control, not a fourth copy of it.
+    ///
+    /// This used to be ~40 lines of chip drawing identical to
+    /// `ProspectPositionChips` in `ProspectListControls.swift` — which was
+    /// EXTRACTED FROM THIS PROPERTY so the pro-day and workout lists could wear
+    /// the same row, and then left behind here. Two definitions of one control
+    /// is how the hub ended up with three position filters in the first place.
     private var positionFilterChips: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 5) {
-                ForEach(ProspectPositionFilter.allCases) { filter in
-                    let isSelected = positionFilter == filter
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            positionFilter = filter
-                        }
-                    } label: {
-                        Text(filter.label)
-                            .font(.system(size: 12, weight: isSelected ? .heavy : .medium))
-                            .foregroundStyle(isSelected ? Color.backgroundPrimary : Color.textSecondary)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(
-                                isSelected ? Color.accentBlue : Color.backgroundTertiary,
-                                in: Capsule()
-                            )
-                            .overlay(
-                                Capsule().strokeBorder(
-                                    isSelected ? Color.clear : Color.surfaceBorder,
-                                    lineWidth: 1
-                                )
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(filter == .all
-                                        ? "Show all positions"
-                                        : "Filter to \(filter.label)")
-                    .accessibilityAddTraits(isSelected ? .isSelected : [])
-                }
-            }
-        }
-        .mask(
-            HStack(spacing: 0) {
-                Color.white
-                LinearGradient(colors: [.white, .clear], startPoint: .leading, endPoint: .trailing)
-                    .frame(width: 20)
-            }
-        )
+        ProspectPositionChips(selection: $positionFilter)
     }
 
     // MARK: - Tab Content
@@ -1046,6 +1041,9 @@ struct ScoutingHubView: View {
                 onInterview: interviewJump(progress),
                 scoutCount: scouts.count,
                 positionFilter: $positionFilter,
+                // #142: the shared chip row belongs on the table here, under the
+                // board's own strip, not above it. See `hostsPositionFilterChips`.
+                hostsPositionChips: true,
                 // #130: the metrics strip and the prep card moved into the hub's
                 // Insights block. The board's first row is a prospect again.
                 header: { EmptyView() }
@@ -1114,6 +1112,9 @@ struct ScoutingHubView: View {
                 // with it. The send-scouts CTA never folds — it is a one-window
                 // offer with money attached, not an insight.
                 insightsExpanded: insightsExpanded,
+                // #137: the same row hand-off the Big Board has. One gate, the
+                // hub's, applied identically wherever the menu is drawn.
+                onInterview: interviewJump(progress),
                 header: { EmptyView() }
             )
         case .interviews:
@@ -1123,7 +1124,11 @@ struct ScoutingHubView: View {
                 focusProspectID: interviewFocusProspectID
             )
         case .mockDraft:
-            MockDraftView(career: career, prospects: prospects)
+            MockDraftView(
+                career: career,
+                prospects: prospects,
+                onInterview: interviewJump(progress)
+            )
         case .draftOrder:
             DraftOrderView(career: career)
         case .workouts:
@@ -1133,7 +1138,8 @@ struct ScoutingHubView: View {
                 teamRoster: teamPlayers,
                 positionFilter: $positionFilter,
                 canAct: progress.canAct(.workouts),
-                onRefresh: loadData
+                onRefresh: loadData,
+                onInterview: interviewJump(progress)
             )
         case .top30:
             Top30VisitsView(
@@ -1142,7 +1148,8 @@ struct ScoutingHubView: View {
                 prospects: prospects,
                 teamRoster: teamPlayers,
                 canAct: progress.canAct(.top30Visits),
-                onRefresh: loadData
+                onRefresh: loadData,
+                onInterview: interviewJump(progress)
             )
         case .proDays:
             // Wave B split `ProDayListView` into three stage screens. This case
@@ -1206,10 +1213,27 @@ struct ScoutingHubView: View {
             } else {
                 let validPhases: [SeasonPhase] = [.coachingChanges, .reviewRoster, .combine, .freeAgency, .proDays, .draft, .otas]
                 if validPhases.contains(career.currentPhase) {
-                    WeekAdvancer.currentDraftClass = ScoutingEngine.generateDraftClass()
+                    // Born stamped (#145). `persistDraftClass` stamps
+                    // `WeekAdvancer.activeCareerID` on the way into the store,
+                    // which is a process static this heal path does not set and
+                    // cannot see — every other generation site in the build
+                    // passes the id it is holding, and a heal that ran against a
+                    // stale static would hand this save's class to another
+                    // career's `careerID` predicate.
+                    WeekAdvancer.currentDraftClass = ScoutingEngine.generateDraftClass(careerID: career.id)
                     WeekAdvancer.draftClassGenerated = true
-                    // Apply pre-scouted data for first season
-                    ScoutingEngine.applyPreScoutedData(prospects: &WeekAdvancer.currentDraftClass)
+                    // The pre-scout freebie is a FIRST-SEASON inheritance: the
+                    // previous regime's paper on the top ~250 of the class the
+                    // user walks in on. This call was ungated under a comment
+                    // that promised the gate, so a save that lost its class in
+                    // year six — the very saves this branch exists to heal —
+                    // regenerated it with a third of the board already scouted,
+                    // free, by a staff that had not worked here for five years.
+                    // Same test `WeekAdvancer` applies at the real call sites.
+                    let isFirstSeason = career.totalWins == 0 && career.totalLosses == 0
+                    if isFirstSeason {
+                        ScoutingEngine.applyPreScoutedData(prospects: &WeekAdvancer.currentDraftClass)
+                    }
                     WeekAdvancer.persistDraftClass(WeekAdvancer.currentDraftClass, to: modelContext)
                 }
             }

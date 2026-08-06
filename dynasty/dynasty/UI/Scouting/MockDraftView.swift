@@ -4,6 +4,11 @@ import SwiftData
 struct MockDraftView: View {
     let career: Career
     let prospects: [CollegeProspect]
+    /// Hands one man to the interview room (#137), exactly as the Big Board's
+    /// rows do. Supplied by the hub only when the room is honestly open, so this
+    /// screen never has to know the interview economy; `nil` and the menu item
+    /// is not drawn at all.
+    var onInterview: ((CollegeProspect) -> Void)? = nil
 
     @Environment(\.modelContext) private var modelContext
     @State private var teams: [Team] = []
@@ -257,7 +262,11 @@ struct MockDraftView: View {
                                         if let prospect {
                                             ProspectGradeContextMenu(
                                                 prospect: prospect,
-                                                onChange: { try? modelContext.save() }
+                                                onChange: { try? modelContext.save() },
+                                                onInterview: ProspectGradeContextMenu.interviewAction(
+                                                    for: prospect,
+                                                    jump: onInterview
+                                                )
                                             )
                                         }
                                     }

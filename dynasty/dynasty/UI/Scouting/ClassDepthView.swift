@@ -541,7 +541,18 @@ struct ClassDepthView: View {
     // MARK: - Position rows
 
     private func groupRow(_ row: ClassDepthRow) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
+        // NINE bars, EIGHT chips (#142). `ProspectPositionFilter` has no K/P
+        // case and is not getting one: it is the hub's shared filter and a tenth
+        // chip would land on the Big Board, the combine table, the film list and
+        // the workout list, all of which exist to rank draftable football
+        // players. See ``ClassDepthGroup`` for the whole argument.
+        //
+        // So the specialists' bar is a READ, not a door — and it is drawn as
+        // one. The row carries no tap target and no hint at all rather than a
+        // tap that silently does nothing: an affordance that promises a filtered
+        // board it cannot deliver is worse than no affordance.
+        let chip = row.group.chip
+        return VStack(alignment: .leading, spacing: 7) {
             groupHeadline(row)
             depthBar(row)
             tierLegend(row)
@@ -553,13 +564,14 @@ struct ClassDepthView: View {
             // A depth read is a scan; the board is where the work happens. The
             // tap sets the SHARED chip, so the board opens already narrowed to
             // the group the user was looking at.
-            guard let chip = row.group.chip else { return }
+            guard let chip else { return }
             positionFilter = chip
             onOpenBoard?()
         }
+        .allowsHitTesting(chip != nil)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityText(row))
-        .accessibilityHint(row.group.chip == nil ? "" : "Opens the Big Board filtered to this group")
+        .accessibilityHint(chip == nil ? "" : "Opens the Big Board filtered to this group")
     }
 
     private func groupHeadline(_ row: ClassDepthRow) -> some View {

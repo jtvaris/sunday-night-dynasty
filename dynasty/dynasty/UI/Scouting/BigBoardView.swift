@@ -68,6 +68,16 @@ struct BigBoardView<Header: View>: View {
     /// piece of state than the board he was looking at.
     @Binding var positionFilter: ProspectPositionFilter
 
+    /// Whether this board draws the shared position chips itself (#142).
+    ///
+    /// The hub normally pins them as its own fourth chrome layer, above the
+    /// whole surface. The plain Board tab asks for them down here instead, so
+    /// they sit on the table like they do on every other prospect surface; a
+    /// board hosted inside another stage screen (film study) leaves them where
+    /// the hub put them, because that screen has chrome of its own above the
+    /// board and two chip rows would be one too many.
+    var hostsPositionChips: Bool = false
+
     /// The column block the board opens on, when the HOST has an opinion.
     ///
     /// The film-study stage opens it on `.workup`, which is the block that
@@ -137,6 +147,17 @@ struct BigBoardView<Header: View>: View {
     /// Value-vs-my-grade read per prospect, computed once per refresh so a row
     /// never re-derives it and the sort has one source.
     @State private var cachedValueReads: [UUID: ProspectFog.ValueRead] = [:]
+    /// The club's three holes, ranked once per data version. See
+    /// ``computeTeamNeeds()`` for why this is state rather than a computed
+    /// property, and why it is not `DraftEngine.topTeamNeeds`.
+    @State private var cachedTeamNeeds: [Position] = []
+    /// `Set(cachedTeamNeeds)` — every board ROW asks this, so it is built once
+    /// rather than re-ranking the roster 350 times a pass.
+    @State private var cachedNeedPositions: Set<Position> = []
+    /// Best man on the board per need position, and overall, ordered by what the
+    /// user can actually see. See ``bestByRead(_:)``.
+    @State private var cachedBestByPosition: [Position: CollegeProspect] = [:]
+    @State private var cachedBestAvailable: CollegeProspect?
 
     // MARK: - Prospect Notes Storage
 
@@ -790,40 +811,112 @@ struct BigBoardView<Header: View>: View {
     }
 
     // MARK: - Need-Based Recommendations
+    //
+    // All of it computed ONCE per data version, in `refreshNeedReads()`. Every
+    // value below used to be a computed property re-evaluated on every body
+    // pass — and `teamNeedPositions`, which each of ~350 rows asks, re-ranked
+    // the whole roster once per ROW.
 
-    private var teamNeeds: [Position] {
-        DraftEngine.topTeamNeeds(roster: teamRoster, limit: 3)
+    /// The club's holes, best first, and the SAME answer every visit.
+    ///
+    /// `DraftEngine.topTeamNeeds` was the old source and it is not stable. It
+    /// sorts a `[Position: Double]` on value alone, and on a full roster the
+    /// EVIDENCE half of that score is exactly 1.0 nearly everywhere (the ideal
+    /// counts sum to 48 against a 53-man roster), so the ranking collapses onto
+    /// the five weight-1.0 positions {QB, DE, CB, WR, LT} — five EQUAL scores,
+    /// handed back in whatever order `Dictionary` iteration and an unstable
+    /// `sorted` produce. "Your #1 need" therefore read LT, then CB, then LT,
+    /// then DE over four visits with nothing about the roster changed, and the
+    /// "Scout: Need" trio reshuffled underneath it.
+    ///
+    /// `teamNeedDeficits` is the deterministic sibling and the one the rest of
+    /// this hub already reads (`ClassDepthView`, the interview room's NEED
+    /// column): only positions whose evidence half clears 1.0 survive, and equal
+    /// scores tiebreak on `rawValue`. Three surfaces of one hub now name the
+    /// same holes.
+    ///
+    /// An empty deficit list is a real and common answer — a well-built roster
+    /// has no holes — and the fallback is exact rather than arbitrary: deficits
+    /// come back empty only when every multiplier is exactly 1.0, which is
+    /// precisely the case where `topTeamNeeds`' scores ARE the bare positional
+    /// weights and its top five tie. Sorting those five by `rawValue` loses no
+    /// ordering, because there was none to lose.
+    private func computeTeamNeeds() -> [Position] {
+        let deficits = DraftEngine.teamNeedDeficits(roster: teamRoster, limit: 3)
+        if !deficits.isEmpty { return deficits }
+        return Array(
+            DraftEngine.topTeamNeeds(roster: teamRoster, limit: 5)
+                .sorted { $0.rawValue < $1.rawValue }
+                .prefix(3)
+        )
+    }
+
+    /// How the recommendation strip ranks two men: the fogged band's MIDPOINT
+    /// first, the media's consensus slot second, the prospect's own id last so
+    /// two identical reads still order the same way twice.
+    private struct BoardReadKey {
+        /// `ProspectFog.Read.rank` — the mid-grade of the band the row prints.
+        /// Higher is better.
+        let readRank: Int
+        /// `DraftIntel.consensusRank`. Public by contract; lower is better.
+        let marketRank: Int
+        let id: UUID
+
+        func beats(_ other: BoardReadKey) -> Bool {
+            if readRank != other.readRank { return readRank > other.readRank }
+            if marketRank != other.marketRank { return marketRank < other.marketRank }
+            return id.uuidString < other.id.uuidString
+        }
+    }
+
+    /// The best man in a pool AS THE USER SEES HIM.
+    ///
+    /// These three answers used to sort on raw `scoutedOverall` — a number this
+    /// screen never prints — while `bestAvailableGradeText` printed the FOGGED
+    /// band beside the name. One point of a hidden integer could therefore hand
+    /// the "Best:" chip to a man whose visible band ("B-/B+") was plainly worse
+    /// than the next man's ("A-/A+"): the strip contradicted itself on one line.
+    /// Ordering by the read's own midpoint makes the recommendation and the
+    /// grade beside it the same claim.
+    private func bestByRead(_ pool: [CollegeProspect]) -> CollegeProspect? {
+        var best: (prospect: CollegeProspect, key: BoardReadKey)?
+        for prospect in pool {
+            let read = ProspectFog.read(prospect)
+            // Our own paper only. A media projection is not a scouting answer,
+            // and `bestAvailableGradeText` would print "—" beside the name.
+            guard read.source == .scouts, read.band != nil else { continue }
+            let key = BoardReadKey(
+                readRank: read.rank,
+                marketRank: marketRank(for: prospect) ?? Int.max,
+                id: prospect.id
+            )
+            if best == nil || key.beats(best!.key) {
+                best = (prospect, key)
+            }
+        }
+        return best?.prospect
     }
 
     private var topNeedPosition: Position? {
-        teamNeeds.first
+        cachedTeamNeeds.first
     }
 
     private var bestAtNeed: CollegeProspect? {
         guard let need = topNeedPosition else { return nil }
-        return scoutedProspects
-            .filter { $0.position == need }
-            .sorted { ($0.scoutedOverall ?? 0) > ($1.scoutedOverall ?? 0) }
-            .first
+        return cachedBestByPosition[need]
     }
 
     private var bestPlayerAvailable: CollegeProspect? {
-        scoutedProspects
-            .sorted { ($0.scoutedOverall ?? 0) > ($1.scoutedOverall ?? 0) }
-            .first
+        cachedBestAvailable
     }
 
     private var teamNeedPositions: Set<Position> {
-        guard !teamRoster.isEmpty else { return [] }
-        return Set(teamNeeds)
+        cachedNeedPositions
     }
 
     /// Best available prospect on the board for a given position.
     private func bestAvailableForPosition(_ pos: Position) -> CollegeProspect? {
-        scoutedProspects
-            .filter { $0.position == pos }
-            .sorted { ($0.scoutedOverall ?? 0) > ($1.scoutedOverall ?? 0) }
-            .first
+        cachedBestByPosition[pos]
     }
 
     /// Grade text for a prospect — the stored band, else the letter its scouted
@@ -870,6 +963,8 @@ struct BigBoardView<Header: View>: View {
         }
         cachedValueReads = reads
 
+        refreshNeedReads()
+
         let ordered = orderedBoard(valueReads: reads)
         let custom = customOrderedBoard
         cachedOrderedBoard = ordered
@@ -890,6 +985,42 @@ struct BigBoardView<Header: View>: View {
         // them #1/#2/#3 here while the draft room printed #4/#19/#41. One
         // reader now, shared with `DraftDayCoordinator` and `MockDraftView`.
         cachedCustomRankMap = UserDraftBoard.slotMap(among: prospects)
+    }
+
+    /// The recommendation strip's three answers, in ONE pass over the board.
+    ///
+    /// One pass because `ProspectFog.read` widens a stored band by
+    /// `DraftIntel.scoutConfidence` for every man it is asked about, and the old
+    /// shape asked once per candidate per strip line, per body pass.
+    private func refreshNeedReads() {
+        let needs = computeTeamNeeds()
+        cachedTeamNeeds = needs
+        // An empty roster is "we do not know", not "we need nothing" — the NEED
+        // badge on a row must stay dark until the club has players to compare.
+        cachedNeedPositions = teamRoster.isEmpty ? [] : Set(needs)
+
+        let wanted = Set(needs)
+        var bestByPosition: [Position: (prospect: CollegeProspect, key: BoardReadKey)] = [:]
+        var bestOverall: (prospect: CollegeProspect, key: BoardReadKey)?
+
+        for prospect in scoutedProspects {
+            let read = ProspectFog.read(prospect)
+            guard read.source == .scouts, read.band != nil else { continue }
+            let key = BoardReadKey(
+                readRank: read.rank,
+                marketRank: marketRank(for: prospect) ?? Int.max,
+                id: prospect.id
+            )
+            if bestOverall == nil || key.beats(bestOverall!.key) {
+                bestOverall = (prospect, key)
+            }
+            guard wanted.contains(prospect.position) else { continue }
+            if let current = bestByPosition[prospect.position], !key.beats(current.key) { continue }
+            bestByPosition[prospect.position] = (prospect, key)
+        }
+
+        cachedBestByPosition = bestByPosition.mapValues(\.prospect)
+        cachedBestAvailable = bestOverall?.prospect
     }
 
     // MARK: - Board Row
@@ -1216,6 +1347,26 @@ struct BigBoardView<Header: View>: View {
 
                     compareTrayBar
 
+                    // The hub's shared position filter, hosted HERE rather than
+                    // above the search bar (#142).
+                    //
+                    // The hub draws it as the last of its four pinned layers, so
+                    // on Class Depth and the combine it lands directly on the
+                    // table it filters. The board is the one surface that stacks
+                    // chrome of its own — search, the mode chips, the compare
+                    // tray, the column labels — between the two, which left the
+                    // shared chips reading as a fifth navigation row rather than
+                    // as one of the list's controls. The board's own strip keeps
+                    // its order; only the shared row moved, to the bottom of the
+                    // stack where every other surface already has it.
+                    if hostsPositionChips {
+                        ProspectPositionChips(selection: $positionFilter)
+                            .padding(.horizontal, 16)
+                            .padding(.top, 4)
+                            .padding(.bottom, 6)
+                            .background(Color.backgroundPrimary)
+                    }
+
                     if !scoutedProspects.isEmpty {
                         // Insets MIRROR the rows' `listRowInsets` (leading 8 /
                         // trailing 16) so each label sits over its own column.
@@ -1434,6 +1585,11 @@ struct BigBoardView<Header: View>: View {
             }
         }
         .onChange(of: positionFilter) { _, _ in refreshCachedBoard() }
+        // The need read is cached off the ROSTER, which the hub can reload
+        // under a board that never left the screen (a signing, a cut, the
+        // week advancing). Cheap proxy, and the only one `[Player]` offers
+        // without making the model `Equatable`.
+        .onChange(of: teamRoster.count) { _, _ in refreshCachedBoard() }
         .onChange(of: markFilter) { _, _ in refreshCachedBoard() }
         .onChange(of: boardSortOrder) { _, _ in refreshCachedBoard() }
         .onChange(of: showMyBoard) { _, _ in refreshCachedBoard() }
@@ -1447,10 +1603,14 @@ struct BigBoardView<Header: View>: View {
     // MARK: - Attribute Tab Picker (Capsule-style)
     //
     // The control itself moved to `ProspectListControls.swift` so the combine
-    // table wears the same one. The position chips stay switched OFF here: the
-    // hub draws them above the whole tab strip already, and `positionFilter` is
-    // passed through only so the board and the shared control agree on which
-    // binding the chips would write if a future host turned them on.
+    // table wears the same one. The position chips stay switched OFF *here*
+    // whoever hosts them: either the hub draws them above the whole tab strip,
+    // or (the plain Board tab, `hostsPositionChips`) this screen draws them at
+    // the bottom of its own strip, under the compare tray and over the column
+    // labels. Never inside this picker, which would put them between the mode
+    // chips and the search bar — a third position for one control. The binding
+    // is passed through so the board and the shared control agree on which
+    // state the chips write.
 
     /// Which block the board opens on when the host has no opinion.
     ///
@@ -1631,7 +1791,13 @@ struct BigBoardView<Header: View>: View {
                     Image(systemName: "target")
                         .foregroundStyle(Color.success)
                         .font(.caption)
-                    Text("Best available at \(need.rawValue): **\(prospect.fullName)** (Tier \(prospect.scoutedTier))")
+                    // The BAND, not the tier. These two lines pick their man by
+                    // the midpoint of the fogged read now, so printing
+                    // `scoutedTier` — a bucketing of the raw scouted integer —
+                    // put a second, tighter yardstick on the same line as the
+                    // first: the depth list three rows down already prints the
+                    // band, for the same prospect, off the same instrument.
+                    Text("Best available at \(need.rawValue): **\(prospect.fullName)** (\(bestAvailableGradeText(prospect)))")
                         .font(.subheadline)
                         .foregroundStyle(Color.textPrimary)
                 }
@@ -1643,7 +1809,7 @@ struct BigBoardView<Header: View>: View {
                     Image(systemName: "star.fill")
                         .foregroundStyle(Color.accentGold)
                         .font(.caption)
-                    Text("Best player available: **\(prospect.fullName)** (Tier \(prospect.scoutedTier))")
+                    Text("Best player available: **\(prospect.fullName)** (\(bestAvailableGradeText(prospect)))")
                         .font(.subheadline)
                         .foregroundStyle(Color.textPrimary)
                 }
@@ -1672,7 +1838,7 @@ struct BigBoardView<Header: View>: View {
 
     /// Position needs mapped to how many are on the board vs how many are needed.
     private var positionDepthItems: [(position: Position, onBoard: Int, needed: Int)] {
-        teamNeeds.map { pos in
+        cachedTeamNeeds.map { pos in
             let onBoard = scoutedProspects.filter { $0.position == pos }.count
             // Estimate need count from roster deficit (1-3 range).
             let rosterCount = teamRoster.filter { $0.position == pos }.count
@@ -1744,7 +1910,7 @@ struct BigBoardView<Header: View>: View {
                     .font(.caption)
                     .foregroundStyle(Color.accentBlue)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Scout: Need \(teamNeeds.prefix(3).map { $0.rawValue }.joined(separator: ", "))")
+                    Text("Scout: Need \(cachedTeamNeeds.map { $0.rawValue }.joined(separator: ", "))")
                         .font(.caption)
                         .foregroundStyle(Color.textPrimary)
                     if userPriorityPositions.isEmpty {
@@ -2069,12 +2235,14 @@ struct BigBoardView<Header: View>: View {
             onEditNote: { editingMarkNoteProspect = prospect },
             // Only for a man nobody has been in a room with — the rest of the
             // gate (window, stage, slots) is the hub's, and it withholds the
-            // closure entirely when any of it is shut. `combineInvite` matches
-            // the interview room's own selectable set: without it the action
-            // jumps tabs and ticks nobody.
-            onInterview: (onInterview != nil && !prospect.interviewCompleted && prospect.combineInvite)
-                ? { onInterview?(prospect) }
-                : nil
+            // closure entirely when any of it is shut. The three row tests moved
+            // to `ProspectGradeContextMenu.interviewAction` when four more
+            // tables adopted this menu (#137); this call site is unchanged in
+            // behaviour.
+            onInterview: ProspectGradeContextMenu.interviewAction(
+                for: prospect,
+                jump: onInterview
+            )
         )
         Divider()
         Button {

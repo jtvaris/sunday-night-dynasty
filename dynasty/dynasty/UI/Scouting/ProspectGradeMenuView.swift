@@ -286,6 +286,26 @@ struct ProspectGradeContextMenu: View {
     var onInterview: (() -> Void)? = nil
     @ObservedObject private var store = UserProspectGradeStore.shared
 
+    /// The ROW half of the interview gate, written once.
+    ///
+    /// The hub owns the economy half and withholds its jump closure entirely
+    /// when the window, the stage or the 60-slot ration is shut. What is left is
+    /// the same three tests on every table that hosts this menu: a closure has
+    /// to exist, the man must not already have been in a room, and he must be on
+    /// the combine invite list — which is the interview room's own selectable
+    /// set, and without it the action jumps tabs and ticks nobody.
+    ///
+    /// It was spelled out longhand on the Big Board and simply absent from the
+    /// combine table, the Top-30 list, the workout list and the mock draft, so
+    /// four surfaces that draw this menu drew it without its one action (#137).
+    static func interviewAction(
+        for prospect: CollegeProspect,
+        jump: ((CollegeProspect) -> Void)?
+    ) -> (() -> Void)? {
+        guard let jump, !prospect.interviewCompleted, prospect.combineInvite else { return nil }
+        return { jump(prospect) }
+    }
+
     var body: some View {
         ProspectMarkMenu(prospect: prospect, onChange: onChange, onEditNote: onEditNote)
 
