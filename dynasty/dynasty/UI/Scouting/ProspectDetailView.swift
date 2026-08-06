@@ -133,6 +133,9 @@ struct ProspectDetailView: View {
     @State private var coaches: [Coach] = []
     /// The one sheet this card can have open. See ``CardSheet``.
     @State private var activeSheet: CardSheet?
+    /// A film-study result waiting for the scout picker to finish dismissing
+    /// (#117) — presented from the sheet's `onDismiss`, never mid-transition.
+    @State private var pendingFilmResult: FilmStudyOutcome?
     @State private var showInterviewResult = false
     @State private var interviewResult: (personality: PersonalityArchetype, footballIQ: Int, characterNotes: [String])?
     @State private var positionRank: Int?
@@ -325,7 +328,16 @@ struct ProspectDetailView: View {
         // button on a prospect's page opened nothing, which is the prospect-card
         // half of "film study could not be assigned to anyone" (B3), and the
         // note editor was dead the same way.
-        .sheet(item: $activeSheet) { sheet in
+        .sheet(item: $activeSheet, onDismiss: {
+            // The film-study result presents AFTER the scout picker closes —
+            // swapping the item while a sheet is up glitches the transition,
+            // and the interview/workout pattern the user knows is
+            // pick → sheet closes → results open.
+            if let outcome = pendingFilmResult {
+                pendingFilmResult = nil
+                activeSheet = .filmResult(outcome)
+            }
+        }) { sheet in
             switch sheet {
             case .sendScout:
                 SendScoutSheet(
@@ -335,7 +347,10 @@ struct ProspectDetailView: View {
                     cost: ScoutEvaluationBudget.cost(existingReports: prospect.scoutingReports.count),
                     slotsLeft: evaluationSlotsLeft,
                     budgetRemaining: remainingScoutingBudget,
-                    onFiled: { recordEvaluation(cost: $0) }
+                    onFiled: { cost, outcome in
+                        recordEvaluation(cost: cost)
+                        pendingFilmResult = outcome
+                    }
                 )
             case .markNote:
                 ProspectMarkNoteSheet(
@@ -357,6 +372,12 @@ struct ProspectDetailView: View {
                     slotsUsed: career.workoutsUsed,
                     slotLimit: Self.maxWorkouts
                 )
+            case let .filmResult(outcome):
+                FilmStudyResultSheet(
+                    outcome: outcome,
+                    prospect: prospect,
+                    slotsLeft: evaluationSlotsLeft
+                )
             }
         }
     }
@@ -371,14 +392,28 @@ struct ProspectDetailView: View {
         case markNote
         /// The result of a private workout that just ran.
         case workoutResult(ScoutingEngine.WorkoutResult)
+        /// The report a film-study order just filed (#117) — the same
+        /// pick-then-see-the-result shape the interview and workout have,
+        /// instead of the sheet closing on a silently narrower band.
+        case filmResult(FilmStudyOutcome)
 
         var id: String {
             switch self {
             case .sendScout:     return "sendScout"
             case .markNote:      return "markNote"
             case .workoutResult: return "workoutResult"
+            case .filmResult:    return "filmResult"
             }
         }
+    }
+
+    /// What one film-study order bought, captured around `applyReport` so the
+    /// result sheet can show the band move the money paid for.
+    struct FilmStudyOutcome: Identifiable {
+        let id = UUID()
+        let report: ScoutingReport
+        let gradeBefore: GradeRange?
+        let gradeAfter: GradeRange?
     }
 
     // MARK: - My Verdict
@@ -1128,13 +1163,45 @@ struct ProspectDetailView: View {
 
             positionGradesGrid
 
-            // Status indicators
-            HStack(spacing: 16) {
-                StatusPill(label: "Interview", completed: prospect.interviewCompleted)
-                StatusPill(label: "Pro Day",   completed: prospect.proDayCompleted)
+            // Status indicators — ONE pill per instrument the spring offers,
+            // so the card answers "what have I run on this man" in a glance
+            // (#117: it used to show two of the five and the user reasonably
+            // read that as the complete list). Film and Workout are derived
+            // from the report ledger: a workout has no flag of its own (it
+            // files a `.personalWorkout` report AND sets `proDayCompleted`,
+            // see #115), and the pre-scout "Previous Staff" freebie must not
+            // light Film Study for work this regime never ordered.
+            HStack(spacing: 12) {
+                StatusPill(label: "Film Study", completed: hasOwnFilmReport)
+                StatusPill(label: "Interview",  completed: prospect.interviewCompleted)
+                StatusPill(label: "Pro Day",    completed: prospect.proDayCompleted)
+                StatusPill(label: "Workout",    completed: hasWorkoutReport)
+                StatusPill(label: "Top-30 Visit", completed: hasTop30Visit)
             }
         }
         .listRowBackground(Color.backgroundSecondary)
+    }
+
+    /// A tape report THIS regime ordered — the Film Study pill's predicate.
+    /// The pre-scout "Previous Staff" rows and the workout's own report are
+    /// both excluded: the first is inherited, the second has its own pill.
+    private var hasOwnFilmReport: Bool {
+        prospect.scoutingReports.contains {
+            $0.scoutName != "Previous Staff" && $0.phase != .personalWorkout
+        }
+    }
+
+    /// A private workout files a `.personalWorkout` report rather than setting
+    /// a flag of its own (see #115) — the ledger is the truth here.
+    private var hasWorkoutReport: Bool {
+        prospect.scoutingReports.contains { $0.phase == .personalWorkout }
+    }
+
+    /// Facility visits are recorded per club, so the pill answers for THIS
+    /// building, not for the league.
+    private var hasTop30Visit: Bool {
+        guard let teamID = career.teamID else { return false }
+        return prospect.top30VisitedByTeams.contains(teamID)
     }
 
     /// The mental block, drawn against the instruments that write it.
@@ -2035,9 +2102,12 @@ struct ProspectDetailView: View {
     @ViewBuilder
     private var evaluationRow: some View {
         let availability = evaluationAvailability
+        // "Film study" is what the wizard stage, the required task and the
+        // TAPE column all call this — the row used to say "Send Scout to
+        // Evaluate" and the user could not find where film study was done.
         let title = isScouted
-            ? "Send Another Scout (\(currentScoutingPhase.displayName))"
-            : "Send Scout to Evaluate"
+            ? "Order Another Report (\(currentScoutingPhase.displayName))"
+            : "Order Film Study"
 
         Button {
             activeSheet = .sendScout
@@ -2244,30 +2314,43 @@ struct ProspectDetailView: View {
                     : "Unmarked. Set your mark"
             )
 
-            // Interview button — only during combine phase.
+            // One CTA per instrument that is live RIGHT NOW (#117) — the bar
+            // used to offer only the interview, so film study and the workout
+            // read as if they did not exist even when their windows were open.
+            // Each button is the same action its Actions-section row runs.
+            if evaluationAvailability.isAvailable {
+                instrumentButton("Film Study", icon: "film") { activeSheet = .sendScout }
+            }
             if canInterview {
-                Button {
-                    performInterview()
-                } label: {
-                    Label("Interview", systemImage: "bubble.left.fill")
-                        .font(.body.weight(.bold))
-                        .foregroundStyle(Color.accentBlue)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 52)
-                        .background(
-                            RoundedRectangle(cornerRadius: 14)
-                                .fill(Color.accentBlue.opacity(0.18))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 14)
-                                .strokeBorder(Color.accentBlue.opacity(0.5), lineWidth: 1)
-                        )
-                }
+                instrumentButton("Interview", icon: "bubble.left.fill") { performInterview() }
+            }
+            if canWorkout {
+                instrumentButton("Workout", icon: "figure.run") { performWorkout() }
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .background(.ultraThinMaterial)
+    }
+
+    private func instrumentButton(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: icon)
+                .font(.body.weight(.bold))
+                .foregroundStyle(Color.accentBlue)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .frame(maxWidth: .infinity)
+                .frame(height: 52)
+                .background(
+                    RoundedRectangle(cornerRadius: 14)
+                        .fill(Color.accentBlue.opacity(0.18))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .strokeBorder(Color.accentBlue.opacity(0.5), lineWidth: 1)
+                )
+        }
     }
 
     // MARK: - Helpers
@@ -2642,7 +2725,9 @@ private struct SendScoutSheet: View {
     let slotsLeft: Int
     let budgetRemaining: Int
     /// Books the slot and the money once the report is actually filed.
-    let onFiled: (Int) -> Void
+    /// Called with the spend and what it bought, so the card can charge the
+    /// ledger and then show the result the way the interview does (#117).
+    let onFiled: (Int, ProspectDetailView.FilmStudyOutcome) -> Void
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -2721,13 +2806,140 @@ private struct SendScoutSheet: View {
             dismiss()
             return
         }
+        // Band before/after around the apply, so the result sheet can show
+        // what the order actually bought (#117) — same shape as the workout.
+        let before = prospect.effectiveOverallGrade
         let report = ScoutingEngine.generateScoutReport(
             scout: scout,
             prospect: prospect,
             phase: scoutingPhase
         )
         ScoutingEngine.applyReport(report: report, to: prospect)
-        onFiled(cost)
+        let outcome = ProspectDetailView.FilmStudyOutcome(
+            report: report,
+            gradeBefore: before,
+            gradeAfter: prospect.effectiveOverallGrade
+        )
+        onFiled(cost, outcome)
         dismiss()
+    }
+}
+
+// MARK: - Film Study Result Sheet (#117)
+
+/// What the report said, shown the moment it is filed — the interview and the
+/// workout both end in a result sheet, and film study ended in a silent
+/// dismiss that left the user hunting the card for what changed.
+private struct FilmStudyResultSheet: View {
+    let outcome: ProspectDetailView.FilmStudyOutcome
+    let prospect: CollegeProspect
+    let slotsLeft: Int
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color.backgroundPrimary.ignoresSafeArea()
+                List {
+                    filedBySection
+                    gradeSection
+                    if let strengths = nonEmpty(outcome.report.strengthNotes) {
+                        readSection(title: "What the tape showed", body: strengths)
+                    }
+                    if let weaknesses = nonEmpty(outcome.report.weaknessNotes) {
+                        readSection(title: "Where he gets beaten", body: weaknesses)
+                    }
+                    if let personality = nonEmpty(outcome.report.personalityNotes) {
+                        readSection(title: "The person", body: personality)
+                    }
+                    slotSection
+                }
+                .scrollContentBackground(.hidden)
+                .listStyle(.insetGrouped)
+            }
+            .navigationTitle(prospect.fullName)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private var filedBySection: some View {
+        Section {
+            HStack(spacing: 8) {
+                Image(systemName: "doc.text.magnifyingglass")
+                    .foregroundStyle(Color.accentGold)
+                Text("Report filed by \(outcome.report.scoutName) \u{00B7} \(Int(outcome.report.confidenceLevel * 100))% confidence")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.textPrimary)
+            }
+        }
+        .listRowBackground(Color.backgroundSecondary)
+    }
+
+    private var gradeSection: some View {
+        Section {
+            HStack(spacing: 14) {
+                gradeColumn("Before", text: outcome.gradeBefore?.displayText ?? "\u{2014}", tint: .textTertiary)
+                Image(systemName: "arrow.right")
+                    .font(.caption)
+                    .foregroundStyle(Color.textTertiary)
+                gradeColumn("After", text: outcome.gradeAfter?.displayText ?? "\u{2014}", tint: .accentGold)
+                Spacer()
+            }
+            .padding(.vertical, 4)
+        } header: {
+            Text("Grade band")
+        } footer: {
+            Text("A filed report grades all eight mental bands and every \(prospect.position.rawValue) skill \u{2014} the card below is already updated.")
+        }
+        .listRowBackground(Color.backgroundSecondary)
+    }
+
+    private func gradeColumn(_ label: String, text: String, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(Color.textTertiary)
+            Text(text)
+                .font(.title3.weight(.bold))
+                .foregroundStyle(tint)
+        }
+    }
+
+    private func readSection(title: String, body: String) -> some View {
+        Section {
+            Text(body)
+                .font(.caption)
+                .foregroundStyle(Color.textSecondary)
+        } header: {
+            Text(title)
+        }
+        .listRowBackground(Color.backgroundSecondary)
+    }
+
+    private var slotSection: some View {
+        Section {
+            HStack {
+                Text("Reports on file")
+                    .font(.caption)
+                    .foregroundStyle(Color.textSecondary)
+                Spacer()
+                Text("\(prospect.scoutingReports.count)/\(ScoutEvaluationBudget.maxReportsPerProspect) \u{00B7} \(slotsLeft) evaluation\(slotsLeft == 1 ? "" : "s") left this cycle")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(Color.textTertiary)
+            }
+        }
+        .listRowBackground(Color.backgroundSecondary)
+    }
+
+    private func nonEmpty(_ text: String?) -> String? {
+        guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return text
     }
 }
