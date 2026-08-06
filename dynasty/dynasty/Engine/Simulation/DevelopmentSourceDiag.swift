@@ -263,6 +263,14 @@ enum ChurnDiag {
         var ovr = 0
         var age = 0
         var yearsPro = 0
+        /// Task #98: how many of this stage's men were 33 or older.
+        ///
+        /// The stage means cannot answer "where does the 33+ tail exit", because
+        /// a stage that moves 400 men at a mean age of 26.9 can be removing every
+        /// veteran in the league or none of them and the mean reads the same. The
+        /// 33+ share is ~1 % of the population under discussion, so it has to be
+        /// counted, not averaged.
+        var age33 = 0
     }
 
     private static var buckets: [String: Bucket] = [:]
@@ -276,6 +284,7 @@ enum ChurnDiag {
         bucket.ovr += player.overall
         bucket.age += player.age
         bucket.yearsPro += player.yearsPro
+        if player.age >= 33 { bucket.age33 += 1 }
         buckets[stage] = bucket
     }
 
@@ -295,20 +304,22 @@ enum ChurnDiag {
             }
             let n = Double(bucket.n)
             parts.append(String(
-                format: "%@=%d/ovr%.1f/age%.1f/yp%.1f",
+                format: "%@=%d/ovr%.1f/age%.1f/yp%.1f/a33:%d",
                 stage, bucket.n,
-                Double(bucket.ovr) / n, Double(bucket.age) / n, Double(bucket.yearsPro) / n
+                Double(bucket.ovr) / n, Double(bucket.age) / n, Double(bucket.yearsPro) / n,
+                bucket.age33
             ))
         }
         var line = "SMOKE: diag churn season=\(seasonLabel) " + parts.joined(separator: " ")
         if !pool.isEmpty {
             let n = Double(pool.count)
             line += String(
-                format: " | poolLeft=%d/ovr%.1f/age%.1f/yp%.1f",
+                format: " | poolLeft=%d/ovr%.1f/age%.1f/yp%.1f/a33:%d",
                 pool.count,
                 Double(pool.reduce(0) { $0 + $1.overall }) / n,
                 Double(pool.reduce(0) { $0 + $1.age }) / n,
-                Double(pool.reduce(0) { $0 + $1.yearsPro }) / n
+                Double(pool.reduce(0) { $0 + $1.yearsPro }) / n,
+                pool.filter { $0.age >= 33 }.count
             )
         }
         buckets.removeAll(keepingCapacity: true)

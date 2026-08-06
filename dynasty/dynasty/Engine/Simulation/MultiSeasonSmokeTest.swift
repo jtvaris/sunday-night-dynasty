@@ -903,7 +903,26 @@ enum MultiSeasonSmokeTest {
             print(devSources)
         }
 
-        let unsigned = players.filter { $0.teamID == nil && !$0.isRetired }
+        // Task #99 — the shadow pool, measured honestly.
+        //
+        // `teamID == nil` is NOT "unemployed": a practice-squad player carries a
+        // nil `teamID` by design (`PracticeSquadEngine`'s data-shape note — the
+        // squad hangs off `practiceSquadTeamID` so the man is invisible to the
+        // ~240 places that read `teamID` as "dresses on Sunday"), and he is under
+        // a two-year contract while he sits there. This diagnostic runs at the
+        // `.rosterCuts` → `.regularSeason` boundary, which is the ONE moment in
+        // the calendar when all 32 squads have just been filled, so every one of
+        // the 512 squad men was being counted into the "unsigned pool" figure
+        // task #99 is about. That is 512 of a measured ~920 — i.e. more than half
+        // of the number the shadow-pool investigation was chasing was employed
+        // men. Both counts are printed now so the two populations can never be
+        // read as one again.
+        let squadded = players.filter { $0.isOnPracticeSquad && !$0.isRetired }
+        let unsigned = players.filter {
+            $0.teamID == nil && !$0.isRetired && !$0.isOnPracticeSquad
+        }
+        print("SMOKE: diag squads season=\(seasonLabel) onSquad=\(squadded.count) "
+              + "trulyUnsigned=\(unsigned.count)")
 
         // Task #53: the roster-churn funnel — WHICH stage selects the league's
         // age/quality composition. Printed next to `devsource` because the two
@@ -1174,15 +1193,30 @@ enum MultiSeasonSmokeTest {
                   + "breakout+gameXP total +0.07 mean OVR a season) and task"
                   + " #53 fixed the churn asymmetry they pointed at (the market"
                   + " signed on raw `overall` while cutdown day cut on"
-                  + " age-discounted `keepScore`). What is LEFT is neither:"
-                  + " `leaguePot` climbs 73 → 78 over four seasons because"
-                  + " LeagueGenerator ships a cross-section with ~2 points of"
-                  + " potential headroom (its own gate 8.hea asserts ≤ 4) while"
-                  + " DraftClassBuilder ships classes with 8-11, so the league"
-                  + " necessarily gains quality until the intake's equilibrium"
-                  + " is reached — and churning HARDER accelerates it, because"
-                  + " churn is what swaps generator veterans for pipeline"
-                  + " rookies. See the `80+ vs yp0to3` note above")
+                  + " age-discounted `keepScore`). Task #97 then ruled out the"
+                  + " third suspect this line used to name — the INTAKE HEADROOM"
+                  + " (LeagueGenerator ships a cross-section 2 points over OVR,"
+                  + " DraftClassBuilder classes 8-11, so the league gains quality"
+                  + " until the pipeline's equilibrium is reached). That"
+                  + " transient is real but it is now SPENT: over 8 seasons"
+                  + " `leaguePot` runs 74.8 → 81.8 and flattens, against the"
+                  + " `career` rig's own converged equilibrium of 82.7 — i.e."
+                  + " this league is within a point of the intake it is fed."
+                  + " At that SAME leaguePot the rig measures 80+ = 16.1 % and"
+                  + " this smoke measures 20.8 %, so the residual is REALIZATION,"
+                  + " not headroom: the shipped season pipeline turns the same"
+                  + " potential into ~2 more OVR a man (`diag devsource`"
+                  + " offseasonDevelop = +2.2/player/season here). Cutting the"
+                  + " intake to pay for it was measured and does not work —"
+                  + " `DraftClassBuilder.runwayCentre` 0.55 → 0.40 buys the rig"
+                  + " 80+ 16.1 % → 14.1 % and costs FOUR §6 asserts (6.1a R3 hit"
+                  + " −10.0pp, 6.2a R1 elite 8.6 % vs [10,18], 6.2b R2 elite"
+                  + " 2.6 % vs [3,9], 6.9c 75+ 26.9 % vs [28,40]), because the"
+                  + " draft reference curve is a statement about that headroom."
+                  + " The next lever is what `WeekAdvancer` feeds"
+                  + " `processOffseason` — opportunity, coaching layers, scheme"
+                  + " fit — measured against the rig, not a generator constant."
+                  + " See the `80+ vs yp0to3` note above")
         }
     }
 

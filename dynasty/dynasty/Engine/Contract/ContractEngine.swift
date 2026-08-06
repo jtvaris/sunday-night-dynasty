@@ -330,7 +330,7 @@ enum ContractEngine {
     /// **As ratios to the quarterback** — which is all a multiplier vector means
     /// — the reachable table reproduces the modern market: QB 1.00,
     /// WR 0.59 (real ~0.58), EDGE 0.57 (~0.67), OT 0.48 (~0.47), CB 0.43 (~0.50),
-    /// DT 0.41 (~0.40), RT 0.39 (~0.38), MLB 0.36 (~0.35), S 0.34 (~0.35),
+    /// DT 0.45 (~0.45 — task #126; was 0.41), RT 0.39 (~0.38), MLB 0.36 (~0.35), S 0.34 (~0.35),
     /// TE 0.32 (~0.32), IOL 0.30 (~0.30), RB 0.27 (~0.30), K/P 0.11 (~0.10).
     ///
     /// **RB 0.45 → 0.60 (task #87 / F12).** At 0.45 the best running back in the
@@ -364,39 +364,58 @@ enum ContractEngine {
         case .CB:
             return 0.95   // Top CB: ~8-9.5%
         case .DT:
-            // ## Task #88a — measured, and deliberately NOT moved
+            // ## Task #126 — raised to 1.0, and why it fits now
             //
-            // Both positions #88a flagged as "now measurable off the #87
-            // rating-aware seeder" were re-derived against the `career`
-            // equilibrium cap sheet (20 leagues x 30 seasons, 33 900 rostered
-            // slots) by anchoring on the one rung of this ladder that is already
-            // calibrated — the quarterback at 2.2, which the NFL pays ~21.5 % of
-            // the cap — and reading every other position's implied multiplier
-            // off its own top-of-market share:
+            // Task #88a measured this gap and left it alone because correcting
+            // it broke the cap sheet. Re-measured on the current tree it no
+            // longer does, and the honest thing is to record both readings.
             //
-            //   WR 1.30 (implied 1.28) · LT 1.05 (1.02) · CB 0.95 (0.90) ·
-            //   MLB 0.80 (0.76) · S 0.75 (0.70) · TE 0.70 (0.70)
+            // The gap itself is unchanged and is the largest on the ladder: at
+            // 0.9 an OVR-92 interior lineman cost 7.4 % of the cap and the
+            // position took 7.55-7.77 % of league payroll, against 2023-25
+            // interior resets (Chris Jones 11.4 % of the 2025 cap, Wilkins 9.8 %,
+            // Quinnen Williams and Dexter Lawrence 8.8-9.4 %) that put the real
+            // top-3 IDL average near 9.7 % — an implied multiplier of ~1.0.
+            // Every other rung of the ladder was inside a point of its implied
+            // value at the same measurement: WR 1.30 (1.28) · LT 1.05 (1.02) ·
+            // CB 0.95 (0.90) · MLB 0.80 (0.76) · S 0.75 (0.70) · TE 0.70 (0.70).
             //
-            // **MLB is inside band and is unchanged** — no drift to correct.
+            // **What broke in #88a, and what it turned out to be.** The extra
+            // market demand is paid out of a fixed club budget in the `career`
+            // rig's `tickContracts`, which clips a deal that would take payroll
+            // past 92 % of the cap — and the man who absorbs a clip is always
+            // the most expensive one on the sheet. Assert 6.11e (franchise QBs
+            // paid in [0.75, 1.15] of their own ask) therefore moved 0.823 →
+            // 0.746 and failed. That was the whole failure: one Monte-Carlo run,
+            // 21 points of headroom, and a mechanism that is arithmetically a
+            // budget-crowding effect rather than a statement about DT.
             //
-            // **DT is the one real gap.** At 0.9 the ladder prices an OVR-92
-            // interior lineman at 7.4 % of the cap and takes 7.55 % of league
-            // payroll, while the 2023-25 interior resets (Chris Jones 11.4 % of
-            // the 2025 cap, Wilkins 9.8 %, Quinnen Williams and Dexter Lawrence
-            // 8.8-9.4 %) put the real top-3 IDL average near 9.7 % — an implied
-            // multiplier of ~1.0.
+            // Re-measured at 1.0 on this tree (2026-08-06), three gates green:
+            // 6.11e reads **0.798** and **0.828** over two runs against a
+            // baseline of 0.819 — i.e. inside the run-to-run spread of the
+            // unseeded rig, with 0.05-0.08 of margin under the 0.75 floor. DT
+            // payroll share goes 7.77 % → 8.41 % and the DL group 18.1 % →
+            // 18.8 %, both well clear of 6.11d's 30 % ceiling; 6.11b moves
+            // 0.810 → 0.826 and 6.11c is unchanged at 0.750. `leaguegen` (19)
+            // and `draftclass` (32) are unaffected and pass.
             //
-            // Raising it to 1.0 was measured and REVERTED: DT payroll share went
-            // 7.55 % -> 8.23 % (DL group 18.3 % -> 19.0 %, both fine) but the
-            // extra market demand is paid for out of a fixed club budget in
-            // `tickContracts`, and the men it comes out of are the most
-            // expensive ones — assert 6.11e (franchise QBs paid in [0.75, 1.15]
-            // of their own ask) went 0.823 -> **0.746** and failed. Correcting
-            // DT therefore is not a one-constant change; it needs the cap sheet
-            // re-balanced around it, which is its own wave. Recorded here rather
-            // than in a task file so the next person to open this table sees the
-            // measurement and the reason.
-            return 0.9    // Interior DL: ~7-8.5% (NFL is ~9.7% — see above)
+            // The band was NOT loosened and no other multiplier was moved to pay
+            // for this: the offsetting slack the task asked for turned out not to
+            // be needed, because the crowding #88a measured was a fraction of a
+            // percent of league-wide demand (DT is 7.8 % of payroll; +11 % on it
+            // is +0.86 % of the total) landing on a rig whose equilibrium payroll
+            // sits at 76-77 % of a 92 % ceiling. If a future wave does need the
+            // slack, CB (0.95 vs implied 0.90) and the safeties (0.75 vs 0.70)
+            // are where it is, and `leagueAffordabilityScale` is the one knob
+            // that moves the LEVEL without disturbing the ladder's shape.
+            //
+            // The implied-multiplier readings above come from the `career`
+            // equilibrium cap sheet (20 leagues x 30 seasons, ~33 900 rostered
+            // slots), anchored on the one rung already calibrated — the
+            // quarterback at 2.2, which the NFL pays ~21.5 % of the cap — with
+            // every other position read off its own top-of-market share. MLB is
+            // inside band and is unchanged; DT was the one real gap.
+            return 1.0    // Interior DL: ~8-9.5% (NFL top-3 IDL ~9.7%)
         case .RT:
             return 0.85   // RT: ~7-8%
         case .MLB:

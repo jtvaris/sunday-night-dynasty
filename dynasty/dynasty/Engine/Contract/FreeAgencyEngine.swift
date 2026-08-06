@@ -936,6 +936,23 @@ enum FreeAgencyEngine {
         /// Players under contract at this club right now.
         func rosterSize(teamID: UUID) -> Int { sizeByTeam[teamID] ?? 0 }
 
+        /// The best rating this club has in `position`'s GROUP — i.e. what it
+        /// would still be able to put on the field there (task #98).
+        ///
+        /// The group and not the exact position, matching `need` above: a club
+        /// with three good guards is not thin at right guard, and grading a
+        /// veteran against the man who happens to share his exact slot label
+        /// would read every interior lineman as irreplaceable.
+        func bestOverall(teamID: UUID, position: Position) -> Int {
+            let (groupPositions, _) = FreeAgencyEngine.positionGroupInfo(for: position)
+            guard let teamMap = byTeam[teamID] else { return 0 }
+            var best = 0
+            for groupPosition in groupPositions {
+                if let entry = teamMap[groupPosition] { best = max(best, entry.best) }
+            }
+            return best
+        }
+
         /// Same decision table as `assessPositionNeed(team:position:allPlayers:)`.
         func need(teamID: UUID, position: Position) -> PositionNeedLevel {
             let (groupPositions, idealCount) = FreeAgencyEngine.positionGroupInfo(for: position)
@@ -1382,6 +1399,83 @@ enum FreeAgencyEngine {
     /// the open-market ask. Never below the agent's own floor.
     static let ownCoreHometownDiscount = 0.95
 
+    // MARK: - The veteran door (task #98)
+
+    /// Ageing starters one AI club may keep off the market per league year, on
+    /// top of ``ownCoreRetentionsPerClub``.
+    ///
+    /// ## Why the core budget could not reach these men
+    ///
+    /// Every door back onto a roster ranks a player through an age discount, and
+    /// all three of them saturate before a 33-year-old arrives:
+    ///
+    /// * ``ownCoreAppealFloor`` (72) is a floor on ``marketAppeal``, which docks
+    ///   the full ``marketAgeDiscountCap`` (14) from age 30. A 33-year-old
+    ///   therefore has to be an **86 OVR** to be worth a conversation with his
+    ///   own club — roughly the top 40 players alive.
+    /// * The open market sorts on the same appeal, so he is behind every
+    ///   72-OVR 25-year-old in the pool.
+    /// * `WeekAdvancer.refillAIRosters` sorts on `RosterValue.keepScore`, whose
+    ///   age term was uncapped entirely until this same task.
+    ///
+    /// Measured over an 8-season `PERF_SMOKE_SEASONS` run the consequence is a
+    /// 33+ share of **0.7-1.1 %** against a generator opening at 2.7 % and the
+    /// `career` rig's ~3.1-3.2 % equilibrium: the league's opening veterans
+    /// reach the market once and essentially none of them come back. The exit is
+    /// not the retirement hazard (that pass is calibrated and its own gate is
+    /// green); it is that nobody re-signs them, after which
+    /// `PlayerRetirementEngine.washoutProbability` reads the silence correctly
+    /// and removes them.
+    ///
+    /// ## Why a separate budget rather than a bigger one
+    ///
+    /// ``ownCoreRetentionsPerClub`` is already saturated — the measured league
+    /// writes 2.5 retentions per club against a cap of 3 — so an age door added
+    /// to the same budget would only DISPLACE a young star, and a displaced
+    /// young star is fine: he is at the top of the pool by appeal and the market
+    /// signs him within the hour. A displaced 33-year-old is gone for good.
+    /// The two decisions are not competing for the same money in a real front
+    /// office either: keeping your own ageing starter on a one-year deal is the
+    /// most routine transaction in the league, not a franchise-defining one.
+    ///
+    /// Two per club is a ceiling, not a quota: the qualification below is
+    /// genuinely narrow (he must still be the best man his club has at his
+    /// position, and starter-quality in absolute terms), so most clubs will use
+    /// one or none in a given year.
+    static let ownCoreVeteranRetentionsPerClub = 2
+
+    /// Age from which a man is judged on production instead of on the market's
+    /// age discount. One year before `contractYearsCeiling` drops a club to
+    /// two-year offers, which is where "how much has he declined" turns into
+    /// "how many years are left".
+    static let ownCoreVeteranAge = 31
+
+    /// Overall a veteran must still hold for this door to open — starter
+    /// quality with nothing subtracted for the calendar.
+    ///
+    /// Stated in raw OVR on purpose. The whole point of the door is that it does
+    /// NOT read `marketAppeal`; running it through the same discount that closed
+    /// the core door would reproduce the core door with a different number on it.
+    /// 76 is comfortably above ``starterQualityOVR`` (70) so a club is keeping a
+    /// man it would otherwise have to replace at market price, and comfortably
+    /// below the 80+ band so the door is about ordinary good players rather than
+    /// about stars (a star clears ``ownCoreStarAppeal`` and never reaches here).
+    static let ownCoreVeteranOverallFloor = 76
+
+    /// How close the club's next-best man at the position has to be before the
+    /// veteran is treated as replaceable.
+    ///
+    /// The door asks "does this club have a successor", and a successor is not
+    /// "somebody at the position" — it is somebody who can do the job. Four
+    /// points is one tier of the roster: a club whose next man is within four of
+    /// a 78-OVR veteran has a starter already and lets the 33-year-old walk,
+    /// while a club whose next man is a 70 does not. Without a gap the test
+    /// would be `bestOverall < player.overall`, which every expiring starter
+    /// passes by construction (he IS the best man at his position, which is why
+    /// `needIndex` is built with the expiring cohort removed) and the door would
+    /// stop being narrow.
+    static let ownCoreVeteranSuccessorGap = 4
+
     /// Let every AI club re-sign a bounded number of its own expiring core
     /// before the league year turns. Returns the number of deals written.
     ///
@@ -1472,18 +1566,18 @@ enum FreeAgencyEngine {
             var room = Int(Double(team.salaryCap) * (1.0 - capReservePercent))
                 - (survivingPayrollByTeam[team.id] ?? 0)
             var signed = 0
+            // Task #98 — men this club has already kept, so the veteran pass
+            // below cannot re-sign somebody the core pass just signed.
+            var keptIDs: Set<UUID> = []
 
-            for player in expiring.sorted(by: { marketAppeal($0) > marketAppeal($1) }) {
-                guard signed < ownCoreRetentionsPerClub else { break }
-                let appeal = marketAppeal(player)
-                // Sorted descending — once one man is under the floor, so is
-                // everyone after him.
-                guard appeal >= ownCoreAppealFloor else { break }
-
-                let wanted = needIndex.need(teamID: team.id, position: player.position) != .none
-                    || topNeeds.contains(player.position)
-                guard wanted || appeal >= ownCoreStarAppeal else { continue }
-
+            /// One agreed retention: price it against the incumbent demand model
+            /// and write the deal. Returns false when the man refuses, the price
+            /// is nonsense, or the club cannot afford him.
+            ///
+            /// Shared by both passes so a veteran retention costs the club
+            /// exactly what a core retention costs — the door decides WHO is
+            /// asked, never what the answer is priced at.
+            func retain(_ player: Player) -> Bool {
                 // What the club has to negotiate against: the season it just
                 // played. The demand model reads a record — a losing building
                 // pays a premium, a contender gets a discount, and the
@@ -1522,15 +1616,15 @@ enum FreeAgencyEngine {
                 // The rarity budgets live inside `ContractNegotiationEngine`; the
                 // club simply respects the answer and lets him reach the market,
                 // where a contender can sign him.
-                guard !demand.isRefusing else { continue }
+                guard !demand.isRefusing else { return false }
 
                 let price = max(
                     min(demand.askAmount, Int(Double(demand.askAmount) * ownCoreHometownDiscount)),
                     demand.floorAmount
                 )
-                guard price > 0 else { continue }
+                guard price > 0 else { return false }
                 if capMode != .sandbox {
-                    guard price <= room else { continue }
+                    guard price <= room else { return false }
                 }
 
                 let years = max(1, min(4, contractYearsCeiling(age: player.age)))
@@ -1538,10 +1632,55 @@ enum FreeAgencyEngine {
                 player.contractYearsRemaining = years + 1
                 player.annualSalary = price
                 room -= price
-                signed += 1
                 retained += 1
+                keptIDs.insert(player.id)
                 needIndex.add(position: player.position, overall: player.overall, to: team.id)
                 ChurnDiag.record(ChurnDiag.resign, player)
+                return true
+            }
+
+            // --- Pass 1: the core, ranked by market appeal (task #89) --------
+            for player in expiring.sorted(by: { marketAppeal($0) > marketAppeal($1) }) {
+                guard signed < ownCoreRetentionsPerClub else { break }
+                let appeal = marketAppeal(player)
+                // Sorted descending — once one man is under the floor, so is
+                // everyone after him.
+                guard appeal >= ownCoreAppealFloor else { break }
+
+                let wanted = needIndex.need(teamID: team.id, position: player.position) != .none
+                    || topNeeds.contains(player.position)
+                guard wanted || appeal >= ownCoreStarAppeal else { continue }
+
+                if retain(player) { signed += 1 }
+            }
+
+            // --- Pass 2: the veteran door (task #98) -------------------------
+            //
+            // Judged on production and on the hole he would leave, with the
+            // market's age discount deliberately not applied — see
+            // `ownCoreVeteranRetentionsPerClub` for why the pass-1 budget could
+            // never reach these men.
+            //
+            // The "would leave" test is what keeps this narrow: the club looks at
+            // the room WITHOUT him (`needIndex` was built with every expiring
+            // player removed, and pass 1's retentions have been added back), and
+            // he only qualifies if it has nobody at his position who is within
+            // `ownCoreVeteranSuccessorGap` of him. A club with a ready successor
+            // lets the 33-year-old walk, which is what a real front office does
+            // and is the whole reason this is not simply "keep every old
+            // starter".
+            var vetSigned = 0
+            for player in expiring.sorted(by: { $0.overall > $1.overall }) {
+                guard vetSigned < ownCoreVeteranRetentionsPerClub else { break }
+                guard !keptIDs.contains(player.id) else { continue }
+                guard player.age >= ownCoreVeteranAge else { continue }
+                // Sorted descending on overall — once one man is under the floor,
+                // so is everyone after him.
+                guard player.overall >= ownCoreVeteranOverallFloor else { break }
+                guard needIndex.bestOverall(teamID: team.id, position: player.position)
+                        < player.overall - ownCoreVeteranSuccessorGap else { continue }
+
+                if retain(player) { vetSigned += 1 }
             }
         }
         return retained

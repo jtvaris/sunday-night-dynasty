@@ -24,8 +24,13 @@ import SwiftData
 ///
 /// ## The calendar
 ///
-/// * **Cutdown day** (`.rosterCuts` → `.regularSeason`): every club fills its
-///   squad, own cuts first, then street free agents. `fillSquads`.
+/// * **Cutdown day** (`.rosterCuts` → `.regularSeason`): every club stocks its
+///   squad, own cuts first, then street free agents, and finally — only up to
+///   ``squadGenerationFloor`` — invented bodies. ``squadSize`` is a CEILING, not
+///   a quota: a club that cannot find sixteen eligible men carries fewer, and
+///   measured league-wide the squads run 6-8 deep rather than 16. See
+///   ``squadGenerationFloor`` for why that is the honest answer and what the
+///   unbounded version cost. `fillSquads`.
 /// * **Every regular-season week**: squads develop on the depth rung, AI clubs
 ///   poach 0-3 players league-wide, and the user is warned a week before one of
 ///   his own is signed away. `runWeeklyPass`.
@@ -48,6 +53,42 @@ enum PracticeSquadEngine {
 
     /// Practice-squad spots per club. The NFL settled at 16 in 2022.
     static let squadSize = 16
+
+    /// Squad men a club will INVENT when the market has nobody left (task #99).
+    ///
+    /// ## Why a squad is a ceiling and not a quota
+    ///
+    /// `fillSquads`' last pass used to run `while squad.count < squadSize`,
+    /// generating a brand-new `Player` for every unfilled spot. Measured over an
+    /// 8-season `PERF_SMOKE_SEASONS` run that pass minted **417 / 250 / 212 / 244
+    /// players per season** — a second draft class every year, from nowhere, on
+    /// top of the ~250 the real one brings and the AI's undrafted signings.
+    ///
+    /// Those men are not a curiosity. A squad deal is two contract years
+    /// (``contractYears``), so every one of them dissolves into free agency at
+    /// the next league year (`FreeAgencyEngine.executeNewLeagueYear` →
+    /// ``dissolveSquads``) and lands in the unsigned pool. That is the inflow
+    /// half of task #99's shadow pool: the washout pass was strengthened
+    /// (`PlayerRetirementEngine.washoutUnprovenFloor` / `washoutSilentMarketFloor`)
+    /// and the pool did not shrink, because this door was refilling it as fast
+    /// as the exit drained it — measured equilibrium ~900 with the pool's own
+    /// clearance running at ~57 %/yr.
+    ///
+    /// The reason the pool "runs out" is not that the league is short of
+    /// footballers. It is that squad eligibility is narrow by RULE — under 70
+    /// OVR, three years pro or less unless one of the six ``veteranSlots`` is
+    /// spent, three bodies per position — and the unsigned population skews
+    /// older than that window (measured mean 5.5 years pro). A club that cannot
+    /// find sixteen eligible men has genuinely not found them, and inventing
+    /// them is the league telling itself a lie about its own supply.
+    ///
+    /// So the fallback survives, bounded: a scout team needs enough bodies to
+    /// run a look squad in practice, and that is what four is — a unit, not a
+    /// roster. Everything above it now has to come from men the league actually
+    /// produced. League-wide worst case is 32 × 4 = 128 a season against the
+    /// ~250-man draft class, and in practice well under that because the pool
+    /// fills the early spots first.
+    static let squadGenerationFloor = 4
 
     /// Active-roster ceiling — a poach signs a man to the 53, so a club must
     /// open a spot for him.
@@ -266,7 +307,15 @@ enum PracticeSquadEngine {
         // existed that tick did nothing at all.
         let keeperIDs = userFlaggedKeepers(career: career, modelContext: modelContext)
 
-        for team in teams {
+        // Fetch order is not a signing order. Each club's pass takes the best
+        // remaining men out of ONE shared pool, so iterating `teams` as they came
+        // out of the store gave the earliest-indexed clubs first refusal on the
+        // whole market every cutdown day — and, now that the invented-body
+        // fallback is bounded, it would also concentrate the SHORT squads on the
+        // same late clubs every season. Same argument, same fix as
+        // `WeekAdvancer.refillAIStaffVacancies`: with no ordering that means
+        // anything, the honest answer is a coin toss.
+        for team in teams.shuffled() {
             let roster = activeRoster(of: team.id, in: allPlayers)
             var squad: [Player] = []
             var veteransUsed = 0
@@ -345,8 +394,11 @@ enum PracticeSquadEngine {
 
             // Pass 3: the pool ran dry — street free agents report for a
             // tryout, the same fallback `refillAIRosters` uses when the market
-            // has nothing left.
-            while squad.count < squadSize {
+            // has nothing left. Bounded at ``squadGenerationFloor``: a short
+            // squad is the honest reading of an empty market, and an unbounded
+            // one here was the league's largest single source of invented
+            // population (see the constant).
+            while squad.count < squadGenerationFloor {
                 let needs = DraftEngine.topTeamNeeds(roster: roster + squad, limit: 3)
                 let position = needs.first(where: {
                     ($0 == .QB ? maxQuarterbacks : maxPerPosition) > (countByPosition[$0] ?? 0)
