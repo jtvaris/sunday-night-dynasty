@@ -62,9 +62,19 @@ struct BigBoardView<Header: View>: View {
     /// piece of state than the board he was looking at.
     @Binding var positionFilter: ProspectPositionFilter
 
-    /// The column block the board opens on. The film-study stage opens it on
-    /// `.workup`, which is the block that answers "what work is missing".
-    var initialAttributeTab: ProspectAttributeTab = .overview
+    /// The column block the board opens on, when the HOST has an opinion.
+    ///
+    /// The film-study stage opens it on `.workup`, which is the block that
+    /// answers "what work is missing". `nil` — the default, and what the plain
+    /// Board tab passes — lets the board read the calendar instead: see
+    /// ``defaultAttributeTab``.
+    ///
+    /// Optional rather than defaulted-to-`.overview` because those are two
+    /// different statements and the board has to tell them apart. With a plain
+    /// default there is no way to distinguish "the host wants Overview" from
+    /// "the host did not say", so a calendar-aware default would silently
+    /// override a host that had deliberately asked for Overview.
+    var initialAttributeTab: ProspectAttributeTab? = nil
 
     /// Film-study stage: the board IS the stage screen, and the paid evaluate
     /// action is promoted out of the prospect card (two taps deep) into the row.
@@ -81,6 +91,9 @@ struct BigBoardView<Header: View>: View {
     @Environment(\.modelContext) private var modelContext
     @State private var markFilter: ProspectMarkFilter = .all
     @State private var attributeTab: ProspectAttributeTab = .overview
+    /// See ``rebuildPercentilePools()``. Empty until the board's `.task` runs,
+    /// which is exactly right — an empty pool prints no percentile claim.
+    @State private var percentilePools = PercentilePools()
     /// Loaded for the film-study row action; empty everywhere else.
     @State private var scouts: [Scout] = []
     @State private var scoutingBudget: Int = 4_000
@@ -904,6 +917,7 @@ struct BigBoardView<Header: View>: View {
                     starterComparison: starterComparison(for: prospect),
                     attributeTab: attributeTab,
                     scoutsSentToCombine: scoutsSentToCombine,
+                    percentilePools: percentilePools,
                     isPositionNeed: teamNeedPositions.contains(prospect.position),
                     projectedRound: boardProjectedRound(for: prospect),
                     isValuePick: isValuePick(prospect),
@@ -1394,7 +1408,8 @@ struct BigBoardView<Header: View>: View {
             loadCoaches()
             loadDraftPicks()
             loadScoutingDepartment()
-            attributeTab = initialAttributeTab
+            attributeTab = initialAttributeTab ?? defaultAttributeTab
+            rebuildPercentilePools()
             refreshCachedBoard()
             isLoading = false
         }
@@ -1425,6 +1440,39 @@ struct BigBoardView<Header: View>: View {
     // hub draws them above the whole tab strip already, and `positionFilter` is
     // passed through only so the board and the shared control agree on which
     // binding the chips would write if a future host turned them on.
+
+    /// Which block the board opens on when the host has no opinion.
+    ///
+    /// Combine week, the question the user came to this screen with is "what did
+    /// he run" — the numbers land that week and they are the only new
+    /// information on the board — so the board opens on the drills instead of
+    /// making him find the mode chip first. Every other phase opens on Overview,
+    /// which is the block that answers "who is he".
+    ///
+    /// Two signals, because the phase and the prep stage do not move together: a
+    /// save can sit in `DraftPrepStep.combineReview` — the stage whose whole job
+    /// is reading the numbers — after `SeasonPhase.combine` has rolled over.
+    ///
+    /// The host can still override: `initialAttributeTab` wins whenever it is
+    /// non-`nil`, which is how the film-study stage keeps its `.workup`.
+    private var defaultAttributeTab: ProspectAttributeTab {
+        if career.currentPhase == .combine { return .physical }
+        if career.prepStep == .combineReview { return .physical }
+        return .overview
+    }
+
+    /// The position-relative pool the Physical block ranks drill results
+    /// against, built ONCE per open rather than per row: it is a full sort of
+    /// every measurement in the class, and this list is 350 rows deep.
+    ///
+    /// Built from the whole class rather than from the combine invitee list the
+    /// combine table uses. The two produce the same numbers in practice —
+    /// `PercentilePools` only collects non-`nil` measurements, and a man with a
+    /// 40 time on file is in both populations — while this one also ranks a
+    /// pro-day riser the combine table's invitee filter drops.
+    private func rebuildPercentilePools() {
+        percentilePools = PercentilePools(prospects: prospects)
+    }
 
     private var bigBoardAttributeTabPicker: some View {
         ProspectListControls(
@@ -1463,6 +1511,18 @@ struct BigBoardView<Header: View>: View {
             Text("NAME")
                 .frame(minWidth: 80, alignment: .leading)
                 .padding(.leading, 6)
+
+            // OVR — leading, beside the name, in every mode. Mirrors the row's
+            // `boardOverallBadge`, same 50 pt.
+            HStack(spacing: 2) {
+                Text("OVR")
+                InfoTooltipButton(
+                    text: "Scout's read on the prospect. When you have logged your own grade you'll see \"Yours / Scout\" \u{2014} a wider gap means more uncertainty in the scout's evaluation. Letter grades use the standard A-F tiers (see legend).",
+                    showLetterGradeKey: true,
+                    size: 9
+                )
+            }
+            .frame(width: 50, alignment: .center)
 
             Spacer(minLength: 2)
 
@@ -1509,16 +1569,7 @@ struct BigBoardView<Header: View>: View {
             }
             .frame(width: 34, alignment: .center)
 
-            // Always-visible: OVR (with tooltip explaining dual grade format)
-            HStack(spacing: 2) {
-                Text("OVR")
-                InfoTooltipButton(
-                    text: "Scout's read on the prospect. When you have logged your own grade you'll see \"Yours / Scout\" — a wider gap means more uncertainty in the scout's evaluation. Letter grades use the standard A-F tiers (see legend).",
-                    showLetterGradeKey: true,
-                    size: 9
-                )
-            }
-            .frame(width: 50, alignment: .center)
+            // OVR moved LEADING, beside NAME — see the block above.
 
             // Always-visible: Proj Rd (overview) or Grade (others)
             if attributeTab == .overview {
@@ -2496,6 +2547,10 @@ struct BigBoardRowView: View {
     var starterComparison: String? = nil
     var attributeTab: ProspectAttributeTab = .overview
     var scoutsSentToCombine: Bool = false
+    /// The class-wide, position-keyed drill pool the Physical block ranks this
+    /// man's numbers against. Built once by the host — see
+    /// `BigBoardView.rebuildPercentilePools()`.
+    var percentilePools: PercentilePools = PercentilePools()
     var isPositionNeed: Bool = false
     var projectedRound: Int = 7
     var isValuePick: Bool = false
@@ -2608,6 +2663,15 @@ struct BigBoardRowView: View {
             .frame(minWidth: 80, alignment: .leading)
             .padding(.leading, 6)
 
+            // OVR — the FIRST column after the name, in every mode.
+            //
+            // It used to sit at the trailing edge, eleven columns to the right,
+            // which meant the Physical block read as six raw stopwatch numbers
+            // with your department's actual verdict on the man parked past them.
+            // The grade is what orders this board and it is what the user scans
+            // for; it belongs beside the name it belongs to.
+            boardOverallBadge
+
             Spacer(minLength: 2)
 
             // Tab-specific columns, from the shared vocabulary. Nothing here is
@@ -2621,15 +2685,17 @@ struct BigBoardRowView: View {
             // precedence rule and printed whichever won, which is right for the
             // draft room's tight rows and wrong for a board the user is scanning
             // to find the work he has not done.
-            ProspectTapeCell(prospect: prospect, width: 40)
-            ProspectMeetCell(prospect: prospect, width: 34)
+            //
+            // 42 / 38 rather than 40 / 34: the pinned header has always reserved
+            // 42 and 38 for these labels (the tooltip button needs it), so the
+            // cells were running 2 and 4 points narrow and walking every column
+            // to their right off its label.
+            ProspectTapeCell(prospect: prospect, width: 42)
+            ProspectMeetCell(prospect: prospect, width: 38)
 
             // Always-visible: value vs the user's own grade.
             ProspectValueChip(read: valueRead)
                 .frame(width: 34, alignment: .center)
-
-            // Always-visible: OVR
-            boardOverallBadge
 
             // Always-visible: Proj Rd or Grade
             if attributeTab == .overview {
@@ -2671,7 +2737,12 @@ struct BigBoardRowView: View {
             // list surfaces — without this the board read 1/3 on a man whose
             // only paper was the inherited baseline, then happily sold him a
             // "fourth" report (#122 review F4).
-            reportCount: ScoutEvaluationBudget.chargeableReports(prospect)
+            reportCount: ScoutEvaluationBudget.chargeableReports(prospect),
+            percentilePools: percentilePools
+            // `leadsWithScoutBand` stays OFF: the board pins its OWN band beside
+            // the name, because tapping it opens the assessment sheet and a
+            // shared cell cannot carry the board's `onGradeTap`. Turning both on
+            // would print the same band twice on one row.
         )
     }
 
@@ -2832,15 +2903,13 @@ struct BigBoardRowView: View {
         )
         guard let text = ProspectFog.drillGradeText(prospect.positionDrillGrade, fidelity: fidelity)
         else { return Color.textTertiary }
-        // `ProspectRoundFormat.gradeRank` rather than `LetterGrade(rawValue:)`:
-        // the engine writes "D-", which `LetterGrade` has no case for, and a
-        // bottom-tier tester must read as a bad combine rather than as no data.
-        switch ProspectRoundFormat.gradeRank(text) {
-        case 10...:  return Color.success    // B+ and up — strong week
-        case 6...9:  return Color.warning     // C through B — an average week
-        case 1...5:  return Color.danger      // C- and down — a bad week
-        default:     return Color.textTertiary
-        }
+        // THE grade colour, not a fourth ladder. This used to be a bespoke
+        // three-band switch on `ProspectRoundFormat.gradeRank` — B+ and up
+        // green, C through B yellow, C- and down red — so the same letter that
+        // printed blue in the Pos Drill cell painted the badge yellow two
+        // inches away. The central function already handles "D-", which is the
+        // string the engine writes and which `LetterGrade` has no case for.
+        return PositionGradeCalculator.gradeColorForLetter(text)
     }
 
     // `boardMediaColor` deleted with the newspaper glyph it tinted. The glyph

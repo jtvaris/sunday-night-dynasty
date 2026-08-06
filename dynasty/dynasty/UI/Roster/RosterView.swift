@@ -1548,13 +1548,35 @@ enum PositionGradeCalculator {
         Color.forRating(avgOVR)
     }
 
-    /// Color for a letter grade string aligned with the 5-tier OVR palette.
-    /// A+ → bright green, A/A- → green, B → blue, C → yellow, D/F → red.
+    /// THE grade colour. One language for every letter the app prints.
+    ///
+    ///     A+        eliteGreen
+    ///     A / A-    success      (green)
+    ///     B+/B/B-   accentBlue   (blue)
+    ///     C+/C/C-   warning      (yellow)
+    ///     D+/D/D-   alertOrange  (orange)
+    ///     F         danger       (red)
+    ///
+    /// Plus/minus variants deliberately share the letter's colour — the tier is
+    /// the thing being read across a 350-row board, and six hues plus twelve
+    /// shades is not a scale anybody can scan. `A+` is the one exception, and it
+    /// is the same exception `Color.forRating` makes for the 90+ band.
+    ///
+    /// `D` used to fall through to `.danger` with `F`, which said a back-end
+    /// roster player and an undraftable one are the same verdict. The ladder has
+    /// six rungs now (`Color.alertOrange`), so it does not.
+    ///
+    /// Anything that tints a letter grade goes THROUGH here. There is no second
+    /// mapping to keep in step, and a per-view `switch` on `"A"`/`"B"` prefixes
+    /// is the bug this function exists to prevent — the strings the engine
+    /// writes include `"D-"`, which `LetterGrade` has no case for, so a bespoke
+    /// switch tends to drop it into whatever its `default` is.
     static func gradeColorForLetter(_ grade: String) -> Color {
         if grade == "A+" { return .eliteGreen }
         if grade.hasPrefix("A") { return .success }
         if grade.hasPrefix("B") { return .accentBlue }
         if grade.hasPrefix("C") { return .warning }
+        if grade.hasPrefix("D") { return .alertOrange }
         return .danger
     }
 

@@ -100,9 +100,27 @@ struct CombineResultsView<Header: View>: View {
     /// `false` when the scouting budget cannot cover `tripCost`.
     var canAffordTrip: Bool = true
 
+    /// Forward exit out of the pre-invite empty state (#128). The one thing a
+    /// user standing here in January can actually read is what the declared
+    /// class looks like, so the dead end gets a door instead of a full stop.
+    var onOpenClassDepth: (() -> Void)? = nil
+
     /// Shared with the Big Board and the Prospects list — the chips live in
     /// `ScoutingHubView` now, so a filter survives a tab switch.
     @Binding var positionFilter: ProspectPositionFilter
+
+    /// Whether the hub's Insights block is open (#130).
+    ///
+    /// Two of this screen's blocks are insights rather than table: the title /
+    /// invitee-count / fidelity header, and the RISERS / FALLERS rails. Both
+    /// used to sit permanently between the hub's four control rows and the first
+    /// combine row, which is most of why the user could not find the table. They
+    /// fold with the hub's one chevron now.
+    ///
+    /// The send-scouts CTA is deliberately NOT gated: it is a priced, one-window
+    /// offer, and an offer that disappears because a *presentation* preference is
+    /// collapsed is the shape of every "the button was not there" report.
+    var insightsExpanded: Bool = true
 
     /// The hub's scroll-away header, rendered as this list's first section.
     let header: () -> Header
@@ -172,12 +190,18 @@ struct CombineResultsView<Header: View>: View {
         prospects.contains { $0.fortyTime != nil }
     }
 
-    /// True when at least one prospect has been scouted but no combine
-    /// measurements exist — used to drive a "needs simulation" empty state.
-    private var hasScoutedOnly: Bool {
-        !hasResults
-            && !prospects.contains { $0.combineInvite }
-            && prospects.contains { $0.scoutedOverall != nil }
+    /// Whether the league has published an invite list at all.
+    ///
+    /// #128, case D. `combineInvite` is written by exactly one thing —
+    /// `ScoutingEngine.generateCombineResults`, inside `runLeagueCombine` — and
+    /// `WeekAdvancer` only runs that inside its `combineResultPhases` window
+    /// (combine / free agency / pro days / draft). So in `.reviewRoster` NOBODY
+    /// carries an invite: the list does not exist yet, and no amount of scouting
+    /// makes one appear. That is not a data desync, and the header must not
+    /// report it as "0 of 0 prospects invited" over a class the user has spent
+    /// the autumn on — a count of zero out of zero reads as a broken screen.
+    private var hasInvitations: Bool {
+        prospects.contains { $0.combineInvite }
     }
 
     /// True when the season has advanced past the Combine phase. Used to
@@ -264,41 +288,16 @@ struct CombineResultsView<Header: View>: View {
 
     private var combineRisers: [CollegeProspect] {
         combineInvitees
-            .filter { gradeImprovement(for: $0) > 0 }
-            .sorted { gradeImprovement(for: $0) > gradeImprovement(for: $1) }
+            .filter { CombineMovers.improvement(for: $0) > 0 }
+            .sorted { CombineMovers.improvement(for: $0) > CombineMovers.improvement(for: $1) }
             .prefix(5).map { $0 }
     }
 
     private var combineFallers: [CollegeProspect] {
         combineInvitees
-            .filter { gradeImprovement(for: $0) < 0 }
-            .sorted { gradeImprovement(for: $0) < gradeImprovement(for: $1) }
+            .filter { CombineMovers.improvement(for: $0) < 0 }
+            .sorted { CombineMovers.improvement(for: $0) < CombineMovers.improvement(for: $1) }
             .prefix(5).map { $0 }
-    }
-
-    private func gradeImprovement(for prospect: CollegeProspect) -> Int {
-        guard let pre = prospect.preCombineGrade,
-              let post = prospect.scoutGrade else { return 0 }
-        return gradeRank(post) - gradeRank(pre)
-    }
-
-    private func gradeRank(_ grade: String) -> Int {
-        switch grade {
-        case "A+": return 13
-        case "A":  return 12
-        case "A-": return 11
-        case "B+": return 10
-        case "B":  return 9
-        case "B-": return 8
-        case "C+": return 7
-        case "C":  return 6
-        case "C-": return 5
-        case "D+": return 4
-        case "D":  return 3
-        case "D-": return 2
-        case "F":  return 1
-        default:   return 0
-        }
     }
 
     private func refreshCachedData() {
@@ -334,12 +333,14 @@ struct CombineResultsView<Header: View>: View {
                 .listRowBackground(Color.clear)
                 .listRowSeparator(.hidden)
 
-                Section {
-                    headerBar
+                if insightsExpanded || onSendScouts != nil {
+                    Section {
+                        headerBar
+                    }
+                    .listRowInsets(EdgeInsets(top: 2, leading: 8, bottom: 10, trailing: 8))
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
                 }
-                .listRowInsets(EdgeInsets(top: 2, leading: 8, bottom: 10, trailing: 8))
-                .listRowBackground(Color.clear)
-                .listRowSeparator(.hidden)
 
                 if combineInvitees.isEmpty {
                     Section {
@@ -350,7 +351,7 @@ struct CombineResultsView<Header: View>: View {
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
                 } else {
-                    if !combineRisers.isEmpty || !combineFallers.isEmpty {
+                    if insightsExpanded, !combineRisers.isEmpty || !combineFallers.isEmpty {
                         Section {
                             risersAndFallersSection
                         }
@@ -452,20 +453,25 @@ struct CombineResultsView<Header: View>: View {
 
     private var headerBar: some View {
         VStack(spacing: 12) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("NFL COMBINE RESULTS")
-                        .font(.title3.weight(.heavy))
-                        .foregroundStyle(Color.textPrimary)
+            // #130: the hub's Insights header already prints COMBINE in 14 pt
+            // black directly above this, with the fidelity word and the mover
+            // counts in its teaser. The full block is the expanded read.
+            if insightsExpanded {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("NFL COMBINE RESULTS")
+                            .font(.title3.weight(.heavy))
+                            .foregroundStyle(Color.textPrimary)
 
-                    Text("\(filteredProspects.count) of \(combineInvitees.count) prospects invited")
-                        .font(.caption)
-                        .foregroundStyle(Color.accentGold)
+                        Text(inviteeCountText)
+                            .font(.caption)
+                            .foregroundStyle(combineInvitees.isEmpty ? Color.textTertiaryReadable : Color.accentGold)
+                    }
+
+                    Spacer()
+
+                    fidelityChip
                 }
-
-                Spacer()
-
-                fidelityChip
             }
 
             if let onSendScouts {
@@ -474,6 +480,22 @@ struct CombineResultsView<Header: View>: View {
             // Position filtering moved to the hub's shared chip bar so one tap
             // filters the board, the prospect list and this table together.
         }
+    }
+
+    /// The count under the title.
+    ///
+    /// #128 case D. This used to be an unconditional "\(filtered) of \(invited)
+    /// prospects invited", which prints **"0 of 0 prospects invited"** for the
+    /// entire pre-combine window — the autumn and the whole of Review Roster —
+    /// because no prospect carries `combineInvite` until the league holds the
+    /// event (see ``hasInvitations``). A zero-of-zero over a class the user has
+    /// scouted 83 % of reads as a screen that has lost its data. It has not; the
+    /// list simply does not exist yet, and the honest line says so.
+    private var inviteeCountText: String {
+        guard !combineInvitees.isEmpty else {
+            return "Invitations go out when the combine window opens"
+        }
+        return "\(filteredProspects.count) of \(combineInvitees.count) prospects invited"
     }
 
     /// One line telling the user which of the two combine reads he is looking
@@ -1196,24 +1218,40 @@ struct CombineResultsView<Header: View>: View {
                 .foregroundStyle(Color.textSecondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 40)
+
+            if !hasInvitations, !hasResults, let onOpenClassDepth {
+                Button(action: onOpenClassDepth) {
+                    Label("Open Class Depth", systemImage: "chart.bar.fill")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(Color.backgroundPrimary)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 9)
+                        .background(Color.accentGold, in: Capsule())
+                }
+                .buttonStyle(.plain)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var emptyStateTitle: String {
         if hasResults { return "No Combine Invitees" }
-        if hasScoutedOnly { return "Combine Not Simulated" }
-        return "No Combine Results Yet"
+        // #128 case D: the pre-invite window is its own state and it is the
+        // COMMON one — the whole autumn and the whole of Review Roster sit in
+        // it. It used to print "Combine Not Simulated", which claims a step was
+        // skipped when in fact the league has not got there yet.
+        if !hasInvitations { return "Invitations Are Not Out Yet" }
+        return "Combine Not Simulated"
     }
 
     private var emptyStateMessage: String {
         if hasResults {
             return "No prospects in this draft class were invited to the Combine."
         }
-        if hasScoutedOnly {
-            return "The combine has not been held for this draft class yet. It runs automatically when the Combine phase begins."
+        if !hasInvitations {
+            return "The league picks its ~330 invitees when the combine window opens \u{2014} nobody in this class carries an invite before then. Until it does, the Class Depth tab is the read on what the class actually is."
         }
-        return "The combine runs when the Combine phase begins \u{2014} results stay here through the draft."
+        return "The invite list is out but the drills have not been run. The combine is held automatically when the Combine phase begins."
     }
 
     // MARK: - Media Mention Helpers
@@ -1402,6 +1440,41 @@ struct CombineResultsView<Header: View>: View {
         if time < 4.3 { return .good }
         if time < 4.5 { return .average }
         return .poor
+    }
+}
+
+// MARK: - Combine movers
+
+/// Who Indianapolis moved, and by how much.
+///
+/// Lifted out of `CombineResultsView` (#130) because the hub's Insights teaser
+/// has to say "5 risers · 2 fallers" while the rails themselves are folded away,
+/// and two copies of a grade ladder is exactly how the same event ends up
+/// reported two different ways on two rows of one screen.
+enum CombineMovers {
+
+    /// Steps up (positive) or down (negative) the letter ladder since the class
+    /// opened. `0` when either read is missing — a man with no pre-combine grade
+    /// has not moved, he has simply never been graded.
+    ///
+    /// The ladder itself is `ProspectRoundFormat.gradeRank`, which the Big Board
+    /// already sorts and bands on. This screen used to carry a private,
+    /// character-for-character identical copy of it.
+    static func improvement(for prospect: CollegeProspect) -> Int {
+        guard let pre = prospect.preCombineGrade,
+              let post = prospect.scoutGrade else { return 0 }
+        return ProspectRoundFormat.gradeRank(post) - ProspectRoundFormat.gradeRank(pre)
+    }
+
+    /// One pass, both counts — for the collapsed teaser.
+    static func counts(in prospects: [CollegeProspect]) -> (risers: Int, fallers: Int) {
+        var risers = 0
+        var fallers = 0
+        for prospect in prospects {
+            let move = improvement(for: prospect)
+            if move > 0 { risers += 1 } else if move < 0 { fallers += 1 }
+        }
+        return (risers, fallers)
     }
 }
 

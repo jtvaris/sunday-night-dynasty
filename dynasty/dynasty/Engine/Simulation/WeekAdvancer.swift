@@ -6528,7 +6528,8 @@ enum WeekAdvancer {
                     team: team,
                     contract: nil,
                     capMode: capMode,
-                    leagueYearRemaining: leagueYearRemaining
+                    leagueYearRemaining: leagueYearRemaining,
+                    careerID: career.id
                 )
             }
         }

@@ -1298,11 +1298,17 @@ struct FinalPushView: View {
     private func applyFranchiseTag(to player: Player) {
         guard let team, !hasUsedFranchiseTag else { return }
         let tagCost = franchiseTagValue(for: player.position)
+        // #127: the tag binds the league year this screen's rollover opens. Final
+        // Push runs immediately before `FreeAgencyEngine.executeNewLeagueYear`
+        // and `career.currentSeason` does not move across the offseason, so the
+        // binding year is the same `currentSeason + 1` the tag screen stamps.
         ContractEngine.applyFranchiseTag(
             player: player,
             tagValue: tagCost,
             team: team,
-            capMode: career.capMode
+            capMode: career.capMode,
+            bindingSeason: career.currentSeason + 1,
+            careerID: career.id
         )
         try? modelContext.save()
         // Deliberately does NOT set `franchiseTagVisited`. That flag means "the
@@ -1312,7 +1318,11 @@ struct FinalPushView: View {
         // "Franchise Tag Decisions" task before the user had seen it. The tag
         // itself is the evidence the task checks for anyway.
         var state = decisions[player.id] ?? PlayerDecisionState()
-        state.status = .tagged(salary: player.annualSalary)
+        // `tagCost`, not `player.annualSalary` (#127): the tag no longer
+        // overwrites the salary — the expiring deal keeps running until the
+        // rollover — so reading the player row here would report the OLD
+        // contract as the tag number.
+        state.status = .tagged(salary: tagCost)
         decisions[player.id] = state
     }
 
@@ -1357,10 +1367,14 @@ struct FinalPushView: View {
     /// term must land verbatim. Only Final Push runs immediately ahead of the
     /// decrement.
     ///
-    /// The franchise tag needs no adjustment and deliberately does not get one:
-    /// the expiry loop skips `isFranchiseTagged` rows outright
-    /// (`FreeAgencyEngine.executeNewLeagueYear`), so the single year
-    /// `applyFranchiseTag` writes survives the transition intact.
+    /// The franchise tag needs no adjustment and deliberately does not get one,
+    /// but not because its year survives the rollover untouched — the year is
+    /// REWRITTEN there. `FreeAgencyEngine.settleFranchiseTags` runs inside
+    /// `executeNewLeagueYear` and sets every tagged man to exactly
+    /// `contractYearsRemaining = 1` off the forward ledger, and the expiry loop
+    /// below it skips `isFranchiseTagged` rows so nothing decrements what it
+    /// just wrote. Compensating here would be adding a year to a number the
+    /// rollover is about to overwrite.
     ///
     /// Only `Player.contractYearsRemaining` is adjusted. In realistic mode the
     /// `Contract` row keeps the negotiated `totalYears`, exactly as it does for
@@ -1374,6 +1388,7 @@ struct FinalPushView: View {
             offer: offer,
             application: .replaceContract,
             capMode: career.capMode,
+            careerID: career.id,
             modelContext: modelContext
         )
         player.contractYearsRemaining += 1

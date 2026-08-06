@@ -510,6 +510,7 @@ struct CapComplianceView: View {
             contract: contractsByPlayer[player.id],
             capMode: career.capMode,
             leagueYearRemaining: leagueYearRemaining,
+            careerID: career.id,
             modelContext: modelContext
         )
         releaseTarget = nil

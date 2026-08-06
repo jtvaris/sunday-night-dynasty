@@ -1506,6 +1506,21 @@ enum TradeValueEngine {
             errors.append("\(player.fullName) is injured — \(receiving.abbreviation) won't move him until he's cleared.")
         }
 
+        // A franchise-tagged man is not a tradeable asset here (#132 review F6).
+        // The tag is a forward commitment in `CommittedCapLedger`, keyed by
+        // player and scoped to the SAVE, not to a club — so trading him carried
+        // the charge to the buyer's projections while the seller, whose
+        // `hasUsedTag` test is just "does anyone on my roster carry the flag",
+        // was freed to tag a second player in the same offseason. Modelling the
+        // real tag-and-trade (the buyer inherits the tag and the seller's tag is
+        // still spent) means giving the ledger a team, which is a bigger change
+        // than this rule is worth; the honest interim answer is that the man
+        // does not move.
+        if sendingPlayers.contains(where: \.isFranchiseTagged)
+            || receivingPlayers.contains(where: \.isFranchiseTagged) {
+            errors.append("Franchise-tagged players can't be traded.")
+        }
+
         // Roster-size bounds (keep both squads playable).
         let minRoster = max(0, rosterFloor)
         let maxRoster = max(minRoster + 1, rosterCeiling)
@@ -1663,11 +1678,13 @@ enum TradeValueEngine {
 
         for id in proposal.sendingPlayers {
             guard let player = playerLookup[id],
-                  player.teamID == proposal.offeringTeamID, !player.isInjured else { return false }
+                  player.teamID == proposal.offeringTeamID,
+                  !player.isInjured, !player.isFranchiseTagged else { return false }
         }
         for id in proposal.receivingPlayers {
             guard let player = playerLookup[id],
-                  player.teamID == proposal.receivingTeamID else { return false }
+                  player.teamID == proposal.receivingTeamID,
+                  !player.isFranchiseTagged else { return false }
         }
         for id in proposal.sendingPicks {
             guard let pick = pickLookup[id],
@@ -2101,7 +2118,11 @@ enum TradeValueEngine {
     ) -> Player? {
         let candidates = seller.roster.filter { player in
             // #30: 72 → 66, the same percentile floor in the calibrated league.
-            guard player.overall >= 66, !player.isInjured, !player.isHoldingOut else { return false }
+            // `isFranchiseTagged` is a hard league rule here, not a preference —
+            // `validationErrors` vetoes the deal, so shopping one only produces
+            // a call that cannot be closed (#132 review F6).
+            guard player.overall >= 66, !player.isInjured, !player.isHoldingOut,
+                  !player.isFranchiseTagged else { return false }
             guard buyer.needs.severity(player.position) >= 0.18 else { return false }
             guard seller.lastManReason(player) == nil else { return false }
             guard !hasActiveNoTradeClause(player: player, contracts: contracts) else { return false }
@@ -2149,7 +2170,11 @@ enum TradeValueEngine {
         seller.roster
             .filter { player in
                 // #30: 72 → 66, same percentile floor as `shoppingTarget`.
-                guard !player.isInjured, !player.isHoldingOut, player.overall >= 66 else { return false }
+                // The tag is a hard veto in `validationErrors`, so it belongs
+                // with the other hard gates rather than with the stance rules —
+                // even a standing trade request cannot move a tagged man.
+                guard !player.isInjured, !player.isHoldingOut, player.overall >= 66,
+                      !player.isFranchiseTagged else { return false }
                 guard seller.lastManReason(player) == nil else { return false }
                 guard !hasActiveNoTradeClause(player: player, contracts: contracts) else { return false }
                 if TradeRequestRegistry.hasStandingRequest(player.id, season: season) { return true }
@@ -2261,7 +2286,7 @@ enum TradeValueEngine {
         /// Everyone the payer is allowed to put in a package.
         func fillerPool() -> [Player] {
             payer.roster.filter { player in
-                guard !player.isInjured, !player.isHoldingOut else { return false }
+                guard !player.isInjured, !player.isHoldingOut, !player.isFranchiseTagged else { return false }
                 // #30: the 62-82 filler window → 55-77, percentile-preserving.
                 guard player.overall >= 55, player.overall <= 77 else { return false }
                 guard payer.untouchableReason(player) == nil,
@@ -3614,7 +3639,7 @@ enum TradeValueEngine {
                 let filler = buyerRoster
                     .filter {
                         // #30: the 60-80 gap-filler window → 53-75.
-                        !$0.isInjured && $0.position != .QB
+                        !$0.isInjured && !$0.isFranchiseTagged && $0.position != .QB
                             && $0.overall >= 53 && $0.overall <= 75
                             && !hasActiveNoTradeClause(player: $0, contracts: contracts)
                     }

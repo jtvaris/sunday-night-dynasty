@@ -537,6 +537,13 @@ enum CareerScopedDefaults {
         // so a deleted save must not hand a new career somebody else's
         // commitments and silently shrink its cap room.
         "committedCapReservations",
+        // `CommittedCapLedger.forwardDefaultsKey` (task #127) — money promised
+        // for a league year that has not opened yet, the franchise tag being the
+        // only one so far. Same reason as the row above, plus one of its own: a
+        // forward row is deliberately stamped a year AHEAD, so nothing in normal
+        // play sweeps it except the rollover that settles it. A deleted save
+        // must not leave one behind for the next career to be charged for.
+        "committedCapForwardCommitments",
     ]
 
     /// Every read of a key above goes through `CareerScopedDefaults.scopedKey`

@@ -217,6 +217,7 @@ extension TaskDestination {
         case .workouts:             return "Private Workouts"
         case .top30Visits:          return "Top-30 Visits"
         case .mockDraft:            return "Mock Draft"
+        case .classDepth:           return "Class Depth"
         case .developmentReport:    return "Development Report"
         case .history:              return "League History"
         case .draftReportCard:      return "Draft Report Card"

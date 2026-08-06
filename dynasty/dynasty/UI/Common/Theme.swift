@@ -39,6 +39,13 @@ extension Color {
     static let success = Color(red: 0.133, green: 0.773, blue: 0.369)
     /// Caution, moderate `#EAB308`
     static let warning = Color(red: 0.918, green: 0.702, blue: 0.031)
+    /// Poor-but-not-failing — the rung between caution and destructive `#F97316`
+    ///
+    /// Added for the grade ladder: the letter scale has SIX tiers (A+/A/B/C/D/F)
+    /// and the palette had five, so `D` and `F` were painted the same red and a
+    /// back-end roster player read as undraftable. 6.69 : 1 on
+    /// `backgroundPrimary`, clear of the WCAG AA floor.
+    static let alertOrange = Color(red: 0.976, green: 0.451, blue: 0.086)
     /// Injuries, bad events, destructive `#EF4444`
     static let danger = Color(red: 0.937, green: 0.267, blue: 0.267)
 

@@ -186,22 +186,20 @@ struct ScoutingStageGate {
 
 // MARK: - Hub header
 
-/// The scroll-away header of the scouting hub.
+/// The scouting hub's orientation block: how much of the class is filed on, what
+/// week it is, and the Draft Prep card.
 ///
-/// It is passed BY CLOSURE into each list surface and rendered as that
-/// surface's **first section** — it never wraps a surface. That is the whole
-/// trick behind the full-page scroll: the hub used to be a `VStack` of metrics
-/// strip → prep card → combine CTA → tab picker → chips → `Divider` → list, and
-/// everything above the list was outside the scroll view permanently, so a
-/// landscape iPad showed three prospect rows. A `ScrollView` around the hub is
-/// illegal (`BigBoardView` and the combine table own `List`s, and a `List`
-/// inside a `ScrollView` collapses), and flattening a 3000-line `List` into a
-/// `LazyVStack` would destroy `.onMove`, which is the board's whole reordering
-/// interaction. Moving the header inside the list keeps one scroll owner per
-/// surface, one gesture, and every interaction intact.
+/// **It lives inside the hub's Insights section now (#130).** It used to be
+/// passed BY CLOSURE into each list surface and rendered as that surface's first
+/// section, which was the right answer to the question *"how do I keep one
+/// scroll owner per screen"* — and the wrong answer to the question the user
+/// actually asked, which was why every scouting screen opens on ~350 pt of
+/// explanation instead of on its list. Folding it behind one chevron solves both:
+/// the surfaces receive `EmptyView` and open on their own first row, and nothing
+/// here is deleted — it is one tap up and to the right, remembered per surface.
 ///
-/// Nothing in here may read an uncached computed property: it is a `Section` of
-/// one row inside a list that re-evaluates on every `@State` touch.
+/// Nothing in here may read an uncached computed property: it re-evaluates on
+/// every `@State` touch of a screen that owns a 350-row table.
 struct ScoutingHubHeader: View {
     let career: Career
     let prospects: [CollegeProspect]
@@ -231,9 +229,9 @@ struct ScoutingHubHeader: View {
                 onFilterPosition: onFilterPosition
             )
         }
-        .padding(.horizontal, 4)
-        .padding(.top, 6)
-        .padding(.bottom, 10)
+        // The Insights container supplies the outer margin now, so this is only
+        // the gap between the two blocks and the chevron row above them.
+        .padding(.top, 2)
     }
 
     // MARK: - Metrics strip

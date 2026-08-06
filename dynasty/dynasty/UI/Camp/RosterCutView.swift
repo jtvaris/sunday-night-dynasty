@@ -330,6 +330,7 @@ struct RosterCutView: View {
                 contract: contractsByPlayer[player.id],
                 capMode: career.capMode,
                 leagueYearRemaining: leagueYearRemaining,
+                careerID: career.id,
                 modelContext: modelContext
             )
             let cut = RosterCut(

@@ -298,15 +298,21 @@ struct TimelineTasksPanel: View {
             // Task rows for current phase
             VStack(spacing: 0) {
                 let actionable = Self.actionableTasks(tasks)
-                let required = actionable.filter { $0.isRequired }
-                let optional = actionable.filter { !$0.isRequired }
+                // Required-first everywhere EXCEPT Review Roster (#132), where
+                // the generator's own order is the meaningful one: that list
+                // opens with "Check Salary Cap Outlook" because next year's cap
+                // is the number every decision under it — which groups to grade
+                // harshly, who to tag, who to let walk — is made against, and
+                // sorting required-first dropped it to 4th, underneath the three
+                // calls it exists to inform. Nothing about REQUIREDNESS changes:
+                // the badge, the lock chain and `allRequiredComplete` all read
+                // `isRequired`, never position.
+                let ordered = career.currentPhase == .reviewRoster
+                    ? actionable
+                    : actionable.filter(\.isRequired) + actionable.filter { !$0.isRequired }
 
-                ForEach(required) { task in
-                    currentTaskRow(task, isRequired: true)
-                }
-
-                ForEach(optional) { task in
-                    currentTaskRow(task, isRequired: false)
+                ForEach(ordered) { task in
+                    currentTaskRow(task, isRequired: task.isRequired)
                 }
             }
             .padding(.leading, 30) // Align with text after timeline dot

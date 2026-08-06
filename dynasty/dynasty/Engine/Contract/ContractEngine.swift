@@ -737,10 +737,24 @@ enum ContractEngine {
     /// number because that is what every other system in the game
     /// (`HoldoutEngine`, `TradeValueEngine`, the cap bars) reads it as.
     ///
+    /// **A signed deal rescinds a franchise tag.** That is the NFL rule — the tag
+    /// is a placeholder for the long-term contract, and agreeing the contract
+    /// retires it — and without it the tag was live money the club paid twice.
+    /// The flag survived the signing, so `FreeAgencyEngine.settleFranchiseTags`
+    /// found him at the rollover and OVERWROTE the deal just agreed with the
+    /// one-year tag number: the extension the user negotiated was destroyed
+    /// between screens, and the forward reservation kept charging every cap
+    /// projection in the meantime. Both are undone here, before the new deal is
+    /// written, so the tag cannot outlive the signature.
+    ///
     /// - Parameter existingContract: the player's detailed contract when the
     ///   caller already has it. Passing `nil` makes the function look one up
     ///   through `modelContext`; passing `nil` with no context means the deal is
     ///   booked on `annualSalary` alone, which is the simple-mode shape.
+    /// - Parameter careerID: the save whose forward ledger a rescinded tag is
+    ///   released from. `career.id`, matching every reader of that table;
+    ///   `player.careerID` is only the fallback for a path with no `Career` in
+    ///   hand, and a nil there releases nothing at all.
     @discardableResult
     static func applyNegotiatedDeal(
         player: Player,
@@ -748,6 +762,7 @@ enum ContractEngine {
         offer: NegotiationOffer,
         application: DealApplication,
         capMode: CapMode,
+        careerID: UUID? = nil,
         existingContract: Contract? = nil,
         modelContext: ModelContext? = nil
     ) -> Int {
@@ -796,6 +811,14 @@ enum ContractEngine {
         player.restructureReliefK = 0
         player.restructureProrationK = 0
         player.restructureCarryYears = 0
+
+        // The tag is retired by the signature — see the doc above. BEFORE the
+        // clock is written, because rescinding restores the year of control the
+        // tag floored it at and an extension must add its years to the contract
+        // the man actually had.
+        if player.isFranchiseTagged {
+            rescindFranchiseTagBooks(player: player, careerID: resolvedCareerID(careerID, player: player))
+        }
 
         let years: Int = {
             switch application {
@@ -1333,60 +1356,92 @@ enum ContractEngine {
     /// screens hardcoded, expressed so it grows with the league.
     static let franchiseTagFloorShare = 5_000.0 / Double(openingSalaryCap)
 
-    /// Apply franchise tag to a player. Sets their salary to the tag value
-    /// and marks them as franchise-tagged for the season.
+    /// **Apply the franchise tag — a decision about NEXT league year** (#127).
+    ///
+    /// The bug this replaces, in the user's own numbers: a club with $27.4M of
+    /// room tagged a quarterback earning $36.9M on the last year of his deal at
+    /// a $32.8M tag, and the header went to **$31.4M** — the tag had *given the
+    /// club back $4.0M*. The old body did
+    ///
+    /// ```swift
+    /// player.contractYearsRemaining = 1
+    /// player.annualSalary = tagValue
+    /// team.currentCapUsage = team.currentCapUsage - previousSalary + tagValue + …
+    /// ```
+    ///
+    /// i.e. it tore up a contract that is still running and charged next year's
+    /// number against this year's books. Both halves are wrong in the same
+    /// direction: **the tag is not a repricing of the current league year, it is
+    /// a commitment for the one that has not started.** A tagged man plays out
+    /// the season he is already being paid for; from the new league year his
+    /// expired deal is replaced by the one-year tag.
+    ///
+    /// So this function no longer touches `annualSalary` and no longer touches
+    /// `Team.currentCapUsage` at all. It flags the man — which is what makes
+    /// `FreeAgencyEngine.executeNewLeagueYear`'s expiry loop skip him instead of
+    /// putting him on the market — and books the tag number as a **forward
+    /// commitment** binding `bindingSeason`. `FreeAgencyEngine.settleFranchiseTags`
+    /// consumes it at the rollover, which is the moment the money becomes real.
+    ///
+    /// Sandbox is the same shape, with `tagValue` already 0 from
+    /// ``franchiseTagValue(position:topSalaries:capMode:salaryCap:)`` — the mode
+    /// switches the CAP off, not the year of team control, so the flag and the
+    /// morale hit still land and the settlement writes a $0 tag.
+    ///
     /// R22: no player wants the tag — it costs 10 morale.
+    ///
+    /// - Parameter bindingSeason: the league year the tag charges. Callers pass
+    ///   `career.currentSeason + 1`: `WeekAdvancer` does not increment the year
+    ///   until the roster-cuts → regular-season transition, so every offseason
+    ///   phase of a given league year reads the same `currentSeason`, and the
+    ///   year a tag decided in that offseason applies to is always the next one.
+    /// - Parameter careerID: the save the forward ledger row belongs to, passed
+    ///   explicitly because `Player.careerID` is optional and a nil there books
+    ///   NOTHING — silently, and against a table every reader queries with
+    ///   `career.id`. Callers all hold a `Career`; they pass its id.
     static func applyFranchiseTag(
         player: Player,
         tagValue: Int,
-        team: Team
+        team: Team?,
+        capMode: CapMode,
+        bindingSeason: Int,
+        careerID: UUID
     ) {
-        let previousSalary = player.annualSalary
+        _ = team // The club's books are deliberately untouched — see the doc above.
+        _ = capMode
 
-        // #102 F6, symmetric with `applyNegotiatedDeal`. The tag OVERWRITES
-        // `annualSalary`, so a restructured man carries the same two hazards
-        // through it: the rollover would add `restructureReliefK` on top of the
-        // tag number, and `restructureDeadMoney` would keep accelerating a bonus
-        // the tag year does not contain. Settle the receipt into this year's
-        // books — the converted money is owed either way — and clear it.
-        let restructureSettlement = max(0, player.restructureDeadMoney)
-        player.restructureReliefK = 0
-        player.restructureProrationK = 0
-        player.restructureCarryYears = 0
-
-        player.contractYearsRemaining = 1
-        player.annualSalary = tagValue
+        // A tagged man is under club control for the tag year. Normally he is
+        // already at 1 (the tag screen only offers `contractYearsRemaining <= 1`)
+        // and this is a no-op; the `max` only covers the man whose deal has
+        // somehow already run to 0 while he is still on the roster, who would
+        // otherwise be skipped by the expiry loop AND carry no year of control.
+        // Never lowered: the clock is the rollover's business, not the tag's.
+        //
+        // Where it DOES raise the clock the pre-tag value is stashed on the
+        // ledger row, because that is the only thing that makes
+        // `removeFranchiseTag` an exact undo (F3): without it a rescinded tag
+        // left a 0-year man sitting at 1.
+        let priorYears = player.contractYearsRemaining
+        player.contractYearsRemaining = Swift.max(1, player.contractYearsRemaining)
         player.isFranchiseTagged = true
-        player.morale = max(0, player.morale - 10)
+        player.morale = Swift.max(0, player.morale - 10)
 
-        // Update team cap: remove old salary, add new tag salary, book whatever
-        // proration the old deal still owed.
-        team.currentCapUsage = team.currentCapUsage - previousSalary + tagValue + restructureSettlement
-    }
-
-    /// Cap-mode-aware franchise-tag application. In sandbox mode the tag is free
-    /// and team cap is never touched — the player is just flagged as tagged for
-    /// one extra year of team control.
-    static func applyFranchiseTag(
-        player: Player,
-        tagValue: Int,
-        team: Team,
-        capMode: CapMode
-    ) {
-        switch capMode {
-        case .simple, .realistic:
-            applyFranchiseTag(player: player, tagValue: tagValue, team: team)
-        case .sandbox:
-            player.contractYearsRemaining = 1
-            player.annualSalary = 0
-            player.isFranchiseTagged = true
-            player.morale = max(0, player.morale - 10)
-            // Sandbox books no cap, so there is nothing to accelerate — but the
-            // receipt must still not survive onto a salary it does not describe.
-            player.restructureReliefK = 0
-            player.restructureProrationK = 0
-            player.restructureCarryYears = 0
-        }
+        // The restructure receipt is deliberately LEFT ALONE. It describes money
+        // the club converted out of the salary it is still paying this year, and
+        // this year is unchanged by tagging. `settleFranchiseTags` clears it at
+        // the rollover — the same treatment the expiry loop gives a deal that
+        // simply runs out, and correct for the same reason: the true-up rebuilds
+        // every club's usage from rostered salaries, so an accelerated bonus ages
+        // off with the league year that incurred it.
+        CommittedCapLedger.commitForward(
+            playerID: player.id,
+            playerName: player.fullName,
+            annualCapHit: Swift.max(0, tagValue),
+            years: 1,
+            priorYears: priorYears < player.contractYearsRemaining ? priorYears : nil,
+            bindingSeason: bindingSeason,
+            careerID: careerID
+        )
     }
 
     // MARK: - FA Preview
@@ -1460,34 +1515,77 @@ enum ContractEngine {
             }
     }
 
-    /// Remove franchise tag from a player. Reverts them to an expiring contract.
+    /// **Rescind the tag — the exact undo of ``applyFranchiseTag``** (#127).
+    ///
+    /// The old body was not an undo of anything. Applying wrote
+    /// `contractYearsRemaining = 1` and `annualSalary = tagValue`; removing wrote
+    /// `contractYearsRemaining = 0` and `annualSalary = 0` and refunded the tag
+    /// off the club's books — so a user who tagged a man and changed his mind
+    /// thirty seconds later was left with a $0 player still sitting on his roster
+    /// with no contract years, a state nothing else in the game produces. The
+    /// asymmetry only existed because applying destroyed the contract in the
+    /// first place.
+    ///
+    /// Now that applying touches neither the salary nor the cap, this has nothing
+    /// to give back except the flag, the morale, the forward commitment — and the
+    /// one year of club control the tag floors the contract clock at. The man
+    /// goes back to being exactly what he was: a player in the last year of his
+    /// deal, who reaches the market at the rollover.
+    ///
+    /// **The clock is only restored where applying moved it** (F3). `applyFranchiseTag`
+    /// does `contractYearsRemaining = max(1, …)`, which is a no-op for the man
+    /// the tag screen normally offers (already at 1) and a raise for the man
+    /// whose deal has run to 0. The pre-tag value rides on the ledger row, so the
+    /// undo can tell the two apart; a missing row (a save whose tag predates the
+    /// forward table, or a flag some other engine set) leaves the clock alone,
+    /// which is the safe direction — it keeps a rostered man under contract
+    /// rather than stranding him at 0.
+    ///
     /// R22: rescinding the tag gives back the 10 morale the tag cost.
-    static func removeFranchiseTag(
-        player: Player,
-        team: Team
-    ) {
-        let tagSalary = player.annualSalary
+    static func removeFranchiseTag(player: Player, team: Team?, capMode: CapMode, careerID: UUID) {
+        _ = team
+        _ = capMode
+        guard player.isFranchiseTagged else { return }
 
-        player.isFranchiseTagged = false
-        player.contractYearsRemaining = 0
-        player.annualSalary = 0
-        player.morale = min(100, player.morale + 10)
-
-        // Free up the tag salary from team cap
-        team.currentCapUsage -= tagSalary
+        rescindFranchiseTagBooks(player: player, careerID: careerID)
+        player.morale = Swift.min(100, player.morale + 10)
     }
 
-    /// Cap-mode-aware franchise tag removal. Sandbox skips cap refund logic.
-    static func removeFranchiseTag(player: Player, team: Team, capMode: CapMode) {
-        switch capMode {
-        case .simple, .realistic:
-            removeFranchiseTag(player: player, team: team)
-        case .sandbox:
-            player.isFranchiseTagged = false
-            player.contractYearsRemaining = 0
-            player.annualSalary = 0
-            player.morale = min(100, player.morale + 10)
+    /// Takes a franchise tag off the club's books — the flag, the forward
+    /// commitment and the year of control the tag floored the clock at — and
+    /// nothing else.
+    ///
+    /// Shared by the two paths that end a tag, which differ only in what they owe
+    /// the player. ``removeFranchiseTag`` hands the 10 morale back because the
+    /// club changed its mind; ``applyNegotiatedDeal`` does not, because the man
+    /// just signed the long-term deal the tag was standing in for and taking the
+    /// tag's morale hit back would pay him twice.
+    /// Which save a ledger write belongs to, preferring the id the caller threaded
+    /// through.
+    ///
+    /// The forward table is read everywhere with `career.id`, so a write scoped by
+    /// anything else lands in a namespace nobody queries. `Player.careerID` is
+    /// optional and is nil often enough (any row a generator minted without
+    /// stamping it) that trusting it silently books nothing — the failure this
+    /// fallback is only a last resort for. Loud in DEBUG so a call site that
+    /// forgot to pass `career.id` is found in the simulator rather than in a save.
+    static func resolvedCareerID(_ careerID: UUID?, player: Player) -> UUID? {
+        if let careerID { return careerID }
+        #if DEBUG
+        if player.careerID == nil {
+            assertionFailure("Ledger write for \(player.fullName) has no careerID — pass career.id")
         }
+        #endif
+        return player.careerID
+    }
+
+    private static func rescindFranchiseTagBooks(player: Player, careerID: UUID?) {
+        let reservation = CommittedCapLedger.forwardCommitment(playerID: player.id, careerID: careerID)
+        player.isFranchiseTagged = false
+        if let priorYears = reservation?.priorYears {
+            player.contractYearsRemaining = priorYears
+        }
+        CommittedCapLedger.releaseForward(playerID: player.id, careerID: careerID)
     }
 
     // MARK: - Natural Position Helpers

@@ -444,6 +444,7 @@ struct PlayerContractView: View {
             contract: contract,
             capMode: career.capMode,
             leagueYearRemaining: leagueYearRemaining,
+            careerID: career.id,
             modelContext: modelContext
         )
         try? modelContext.save()

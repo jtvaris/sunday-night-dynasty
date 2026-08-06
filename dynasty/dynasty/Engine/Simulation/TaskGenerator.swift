@@ -87,6 +87,13 @@ enum TaskDestination: String, Codable, CaseIterable {
     case top30Visits
     /// The mock-draft screen, as a league information event.
     case mockDraft
+    /// #128: the draft class by position — declarations, the Senior Bowl, and
+    /// how deep the DECLARED pool is at each group against the club's own holes.
+    /// The January "read the reports" task used to point at `.scouting`, which
+    /// opened the hub on the combine tab — a screen that in `.reviewRoster` reads
+    /// "0 of 0 prospects invited" because the league has not issued an invite
+    /// list yet and cannot have.
+    case classDepth
     /// R32: League History & Hall of Fame screen.
     case history
     /// #40: Draft Report Card — hindsight draft-class grades.
@@ -678,12 +685,21 @@ enum TaskGenerator {
             // Senior Bowl was played (a fresh report on every prospect who
             // attended). Both landed as news + inbox only, so a user working the
             // task list top-down never learned the board had moved.
+            //
+            // #128: the destination is `.classDepth`, not `.scouting`. Opening
+            // the hub bare in `.reviewRoster` lands on the combine tab — the
+            // stage the pipeline pointer sits at — and the combine has not been
+            // held: `combineInvite` is stamped by `ScoutingEngine
+            // .generateCombineResults`, which only runs once the combine window
+            // opens, so the screen a REQUIRED-adjacent task handed the user read
+            // "Combine Not Simulated / 0 of 0 prospects invited" over a class he
+            // had scouted 83 % of. The depth screen is what this copy describes.
             GameTask(
                 phase: .reviewRoster,
                 title: "Read the Senior Bowl & declaration reports",
-                description: "Underclassmen have declared and the Senior Bowl has been played. New reports are on the board \u{2014} the class is not the one you scouted in the autumn.",
-                icon: "doc.text.magnifyingglass",
-                destination: .scouting,
+                description: "Underclassmen have declared and the Senior Bowl has been played. See how deep the class is now at every position \u{2014} it is not the one you scouted in the autumn.",
+                icon: "chart.bar.doc.horizontal",
+                destination: .classDepth,
                 isRequired: false
             ),
             GameTask(

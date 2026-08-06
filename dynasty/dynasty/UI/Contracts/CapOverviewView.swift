@@ -119,6 +119,7 @@ struct CapOverviewView: View {
                             offer: offer,
                             application: .extendExisting,
                             capMode: career.capMode,
+                            careerID: career.id,
                             existingContract: contractsByPlayer[player.id],
                             modelContext: modelContext
                         )
@@ -893,7 +894,12 @@ struct CapOverviewView: View {
     private func committedCap(team: Team, yearOffset: Int) -> Int {
         guard yearOffset > 0 else { return team.currentCapUsage }
 
-        return players.reduce(0) { total, player in
+        let contracts = players.reduce(0) { total, player in
+            // #127: a franchise-tagged man's row still carries his EXPIRING deal
+            // until the March rollover settles the tag onto it, so reading either
+            // source for him would price a future year off a contract that ends
+            // before it. His tag comes in below, at the number he was tagged for.
+            if player.isFranchiseTagged { return total }
             if let contract = contractsByPlayer[player.id], contract.totalYears > 0 {
                 let index = contract.currentYear + yearOffset
                 guard index < contract.totalYears else { return total }
@@ -902,6 +908,16 @@ struct CapOverviewView: View {
             }
             return player.contractYearsRemaining > yearOffset ? total + player.annualSalary : total
         }
+
+        // Money promised for a league year that has not opened — the franchise
+        // tag today. Without this the year-1 bar reads a tagged quarterback as
+        // free, which is exactly the year the club has just committed $32.8M to.
+        // Player-scoped so a tagged-then-released man stops counting at once.
+        return contracts + CommittedCapLedger.forwardCommitted(
+            playerIDs: players.filter(\.isFranchiseTagged).map(\.id),
+            careerID: career.id,
+            season: career.currentSeason + yearOffset
+        )
     }
 
     private func projectedCap(team: Team, yearOffset: Int) -> Int {

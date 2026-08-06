@@ -1010,7 +1010,9 @@ struct FilmStudySelectionView<Board: View>: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.leading, 6)
 
-            ProspectColumns.headers(mode: mode)
+            // `leadsWithScoutBand` must match the row's context exactly or the
+            // labels slide one column out of line — see `columnContext`.
+            ProspectColumns.headers(mode: mode, context: ProspectColumnContext(leadsWithScoutBand: true))
 
             Text("TAPE").frame(width: 46, alignment: .center)
             // #fleet review F19a: the Work-up block opens with the same n/3, so
@@ -1038,12 +1040,19 @@ struct FilmStudySelectionView<Board: View>: View {
     /// missing one. `reportCount` is the cached chargeable count so the work-up
     /// block's RPT cell and this row's own RPTS column cannot print two
     /// different numbers for the same man.
+    ///
+    /// `leadsWithScoutBand` is on: this screen asks the user to spend money on a
+    /// man, and what his own department already has him at is the first thing he
+    /// needs to read. The list draws no OVR column of its own, so the shared one
+    /// cannot duplicate anything — the case `BigBoardView.columnContext` stays
+    /// off for.
     private func columnContext(filed: Int) -> ProspectColumnContext {
         ProspectColumnContext(
             knowsSchemeFit: false,
             knowsNeeds: false,
             userTeamID: career.teamID,
-            reportCount: filed
+            reportCount: filed,
+            leadsWithScoutBand: true
         )
     }
 

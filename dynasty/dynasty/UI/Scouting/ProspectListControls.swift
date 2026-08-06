@@ -217,18 +217,73 @@ struct ProspectWorkTick: View {
     }
 }
 
-/// One measurable over its column label.
+/// Where one drill result sits inside its POSITION group, as a phrase rather
+/// than a rank number.
+///
+/// Lifted out of `CombineResultsView.tierLabel` so the board, the two selection
+/// lists and (in the next pass) the combine table itself all say "Top 10%" in
+/// the same green. A raw "87th" is a number the user then has to rank against
+/// the other five numbers on the row; the phrase is the read.
+///
+/// The colours are the top five rungs of the ladder
+/// `PositionGradeCalculator.gradeColorForLetter` paints letters on — elite
+/// green, green, blue, amber, red — so a man whose 40 reads "Top 10%" in bright
+/// green and whose DRILL grade reads "A+" in bright green is not two different
+/// scales agreeing by accident. Not the SAME ladder: the letter version has six
+/// rungs, splitting the bottom into `alertOrange` for D and `danger` for F,
+/// where five percentile bands have nowhere to put a sixth colour.
+enum ProspectMeasurableTier {
+    /// Maps a 1-99 percentile to its phrase and its colour.
+    static func label(for percentile: Int) -> (text: String, color: Color) {
+        switch percentile {
+        case 90...:    return ("Top 10%", .eliteGreen)
+        case 75..<90:  return ("Top 25%", .success)
+        case 50..<75:  return ("Above Avg", .accentBlue)
+        case 25..<50:  return ("Below Avg", .warning)
+        default:       return ("Bottom 25%", .danger)
+        }
+    }
+}
+
+/// One measurable over its column label, and — when the club has earned the
+/// precision — where that number sits in his position group.
 ///
 /// A blank cell is two different facts and the cell says which: "?" when nobody
 /// has measured him where you could see it, an em-dash when he was there and did
 /// not run that drill. The tint carries the other half of the fog — a hard
 /// number your own people took reads at full strength, a rounded broadcast
 /// figure reads back, matching the "~" the `ProspectFog` helper prefixes.
+///
+/// ## The percentile and the fog
+///
+/// `percentile` is `nil` for a broadcast read, and that is not a shortcut — it
+/// is `ProspectFog.showsPercentile`, the rule the combine table has always
+/// followed. A percentile computed off "~4.5" would be a precise-looking claim
+/// built on a number that was rounded to a tenth precisely because the club did
+/// not earn the decimals: two men at 4.46 and 4.54 both print "~4.5" and would
+/// then be told they tested identically. Attending the combine buys precision,
+/// and the percentile is what precision is FOR. A dimmed "~4.5" with the drill
+/// label straight under it and no phrase between them is the honest rendering —
+/// and the missing line is itself the tell that there is a read here the club
+/// has not paid for.
 struct ProspectMeasurableCell: View {
     let value: String?
     let label: String
     let fidelity: ProspectFog.MeasurableFidelity
     var empty: String = "\u{2014}"
+    /// Position-relative percentile, 1-99. `nil` prints no phrase — either the
+    /// host has no peer population or the fog forbids the claim.
+    var percentile: Int? = nil
+    /// Keeps the phrase's line even when THIS cell has no phrase to put in it.
+    ///
+    /// The row decides the height, not the cell. A full-fidelity prospect who
+    /// simply never ran the shuttle has a percentile for five drills and none
+    /// for the sixth, so without this his SHUT cell was two lines beside five
+    /// three-line ones and the whole label row stepped. Set from the same test
+    /// `ProspectDrillGradeCell.reservesPercentileLine` is set from — the fog
+    /// allows percentiles and the host has a pool — so the seven cells of a
+    /// Physical block always agree about how tall they are.
+    var reservesPercentileLine: Bool = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -241,11 +296,86 @@ struct ProspectMeasurableCell: View {
                 )
                 .lineLimit(1)
                 .minimumScaleFactor(0.65)
+
+            // The phrase sits directly under the number it grades, above the
+            // drill label: the label is a constant down the column (pure
+            // identification, and the block's header is one "COMBINE" span, so
+            // it is the ONLY thing naming the column), while the phrase is the
+            // signal the eye is hunting. Three 7-10 pt lines stack to ~29 pt,
+            // which is inside the 30 pt portrait that already sets the row
+            // height — so the percentile costs no vertical space at all.
+            if let percentile, value != nil {
+                let tier = ProspectMeasurableTier.label(for: percentile)
+                Text(tier.text)
+                    .font(.system(size: 7, weight: .semibold))
+                    .foregroundStyle(tier.color)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+            } else if reservesPercentileLine {
+                Text(" ")
+                    .font(.system(size: 7, weight: .semibold))
+                    .accessibilityHidden(true)
+            }
+
             Text(label)
                 .font(.system(size: 7, weight: .medium))
                 .foregroundStyle(Color.textTertiary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
         }
         .frame(width: prospectMeasurableWidth, alignment: .center)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityText)
+    }
+
+    /// VoiceOver reads the three lines as one sentence — a 7 pt label, a number
+    /// and a phrase announced as three separate elements is worse than useless
+    /// on a 42 pt column.
+    private var accessibilityText: String {
+        guard let value else { return "\(label): \(empty == "?" ? "not measured" : "did not run")" }
+        guard let percentile else { return "\(label) \(value)" }
+        return "\(label) \(value), \(ProspectMeasurableTier.label(for: percentile).text) for his position"
+    }
+}
+
+/// The POSITION-DRILL grade — the coaches' verdict on the drill session, which
+/// is the one thing on the combine card that is a judgement rather than a
+/// stopwatch reading.
+///
+/// Rendered exactly as `CombineResultsView.positionDrillCell` renders it: the
+/// fogged letter through `ProspectFog.drillGradeText` (broadcast loses the
+/// +/- modifier — you know the tier he tested in, not where inside it he
+/// landed), tinted by the ONE grade colour function.
+struct ProspectDrillGradeCell: View {
+    let grade: String?
+    var empty: String = "\u{2014}"
+    /// Reserves the blank line its six neighbours spend on a percentile phrase.
+    ///
+    /// Pure layout, no information: a two-line cell beside six three-line ones
+    /// centres half a line high, and the result is a DRILL label sitting above
+    /// the 40YD / BENCH / … labels it is meant to be in a row with.
+    var reservesPercentileLine: Bool = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Text(grade ?? empty)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(grade.map { PositionGradeCalculator.gradeColorForLetter($0) }
+                                 ?? Color.textTertiary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            if reservesPercentileLine {
+                Text(" ")
+                    .font(.system(size: 7, weight: .semibold))
+                    .accessibilityHidden(true)
+            }
+            Text("DRILL")
+                .font(.system(size: 7, weight: .medium))
+                .foregroundStyle(Color.textTertiary)
+        }
+        .frame(width: prospectDrillGradeWidth, alignment: .center)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(grade.map { "position drill grade \($0)" } ?? "no position drill grade")
     }
 }
 
@@ -468,8 +598,20 @@ extension ProspectRowIdentity where Detail == EmptyView {
 let prospectMeasurableLabels = ["40YD", "BENCH", "VERT", "BROAD", "3CONE", "SHUT"]
 
 /// One drill column. Wider than the 32 pt attribute cells it replaced because
-/// "~4.5" and "126" are four glyphs where "91" was two.
-let prospectMeasurableWidth: CGFloat = 38
+/// "~4.5" and "126" are four glyphs where "91" was two — and 38 → 42 now that
+/// "Bottom 25%" sets under the number. Deliberately NOT wider than that: the
+/// Physical block is seven columns and every point here is seven points off
+/// the name column on three different surfaces.
+let prospectMeasurableWidth: CGFloat = 42
+
+/// The Pos Drill column that closes the Physical block. Narrower than a drill
+/// cell: it prints one letter, never a percentile phrase.
+let prospectDrillGradeWidth: CGFloat = 34
+
+/// The leading OVR / GRD band column, when a surface pins the scouted read
+/// beside the name instead of at the trailing edge. Matches the board's own
+/// 50 pt `ProspectScoutBandCell`.
+let prospectScoutBandWidth: CGFloat = 50
 
 /// What a column block needs that lives on the HOST rather than on the prospect.
 ///
@@ -505,6 +647,64 @@ struct ProspectColumnContext {
     /// keeps a list whose own RPTS column uses a cached count from printing two
     /// different numbers for the same man on the same row.
     var reportCount: Int? = nil
+    /// The peer population the Physical block ranks a drill result against.
+    ///
+    /// `nil` prints the drill labels and no percentile phrase — a host that has
+    /// not handed the block a class cannot honestly say "Top 10%" of anything.
+    /// Build it once per screen (`PercentilePools(prospects:)` is a full sort of
+    /// the class) and hold it in `@State`, never per row.
+    ///
+    /// The type lives in `CombineResultsView.swift` today, next to the table
+    /// that grew it. It is deliberately NOT copied here: a second percentile
+    /// implementation is a second answer to "what did he run, relative to his
+    /// position", and the whole point of this file is that there is one. It
+    /// wants lifting into a file of its own in the sweep that moves the combine
+    /// table onto these cells.
+    var percentilePools: PercentilePools? = nil
+    /// Pins the scouted OVR band as the FIRST column of the block, beside the
+    /// name, rather than leaving it at the trailing edge.
+    ///
+    /// Off by default because a host that already draws its own OVR band would
+    /// otherwise print the same band twice on one row. Two hosts do, for reasons
+    /// the shared cell cannot cover, and both stay off:
+    ///
+    /// * the **Big Board** pins a tappable band beside the name — tapping it
+    ///   opens the assessment sheet, and the shared cell carries no
+    ///   `onGradeTap`;
+    /// * the **interview list** pins one at the trailing edge WITH the
+    ///   stock-trajectory chevron, which the shared cell deliberately drops.
+    ///
+    /// `FilmStudySelectionView` draws no OVR column of its own, so it turns this
+    /// on and gets the band as the first thing after the name.
+    var leadsWithScoutBand: Bool = false
+}
+
+// MARK: - Percentile plumbing
+//
+// One place that turns a prospect's stored measurement into the drill it
+// belongs to, so a host does not have to know that `benchPress` is an `Int` on
+// a `Double` scale or that the cone and the shuttle are separate pools.
+
+extension ProspectColumnContext {
+    /// The percentile for one drill, or `nil` when the fog forbids the claim,
+    /// the host has no pool, or the man never ran it.
+    ///
+    /// `ProspectFog.showsPercentile` is the gate — see the note on
+    /// ``ProspectMeasurableCell``. A broadcast read gets the number and nothing
+    /// under it.
+    func percentile(
+        _ value: Double?,
+        drill: DrillKind,
+        position: Position,
+        fidelity: ProspectFog.MeasurableFidelity
+    ) -> Int? {
+        guard ProspectFog.showsPercentile(fidelity),
+              let pools = percentilePools,
+              !pools.isEmpty,
+              let value
+        else { return nil }
+        return pools.percentile(value: value, drill: drill, position: position)
+    }
 }
 
 enum ProspectColumns {
@@ -512,12 +712,27 @@ enum ProspectColumns {
     // MARK: Cells
 
     /// The mode's column block for one prospect row.
+    ///
+    /// The scouted band LEADS every block when the host asks for it
+    /// (``ProspectColumnContext/leadsWithScoutBand``). It is the column the user
+    /// reads first and it used to be pinned at the far trailing edge of every
+    /// surface — so in Physical mode the whole row was six raw numbers and the
+    /// one verdict that orders the board sat past them. Same column in the same
+    /// place in all five modes; nothing about the mode changes what your scouts
+    /// think of the man.
     @ViewBuilder
     static func cells(
         for prospect: CollegeProspect,
         mode: ProspectAttributeTab,
         context: ProspectColumnContext = ProspectColumnContext()
     ) -> some View {
+        if context.leadsWithScoutBand {
+            ProspectScoutBandCell(
+                prospect: prospect,
+                width: prospectScoutBandWidth,
+                showsTrajectory: false
+            )
+        }
         switch mode {
         case .overview: overviewCells(prospect, context)
         case .workup:   workupCells(prospect, context)
@@ -675,12 +890,25 @@ enum ProspectColumns {
             .minimumScaleFactor(0.7)
     }
 
-    /// The combine card, at the precision this club has paid for.
+    /// The combine card, at the precision this club has paid for — and, when it
+    /// has paid for it, where each number sits in his POSITION group.
     ///
     /// Every cell renders through the same `ProspectFog` text helper the combine
     /// table's own drill cells use, so two screens print the same string for the
     /// same man: "4.52" when your people held the watch, "~4.5" when you watched
     /// it on television with everybody else.
+    ///
+    /// The percentile line is what the combine table has and the board did not:
+    /// a bare "4.52" is a number the user has to know the position's distribution
+    /// to read, and nobody carries a corner's 40 distribution in his head while
+    /// scanning 350 rows. "Top 10%" is the read. It only prints when the host
+    /// hands the block a `percentilePools` AND `ProspectFog.showsPercentile`
+    /// allows the claim — see ``ProspectMeasurableCell``.
+    ///
+    /// The block ends on the POSITION DRILL grade, which is the only cell here
+    /// that is a judgement rather than a stopwatch reading, and which the board
+    /// previously showed nowhere at all — the CMB badge tinted itself off it and
+    /// then threw the letter away.
     @ViewBuilder
     private static func physicalCells(
         _ prospect: CollegeProspect,
@@ -691,24 +919,71 @@ enum ProspectColumns {
                 let fidelity = context.scoutsSentToCombine.map {
                     ProspectFog.combineFidelity(for: prospect, scoutsAttended: $0)
                 } ?? ProspectFog.combineFidelity(for: prospect)
-                ProspectMeasurableCell(value: ProspectFog.fortyText(prospect.fortyTime, fidelity: fidelity),
-                                       label: "40YD", fidelity: fidelity)
-                ProspectMeasurableCell(value: ProspectFog.benchText(prospect.benchPress, fidelity: fidelity),
-                                       label: "BENCH", fidelity: fidelity)
-                ProspectMeasurableCell(value: ProspectFog.verticalText(prospect.verticalJump, fidelity: fidelity, unit: ""),
-                                       label: "VERT", fidelity: fidelity)
-                ProspectMeasurableCell(value: ProspectFog.broadJumpText(prospect.broadJump, fidelity: fidelity, unit: ""),
-                                       label: "BROAD", fidelity: fidelity)
-                ProspectMeasurableCell(value: ProspectFog.agilityText(prospect.coneDrill, fidelity: fidelity),
-                                       label: "3CONE", fidelity: fidelity)
-                ProspectMeasurableCell(value: ProspectFog.agilityText(prospect.shuttleTime, fidelity: fidelity),
-                                       label: "SHUT", fidelity: fidelity)
+                let pos = prospect.position
+                // ONE decision for all seven cells: does this row spend a third
+                // line on percentiles? Per-cell "do I have a phrase" was not the
+                // same question — a man who never ran the shuttle has no phrase
+                // there and his SHUT cell came out a line short of its six
+                // neighbours, stepping the label row.
+                let reservesPercentileLine = ProspectFog.showsPercentile(fidelity)
+                    && !(context.percentilePools?.isEmpty ?? true)
+                ProspectMeasurableCell(
+                    value: ProspectFog.fortyText(prospect.fortyTime, fidelity: fidelity),
+                    label: "40YD", fidelity: fidelity,
+                    percentile: context.percentile(prospect.fortyTime, drill: .forty,
+                                                   position: pos, fidelity: fidelity),
+                    reservesPercentileLine: reservesPercentileLine
+                )
+                ProspectMeasurableCell(
+                    value: ProspectFog.benchText(prospect.benchPress, fidelity: fidelity),
+                    label: "BENCH", fidelity: fidelity,
+                    percentile: context.percentile(prospect.benchPress.map { Double($0) }, drill: .bench,
+                                                   position: pos, fidelity: fidelity),
+                    reservesPercentileLine: reservesPercentileLine
+                )
+                ProspectMeasurableCell(
+                    value: ProspectFog.verticalText(prospect.verticalJump, fidelity: fidelity, unit: ""),
+                    label: "VERT", fidelity: fidelity,
+                    percentile: context.percentile(prospect.verticalJump, drill: .vertical,
+                                                   position: pos, fidelity: fidelity),
+                    reservesPercentileLine: reservesPercentileLine
+                )
+                ProspectMeasurableCell(
+                    value: ProspectFog.broadJumpText(prospect.broadJump, fidelity: fidelity, unit: ""),
+                    label: "BROAD", fidelity: fidelity,
+                    percentile: context.percentile(prospect.broadJump.map { Double($0) }, drill: .broad,
+                                                   position: pos, fidelity: fidelity),
+                    reservesPercentileLine: reservesPercentileLine
+                )
+                ProspectMeasurableCell(
+                    value: ProspectFog.agilityText(prospect.coneDrill, fidelity: fidelity),
+                    label: "3CONE", fidelity: fidelity,
+                    percentile: context.percentile(prospect.coneDrill, drill: .threeCone,
+                                                   position: pos, fidelity: fidelity),
+                    reservesPercentileLine: reservesPercentileLine
+                )
+                ProspectMeasurableCell(
+                    value: ProspectFog.agilityText(prospect.shuttleTime, fidelity: fidelity),
+                    label: "SHUT", fidelity: fidelity,
+                    percentile: context.percentile(prospect.shuttleTime, drill: .shuttle,
+                                                   position: pos, fidelity: fidelity),
+                    reservesPercentileLine: reservesPercentileLine
+                )
+                ProspectDrillGradeCell(
+                    grade: ProspectFog.drillGradeText(prospect.positionDrillGrade, fidelity: fidelity),
+                    // Its neighbours grow a third line exactly when the club has
+                    // earned percentiles; this keeps the seven labels level.
+                    reservesPercentileLine: reservesPercentileLine
+                )
             } else {
                 // Nothing has put this man in front of a stopwatch you can read:
-                // no invite, no pro day, no report of your own.
+                // no invite, no pro day, no report of your own. The columns are
+                // still drawn — the header spans them either way, and a row that
+                // silently loses seven cells walks every label off its column.
                 ForEach(prospectMeasurableLabels, id: \.self) { label in
                     ProspectMeasurableCell(value: nil, label: label, fidelity: .broadcast, empty: "?")
                 }
+                ProspectDrillGradeCell(grade: nil, empty: "?")
             }
         }
     }
@@ -792,6 +1067,12 @@ enum ProspectColumns {
         context: ProspectColumnContext = ProspectColumnContext()
     ) -> some View {
         Group {
+            // Mirrors `cells`: the band leads the block when the host pins it
+            // there, at the same width, so the label sits over the column.
+            if context.leadsWithScoutBand {
+                Text("OVR")
+                    .frame(width: prospectScoutBandWidth, alignment: .center)
+            }
             switch mode {
             case .overview:
                 Text("AGE")
@@ -830,11 +1111,16 @@ enum ProspectColumns {
                 Text("FILE")
                     .frame(width: 44, alignment: .center)
             case .physical:
-                // ONE span over the six drill cells, each of which prints its
-                // own 40YD / BENCH / … label under the number.
+                // ONE span over the six drill cells plus the Pos Drill grade.
+                // Each drill cell prints its own 40YD / BENCH / … label under
+                // the number — with the percentile phrase stacked BETWEEN the
+                // two once the club has earned the precision — and the grade
+                // cell prints DRILL, so a per-column header would be a second
+                // row of 7 pt labels over the first.
                 Text("COMBINE")
                     .frame(
-                        width: prospectMeasurableWidth * CGFloat(prospectMeasurableLabels.count),
+                        width: prospectMeasurableWidth * CGFloat(prospectMeasurableLabels.count)
+                            + prospectDrillGradeWidth,
                         alignment: .center
                     )
             case .mental:

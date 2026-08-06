@@ -1432,6 +1432,13 @@ struct CareerShellView: View {
         case .mockDraft:
             CareerScopedDefaults.set("mockDraft", "scoutingPendingTab")
             shellDest = .scouting
+        // #128. The January "Senior Bowl & declarations" task. Without the hint
+        // the hub opens on `currentStageTab`, which in `.reviewRoster` is the
+        // combine — a screen with nothing in it until the league issues an
+        // invite list, which it does not do until the combine window opens.
+        case .classDepth:
+            CareerScopedDefaults.set("classDepth", "scoutingPendingTab")
+            shellDest = .scouting
         case .developmentReport:  shellDest = .developmentReport
         case .history:            shellDest = .history
         case .draftReportCard:    shellDest = .draftReportCard

@@ -606,6 +606,14 @@ enum ContactAgentEntry {
     /// Subtitle for a button that also wants to show a money hint: the thread
     /// state wins when there is one, because a live conversation is the more
     /// useful thing to know.
+    ///
+    /// **Nothing calls this any more** (#127). Its only caller was the roster
+    /// card's Contact Agent button, whose `fallback` was an
+    /// `estimateMarketValue` preview — "~$38.4M/yr · 3yr" printed on the door,
+    /// which answered the question the conversation exists to ask and then read
+    /// as a broken promise whenever the agent opened above it. The card now
+    /// shows ``badge(for:season:)`` alone. Kept because the shape is right for
+    /// any future surface that has a non-money hint worth falling back to.
     static func subtitle(for player: Player, season: Int, fallback: String?) -> String? {
         badge(for: player, season: season) ?? fallback
     }

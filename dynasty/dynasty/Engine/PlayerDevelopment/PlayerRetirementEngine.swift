@@ -1020,6 +1020,18 @@ enum PlayerRetirementEngine {
         player.annualSalary = 0
         player.contractYearsRemaining = 0
         player.isFranchiseTagged = false
+        // #127: a retirement leaves the man's forward franchise-tag commitment
+        // (if any) orphaned in `CommittedCapLedger`, and it is DELIBERATELY not
+        // released here. This file is staged VERBATIM into the balance harness
+        // (`tools/balance-harness/sync_sources.sh`), which does not compile the
+        // ledger — a call to it would break the harness build outright.
+        //
+        // Nothing is lost. Retirement sets `teamID = nil`, and every reader of
+        // the forward table is player-scoped off a club's roster
+        // (`CommittedCapLedger.forwardCommitted(playerIDs:careerID:season:)`),
+        // so a retired man is already outside every projection. The row itself
+        // is dropped by the next rollover's `consumeForward`, which takes
+        // everything due whether it finds a matching player or not.
         player.isHoldingOut = false
         player.trainingFocusArea = nil
         player.trainingPosition = nil

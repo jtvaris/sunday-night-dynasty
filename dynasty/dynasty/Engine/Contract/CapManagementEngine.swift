@@ -434,6 +434,10 @@ enum CapManagementEngine {
     ///   keys off `Player.teamID`, a live double-count the moment anything sums
     ///   contracts by team. Callers with no context (the AI cutdown path) pass
     ///   nil; those players have no `Contract` row to begin with.
+    /// - Parameter careerID: the save whose forward ledger the released man's
+    ///   franchise tag is dropped from. `career.id`, matching every reader of
+    ///   that table; omitting it falls back to `Player.careerID`, which is
+    ///   optional and releases nothing when nil.
     @discardableResult
     static func applyRelease(
         player: Player,
@@ -441,6 +445,7 @@ enum CapManagementEngine {
         contract: Contract? = nil,
         capMode: CapMode,
         leagueYearRemaining: Double = 1.0,
+        careerID: UUID? = nil,
         modelContext: ModelContext? = nil
     ) -> ReleaseCapSplit {
         let split = releaseCapSplit(
@@ -469,6 +474,16 @@ enum CapManagementEngine {
         player.restructureCarryYears = 0
         player.isHoldingOut = false
         player.isFranchiseTagged = false
+        // #127: a released man's franchise tag is off the books with him. The
+        // rollover's `consumeForward` would drop the orphaned row anyway, but a
+        // release can happen months before that and every cap projection between
+        // now and then would keep charging the club for a player it just cut.
+        // Same discipline as the `Contract` row deleted a few lines below: the
+        // deal is over, so nothing that describes it may survive.
+        CommittedCapLedger.releaseForward(
+            playerID: player.id,
+            careerID: ContractEngine.resolvedCareerID(careerID, player: player)
+        )
         player.trainingFocusArea = nil
         player.trainingPosition = nil
         // §5.1: stamp the release so `PracticeSquadEngine.fillSquads` can honour

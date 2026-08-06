@@ -537,6 +537,24 @@ enum FreeAgencyEngine {
             }
         }
 
+        // Task #127 — the franchise tag's money lands HERE, in the league year it
+        // was always a decision about.
+        //
+        // Ordering, all three constraints load-bearing and all three the same
+        // ones `settleFifthYearOptions` below is placed by:
+        //
+        //   • AFTER the #45 proration restore and the restructure tick, because
+        //     the tag OVERWRITES `annualSalary` and both of those write it — a
+        //     tag settled first would be re-inflated by `restructureReliefK` a
+        //     dozen lines later, which is bug (1) in `applyNegotiatedDeal`'s #102
+        //     F6 note in a new costume;
+        //   • BEFORE `resignAIOwnCore`, whose retention budget is built from the
+        //     payroll that survives this rollover — a tag is exactly such a
+        //     commitment, so the club cannot also promise that money elsewhere;
+        //   • BEFORE the expiry loop and the cap true-up, so the tag number is
+        //     what the true-up sums for the new league year.
+        settleFranchiseTags(allPlayers: allPlayers, allTeams: allTeams, career: career)
+
         // Task #90 — the fifth-year option deadline, and the first money
         // decision of the league year.
         //
@@ -1674,6 +1692,112 @@ enum FreeAgencyEngine {
             table[player.position, default: []].append(player.annualSalary)
         }
         return table
+    }
+
+    // MARK: - Franchise Tag Settlement (task #127)
+
+    /// **The one place a franchise tag becomes money**, and the other half of
+    /// the fix `ContractEngine.applyFranchiseTag` starts.
+    ///
+    /// The tag is decided in the offseason and binds the league year this
+    /// function opens. Applying it therefore writes nothing to `annualSalary` and
+    /// nothing to `Team.currentCapUsage` — it flags the man and books the number
+    /// as a forward commitment in `CommittedCapLedger`. This is where that
+    /// promise is collected: the man's expired deal is replaced by the one-year
+    /// tag, on the books of the year that has just started.
+    ///
+    /// Runs INSIDE ``executeNewLeagueYear``; see the call site for why the
+    /// position in the sequence is load-bearing three separate ways.
+    ///
+    /// **What each tagged man gets:**
+    ///
+    /// * `annualSalary = tag` — the number the user was quoted when he pressed
+    ///   the button, not a re-derived one. Re-deriving would be cheap (the
+    ///   position salary table is right there) but it would let the charge drift
+    ///   away from the quote as the rest of the offseason moved salaries around,
+    ///   and a tag that costs more than the screen said is precisely the class of
+    ///   dishonesty #127 is about. The re-derivation survives only as the
+    ///   fallback for a row that is missing — a save written before this table
+    ///   existed, or a harness run with no career to scope `UserDefaults` by.
+    /// * `contractYearsRemaining = 1` — one year, and only one. The expiry loop
+    ///   below skips `isFranchiseTagged` rows, so this survives the rollover
+    ///   intact and ticks to 0 at the NEXT one, which puts him on the market a
+    ///   year later exactly as a tag should.
+    /// * the restructure receipt cleared, uncharged. The old deal is over; its
+    ///   unpaid proration accelerates into the league year that just closed, and
+    ///   the cap true-up a few lines down rebuilds usage from rostered salaries
+    ///   — so it ages off with that year's dead money, which is the same
+    ///   treatment the expiry loop gives a contract that simply runs out.
+    ///
+    /// **Orphans are dropped, not settled.** `consumeForward` returns every row
+    /// binding at or before this year and deletes the lot; a row whose player has
+    /// since retired, been cut or had his flag cleared by another engine simply
+    /// finds no match here and disappears. That is the leak defence — nothing
+    /// carries a stale tag into a second league year.
+    ///
+    /// Returns how many tags were settled (0 = nobody was tagged).
+    @discardableResult
+    static func settleFranchiseTags(
+        allPlayers: [Player],
+        allTeams: [Team],
+        career: Career?
+    ) -> Int {
+        guard let career else { return 0 }
+
+        // The year this rollover OPENS. `currentSeason` does not move across the
+        // offseason (see `executeNewLeagueYear`'s doc), so the tag applied during
+        // it was stamped `currentSeason + 1` and this is the same number.
+        let bindingSeason = career.currentSeason + 1
+        let due = CommittedCapLedger.consumeForward(
+            careerID: career.id,
+            bindingSeason: bindingSeason
+        )
+
+        // Belt to the braces: a tagged man with no row (pre-#127 save, or a
+        // sandbox save whose $0 row was written before the ledger existed) still
+        // has to come out of this function with a contract, or the expiry loop
+        // would skip him and the true-up would carry the OLD salary into the new
+        // year — the very bug in mirror image.
+        let tagged = allPlayers.filter { $0.isFranchiseTagged && $0.teamID != nil && !$0.isRetired }
+        guard !due.isEmpty || !tagged.isEmpty else { return 0 }
+
+        var quoteByPlayer: [UUID: Int] = [:]
+        for row in due { quoteByPlayer[row.playerID] = row.annualCapHit }
+
+        // Only built when somebody actually needs the fallback — a full sweep of
+        // ~1 700 players is not worth doing for the overwhelmingly common case
+        // where every tag has its quote.
+        var salaryTable: [Position: [Int]]?
+        var capByTeam: [UUID: Int] = [:]
+        for team in allTeams { capByTeam[team.id] = team.salaryCap }
+
+        var settled = 0
+        for player in tagged {
+            let tag: Int
+            if let quoted = quoteByPlayer[player.id] {
+                tag = quoted
+            } else {
+                if salaryTable == nil { salaryTable = positionSalaryTable(allPlayers: allPlayers) }
+                // The PRE-growth cap: league-year growth is applied further down
+                // `executeNewLeagueYear`, so this is the same cap the tag screen
+                // floored its quote against.
+                tag = ContractEngine.franchiseTagValue(
+                    position: player.position,
+                    topSalaries: salaryTable?[player.position] ?? [],
+                    capMode: career.capMode,
+                    salaryCap: player.teamID.flatMap { capByTeam[$0] } ?? ContractEngine.openingSalaryCap
+                )
+            }
+
+            player.annualSalary = tag
+            player.contractYearsRemaining = 1
+            player.restructureReliefK = 0
+            player.restructureProrationK = 0
+            player.restructureCarryYears = 0
+            settled += 1
+        }
+
+        return settled
     }
 
     /// The fifth-year price for one man, in thousands.

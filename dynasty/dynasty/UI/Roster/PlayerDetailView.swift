@@ -171,7 +171,39 @@ struct PlayerDetailView: View {
 
     @State private var showCutConfirmation = false
     @State private var showPositionChange = false
-    @State private var showContractNegotiation = false
+
+    /// **Which contract conversation is open** (#127).
+    ///
+    /// Was a bare `showContractNegotiation: Bool` behind a single "Contact
+    /// Agent" button. There are two different conversations a club has with its
+    /// own player — *pay me less on the deal I have* and *pay me for the years
+    /// after it* — and folding them into one door meant the roster card could
+    /// only ever open the extension. The pay-cut mode existed (`#102`) but was
+    /// reachable from the Cap Compliance workspace alone, so a GM who simply
+    /// wanted to reprice a contract had to be over the cap first.
+    ///
+    /// An `Identifiable` mode rather than two booleans so the presentation stays
+    /// on the `item:` form: two `isPresented:` covers on one screen is the shape
+    /// that produces a blank sheet when both flip in the same frame.
+    private enum ContractTalk: String, Identifiable {
+        /// Ask the man already under contract to take less — `#102`'s consent
+        /// model, the same one the compliance workspace opens.
+        case renegotiate
+        /// Buy the years after the current deal — the original Contact Agent
+        /// flow.
+        case extension_
+
+        var id: String { rawValue }
+
+        var negotiationType: NegotiationType {
+            switch self {
+            case .renegotiate: return .payCut
+            case .extension_:  return .extend
+            }
+        }
+    }
+
+    @State private var contractTalk: ContractTalk?
 
     /// Real cap space (thousands) for this player's team, used to seed the
     /// agent's opening demand in contract negotiation. Falls back to a nominal
@@ -341,13 +373,13 @@ struct PlayerDetailView: View {
         .sheet(isPresented: $showPositionChange) {
             positionChangeSheet
         }
-        .fullScreenCover(isPresented: $showContractNegotiation) {
+        .fullScreenCover(item: $contractTalk) { talk in
             // ContractNegotiationView supplies its own "Close" toolbar item, so
             // the wrapper must NOT add a second one (that produced "Close Close").
             NavigationStack {
                 ContractNegotiationView(
                     player: player,
-                    negotiationType: .extend,
+                    negotiationType: talk.negotiationType,
                     teamCapSpace: negotiationCapSpace,
                     onDealCompleted: { offer in
                         // Extension: ADD new years to the existing contract.
@@ -361,6 +393,7 @@ struct PlayerDetailView: View {
                             offer: offer,
                             application: .extendExisting,
                             capMode: careers.first?.capMode ?? .simple,
+                            careerID: careers.first?.id ?? player.careerID,
                             modelContext: modelContext
                         )
                         try? modelContext.save()
@@ -369,6 +402,22 @@ struct PlayerDetailView: View {
                         // closes the conversation with the Done button when he has
                         // read them. Auto-exiting here is exactly what made the
                         // handshake invisible before this wave.
+                    },
+                    // #102's pay-cut payoff, wired the same way the Cap
+                    // Compliance workspace wires it: `applyPayCut` is the ONE
+                    // place a cut is booked, and the morale delta comes through
+                    // from the agent's verdict rather than being re-derived here.
+                    onPayCutAgreed: { newSalary, moraleDelta in
+                        ContractEngine.applyPayCut(
+                            player: player,
+                            team: allTeams.first(where: { $0.id == player.teamID }),
+                            contract: playerContract,
+                            capMode: careers.first?.capMode ?? .simple,
+                            salaryCap: contextSalaryCap,
+                            newAnnualSalary: newSalary,
+                            moraleDelta: moraleDelta
+                        )
+                        try? modelContext.save()
                     }
                 )
             }
@@ -845,7 +894,13 @@ struct PlayerDetailView: View {
                 HStack(spacing: 4) {
                     Image(systemName: "tag.fill")
                         .font(.caption2)
-                    Text("Franchise Tagged")
+                    // #127: the money above this line is his CURRENT deal, which
+                    // the tag no longer overwrites — it runs to the end of this
+                    // league year and the tag replaces it in the next one. So the
+                    // badge has to name the year and the number, or a card that
+                    // says "Franchise Tagged" over last season's salary reads as
+                    // the tag having cost that.
+                    Text(franchiseTagBadgeText)
                         .font(.caption2.weight(.semibold))
                 }
                 .foregroundStyle(Color.accentGold)
@@ -1503,6 +1558,23 @@ struct PlayerDetailView: View {
         }
     }
 
+    /// `"Franchise Tagged — 2027 at $32.8M"`, falling back to the bare label
+    /// when the commitment cannot be read (a save whose tag predates the forward
+    /// ledger). The year is `currentSeason + 1` for the same reason the tag
+    /// screen labels itself that way: `currentSeason` does not move across the
+    /// offseason, so the tag decided in it always binds the following year.
+    private var franchiseTagBadgeText: String {
+        guard let career = careers.first,
+              let row = CommittedCapLedger.forwardCommitment(
+                  playerID: player.id,
+                  careerID: career.id
+              ),
+              row.annualCapHit > 0
+        else { return "Franchise Tagged" }
+        let millions = Double(row.annualCapHit) / 1_000.0
+        return String(format: "Franchise Tagged \u{2014} %d at $%.1fM", row.seasonYear, millions)
+    }
+
     // MARK: - Action Buttons (#35)
 
     /// Whether the shown player is on the user's own roster. The league
@@ -1517,9 +1589,12 @@ struct PlayerDetailView: View {
 
     private var actionButtonsSection: some View {
         Section(header: SectionHeaderText(title: "Actions")) {
-            // 2×2 grid for the four primary actions, then a full-width "Change Position"
-            // beneath. Avoids the previous asymmetric 5-button layout where the last
-            // button sat alone in its row.
+            // Two-column grid for the primary actions, then a full-width "Change
+            // Position" beneath. Avoids the old asymmetric 5-button layout where
+            // the last button sat alone in its row. The common own-roster case
+            // is still an exact 2×2 — Set as Starter, Renegotiate, Negotiate
+            // Extension, Cut/Release — and the grid reflows on its own when the
+            // contract gates (#127) drop one of the two talks.
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
                 if isUserRosterPlayer {
                 actionButton(
@@ -1528,21 +1603,44 @@ struct PlayerDetailView: View {
                     color: .accentGold,
                     subtitle: nil
                 ) {}
-                // ONE uniform entry into a contract conversation. It says the
-                // same thing on every player and never reveals willingness —
-                // whether his camp picks up is something the agent tells you in
-                // the chat, not something the roster leaks by hiding a button.
-                actionButton(
-                    label: ContactAgentEntry.title,
-                    icon: ContactAgentEntry.icon,
-                    color: .accentBlue,
-                    subtitle: ContactAgentEntry.subtitle(
-                        for: player,
-                        season: careers.first?.currentSeason ?? 0,
-                        fallback: extensionPreviewText
-                    )
-                ) {
-                    showContractNegotiation = true
+                // TWO conversations, not one (#127). "Contact Agent" was a single
+                // door that only ever opened the extension, so the club's other
+                // contract lever — asking a man to take less on the deal he
+                // already has — was reachable only from the Cap Compliance
+                // workspace, i.e. only after the club was already over the cap.
+                //
+                // The subtitle no longer carries a money estimate. It used to
+                // read "~$38.4M/yr · 3yr" off `estimateMarketValue`, which put
+                // the answer on the button: the whole point of the Contact Agent
+                // wave is that the agent's ask is something you find out by
+                // ringing him. What survives is `ContactAgentEntry.badge` — the
+                // state of a conversation already in progress — which reveals
+                // nothing the user has not already been told to his face.
+                if canRenegotiate {
+                    actionButton(
+                        label: "Renegotiate Contract",
+                        icon: "arrow.down.circle",
+                        color: .warning,
+                        subtitle: ContactAgentEntry.badge(
+                            for: player,
+                            season: careers.first?.currentSeason ?? 0
+                        )
+                    ) {
+                        contractTalk = .renegotiate
+                    }
+                }
+                if canExtend {
+                    actionButton(
+                        label: "Negotiate Extension",
+                        icon: ContactAgentEntry.icon,
+                        color: .accentBlue,
+                        subtitle: ContactAgentEntry.badge(
+                            for: player,
+                            season: careers.first?.currentSeason ?? 0
+                        )
+                    ) {
+                        contractTalk = .extension_
+                    }
                 }
                 }
                 // A player on another club is a trade TARGET: this opens the
@@ -1611,21 +1709,54 @@ struct PlayerDetailView: View {
         return "~$\(deadK)K dead cap"
     }
 
-    /// Suggested-extension preview for the Extend button. E.g. "~$32M/yr × 4yr".
-    private var extensionPreviewText: String? {
-        // The same engine and cap `ContractNegotiationView` opens with, so the
-        // number on the button is the number behind it (task #87 / F3).
-        let market = estimateMarketValueAmount
-        guard market > 0 else { return nil }
-        let years: Int
-        switch player.age {
-        case ..<28: years = 5
-        case 28...30: years = 4
-        case 31...32: years = 3
-        default: years = 2
-        }
-        let perYearM = Double(market) / 1_000.0
-        return String(format: "~$%.1fM/yr · %dyr", perYearM, years)
+    // The "~$32M/yr × 4yr" extension preview that used to sit under the Contact
+    // Agent button is gone (#127). It was `estimateMarketValue` rendered on the
+    // door, which meant the user knew the shape of the deal before the agent had
+    // said a word — and when the agent's opening ask came in above it (personas,
+    // stances and the GM's standing all move the number), the button read as a
+    // broken promise. The ask belongs in the conversation.
+
+    /// **When an extension is a real question.**
+    ///
+    /// A deal with four years to run is not up for renewal — offering new years
+    /// on top of it is a decision nobody in a front office makes, and
+    /// `applyNegotiatedDeal(.extendExisting)` would happily stack them. Two years
+    /// out is where a club starts talking, which is also where
+    /// `FreeAgencyEngine`'s own retention logic starts looking.
+    ///
+    /// This gates on the CONTRACT, never on the man's willingness — the rule
+    /// `ContactAgentEntry` exists to enforce. Whether his camp picks up is still
+    /// something the agent says in the chat; how long he is signed for is printed
+    /// on the contract row two sections up this very screen.
+    private var canExtend: Bool {
+        isUserRosterPlayer && player.contractYearsRemaining <= Self.extensionWindowYears
+    }
+
+    /// Contract years remaining at which an extension becomes a live question.
+    private static let extensionWindowYears = 2
+
+    /// **When a repricing is a real question.**
+    ///
+    /// There has to be a deal to reprice — an expired row still sitting on the
+    /// sheet at $0 has nothing to give back — and it has to be a deal whose
+    /// money is still ahead of the club.
+    ///
+    /// A **franchise-tagged** man fails that second test (#127). His
+    /// `annualSalary` is the contract for the season already played; the tag
+    /// number does not land on the row until the March rollover. Asking him to
+    /// take a cut would reprice a year that is over, and `applyPayCut` would
+    /// hand the club cap relief in the one phase nothing checks compliance in
+    /// (`CapManagementEngine.isComplianceWindow` is false for `.reviewRoster`)
+    /// — relief the rollover's true-up then silently takes back. There is no
+    /// honest transaction there, so the button is not offered.
+    ///
+    /// Sandbox has no cap to relieve, so there is nothing to negotiate for.
+    private var canRenegotiate: Bool {
+        isUserRosterPlayer
+            && player.contractYearsRemaining >= 1
+            && player.annualSalary > 0
+            && !player.isFranchiseTagged
+            && (careers.first?.capMode ?? .simple) != .sandbox
     }
 
     // The old "~6 teams interested" teaser lived here. It was a hardcoded curve

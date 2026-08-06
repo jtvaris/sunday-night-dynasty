@@ -33,6 +33,20 @@ struct ScoutingHubView: View {
     /// three tables read this binding.
     @State private var positionFilter: ProspectPositionFilter = .all
 
+    /// Whether the active surface's Insights block is open (#130).
+    ///
+    /// Owned here rather than by `ScoutingInsightsSection` because two surfaces
+    /// keep insight blocks of their own *inside* their lists — the combine's
+    /// risers/fallers rails and the class-depth declaration header — and those
+    /// have to fold with the same one tap. The section resolves the value from
+    /// its per-surface defaults on appear; the hub only relays it downward.
+    @State private var insightsExpanded: Bool = false
+
+    /// The last stage screen the user stood on, so the switcher's stage segment
+    /// keeps showing the room he was working in when he steps onto the board or
+    /// into a reference surface. Reset by nothing: walking back is one tap.
+    @State private var lastStageTab: ScoutingTab?
+
     /// Read only to migrate the legacy bookmark set onto the unified mark.
     @CareerScopedStorage("prospectWatchlist") private var hubProspectWatchlistJSON: String = "[]"
 
@@ -47,31 +61,42 @@ struct ScoutingHubView: View {
     /// that does nothing.
     private var positionFilterAppliesToCurrentTab: Bool {
         switch selectedTab {
-        case .board, .film, .combine: return true
-        default:                      return false
+        // `.classDepth` is not a prospect TABLE, but it is a per-position read
+        // and the chips narrow it to one group exactly as they narrow the board.
+        case .board, .film, .combine, .classDepth: return true
+        default:                                   return false
         }
     }
 
     // MARK: - Body
     //
-    // PROCESS VIEW. The hub is four layers of pinned chrome over one surface:
+    // PROCESS VIEW, re-stacked (#130). Four layers of pinned chrome over one
+    // surface, in this order and no other:
     //
-    //   1. the pipeline           — every stage, in calendar order, with its
-    //                               state and its own count of work
-    //   2. the reference tabs     — the five surfaces that are not stages
-    //   3. the stage explainer    — what this stage reveals, what it costs
-    //   4. the advance bar        — the transition, with its requirement
+    //   1. the surface switcher   — Big Board · the stage surface · Tools.
+    //                               ONE control, three slots, the active one
+    //                               loud by size AND fill
+    //   2. the process bar        — the pipeline. Full size on a stage surface,
+    //                               a demoted counter strip everywhere else
+    //   3. Insights               — the surface's title bar, and behind its
+    //                               chevron everything that used to stack above
+    //                               the list: the stage explainer, the
+    //                               "N % scouted · phase" strip, the Draft Prep
+    //                               card, the combine's risers/fallers, the
+    //                               class-depth declaration header
+    //   4. the position chips     — directly on top of the table, so the shared
+    //                               filter reads as part of the list's own
+    //                               controls rather than as a fourth nav row
     //
-    // What it replaced was a flat strip of eleven equal tabs that HID every
-    // stage the club had not reached. That is one control doing three jobs
-    // badly: it said nothing about order, nothing about progress, and it
-    // deleted the screens a user was looking for rather than explaining them —
-    // which is the whole of the "pro days completely unavailable" and "film
-    // study could not be assigned" bug pair.
+    //   … then the surface, whose own controls (mode chips, search, sortable
+    //   column labels) live in ITS pinned list header, and finally the advance
+    //   bar, which is a transition and not an insight and therefore never folds.
     //
-    // The metrics strip and the prep card still live INSIDE each surface's list
-    // as its first section (`ScoutingHubHeader`), which is what keeps one scroll
-    // owner per screen and one gesture.
+    // What all of this replaced, verbatim from the user: *"This area is really
+    // really unclear and confusing — when is Big Board selected, when Combine
+    // etc."* The shipped build answered that question with a hue change on one
+    // capsule inside the second of four near-identical chip rows, and put ~350 pt
+    // of explanation above a list whose first row is the point of the screen.
 
     var body: some View {
         ZStack {
@@ -96,10 +121,13 @@ struct ScoutingHubView: View {
 
                 tabContent
 
-                // Layer 4: the transition. It used to be a 12 pt greyed button
-                // inside the Big Board's scroll-away header — the single most
-                // important control on the screen, parked where a 350-row list
-                // scrolled it out of existence.
+                // The transition. It used to be a 12 pt greyed button inside the
+                // Big Board's scroll-away header — the single most important
+                // control on the screen, parked where a 350-row list scrolled it
+                // out of existence. It is NOT an insight and never folds: a
+                // requirement and the button that satisfies it are the work, and
+                // the whole of #130 is about telling the work apart from the
+                // commentary on it.
                 if showsAdvanceBar {
                     advanceBar
                 }
@@ -151,6 +179,11 @@ struct ScoutingHubView: View {
                     case "workouts":   return .workouts
                     case "top30":      return .top30
                     case "mockDraft":  return .mockDraft
+                    // #128. The January "Senior Bowl & declarations" task used to
+                    // land on `.combine`, which in `.reviewRoster` is a screen
+                    // reading "0 of 0 prospects invited" — the league has not
+                    // issued an invite list yet, and cannot have. It lands here.
+                    case "classDepth": return .classDepth
                     default:           return nil
                     }
                 }()
@@ -160,15 +193,39 @@ struct ScoutingHubView: View {
                 if let hinted { selectedTab = hinted }
                 CareerScopedDefaults.remove("scoutingPendingTab")
             } else {
-                // PROCESS VIEW: the hub opens on where the club actually IS.
-                // It used to open on the Big Board every time, which is a
-                // reference surface — the user had to work out for himself
-                // which of eleven tabs was this week's job.
-                selectedTab = currentStageTab
+                // BOARD FIRST, UNLESS THERE IS WORK (#130). The hub used to open
+                // on `currentStageTab` unconditionally, which is right only when
+                // that stage can actually be worked: `Career.prepStep` is a
+                // floor and never reads lower than `.combineReview`, so in
+                // November the "process view" landed every visit on a combine
+                // screen reading "0 of 0 prospects invited" — and the user's own
+                // board, the one surface that is always true, took two taps.
+                //
+                // Live work wins; otherwise the board.
+                let progress = prepProgress
+                let current = progress.current
+                selectedTab = (progress[current].unlocked && !progress[current].isSatisfied)
+                    ? currentStageTab
+                    : .board
             }
+            if Self.stageTabs.contains(selectedTab) { lastStageTab = selectedTab }
             isLoading = false
         }
         .onChange(of: selectedTab) { _, newTab in
+            // The switcher's stage segment follows the room the user was last
+            // in, so stepping onto the board and back is one tap each way.
+            if Self.stageTabs.contains(newTab) { lastStageTab = newTab }
+            // The fold state belongs to the SURFACE, but the flag is one piece of
+            // hub state shared across all of them (two screens fold their own
+            // blocks with it). `ScoutingInsightsSection` resolves the new
+            // surface's value in its `onAppear`, one frame after this body pass,
+            // so leaving the outgoing surface's value in place flashed the
+            // incoming block open — or shut — for that frame. Seeded from the
+            // same two keys the section reads.
+            insightsExpanded = ScoutingInsightsDefaults.resolvedExpansion(
+                surfaceKey: newTab.rawValue,
+                phaseToken: insightsPhaseToken
+            )
             // Reviewing is opening the tab and finding numbers in it. It used to
             // additionally require that scouts had been sent, which made the
             // task uncompletable for a class the user chose to watch on
@@ -379,9 +436,25 @@ struct ScoutingHubView: View {
         prospects.filter { !$0.scoutingReports.isEmpty }.count
     }
 
-    private var scoutedPercentage: Int {
-        guard !prospects.isEmpty else { return 0 }
-        return Int((Double(scoutedCount) / Double(prospects.count) * 100).rounded())
+    /// Filed reports and their share of the class, walked ONCE per chrome pass.
+    ///
+    /// Three call sites want this number now — the board segment's subtitle, the
+    /// Insights teaser and the coverage strip inside the Insights body — and
+    /// `scoutingReports` is a SwiftData `Codable` array, i.e. a decode per
+    /// prospect per read. Three walks of a ~350-man class on every `@State`
+    /// touch of a screen that owns a 350-row table is not a rounding error.
+    private struct CoverageReadout {
+        let filed: Int
+        let percent: Int
+    }
+
+    private func coverageReadout() -> CoverageReadout {
+        let filed = scoutedCount
+        guard !prospects.isEmpty else { return CoverageReadout(filed: filed, percent: 0) }
+        return CoverageReadout(
+            filed: filed,
+            percent: Int((Double(filed) / Double(prospects.count) * 100).rounded())
+        )
     }
 
     private var phaseLabel: String {
@@ -424,8 +497,14 @@ struct ScoutingHubView: View {
     @CareerScopedStorage(DraftPrepProgress.Key.mockTwoRead)
     private var finalMockReadSeason: Int = 0
 
-    /// The full scroll-away header, handed to whichever surface owns the scroll.
-    private func hubHeader() -> ScoutingHubHeader {
+    /// The coverage strip and the Draft Prep card.
+    ///
+    /// It used to be handed by closure into whichever surface owned the scroll,
+    /// as that list's first section. #130 moved it into the hub's Insights block:
+    /// both halves are *orientation*, read once a phase, and folding them behind
+    /// the same chevron as the stage explainer is what lets a surface open on its
+    /// own content. The list surfaces now receive `EmptyView`.
+    private func hubHeader(scoutedPercent: Int) -> ScoutingHubHeader {
         ScoutingHubHeader(
             career: career,
             prospects: prospects,
@@ -434,7 +513,7 @@ struct ScoutingHubView: View {
             scoutsSentToCombine: scoutsSentToCombine,
             scoutingBudgetRemaining: remainingScoutingBudget,
             evaluationsUsed: evaluationsUsed,
-            scoutedPercent: scoutedPercentage,
+            scoutedPercent: scoutedPercent,
             phaseLabel: phaseLabel,
             onSelectTab: { selectedTab = $0 },
             onFilterPosition: { positionFilter = $0 }
@@ -460,10 +539,35 @@ struct ScoutingHubView: View {
 
     // MARK: - Process view: stage cells, selection, transition
 
-    /// The five surfaces that are not part of the pipeline. Always open, always
+    /// The six surfaces that are not part of the pipeline. Always open, always
     /// in the same place, never mixed into the calendar strip.
+    ///
+    /// `.classDepth` sits directly behind the board because it is the same class
+    /// read one level up: the board is 350 rows of men, the depth screen is the
+    /// nine sentences those rows add up to. It is the January landing surface for
+    /// the declaration / Senior Bowl task (#128), and — like every reference tab
+    /// — it is open all year.
     private static let referenceTabs: [ScoutingTab] =
-        [.board, .mockDraft, .draftOrder, .scouts, .nextYear]
+        [.board, .classDepth, .mockDraft, .draftOrder, .scouts, .nextYear]
+
+    /// The reference surfaces the switcher parks behind the **Tools** menu —
+    /// `referenceTabs` minus the board, which is a segment of its own (#130).
+    ///
+    /// The board is not one lookup among six. It is the club's own list, the one
+    /// screen the user returns to between every instrument, and giving it a
+    /// quarter of a scrolling capsule row next to "Next Yr" is what made the
+    /// whole strip read as undifferentiated.
+    private static let toolTabs: [ScoutingTab] =
+        [.classDepth, .mockDraft, .draftOrder, .scouts, .nextYear]
+
+    /// The tabs that are a pipeline stage's own screen.
+    ///
+    /// `.mockDraft` is in here as well as in `toolTabs`, and both are correct: it
+    /// is a permanent reference screen AND the room stages 6 and 9 are worked in.
+    /// The switcher resolves the overlap in favour of the stage segment, which is
+    /// the reading that carries more information (a stage number and a state).
+    private static let stageTabs: Set<ScoutingTab> =
+        [.combine, .interviews, .film, .proDays, .workouts, .top30, .mockDraft]
 
     /// The tab whose screen belongs to the stage the club is standing in.
     ///
@@ -481,6 +585,47 @@ struct ScoutingHubView: View {
             return [.mockOne, .mockTwo].contains(career.prepStep) ? career.prepStep : nil
         }
         return selectedTab.stage
+    }
+
+    // MARK: - Surface switcher wiring (#130)
+
+    /// Whether the screen showing is a stage's own working surface.
+    ///
+    /// Drives the process bar's size: the pipeline is the SUBJECT here, so it
+    /// gets its full cells. Everywhere else it is context and demotes.
+    private var isOnStageSurface: Bool { Self.stageTabs.contains(selectedTab) }
+
+    /// The tab the switcher's stage segment offers.
+    ///
+    /// The room the user is standing in, else the last room he was in, else the
+    /// club's current stage. `.ready` routes to the board — which is already the
+    /// first segment — so at the end of the pipeline the segment offers the final
+    /// mock, the last thing the spring has to say.
+    private var stageSegmentTab: ScoutingTab {
+        if Self.stageTabs.contains(selectedTab) { return selectedTab }
+        if let lastStageTab, Self.stageTabs.contains(lastStageTab) { return lastStageTab }
+        let current = currentStageTab
+        return current == .board ? .mockDraft : current
+    }
+
+    /// The stage the segment above is showing, for its number and its state.
+    private var stageSegmentStep: DraftPrepStep {
+        let tab = stageSegmentTab
+        if let step = tab.stage { return step }
+        // `.mockDraft` carries no `stage` of its own (four mocks print a year and
+        // all of them are public), so the step comes off where the club stands.
+        return [.mockOne, .mockTwo].contains(career.prepStep) ? career.prepStep : .mockOne
+    }
+
+    private var activeSurfaceSlot: ScoutingSurfaceSwitcher.Slot {
+        if selectedTab == .board { return .board }
+        if selectedTab == stageSegmentTab { return .stage }
+        return .tools
+    }
+
+    /// "<season>-<phase>" — the token that re-arms one free Insights expansion.
+    private var insightsPhaseToken: String {
+        "\(career.currentSeason)-\(career.currentPhase.rawValue)"
     }
 
     // MARK: - Progress
@@ -541,18 +686,36 @@ struct ScoutingHubView: View {
 
     // MARK: - Process chrome
     //
-    // Four layers, ~120 pt pinned, and every one of them says something the
-    // eleven-tab picker could not: where you are, what is left, what this stage
-    // buys, and how you leave it. Built as one function rather than inline in
-    // `body` so `DraftPrepProgress` is constructed ONCE per pass — it walks the
-    // draft class, and this screen re-evaluates on every `@State` touch.
+    // Built as one function rather than inline in `body` so `DraftPrepProgress`
+    // is constructed ONCE per pass — it walks the draft class, and this screen
+    // re-evaluates on every `@State` touch.
 
     private var processChrome: some View {
         let progress = prepProgress
         let stage = selectedStage
+        let segmentStep = stageSegmentStep
+        let coverage = coverageReadout()
         return VStack(spacing: 0) {
-            // Layer 1: the pipeline itself. Every stage in calendar order, each
-            // carrying its state and its own count of work, none ever hidden.
+            // Layer 1: WHERE AM I. One control, three slots, and the answer is
+            // legible from across the room.
+            ScoutingSurfaceSwitcher(
+                boardSubtitle: boardSegmentSubtitle(coverage),
+                stageTab: stageSegmentTab,
+                stageSubtitle: stageSegmentSubtitle(step: segmentStep, progress: progress),
+                stageState: stageState(segmentStep, progress: progress),
+                stageIsWaiting: progress[segmentStep].isCalendarLocked,
+                toolTabs: Self.toolTabs,
+                selected: selectedTab,
+                active: activeSurfaceSlot,
+                onSelect: { selectedTab = $0 }
+            )
+            .padding(.horizontal, 12)
+            .padding(.top, 2)
+            .padding(.bottom, 8)
+
+            // Layer 2: the pipeline. Every stage in calendar order, each carrying
+            // its state and its own count of work, none ever hidden — but sized
+            // for whether it is the subject of the screen or its context.
             DraftPrepProcessBar(
                 cells: DraftPrepStep.allCases
                     .sorted { $0.order < $1.order }
@@ -564,30 +727,142 @@ struct ScoutingHubView: View {
                         )
                     },
                 selected: stage,
+                isCompact: !isOnStageSurface,
                 onSelect: { selectStage($0) }
             )
             .padding(.horizontal, 12)
-            .padding(.bottom, 4)
+            .padding(.bottom, 8)
 
-            // Layer 2: the surfaces that are not stages at all. Splitting them
-            // out is what lets layer 1 read as a calendar — the board and the
-            // department used to sit between two dated stages in the same strip.
-            ScoutingReferenceTabRow(
-                tabs: Self.referenceTabs,
-                selected: selectedTab,
-                onSelect: { selectedTab = $0 }
-            )
-            .padding(.horizontal, 20)
-            .padding(.bottom, positionFilterAppliesToCurrentTab ? 4 : 6)
+            // Layer 3: the surface's title, and behind one chevron everything
+            // that used to be stacked above the list unasked.
+            ScoutingInsightsSection(
+                surfaceKey: selectedTab.rawValue,
+                phaseToken: insightsPhaseToken,
+                title: selectedTab.label,
+                icon: selectedTab.icon,
+                stateChip: insightsStateChip(progress: progress),
+                stateChipTint: insightsStateChipTint(progress: progress),
+                teaser: insightsTeaser(progress: progress, stage: stage, coverage: coverage),
+                isExpanded: $insightsExpanded
+            ) {
+                insightsBody(progress: progress, stage: stage, coverage: coverage)
+            }
+            // A fresh instance per surface: `ScoutingInsightsSection` binds its
+            // two `@AppStorage` keys at init, so without this the board's flags
+            // would follow the user onto the combine.
+            .id(selectedTab.rawValue)
+            .padding(.horizontal, 12)
+            .padding(.bottom, positionFilterAppliesToCurrentTab ? 6 : 8)
 
+            // Layer 4: the shared filter, LAST, so it sits on the table rather
+            // than between two blocks of prose. The table's own controls (mode
+            // chips, search, sortable column labels) are pinned inside its list
+            // header directly underneath, and the two read as one strip.
             if positionFilterAppliesToCurrentTab {
                 positionFilterChips
-                    .padding(.horizontal, 20)
+                    .padding(.horizontal, 16)
                     .padding(.bottom, 6)
             }
+        }
+    }
 
-            // Layer 3: what this stage buys and what it costs. One card, same
-            // shape on every stage screen, collapsible and remembered per stage.
+    // MARK: - Insights composition (#130)
+
+    /// The stage segment's second line — where it sits in the pipeline and how
+    /// much of it is done. The counter is `DraftPrepProgress`'s own string, so
+    /// the segment, the process-bar cell and the required task in the left bar
+    /// can never print three different numbers for one stage.
+    private func stageSegmentSubtitle(step: DraftPrepStep, progress: DraftPrepProgress) -> String {
+        let total = DraftPrepStep.allCases.count
+        return "Stage \(step.order + 1) of \(total) \u{00B7} \(progress[step].counter)"
+    }
+
+    /// The board segment's second line — the size of the pool it holds.
+    private func boardSegmentSubtitle(_ coverage: CoverageReadout) -> String {
+        prospects.isEmpty
+            ? "No class on the board yet"
+            : "\(prospects.count) declared \u{00B7} \(coverage.percent)% scouted"
+    }
+
+    /// "STAGE 4 · CURRENT" over a stage surface, nothing over a reference one.
+    private func insightsStateChip(progress: DraftPrepProgress) -> String? {
+        guard let stage = selectedStage else { return nil }
+        let word: String = {
+            switch stageState(stage, progress: progress) {
+            case .current: return "CURRENT"
+            case .done:    return "DONE"
+            case .open:    return "OPEN"
+            case .locked:  return progress[stage].isCalendarLocked ? "WAITING" : "LOCKED"
+            }
+        }()
+        return "STAGE \(stage.order + 1) \u{00B7} \(word)"
+    }
+
+    private func insightsStateChipTint(progress: DraftPrepProgress) -> Color {
+        guard let stage = selectedStage else { return .accentGold }
+        switch stageState(stage, progress: progress) {
+        case .current: return .accentGold
+        case .done:    return .success
+        case .open:    return .accentBlue
+        case .locked:  return .textTertiaryReadable
+        }
+    }
+
+    /// The one line that has to survive the collapse.
+    ///
+    /// Whatever is most volatile about THIS surface first, then the two facts
+    /// the old pinned metrics strip carried. Capped at four clauses: a teaser
+    /// that wraps is a paragraph, and a paragraph is what we just folded away.
+    private func insightsTeaser(
+        progress: DraftPrepProgress,
+        stage: DraftPrepStep?,
+        coverage: CoverageReadout
+    ) -> String {
+        var parts: [String] = []
+        switch selectedTab {
+        case .combine:
+            // The fidelity line used to be a chip inside the combine's own
+            // header; it explains why a column reads "~4.5" instead of "4.53",
+            // so it may not disappear behind a chevron.
+            parts.append(scoutsSentToCombine ? "Scouts on site" : "Broadcast numbers")
+            let movers = CombineMovers.counts(in: prospects)
+            if movers.risers > 0 { parts.append("\(movers.risers) risers") }
+            if movers.fallers > 0 { parts.append("\(movers.fallers) fallers") }
+        case .classDepth:
+            parts.append("\(prospects.count) declared")
+        case .board:
+            parts.append("\(coverage.filed) of \(prospects.count) filed on")
+        default:
+            break
+        }
+        // The stage counter stands down on the combine surface, which is the one
+        // that can contribute three clauses of its own: with risers AND fallers
+        // present the list ran fidelity · risers · fallers · counter · scouted% ·
+        // phase, and `prefix(4)` then dropped the two facts this teaser exists to
+        // keep. The counter is also the one clause the user can read elsewhere
+        // without expanding anything — the stage segment's own subtitle prints
+        // it, from the same `DraftPrepProgress`.
+        if let stage, selectedTab != .combine { parts.append(progress[stage].counter) }
+        parts.append("\(coverage.percent)% scouted")
+        parts.append(phaseLabel)
+        return parts.prefix(4).joined(separator: " \u{00B7} ")
+    }
+
+    /// Everything the hub itself folds away: what this stage buys and what it
+    /// costs, the coverage strip, and the Draft Prep card.
+    ///
+    /// The two surface-specific blocks — the combine's risers/fallers rails and
+    /// the class-depth declaration header — stay inside their own screens and
+    /// fold on `insightsExpanded`, because both are computed from state those
+    /// screens already hold and hoisting them would mean walking a 350-man class
+    /// twice per body pass.
+    @ViewBuilder
+    private func insightsBody(
+        progress: DraftPrepProgress,
+        stage: DraftPrepStep?,
+        coverage: CoverageReadout
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
             if let stage {
                 let row = progress[stage]
                 DraftPrepStageExplainer(
@@ -604,9 +879,8 @@ struct ScoutingHubView: View {
                         : "",
                     isWaitingOnCalendar: row.isCalendarLocked
                 )
-                .padding(.horizontal, 16)
-                .padding(.bottom, 6)
             }
+            hubHeader(scoutedPercent: coverage.percent)
         }
     }
 
@@ -741,7 +1015,9 @@ struct ScoutingHubView: View {
                 onSwitchTab: { selectedTab = $0 },
                 scoutCount: scouts.count,
                 positionFilter: $positionFilter,
-                header: { hubHeader() }
+                // #130: the metrics strip and the prep card moved into the hub's
+                // Insights block. The board's first row is a prospect again.
+                header: { EmptyView() }
             )
         case .film:
             // The film-study stage screen is the BATCH ORDER surface (#119):
@@ -780,7 +1056,7 @@ struct ScoutingHubView: View {
                     initialAttributeTab: .workup,
                     isFilmStudy: true,
                     isStageClosed: !progress.canAct(.filmStudy),
-                    header: { hubHeader() }
+                    header: { EmptyView() }
                 )
             }
         case .combine:
@@ -796,8 +1072,17 @@ struct ScoutingHubView: View {
                     ? { sendScoutsToCombine() }
                     : nil,
                 canAffordTrip: canAffordCombineTrip,
+                // #128 case D: before the league issues its invite list there is
+                // literally nothing on this tab, and the class-depth read is what
+                // a January user came for.
+                onOpenClassDepth: { selectedTab = .classDepth },
                 positionFilter: $positionFilter,
-                header: { hubHeader() }
+                // #130: the title block, the fidelity chip and the RISERS /
+                // FALLERS rails belong to the hub's Insights block now and fold
+                // with it. The send-scouts CTA never folds — it is a one-window
+                // offer with money attached, not an insight.
+                insightsExpanded: insightsExpanded,
+                header: { EmptyView() }
             )
         case .interviews:
             InterviewSelectionView(career: career, canAct: progress.canAct(.interviews))
@@ -835,6 +1120,23 @@ struct ScoutingHubView: View {
                 teamRoster: teamPlayers,
                 canAct: progress.canAct(.proDayFocus),
                 onRefresh: loadData
+            )
+        case .classDepth:
+            // #128. `prospects` is already the DECLARED class (`loadData` filters
+            // on `isDeclaringForDraft`), which is the whole point of the screen
+            // after the January window — it re-filters anyway, so it stays honest
+            // if it is ever hosted somewhere that does not.
+            ClassDepthView(
+                career: career,
+                prospects: prospects,
+                teamRoster: teamPlayers,
+                positionFilter: $positionFilter,
+                // #130: the declaration header is this surface's insight block
+                // and folds with the hub's chevron.
+                insightsExpanded: insightsExpanded,
+                // A depth read is a scan. Tapping a group hands the user the
+                // board with the shared chip already set to that group.
+                onOpenBoard: { selectedTab = .board }
             )
         case .nextYear:
             NextYearClassPreview(career: career, prospects: nextYearProspects)
@@ -1033,6 +1335,9 @@ private struct CombineReportSheet: View {
 /// pipeline: the spine first (board), then the stages, then the reference tabs.
 enum ScoutingTab: String, CaseIterable, Identifiable {
     case board      = "board"
+    /// The class one level up from the board: how deep the DECLARED pool is per
+    /// position, by projected-round tier, against the club's own holes (#128).
+    case classDepth = "classDepth"
     case combine    = "combine"
     case film       = "film"
     case interviews = "interviews"
@@ -1049,6 +1354,7 @@ enum ScoutingTab: String, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .board:      return "Big Board"
+        case .classDepth: return "Class Depth"
         case .combine:    return "Combine"
         case .film:       return "Film Study"
         case .interviews: return "Interviews"
@@ -1065,6 +1371,7 @@ enum ScoutingTab: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .board:      return "list.number"
+        case .classDepth: return "chart.bar.fill"
         case .combine:    return "figure.run"
         case .film:       return "film"
         case .interviews: return "bubble.left.and.bubble.right"
@@ -1096,7 +1403,7 @@ enum ScoutingTab: String, CaseIterable, Identifiable {
         // being read, which the hub handles when the tab is opened; hiding the
         // screen until then would put the autumn mocks behind a gate they were
         // never behind.
-        case .board, .mockDraft, .draftOrder, .scouts, .nextYear:
+        case .board, .classDepth, .mockDraft, .draftOrder, .scouts, .nextYear:
             return nil
         }
     }

@@ -39,17 +39,42 @@ struct ContractTimelineView: View {
     // MARK: - Per-Season Cap Totals
 
     /// Total committed salary for a given season offset (0 = current season).
+    ///
+    /// #127: franchise-tagged men are held out of the salary sum from offset 1
+    /// onward and added back from the forward ledger. Their `annualSalary` is
+    /// still the EXPIRING deal until the March rollover settles the tag onto it,
+    /// so counting the row would price a future year off a contract that ends
+    /// before it — and counting nothing (which is what
+    /// `contractYearsRemaining > offset` did for a tagged man at 1 year) left the
+    /// club's biggest new commitment invisible on the one screen built to plan
+    /// future years.
+    ///
+    /// **Offset 0 keeps him**, matching `CapOverviewView.committedCap`, whose
+    /// year-0 bar is the live ledger: the club is paying his expiring deal
+    /// through the season just played, and dropping it made the current-year
+    /// column understate used cap by his whole salary. The forward row cannot
+    /// double-count him there — it binds `currentSeason + 1`, and
+    /// `forwardCommitted` returns 0 for a season before the binding year.
     private func committedSalary(forOffset offset: Int) -> Int {
-        players
-            .filter { $0.contractYearsRemaining > offset }
+        let contracts = players
+            .filter { $0.contractYearsRemaining > offset && (offset == 0 || !$0.isFranchiseTagged) }
             .reduce(0) { $0 + $1.annualSalary }
+        return contracts + CommittedCapLedger.forwardCommitted(
+            playerIDs: players.filter(\.isFranchiseTagged).map(\.id),
+            careerID: career.id,
+            season: career.currentSeason + offset
+        )
     }
 
     /// Available cap for a given season offset.
     private func projectedCap(forOffset offset: Int) -> Int {
         guard let team else { return 0 }
-        // Cap grows ~3% per year (rough projection).
-        let projectedTotal = Int(Double(team.salaryCap) * pow(1.03, Double(offset)))
+        // The league's ONE projection (`ContractEngine.capGrowthPerSeason`), not
+        // a local 3 % guess: this screen used to grow the cap slower than the
+        // franchise-tag banner, the cap-overview bars and the dashboard tile, so
+        // the same future year had two different sizes depending on where the
+        // user looked.
+        let projectedTotal = Int(Double(team.salaryCap) * pow(1.0 + ContractEngine.capGrowthPerSeason, Double(offset)))
         return projectedTotal - committedSalary(forOffset: offset)
     }
 

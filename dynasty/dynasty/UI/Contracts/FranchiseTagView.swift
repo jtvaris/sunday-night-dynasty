@@ -80,8 +80,30 @@ struct FranchiseTagView: View {
                             offer: offer,
                             application: .replaceContract,
                             capMode: career.capMode,
+                            careerID: career.id,
                             modelContext: modelContext
                         )
+                        // **The rollover's decrement, compensated for** — the
+                        // same +1 `FinalPushView.applyReSignOffer` carries, and
+                        // for the same reason. This screen runs in Review
+                        // Roster, i.e. BEFORE `executeNewLeagueYear`, whose
+                        // expiry loop decrements every contract in the league.
+                        // `applyNegotiatedDeal(.replaceContract)` writes
+                        // `contractYearsRemaining = offer.years`, so a deal
+                        // agreed here was silently one year short and a 1-year
+                        // re-sign expired the instant the league year turned —
+                        // the man appeared as LOST on the very next screen,
+                        // thirty seconds after being kept. (`FinalPushView`'s
+                        // note lists this screen as an in-season path where "no
+                        // rollover follows"; it is not one.)
+                        //
+                        // Conditional on the rollover still being PENDING, using
+                        // the same test `WeekAdvancer` gates its own fallback
+                        // with, so a screen re-entered after March cannot hand
+                        // out a free extra year.
+                        if career.lastRolloverSeason < career.currentSeason {
+                            player.contractYearsRemaining += 1
+                        }
                         try? modelContext.save()
                         loadData()
                         // No dismiss — the thread shows the signed card and the
@@ -94,24 +116,80 @@ struct FranchiseTagView: View {
 
     // MARK: - Cap Banner
 
+    /// **The banner shows NEXT league year, because that is the year the tag is
+    /// a decision about** (#127).
+    ///
+    /// It used to show "Available Cap Space" — this year's room — and the tag
+    /// used to move it, which is how the bug announced itself: tagging a $36.9M
+    /// quarterback at $32.8M *raised* the number by $4.0M. Both halves are now
+    /// fixed, and the cheapest way to make the fix legible is to stop quoting a
+    /// year the decision cannot touch. The tag charges the league year that opens
+    /// in March; so does everything else on this screen.
+    ///
+    /// The three numbers are the ones a GM actually plans against, and each is
+    /// read from the source the rest of the app already uses:
+    ///
+    /// * **Projected cap** — `salaryCap × (1 + capGrowthPerSeason)`, the engine's
+    ///   own midpoint roll. Same one line `RosterEvaluationView`'s Next Season
+    ///   Outlook, `CapOverviewView`'s year bars and the dashboard's 3-Year Cap
+    ///   tile use, so no two screens can show the user two different futures
+    ///   (task #87 / F15 closed exactly that split once already).
+    /// * **Committed** — contracts that are still running next year
+    ///   (`contractYearsRemaining > 1`) plus tags already applied. A man on an
+    ///   expiring deal is deliberately NOT in it: if he is not re-signed he costs
+    ///   nothing, and that is the whole question this screen asks.
+    /// * **Projected space** — the difference, and the number "Cap after tag" on
+    ///   every row is measured against.
     private var capBanner: some View {
-        HStack(spacing: 20) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Available Cap Space")
-                    .font(.caption)
-                    .foregroundStyle(Color.textSecondary)
-                Text(formatMillions(team?.availableCap ?? 0))
-                    .font(.title3.weight(.bold).monospacedDigit())
-                    .foregroundStyle((team?.availableCap ?? 0) >= 0 ? Color.success : Color.danger)
+        VStack(spacing: 10) {
+            HStack(spacing: 20) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Projected \(seasonLabel(nextSeason)) Cap")
+                        .font(.caption)
+                        .foregroundStyle(Color.textSecondary)
+                    Text(formatMillions(projectedNextYearCap))
+                        .font(.title3.weight(.bold).monospacedDigit())
+                        .foregroundStyle(Color.accentGold)
+                }
+                Spacer()
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("Committed to \(seasonLabel(nextSeason))")
+                        .font(.caption)
+                        .foregroundStyle(Color.textSecondary)
+                    Text(formatMillions(committedNextYear))
+                        .font(.title3.weight(.bold).monospacedDigit())
+                        .foregroundStyle(Color.textPrimary)
+                }
+                Spacer()
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("Projected Space")
+                        .font(.caption)
+                        .foregroundStyle(Color.textSecondary)
+                    Text(formatMillions(projectedNextYearSpace))
+                        .font(.title3.weight(.bold).monospacedDigit())
+                        .foregroundStyle(projectedNextYearSpace >= 0 ? Color.success : Color.danger)
+                }
             }
-            Spacer()
-            VStack(alignment: .trailing, spacing: 2) {
-                Text("Expiring Contracts")
-                    .font(.caption)
-                    .foregroundStyle(Color.textSecondary)
-                Text("\(expiringPlayers.count)")
-                    .font(.title3.weight(.bold).monospacedDigit())
-                    .foregroundStyle(Color.textPrimary)
+
+            Divider().overlay(Color.surfaceBorder.opacity(0.6))
+
+            // The current year is kept, small and explicitly labelled, because a
+            // GM still wants to know where he stands today — but it is no longer
+            // the headline and, more to the point, tagging no longer moves it.
+            HStack(spacing: 8) {
+                Text("\(seasonLabel(career.currentSeason)) cap space")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.textTertiary)
+                Text(formatMillions(team?.availableCap ?? 0))
+                    .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                    .foregroundStyle((team?.availableCap ?? 0) >= 0 ? Color.textSecondary : Color.danger)
+                Text("— unchanged by tagging")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.textTertiary)
+                Spacer()
+                Text("\(expiringPlayers.count) expiring")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color.textTertiary)
             }
         }
         .padding(.horizontal, 24)
@@ -124,6 +202,51 @@ struct FranchiseTagView: View {
         )
     }
 
+    // MARK: - Next League Year Projection (#127)
+
+    /// The league year a tag applied on this screen charges.
+    ///
+    /// `currentSeason + 1` and not `currentSeason`: `WeekAdvancer` only
+    /// increments the year at the roster-cuts → regular-season transition, so
+    /// every offseason phase of a given league year reads the same number, and
+    /// the year being decided is always the one after it. Same arithmetic
+    /// `RosterEvaluationView` labels its "Next Season Outlook" with.
+    private var nextSeason: Int { career.currentSeason + 1 }
+
+    /// The club's cap rolled forward one league year at the engine's own growth
+    /// midpoint — one formula, shared with every other projection in the app.
+    private var projectedNextYearCap: Int {
+        let cap = team?.salaryCap ?? ContractEngine.openingSalaryCap
+        return Int(Double(cap) * (1.0 + ContractEngine.capGrowthPerSeason))
+    }
+
+    /// Salary already owed for next league year, in thousands.
+    ///
+    /// `contractYearsRemaining > 1` is "still under contract after this year's
+    /// rollover" — the same test `ContractTimelineView` and `CapOverviewView`
+    /// project a future year's committed cap with. Tagged men are excluded from
+    /// the sum and added back through the forward ledger instead, so the tag is
+    /// counted at the number the user was quoted rather than at the salary his
+    /// expiring deal happens to still be carrying.
+    private var committedNextYear: Int {
+        let underContract = teamPlayers
+            .filter { $0.contractYearsRemaining > 1 && !$0.isFranchiseTagged }
+            .reduce(0) { $0 + $1.annualSalary }
+        // Walked from the ROSTER rather than summed straight off the ledger, so
+        // a man who was tagged and then released still owes nothing here. His
+        // orphaned row survives until the rollover drops it (`consumeForward`
+        // takes everything due, matched or not), and reading the ledger blind
+        // would keep charging the club for a player it no longer employs.
+        let tags = taggedPlayers.reduce(0) { $0 + tagCommitment(for: $1) }
+        return underContract + tags
+    }
+
+    private var projectedNextYearSpace: Int { projectedNextYearCap - committedNextYear }
+
+    /// `2027`, never `2 027` — a league year is a name, not a quantity, so it
+    /// must not pick up the locale's group separator.
+    private func seasonLabel(_ season: Int) -> String { String(season) }
+
     // MARK: - Rules Banner
 
     private var tagRulesBanner: some View {
@@ -134,7 +257,7 @@ struct FranchiseTagView: View {
                 Text("Franchise Tag Rules")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Color.textPrimary)
-                Text("You can apply up to 1 franchise tag per season. Tagged players are kept at the average of the top 5 salaries at their position for one year.")
+                Text("You can apply up to 1 franchise tag per season. A tagged player finishes his current deal, then plays \(seasonLabel(nextSeason)) at the average of the top 5 salaries at his position — so the tag charges the \(seasonLabel(nextSeason)) cap, not this year's.")
                     .font(.caption)
                     .foregroundStyle(Color.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -184,10 +307,15 @@ struct FranchiseTagView: View {
             Spacer()
 
             VStack(alignment: .trailing, spacing: 2) {
-                Text(formatMillions(player.annualSalary))
+                // #127: `annualSalary` is still the EXPIRING deal — the tag has
+                // not been paid yet and does not overwrite it until the rollover
+                // — so the number quoted here comes off the forward commitment
+                // the tag actually booked. Showing `annualSalary` would now
+                // print the old contract under the words "Tag Value".
+                Text(formatMillions(tagCommitment(for: player)))
                     .font(.subheadline.weight(.semibold).monospacedDigit())
                     .foregroundStyle(Color.accentGold)
-                Text("Tag Value")
+                Text("\(seasonLabel(nextSeason)) Tag")
                     .font(.system(size: 9).weight(.medium))
                     .foregroundStyle(Color.textTertiary)
             }
@@ -232,7 +360,13 @@ struct FranchiseTagView: View {
 
     private func expiringPlayerRow(_ player: Player) -> some View {
         let tagCost = tagValue(for: player.position)
-        let capAfterTag = (team?.availableCap ?? 0) - tagCost + player.annualSalary
+        // #127. This used to be `availableCap − tagCost + annualSalary`: next
+        // year's tag netted against this year's room, with this year's salary
+        // credited back as though the season already played were about to be
+        // refunded. Every term was from the wrong year. The tag charges
+        // `nextSeason`, where the man's expiring deal is already worth nothing —
+        // so the honest answer is simply projected space less the tag.
+        let capAfterTag = projectedNextYearSpace - tagCost
         let recommendation = smartRecommendation(for: player)
 
         return VStack(alignment: .leading, spacing: 8) {
@@ -308,7 +442,7 @@ struct FranchiseTagView: View {
                 Image(systemName: "dollarsign.circle")
                     .font(.caption)
                     .foregroundStyle(Color.textTertiary)
-                Text("Cap after tag: \(formatMillions(capAfterTag))")
+                Text("\(seasonLabel(nextSeason)) space after tag: \(formatMillions(capAfterTag))")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(capAfterTag >= 0 ? Color.textTertiary : Color.danger)
                 if capAfterTag < 0 {
@@ -502,6 +636,14 @@ struct FranchiseTagView: View {
 
     // MARK: - Tag Value Calculation
 
+    /// What the tag on this man actually costs next year — the number
+    /// `ContractEngine.applyFranchiseTag` booked, falling back to a fresh quote
+    /// for a save whose tag predates the forward ledger.
+    private func tagCommitment(for player: Player) -> Int {
+        CommittedCapLedger.forwardCommitment(playerID: player.id, careerID: career.id)?.annualCapHit
+            ?? tagValue(for: player.position)
+    }
+
     private func tagValue(for position: Position) -> Int {
         let positionSalaries = allPlayers
             .filter { $0.position == position && $0.annualSalary > 0 }
@@ -524,7 +666,10 @@ struct FranchiseTagView: View {
         ContractEngine.applyFranchiseTag(
             player: player,
             tagValue: tagCost,
-            team: team
+            team: team,
+            capMode: career.capMode,
+            bindingSeason: nextSeason,
+            careerID: career.id
         )
 
         // Persist so CareerShellView picks up the change
@@ -540,7 +685,9 @@ struct FranchiseTagView: View {
 
         ContractEngine.removeFranchiseTag(
             player: player,
-            team: team
+            team: team,
+            capMode: career.capMode,
+            careerID: career.id
         )
 
         // Persist so CareerShellView picks up the change

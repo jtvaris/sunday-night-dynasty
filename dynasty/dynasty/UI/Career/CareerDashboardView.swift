@@ -4442,19 +4442,87 @@ struct CareerDashboardView: View {
         }
     }
 
-    /// Next league year's room: this year's unspent cap, rolled forward at the
-    /// engine's growth rate (task #87 / F18 — it was the literal "$58.4M").
+    /// Next league year's room: the projected cap less what is actually
+    /// committed to that year (task #87 / F18 replaced the literal "$58.4M"
+    /// here; #127 fixed what it was subtracting).
+    ///
+    /// It used to subtract `team.currentCapUsage` — THIS year's ledger — from
+    /// next year's cap, which is wrong twice over and in opposite directions:
+    /// it charged next year for every expiring contract that will be off the
+    /// books by then, and, once the tag stopped writing `annualSalary` at apply
+    /// time, it missed the franchise tag entirely. The row sat directly under
+    /// the offseason hero card's other numbers and disagreed with all of them.
+    ///
+    /// Now it is the same definition `FranchiseTagView`'s banner uses: contracts
+    /// that still run next year, plus tags booked for it, against the projected
+    /// cap. One arithmetic, so the dashboard and the tag screen cannot show the
+    /// user two different 2027s.
     private var nextYearCapSpace: String {
         guard let team else { return "—" }
         let nextCap = Double(team.salaryCap) * (1.0 + ContractEngine.capGrowthPerSeason)
-        return formatCap(max(0, Int(nextCap) - team.currentCapUsage))
+        let underContract = players
+            .filter { $0.contractYearsRemaining > 1 && !$0.isFranchiseTagged }
+            .reduce(0) { $0 + $1.annualSalary }
+        let tags = CommittedCapLedger.forwardCommitted(
+            playerIDs: players.filter(\.isFranchiseTagged).map(\.id),
+            careerID: career.id,
+            season: career.currentSeason + 1
+        )
+        // Negative room is a real state (a club can be committed past next
+        // year's projected cap), and `formatCap` renders it as "$-8.3M" — a
+        // string that reads as a typo rather than as a problem. Named instead.
+        let capSpace = Int(nextCap) - underContract - tags
+        return capSpace >= 0 ? formatCap(capSpace) : "Over by " + formatCap(-capSpace)
+    }
+
+    /// Staff whose deals run out with this league year (#127 — it was the
+    /// literal `"2"`).
+    ///
+    /// `contractYearsRemaining <= 1` is the same test `CoachDetailView` renders
+    /// its expiry warning from and the same one the player-side expiring list
+    /// uses, so the hero card and the staff screen cannot disagree about who is
+    /// about to walk. `allCoaches` is already fetched for the club, scoped to the
+    /// open save (`loadCoaches`), so this costs nothing.
+    private var expiringCoachCount: Int {
+        allCoaches.filter { $0.contractYearsRemaining <= 1 }.count
+    }
+
+    /// Roster OVR now, and what it becomes if nobody on an expiring deal is kept
+    /// (#127 — it was the literal `"76 → 73 projected"`).
+    ///
+    /// There is no OVR-projection engine in the game to read, so rather than
+    /// invent one this states the only projection the data actually supports and
+    /// labels it honestly: the average the club would field if every expiring
+    /// contract walked. That is a real number, it is the number this screen's own
+    /// "Roster Review" button leads to, and it is the one a GM opening his
+    /// offseason wants — the size of the hole.
+    ///
+    /// The average is the whole-roster one (`Σ overall / count`), which is the
+    /// definition `FACompleteView`'s before/after and `NewLeagueYearView`'s
+    /// pre-FA snapshot already use; taking a different one here would make the
+    /// dashboard disagree with the two screens that report the same move.
+    ///
+    /// `nil` — and the row is dropped — when the club has no expiring contracts
+    /// at all, because "76 → 76" is a row that says nothing.
+    private var rosterOVRProjection: String? {
+        guard !players.isEmpty else { return nil }
+        let current = players.reduce(0) { $0 + $1.overall } / players.count
+        // Franchise-tagged men are NOT leaving: the tag is one more year of club
+        // control and the rollover keeps them on the roster (#127).
+        let retained = players.filter { $0.contractYearsRemaining > 1 || $0.isFranchiseTagged }
+        guard retained.count < players.count else { return nil }
+        guard !retained.isEmpty else { return "\(current) → — (whole roster expiring)" }
+        let projected = retained.reduce(0) { $0 + $1.overall } / retained.count
+        return "\(current) → \(projected) if none re-signed"
     }
 
     private var offseasonOpenerHeroCard: some View {
         phaseCardBase(icon: "arrow.triangle.2.circlepath", accent: .accentGold) {
             heroHeader("Offseason Begins")
-            heroStatRow("Coach contracts expiring", value: "2")
-            heroStatRow("Roster OVR", value: "76 → 73 projected")
+            heroStatRow("Coach contracts expiring", value: "\(expiringCoachCount)")
+            if let rosterOVRProjection {
+                heroStatRow("Roster OVR", value: rosterOVRProjection)
+            }
             heroStatRow("Cap space (next yr)", value: nextYearCapSpace)
             HStack(spacing: DSSpacing.sm) {
                 heroActionLink(title: "Roster Review", destination: .rosterEvaluation)
