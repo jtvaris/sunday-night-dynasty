@@ -189,6 +189,16 @@ struct PracticeSquadView: View {
                             .foregroundStyle(Color.textSecondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.bottom, DSSpacing.xxs)
+                    } else if ourSquad.count < PracticeSquadEngine.squadSize {
+                        // `squadSize` is a maximum, not a quota — a club carries
+                        // whoever it can find who is still squad-eligible, and
+                        // measured league-wide that is well under sixteen. Said
+                        // out loud so "8/16" reads as a roster and not as a hole.
+                        Text("Sixteen is the maximum, not a quota. Every club carries as many eligible men as the August market gives it — most of the league runs short of a full squad.")
+                            .font(.caption)
+                            .foregroundStyle(Color.textSecondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.bottom, DSSpacing.xxs)
                     }
                     ForEach(rows, id: \.id) { player in
                         row(player)
