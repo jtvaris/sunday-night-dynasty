@@ -101,6 +101,51 @@ enum ProspectFog {
     /// Convenience for sort closures.
     static func rank(_ prospect: CollegeProspect) -> Int { read(prospect).rank }
 
+    // MARK: - Whose work is this
+
+    /// The scout name `ScoutingEngine.applyPreScoutedData` stamps on the
+    /// baseline report the top ~250 of every class inherits at career creation.
+    ///
+    /// That pass is the sharpest hazard in this file's neighbourhood. It writes
+    /// `scoutedOverall`, `scoutGrade`, `scoutedPotential` and a report row for a
+    /// THIRD of the class before the user has spent a dollar or hired a scout —
+    /// so any surface that reads `scoutedOverall != nil` or
+    /// `!scoutingReports.isEmpty` and calls the answer "scouted by us" is
+    /// claiming work nobody in this building did. It is the previous regime's
+    /// paper: honest to read as "somebody once looked", never as "we know him".
+    ///
+    /// `ScoutEvaluationBudget.inheritedScoutName` is this same constant — the
+    /// money question ("does this report move the price ladder") and the
+    /// disclosure question ("does this report back what is on the screen") have
+    /// always had the same answer, and they must not drift into two spellings.
+    static let inheritedScoutName = "Previous Staff"
+
+    /// Reports THIS regime ordered — the inherited baseline excluded.
+    static func ownReportCount(_ prospect: CollegeProspect) -> Int {
+        prospect.scoutingReports.reduce(into: 0) {
+            $0 += ($1.scoutName == inheritedScoutName ? 0 : 1)
+        }
+    }
+
+    /// Whether anybody in the user's own building has filed on this man. The
+    /// predicate every "you have scouted N of the class" count belongs on.
+    static func hasOwnReport(_ prospect: CollegeProspect) -> Bool {
+        prospect.scoutingReports.contains { $0.scoutName != inheritedScoutName }
+    }
+
+    /// The band ONE report buys, centred on its observation: ±2 grades at
+    /// `reportCount` 1.
+    ///
+    /// Mirrors `ScoutingEngine.applyGradeBasedFields`' first-report branch,
+    /// which is the only thing in the build allowed to open a stored band. It
+    /// is exposed here for `CareerShellView`'s save-repair pass — a band an
+    /// earlier build fabricated has to be put back to the shape the writer
+    /// would have produced, not to some second opinion of what one report is
+    /// worth.
+    static func firstReportBand(centredOn grade: LetterGrade) -> GradeRange {
+        GradeRange(low: grade.shifted(by: -2), high: grade.shifted(by: 2), reportCount: 1)
+    }
+
     // MARK: - Measurables
 
     /// Height / weight / 40 times are public the moment a man runs them in

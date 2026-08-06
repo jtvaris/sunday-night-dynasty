@@ -2038,9 +2038,6 @@ struct CareerShellView: View {
         }
     }
 
-    /// Reconciles the legacy `scoutGrade` letter with the modern `scoutedOverallGrade`
-    /// range, and back-fills `scoutedOverallGrade` from `scoutedOverall` when missing.
-    /// Idempotent — safe to call on every load.
     /// Binds `FaceLibrary` to this career and backfills missing portraits.
     ///
     /// Mirrors `WeekAdvancer.backfillLegacyFaces` (which covers the advance
@@ -2098,23 +2095,88 @@ struct CareerShellView: View {
         ExtrasCatalog.shared.backfillOwnerFaces(owners)
     }
 
+    /// Career-scoped flag holding the band-repair version this save has had run.
+    /// Listed in `CareerScopedDefaults.keys` so deleting a save takes it along.
+    private static let prospectBandRepairKey = "prospectBandRepairVersion"
+
+    /// Bump to re-run the repair on saves that have already had the current one.
+    private static let prospectBandRepairVersion = 1
+
+    /// The honest stored band for a man NO report of this regime's backs.
+    ///
+    /// The inherited "Previous Staff" row is real paper, so it is worth exactly
+    /// what one report is worth — `ProspectFog.firstReportBand`, ±2 grades,
+    /// `reportCount` 1 — centred on the grade that row actually carries. A man
+    /// with no report at all gets no stored band: `effectiveOverallGrade` and
+    /// `ProspectFog.read` still derive a read from `scoutedOverall` on the fly,
+    /// and deriving it is not the same as asserting it into the store.
+    private func honestUnbackedBand(for prospect: CollegeProspect) -> GradeRange? {
+        guard let inherited = prospect.scoutingReports
+            .max(by: { $0.confidenceLevel < $1.confidenceLevel }) else { return nil }
+        let centre = inherited.overallLetterGrade
+            ?? LetterGrade.from(numericValue: inherited.overallGrade)
+        return ProspectFog.firstReportBand(centredOn: centre)
+    }
+
+    /// Pins the legacy `scoutGrade` letter to the modern `scoutedOverallGrade`
+    /// range — and REPAIRS the bands an earlier build of this same function
+    /// fabricated.
+    ///
+    /// ## What it used to do, and why it corrupted saves
+    ///
+    /// The old pass back-filled `scoutedOverallGrade` from the legacy
+    /// `scoutedOverall` using `GradeRange(grade:)` — a range whose `low == high`
+    /// **and** whose `reportCount` is **3**, i.e. the store's way of saying
+    /// "three reports have converged on exactly this letter".
+    /// `ScoutingEngine.applyPreScoutedData` sets `scoutedOverall` on the top
+    /// ~250 of every class at career creation, so the FIRST load of a brand new
+    /// save wrote a maximum-confidence, zero-width band onto a third of the
+    /// class off paper the user never ordered, and then persisted it.
+    ///
+    /// The second-order damage is worse than the display. With a band already
+    /// stored, `ScoutingEngine.applyGradeBasedFields` takes the
+    /// `GradeRange.incorporate(newGrade:)` branch instead of the first-report
+    /// branch — and `incorporate` at `reportCount >= 3` collapses straight back
+    /// to a single grade. A real report filed later could therefore NEVER open
+    /// the band to the ±2 it is supposed to buy: every one of those men stayed
+    /// pinned at pinpoint certainty for the life of the save, and the scouting
+    /// economy's whole "each report narrows the range" promise was dead on
+    /// arrival for exactly the men the user cares most about.
+    ///
+    /// ## What it does now
+    ///
+    /// * **It never invents a band.** Nothing needs one written to render a
+    ///   read: `CollegeProspect.effectiveOverallGrade` derives one from
+    ///   `scoutedOverall` on the fly, and `ProspectFog.read` widens it by
+    ///   `DraftIntel.scoutConfidence` before anybody sees it.
+    /// * **It repairs saves the old pass touched**, once. A prospect no report
+    ///   of this regime's backs gets the honest band (`honestUnbackedBand`) or
+    ///   no band at all.
+    /// * **It never touches a band that has a backing report.** The gate is
+    ///   `ProspectFog.hasOwnReport`, the same "scoutName != Previous Staff"
+    ///   test the Film Study pill and the evaluation price ladder already use,
+    ///   so a band three real reports converged on is left converged.
+    ///
+    /// Runs its repair ONCE per save, like `restoreDraftClassIfNeeded` and
+    /// `loadFaceLibrary` beside it — `loadShellData()` is also the post-advance
+    /// reload, and the repair is a full unpredicated walk of the class. The
+    /// `scoutGrade` pin below stays idempotent and runs every load, as it did.
     private func syncProspectGrades() {
         let cid = career.id
         let prospects = (try? modelContext.fetch(FetchDescriptor<CollegeProspect>(
             predicate: #Predicate { $0.careerID == cid }
         ))) ?? []
+        let repairedVersion: Int = CareerScopedDefaults.value(Self.prospectBandRepairKey) ?? 0
+        let needsRepair = repairedVersion < Self.prospectBandRepairVersion
         var changed = 0
 
         for prospect in prospects {
-            // 1. If the modern range is missing but a numeric/legacy grade exists,
-            //    seed it so all readers converge on the same letter.
-            if prospect.scoutedOverallGrade == nil {
-                if let ovr = prospect.scoutedOverall {
-                    let lg = LetterGrade.from(numericValue: ovr)
-                    prospect.scoutedOverallGrade = GradeRange(grade: lg)
-                    changed += 1
-                } else if let raw = prospect.scoutGrade, let lg = LetterGrade(rawValue: raw) {
-                    prospect.scoutedOverallGrade = GradeRange(grade: lg)
+            // 1. Repair: a persisted band with no work of this regime's behind
+            //    it is not evidence, it is the old back-fill's fabrication.
+            if needsRepair, !ProspectFog.hasOwnReport(prospect) {
+                let honest = honestUnbackedBand(for: prospect)
+                if prospect.scoutedOverallGrade != honest {
+                    prospect.scoutedOverallGrade = honest
                     changed += 1
                 }
             }
@@ -2132,6 +2194,9 @@ struct CareerShellView: View {
 
         if changed > 0 {
             try? modelContext.save()
+        }
+        if needsRepair {
+            CareerScopedDefaults.set(Self.prospectBandRepairVersion, Self.prospectBandRepairKey)
         }
     }
 }

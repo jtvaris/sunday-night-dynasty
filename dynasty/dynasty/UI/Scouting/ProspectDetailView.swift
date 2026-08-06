@@ -67,7 +67,7 @@ enum ScoutEvaluationBudget {
     /// The scout name `applyPreScoutedData` stamps on the baseline report the
     /// top of every class inherits at career creation. Paper the user never
     /// ordered, and it must not move his prices or his caps.
-    static let inheritedScoutName = "Previous Staff"
+    static let inheritedScoutName = ProspectFog.inheritedScoutName
 
     /// Reports that count against `maxReportsPerProspect` and the price
     /// ladder: the ones THIS regime bought. The inherited baseline is excluded
@@ -212,7 +212,17 @@ struct ProspectDetailView: View {
         return read.source == .scouts ? read.band : nil
     }
 
-    private var isScouted: Bool { prospect.scoutedOverall != nil }
+    /// Whether this building has a scout read on him at all — the gate on the
+    /// Scouting Report section, the starter comparison, and the wording of the
+    /// evaluation row.
+    ///
+    /// Routed through `ProspectFog` rather than reading `scoutedOverall != nil`:
+    /// the fog is the one authority on whether there is a scout read to show,
+    /// and every list on the way to this card has already been ported to it. The
+    /// raw field says "the generator ranked him top-250", which is a different
+    /// question that happens to have the same answer in season 1 and a
+    /// different one from season 2 on.
+    private var isScouted: Bool { ProspectFog.read(prospect).source == .scouts }
     private var hasCombine: Bool {
         prospect.fortyTime != nil || prospect.benchPress != nil ||
         prospect.verticalJump != nil || prospect.broadJump != nil ||
@@ -910,8 +920,14 @@ struct ProspectDetailView: View {
                         }
                         .frame(maxWidth: .infinity)
 
-                        // Qualitative comparison
-                        let diff = (prospect.scoutedOverall ?? 0) - starter.overall
+                        // Qualitative comparison, off the SAME band printed two
+                        // inches to the left. It used to subtract the raw
+                        // `scoutedOverall`, which is sharper than the fogged
+                        // band beside it — so a card showing "B-/A-" could
+                        // still label the gap from a number the user is not
+                        // entitled to. No band, no verdict.
+                        let diff = effectiveOverallGrade
+                            .map { ProspectFog.approximateValue(of: $0.midGrade) - starter.overall } ?? 0
                         let compLabel = starterComparisonLabel(diff)
                         let compColor = starterComparisonColor(diff)
                         VStack(spacing: 2) {
@@ -1136,7 +1152,16 @@ struct ProspectDetailView: View {
                         .font(.body.weight(.semibold))
                         .foregroundStyle(potentialLabelColor(potentialLabel))
                 }
-            } else if let potential = prospect.scoutedPotential {
+            } else if let potential = prospect.scoutedPotential,
+                      ProspectFog.hasOwnReport(prospect) {
+                // Legacy fallback, for saves whose reports predate
+                // `potentialLabel`. Gated on work of THIS regime's: the only
+                // other writer of `scoutedPotential` is
+                // `ScoutingEngine.applyPreScoutedData`, which guesses the top 50
+                // of the class within ±8 of the truth — and this row renders it
+                // as one exact letter, with no band and no attribution. That is
+                // the previous staff's guess printed as your department's
+                // finding.
                 let potentialGrade = LetterGrade.from(numericValue: potential)
                 LabeledContent("Potential") {
                     Text(potentialGrade.rawValue)
@@ -2273,11 +2298,17 @@ struct ProspectDetailView: View {
                 )
             }
 
-            if isScouted {
+            // "Scouted (N reports)" counts reports THIS regime ordered. Off
+            // `scoutingReports.count` it counted the inherited "Previous Staff"
+            // freebie too, so a brand new save's top 250 all opened with a green
+            // tick and "Scouted (1 report)" against work nobody had done —
+            // beside a Film Study pill that correctly read dark.
+            let ownReports = ProspectFog.ownReportCount(prospect)
+            if ownReports > 0 {
                 HStack(spacing: 6) {
                     Image(systemName: "checkmark.seal.fill")
                         .foregroundStyle(Color.success)
-                    Text("Scouted (\(prospect.scoutingReports.count) report\(prospect.scoutingReports.count == 1 ? "" : "s"))")
+                    Text("Scouted (\(ownReports) report\(ownReports == 1 ? "" : "s"))")
                         .foregroundStyle(Color.success)
                     // R27: attribution + accuracy indicator for the latest report
                     if let scoutedBy = prospect.latestScoutName {

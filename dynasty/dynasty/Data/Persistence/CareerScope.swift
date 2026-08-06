@@ -505,6 +505,14 @@ enum CareerScopedDefaults {
         // the purge set, so it outlived the save that armed it and a brand new
         // career could open on the previous one's reveal.
         "rookieClassRevealPendingSeason",
+        // `CareerShellView.prospectBandRepairKey` (#124) — the version of the
+        // scouted-band repair this save has had run. An earlier build of
+        // `syncProspectGrades` persisted a maximum-confidence band onto every
+        // pre-scouted prospect; the repair walks the class once and puts the
+        // unbacked ones back to what one report is actually worth. Career
+        // state, so a deleted save must not leave a "already repaired" stamp
+        // behind for the next career that reuses the slot.
+        "prospectBandRepairVersion",
         "scoutingPendingTab",
         "negotiationLockedPlayerIDs",
         // TODO §5.5 — `ContractIncentiveRegistry.defaultsKey`. Listed so a

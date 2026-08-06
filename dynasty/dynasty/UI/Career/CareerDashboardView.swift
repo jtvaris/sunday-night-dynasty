@@ -4311,10 +4311,12 @@ struct CareerDashboardView: View {
         )
     }
 
-    /// Share of this cycle's class with a filed scouting report.
+    /// Share of this cycle's class with a scouting report THIS regime ordered.
     ///
-    /// Counted off `scoutingReports` rather than `scoutedOverall` so this card
-    /// and the scouting hub's own header mean the same thing by "scouted".
+    /// Counted off filed reports rather than `scoutedOverall` so this card and
+    /// the scouting hub's own header mean the same thing by "scouted", and
+    /// through `ProspectFog.hasOwnReport` so neither of them counts the
+    /// inherited "Previous Staff" baseline as work the user did (#124).
     ///
     /// #fleet review F16: over the DECLARING class, which is the hub header's
     /// denominator (`ScoutingHubView.loadData` filters `isDeclaringForDraft`
@@ -4324,7 +4326,7 @@ struct CareerDashboardView: View {
     private func computeDraftClassScoutedPercent() -> Int {
         let draftClass = WeekAdvancer.currentDraftClass.filter { $0.isDeclaringForDraft }
         guard !draftClass.isEmpty else { return 0 }
-        let scouted = draftClass.filter { !$0.scoutingReports.isEmpty }.count
+        let scouted = draftClass.filter(ProspectFog.hasOwnReport).count
         return Int((Double(scouted) / Double(draftClass.count) * 100).rounded())
     }
 

@@ -437,11 +437,16 @@ struct ScoutingHubView: View {
 
     /// Prospects your building has actually filed on.
     ///
-    /// Counted off `scoutingReports` rather than `scoutedOverall` so this header
-    /// and the Draft Prep card underneath it mean the same thing by "scouted" —
-    /// the card has always counted filed reports.
+    /// Counted off filed reports rather than `scoutedOverall` so this header and
+    /// the Draft Prep card underneath it mean the same thing by "scouted" — and
+    /// off `ProspectFog.hasOwnReport` rather than `!scoutingReports.isEmpty`,
+    /// because the second test counts the inherited "Previous Staff" baseline
+    /// `ScoutingEngine.applyPreScoutedData` hands the top ~250 of every class.
+    /// A brand new save therefore opened this header at ~88 % of the class
+    /// "scouted" before the user had hired a scout, which is the exact opposite
+    /// of what a coverage number is for.
     private var scoutedCount: Int {
-        prospects.filter { !$0.scoutingReports.isEmpty }.count
+        prospects.filter(ProspectFog.hasOwnReport).count
     }
 
     /// Filed reports and their share of the class, walked ONCE per chrome pass.

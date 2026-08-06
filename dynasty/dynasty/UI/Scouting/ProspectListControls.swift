@@ -988,27 +988,27 @@ enum ProspectColumns {
 
     /// The eight mental grade BANDS an interview and filed tape write.
     ///
-    /// An interview writes mental grade bands without touching `scoutedOverall`,
-    /// so this block follows the grades rather than the overall read.
+    /// Driven per key by `ProspectFog.mentalDisclosure`, never by a row-level
+    /// "is he scouted" flag. The gate here used to be
+    /// `scoutedOverall != nil || !grades.isEmpty`, and the first half of that is
+    /// `ScoutingEngine.applyPreScoutedData`'s — set on the top ~250 of every
+    /// class before the user has ordered anything. So whether a man's mental
+    /// block read "?" (work you have not bought) or "--" (nothing to say here)
+    /// was decided by where the generator ranked him, which is neither of those
+    /// two sentences.
+    ///
+    /// Per-key is the only honest unit anyway, and it is the same discipline the
+    /// prospect card's grid uses (#110): a filed report grades all eight, an
+    /// interview reads five, and the keys nobody has bought are drawn DARK
+    /// rather than dropped or blanket-dashed — the hole is the thing a user
+    /// scans a board looking for.
     @ViewBuilder
     private static func mentalCells(_ prospect: CollegeProspect) -> some View {
-        let grades = prospect.scoutedMentalGrades
-        let hasRead = prospect.scoutedOverall != nil || !(grades ?? [:]).isEmpty
-        Group {
-            if hasRead {
-                // 8 columns (LRN + CMP added) — widths 26 so the row fits.
-                ForEach(ProspectFog.mentalKeys, id: \.self) { key in
-                    ProspectGradeBandCell(grade: grades?[key], label: key)
-                        .frame(width: 26, alignment: .center)
-                }
-            } else {
-                ForEach(0..<ProspectFog.mentalKeys.count, id: \.self) { _ in
-                    Text("--")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(Color.textTertiary)
-                        .frame(width: 26, alignment: .center)
-                }
-            }
+        // 8 columns (LRN + CMP added) — widths 26 so the row fits.
+        let disclosure = ProspectFog.mentalDisclosure(prospect)
+        ForEach(ProspectFog.mentalKeys, id: \.self) { key in
+            ProspectGradeBandCell(grade: disclosure[key], label: key)
+                .frame(width: 26, alignment: .center)
         }
     }
 
@@ -1018,26 +1018,25 @@ enum ProspectColumns {
     /// the writer (`ScoutingEngine.generatePositionSkillGrades`). Four columns is
     /// a row's budget; a quarterback's canonical block is six keys long, so the
     /// tables show the first four and his card carries the rest.
+    /// Same discipline as ``mentalCells``: the block is per key, off
+    /// `ProspectFog.positionSkillDisclosure`, and the keys are always LABELLED
+    /// even when dark. The old `scoutedOverall != nil` branch printed four
+    /// anonymous dashes for an unscouted man, which threw away the one thing
+    /// that costs nothing to say — WHICH four skills this position is judged on.
+    /// (Reading `positionSkillKeys(for:)` is reading the position group, which
+    /// is on his jersey, never the attribute payload.)
     @ViewBuilder
     private static func positionCells(_ prospect: CollegeProspect) -> some View {
+        let disclosure = ProspectFog.positionSkillDisclosure(prospect)
+        let keys = Array(ProspectFog.positionSkillKeys(for: prospect).prefix(4))
         Group {
-            if prospect.scoutedOverall != nil {
-                let keys = Array(ProspectFog.positionSkillKeys(for: prospect).prefix(4))
-                ForEach(Array(keys.enumerated()), id: \.offset) { _, key in
-                    ProspectGradeBandCell(grade: prospect.scoutedPositionGrades?[key], label: key)
-                        .frame(width: 32, alignment: .center)
-                }
-                if keys.count < 4 {
-                    ForEach(0..<(4 - keys.count), id: \.self) { _ in
-                        Spacer().frame(width: 32)
-                    }
-                }
-            } else {
-                ForEach(0..<4, id: \.self) { _ in
-                    Text("--")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(Color.textTertiary)
-                        .frame(width: 32, alignment: .center)
+            ForEach(Array(keys.enumerated()), id: \.offset) { _, key in
+                ProspectGradeBandCell(grade: disclosure[key], label: key)
+                    .frame(width: 32, alignment: .center)
+            }
+            if keys.count < 4 {
+                ForEach(0..<(4 - keys.count), id: \.self) { _ in
+                    Spacer().frame(width: 32)
                 }
             }
         }

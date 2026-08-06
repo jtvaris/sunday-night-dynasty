@@ -835,11 +835,13 @@ struct BigBoardView<Header: View>: View {
     /// same reason `boardCompositeScore`'s twin was: fail soft, never fall back
     /// to the truth.
     private func bestAvailableGradeText(_ prospect: CollegeProspect) -> String {
-        if let gradeRange = prospect.scoutedOverallGrade {
-            return gradeRange.displayText
-        }
-        guard let scouted = prospect.scoutedOverall else { return "\u{2014}" }
-        return LetterGrade.from(numericValue: scouted).rawValue
+        // Through the fog, not around it. Reading `scoutedOverallGrade` straight
+        // skipped the confidence widening `ProspectFog.read` applies, so this
+        // strip printed a pinpoint "B+" for a man whose own board row, two
+        // inches away, correctly read "B-/A-" — the same prospect, two
+        // certainties, on one screen.
+        let read = ProspectFog.read(prospect)
+        return read.source == .scouts ? read.text : "\u{2014}"
     }
 
     /// Format the team's draft picks for display.
