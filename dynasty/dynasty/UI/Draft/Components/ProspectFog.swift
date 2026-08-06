@@ -407,6 +407,141 @@ enum ProspectFog {
         LetterGrade.allCases.min(by: { abs($0.rank - rank) < abs($1.rank - rank) }) ?? .c
     }
 
+    // MARK: - Attribute-grade disclosure
+
+    /// What the club's work has actually produced on one prospect's attribute
+    /// grades — and, by omission, what it has not.
+    ///
+    /// `scoutedMentalGrades` and `scoutedPositionGrades` are written by exactly
+    /// two things, and nothing else in the build touches them:
+    ///
+    /// * **A filed report** — `ScoutingEngine.applyGradeBasedFields`, reached
+    ///   through `applyReport`. Every instrument that files one goes through it:
+    ///   the regional tape assignment, Senior Bowl week, the combine trip and the
+    ///   pro-day tour. It writes all eight mental keys AND the position block.
+    /// * **An interview** — `ScoutingEngine.revealMentalGradesFromInterview`,
+    ///   which writes the five keys in `interviewRevealedMentalKeys` and nothing
+    ///   else. A meeting reads a man's head, never his hands, so it never touches
+    ///   a position skill.
+    ///
+    /// A band on a screen therefore always has an instrument behind it. What the
+    /// prospect card was missing was the other half of that sentence: it *dropped*
+    /// the keys nobody had bought instead of drawing them dark, so eight grades
+    /// sat directly above two empty "Interview" / "Pro Day" chips and read as a
+    /// leak of the generator's own numbers. This type carries both halves.
+    struct AttributeDisclosure {
+        /// The bands the work has produced. Keys absent from here are work the
+        /// user has not done — never data the fog is hiding from him.
+        let grades: [String: GradeRange]
+        /// Reports on file. The tape half of the attribution line.
+        let reportCount: Int
+        /// Whether a meeting has been held. The MEET half.
+        let interviewed: Bool
+
+        var hasAny: Bool { !grades.isEmpty }
+
+        subscript(key: String) -> GradeRange? { grades[key] }
+
+        /// Which key is still dark, out of the keys a caller renders.
+        func unread(of keys: [String]) -> [String] {
+            keys.filter { grades[$0] == nil }
+        }
+
+        /// "2 reports on file · interview" — what paid for what is on the screen.
+        /// `nil` when there is nothing on the screen to attribute.
+        var attribution: String? {
+            guard hasAny else { return nil }
+            var parts: [String] = []
+            if reportCount > 0 {
+                parts.append("\(reportCount) report\(reportCount == 1 ? "" : "s") on file")
+            }
+            if interviewed { parts.append("interview") }
+            guard !parts.isEmpty else { return nil }
+            return parts.joined(separator: " \u{00B7} ")
+        }
+    }
+
+    /// The eight mental keys in board order. Matches
+    /// `ScoutingEngine.generateMentalGrades`, which is what writes them.
+    static let mentalKeys = ["AWR", "DEC", "WRK", "CLT", "COA", "LDR", "LRN", "CMP"]
+
+    /// The mental block the user has bought on `prospect`.
+    static func mentalDisclosure(_ prospect: CollegeProspect) -> AttributeDisclosure {
+        AttributeDisclosure(
+            grades: prospect.scoutedMentalGrades ?? [:],
+            reportCount: prospect.scoutingReports.count,
+            interviewed: prospect.interviewCompleted
+        )
+    }
+
+    /// The position-skill block the user has bought on `prospect`. Never carries
+    /// the interview half — see ``AttributeDisclosure``.
+    static func positionSkillDisclosure(_ prospect: CollegeProspect) -> AttributeDisclosure {
+        AttributeDisclosure(
+            grades: prospect.scoutedPositionGrades ?? [:],
+            reportCount: prospect.scoutingReports.count,
+            interviewed: false
+        )
+    }
+
+    /// The position-skill keys a report writes for `prospect`, in card order.
+    ///
+    /// Copied from `ScoutingEngine.generatePositionSkillGrades` — the writer is
+    /// the authority on the spelling. Reading `truePositionAttributes` here is
+    /// reading the enum CASE (the position group, which is on his jersey), never
+    /// the payload.
+    ///
+    /// Three surfaces had drifted from the writer and were looking up keys that
+    /// can never exist: `SAc` / `DAc` for a quarterback (written `SAC` / `DAC`)
+    /// and `TAK` for a linebacker (written `TKL`). Every one of those lookups
+    /// missed on a fully scouted man.
+    static func positionSkillKeys(for prospect: CollegeProspect) -> [String] {
+        switch prospect.truePositionAttributes {
+        case .quarterback:    return ["ARM", "SAC", "MAC", "DAC", "PKT", "SCR"]
+        case .wideReceiver:   return ["RTE", "CTH", "RLS", "SPC"]
+        case .runningBack:    return ["VIS", "ELU", "BTK", "RCV"]
+        case .tightEnd:       return ["BLK", "CTH", "RTE", "SPD"]
+        case .offensiveLine:  return ["RBK", "PBK", "PUL", "ANC"]
+        case .defensiveLine:  return ["PRU", "BSH", "PWR", "FIN"]
+        case .linebacker:     return ["TKL", "ZCV", "MCV", "BLZ"]
+        case .defensiveBack:  return ["MCV", "ZCV", "PRS", "BSK"]
+        case .kicking:        return ["PWR", "ACC"]
+        }
+    }
+
+    /// Whether an interview can read `key` on its own — the five in
+    /// `ScoutingEngine.interviewRevealedMentalKeys`. `DEC`, `CLT` and `COA` are
+    /// deliberately not among them: decision-making under a live rush, playing
+    /// big in a big moment and taking coaching across a season are tape
+    /// questions, and forty minutes in a room cannot answer them.
+    static func interviewReads(_ key: String) -> Bool {
+        ScoutingEngine.interviewRevealedMentalKeys.contains(key)
+    }
+
+    /// One line naming what would fill the DARK cells of a mental block, given
+    /// exactly which keys are dark.
+    ///
+    /// Per-key rather than blanket on purpose: a user looking at three empty
+    /// cells that read `DEC` / `CLT` / `COA` must not be told to spend an
+    /// interview slot, because the room cannot answer any of them.
+    static func mentalUnlockHint(forUnread keys: [String]) -> String {
+        let prefix = "Dark cells are work you have not bought \u{2014} "
+        if keys.allSatisfy(interviewReads) {
+            return prefix + "a scouting report or an interview opens them."
+        }
+        if keys.contains(where: interviewReads) {
+            return prefix + "a report grades all eight; an interview reads AWR, LRN, CMP, LDR and WRK."
+        }
+        return prefix + "decision-making, clutch and coachability are tape questions, so only a scouting report opens them."
+    }
+
+    /// The same line for a position block. There is only one instrument here:
+    /// every filed report writes the whole block, and nothing else writes any of
+    /// it — a meeting never touches it, and a pro day only counts because the
+    /// tour files a `.proDay` report.
+    static let positionSkillUnlockHint =
+        "Dark cells are work you have not bought \u{2014} any filed report (regional tape, the combine trip, a pro day) grades every skill."
+
     // MARK: - Risk-flag disclosure
 
     /// How much of a prospect's medical / character file the user may read.

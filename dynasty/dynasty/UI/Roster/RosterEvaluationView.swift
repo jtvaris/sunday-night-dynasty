@@ -92,6 +92,16 @@ struct RosterEvaluationView: View {
     @State private var editingPriority: String = "none"
     @State private var editingOwnAssessment: String = "none"
 
+    // MARK: - #108: Auto-Set Priorities
+    /// Raised only when at least one group already carries a hand-set priority —
+    /// auto-set is a one-tap RESET, so overwriting the user's own work has to be
+    /// asked for. With nothing set the button just runs.
+    @State private var showAutoPriorityConfirm = false
+    /// One-line report of what auto-set actually did ("4 high · 3 medium · 2 low").
+    /// The nine rows it fills are mostly below the fold, so without this the wand
+    /// looks like it did nothing — same reasoning as the Depth Chart's toast.
+    @State private var autoPriorityMessage: String?
+
     // #251: Expandable key decision rows
     @State private var expandedDecisions: Set<UUID> = []
 
@@ -134,6 +144,20 @@ struct RosterEvaluationView: View {
         } else {
             ownAssessments[groupID] = ownAssessment
         }
+        persistGroupEvaluations(notes: notes, priorities: priorities, ownAssessments: ownAssessments)
+    }
+
+    /// The single writer for the three group-keyed evaluation dictionaries.
+    ///
+    /// Both the manual edit sheet (`saveNote`) and Auto-Set Priorities (#108) go
+    /// through here, so the stored JSON can only ever be written one way: three
+    /// `[groupID: String]` maps, a key present only when its value is set. Two
+    /// encoders writing the same keys is how storage shapes drift apart.
+    private func persistGroupEvaluations(
+        notes: [String: String],
+        priorities: [String: String],
+        ownAssessments: [String: String]
+    ) {
         if let data = try? JSONEncoder().encode(notes) { rosterNotesJSON = String(data: data, encoding: .utf8) ?? "{}" }
         if let data = try? JSONEncoder().encode(priorities) { rosterPrioritiesJSON = String(data: data, encoding: .utf8) ?? "{}" }
         if let data = try? JSONEncoder().encode(ownAssessments) { rosterOwnAssessmentsJSON = String(data: data, encoding: .utf8) ?? "{}" }
@@ -170,6 +194,17 @@ struct RosterEvaluationView: View {
         .task { loadData() }
         .sheet(item: $editingGroup) { group in
             rosterNoteSheet(group: group)
+        }
+        // #108: only shown when auto-set would overwrite hand-set priorities.
+        .confirmationDialog(
+            "Overwrite \(prioritiesSetCount) priorit\(prioritiesSetCount == 1 ? "y" : "ies") you set by hand?",
+            isPresented: $showAutoPriorityConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Auto-Set All Priorities") { applyAutoPriorities() }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Every position group gets a priority from its grades, depth and expiring contracts. Your notes and your own assessments are not changed.")
         }
     }
 
@@ -400,20 +435,204 @@ struct RosterEvaluationView: View {
         rosterPriorities.values.filter { $0 != "none" }.count
     }
 
+    // MARK: - #108: Auto-Set Priorities
+
+    /// Secondary action next to the "Priorities set: N/M" counter.
+    ///
+    /// Styled as the screen's gold-outline secondary action (same fill/stroke as
+    /// "View Player Details"), not as a primary button: the hand-set priority is
+    /// still the real one, this only saves the user nine sheet round-trips.
+    private var autoSetPrioritiesButton: some View {
+        Button {
+            if prioritiesSetCount > 0 {
+                showAutoPriorityConfirm = true
+            } else {
+                applyAutoPriorities()
+            }
+        } label: {
+            Label(isIPad ? "Auto-Set Priorities" : "Auto-Set", systemImage: "wand.and.stars")
+                .labelStyle(.titleAndIcon)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(Color.accentGold)
+                .lineLimit(1)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.accentGold.opacity(0.1))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .strokeBorder(Color.accentGold.opacity(0.35), lineWidth: 1)
+                        )
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Auto-set priorities")
+        .accessibilityHint("Fills a priority for every position group from its grades, depth and expiring contracts. You can still change any of them by hand.")
+    }
+
+    /// Fills a priority for EVERY position group in one tap (#108).
+    ///
+    /// Overwrites priorities only. `rosterNotes` and `rosterOwnAssessments` are
+    /// re-written byte-identical through the shared writer, so a group the user
+    /// annotated keeps its note and its own assessment. Because the heuristic
+    /// never returns `"none"`, every group ends up keyed and the counter reads
+    /// M/M; the write goes through `CareerScopedDefaults`, whose change beacon
+    /// re-renders the rows exactly as a manual save does.
+    private func applyAutoPriorities() {
+        // Deficit ranking is the same need evidence the draft board and free
+        // agency read (DraftEngine.teamNeedDeficits) — not modified, just asked.
+        let deficits = DraftEngine.teamNeedDeficits(roster: players, limit: 5)
+        var deficitRanks: [Position: Int] = [:]
+        for (index, position) in deficits.enumerated() where deficitRanks[position] == nil {
+            deficitRanks[position] = index
+        }
+
+        var priorities = rosterPriorities
+        var counts: [String: Int] = ["high": 0, "medium": 0, "low": 0]
+        for group in EvalPositionGroup.allGroups {
+            let priority = autoPriority(for: group, deficitRanks: deficitRanks)
+            priorities[group.id] = priority
+            counts[priority, default: 0] += 1
+        }
+
+        persistGroupEvaluations(
+            notes: rosterNotes,
+            priorities: priorities,
+            ownAssessments: rosterOwnAssessments
+        )
+
+        autoPriorityMessage = "Set all \(EvalPositionGroup.allGroups.count) groups — "
+            + "\(counts["high"] ?? 0) high · \(counts["medium"] ?? 0) medium · \(counts["low"] ?? 0) low. "
+            + "Tap any row to adjust. Notes and your own assessments were left alone."
+    }
+
+    /// Need → priority for one position group.
+    ///
+    /// Points, all from signals this screen already computes:
+    ///
+    /// | Signal                                                  | Score |
+    /// |---------------------------------------------------------|-------|
+    /// | Starter grade D or F (no starter-quality body)           |  +3   |
+    /// | Starter grade C or C- (below-average starter)            |  +1   |
+    /// | Depth grade D or F (one injury from a hole)              |  +1   |
+    /// | Position in `teamNeedDeficits` top 3                     |  +2   |
+    /// | Position in `teamNeedDeficits` rank 4-5                  |  +1   |
+    /// | A projected starter's contract expires this year         |  +1   |
+    /// | Starters average past their positional peak age          |  +1   |
+    /// | Group already grades as a Strength (A starter, B+ depth) |  -2   |
+    ///
+    /// Bands: **3+ → high, 1-2 → medium, ≤0 → low.** So a D/F starter alone is
+    /// high, a soft starter or thin bench alone is medium, and a healthy group
+    /// is low — never "none", so one tap really does complete the counter.
+    ///
+    /// Special teams is capped at medium: `DraftEngine` weights K/P at 0.3 of a
+    /// premium position, and a kicker room grading out at D should never be the
+    /// default headline priority of an offseason.
+    private func autoPriority(for group: EvalPositionGroup, deficitRanks: [Position: Int]) -> String {
+        let groupPlayers = players.filter { group.positions.contains($0.position) }
+        let isDefensive = group.positions.first?.side == .defense
+        let grades = PositionGradeCalculator.calculatePositionGrades(
+            players: groupPlayers,
+            positions: group.positions,
+            scheme: isDefensive ? defensiveScheme : nil
+        )
+
+        var score = 0
+
+        // Starter quality.
+        if ["D", "F"].contains(grades.starterGrade) {
+            score += 3
+        } else if ["C", "C-"].contains(grades.starterGrade) {
+            score += 1
+        }
+
+        // Depth behind them.
+        if ["D", "F"].contains(grades.depthGrade) {
+            score += 1
+        }
+
+        // Roster-count / quality deficit, ranked league-style.
+        if let rank = group.positions.compactMap({ deficitRanks[$0] }).min() {
+            score += rank < 3 ? 2 : 1
+        }
+
+        // Contract churn: a starter about to walk is a need next spring.
+        // Scheme-aware, same as the grades above — a 3-4 front tests a
+        // different number of DL "starters" than a 4-3 does.
+        let starterCount = isDefensive
+            ? PositionGradeCalculator.starterCount(for: group.positions, scheme: defensiveScheme)
+            : PositionGradeCalculator.starterCount(for: group.positions)
+        let byOVR = groupPlayers.sorted { $0.overall > $1.overall }
+        if byOVR.prefix(starterCount).contains(where: { $0.contractYearsRemaining <= 1 }) {
+            score += 1
+        }
+
+        // Aging starters — same peak-age test the staff badge uses.
+        let starters = Array(byOVR.prefix(starterCount))
+        if !starters.isEmpty {
+            let avgAge = starters.map(\.age).reduce(0, +) / starters.count
+            let peakUpper = group.positions.map { $0.peakAgeRange.upperBound }.reduce(0, +) / max(group.positions.count, 1)
+            if avgAge > peakUpper { score += 1 }
+        }
+
+        // Already a strength — the same A-starter / B-depth test as the row badge.
+        let starterIsA = grades.starterGrade.hasPrefix("A")
+        let depthIsBOrBetter = grades.depthGrade.hasPrefix("A") || grades.depthGrade.hasPrefix("B")
+        if starterIsA && depthIsBOrBetter { score -= 2 }
+
+        let isSpecialTeams = group.positions.first?.side == .specialTeams
+        if score >= 3 { return isSpecialTeams ? "medium" : "high" }
+        if score >= 1 { return "medium" }
+        return "low"
+    }
+
     private var positionGradesSection: some View {
         sectionCard(title: "Position Group Grades", icon: "chart.bar.doc.horizontal") {
             VStack(spacing: 0) {
                 // #249: Priorities intro text and progress
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Setting priorities affects draft board rankings and scouting focus")
-                        .font(.caption)
-                        .foregroundStyle(Color.textSecondary)
-                    Text("Priorities set: \(prioritiesSetCount)/\(EvalPositionGroup.allGroups.count) position groups")
-                        .font(.caption.weight(.semibold).monospacedDigit())
-                        .foregroundStyle(prioritiesSetCount == EvalPositionGroup.allGroups.count ? Color.success : Color.accentGold)
+                // #108: Auto-Set sits with the counter it moves to M/M.
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .top, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Setting priorities affects draft board rankings and scouting focus")
+                                .font(.caption)
+                                .foregroundStyle(Color.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text("Priorities set: \(prioritiesSetCount)/\(EvalPositionGroup.allGroups.count) position groups")
+                                .font(.caption.weight(.semibold).monospacedDigit())
+                                .foregroundStyle(prioritiesSetCount == EvalPositionGroup.allGroups.count ? Color.success : Color.accentGold)
+                        }
+
+                        Spacer(minLength: 4)
+
+                        autoSetPrioritiesButton
+                    }
+
+                    if let message = autoPriorityMessage {
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: "checkmark.seal.fill")
+                                .font(.caption)
+                                .foregroundStyle(Color.success)
+                            Text(message)
+                                .font(.caption)
+                                .foregroundStyle(Color.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.success.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .strokeBorder(Color.success.opacity(0.4), lineWidth: 1)
+                        )
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
+                .animation(.easeInOut(duration: 0.2), value: autoPriorityMessage)
 
                 Divider().overlay(Color.surfaceBorder)
 
@@ -470,6 +689,9 @@ struct RosterEvaluationView: View {
             editingPriority = rosterPriorities[group.id] ?? "none"
             editingOwnAssessment = rosterOwnAssessments[group.id] ?? "none"
             editingGroup = group
+            // The auto-set report describes the state the user is about to edit
+            // by hand, so it stops being true the moment they open a group.
+            autoPriorityMessage = nil
         } label: {
             HStack(alignment: .center) {
                 // Group label
@@ -539,14 +761,28 @@ struct RosterEvaluationView: View {
                     }
                     .frame(minWidth: 60, alignment: .trailing)
 
-                    // Own assessment (user's)
+                    // Own assessment (user's) + the priority set for the group.
+                    // The priority badge is what makes Auto-Set (#108) visible on
+                    // the row itself — it used to live only inside the sheet.
                     Group {
-                        if let ownAssessment = rosterOwnAssessments[group.id], ownAssessment != "none" {
-                            needBadge(label: ownAssessment, color: ownAssessmentColor(ownAssessment), small: false)
-                        } else {
+                        let storedAssessment = rosterOwnAssessments[group.id]
+                        let storedPriority = rosterPriorities[group.id]
+                        let ownAssessment: String? = storedAssessment == "none" ? nil : storedAssessment
+                        let priority: String? = storedPriority == "none" ? nil : storedPriority
+
+                        if ownAssessment == nil && priority == nil {
                             Text("—")
                                 .font(.system(size: 9, weight: .medium))
                                 .foregroundStyle(Color.textTertiary)
+                        } else {
+                            VStack(alignment: .trailing, spacing: 2) {
+                                if let ownAssessment {
+                                    needBadge(label: ownAssessment, color: ownAssessmentColor(ownAssessment), small: false)
+                                }
+                                if let priority {
+                                    priorityBadge(priority)
+                                }
+                            }
                         }
                     }
                     .frame(minWidth: 60, alignment: .trailing)
@@ -1595,6 +1831,30 @@ struct RosterEvaluationView: View {
         case "low":    return .accentBlue
         default:       return .clear
         }
+    }
+
+    /// Short row-width form of the stored priority value.
+    private func priorityLabel(_ priority: String) -> String {
+        switch priority {
+        case "high":   return "HIGH"
+        case "medium": return "MED"
+        case "low":    return "LOW"
+        default:       return ""
+        }
+    }
+
+    /// Priority chip for a group row. Same capsule geometry as `needBadge` so the
+    /// two badges in the "You" column read as one stack.
+    private func priorityBadge(_ priority: String) -> some View {
+        let color = priorityColor(priority)
+        return Text(priorityLabel(priority))
+            .font(.system(size: DSType.Size.micro, weight: .heavy))
+            .foregroundStyle(color)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 1)
+            .background(color.opacity(0.15), in: Capsule())
+            .overlay(Capsule().strokeBorder(color.opacity(0.4), lineWidth: 1))
+            .accessibilityLabel("\(priorityLabel(priority)) priority")
     }
 
     // MARK: - Eval Modal: Roster List for the Group

@@ -631,6 +631,10 @@ struct CoachingStaffView: View {
         var hires = 0
         var spent = 0
 
+        // Jobs the planned allocation could not buy, kept in priority order
+        // for the second pass below.
+        var unfilled: [StaffVacancy] = []
+
         for vacancy in plan {
             autoHireStatus = "Hiring \(vacancy.displayName)…"
             await Task.yield()
@@ -638,45 +642,47 @@ struct CoachingStaffView: View {
             let potKey = pot(for: vacancy)
             let allocation = (allocations[vacancy.id] ?? 0) + (carry[potKey] ?? 0)
             let cap = min(wallet[potKey] ?? 0, allocation)
-            guard cap > 0 else { continue }
-
-            switch vacancy {
-            case .coach(let role):
-                // Task #96: auto-hire shops the same market the manual sheet
-                // does — real out-of-work coaches of this exact title first.
-                let pool = CoachMarketEngine.availableBench(allCoaches).filter { $0.role == role }
-                    + CoachingEngine.generateCoachCandidates(
-                        role: role,
-                        count: 20,
-                        teamBudget: coachingBudget,
-                        teamWins: team?.wins ?? 8,
-                        teamReputation: career.reputation
-                    )
-                guard let pick = bestAffordableCoach(in: pool, cap: cap) else { continue }
-                hire(coach: pick, teamID: teamID)
-                wallet[potKey] = (wallet[potKey] ?? 0) - pick.salary
-                carry[potKey] = max(0, allocation - pick.salary)
-                spent += pick.salary
-                hires += 1
-
-            case .scout(let role):
-                // Same seeded pool the manual sheet shows for this team/role/season.
-                let pool = CoachingEngine.generateScoutCandidates(
-                    role: role,
-                    count: 20,
-                    seed: CoachingEngine.scoutPoolSeed(
-                        teamID: teamID,
-                        role: role,
-                        season: career.currentSeason
-                    )
-                )
-                guard let pick = bestAffordableScout(in: pool, cap: cap) else { continue }
-                hire(scout: pick, teamID: teamID)
-                wallet[potKey] = (wallet[potKey] ?? 0) - pick.salary
-                carry[potKey] = max(0, allocation - pick.salary)
-                spent += pick.salary
-                hires += 1
+            guard cap > 0, let salary = signBest(for: vacancy, cap: cap, teamID: teamID) else {
+                unfilled.append(vacancy)
+                continue
             }
+            wallet[potKey] = (wallet[potKey] ?? 0) - salary
+            carry[potKey] = max(0, allocation - salary)
+            spent += salary
+            hires += 1
+        }
+
+        // Task #106: second pass. A job whose allocation lands under every
+        // asking price on the market — the assistant HC, funded off the tail
+        // of the coaching plan — used to be reported "no room in the budget"
+        // while his pot still held millions. Re-offer whatever the first pass
+        // left in the wallet, still most decisive job first, so the only roles
+        // that stay open are the ones the money genuinely cannot reach.
+        var stillOpenByPot: [StaffPot: Int] = [:]
+        for vacancy in unfilled { stillOpenByPot[pot(for: vacancy), default: 0] += 1 }
+
+        for vacancy in unfilled {
+            let potKey = pot(for: vacancy)
+            let walletLeft = wallet[potKey] ?? 0
+            let peers = max(1, stillOpenByPot[potKey] ?? 1)
+            stillOpenByPot[potKey] = peers - 1
+            guard walletLeft > 0 else { continue }
+
+            // Re-offer the wallet, but not ALL of it while pot-mates still
+            // wait: the first retried job gets at least its going rate and at
+            // most an even share of what is left, so a $12M assistant cannot
+            // eat the money two position coaches behind him need — the exact
+            // failure the planned pass exists to prevent.
+            let fairShare = walletLeft / peers
+            let cap = min(walletLeft, max(plannedSalaryBand(for: vacancy).avg, fairShare))
+
+            autoHireStatus = "Hiring \(vacancy.displayName)…"
+            await Task.yield()
+
+            guard let salary = signBest(for: vacancy, cap: cap, teamID: teamID) else { continue }
+            wallet[potKey] = walletLeft - salary
+            spent += salary
+            hires += 1
         }
 
         try? modelContext.save()
@@ -701,6 +707,44 @@ struct CoachingStaffView: View {
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
             withAnimation(.easeOut(duration: 0.4)) { recentHireMessage = nil }
+        }
+    }
+
+    /// Signs the best candidate `cap` can buy for one open job and returns his
+    /// salary; nil when nothing on that market fits the cap. Shared by both
+    /// auto-hire passes so the planned offer and the leftover-wallet offer shop
+    /// the exact same pool.
+    private func signBest(for vacancy: StaffVacancy, cap: Int, teamID: UUID) -> Int? {
+        switch vacancy {
+        case .coach(let role):
+            // Task #96: auto-hire shops the same market the manual sheet
+            // does — real out-of-work coaches of this exact title first.
+            let pool = CoachMarketEngine.availableBench(allCoaches).filter { $0.role == role }
+                + CoachingEngine.generateCoachCandidates(
+                    role: role,
+                    count: 20,
+                    teamBudget: coachingBudget,
+                    teamWins: team?.wins ?? 8,
+                    teamReputation: career.reputation
+                )
+            guard let pick = bestAffordableCoach(in: pool, cap: cap) else { return nil }
+            hire(coach: pick, teamID: teamID)
+            return pick.salary
+
+        case .scout(let role):
+            // Same seeded pool the manual sheet shows for this team/role/season.
+            let pool = CoachingEngine.generateScoutCandidates(
+                role: role,
+                count: 20,
+                seed: CoachingEngine.scoutPoolSeed(
+                    teamID: teamID,
+                    role: role,
+                    season: career.currentSeason
+                )
+            )
+            guard let pick = bestAffordableScout(in: pool, cap: cap) else { return nil }
+            hire(scout: pick, teamID: teamID)
+            return pick.salary
         }
     }
 

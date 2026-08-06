@@ -291,7 +291,6 @@ struct ProspectDetailView: View {
                 starterComparisonSection
                 combineSection
                 collegeProductionSummarySection
-                positionSkillsSection
                 draftSection
                 characterFileSection
                 riskFlagsSection
@@ -1099,17 +1098,34 @@ struct ProspectDetailView: View {
                 }
             }
 
+            // Personality has two writers — a meeting (`conductInterview`) and a
+            // report that came back with a personality read (`applyReport`) — and
+            // they are not equally good. Naming the instrument is the difference
+            // between a read the user knows to discount and a fact he cannot.
             if let personality = prospect.scoutedPersonality {
-                LabeledContent("Personality") {
-                    Text(personality.displayName)
-                        .foregroundStyle(Color.textPrimary)
+                LabeledContent {
+                    VStack(alignment: .trailing, spacing: 1) {
+                        Text(personality.displayName)
+                            .foregroundStyle(Color.textPrimary)
+                        // "Scouts' read" is only honest when a report exists —
+                        // `applyPreScoutedData` hands the class's top names a
+                        // personality with no instrument behind it, and that
+                        // read is the league's, not this building's.
+                        Text(prospect.interviewCompleted
+                             ? "From your interview"
+                             : (prospect.scoutingReports.isEmpty ? "League consensus" : "Scouts' read"))
+                            .font(.caption2)
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                } label: {
+                    Text("Personality")
                 }
             }
 
-            // Mental grades — with fallback from trueMental
+            // Both grids draw every key, revealed or not, and name what bought
+            // the ones that are lit — see `ProspectFog.AttributeDisclosure`.
             mentalGradesGrid
 
-            // Position grades — with fallback from truePositionAttributes
             positionGradesGrid
 
             // Status indicators
@@ -1121,53 +1137,140 @@ struct ProspectDetailView: View {
         .listRowBackground(Color.backgroundSecondary)
     }
 
-    /// Mental grades grid with fallback from legacy numeric values.
+    /// The mental block, drawn against the instruments that write it.
+    ///
+    /// Every key is rendered whether or not it has been bought: a key nobody has
+    /// worked is a DARK cell, not an absent one. Silently dropping the unbought
+    /// keys is what put a full eight-grade row directly above two empty
+    /// "Interview" / "Pro Day" chips and made the card look like it was printing
+    /// the generator's hidden numbers — the grades were honest (a filed report
+    /// grades all eight), but nothing on the card said which instrument had paid
+    /// for them. `ProspectFog.mentalDisclosure` is the authority on both halves.
+    ///
+    /// LRN = how fast he absorbs a playbook (drives scheme install speed).
+    /// CMP = competitiveness, how he answers adversity (plan §2.1).
     private var mentalGradesGrid: some View {
-        // LRN = how fast he absorbs a playbook (drives scheme install speed).
-        // CMP = competitiveness, how he answers adversity (plan §2.1).
-        let mentalKeys = ["AWR", "DEC", "WRK", "CLT", "COA", "LDR", "LRN", "CMP"]
-        let scoutedGrades = prospect.scoutedMentalGrades
-        let hasAny = scoutedGrades != nil && !(scoutedGrades?.isEmpty ?? true)
+        let disclosure = ProspectFog.mentalDisclosure(prospect)
+        let unread = disclosure.unread(of: ProspectFog.mentalKeys)
 
-        return Group {
-            if hasAny {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Mental Attributes")
-                        .font(.caption)
-                        .foregroundStyle(Color.textTertiary)
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 8), spacing: 8) {
-                        ForEach(mentalKeys, id: \.self) { key in
-                            if let gr = scoutedGrades?[key] {
-                                gradeCell(key: key, grade: gr)
-                            }
+        return VStack(alignment: .leading, spacing: 6) {
+            gradeBlockHeader(title: "Mental Attributes", attribution: disclosure.attribution)
+
+            if disclosure.hasAny {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 8), spacing: 8) {
+                    ForEach(ProspectFog.mentalKeys, id: \.self) { key in
+                        if let gr = disclosure[key] {
+                            gradeCell(key: key, grade: gr)
+                        } else {
+                            lockedGradeCell(key: key)
                         }
                     }
                 }
+                if !unread.isEmpty {
+                    gradeBlockFootnote(ProspectFog.mentalUnlockHint(forUnread: unread))
+                }
+            } else {
+                gradeBlockEmptyState(
+                    "No mental read yet. A scouting report grades all eight; an interview reads the five a meeting can answer."
+                )
             }
         }
     }
 
-    /// Position grades grid with fallback from legacy numeric values.
+    /// The position-skill block. Same rules as the mental block, against its own
+    /// instrument: only a filed report writes these, so an interview never lights
+    /// a cell here and the hint never offers one.
     private var positionGradesGrid: some View {
-        let scoutedGrades = prospect.scoutedPositionGrades
-        let hasAny = scoutedGrades != nil && !(scoutedGrades?.isEmpty ?? true)
+        let disclosure = ProspectFog.positionSkillDisclosure(prospect)
+        let keys = ProspectFog.positionSkillKeys(for: prospect)
+        let unread = disclosure.unread(of: keys)
 
-        return Group {
-            if hasAny {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Position Skills")
-                        .font(.caption)
-                        .foregroundStyle(Color.textTertiary)
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: min(scoutedGrades?.count ?? 4, 6)), spacing: 8) {
-                        ForEach(Array((scoutedGrades ?? [:]).keys.sorted()), id: \.self) { key in
-                            if let gr = scoutedGrades?[key] {
-                                gradeCell(key: key, grade: gr)
-                            }
+        return VStack(alignment: .leading, spacing: 6) {
+            gradeBlockHeader(title: "Position Skills", attribution: disclosure.attribution)
+
+            if disclosure.hasAny {
+                LazyVGrid(
+                    columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: min(keys.count, 6)),
+                    spacing: 8
+                ) {
+                    ForEach(keys, id: \.self) { key in
+                        if let gr = disclosure[key] {
+                            gradeCell(key: key, grade: gr)
+                        } else {
+                            lockedGradeCell(key: key)
                         }
                     }
                 }
+                if !unread.isEmpty {
+                    gradeBlockFootnote(ProspectFog.positionSkillUnlockHint)
+                }
+            } else {
+                gradeBlockEmptyState(
+                    "No skill grades yet. Send a scout \u{2014} any filed report grades every \(prospect.position.rawValue) skill."
+                )
             }
         }
+    }
+
+    /// Block title plus the one line naming what paid for what is under it.
+    private func gradeBlockHeader(title: String, attribution: String?) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(Color.textTertiary)
+            if let attribution {
+                Text(attribution)
+                    .font(.system(size: DSType.Size.micro, weight: .semibold))
+                    .foregroundStyle(Color.accentGold)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func gradeBlockFootnote(_ text: String) -> some View {
+        Text(text)
+            .font(.caption2)
+            .foregroundStyle(Color.textTertiary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func gradeBlockEmptyState(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: "eye.slash")
+                .font(.caption2)
+                .foregroundStyle(Color.textTertiary)
+                .padding(.top, 1)
+            Text(text)
+                .font(.caption2)
+                .foregroundStyle(Color.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    /// An attribute nobody has worked. Deliberately shaped like `gradeCell` so
+    /// the grid reads as one row of eight with holes in it, rather than a short
+    /// row that hides how much of the man is still unknown.
+    private func lockedGradeCell(key: String) -> some View {
+        VStack(spacing: 2) {
+            Text("\u{2014}")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(Color.textTertiary.opacity(0.6))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.textTertiary.opacity(0.06))
+                )
+            Text(key)
+                .font(.caption2)
+                .foregroundStyle(Color.textTertiary.opacity(0.6))
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(key) not read yet")
     }
 
     private func gradeCell(key: String, grade: GradeRange) -> some View {
@@ -1584,28 +1687,23 @@ struct ProspectDetailView: View {
         return max(5, min(80, risk))
     }
 
-    // MARK: - College Production Section (Position Skills)
-
-    /// Position-skill letter grades from scouting visits (per-attribute eyes-on
-    /// evaluation). Distinct from "Position Drills" in the combine section, which
-    /// is a one-shot combine snapshot.
-    @ViewBuilder
-    private var positionSkillsSection: some View {
-        if isScouted {
-            Section {
-                collegeFlavorStats
-            } header: {
-                HStack(spacing: 4) {
-                    Text("Position Skills")
-                    Text("· per-attribute scouting grade")
-                        .font(.caption2)
-                        .foregroundStyle(Color.textTertiary)
-                        .textCase(nil)
-                }
-            }
-            .listRowBackground(Color.backgroundSecondary)
-        }
-    }
+    // MARK: - College Production Section
+    //
+    // A SECOND "Position Skills" section used to live here, and it was the one
+    // real truth leak on this card. `flavorGradeStat` fell back to
+    // `positionFallbackValues` — letter grades taken straight off
+    // `prospect.truePositionAttributes`, the hidden generator block — whenever
+    // the scouted band for a key was missing, and the section was gated on
+    // `isScouted` (`scoutedOverall != nil`), which `ScoutingEngine.applyPreScoutedData`
+    // sets for the top 250 of every class WITHOUT writing a single band. Every
+    // one of those men printed his true skill letters to a user who had never
+    // filed a report. Three of its keys ("SAc", "DAc", "TAK") could never match
+    // what the engine writes ("SAC", "DAC", "TKL") either, so a fully scouted
+    // quarterback or linebacker took the truth path as well.
+    //
+    // It is gone rather than patched: `positionGradesGrid` in the Scouting
+    // Report section renders the same data for EVERY key of the position, dark
+    // where the work has not been done, attributed where it has.
 
     /// Snapshot of college playing time + production. Generator v2 stores this
     /// as a noisy signal (`collegeProductionScore`) that correlates with — but
@@ -1654,115 +1752,6 @@ struct ProspectDetailView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(8)
         .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 8))
-    }
-
-    @ViewBuilder
-    private var collegeFlavorStats: some View {
-        let posGrades = prospect.scoutedPositionGrades
-        let fb = positionFallbackValues
-        switch prospect.truePositionAttributes {
-        case .quarterback:
-            HStack(spacing: 14) {
-                flavorGradeStat(label: "Arm", key: "ARM", grades: posGrades, fallback: fb)
-                flavorGradeStat(label: "Acc (S)", key: "SAc", grades: posGrades, fallback: fb)
-                flavorGradeStat(label: "Acc (D)", key: "DAc", grades: posGrades, fallback: fb)
-                flavorGradeStat(label: "Pocket", key: "PKT", grades: posGrades, fallback: fb)
-            }
-        case .wideReceiver:
-            HStack(spacing: 14) {
-                flavorGradeStat(label: "Route", key: "RTE", grades: posGrades, fallback: fb)
-                flavorGradeStat(label: "Catch", key: "CTH", grades: posGrades, fallback: fb)
-                flavorGradeStat(label: "Release", key: "RLS", grades: posGrades, fallback: fb)
-            }
-        case .runningBack:
-            HStack(spacing: 14) {
-                flavorGradeStat(label: "Vision", key: "VIS", grades: posGrades, fallback: fb)
-                flavorGradeStat(label: "Elusiv", key: "ELU", grades: posGrades, fallback: fb)
-                flavorGradeStat(label: "Recv", key: "RCV", grades: posGrades, fallback: fb)
-            }
-        case .defensiveBack:
-            HStack(spacing: 14) {
-                flavorGradeStat(label: "Man", key: "MCV", grades: posGrades, fallback: fb)
-                flavorGradeStat(label: "Zone", key: "ZCV", grades: posGrades, fallback: fb)
-                flavorGradeStat(label: "Press", key: "PRS", grades: posGrades, fallback: fb)
-            }
-        case .linebacker:
-            HStack(spacing: 14) {
-                flavorGradeStat(label: "Tackle", key: "TAK", grades: posGrades, fallback: fb)
-                flavorGradeStat(label: "Zone", key: "ZCV", grades: posGrades, fallback: fb)
-                flavorGradeStat(label: "Blitz", key: "BLZ", grades: posGrades, fallback: fb)
-            }
-        case .defensiveLine:
-            HStack(spacing: 14) {
-                flavorGradeStat(label: "Pass Rush", key: "PRU", grades: posGrades, fallback: fb)
-                flavorGradeStat(label: "Shed", key: "BSH", grades: posGrades, fallback: fb)
-                flavorGradeStat(label: "Power", key: "PWR", grades: posGrades, fallback: fb)
-            }
-        case .offensiveLine:
-            HStack(spacing: 14) {
-                flavorGradeStat(label: "Run Blk", key: "RBK", grades: posGrades, fallback: fb)
-                flavorGradeStat(label: "Pass Blk", key: "PBK", grades: posGrades, fallback: fb)
-                flavorGradeStat(label: "Anchor", key: "ANC", grades: posGrades, fallback: fb)
-            }
-        case .tightEnd:
-            HStack(spacing: 14) {
-                flavorGradeStat(label: "Block", key: "BLK", grades: posGrades, fallback: fb)
-                flavorGradeStat(label: "Catch", key: "CTH", grades: posGrades, fallback: fb)
-                flavorGradeStat(label: "Route", key: "RTE", grades: posGrades, fallback: fb)
-            }
-        case .kicking:
-            HStack(spacing: 14) {
-                flavorGradeStat(label: "Power", key: "PWR", grades: posGrades, fallback: fb)
-                flavorGradeStat(label: "Accuracy", key: "ACC", grades: posGrades, fallback: fb)
-            }
-        }
-    }
-
-    /// Builds a fallback dictionary mapping position skill keys to numeric values from truePositionAttributes.
-    private var positionFallbackValues: [String: Int] {
-        switch prospect.truePositionAttributes {
-        case .quarterback(let qb):
-            return ["ARM": qb.armStrength, "SAc": qb.accuracyShort, "DAc": qb.accuracyDeep,
-                    "PKT": qb.pocketPresence, "MAc": qb.accuracyMid, "SCR": qb.scrambling]
-        case .wideReceiver(let wr):
-            return ["RTE": wr.routeRunning, "CTH": wr.catching, "RLS": wr.release]
-        case .runningBack(let rb):
-            return ["VIS": rb.vision, "ELU": rb.elusiveness, "RCV": rb.receiving, "BTK": rb.breakTackle]
-        case .defensiveBack(let db):
-            return ["MCV": db.manCoverage, "ZCV": db.zoneCoverage, "PRS": db.press, "BLS": db.ballSkills]
-        case .linebacker(let lb):
-            return ["TAK": lb.tackling, "ZCV": lb.zoneCoverage, "BLZ": lb.blitzing]
-        case .defensiveLine(let dl):
-            return ["PRU": dl.passRush, "BSH": dl.blockShedding, "PWR": dl.powerMoves, "FIN": dl.finesseMoves]
-        case .offensiveLine(let ol):
-            return ["RBK": ol.runBlock, "PBK": ol.passBlock, "ANC": ol.anchor, "PUL": ol.pull]
-        case .tightEnd(let te):
-            return ["BLK": te.blocking, "CTH": te.catching, "RTE": te.routeRunning, "SPD": te.speed]
-        case .kicking(let k):
-            return ["PWR": k.kickPower, "ACC": k.kickAccuracy]
-        }
-    }
-
-    private func flavorGradeStat(label: String, key: String, grades: [String: GradeRange]?, fallback: [String: Int]) -> some View {
-        VStack(spacing: 2) {
-            if let gr = grades?[key] {
-                Text(gr.displayText)
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(detailGradeColor(gr.midGrade))
-            } else if let numVal = fallback[key] {
-                let lg = LetterGrade.from(numericValue: numVal)
-                Text(lg.rawValue)
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(detailGradeColor(lg))
-            } else {
-                Text("?")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(Color.textTertiary)
-            }
-            Text(label)
-                .font(.caption2)
-                .foregroundStyle(Color.textTertiary)
-        }
     }
 
     // MARK: - Scheme Fit

@@ -531,7 +531,17 @@ struct ProspectCompareSheet: View {
         guard positions.count == 1, let first = columns.first else {
             return [CompareRow(label: "NOTE", values: columns.map { $0.position.rawValue })]
         }
-        return positionSkillKeys(for: first).map { key in
+        // `ProspectFog.positionSkillKeys` is the canonical table, copied from the
+        // writer (`ScoutingEngine.generatePositionSkillGrades`). This sheet used
+        // to carry its own, and it had drifted: `SAc` / `DAc` for a quarterback
+        // and `TAK` for a linebacker, where the engine writes `SAC` / `DAC` /
+        // `TKL`. Every one of those lookups missed, so the sheet showed "?" for
+        // work the user had already paid for — and a compare sheet is exactly
+        // where that reads as "neither of them has been scouted".
+        //
+        // The board takes the first four of these because a row is four columns
+        // wide; a section here is a vertical list, so a quarterback gets all six.
+        return ProspectFog.positionSkillKeys(for: first).map { key in
             row(
                 key,
                 { $0.scoutedPositionGrades?[key]?.displayText ?? "?" },
@@ -563,20 +573,6 @@ struct ProspectCompareSheet: View {
         case .hidden: return "?"
         case .count:  return total == 0 ? "None" : "\(total) on file"
         case .full:   return total == 0 ? "Clean" : "\(total)"
-        }
-    }
-
-    private func positionSkillKeys(for prospect: CollegeProspect) -> [String] {
-        switch prospect.truePositionAttributes {
-        case .quarterback:    return ["ARM", "SAc", "DAc", "PKT"]
-        case .wideReceiver:   return ["RTE", "CTH", "RLS", "SPC"]
-        case .runningBack:    return ["VIS", "ELU", "BTK", "RCV"]
-        case .tightEnd:       return ["BLK", "CTH", "RTE", "SPD"]
-        case .offensiveLine:  return ["RBK", "PBK", "PUL", "ANC"]
-        case .defensiveLine:  return ["PRU", "BSH", "PWR", "FIN"]
-        case .linebacker:     return ["TAK", "ZCV", "MCV", "BLZ"]
-        case .defensiveBack:  return ["MCV", "ZCV", "PRS", "BSK"]
-        case .kicking:        return ["PWR", "ACC"]
         }
     }
 

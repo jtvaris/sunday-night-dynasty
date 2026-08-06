@@ -24,25 +24,37 @@ struct DraftPrepStageCell: Identifiable, Equatable {
     enum State: Equatable {
         /// Behind the club. Its screen opens read-only.
         case done
-        /// Where the club is standing. Its screen is the working surface.
+        /// Where the club is standing **and may work**. Its screen is the
+        /// working surface.
+        ///
+        /// Never emitted for a stage that is shut — see the init below. Standing
+        /// somewhere and being allowed to work there are two different claims,
+        /// and only the second one may be drawn as an invitation.
         case current
         /// Ahead of the club but already reachable — `DraftPrepProgress.reach`
         /// opens the next room the moment the current stage is satisfied, so
         /// this is the common state, not an edge case.
         case open
-        /// Ahead of the club and shut, by the pipeline or by the calendar.
+        /// Shut, by the pipeline or by the calendar. Usually ahead of the club —
+        /// but the stage it is STANDING in lands here too whenever the calendar
+        /// has not opened it, which is the whole pre-draft pipeline outside the
+        /// four pre-draft phases.
         case locked
     }
 
     let step: DraftPrepStep
     let state: State
     /// "30/60 interviews", or "Done" / "Not read" for the stages that are a read
-    /// rather than a spend. Straight off `DraftPrepProgress.Stage.counter`.
+    /// rather than a spend — or "Opens at combine" for a stage the season has
+    /// not reached. Straight off `DraftPrepProgress.Stage.counter`.
     let counterText: String
     /// 0…1 fill for the cell's hairline meter.
     let fraction: Double
     /// One clause saying what opens this stage. Empty unless it is shut.
     let lockReason: String
+    /// `true` when the calendar, not the club's own work, is what shuts this
+    /// stage. Changes the words, never the state: a wait is drawn locked.
+    let isWaitingOnCalendar: Bool
 
     var id: String { step.rawValue }
 
@@ -53,7 +65,7 @@ struct DraftPrepStageCell: Identifiable, Equatable {
         case .done:    parts.append("complete")
         case .current: parts.append("current stage")
         case .open:    parts.append("open")
-        case .locked:  parts.append("locked")
+        case .locked:  parts.append(isWaitingOnCalendar ? "waiting for the calendar" : "locked")
         }
         parts.append(counterText)
         if !lockReason.isEmpty { parts.append(lockReason) }
@@ -62,10 +74,19 @@ struct DraftPrepStageCell: Identifiable, Equatable {
 
     init(step: DraftPrepStep, state: State, stage: DraftPrepProgress.Stage) {
         self.step = step
-        self.state = state
+        // LOCKED WINS OVER CURRENT (#107). `Career.prepStep` is a floor, so
+        // outside the pre-draft window it still points at stage 1 — and the bar
+        // drew that stage in February with the gold "1" puck, the current-stage
+        // ring and "Not read" underneath, over a combine nobody had held. The
+        // hub's `stageState` already resolves this; the coercion is here as well
+        // because the cell holds both facts and no caller should be able to draw
+        // an invitation over a shut stage. A satisfied stage keeps its tick —
+        // `done` is a claim about work, and the work happened.
+        self.state = (state == .current && !stage.unlocked) ? .locked : state
         self.counterText = stage.counter
         self.fraction = stage.fraction
         self.lockReason = stage.lockReason ?? ""
+        self.isWaitingOnCalendar = stage.isCalendarLocked
     }
 }
 
@@ -118,8 +139,12 @@ struct DraftPrepProcessBar: View {
     private func scroll(_ proxy: ScrollViewProxy, animated: Bool) {
         // Follow the SELECTED stage, falling back to the current one. Without
         // this the bar opens parked on stage 1 and a club six stages in has to
-        // hunt for itself.
-        let target = selected ?? cells.first(where: { $0.state == .current })?.step
+        // hunt for itself. Outside the pre-draft window there IS no current
+        // cell — the whole strip is shut — so the head of the pipeline is the
+        // honest place to park.
+        let target = selected
+            ?? cells.first(where: { $0.state == .current })?.step
+            ?? cells.first?.step
         guard let target else { return }
         if animated {
             withAnimation(.easeInOut(duration: 0.22)) { proxy.scrollTo(target, anchor: .center) }

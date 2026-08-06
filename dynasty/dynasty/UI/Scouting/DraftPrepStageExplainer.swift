@@ -93,6 +93,15 @@ struct DraftPrepStageExplainer: View {
     var lockReason: String = ""
     /// What still has to happen before the club may advance out of this stage.
     var requirement: String = ""
+    /// `true` when the stage is shut by the SEASON rather than by the club's own
+    /// work — `DraftPrepProgress.Stage.isCalendarLocked`.
+    ///
+    /// The card is otherwise a set of instructions, and instructions over a
+    /// stage that does not exist this week are what #107 reports: "Open the
+    /// Combine tab and read the numbers" printed above a combine that has not
+    /// been held. A wait is not a chore, so it loses the counter pill and says
+    /// WAITING rather than LOCKED — nothing here is anybody's fault.
+    var isWaitingOnCalendar: Bool = false
 
     @AppStorage private var isExpanded: Bool
 
@@ -101,13 +110,15 @@ struct DraftPrepStageExplainer: View {
         state: DraftPrepStageCell.State,
         counterText: String? = nil,
         lockReason: String = "",
-        requirement: String = ""
+        requirement: String = "",
+        isWaitingOnCalendar: Bool = false
     ) {
         self.step = step
         self.state = state
         self.counterText = counterText
         self.lockReason = lockReason
         self.requirement = requirement
+        self.isWaitingOnCalendar = isWaitingOnCalendar
         // Per-stage key: collapsing the interview explainer must not collapse
         // the workout one, and the flag has to survive leaving the screen.
         _isExpanded = AppStorage(wrappedValue: true, "prepExplainerOpen_\(step.rawValue)")
@@ -135,7 +146,15 @@ struct DraftPrepStageExplainer: View {
                 }
 
                 if state == .locked, !lockReason.isEmpty {
-                    statusLine(icon: "lock.fill", tint: .warning, text: lockReason)
+                    // The lock sentence REPLACES the requirement line. A stage
+                    // the club cannot enter has no target, and printing one is
+                    // how the February hub ended up telling a user to go read
+                    // combine numbers that did not exist.
+                    statusLine(
+                        icon: isWaitingOnCalendar ? "calendar.badge.clock" : "lock.fill",
+                        tint: .warning,
+                        text: lockReason
+                    )
                 } else if state == .done {
                     statusLine(
                         icon: "checkmark.seal.fill",
@@ -204,7 +223,10 @@ struct DraftPrepStageExplainer: View {
 
                 Spacer(minLength: 4)
 
-                if let counterText {
+                // No counter over a wait: "Opens at combine" in a pill next to
+                // a WAITING chip says the same thing twice, and a "0/60" pill
+                // says a ration is being spent in a stage that is not open.
+                if let counterText, !isWaitingOnCalendar {
                     Text(counterText)
                         .font(.system(size: DSType.Size.micro, weight: .heavy).monospacedDigit())
                         .foregroundStyle(Color.textPrimary)
@@ -233,7 +255,11 @@ struct DraftPrepStageExplainer: View {
         case .open:
             chip("OPEN", fill: .accentBlue, ink: .backgroundPrimary)
         case .locked:
-            chip("LOCKED", fill: .backgroundTertiary, ink: .textTertiaryReadable)
+            // Same chip styling either way — a wait is drawn locked. Only the
+            // word changes: LOCKED reads as "you have not got here yet", which
+            // is untrue of a club standing in November.
+            chip(isWaitingOnCalendar ? "WAITING" : "LOCKED",
+                 fill: .backgroundTertiary, ink: .textTertiaryReadable)
         }
     }
 

@@ -86,6 +86,19 @@ struct DraftPrepProgress {
         let total: Int
         /// `true` when the club may act in this stage right now.
         let unlocked: Bool
+        /// `true` when the SEASON is what shuts this stage: the phase it belongs
+        /// to has not arrived, so no amount of work opens it and nothing on its
+        /// screen can be acted on.
+        ///
+        /// The distinction the presentation needs and `unlocked` alone cannot
+        /// make. A pipeline-locked stage is a room you have not walked into yet
+        /// — finish the one in front of you and it opens. A calendar-locked
+        /// stage is a room that does not exist this week, and the events it
+        /// reads from (the combine, the mocks) are LEAGUE events run by the
+        /// phase hook, not by a button anywhere on this screen. Drawing the two
+        /// the same way is #107: a February hub telling a club to go read
+        /// numbers from a combine that has not been held.
+        let isCalendarLocked: Bool
         /// `true` when the stage's required task is satisfied.
         let isSatisfied: Bool
         /// `false` for the read-only stages (combine review, the two mocks,
@@ -100,8 +113,31 @@ struct DraftPrepProgress {
         var id: String { step.rawValue }
 
         /// "30/60 interviews" — the process view's stage-tab counter.
+        ///
+        /// A stage the season has not reached says WHEN it opens instead. Its
+        /// counter is not the useful thing to say about it: "Not read" is a
+        /// chore the user is being told he is failing at, over a combine that
+        /// nobody has held yet, with no control anywhere that holds it. Work
+        /// already banked still reads as done — a tick is a claim about work,
+        /// and the work happened.
         var counter: String {
-            isCounted ? "\(done)/\(total) \(unit)" : (isSatisfied ? "Done" : "Not read")
+            if isCalendarLocked && !isSatisfied { return waitLabel }
+            return isCounted ? "\(done)/\(total) \(unit)" : (isSatisfied ? "Done" : "Not read")
+        }
+
+        /// "Opens at combine" — what a calendar-locked stage says in place of a
+        /// counter, short enough for the process bar's 92 pt cell.
+        ///
+        /// One table, read by both the bar's sub-label and ``counter``, so the
+        /// strip and the Draft Prep card cannot describe the same wait with two
+        /// different sentences.
+        var waitLabel: String {
+            switch step.phase {
+            case .combine:  return "Opens at combine"
+            case .proDays:  return "Opens at pro days"
+            case .draft:    return "Opens draft week"
+            default:        return "Not on calendar"
+            }
         }
 
         /// 0…1 for a progress bar. A satisfied uncounted stage reads full.
@@ -185,6 +221,13 @@ struct DraftPrepProgress {
                 let lockReason: String? = {
                     if unlocked { return nil }
                     if !calendarOpen {
+                        // Outside the four pre-draft phases the pipeline has not
+                        // started AT ALL, and that is a different sentence from
+                        // "the next room is not open yet" — see
+                        // ``calendarClosedReason``.
+                        if calendarRank == 0 {
+                            return DraftPrepProgress.calendarClosedReason(for: s)
+                        }
                         switch s.phase {
                         case .combine:  return "Opens at the combine."
                         case .proDays:  return "Opens when the pro-day circuit does."
@@ -231,12 +274,43 @@ struct DraftPrepProgress {
                     done: done,
                     total: total,
                     unlocked: unlocked,
+                    isCalendarLocked: !calendarOpen,
                     isSatisfied: satisfied(s),
                     isCounted: counted,
                     unit: unit,
                     lockReason: lockReason
                 )
             }
+    }
+
+    // MARK: - Calendar copy
+
+    /// What a stage says when the pre-draft calendar has not opened AT ALL —
+    /// `prepCalendarRank == 0`, i.e. a February career or any week of the
+    /// autumn.
+    ///
+    /// Kept apart from the in-window sentences because the situation differs in
+    /// kind. In combine week "Opens when the pro-day circuit does." is a note
+    /// about the NEXT room, and the club is standing in one. Outside the window
+    /// the club is between nothing: the building is shut, and the events these
+    /// stages read from are league events the phase hook runs on its own.
+    ///
+    /// So the copy has to do two jobs the old one-clause version did neither of:
+    /// say that the event has not happened, and say that nothing on this screen
+    /// makes it happen — advance the calendar. #107 is a user reading "Read
+    /// Indianapolis before you spend a dollar" over "0 of 0 prospects invited",
+    /// hunting for the control that sends them.
+    static func calendarClosedReason(for step: DraftPrepStep) -> String {
+        switch step {
+        case .combineReview:
+            return "The combine has not been held yet \u{2014} it runs automatically when the Combine phase begins. Advance the calendar to get there."
+        case .interviews, .filmStudy:
+            return "The pre-draft window has not opened. This stage starts in combine week \u{2014} advance the calendar to get there."
+        case .proDayFocus, .workouts, .mockOne, .top30Visits, .mockTwo:
+            return "The pre-draft window has not opened. This stage starts on the pro-day circuit, after the combine."
+        case .ready:
+            return "The draft room opens in draft week."
+        }
     }
 
     // MARK: - Lookup
@@ -246,8 +320,8 @@ struct DraftPrepProgress {
             // `stages` is built from `allCases`, so this is unreachable; the
             // fallback exists so no call site has to unwrap.
             ?? Stage(step: step, done: 0, total: 1, unlocked: false,
-                     isSatisfied: false, isCounted: false, unit: "",
-                     lockReason: "Not open yet.")
+                     isCalendarLocked: false, isSatisfied: false,
+                     isCounted: false, unit: "", lockReason: "Not open yet.")
     }
 
     /// The stage's counter as a bare tuple, or `nil` for the stages whose

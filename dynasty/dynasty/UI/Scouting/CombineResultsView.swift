@@ -2,18 +2,42 @@ import SwiftUI
 import SwiftData
 
 // Column widths, shared by the header and the row so a label always sits
-// over its own cell. They were trimmed from ~1000 pt total to ~866 when the
-// table stopped scrolling sideways: 866 + 16 pt of list insets clears a
-// portrait iPad (1024) with room, and a landscape one comfortably.
+// over its own cell.
+//
+// ONE elastic cell, everything after it fixed. That is the Big Board's layout
+// and it is what this table was missing: the name column used to be pinned to a
+// hard 130 pt, so the table drew itself 866 pt wide and STOPPED — a landscape
+// iPad got a third of a screen of dead space to the right of it while
+// "Nehemiah Pritchett" printed as "Nehemiah…" and the NEED / PARTIAL chips
+// beside the name were cut off the end of their own cell.
+//
+// Now the name cell is a floor (`nameMin`) followed by a `Spacer`, so:
+//
+//   * the table fills whatever width it is given, in both orientations;
+//   * every column after the gap is fixed AND anchored to the trailing edge,
+//     in the pinned header and in each row alike, so they cannot drift out of
+//     alignment however wide the name grows;
+//   * in landscape the name cell takes its natural width and nothing truncates;
+//   * in portrait the slack runs out and the name TEXT gives first — the chips
+//     carry `layoutPriority(1)` and are laid out before it.
+//
+// The widest column set (the drills) still fits a portrait iPad without a
+// sideways scroll: 40+32+132+8+40+56+46+38+96+380+16 = 884, plus 16 pt of list
+// insets, inside 1024.
 private enum CombineW {
     static let mark: CGFloat = 40
     static let rank: CGFloat = 32
-    static let name: CGFloat = 130
+    /// A floor, not a width — enough for a short name plus its chips in portrait.
+    static let nameMin: CGFloat = 132
+    /// The elastic gap. Everything after it is fixed and trailing-anchored.
+    static let gap: CGFloat = 8
     static let pos: CGFloat = 40
     static let grade: CGFloat = 56
     static let prod: CGFloat = 46
     static let proj: CGFloat = 38
-    static let college: CGFloat = 88
+    static let college: CGFloat = 96
+
+    // Physical block — the combine's own drills, the table's home mode.
     static let forty: CGFloat = 54
     static let bench: CGFloat = 52
     static let vertical: CGFloat = 52
@@ -21,6 +45,26 @@ private enum CombineW {
     static let cone: CGFloat = 56
     static let shuttle: CGFloat = 56
     static let drill: CGFloat = 56
+
+    // Overview block. No NEED column: it is already a chip on his name, and a
+    // fact printed twice on one row is a column spent on nothing.
+    static let age: CGFloat = 30
+    static let height: CGFloat = 42
+    static let weight: CGFloat = 40
+    static let risk: CGFloat = 64
+
+    // Work-up block
+    static let reports: CGFloat = 34
+    static let tick: CGFloat = 38
+
+    // Mental block
+    static let tape: CGFloat = 42
+    static let meet: CGFloat = 38
+    static let band: CGFloat = 26
+
+    // Position block
+    static let skill: CGFloat = 32
+
     static let chevron: CGFloat = 16
 }
 
@@ -30,9 +74,14 @@ private enum CombineW {
 /// with its title bar and its risers/fallers strip pinned above both — three
 /// scroll regions on one screen and no way for the hub's header to scroll away
 /// with the content. It is a `List` now, like every other prospect surface:
-/// the hub header is its first section, the column headers are a pinned section
-/// header, and the columns were trimmed ~130 pt so the table fits an iPad in
-/// both orientations without a sideways scroll.
+/// the hub header is its first section, and the column headers — with the mode
+/// chips above them — are a pinned section header.
+///
+/// The columns were then FROZEN at 866 pt to fit a portrait iPad, which fixed
+/// the sideways scroll by giving a landscape one a third of a screen of dead
+/// space instead. They stretch now: see `CombineW` for the one-elastic-cell
+/// layout, borrowed off the Big Board, that fills either orientation without a
+/// horizontal scroll and without the header drifting off its own columns.
 struct CombineResultsView<Header: View>: View {
     let career: Career
     let prospects: [CollegeProspect]
@@ -61,6 +110,16 @@ struct CombineResultsView<Header: View>: View {
     @Environment(\.modelContext) private var modelContext
     @State private var sortColumn: CombineColumn = .rank
     @State private var sortAscending: Bool = true
+    /// Which block of columns sits after the identity block — the same control
+    /// the Big Board wears, over the same five blocks, so a user who learned it
+    /// on the board does not lose it one tab to the right.
+    ///
+    /// It opens on `.physical` because that is what a combine table IS: the
+    /// drills are this screen's home block, where the board's is the overview.
+    /// Local `@State` rather than a hub binding on purpose — the hub owns the
+    /// position filter because a filter that evaporates on a tab switch was a
+    /// bug, but a column block is a reading of THIS table.
+    @State private var viewMode: ProspectAttributeTab = .physical
     @State private var mediaPopoverProspectID: UUID?
     @State private var dnpPopoverProspectID: UUID?
     @State private var teamPlayers: [Player] = []
@@ -323,11 +382,37 @@ struct CombineResultsView<Header: View>: View {
                     } header: {
                         // `.plain` pins section headers, so the column labels
                         // stay over their columns while the table scrolls —
-                        // which the old nested-scroll layout never managed.
-                        columnHeaders
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 6)
-                            .background(Color.backgroundSecondary)
+                        // which the old nested-scroll layout never managed. The
+                        // mode chips ride along in the same pinned block, which
+                        // is where the Big Board keeps them: a control that
+                        // scrolls away on a 300-row table is a control the user
+                        // has to hunt for.
+                        VStack(spacing: 0) {
+                            ProspectListControls(
+                                positionFilter: $positionFilter,
+                                mode: $viewMode,
+                                modes: ProspectAttributeTab.allCases,
+                                // The hub already draws one chip bar above this
+                                // whole tab. Two identical rows stacked would be
+                                // a worse bug than the missing control was.
+                                showsPositionChips: false
+                            )
+
+                            Divider().overlay(Color.surfaceBorder)
+
+                            columnHeaders
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 6)
+                        }
+                        .background(Color.backgroundSecondary)
+                        // Zeroed so the 8 pt above is the ONLY horizontal inset
+                        // on the header, which is exactly the rows' own
+                        // `listRowInsets`. A section header otherwise carries the
+                        // platform's default margin and the whole label strip
+                        // sits a few points off its own columns — invisible while
+                        // every column was fixed-width, and a permanent drift now
+                        // that the block is anchored to the trailing edge.
+                        .listRowInsets(EdgeInsets())
                     }
                 }
             }
@@ -344,6 +429,19 @@ struct CombineResultsView<Header: View>: View {
         .onChange(of: positionFilter) { _, _ in refreshCachedData() }
         .onChange(of: sortColumn) { _, _ in refreshCachedData() }
         .onChange(of: sortAscending) { _, _ in refreshCachedData() }
+        .onChange(of: viewMode) { _, newMode in
+            // Only the Physical block's headers are sort buttons. Leaving a
+            // drill sort live under another mode keeps the table ordered by a
+            // column that is no longer on screen, with no arrow and no way to
+            // clear it — reset to rank instead of sorting by a ghost.
+            let drillColumns: Set<CombineColumn> = [
+                .fortyYard, .bench, .vertical, .broadJump, .threeCone, .shuttle, .positionDrill
+            ]
+            if newMode != .physical && drillColumns.contains(sortColumn) {
+                sortColumn = .rank
+                sortAscending = true
+            }
+        }
     }
 
     // MARK: - Header Bar
@@ -539,12 +637,37 @@ struct CombineResultsView<Header: View>: View {
                 .frame(width: CombineW.mark)
 
             sortableHeader("Rank", column: .rank, width: CombineW.rank)
-            sortableHeader("Name", column: .name, width: CombineW.name, alignment: .leading)
+            // The one elastic header. It carries the same floor as the row's
+            // name cell and is followed by the same `Spacer`, so the fixed block
+            // below lands on the same pixels in the header and in every row.
+            sortableHeader("Name", column: .name, minWidth: CombineW.nameMin, alignment: .leading)
+
+            Spacer(minLength: CombineW.gap)
+
             sortableHeader("Pos", column: .position, width: CombineW.pos)
             sortableHeader("GRD", column: .grade, width: CombineW.grade)
             sortableHeader("PROD", column: .production, width: CombineW.prod)
             sortableHeader("Proj", column: .projection, width: CombineW.proj)
             sortableHeader("College", column: .college, width: CombineW.college, alignment: .leading)
+
+            switch viewMode {
+            case .physical: physicalHeaders
+            case .overview: overviewHeaders
+            case .workup:   workupHeaders
+            case .mental:   mentalHeaders
+            case .position: positionHeaders
+            }
+
+            Spacer().frame(width: CombineW.chevron)
+        }
+    }
+
+    // MARK: - Mode column headers
+
+    /// The drills. This block is why the screen exists, so it is the one the
+    /// table opens on — and it keeps the sortable headers it always had.
+    private var physicalHeaders: some View {
+        Group {
             sortableHeader("40yd", column: .fortyYard, width: CombineW.forty)
             sortableHeader("Bench", column: .bench, width: CombineW.bench)
             sortableHeader("Vert", column: .vertical, width: CombineW.vertical)
@@ -552,33 +675,107 @@ struct CombineResultsView<Header: View>: View {
             sortableHeader("3-Cone", column: .threeCone, width: CombineW.cone)
             sortableHeader("Shuttle", column: .shuttle, width: CombineW.shuttle)
             sortableHeader("Pos Drill", column: .positionDrill, width: CombineW.drill)
-            Spacer().frame(width: CombineW.chevron)
+        }
+    }
+
+    private var overviewHeaders: some View {
+        Group {
+            staticHeader("AGE", width: CombineW.age)
+            staticHeader("HT", width: CombineW.height)
+            staticHeader("WT", width: CombineW.weight)
+            staticHeader("RISK", width: CombineW.risk)
+        }
+    }
+
+    /// What the building has DONE on him, in the same five slots the board's
+    /// work-up block uses — with the interview in the last one, because the
+    /// combine week is when that slot is spent.
+    private var workupHeaders: some View {
+        Group {
+            staticHeader("RPT", width: CombineW.reports)
+            staticHeader("PDAY", width: CombineW.tick)
+            staticHeader("VISIT", width: CombineW.tick)
+            staticHeader("WORK", width: CombineW.tick)
+            staticHeader("MEET", width: CombineW.meet)
+        }
+    }
+
+    private var mentalHeaders: some View {
+        Group {
+            staticHeader("TAPE", width: CombineW.tape)
+            staticHeader("MEET", width: CombineW.meet)
+            ForEach(ProspectFog.mentalKeys, id: \.self) { key in
+                staticHeader(key, width: CombineW.band)
+            }
+        }
+    }
+
+    private var positionHeaders: some View {
+        Group {
+            // The four skill keys differ per position (a QB row reads ARM/SAC/
+            // MAC/DAC where a CB reads MCV/ZCV/PRS/BSK), so the cells carry
+            // their own key labels and the header names the block once instead
+            // of printing four dashes over it.
+            staticHeader("POSITION SKILLS", width: CombineW.skill * 4)
+            sortableHeader("Pos Drill", column: .positionDrill, width: CombineW.drill)
         }
     }
 
     private func sortableHeader(_ title: String, column: CombineColumn, width: CGFloat, alignment: Alignment = .center) -> some View {
         Button {
-            if sortColumn == column {
-                sortAscending.toggle()
-            } else {
-                sortColumn = column
-                sortAscending = true
-            }
+            toggleSort(column)
         } label: {
-            HStack(spacing: 2) {
-                Text(title)
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(sortColumn == column ? Color.accentGold : Color.textSecondary)
-
-                if sortColumn == column {
-                    Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
-                        .font(.system(size: DSType.Size.micro, weight: .bold))
-                        .foregroundStyle(Color.accentGold)
-                }
-            }
-            .frame(width: width, alignment: alignment)
+            sortLabel(title, column: column)
+                .frame(width: width, alignment: alignment)
         }
         .buttonStyle(.plain)
+    }
+
+    /// The flexible variant: a floor rather than a width, for the name column.
+    private func sortableHeader(_ title: String, column: CombineColumn, minWidth: CGFloat, alignment: Alignment = .center) -> some View {
+        Button {
+            toggleSort(column)
+        } label: {
+            sortLabel(title, column: column)
+                .frame(minWidth: minWidth, alignment: alignment)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func toggleSort(_ column: CombineColumn) {
+        if sortColumn == column {
+            sortAscending.toggle()
+        } else {
+            sortColumn = column
+            sortAscending = true
+        }
+    }
+
+    private func sortLabel(_ title: String, column: CombineColumn) -> some View {
+        HStack(spacing: 2) {
+            Text(title)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(sortColumn == column ? Color.accentGold : Color.textSecondary)
+
+            if sortColumn == column {
+                Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
+                    .font(.system(size: DSType.Size.micro, weight: .bold))
+                    .foregroundStyle(Color.accentGold)
+            }
+        }
+    }
+
+    /// A label over a block the table does not sort on. The drills are sortable
+    /// because a stopwatch reading is a ranking; a grade band and a yes/no tick
+    /// are not, and a header that looks tappable and does nothing is worse than
+    /// a plain one.
+    private func staticHeader(_ title: String, width: CGFloat) -> some View {
+        Text(title)
+            .font(.caption.weight(.bold))
+            .foregroundStyle(Color.textSecondary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .frame(width: width, alignment: .center)
     }
 
     // MARK: - Row
@@ -609,69 +806,11 @@ struct CombineResultsView<Header: View>: View {
                 .foregroundStyle(Color.textSecondary)
                 .frame(width: CombineW.rank)
 
-            // Name + media mention + NEED badge
-            HStack(spacing: 4) {
-                Text(prospect.fullName)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(Color.textPrimary)
-                    .lineLimit(1)
+            nameCell(for: prospect)
 
-                ProspectMarkChip(mark: prospect.userMark)
-
-                UserGradeBadge(prospectID: prospect.id)
-
-                if prospect.combineMediaMention != nil {
-                    Image(systemName: "megaphone.fill")
-                        .font(.system(size: 9))
-                        .foregroundStyle(isNegativeMediaMention(prospect.combineMediaMention!) ? Color.danger : Color.accentGold)
-                        .onTapGesture {
-                            mediaPopoverProspectID = mediaPopoverProspectID == prospect.id ? nil : prospect.id
-                        }
-                        .popover(isPresented: Binding(
-                            get: { mediaPopoverProspectID == prospect.id },
-                            set: { if !$0 { mediaPopoverProspectID = nil } }
-                        )) {
-                            mediaBubble(prospect.combineMediaMention!)
-                        }
-                        .accessibilityLabel("Media mention")
-                        .accessibilityHint("Tap to view media commentary")
-                        .accessibilityAddTraits(.isButton)
-                }
-
-                if teamNeeds.contains(prospect.position) {
-                    Text("NEED")
-                        .font(.system(size: DSType.Size.micro, weight: .heavy))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 1)
-                        .background(Capsule().fill(Color.danger))
-                }
-
-                // Why this man's card is empty. Tappable rather than always-on
-                // text: the reason is a sentence, the column is 140 pt wide, and
-                // the badge alone already answers "is this a bug or a decision".
-                if let badge = ScoutingEngine.combineParticipation(for: prospect).badge {
-                    Text(badge)
-                        .font(.system(size: DSType.Size.micro, weight: .heavy))
-                        .foregroundStyle(Color.backgroundPrimary)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 1)
-                        .background(Capsule().fill(Color.warning))
-                        .onTapGesture {
-                            dnpPopoverProspectID = dnpPopoverProspectID == prospect.id ? nil : prospect.id
-                        }
-                        .popover(isPresented: Binding(
-                            get: { dnpPopoverProspectID == prospect.id },
-                            set: { if !$0 { dnpPopoverProspectID = nil } }
-                        )) {
-                            dnpBubble(for: prospect)
-                        }
-                        .accessibilityLabel("\(badge): did not complete the combine")
-                        .accessibilityHint("Tap for the reason")
-                        .accessibilityAddTraits(.isButton)
-                }
-            }
-            .frame(width: CombineW.name, alignment: .leading)
+            // The elastic gap — see `CombineW`. It is what anchors everything
+            // below to the trailing edge, in this row and in the pinned header.
+            Spacer(minLength: CombineW.gap)
 
             // Position
             Text(prospect.position.rawValue)
@@ -706,6 +845,122 @@ struct CombineResultsView<Header: View>: View {
                 .lineLimit(1)
                 .frame(width: CombineW.college, alignment: .leading)
 
+            switch viewMode {
+            case .physical:
+                physicalCells(prospect: prospect, fidelity: fidelity,
+                              showsPercentile: showsPercentile, dash: dash, benchDash: benchDash)
+            case .overview:
+                overviewCells(prospect: prospect)
+            case .workup:
+                workupCells(prospect: prospect)
+            case .mental:
+                mentalCells(prospect: prospect)
+            case .position:
+                positionCells(prospect: prospect, fidelity: fidelity, dash: dash)
+            }
+
+            // Chevron for row navigation
+            Image(systemName: "chevron.right")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Color.textTertiary)
+                .frame(width: CombineW.chevron)
+        }
+    }
+
+    // MARK: - Name cell
+
+    /// The name, then everything the row has to SAY about him.
+    ///
+    /// The chips carry `layoutPriority(1)`, so when the cell is squeezed the
+    /// name text is what gives — "Nehemi…" beside an intact PARTIAL badge,
+    /// rather than a whole name beside half a badge. That inversion was the
+    /// reported bug: the marker chips are the row's only unrepeatable
+    /// information, and they were the first thing the old fixed 130 pt cell cut.
+    private func nameCell(for prospect: CollegeProspect) -> some View {
+        HStack(spacing: 4) {
+            Text(prospect.fullName)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(Color.textPrimary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+
+            nameChips(for: prospect)
+                .layoutPriority(1)
+        }
+        .frame(minWidth: CombineW.nameMin, alignment: .leading)
+    }
+
+    private func nameChips(for prospect: CollegeProspect) -> some View {
+        HStack(spacing: 4) {
+            ProspectMarkChip(mark: prospect.userMark)
+
+            UserGradeBadge(prospectID: prospect.id)
+
+            if prospect.combineMediaMention != nil {
+                Image(systemName: "megaphone.fill")
+                    .font(.system(size: 9))
+                    .foregroundStyle(isNegativeMediaMention(prospect.combineMediaMention!) ? Color.danger : Color.accentGold)
+                    .onTapGesture {
+                        mediaPopoverProspectID = mediaPopoverProspectID == prospect.id ? nil : prospect.id
+                    }
+                    .popover(isPresented: Binding(
+                        get: { mediaPopoverProspectID == prospect.id },
+                        set: { if !$0 { mediaPopoverProspectID = nil } }
+                    )) {
+                        mediaBubble(prospect.combineMediaMention!)
+                    }
+                    .accessibilityLabel("Media mention")
+                    .accessibilityHint("Tap to view media commentary")
+                    .accessibilityAddTraits(.isButton)
+            }
+
+            if teamNeeds.contains(prospect.position) {
+                Text("NEED")
+                    .font(.system(size: DSType.Size.micro, weight: .heavy))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(Color.danger))
+                    .fixedSize()
+            }
+
+            // Why this man's card is empty. Tappable rather than always-on
+            // text: the reason is a sentence, and the badge alone already
+            // answers "is this a bug or a decision".
+            if let badge = ScoutingEngine.combineParticipation(for: prospect).badge {
+                Text(badge)
+                    .font(.system(size: DSType.Size.micro, weight: .heavy))
+                    .foregroundStyle(Color.backgroundPrimary)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(Color.warning))
+                    .fixedSize()
+                    .onTapGesture {
+                        dnpPopoverProspectID = dnpPopoverProspectID == prospect.id ? nil : prospect.id
+                    }
+                    .popover(isPresented: Binding(
+                        get: { dnpPopoverProspectID == prospect.id },
+                        set: { if !$0 { dnpPopoverProspectID = nil } }
+                    )) {
+                        dnpBubble(for: prospect)
+                    }
+                    .accessibilityLabel("\(badge): did not complete the combine")
+                    .accessibilityHint("Tap for the reason")
+                    .accessibilityAddTraits(.isButton)
+            }
+        }
+    }
+
+    // MARK: - Mode cells
+
+    private func physicalCells(
+        prospect: CollegeProspect,
+        fidelity: ProspectFog.MeasurableFidelity,
+        showsPercentile: Bool,
+        dash: String,
+        benchDash: String
+    ) -> some View {
+        Group {
             drillCell(value: ProspectFog.fortyText(prospect.fortyTime, fidelity: fidelity),
                       tier: prospect.fortyTime.map { fortyTierForPosition($0, prospect.position) }, width: CombineW.forty,
                       percentile: showsPercentile ? prospect.fortyTime.map { drillPercentile($0, drill: .forty, prospect.position) } : nil,
@@ -736,20 +991,145 @@ struct CombineResultsView<Header: View>: View {
                       percentile: showsPercentile ? prospect.shuttleTime.map { drillPercentile($0, drill: .shuttle, prospect.position) } : nil,
                       emptyText: dash)
 
-            // Position drill grade — a judgement rather than a stopwatch reading,
-            // so the broadcast read gets the tier letter without the modifier.
-            let drillGrade = ProspectFog.drillGradeText(prospect.positionDrillGrade, fidelity: fidelity)
-            Text(drillGrade ?? dash)
-                .font(.caption.weight(.bold))
-                .foregroundStyle(drillGrade.map { PositionGradeCalculator.gradeColorForLetter($0) } ?? Color.textTertiary)
-                .frame(width: CombineW.drill)
-
-            // Chevron for row navigation
-            Image(systemName: "chevron.right")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(Color.textTertiary)
-                .frame(width: CombineW.chevron)
+            positionDrillCell(prospect: prospect, fidelity: fidelity, dash: dash)
         }
+    }
+
+    /// Position drill grade — a judgement rather than a stopwatch reading, so
+    /// the broadcast read gets the tier letter without the modifier.
+    private func positionDrillCell(
+        prospect: CollegeProspect,
+        fidelity: ProspectFog.MeasurableFidelity,
+        dash: String
+    ) -> some View {
+        let drillGrade = ProspectFog.drillGradeText(prospect.positionDrillGrade, fidelity: fidelity)
+        return Text(drillGrade ?? dash)
+            .font(.caption.weight(.bold))
+            .foregroundStyle(drillGrade.map { PositionGradeCalculator.gradeColorForLetter($0) } ?? Color.textTertiary)
+            .frame(width: CombineW.drill)
+    }
+
+    /// Who he is, in the measurements the week is actually for. NEED is not a
+    /// column here because it is already a chip on his name, and RISK is,
+    /// because a boom-or-bust label beside a 4.3 is the whole argument.
+    private func overviewCells(prospect: CollegeProspect) -> some View {
+        Group {
+            Text("\(prospect.age)")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(Color.textSecondary)
+                .frame(width: CombineW.age)
+
+            Text(heightText(prospect.height))
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(Color.textSecondary)
+                .frame(width: CombineW.height)
+
+            Text("\(prospect.weight)")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(Color.textSecondary)
+                .frame(width: CombineW.weight)
+
+            riskBadge(for: prospect)
+                .frame(width: CombineW.risk)
+        }
+    }
+
+    /// What the building has DONE on him. Every empty cell is a hole the user
+    /// can still pay to close, which is why they are drawn dim rather than
+    /// blank — and the last one is the interview, the slot this week is for.
+    private func workupCells(prospect: CollegeProspect) -> some View {
+        Group {
+            Text("\(prospect.scoutingReports.count)/\(ScoutEvaluationBudget.maxReportsPerProspect)")
+                .font(.system(size: 10, weight: .bold).monospacedDigit())
+                .foregroundStyle(prospect.scoutingReports.isEmpty
+                                 ? Color.textTertiary.opacity(0.5)
+                                 : (prospect.scoutingReports.count >= 2 ? Color.success : Color.accentBlue))
+                .frame(width: CombineW.reports)
+
+            ProspectWorkTick(done: prospect.proDayCompleted, tint: .success)
+                .frame(width: CombineW.tick)
+
+            ProspectWorkTick(
+                done: career.teamID.map { prospect.top30VisitedByTeams.contains($0) } ?? false,
+                tint: .accentGold
+            )
+            .frame(width: CombineW.tick)
+
+            ProspectWorkTick(done: ScoutingEngine.hasWorkedOutPrivately(prospect), tint: .accentBlue)
+                .frame(width: CombineW.tick)
+
+            // The interview, read from the list rather than from two taps deep.
+            // A dash here is the prompt: open his card and spend a slot.
+            ProspectMeetCell(prospect: prospect, width: CombineW.meet)
+        }
+    }
+
+    private func mentalCells(prospect: CollegeProspect) -> some View {
+        Group {
+            ProspectTapeCell(prospect: prospect, width: CombineW.tape)
+            ProspectMeetCell(prospect: prospect, width: CombineW.meet)
+            ForEach(ProspectFog.mentalKeys, id: \.self) { key in
+                ProspectGradeBandCell(grade: prospect.scoutedMentalGrades?[key], label: key)
+                    .frame(width: CombineW.band)
+            }
+        }
+    }
+
+    private func positionCells(
+        prospect: CollegeProspect,
+        fidelity: ProspectFog.MeasurableFidelity,
+        dash: String
+    ) -> some View {
+        // `ProspectFog.positionSkillKeys` is the canonical table, copied from the
+        // writer (`ScoutingEngine.generatePositionSkillGrades`). The local list
+        // this used to call had drifted — `SAc` / `DAc` for a quarterback, `TAK`
+        // for a linebacker, where the engine writes `SAC` / `DAC` / `TKL` — so
+        // those cells printed "?" for a fully scouted man no matter how much
+        // work the user had bought.
+        let keys = Array(ProspectFog.positionSkillKeys(for: prospect).prefix(4))
+        return Group {
+            ForEach(Array(keys.enumerated()), id: \.offset) { _, key in
+                ProspectGradeBandCell(grade: prospect.scoutedPositionGrades?[key], label: key)
+                    .frame(width: CombineW.skill)
+            }
+            // Pad to four so a kicker's two columns still leave the drill grade
+            // over its own header.
+            if keys.count < 4 {
+                ForEach(0..<(4 - keys.count), id: \.self) { _ in
+                    Spacer().frame(width: CombineW.skill)
+                }
+            }
+            positionDrillCell(prospect: prospect, fidelity: fidelity, dash: dash)
+        }
+    }
+
+    private func heightText(_ inches: Int) -> String {
+        "\(inches / 12)'\(inches % 12)\""
+    }
+
+    private func riskBadge(for prospect: CollegeProspect) -> some View {
+        let risk = prospect.riskLevel
+        let text: String
+        let tint: Color
+        switch risk {
+        case .safePick:    text = "Safe";       tint = .success
+        case .highCeiling: text = "Ceiling";    tint = .accentBlue
+        case .boomOrBust:  text = "Boom/Bust";  tint = .danger
+        case .unknown:     text = "--";         tint = .textTertiary
+        }
+        return Text(text)
+            .font(.system(size: 8, weight: .bold))
+            .foregroundStyle(risk == .unknown ? tint : .white)
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .padding(.horizontal, risk == .unknown ? 0 : 5)
+            .padding(.vertical, risk == .unknown ? 0 : 2)
+            .background(
+                risk == .unknown
+                    ? Color.clear
+                    : tint.opacity(0.85),
+                in: RoundedRectangle(cornerRadius: DSCornerRadius.tight)
+            )
     }
 
     private func drillCell(
@@ -878,14 +1258,26 @@ struct CombineResultsView<Header: View>: View {
 
     // MARK: - Grade Display
 
+    /// The GRD cell's band — through `ProspectFog`, like the Big Board's OVR
+    /// cell and the prospect card's header.
+    ///
+    /// It read `prospect.effectiveOverallGrade` straight, which is the RAW
+    /// stored range: `ProspectFog.read` widens that by `DraftIntel.scoutConfidence`,
+    /// so this table was printing "B+" for a man the board two tabs to the left
+    /// showed as "B-/A-". One department, one certainty — a screen that looks
+    /// surer than your scouts are is the same class of bug as one that shows
+    /// numbers they never filed.
+    private func scoutBand(for prospect: CollegeProspect) -> GradeRange? {
+        let read = ProspectFog.read(prospect)
+        return read.source == .scouts ? read.band : nil
+    }
+
     private func gradeDisplayText(for prospect: CollegeProspect) -> String {
-        // Single source of truth — same as Big Board, prospect detail, and any
-        // other list. `effectiveOverallGrade` covers all fallbacks.
-        prospect.effectiveOverallGrade?.displayText ?? "--"
+        scoutBand(for: prospect)?.displayText ?? "--"
     }
 
     private func gradeDisplayColor(for prospect: CollegeProspect) -> Color {
-        guard let range = prospect.effectiveOverallGrade else { return Color.textTertiary }
+        guard let range = scoutBand(for: prospect) else { return Color.textTertiary }
         return PositionGradeCalculator.gradeColorForLetter(range.midGrade.rawValue)
     }
 

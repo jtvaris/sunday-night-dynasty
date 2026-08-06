@@ -34,6 +34,9 @@ struct CareerDashboardView: View {
     @State private var bestDefensivePlayer: Player?
     @State private var coachingBudgetRemaining: Int = 0
     @State private var coachingBudgetTotal: Int = 0
+    /// Combined overspend across the coaching, medical and scouting pots —
+    /// what the `.coachingChanges` advance gate actually blocks on.
+    @State private var staffPotOverage: Int = 0
     @State private var expiringContractPlayers: [Player] = []
     @State private var positionGroupGrades: [(group: String, starterGrade: String, depthGrade: String, starterOVR: Int, depthOVR: Int)] = []
     @State private var teamMorale: Int = 70
@@ -99,6 +102,11 @@ struct CareerDashboardView: View {
     /// Battle whose detail sheet is presented.
     @State private var selectedBattle: PositionBattle?
 
+    /// #106: false until the first appear. `.task` owns the opening load; every
+    /// later appear (popping back from staff, cap, scouting…) reloads instead,
+    /// so no tile is left showing numbers a pushed screen already changed.
+    @State private var hasAppearedOnce: Bool = false
+
     /// Camp Phase 1 wire-up: latest Hard Knocks event surfaced as a bottom toast.
     @State private var latestHardKnocksEvent: HardKnocksEvent?
     /// Tracks which Hard Knocks event IDs have already been displayed so the
@@ -148,12 +156,13 @@ struct CareerDashboardView: View {
 
     // MARK: - Derived
 
-    /// Coaching budget overage in thousands. Returns 0 when within budget,
-    /// positive value (in thousands) when staff salaries exceed the owner's
-    /// coaching budget. Only relevant during the `.coachingChanges` phase.
+    /// Staff budget overage in thousands, summed across all three pots
+    /// (coaching, medical, scouting) — the same three the staff screen's own
+    /// overspend banner checks. Returns 0 when every pot is within budget.
+    /// Only relevant during the `.coachingChanges` phase.
     private var coachingOverage: Int {
         guard coachingBudgetTotal > 0 else { return 0 }
-        return max(0, -coachingBudgetRemaining)
+        return staffPotOverage
     }
 
     /// True when the user is in coachingChanges phase and has overspent the
@@ -433,6 +442,20 @@ struct CareerDashboardView: View {
             // R37: one-time dashboard tour on the very first open.
             if !FirstRunTip.dashboardTour.isDone && dashboardTourStep == nil {
                 withAnimation(.easeInOut(duration: 0.25)) { dashboardTourStep = 0 }
+            }
+        }
+        .onAppear {
+            // #106: `.task` only fires on the first open, so hiring staff on a
+            // pushed screen and popping back left the tiles on stale budget and
+            // slot numbers. The re-appear path refreshes ONLY the staff tile's
+            // inputs — the full `loadAllData` refetches every game of two
+            // seasons on the main thread mid-pop animation, and its
+            // `loadLatestHardKnocksEvent` would clear a toast the user may
+            // still be reading. First appear is left to `.task` above.
+            if hasAppearedOnce {
+                refreshStaffTile()
+            } else {
+                hasAppearedOnce = true
             }
         }
         .sheet(isPresented: $showGameSummary) {
@@ -2042,7 +2065,10 @@ struct CareerDashboardView: View {
 
                     // Fix #61: Prominent filled/total staff display (coaches + scouts)
                     let totalCoachSlots = allRoles.count
-                    let totalScoutSlots = 6  // Chief + 5 regional
+                    // #106: read the scouting department off the enum — it grew
+                    // two extra slots (chief + 5 regional + 2 extra) and the
+                    // hardcoded 6 rendered a filled count above the total.
+                    let totalScoutSlots = ScoutRole.allCases.count
                     let totalSlots = totalCoachSlots + totalScoutSlots
                     let filledSlots = coachCount + scoutCount
                     let isFullyStaffed = filledSlots >= totalSlots
@@ -3505,6 +3531,51 @@ struct CareerDashboardView: View {
         PerfLog.time("dashboard_loadAllData") { loadAllDataBody() }
     }
 
+    /// The staff tile's inputs alone — coaches, scouts and the three budget
+    /// pots. This is the slice of `loadAllDataBody` that can go stale while a
+    /// pushed screen hires or fires staff, and the ONLY work the `.onAppear`
+    /// re-entry path runs: the full load refetches two seasons of games on the
+    /// main thread, which is pop-animation jank the tile does not need.
+    private func refreshStaffTile() {
+        guard let teamID = career.teamID else { return }
+
+        let coachDescriptor = FetchDescriptor<Coach>(predicate: #Predicate { $0.teamID == teamID })
+        let coaches = (try? modelContext.fetch(coachDescriptor)) ?? []
+        allCoaches = coaches
+        coachCount = coaches.count
+        headCoach = coaches.first(where: { $0.role == .headCoach })
+
+        // Coaching budget (#147) — the coaching pot only, counted exactly the
+        // way CoachingStaffView counts it (#106). Medical staff draw from the
+        // owner's medical budget and scouts from the scouting budget, so
+        // charging either to this pot made the tile read millions lower than
+        // the staff screen right after an auto-hire.
+        let budgetTotal = team?.owner?.coachingBudget ?? 0
+        // R31: medical staff draw from their own pot, not the coaching budget.
+        let medicalRoles: Set<CoachRole> = [.teamDoctor, .physio, .headTrainer]
+        let coachSalaryUsed = coaches
+            .filter { !medicalRoles.contains($0.role) }
+            .reduce(0) { $0 + $1.salary }
+        let scoutDescriptor = FetchDescriptor<Scout>(predicate: #Predicate { $0.teamID == teamID })
+        let fetchedScouts = (try? modelContext.fetch(scoutDescriptor)) ?? []
+        scoutCount = fetchedScouts.count
+        coachingBudgetTotal = budgetTotal
+        coachingBudgetRemaining = budgetTotal - coachSalaryUsed
+
+        // The advance gate must still catch an overspent medical or scouting
+        // pot even though the tile shows the coaching pot alone — narrowing
+        // the tile's formula must not silently widen what the week lets pass.
+        let medicalUsed = coaches
+            .filter { medicalRoles.contains($0.role) }
+            .reduce(0) { $0 + $1.salary }
+        let scoutUsed = fetchedScouts.reduce(0) { $0 + $1.salary }
+        let medicalRemaining = (team?.owner?.medicalBudget ?? 0) - medicalUsed
+        let scoutingRemaining = (team?.owner?.scoutingBudget ?? 0) - scoutUsed
+        staffPotOverage = max(0, -(budgetTotal - coachSalaryUsed))
+            + max(0, -medicalRemaining)
+            + max(0, -scoutingRemaining)
+    }
+
     private func loadAllDataBody() {
         guard let teamID = career.teamID else { return }
 
@@ -3549,22 +3620,8 @@ struct CareerDashboardView: View {
         // Position group grades (#17)
         positionGroupGrades = calculatePositionGroupGrades(players: players)
 
-        // Coach count + head coach
-        let coachDescriptor = FetchDescriptor<Coach>(predicate: #Predicate { $0.teamID == teamID })
-        let coaches = (try? modelContext.fetch(coachDescriptor)) ?? []
-        allCoaches = coaches
-        coachCount = coaches.count
-        headCoach = coaches.first(where: { $0.role == .headCoach })
-
-        // Coaching budget (#147) — includes both coach and scout salaries
-        let budgetTotal = team?.owner?.coachingBudget ?? 0
-        let coachSalaryUsed = coaches.reduce(0) { $0 + $1.salary }
-        let scoutDescriptor = FetchDescriptor<Scout>(predicate: #Predicate { $0.teamID == teamID })
-        let fetchedScouts = (try? modelContext.fetch(scoutDescriptor)) ?? []
-        scoutCount = fetchedScouts.count
-        let scoutSalaryUsed = fetchedScouts.reduce(0) { $0 + $1.salary }
-        coachingBudgetTotal = budgetTotal
-        coachingBudgetRemaining = budgetTotal - coachSalaryUsed - scoutSalaryUsed
+        // Coach count + head coach + the staff tile's budget numbers.
+        refreshStaffTile()
 
         // Division teams
         if let myTeam = team {

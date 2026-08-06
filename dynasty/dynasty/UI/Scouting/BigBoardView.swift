@@ -24,6 +24,27 @@ private let bigBoardTierDescriptions = [
 /// Cap on how many men of one position a single scout tier may hold.
 private let bigBoardMaxSamePositionPerTier = 4
 
+/// The Physical block's six columns — the COMBINE CARD, in the order the week
+/// runs the drills.
+///
+/// It used to be SPD / STR / AGI / ACC / STA / DUR read straight off
+/// `prospect.truePhysical`: the generator's own attribute block, printed as raw
+/// 40-99 numbers, gated on nothing but "has a 40 time on file". No instrument
+/// in this game reveals `truePhysical`. What the combine reveals is
+/// MEASUREMENTS, and `ProspectFog.combineFidelity` decides how precisely this
+/// club may read them — the same leak the compare sheet's deleted
+/// "Physical (True)" section was, one tab to the left.
+///
+/// Strength, stamina and durability have no fog-safe source at all — nobody
+/// measures a man's durability in front of thirty-two clubs — so they are gone
+/// rather than approximated off the truth. The bench press is the strength
+/// column the week actually produces.
+private let boardMeasurableLabels = ["40YD", "BENCH", "VERT", "BROAD", "3CONE", "SHUT"]
+
+/// One drill column. Wider than the 32 pt attribute cells it replaced because
+/// "~4.5" and "126" are four glyphs where "91" was two.
+private let boardMeasurableWidth: CGFloat = 38
+
 /// The one prospect list surface.
 ///
 /// It used to be two: a "Prospects" tab and this one, over the same array, with
@@ -492,8 +513,15 @@ struct BigBoardView<Header: View>: View {
     /// Positional value is baked into the class blueprint (a position's talent
     /// is decided by which board slots it is allocated), so re-applying a
     /// positional multiplier here would double-count it.
+    ///
+    /// An unscouted man scores 0 and sinks, rather than falling back to
+    /// `trueOverall`. Every caller filters on `scoutedOverall != nil` today, so
+    /// the old `?? prospect.trueOverall` was unreachable — but it sat one filter
+    /// change away from leaking the generator's own number through the SORT,
+    /// which is the quietest disclosure channel there is: nothing prints, the
+    /// unscouted stud just happens to land at the top of the board.
     private func boardCompositeScore(for prospect: CollegeProspect) -> Double {
-        Double(prospect.scoutedOverall ?? prospect.trueOverall)
+        Double(prospect.scoutedOverall ?? 0)
     }
 
     /// Projected round from the board score. Thresholds are `DraftClassBuilder`'s
@@ -794,12 +822,20 @@ struct BigBoardView<Header: View>: View {
             .first
     }
 
-    /// Grade text for a prospect — prefers grade range, falls back to letter grade from numeric.
+    /// Grade text for a prospect — the stored band, else the letter its scouted
+    /// overall implies, else nothing at all.
+    ///
+    /// The old last resort was `LetterGrade.from(numericValue: … ?? trueOverall)`,
+    /// which would have printed the generator's grade for a man nobody had filed
+    /// on. Unreachable behind the `scoutedProspects` filter, and removed for the
+    /// same reason `boardCompositeScore`'s twin was: fail soft, never fall back
+    /// to the truth.
     private func bestAvailableGradeText(_ prospect: CollegeProspect) -> String {
         if let gradeRange = prospect.scoutedOverallGrade {
             return gradeRange.displayText
         }
-        return LetterGrade.from(numericValue: prospect.scoutedOverall ?? prospect.trueOverall).rawValue
+        guard let scouted = prospect.scoutedOverall else { return "\u{2014}" }
+        return LetterGrade.from(numericValue: scouted).rawValue
     }
 
     /// Format the team's draft picks for display.
@@ -1398,45 +1434,20 @@ struct BigBoardView<Header: View>: View {
     }
 
     // MARK: - Attribute Tab Picker (Capsule-style)
+    //
+    // The control itself moved to `ProspectListControls.swift` so the combine
+    // table wears the same one. The position chips stay switched OFF here: the
+    // hub draws them above the whole tab strip already, and `positionFilter` is
+    // passed through only so the board and the shared control agree on which
+    // binding the chips would write if a future host turned them on.
 
     private var bigBoardAttributeTabPicker: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(ProspectAttributeTab.allCases) { tab in
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            attributeTab = tab
-                        }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: tab.icon)
-                                .font(.system(size: 10))
-                            Text(tab.label)
-                                .font(.caption)
-                                .fontWeight(.medium)
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .foregroundStyle(attributeTab == tab ? Color.backgroundPrimary : Color.textSecondary)
-                        .background(
-                            attributeTab == tab ? Color.accentBlue : Color.backgroundTertiary,
-                            in: Capsule()
-                        )
-                        .overlay(
-                            Capsule()
-                                .strokeBorder(
-                                    attributeTab == tab ? Color.accentBlue : Color.surfaceBorder,
-                                    lineWidth: 1
-                                )
-                        )
-                    }
-                    .accessibilityLabel("View mode: \(tab.label)")
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 4)
-        }
-        .background(Color.backgroundPrimary)
+        ProspectListControls(
+            positionFilter: $positionFilter,
+            mode: $attributeTab,
+            modes: ProspectAttributeTab.allCases,
+            showsPositionChips: false
+        )
     }
 
     // MARK: - Column Headers
@@ -1609,20 +1620,13 @@ struct BigBoardView<Header: View>: View {
         .foregroundStyle(Color.textTertiary)
     }
 
+    /// The drills, not the attribute block — see `boardMeasurableLabels`.
     private var bigBoardPhysicalHeaders: some View {
         Group {
-            Text("SPD")
-                .frame(width: 32, alignment: .center)
-            Text("STR")
-                .frame(width: 32, alignment: .center)
-            Text("AGI")
-                .frame(width: 32, alignment: .center)
-            Text("ACC")
-                .frame(width: 32, alignment: .center)
-            Text("STA")
-                .frame(width: 32, alignment: .center)
-            Text("DUR")
-                .frame(width: 32, alignment: .center)
+            ForEach(boardMeasurableLabels, id: \.self) { label in
+                Text(label)
+                    .frame(width: boardMeasurableWidth, alignment: .center)
+            }
         }
         .font(.system(size: 8, weight: .bold))
         .foregroundStyle(Color.textTertiary)
@@ -1765,11 +1769,19 @@ struct BigBoardView<Header: View>: View {
     }
 
     /// User's priority positions from Roster Evaluation, formatted for display.
+    ///
+    /// HIGH only, top-3: Auto-Set Priorities stamps every group with SOME
+    /// priority, so listing everything non-"none" would read "Priority QB,
+    /// RB, WR, TE, OL, DL, LB, DB, ST" — a signal with no information in it.
+    /// This line is the counterpoint to the scouts' top-3 need call above it.
     private var userPriorityPositions: [String] {
-        rosterPriorities
-            .filter { $0.value != "none" }
-            .sorted { priorityRank($0.value) < priorityRank($1.value) }
-            .map { $0.key }
+        Array(
+            rosterPriorities
+                .filter { $0.value == "high" }
+                .map { $0.key }
+                .sorted()   // dictionary order is unstable frame to frame
+                .prefix(3)
+        )
     }
 
     private func priorityRank(_ priority: String) -> Int {
@@ -2836,10 +2848,7 @@ struct BigBoardRowView: View {
     }
 
     private func workupTick(_ done: Bool, tint: Color) -> some View {
-        Image(systemName: done ? "checkmark.circle.fill" : "circle")
-            .font(.system(size: 11))
-            .foregroundStyle(done ? tint : Color.textTertiary.opacity(0.35))
-            .accessibilityHidden(true)
+        ProspectWorkTick(done: done, tint: tint)
     }
 
     /// How far open the medical / character file is, at the disclosure the user
@@ -2869,30 +2878,70 @@ struct BigBoardRowView: View {
 
     // MARK: - Physical Columns
 
+    /// The combine card, at the precision this club has paid for.
+    ///
+    /// See `boardMeasurableLabels` for what this block used to be and why it is
+    /// not that any more. Every cell renders through the same `ProspectFog` text
+    /// helper the combine table's own drill cells use, so the two screens print
+    /// the same string for the same man: "4.52" when your people held the watch,
+    /// "~4.5" when you watched it on television with everybody else.
     private var boardPhysicalColumns: some View {
         Group {
-            if prospect.fortyTime != nil {
-                boardColorCodedMiniAttribute(value: prospect.truePhysical.speed, label: "SPD")
-                    .frame(width: 32, alignment: .center)
-                boardColorCodedMiniAttribute(value: prospect.truePhysical.strength, label: "STR")
-                    .frame(width: 32, alignment: .center)
-                boardColorCodedMiniAttribute(value: prospect.truePhysical.agility, label: "AGI")
-                    .frame(width: 32, alignment: .center)
-                boardColorCodedMiniAttribute(value: prospect.truePhysical.acceleration, label: "ACC")
-                    .frame(width: 32, alignment: .center)
-                boardColorCodedMiniAttribute(value: prospect.truePhysical.stamina, label: "STA")
-                    .frame(width: 32, alignment: .center)
-                boardColorCodedMiniAttribute(value: prospect.truePhysical.durability, label: "DUR")
-                    .frame(width: 32, alignment: .center)
+            if ProspectFog.showsMeasurables(prospect) {
+                let fidelity = ProspectFog.combineFidelity(
+                    for: prospect,
+                    scoutsAttended: scoutsSentToCombine
+                )
+                boardMeasurableCell(ProspectFog.fortyText(prospect.fortyTime, fidelity: fidelity),
+                                    label: "40YD", fidelity: fidelity)
+                boardMeasurableCell(ProspectFog.benchText(prospect.benchPress, fidelity: fidelity),
+                                    label: "BENCH", fidelity: fidelity)
+                boardMeasurableCell(ProspectFog.verticalText(prospect.verticalJump, fidelity: fidelity, unit: ""),
+                                    label: "VERT", fidelity: fidelity)
+                boardMeasurableCell(ProspectFog.broadJumpText(prospect.broadJump, fidelity: fidelity, unit: ""),
+                                    label: "BROAD", fidelity: fidelity)
+                boardMeasurableCell(ProspectFog.agilityText(prospect.coneDrill, fidelity: fidelity),
+                                    label: "3CONE", fidelity: fidelity)
+                boardMeasurableCell(ProspectFog.agilityText(prospect.shuttleTime, fidelity: fidelity),
+                                    label: "SHUT", fidelity: fidelity)
             } else {
-                ForEach(0..<6, id: \.self) { _ in
-                    Text("?")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(Color.textTertiary)
-                        .frame(width: 32, alignment: .center)
+                // Nothing has put this man in front of a stopwatch you can read:
+                // no invite, no pro day, no report of your own.
+                ForEach(boardMeasurableLabels, id: \.self) { label in
+                    boardMeasurableCell(nil, label: label, fidelity: .broadcast, empty: "?")
                 }
             }
         }
+    }
+
+    /// One measurable over its column label.
+    ///
+    /// A blank cell is two different facts and the cell says which: "?" when
+    /// nobody has measured him where you could see it, an em-dash when he was
+    /// there and did not run that drill. The tint carries the other half of the
+    /// fog — a hard number your own people took reads at full strength, a
+    /// rounded broadcast figure reads back, matching the "~" the helper prefixes.
+    private func boardMeasurableCell(
+        _ value: String?,
+        label: String,
+        fidelity: ProspectFog.MeasurableFidelity,
+        empty: String = "\u{2014}"
+    ) -> some View {
+        VStack(spacing: 0) {
+            Text(value ?? empty)
+                .font(.system(size: 10, weight: .bold).monospacedDigit())
+                .foregroundStyle(
+                    value == nil
+                        ? Color.textTertiary
+                        : (fidelity == .full ? Color.textPrimary : Color.textTertiaryReadable)
+                )
+                .lineLimit(1)
+                .minimumScaleFactor(0.65)
+            Text(label)
+                .font(.system(size: 7, weight: .medium))
+                .foregroundStyle(Color.textTertiary)
+        }
+        .frame(width: boardMeasurableWidth, alignment: .center)
     }
 
     // MARK: - Mental Columns
@@ -2940,14 +2989,17 @@ struct BigBoardRowView: View {
     private var boardPositionColumns: some View {
         Group {
             if isScouted {
-                let keys = boardPositionSkillKeys
-                ForEach(Array(keys.prefix(4).enumerated()), id: \.offset) { _, skill in
-                    boardGradeRangeMiniAttribute(key: skill.key, label: skill.label, grades: prospect.scoutedPositionGrades)
+                // Four columns is the row's budget; a quarterback's canonical
+                // block is six keys long, so the board shows the first four
+                // (ARM / SAC / MAC / DAC) and his card carries the rest.
+                let keys = Array(boardPositionSkillKeys.prefix(4))
+                ForEach(Array(keys.enumerated()), id: \.offset) { _, key in
+                    boardGradeRangeMiniAttribute(key: key, label: key, grades: prospect.scoutedPositionGrades)
                         .frame(width: 32, alignment: .center)
                 }
                 // Pad to 4 columns if fewer
                 if keys.count < 4 {
-                    ForEach(0..<(4 - min(keys.count, 4)), id: \.self) { _ in
+                    ForEach(0..<(4 - keys.count), id: \.self) { _ in
                         Spacer().frame(width: 32)
                     }
                 }
@@ -2962,69 +3014,36 @@ struct BigBoardRowView: View {
         }
     }
 
-    /// Returns position-specific attribute keys and labels for grade lookup.
-    private var boardPositionSkillKeys: [(key: String, label: String)] {
-        switch prospect.truePositionAttributes {
-        case .quarterback:
-            return [("ARM", "ARM"), ("SAc", "SAc"), ("DAc", "DAc"), ("PKT", "PKT")]
-        case .wideReceiver:
-            return [("RTE", "RTE"), ("CTH", "CTH"), ("RLS", "RLS"), ("SPC", "SPC")]
-        case .runningBack:
-            return [("VIS", "VIS"), ("ELU", "ELU"), ("BTK", "BTK"), ("RCV", "RCV")]
-        case .tightEnd:
-            return [("BLK", "BLK"), ("CTH", "CTH"), ("RTE", "RTE"), ("SPD", "SPD")]
-        case .offensiveLine:
-            return [("RBK", "RBK"), ("PBK", "PBK"), ("PUL", "PUL"), ("ANC", "ANC")]
-        case .defensiveLine:
-            return [("PRU", "PRU"), ("BSH", "BSH"), ("PWR", "PWR"), ("FIN", "FIN")]
-        case .linebacker:
-            return [("TAK", "TAK"), ("ZCV", "ZCV"), ("MCV", "MCV"), ("BLZ", "BLZ")]
-        case .defensiveBack:
-            return [("MCV", "MCV"), ("ZCV", "ZCV"), ("PRS", "PRS"), ("BSK", "BSK")]
-        case .kicking:
-            return [("PWR", "PWR"), ("ACC", "ACC")]
-        }
+    /// The position-skill keys this man's card is graded on.
+    ///
+    /// `ProspectFog.positionSkillKeys(for:)` is the canonical table — copied
+    /// from the writer, `ScoutingEngine.generatePositionSkillGrades`, which is
+    /// the authority on the spelling. The board used to keep its own list
+    /// (through `ProspectPositionSkills`) and it had drifted: it looked up
+    /// `SAc` / `DAc` for a quarterback and `TAK` for a linebacker where the
+    /// engine writes `SAC` / `DAC` / `TKL`. Those lookups could never hit, so a
+    /// fully scouted QB showed "?" in two of his four Position columns forever,
+    /// and a linebacker in one of his — a hole in the user's work that was
+    /// actually a typo in ours.
+    private var boardPositionSkillKeys: [String] {
+        ProspectFog.positionSkillKeys(for: prospect)
     }
 
     // MARK: - Mini Attribute Helpers
-
-    private func boardColorCodedMiniAttribute(value: Int, label: String) -> some View {
-        VStack(spacing: 0) {
-            Text("\(value)")
-                .font(.system(size: 10, weight: .bold).monospacedDigit())
-                .foregroundStyle(boardAttributeColor(for: value))
-            Text(label)
-                .font(.system(size: 7, weight: .medium))
-                .foregroundStyle(Color.textTertiary)
-        }
-    }
-
-    private func boardAttributeColor(for value: Int) -> Color {
-        switch value {
-        case 90...:   return .accentGold
-        case 80..<90: return .success
-        case 70..<80: return .accentBlue
-        default:      return .warning
-        }
-    }
+    //
+    // The cell shapes live in `ProspectListControls.swift` now — the combine
+    // table renders the same attribute blocks, and two copies of a cell is two
+    // copies that drift. These stay as the row's own vocabulary so no call site
+    // had to change.
+    //
+    // The revealed-integer cell (`ProspectMiniAttributeCell`) is deliberately
+    // NOT wrapped here any more: the Physical block was its only caller on this
+    // screen, and every number it printed came off `truePhysical`. Nothing on a
+    // draft board is entitled to a raw 40-99 attribute, so the board has no
+    // vocabulary for one.
 
     private func boardGradeRangeMiniAttribute(key: String, label: String, grades: [String: GradeRange]?) -> some View {
-        VStack(spacing: 0) {
-            if let gradeRange = grades?[key] {
-                Text(gradeRange.displayText)
-                    .font(.system(size: gradeRange.isSingleGrade ? 10 : 8, weight: .bold))
-                    .foregroundStyle(boardGradeColor(gradeRange.midGrade))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-            } else {
-                Text("?")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(Color.textTertiary)
-            }
-            Text(label)
-                .font(.system(size: 7, weight: .medium))
-                .foregroundStyle(Color.textTertiary)
-        }
+        ProspectGradeBandCell(grade: grades?[key], label: label)
     }
 
     private func boardGradeColor(_ grade: LetterGrade) -> Color {
@@ -3044,12 +3063,22 @@ struct BigBoardRowView: View {
             .background(positionColor, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
     }
 
+    /// The OVR cell — the band the user's own scouts are entitled to, widened by
+    /// how confident they are (`ProspectFog.read`, which folds in
+    /// `DraftIntel.scoutConfidence`).
+    ///
+    /// Reading `prospect.effectiveOverallGrade` straight printed the raw stored
+    /// range, which is narrower than the department's actual certainty — the
+    /// same drift `ProspectDetailView` fixed on the prospect card. Still `nil`
+    /// exactly when `effectiveOverallGrade` was (a scouted grade is the only
+    /// thing that makes the read `.scouts`), so the "?" branch is unchanged.
     private var boardOverallBadge: some View {
-        Button {
+        let read = ProspectFog.read(prospect)
+        return Button {
             onGradeTap?()
         } label: {
             Group {
-                if let gradeRange = prospect.effectiveOverallGrade {
+                if read.source == .scouts, let gradeRange = read.band {
                     DualGradeDisplay(
                         prospectID: prospect.id,
                         scoutGradeText: gradeRange.displayText,
@@ -3248,15 +3277,34 @@ struct BigBoardRowView: View {
         return "Rank \(rank)\(of), \(prospect.fullName), \(prospect.position.rawValue), \(prospect.college), overall \(overall)\(mark)\(value)"
     }
 
-    /// Combine performance color based on physical attributes and drill results (#7)
+    /// How the CMB badge is tinted — how the man TESTED, as far as this club is
+    /// entitled to read it (#7).
+    ///
+    /// It used to average `truePhysical`, which is the generator's own attribute
+    /// block: low bandwidth, but a leak all the same, because a club that never
+    /// went to Indianapolis still got a green badge off a 91 speed nobody had
+    /// ever shown it. The signal is the position-drill grade at
+    /// `ProspectFog.combineFidelity` now — the same letter the combine table
+    /// prints in its Pos Drill cell, coarsened to its tier for a club that only
+    /// watched the broadcast — so the tint says exactly what the card says and
+    /// nothing more. Grey when the drill session produced nothing you can read:
+    /// a specialist, or a man who did not work out.
     private var combinePerformanceColor: Color {
-        // If no combine data (no forty time), gray
-        guard prospect.fortyTime != nil else { return Color.textTertiary }
-        // Use average of physical stats as a proxy for combine performance
-        let avg = prospect.truePhysical.average
-        if avg >= 80 { return Color.success }       // Strong combine
-        if avg >= 65 { return Color.warning }        // Average combine
-        return Color.danger                           // Weak combine
+        let fidelity = ProspectFog.combineFidelity(
+            for: prospect,
+            scoutsAttended: scoutsSentToCombine
+        )
+        guard let text = ProspectFog.drillGradeText(prospect.positionDrillGrade, fidelity: fidelity)
+        else { return Color.textTertiary }
+        // `ProspectRoundFormat.gradeRank` rather than `LetterGrade(rawValue:)`:
+        // the engine writes "D-", which `LetterGrade` has no case for, and a
+        // bottom-tier tester must read as a bad combine rather than as no data.
+        switch ProspectRoundFormat.gradeRank(text) {
+        case 10...:  return Color.success    // B+ and up — strong week
+        case 6...9:  return Color.warning     // C through B — an average week
+        case 1...5:  return Color.danger      // C- and down — a bad week
+        default:     return Color.textTertiary
+        }
     }
 
     // `boardMediaColor` deleted with the newspaper glyph it tinted. The glyph

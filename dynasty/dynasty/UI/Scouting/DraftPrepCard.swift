@@ -180,7 +180,10 @@ struct DraftPrepCard: View {
     private var phaseSubtitle: String {
         switch career.currentPhase {
         case .coachingChanges, .reviewRoster:
-            return "Tape season. Reports filed now are the cheapest intel you will buy all cycle."
+            // Film study is calendar-locked until the combine window opens
+            // (prepCalendarRank == 0 here), so this must read as waiting, not
+            // as an invitation to file reports the board will refuse.
+            return "The combine is next on the calendar. Film, interviews and the department trip all open in Indianapolis."
         case .combine:
             return "Indianapolis. Interviews and the department trip are both one-window offers."
         case .freeAgency:
@@ -190,7 +193,7 @@ struct DraftPrepCard: View {
         case .draft:
             return "Anything unscouted now goes on the clock unscouted."
         case .regularSeason, .tradeDeadline, .playoffs:
-            return "The class is on the board but the chequebook is shut. Reports open at the coaching changes."
+            return "The class is on the board but the chequebook is shut. Reports open at the combine."
         default:
             return "The board keeps between cycles \u{2014} coverage carries into draft week."
         }
@@ -234,28 +237,40 @@ struct DraftPrepCard: View {
             scouted: topSlice.filter { !$0.scoutingReports.isEmpty }.count,
             interviewed: topSlice.filter(\.interviewCompleted).count
         )
+        let progress = DraftPrepProgress(career: career, prospects: prospects, scouts: scouts)
         return Snapshot(
             coverage: coverage,
-            attention: attentionItems(topSlice: topSlice),
-            progress: DraftPrepProgress(career: career, prospects: prospects, scouts: scouts)
+            attention: attentionItems(topSlice: topSlice, progress: progress),
+            progress: progress
         )
     }
 
-    private func attentionItems(topSlice: [CollegeProspect]) -> [AttentionItem] {
+    private func attentionItems(
+        topSlice: [CollegeProspect],
+        progress: DraftPrepProgress
+    ) -> [AttentionItem] {
         var items: [AttentionItem] = []
+
+        // Report gaps are only actionable while a report can actually be
+        // ordered. Pre-combine the board holds film study shut, so "no report
+        // filed — 1 to fix" over a waiting screen was the #107 contradiction
+        // in card form: a nag with no button behind it.
+        let filmWindowOpen = progress.canAct(.filmStudy)
 
         // 1. The best men nobody has filed a word on. Worst gap there is, so it
         //    goes first and gets the most slots.
-        let unscoutedElite = topSlice.prefix(32).filter { $0.scoutingReports.isEmpty }
-        for prospect in unscoutedElite.prefix(3) {
-            items.append(AttentionItem(
-                id: "unscouted-\(prospect.id.uuidString)",
-                icon: "doc.badge.ellipsis",
-                tint: .danger,
-                title: "\(prospect.fullName) \u{00B7} \(prospect.position.rawValue)",
-                detail: "Top-32 consensus, no report filed",
-                target: .prospect(prospect)
-            ))
+        if filmWindowOpen {
+            let unscoutedElite = topSlice.prefix(32).filter { $0.scoutingReports.isEmpty }
+            for prospect in unscoutedElite.prefix(3) {
+                items.append(AttentionItem(
+                    id: "unscouted-\(prospect.id.uuidString)",
+                    icon: "doc.badge.ellipsis",
+                    tint: .danger,
+                    title: "\(prospect.fullName) \u{00B7} \(prospect.position.rawValue)",
+                    detail: "Top-32 consensus, no report filed",
+                    target: .prospect(prospect)
+                ))
+            }
         }
 
         // 2. Men the user has flagged for himself but never met. Only while the
@@ -289,21 +304,25 @@ struct DraftPrepCard: View {
             }
         }
 
-        // 3. Need groups you are walking into the draft blind on.
-        let thinNeeds = DraftIntel.needCoverage(
-            prospects: prospects,
-            roster: teamRoster,
-            topCount: topSliceSize
-        ).filter(\.isThin)
-        for need in thinNeeds.prefix(2) {
-            items.append(AttentionItem(
-                id: "need-\(need.position.rawValue)",
-                icon: "exclamationmark.triangle.fill",
-                tint: .warning,
-                title: "\(need.position.rawValue) is a need \u{2014} thin coverage",
-                detail: "\(need.scouted) of \(need.onBoard) top-100 \(need.position.rawValue)s scouted",
-                target: .position(Self.filter(for: need.position))
-            ))
+        // 3. Need groups you are walking into the draft blind on. Same gate as
+        //    the report gaps above: thin coverage is only fixable when a
+        //    report can be ordered.
+        if filmWindowOpen {
+            let thinNeeds = DraftIntel.needCoverage(
+                prospects: prospects,
+                roster: teamRoster,
+                topCount: topSliceSize
+            ).filter(\.isThin)
+            for need in thinNeeds.prefix(2) {
+                items.append(AttentionItem(
+                    id: "need-\(need.position.rawValue)",
+                    icon: "exclamationmark.triangle.fill",
+                    tint: .warning,
+                    title: "\(need.position.rawValue) is a need \u{2014} thin coverage",
+                    detail: "\(need.scouted) of \(need.onBoard) top-100 \(need.position.rawValue)s scouted",
+                    target: .position(Self.filter(for: need.position))
+                ))
+            }
         }
 
         return Array(items.prefix(5))

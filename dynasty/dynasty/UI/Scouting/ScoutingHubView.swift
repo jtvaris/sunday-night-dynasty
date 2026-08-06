@@ -513,7 +513,23 @@ struct ScoutingHubView: View {
         _ step: DraftPrepStep,
         progress: DraftPrepProgress
     ) -> DraftPrepStageCell.State {
-        if step == progress.current { return .current }
+        // LOCKED WINS OVER CURRENT (#107). `prepStep` is a floor and it never
+        // reads lower than `.combineReview`, so outside the pre-draft window
+        // stage 1 is still "where the club stands" — and the bar drew it in
+        // February with the gold puck and the "Not read" chip while the Combine
+        // tab underneath read "0 of 0 prospects invited". Standing in a stage
+        // and being able to work it are different claims; `unlocked` owns the
+        // second one, and only the second one may be drawn as an invitation.
+        //
+        // Presentation only: `canAct` is untouched, and an EARLIER stage is
+        // still never shut, so the B3 class stays closed.
+        if step == progress.current {
+            // A satisfied stage keeps its tick even when the calendar has shut
+            // it — done work is a fact, not an invitation, and the lock glyph
+            // over a finished stage reads as data loss.
+            if !progress[step].unlocked && progress[step].isSatisfied { return .done }
+            return progress[step].unlocked ? .current : .locked
+        }
         if progress[step].isSatisfied { return .done }
         // Everything the club may work right now — the stages behind it, which
         // never shut, and the next room, which `reach` opens the moment the
@@ -573,12 +589,20 @@ struct ScoutingHubView: View {
             // Layer 3: what this stage buys and what it costs. One card, same
             // shape on every stage screen, collapsible and remembered per stage.
             if let stage {
+                let row = progress[stage]
                 DraftPrepStageExplainer(
                     step: stage,
                     state: stageState(stage, progress: progress),
-                    counterText: progress[stage].counter,
-                    lockReason: progress[stage].lockReason ?? "",
-                    requirement: stage == progress.current ? stageGate.requirement : ""
+                    counterText: row.counter,
+                    lockReason: row.lockReason ?? "",
+                    // The gate's requirement is a TARGET — "Open the Combine tab
+                    // and read the numbers" — so it may only be printed over a
+                    // stage that can actually be worked. A shut stage gets its
+                    // lock sentence instead (#107).
+                    requirement: (stage == progress.current && row.unlocked)
+                        ? stageGate.requirement
+                        : "",
+                    isWaitingOnCalendar: row.isCalendarLocked
                 )
                 .padding(.horizontal, 16)
                 .padding(.bottom, 6)
@@ -607,6 +631,14 @@ struct ScoutingHubView: View {
     /// a stray tap threw those reservations away in the shipped build.
     private var showsAdvanceBar: Bool {
         guard selectedTab == currentStageTab else { return false }
+        // Outside the pre-draft window there is nothing to advance INTO — a
+        // disabled "Advance — Interviews" over a waiting screen reads as a
+        // broken button, which is #107 verbatim. The stage cells and the
+        // explainer already carry the "opens at the combine" message. The
+        // phase rank IS the calendar lock for the current stage (a current
+        // stage inside the window is always calendar-open), and testing it
+        // here avoids building a second full DraftPrepProgress per body pass.
+        guard career.currentPhase.prepCalendarRank > 0 else { return false }
         if case .advance = stageGate.action { return true }
         return false
     }
