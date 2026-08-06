@@ -2292,8 +2292,8 @@ struct CoachingStaffView: View {
                         .foregroundStyle(Color.accentGold)
 
                     HStack(spacing: 20) {
-                        reviewStatBadge(value: "\(coaches.count)", label: "Coaches", color: .accentGold)
-                        reviewStatBadge(value: "\(scouts.count)", label: "Scouts", color: .accentBlue)
+                        reviewStatBadge(value: "\(StaffSlots.filledCoachSlots(coaches: coaches, careerRole: career.role))", label: "Coaches", color: .accentGold)
+                        reviewStatBadge(value: "\(StaffSlots.filledScoutSlots(scouts: scouts))", label: "Scouts", color: .accentBlue)
                         reviewStatBadge(value: "\(vacantCoachRoles.count)", label: "Vacant", color: vacantCoachRoles.isEmpty ? .success : .warning)
                     }
                     .frame(maxWidth: .infinity)

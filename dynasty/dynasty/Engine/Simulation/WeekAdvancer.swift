@@ -3108,7 +3108,8 @@ enum WeekAdvancer {
                 let teamCoaches = allCoaches.filter { $0.teamID == team.id }
                 var poached = CoachingEngine.checkCoordinatorPoaching(
                     coaches: teamCoaches,
-                    teamWins: team.wins
+                    teamWins: team.wins,
+                    currentSeason: career.currentSeason
                 )
                 // R30: the user's coordinators only leave with the user's
                 // consent (interview-request flow) — position coaches can

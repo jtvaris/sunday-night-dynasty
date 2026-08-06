@@ -1170,13 +1170,11 @@ struct ProspectDetailView: View {
                 }
             }
 
-            if let grade = prospect.scoutGrade {
-                LabeledContent("Scout Grade") {
-                    Text(grade)
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(Color.textPrimary)
-                }
-            }
+            // The legacy "Scout Grade" row is gone: `syncProspectGrades` pins
+            // it to the band's midpoint on every load, so it printed a pinpoint
+            // letter beside the fogged range above — one exact answer the range
+            // exists to withhold, and for an inherited-only prospect it dressed
+            // the previous regime's guess as this department's.
 
             // Personality has two writers — a meeting (`conductInterview`) and a
             // report that came back with a personality read (`applyReport`) — and
@@ -1187,13 +1185,14 @@ struct ProspectDetailView: View {
                     VStack(alignment: .trailing, spacing: 1) {
                         Text(personality.displayName)
                             .foregroundStyle(Color.textPrimary)
-                        // "Scouts' read" is only honest when a report exists —
+                        // "Scouts' read" is only honest when OUR report exists —
                         // `applyPreScoutedData` hands the class's top names a
-                        // personality with no instrument behind it, and that
+                        // personality with no instrument behind it, and its
+                        // inherited row still sits in `scoutingReports`; that
                         // read is the league's, not this building's.
                         Text(prospect.interviewCompleted
                              ? "From your interview"
-                             : (prospect.scoutingReports.isEmpty ? "League consensus" : "Scouts' read"))
+                             : (ProspectFog.hasOwnReport(prospect) ? "Scouts' read" : "League consensus"))
                             .font(.caption2)
                             .foregroundStyle(Color.textTertiary)
                     }

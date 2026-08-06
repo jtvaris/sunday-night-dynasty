@@ -1611,8 +1611,11 @@ enum CoachingEngine {
     /// - Parameters:
     ///   - coaches: The full coaching staff to evaluate.
     ///   - teamWins: The team's win total for the season.
+    ///   - currentSeason: The season whose offseason this pass runs in — the
+    ///     grace test needs it, because the flag alone cannot say WHICH
+    ///     offseason a man signed in.
     /// - Returns: Coaches currently being targeted with HC offers (may be empty).
-    static func checkCoordinatorPoaching(coaches: [Coach], teamWins: Int) -> [Coach] {
+    static func checkCoordinatorPoaching(coaches: [Coach], teamWins: Int, currentSeason: Int) -> [Coach] {
         // Only non-HC coaching roles are eligible for poaching.
         //
         // Task #96: the medical family (team doctor, physio, head trainer) used
@@ -1630,11 +1633,15 @@ enum CoachingEngine {
         // clause his brand-new position coaches were on the market the same
         // evening they signed — two of fifteen, on average, on a fresh save.
         // The flag is cleared by `developCoach` further down the same advance,
-        // so the grace is exactly one offseason and every AI hire (which lands
-        // after this pass anyway) is unaffected.
+        // and every AI hire (which lands after this pass anyway) is unaffected.
+        // The `hireSeasonYear >= currentSeason` half exists because the flag
+        // alone would grant a FREE YEAR to any coach hired after this advance
+        // (free agency, midseason): developCoach has already run for the year,
+        // nothing clears the flag until next offseason, and a man who then
+        // coached the full season would arrive here still "brand new".
         let candidates = coaches.filter {
             $0.role != .headCoach && $0.role != .assistantHeadCoach && $0.role.family != .medical
-                && !$0.signedThisOffseason
+                && !($0.signedThisOffseason && $0.hireSeasonYear >= currentSeason)
         }
 
         // Win bonus: teams on winning records attract more HC searches

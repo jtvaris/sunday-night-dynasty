@@ -152,8 +152,13 @@ enum DraftIntel {
     /// happened. Vaihe 5 will integrate per-scout coverage more tightly.
     static func scoutConfidence(for prospect: CollegeProspect) -> Int {
         var score = 1
-        if !prospect.scoutingReports.isEmpty { score += 1 }
-        if prospect.scoutingReports.count >= 2 { score += 1 }
+        // Own reports only — the inherited "Previous Staff" row is not work
+        // this regime did, and `ProspectFog.widened` narrows the displayed
+        // band off this number, so counting the freebie tightened a band no
+        // instrument had earned (#124 review, finding 12).
+        let ownReports = ProspectFog.ownReportCount(prospect)
+        if ownReports >= 1 { score += 1 }
+        if ownReports >= 2 { score += 1 }
         if prospect.combineInvite { score += 1 }
         if prospect.interviewCompleted || prospect.proDayCompleted { score += 1 }
         return min(5, score)

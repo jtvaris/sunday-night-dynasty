@@ -2195,7 +2195,10 @@ struct CareerShellView: View {
         if changed > 0 {
             try? modelContext.save()
         }
-        if needsRepair {
+        // Stamp only when the walk saw the class. In-season the prospect rows
+        // are purged until the next offseason regenerates them — stamping over
+        // an empty fetch would burn the one repair shot on nothing.
+        if needsRepair, !prospects.isEmpty {
             CareerScopedDefaults.set(Self.prospectBandRepairVersion, Self.prospectBandRepairKey)
         }
     }

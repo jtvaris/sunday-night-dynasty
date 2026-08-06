@@ -3937,8 +3937,6 @@ struct CareerDashboardView: View {
         career.role == .gmAndHeadCoach
     }
 
-    private var allRoles: [CoachRole] { StaffSlots.coachRoles(for: career.role) }
-
     // MARK: - Phase-Aware Hero Card
 
     @ViewBuilder

@@ -234,7 +234,10 @@ struct DraftPrepCard: View {
         let topSlice = DraftIntel.consensusTop(prospects, count: topSliceSize)
         let coverage = DraftIntel.BoardCoverage(
             sampleSize: topSlice.count,
-            scouted: topSlice.filter { !$0.scoutingReports.isEmpty }.count,
+            // Own reports only — the inherited "Previous Staff" freebie covers
+            // the whole top slice on a fresh save, and the hub header three
+            // inches up already counts hasOwnReport (#124).
+            scouted: topSlice.filter { ProspectFog.hasOwnReport($0) }.count,
             interviewed: topSlice.filter(\.interviewCompleted).count
         )
         let progress = DraftPrepProgress(career: career, prospects: prospects, scouts: scouts)
@@ -260,7 +263,7 @@ struct DraftPrepCard: View {
         // 1. The best men nobody has filed a word on. Worst gap there is, so it
         //    goes first and gets the most slots.
         if filmWindowOpen {
-            let unscoutedElite = topSlice.prefix(32).filter { $0.scoutingReports.isEmpty }
+            let unscoutedElite = topSlice.prefix(32).filter { !ProspectFog.hasOwnReport($0) }
             for prospect in unscoutedElite.prefix(3) {
                 items.append(AttentionItem(
                     id: "unscouted-\(prospect.id.uuidString)",

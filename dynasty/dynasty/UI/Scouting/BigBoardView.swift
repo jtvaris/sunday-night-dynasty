@@ -959,7 +959,10 @@ struct BigBoardView<Header: View>: View {
     @ViewBuilder
     private func filmStudyButton(for prospect: CollegeProspect) -> some View {
         let availability = filmAvailability(for: prospect)
-        let filed = prospect.scoutingReports.count
+        // Chargeable reports only — raw count includes the inherited "Previous
+        // Staff" row, which made the button read 1/3 before anything was
+        // ordered while the economy gate still charged for a third.
+        let filed = ScoutEvaluationBudget.chargeableReports(prospect)
         Button {
             orderFilmStudy(on: prospect)
         } label: {
@@ -2066,8 +2069,10 @@ struct BigBoardView<Header: View>: View {
             onEditNote: { editingMarkNoteProspect = prospect },
             // Only for a man nobody has been in a room with — the rest of the
             // gate (window, stage, slots) is the hub's, and it withholds the
-            // closure entirely when any of it is shut.
-            onInterview: (onInterview != nil && !prospect.interviewCompleted)
+            // closure entirely when any of it is shut. `combineInvite` matches
+            // the interview room's own selectable set: without it the action
+            // jumps tabs and ticks nobody.
+            onInterview: (onInterview != nil && !prospect.interviewCompleted && prospect.combineInvite)
                 ? { onInterview?(prospect) }
                 : nil
         )

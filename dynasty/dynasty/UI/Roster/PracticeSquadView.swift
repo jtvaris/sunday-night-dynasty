@@ -140,7 +140,10 @@ struct PracticeSquadView: View {
             summaryStat(
                 "Squad",
                 "\(ourSquad.count)/\(PracticeSquadEngine.squadSize)",
-                tint: ourSquad.count < PracticeSquadEngine.squadSize ? Color.warning : Color.textPrimary
+                // squadSize is a CEILING — league squads run 6-8 deep by design
+                // since the #99 mint fix, so a sub-16 count is normal, not a
+                // warning. Warn only below the engine's own generation floor.
+                tint: ourSquad.count < PracticeSquadEngine.squadGenerationFloor ? Color.warning : Color.textPrimary
             )
             summaryStat(
                 "Active",

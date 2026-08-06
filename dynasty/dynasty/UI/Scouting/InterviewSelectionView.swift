@@ -46,7 +46,9 @@ struct InterviewSelectionView: View {
     @ObservedObject private var userGradeStore = UserProspectGradeStore.shared
     @State private var isLoading: Bool = true
 
-    private let maxInterviews = 60
+    // Single source with the hub's quick-action gate — two 60s that drift
+    // apart would let the row shortcut run past the room's own ration.
+    private let maxInterviews = DraftPrepProgress.interviewSlots
 
     private var remainingSlots: Int {
         max(0, maxInterviews - career.interviewsUsed)
@@ -893,7 +895,9 @@ struct InterviewSelectionView: View {
         WeekAdvancer.persistDraftClass(WeekAdvancer.currentDraftClass, to: modelContext)
         try? modelContext.save()
 
-        selectedProspectIDs.removeAll()
+        // The row shortcut passes a single id — don't wipe a batch selection
+        // the user built for the Conduct button; only clear what was spent.
+        selectedProspectIDs.subtract(ids)
         interviewResults = results
         showResults = true
     }

@@ -830,7 +830,7 @@ enum ProspectColumns {
         _ prospect: CollegeProspect,
         _ context: ProspectColumnContext
     ) -> some View {
-        let filed = context.reportCount ?? prospect.scoutingReports.count
+        let filed = context.reportCount ?? ScoutEvaluationBudget.chargeableReports(prospect)
         Group {
             Text("\(filed)/\(ScoutEvaluationBudget.maxReportsPerProspect)")
                 .font(.system(size: 10, weight: .bold).monospacedDigit())

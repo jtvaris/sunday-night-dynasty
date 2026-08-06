@@ -332,6 +332,11 @@ enum PracticeSquadEngine {
 
             func canAdd(_ player: Player) -> Bool {
                 guard !taken.contains(player.id) else { return false }
+                // A man the user flagged as a keeper is spoken for: with the
+                // club order now shuffled, an AI club drawn before the user's
+                // could otherwise lift a cut-and-flagged keeper out of the
+                // shared pool before Pass 0 ever ran for him.
+                guard team.id == career.teamID || !keeperIDs.contains(player.id) else { return false }
                 guard isSquadEligible(player, usedVeteranSlots: veteransUsed) else { return false }
                 let cap = player.position == .QB ? maxQuarterbacks : maxPerPosition
                 return (countByPosition[player.position] ?? 0) < cap
