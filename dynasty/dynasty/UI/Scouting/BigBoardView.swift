@@ -419,11 +419,11 @@ struct BigBoardView<Header: View>: View {
             return .windowShut(hint: ScoutEvaluationBudget.windowHint(for: career.currentPhase))
         }
         guard !scouts.isEmpty else { return .noScouts }
-        guard prospect.scoutingReports.count < ScoutEvaluationBudget.maxReportsPerProspect else {
+        guard ScoutEvaluationBudget.chargeableReports(prospect) < ScoutEvaluationBudget.maxReportsPerProspect else {
             return .reportsMaxed
         }
         guard evaluationSlotsLeft > 0 else { return .slotsSpent }
-        let cost = ScoutEvaluationBudget.cost(existingReports: prospect.scoutingReports.count)
+        let cost = ScoutEvaluationBudget.cost(existingReports: ScoutEvaluationBudget.chargeableReports(prospect))
         guard remainingScoutingBudget >= cost else {
             return .cannotAfford(cost: cost, remaining: remainingScoutingBudget)
         }

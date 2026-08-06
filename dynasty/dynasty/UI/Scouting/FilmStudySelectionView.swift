@@ -19,8 +19,10 @@ import SwiftData
 // ## What is reused, exactly
 //
 // Nothing about the economy is new. Every number below comes from
-// `ScoutEvaluationBudget` — 25 slots a cycle, $20/35/55K rising per report,
-// three reports a man, cycle-stamped so it resets with the class — and the three
+// `ScoutEvaluationBudget` — 25 slots a cycle, $15/25/40K rising per CHARGEABLE
+// report (the inherited "Previous Staff" baseline neither prices nor caps,
+// #122), three own reports a man, cycle-stamped so it resets with the class —
+// and the three
 // career-scoped keys this view writes are the same three the prospect card
 // (`ProspectDetailView.recordEvaluation`) and the board row
 // (`BigBoardView.orderFilmStudy`) write:
@@ -256,7 +258,7 @@ struct FilmStudySelectionView<Board: View>: View {
     /// Whether THIS regime has ordered tape on him is a different question, and
     /// it is answered by ``hasOwnFilmReport`` in the filed-report list.
     private func reportsOnFile(_ prospect: CollegeProspect) -> Int {
-        prospect.scoutingReports.count
+        ScoutEvaluationBudget.chargeableReports(prospect)
     }
 
     private func hasRoom(_ prospect: CollegeProspect) -> Bool {
@@ -1021,7 +1023,7 @@ struct FilmStudySelectionView<Board: View>: View {
             for target in targets {
                 guard slotsLeft > 0 else { break }
                 guard let index = klass.firstIndex(where: { $0.id == target.id }) else { continue }
-                let existing = klass[index].scoutingReports.count
+                let existing = ScoutEvaluationBudget.chargeableReports(klass[index])
                 guard existing < ScoutEvaluationBudget.maxReportsPerProspect else { continue }
                 let cost = ScoutEvaluationBudget.cost(existingReports: existing)
                 guard budgetLeft >= cost else { continue }

@@ -64,19 +64,36 @@ enum ScoutEvaluationBudget {
         }
     }
 
+    /// The scout name `applyPreScoutedData` stamps on the baseline report the
+    /// top of every class inherits at career creation. Paper the user never
+    /// ordered, and it must not move his prices or his caps.
+    static let inheritedScoutName = "Previous Staff"
+
+    /// Reports that count against `maxReportsPerProspect` and the price
+    /// ladder: the ones THIS regime bought. The inherited baseline is excluded
+    /// — it priced the class's best men at the top tier before the user had
+    /// spent a dollar (#122: a $271K pot bought five reports, because every
+    /// interesting man opened at the third-look price).
+    static func chargeableReports(_ prospect: CollegeProspect) -> Int {
+        prospect.scoutingReports.filter { $0.scoutName != inheritedScoutName }.count
+    }
+
     /// Cost in thousands of the *next* report on a man who already carries
-    /// `existingReports`.
+    /// `existingReports` CHARGEABLE ones (`chargeableReports`).
     ///
     /// Rising, because that is where the exploit lived: the first look is a
     /// cheap tape grade, the third is a cross-check trip nobody runs on a man
-    /// they are not seriously considering. Twenty-five slots at these prices is
-    /// $500K-1.4M of a $4.0M pot depending on how deep the user doubles back —
-    /// the same order as the combine trip, so the two compete for the money.
+    /// they are not seriously considering. The ladder is sized against the
+    /// DISCRETIONARY scouting pot — what is left after scout salaries and the
+    /// combine trip, in practice $300-600K — so first looks at $15K make the
+    /// 25-slot promise reachable instead of theoretical (#122: the old
+    /// 20/35/55K ladder, priced off ALL reports including the inherited one,
+    /// bought a $271K pot five reports).
     static func cost(existingReports: Int) -> Int {
         switch existingReports {
-        case 0:  return 20
-        case 1:  return 35
-        default: return 55
+        case 0:  return 15
+        case 1:  return 25
+        default: return 40
         }
     }
 
@@ -271,11 +288,11 @@ struct ProspectDetailView: View {
             return .windowShut(hint: ScoutEvaluationBudget.windowHint(for: career.currentPhase))
         }
         guard !scouts.isEmpty else { return .noScouts }
-        guard prospect.scoutingReports.count < ScoutEvaluationBudget.maxReportsPerProspect else {
+        guard ScoutEvaluationBudget.chargeableReports(prospect) < ScoutEvaluationBudget.maxReportsPerProspect else {
             return .reportsMaxed
         }
         guard evaluationSlotsLeft > 0 else { return .slotsSpent }
-        let cost = ScoutEvaluationBudget.cost(existingReports: prospect.scoutingReports.count)
+        let cost = ScoutEvaluationBudget.cost(existingReports: ScoutEvaluationBudget.chargeableReports(prospect))
         guard remainingScoutingBudget >= cost else {
             return .cannotAfford(cost: cost, remaining: remainingScoutingBudget)
         }
@@ -344,7 +361,7 @@ struct ProspectDetailView: View {
                     prospect: prospect,
                     scouts: scouts,
                     scoutingPhase: currentScoutingPhase,
-                    cost: ScoutEvaluationBudget.cost(existingReports: prospect.scoutingReports.count),
+                    cost: ScoutEvaluationBudget.cost(existingReports: ScoutEvaluationBudget.chargeableReports(prospect)),
                     slotsLeft: evaluationSlotsLeft,
                     budgetRemaining: remainingScoutingBudget,
                     onFiled: { cost, outcome in
@@ -2128,7 +2145,7 @@ struct ProspectDetailView: View {
                         .multilineTextAlignment(.leading)
                 }
                 Spacer(minLength: 0)
-                Text("\(prospect.scoutingReports.count)/\(ScoutEvaluationBudget.maxReportsPerProspect)")
+                Text("\(ScoutEvaluationBudget.chargeableReports(prospect))/\(ScoutEvaluationBudget.maxReportsPerProspect)")
                     .font(.caption.monospacedDigit().weight(.bold))
                     .foregroundStyle(Color.textTertiary)
             }
@@ -2800,7 +2817,7 @@ private struct SendScoutSheet: View {
         // — the report count, the cycle's slots and the pot. It deliberately
         // does not re-check the phase: the sheet has no `Career` to read one
         // from, and a phase cannot advance while it is presented.
-        guard prospect.scoutingReports.count < ScoutEvaluationBudget.maxReportsPerProspect,
+        guard ScoutEvaluationBudget.chargeableReports(prospect) < ScoutEvaluationBudget.maxReportsPerProspect,
               slotsLeft > 0,
               budgetRemaining >= cost else {
             dismiss()
@@ -2930,7 +2947,7 @@ private struct FilmStudyResultSheet: View {
                     .font(.caption)
                     .foregroundStyle(Color.textSecondary)
                 Spacer()
-                Text("\(prospect.scoutingReports.count)/\(ScoutEvaluationBudget.maxReportsPerProspect) \u{00B7} \(slotsLeft) evaluation\(slotsLeft == 1 ? "" : "s") left this cycle")
+                Text("\(ScoutEvaluationBudget.chargeableReports(prospect))/\(ScoutEvaluationBudget.maxReportsPerProspect) \u{00B7} \(slotsLeft) evaluation\(slotsLeft == 1 ? "" : "s") left this cycle")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(Color.textTertiary)
             }
