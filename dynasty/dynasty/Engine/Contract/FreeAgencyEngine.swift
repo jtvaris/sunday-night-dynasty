@@ -1548,10 +1548,45 @@ enum FreeAgencyEngine {
     /// `marketAppeal` at which an AI club picks the option up regardless of
     /// where his raw overall currently sits — the young riser who has not
     /// arrived yet but plainly will. Same scale as ``ownCoreAppealFloor``.
-    static let fifthYearOptionAppealFloor = 74.0
+    ///
+    /// ## Task #101 — why 74 was not a floor at all
+    ///
+    /// Measured over the balance rig (`tools/balance-harness` `career` pipeline,
+    /// 8 leagues x 30 seasons, 5 364 candidates): the option was exercised on
+    /// **95.7 %** of first-rounders reaching the window, against a design intent
+    /// that says "MOST of round 1 is below both doors". The two seeds of the
+    /// 8-season app analysis measured the same thing from the other end at ~81 %.
+    ///
+    /// The reason is arithmetic, not judgement. A man in this window is 24 years
+    /// old (mean 24.3), so ``marketAgeDiscountFrom``'s 25-year threshold has not
+    /// touched him yet, and he is three years pro, so ``marketUpsidePremium``
+    /// credits him 0.45 of his remaining ceiling. The measured cohort averages
+    /// OVR 74.1 against a true potential of 92.8 — eighteen points of headroom —
+    /// so `marketAppeal` hands him **+8.4 points on average** and the cohort's
+    /// mean appeal is 81.9. A floor of 74 sits a full standard deviation below
+    /// the middle of the population it is supposed to filter.
+    ///
+    /// 80 is the same statement about the same man, priced honestly: the option
+    /// costs 80 % of the franchise tag, i.e. starter money, so the young riser
+    /// has to project as a starter. In appeal units 80 is "OVR 74 with a 87
+    /// ceiling", "OVR 78 with an 82 ceiling", or "an 80 today" — and it puts the
+    /// rig at 66 % and, netting out the user-club auto-decline and the
+    /// affordability test the rig does not model, the app in the intended
+    /// 50-60 % band. Re-measure with `PERF_SMOKE_SEASONS`; this constant is the
+    /// single knob.
+    static let fifthYearOptionAppealFloor = 80.0
 
     /// Overall at which an AI club picks the option up on production alone: a
     /// starter the club would have to replace at market price.
+    ///
+    /// Unchanged by task #101, but note what the pair does: `marketAppeal` never
+    /// SUBTRACTS anything from a 24-year-old (the age discount starts at 25) and
+    /// only ever adds the upside premium, so for this cohort `appeal >= overall`
+    /// always holds. Door B is therefore only reachable by a man door A missed
+    /// when this floor is BELOW the appeal floor — which is why 74/78 made door
+    /// B pure dead code (its 26.8 % of the cohort was a strict subset of door
+    /// A's 95.7 %) and why 80/78 gives it a narrow live band again: the finished
+    /// 78-79 with no headroom left, and the rare 26-year-old in the window.
     static let fifthYearOptionOverallFloor = 78
 
     /// Rookie-deal seasons behind a man when the option question is asked. See

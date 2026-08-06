@@ -1957,6 +1957,13 @@ struct CareerShellView: View {
         //    prospect board) to this career's namespace, once.
         CareerScope.adoptLegacyRowsIfNeeded(context: modelContext)
         WeekAdvancer.bind(to: career)
+        // `currentDraftClass` is a process static that `bind` just wiped, and
+        // its only other writers are `advanceWeek` and the scouting hub's
+        // load. A cold launch that lands on the DASHBOARD therefore drove the
+        // "Path to the Draft" hero and the required-task chain off an EMPTY
+        // class — 0% scouted, combine "Not read", and `canAdvance` false on
+        // both advance buttons until the user happened to open Scouting.
+        _ = WeekAdvancer.restoreDraftClassIfNeeded(career: career, modelContext: modelContext)
         CareerScopedDefaults.migrateGlobalKeys(into: career.id)
         #if DEBUG
         if ProcessInfo.processInfo.environment["CAREERID_AUDIT"] != nil {

@@ -219,7 +219,10 @@ struct ProspectDetailView: View {
         prospect.shuttleTime != nil || prospect.coneDrill != nil
     }
     private static let maxInterviews = 60
-    private static let maxWorkouts = 30
+    /// #fleet review F19c: the ration is `DraftPrepProgress`', not this card's.
+    /// A hard 30 here is a fourth copy of a number the prep machine, the
+    /// workout room and the process bar all already count against.
+    private static let maxWorkouts = DraftPrepProgress.workoutSlots
 
     // MARK: - Phase gates
     //

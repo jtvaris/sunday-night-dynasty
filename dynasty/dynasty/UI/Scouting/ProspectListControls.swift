@@ -122,6 +122,10 @@ struct ProspectModeChips: View {
                         )
                     }
                     .accessibilityLabel("View mode: \(tab.label)")
+                    // #fleet review F19f: VoiceOver had no way to tell which
+                    // block was showing — the position chips next door have
+                    // carried this trait all along.
+                    .accessibilityAddTraits(mode == tab ? .isSelected : [])
                 }
             }
             .padding(.horizontal, 16)
@@ -720,12 +724,12 @@ enum ProspectColumns {
         Group {
             if hasRead {
                 // 8 columns (LRN + CMP added) — widths 26 so the row fits.
-                ForEach(prospectMentalKeys, id: \.self) { key in
+                ForEach(ProspectFog.mentalKeys, id: \.self) { key in
                     ProspectGradeBandCell(grade: grades?[key], label: key)
                         .frame(width: 26, alignment: .center)
                 }
             } else {
-                ForEach(0..<8, id: \.self) { _ in
+                ForEach(0..<ProspectFog.mentalKeys.count, id: \.self) { _ in
                     Text("--")
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(Color.textTertiary)
@@ -768,9 +772,18 @@ enum ProspectColumns {
 
     // MARK: Headers
     //
-    // The header widths are NOT always the cell widths — the work-up block's
-    // labels are a couple of points wider than its ticks, which is how the board
-    // shipped and is deliberately preserved so no board row re-flows here.
+    // The header widths ARE the cell widths, block for block. They used not to
+    // be — the work-up labels ran 34/38/38/38/44 over 32/34/34/34/44 of ticks,
+    // 192 pt of header over 178 pt of row — and "deliberately preserved" was a
+    // 14 pt drift that walked every label off its column on all three consumers
+    // (#fleet review F12). Anything added here keeps the two lists in step.
+    //
+    // Three blocks are spanned rather than labelled per column: the cells in
+    // them print their OWN key under the value (`ProspectMeasurableCell`,
+    // `ProspectGradeBandCell`), so a per-column header printed 40YD/BENCH/… and
+    // AWR/DEC/… a second time, two labels deep in a 26-38 pt column, both
+    // squeezed by `minimumScaleFactor`. `CombineResultsView.mentalHeaders` /
+    // `positionHeaders` already span theirs; this matches (#fleet review F11).
 
     /// The mode's column labels, for a table that pins headers over its rows.
     @ViewBuilder
@@ -807,32 +820,32 @@ enum ProspectColumns {
                         size: 9
                     )
                 }
-                .frame(width: 34, alignment: .center)
+                .frame(width: 32, alignment: .center)
                 Text("PDAY")
-                    .frame(width: 38, alignment: .center)
+                    .frame(width: 34, alignment: .center)
                 Text("VISIT")
-                    .frame(width: 38, alignment: .center)
+                    .frame(width: 34, alignment: .center)
                 Text("WORK")
-                    .frame(width: 38, alignment: .center)
+                    .frame(width: 34, alignment: .center)
                 Text("FILE")
                     .frame(width: 44, alignment: .center)
             case .physical:
-                ForEach(prospectMeasurableLabels, id: \.self) { label in
-                    Text(label)
-                        .frame(width: prospectMeasurableWidth, alignment: .center)
-                }
+                // ONE span over the six drill cells, each of which prints its
+                // own 40YD / BENCH / … label under the number.
+                Text("COMBINE")
+                    .frame(
+                        width: prospectMeasurableWidth * CGFloat(prospectMeasurableLabels.count),
+                        alignment: .center
+                    )
             case .mental:
-                ForEach(prospectMentalKeys, id: \.self) { key in
-                    Text(key)
-                        .frame(width: 26, alignment: .center)
-                }
+                Text("MENTAL BANDS")
+                    .frame(width: 26 * CGFloat(ProspectFog.mentalKeys.count), alignment: .center)
             case .position:
                 // The keys differ per row (a QB's block is not a corner's), so
-                // the header cannot name them — the cells carry their own labels.
-                ForEach(0..<4, id: \.self) { _ in
-                    Text("--")
-                        .frame(width: 32, alignment: .center)
-                }
+                // the header cannot name them — the cells carry their own
+                // labels. It used to print four dashes over them.
+                Text("POSITION SKILLS")
+                    .frame(width: 32 * 4, alignment: .center)
             }
         }
         .font(.system(size: 8, weight: .bold))
@@ -840,9 +853,11 @@ enum ProspectColumns {
     }
 }
 
-/// The eight mental keys, in the order every table prints them. CMP is
-/// competitiveness, the fighter mentality.
-let prospectMentalKeys = ["AWR", "DEC", "WRK", "CLT", "COA", "LDR", "LRN", "CMP"]
+// `prospectMentalKeys` used to live here as a second copy of the eight mental
+// keys. It was byte-identical to `ProspectFog.mentalKeys` — the canonical list,
+// which sits next to the disclosure logic that feeds it and which
+// `CombineResultsView` and the prospect card already read — so the tables read
+// that one now (#fleet review F19b).
 
 // `ProspectPositionSkills` used to live here as the per-position key table.
 // It had drifted from the engine's writer (`SAc`/`DAc`/`TAK` vs the written

@@ -49,13 +49,22 @@ struct InterviewSelectionView: View {
         max(0, maxInterviews - career.interviewsUsed)
     }
 
-    /// The club's five biggest holes, by rank, computed ONCE per load.
+    /// The club's actual holes, by rank, computed ONCE per load.
     ///
     /// `teamNeeds` used to re-run `DraftEngine.topTeamNeeds` on every access and
     /// every row asked `teamNeedPositions.contains(...)`, so scrolling a 300-man
     /// list re-ranked a 53-man roster once per row. The NEED column added a
     /// second per-row caller, which is what made the walk worth caching.
     /// `loadTeamData()` is the one writer.
+    ///
+    /// #fleet review F3: the RANKING is `DraftEngine.teamNeedDeficits`, not
+    /// `topTeamNeeds`. `topTeamNeeds` ranks by value × weight and hands back
+    /// {QB, DE, CB, WR, LT} for every full roster in the league — its own doc
+    /// says so — so this list stamped NEED on a fifth receiver while the Big
+    /// Board, which reads a roster-count deficit, said "Set" for the same man on
+    /// the next tab. `teamNeedDeficits` returns only the positions whose
+    /// evidence clears the bar, so an empty answer (a well-built roster) is a
+    /// real one and the two tabs stop contradicting each other.
     @State private var needRankByPosition: [Position: Int] = [:]
 
     private var teamNeedPositions: Set<Position> {
@@ -525,9 +534,9 @@ struct InterviewSelectionView: View {
 
     // MARK: - Table Header (#78)
 
-    /// Column labels. The leading five and the trailing three are PINNED — the
-    /// mark, the checkbox, the man, what a room would tell you about him and
-    /// what he costs you in risk are the same questions in every mode — and the
+    /// Column labels. The leading five and the trailing two are PINNED — the
+    /// mark, the checkbox, the man, what he costs you in risk and what the
+    /// department has him at are the same questions in every mode — and the
     /// block between them follows the mode chips.
     private var tableHeader: some View {
         HStack(spacing: 0) {
@@ -548,8 +557,11 @@ struct InterviewSelectionView: View {
             // block drops its copy rather than printing the fact twice.
             ProspectColumns.headers(mode: mode, context: ProspectColumnContext(includesRisk: false))
 
-            Text("MEET")
-                .frame(width: 34, alignment: .center)
+            // #fleet review F13: no MEET column here. This list only ever holds
+            // men with `interviewCompleted == false`, and `interviewFootballIQ`
+            // — the field the cell reads — is written only alongside
+            // `interviewCompleted = true`, so the column could print nothing but
+            // a dash on every row of every page.
             Text("RISK")
                 .frame(width: 48, alignment: .center)
             Text("OVR")
@@ -661,10 +673,11 @@ struct InterviewSelectionView: View {
 
                     // PINNED regardless of mode — this room's own questions.
                     //
-                    // MEET is the interview read (`ProspectFog.meetRead`): a
-                    // dash is a slot not yet spent, which on a screen for
-                    // spending slots is the single most useful column there is.
-                    ProspectMeetCell(prospect: prospect, width: 34)
+                    // #fleet review F13: the MEET column is gone. Every row here
+                    // is a man nobody has been in a room with yet (the list
+                    // filters `!interviewCompleted`), so the cell was a column of
+                    // dashes charging 34 pt for a fact the screen's own filter
+                    // already guarantees. See `tableHeader`.
 
                     // #18: bust risk preview.
                     ProspectRiskBadge(risk: prospect.riskLevel)
@@ -949,9 +962,10 @@ struct InterviewSelectionView: View {
         let coachDesc = FetchDescriptor<Coach>(predicate: #Predicate { $0.teamID == teamID })
         coaches = (try? modelContext.fetch(coachDesc)) ?? []
 
-        // ONE ranking pass per load — see `needRankByPosition`.
+        // ONE ranking pass per load, off the deficit-only read — see
+        // `needRankByPosition` (#fleet review F3).
         var ranks: [Position: Int] = [:]
-        for (index, position) in DraftEngine.topTeamNeeds(roster: teamRoster, limit: 5).enumerated() {
+        for (index, position) in DraftEngine.teamNeedDeficits(roster: teamRoster, limit: 5).enumerated() {
             ranks[position] = index
         }
         needRankByPosition = ranks

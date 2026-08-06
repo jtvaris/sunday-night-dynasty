@@ -65,10 +65,55 @@ enum PlayerRetirementEngine {
 
     // MARK: - Probability
 
+    // MARK: Specialist ageing (task #98)
+
+    /// Is this man a kicker or a punter?
+    ///
+    /// Specialists are the one room where football age and calendar age come
+    /// apart completely: nobody hits them, the job is a skill rather than an
+    /// athletic contest, and the real league routinely carries men into their
+    /// forties (Vinatieri to 46, Prater and Folk past 39, Tucker still a top
+    /// kicker at 34). Every other position's decline is a physical story the
+    /// hazard below already tells correctly.
+    static func isSpecialist(_ position: Position) -> Bool {
+        position == .K || position == .P
+    }
+
+    /// How much of the ordinary hazard a specialist carries.
+    ///
+    /// This factor existed before task #98 — "kickers and punters hang on
+    /// roughly twice as long" — but it was applied INSIDE the `yearsPastPeak >= 0`
+    /// branch, and a specialist's peak window runs to 38 (`Position.peakAgeRange`),
+    /// so the branch does not open until he is 39. Every term that could reach a
+    /// 33-year-old kicker was the mid-thirties wall below, which the factor never
+    /// touched. Measured consequence: a 33-year-old kicker faced 18 %/yr, a
+    /// 35-year-old 43 % and a 37-year-old 73 % — the same schedule as a running
+    /// back five years past his cliff — so the league's 64 specialist jobs were
+    /// emptied of everyone over 35 and, because `WeekAdvancer.refillAIRosters`
+    /// ranks needs off `DraftEngine.topTeamNeeds` (which never returns K or P),
+    /// the room was refilled by whoever happened to be the best body in the pool.
+    ///
+    /// It is now applied to the WHOLE hazard, which is what the sentence always
+    /// claimed.
+    static let specialistHazardScale = 0.5
+
+    /// How many years later a specialist's CALENDAR terms fire.
+    ///
+    /// The wall is a statement about money, family and accumulated wear (see
+    /// below), and all three arrive later for a man who is not hit. Shifting it
+    /// rather than deleting it keeps one schedule for the whole league: a
+    /// specialist simply reaches each step of it four years after everybody
+    /// else, so the hard ceiling still exists and the room still cycles.
+    static let specialistWallShift = 4
+
     /// Annual retirement probability for one player (0...0.97).
     static func retirementProbability(player: Player) -> Double {
         let peakRange = player.position.peakAgeRange
         let yearsPastPeak = player.age - peakRange.upperBound
+        let specialist = isSpecialist(player.position)
+        // The calendar terms below fire `specialistWallShift` years later for a
+        // kicker or a punter. Everything else reads `player.age` directly.
+        let wallShift = specialist ? specialistWallShift : 0
 
         // Base: 4% in the final peak year, then a steepening slope past it.
         //
@@ -108,11 +153,6 @@ enum PlayerRetirementEngine {
 
             // Body breaking down.
             if player.physical.durability < 50 { chance += 0.08 }
-
-            // Kickers and punters age gracefully.
-            if player.position == .K || player.position == .P {
-                chance *= 0.5
-            }
         }
 
         // The mid-thirties wall: careers end for reasons the peak-age window
@@ -146,14 +186,26 @@ enum PlayerRetirementEngine {
         // 37-year-old 73 %, which leaves him ~2.2 further seasons on average —
         // the shape §8's pyramid describes, and still loose enough that a great
         // quarterback can play to 38.
-        if player.age >= 33 { chance += 0.18 }
-        if player.age >= 35 { chance += 0.25 }
-        if player.age >= 37 { chance += 0.30 }
+        //
+        // Task #98 added `wallShift`: a specialist reaches each step four years
+        // later, so the schedule above reads 37 / 39 / 41 for a kicker. Before
+        // that shift the wall was the ONLY term that could reach a specialist at
+        // all (his peak window runs to 38), which made the "kickers age
+        // gracefully" factor a comment rather than a rule — see
+        // `specialistHazardScale`.
+        if player.age >= 33 + wallShift { chance += 0.18 }
+        if player.age >= 35 + wallShift { chance += 0.25 }
+        if player.age >= 37 + wallShift { chance += 0.30 }
 
-        // Age wall: 40+ almost always retires, 41 is the hard ceiling.
-        if player.age >= 41 {
+        // Kickers and punters age gracefully — applied to the WHOLE hazard, not
+        // only to the past-peak block it used to sit in (task #98).
+        if specialist { chance *= specialistHazardScale }
+
+        // Age wall: 40+ almost always retires, 41 is the hard ceiling — shifted
+        // with everything else for specialists, so a kicker's hard ceiling is 45.
+        if player.age >= 41 + wallShift {
             chance = 1.0
-        } else if player.age >= 40 {
+        } else if player.age >= 40 + wallShift {
             chance = max(chance, 0.85)
         }
 
@@ -207,7 +259,64 @@ enum PlayerRetirementEngine {
     /// How many OVR points above replacement level buy a player his way out of
     /// the base chance entirely. A man that much better than the last roster
     /// spot in the league is between contracts, not out of football.
+    ///
+    ///
+    /// Task #99 measured this and deliberately left it alone. The obvious move
+    /// against the shadow pool is to narrow the grace, and it is the wrong one:
+    /// the term is `base × (1 − surplus/grace)`, so a NARROWER grace makes the
+    /// base decay to zero FASTER and every above-replacement free agent safer,
+    /// not less safe. The fade shape is fine; what was missing is a floor under
+    /// it — see `washoutUnprovenFloor` and `washoutSilentMarketFloor`.
     static let washoutQualityGrace = 8.0
+
+    /// The floor under a man the market never gave a job to in the first place.
+    ///
+    /// **Task #99 — the shadow pool.** The washout pass grades a player on
+    /// quality against replacement level and on age and service, and a young
+    /// unsigned player scores near zero on all three: he is inside the quality
+    /// grace (helped further by `washoutUpsideCredit`), he is years short of
+    /// `washoutAge27Chance`, and he is years short of `washoutServiceFrom`. His
+    /// annual exit probability is consequently ~0-6 %, so he stays in the pool
+    /// for a decade. That is the mechanism behind the measured equilibrium: a
+    /// permanent ~940-man reservoir of roster-caliber men nobody signs, over half
+    /// of it three years pro or less.
+    ///
+    /// A whole league year is the evidence. He was on the market from the moment
+    /// contracts expired, through every wave of free agency and through the
+    /// bulk-market mop-up (`FreeAgencyEngine.simulateRemainingFAOnce`, which
+    /// bids at the veteran minimum with no rating floor), and not one of 32
+    /// clubs offered him a minimum deal. This game has no practice squad and no
+    /// spring league for him to wait in, so "still unsigned in August" and "out
+    /// of football" are the same fact — which is exactly how
+    /// `DEVELOPMENT_NFL_REFERENCE.md` §8 gets to ~250-300 men leaving every year
+    /// against a draft that brings ~250 in.
+    ///
+    /// Scoped to the same service window as the upside credit on purpose: it is
+    /// the answer to that credit, not a second age term. An established player
+    /// who goes unsigned is already covered by the age and service ladders
+    /// below, and those are calibrated.
+    static let washoutUnprovenFloor = 0.35
+
+    /// The floor under a man IN HIS PRIME whom the market left on the street.
+    ///
+    /// The quality grace above reads "well above replacement level and still
+    /// unsigned" as evidence that a man is between contracts. For a veteran past
+    /// his position's peak that reading is right and the age ladder below is the
+    /// statement about him. For a man inside his peak window it is charitable
+    /// and wrong, and the reason is structural rather than economic: rosters are
+    /// hard-capped at 53 and `WeekAdvancer.refillAIRosters` only opens a door
+    /// when a club falls BELOW that number, so a genuinely good 26-year-old can
+    /// be unsigned purely because the league has no vacancy — not because 32
+    /// clubs judged him. His grace is therefore a modelling artifact, and it is
+    /// where the other half of the shadow pool lives: men four to six years pro,
+    /// above the bar, too young for `washoutAge27Chance` and sitting on the flat
+    /// front of the service ramp, whose measured annual exit odds are under
+    /// 10 %.
+    ///
+    /// Deliberately much smaller than `washoutUnprovenFloor`: a man who HAS held
+    /// a job is a better bet than one who never has, and this is the residual
+    /// after that argument, not a second copy of it.
+    static let washoutSilentMarketFloor = 0.22
 
     /// Age surcharges on an unsigned player. An unsigned 30-year-old is a
     /// depth signing waiting to happen; an unsigned 33-year-old is retired and
@@ -232,9 +341,26 @@ enum PlayerRetirementEngine {
     /// only signal the league has about that man, and 7 %/yr is what it is
     /// worth: small enough that a good player between contracts still comes
     /// back, large enough that the bulge drains instead of compounding.
+    ///
+    /// Task #98 cut the 33+ step from 0.32. That number was set when the washout
+    /// pass was the league's only 33+ exit door; it is not any more, and stacked
+    /// on top of everything else it was double-counting the same age twice over.
+    /// A 33-year-old at replacement level carried `washoutBaseChance` 0.30 +
+    /// 0.32 + the full 0.20 service ramp = 0.82, clipped to the 0.80 ceiling —
+    /// and he only reached the pass at all because `FreeAgencyEngine.marketAppeal`
+    /// had already docked him the full 14-point age discount and left him
+    /// unsigned. Combined with the mid-thirties wall in `retirementProbability`
+    /// (18 %/yr at 33) that is an ~84 % annual exit for a 33-year-old the league
+    /// still rates as a starter, which is why the measured 33+ share collapses
+    /// to 0.4 % in seasons 2-5 of a save: the generator's opening veterans hit
+    /// the market once and essentially none of them come back.
+    ///
+    /// At 0.20 the same man faces 0.30 + 0.20 + 0.20 = 0.70 in the pass, the
+    /// retirement wall is unchanged, and the age tail is carried by the door
+    /// that was calibrated for it rather than by the one that was not.
     static let washoutAge27Chance = 0.07
     static let washoutAge30Chance = 0.16
-    static let washoutAge33Chance = 0.32
+    static let washoutAge33Chance = 0.20
 
     /// The second-contract cliff, in years of pro service.
     ///
@@ -371,6 +497,29 @@ enum PlayerRetirementEngine {
             washoutServiceCap,
             Double(max(0, player.yearsPro - washoutServiceFrom)) * washoutServicePerYear
         )
+
+        // Task #99: the man the market never gave a job to. Applied as a FLOOR
+        // and not as an addend, so it changes only the cohort it is about — a
+        // young unsigned player whose quality, age and service terms all read
+        // near zero — and leaves every player the three ladders above already
+        // score exactly where they were.
+        if player.yearsPro <= washoutUpsideYears {
+            chance = max(chance, washoutUnprovenFloor)
+        } else if player.age <= player.position.peakAgeRange.upperBound {
+            // The other half of the same finding — see `washoutSilentMarketFloor`.
+            chance = max(chance, washoutSilentMarketFloor)
+        }
+
+        // Task #98: specialists carry the same fraction of the exit hazard here
+        // that they carry in `retirementProbability`. The league has 64 kicking
+        // jobs and one spare kicker is the difference between a club having a
+        // kicker and not having one — `WeekAdvancer.refillAIRosters` cannot ask
+        // for a K or a P by name, because `DraftEngine.topTeamNeeds` ranks by
+        // positional VALUE and specialists sit at weight 0.3, so it fills the
+        // hole with whoever is best in the pool. Draining the pool of
+        // specialists is therefore not symmetric with draining it of anybody
+        // else.
+        if isSpecialist(player.position) { chance *= specialistHazardScale }
 
         return min(washoutCeiling, max(0.0, chance))
     }

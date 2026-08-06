@@ -1974,15 +1974,26 @@ enum ScoutingEngine {
         // build that narrows `scoutedOverallGrade` and writes
         // `scoutedMentalGrades` / `scoutedPositionGrades`. Filing through it is
         // what makes the session show up on the prospect card at all.
+        //
+        // #fleet review F7: the read on file before the session. `applyReport`'s
+        // generic 70 % personality roll can overwrite a CORRECT archetype an
+        // interview already wrote with a wrong one, so a slot the user spent to
+        // learn more about a man could make the card less accurate than it was.
+        let personalityBefore = prospect.scoutedPersonality
         applyReport(report: report, to: prospect)
 
         // `applyReport`'s personality roll is the generic 70 % one every filed
         // report gets. A private session is sharper than that, and the modal is
         // about to print the read: when the staff got one (the 85 % roll above),
         // pin the card to the same answer so the two cannot contradict each
-        // other on the same screen. When they did not, the generic roll stands.
+        // other on the same screen. When the session's own read MISSED, the
+        // generic roll is not an upgrade on whatever was already there — put
+        // the earlier read back rather than let a coin flip degrade it
+        // (#fleet review F7).
         if personalityRead != nil {
             prospect.scoutedPersonality = prospect.truePersonality.archetype
+        } else if let personalityBefore {
+            prospect.scoutedPersonality = personalityBefore
         }
 
         prospect.proDayCompleted = true

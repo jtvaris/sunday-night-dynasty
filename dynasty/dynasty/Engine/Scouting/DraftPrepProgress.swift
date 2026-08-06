@@ -361,8 +361,15 @@ struct DraftPrepProgress {
         phase: SeasonPhase,
         current: DraftPrepStep
     ) -> String {
-        let calendarLocked = phase.prepCalendarRank == 0
-            || phase.prepCalendarRank < step.phase.prepCalendarRank
+        // #fleet review F10: outside the four pre-draft phases entirely, the
+        // in-window sentence is wrong in kind — "opens after free agency" over a
+        // week-12 screen names a phase that is a whole calendar away, while the
+        // stage explainer beside it (built from ``calendarClosedReason``) says
+        // the window has not opened at all. Same table, same answer, both places.
+        if phase.prepCalendarRank == 0 {
+            return "\(calendarClosedReason(for: step)) You are at: \(phase.displayName)."
+        }
+        let calendarLocked = phase.prepCalendarRank < step.phase.prepCalendarRank
         guard calendarLocked else {
             return "You are at: \(current.displayName) \u{2014} finish or skip it and this opens."
         }

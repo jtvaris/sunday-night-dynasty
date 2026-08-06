@@ -123,6 +123,23 @@ struct CareerDashboardView: View {
     /// off `scout.proDayColleges` / `scout.maxProDays`.
     @State private var scouts: [Scout] = []
 
+    /// The Path to the Draft card's two inputs, cached per LOAD rather than per
+    /// body pass (#fleet review F8).
+    ///
+    /// Both used to be computed properties, and both walk the whole draft class
+    /// — ~350 prospects — on every read: `DraftPrepProgress`'s init counts the
+    /// combine, and the scouted share filters on `scoutingReports`, which is a
+    /// Codable blob that DECODES on every `get`. SwiftUI re-evaluates a
+    /// dashboard body on any state change on the screen, so a card in the
+    /// corner was paying two full class walks for a tapped tile.
+    ///
+    /// `refreshDraftPrepCache()` is the one writer, and it hangs off
+    /// `refreshStaffTile()` — which both `loadAllDataBody` and the pop-back
+    /// `.onAppear` already call, so the card still re-reads after a trip into
+    /// the scouting hub.
+    @State private var prepProgress: DraftPrepProgress?
+    @State private var draftClassScoutedPercent: Int = 0
+
     /// Tracks which Position-Grades letter is currently showing its explainer popover.
     /// Encoded as "<group>:S" or "<group>:D" (e.g. "QB:S" for QB starter grade).
     @State private var positionGradePopoverID: String?
@@ -3634,6 +3651,12 @@ struct CareerDashboardView: View {
         staffPotOverage = max(0, -(budgetTotal - coachSalaryUsed))
             + max(0, -medicalRemaining)
             + max(0, -scoutingRemaining)
+
+        // Last, because it reads the `scouts` this function just wrote. Hung
+        // here rather than on `loadAllDataBody` alone so the pop-back path —
+        // which is exactly the trip that spends interview slots and reserves
+        // pro-day schools — refreshes the card too (#fleet review F8).
+        refreshDraftPrepCache()
     }
 
     private func loadAllDataBody() {
@@ -4199,15 +4222,26 @@ struct CareerDashboardView: View {
     /// offered the advance that was the club's actual next move.
     /// `proDaysHeroCard` was the same card with four different literals.
     private var pathToDraftHeroCard: some View {
-        let progress = prepProgress
+        // The cache, or a one-off build on the single body pass that precedes
+        // the first `loadAllData` (#fleet review F8).
+        let progress = prepProgress ?? buildPrepProgress()
         let stage = progress[progress.current]
         // Is there still something to DO in this stage? A counted stage is
         // workable until its ration is gone — one interview satisfies the
         // required task, 59 unspent slots is still work. An uncounted stage
         // (a read: the combine review, the two mocks) is finished the moment
         // it is satisfied. A calendar-locked stage is nobody's next move.
+        //
+        // #fleet review F5: a counted stage needs a ration before `done < total`
+        // means anything. A club with no scouts hired has 0 pro-day focus slots,
+        // so `.proDayFocus` read 0 < 0 == false — "ration spent" — and the card
+        // offered "Advance to NFL Draft" over the one stage whose work the user
+        // had not started and could still fix by hiring somebody. With no ration
+        // at all the honest question is the uncounted one: has it been satisfied.
         let hasWorkLeft = stage.unlocked
-            && (stage.isCounted ? stage.done < stage.total : !stage.isSatisfied)
+            && ((stage.isCounted && stage.total > 0)
+                ? stage.done < stage.total
+                : !stage.isSatisfied)
 
         return phaseCardBase(icon: "flag.checkered", accent: .accentGold) {
             heroHeader("Path to the Draft")
@@ -4246,9 +4280,13 @@ struct CareerDashboardView: View {
                     }
                 }
                 if !canAdvance {
-                    Text(isBlockedByCoachingBudget
-                         ? "Staff budget is overspent \u{2014} fix it before advancing."
-                         : "Finish the required tasks in the left panel to advance.")
+                    // #fleet review F19e: no coaching-budget branch here. This
+                    // card renders for `.combine` and `.proDays` only, and
+                    // `isBlockedByCoachingBudget` is `.coachingChanges`-only, so
+                    // the other half of that ternary was unreachable — the
+                    // remaining required tasks are the only thing that can be
+                    // holding an advance on this screen.
+                    Text("Finish the required tasks in the left panel to advance.")
                         .font(.caption)
                         .foregroundStyle(Color.textTertiary)
                 }
@@ -4262,7 +4300,7 @@ struct CareerDashboardView: View {
     /// Costs no fetch of its own: the class is already in memory
     /// (`WeekAdvancer.currentDraftClass`, the same source the Scouting tile
     /// reads) and the department comes off `refreshStaffTile`'s scout fetch.
-    private var prepProgress: DraftPrepProgress {
+    private func buildPrepProgress() -> DraftPrepProgress {
         DraftPrepProgress(
             career: career,
             prospects: WeekAdvancer.currentDraftClass,
@@ -4274,11 +4312,23 @@ struct CareerDashboardView: View {
     ///
     /// Counted off `scoutingReports` rather than `scoutedOverall` so this card
     /// and the scouting hub's own header mean the same thing by "scouted".
-    private var draftClassScoutedPercent: Int {
-        let draftClass = WeekAdvancer.currentDraftClass
+    ///
+    /// #fleet review F16: over the DECLARING class, which is the hub header's
+    /// denominator (`ScoutingHubView.loadData` filters `isDeclaringForDraft`
+    /// before it counts). The whole class carries the underclassmen who stayed
+    /// in school; counting them dragged this card's percentage below the number
+    /// printed at the top of the screen it deep-links into, for the same work.
+    private func computeDraftClassScoutedPercent() -> Int {
+        let draftClass = WeekAdvancer.currentDraftClass.filter { $0.isDeclaringForDraft }
         guard !draftClass.isEmpty else { return 0 }
         let scouted = draftClass.filter { !$0.scoutingReports.isEmpty }.count
         return Int((Double(scouted) / Double(draftClass.count) * 100).rounded())
+    }
+
+    /// Refills the Path to the Draft card's cache. See `prepProgress`.
+    private func refreshDraftPrepCache() {
+        prepProgress = buildPrepProgress()
+        draftClassScoutedPercent = computeDraftClassScoutedPercent()
     }
 
     /// The stage's work in button voice, plus the scouting-hub tab it lives on.
@@ -4310,18 +4360,22 @@ struct CareerDashboardView: View {
         onTaskSelected(.scouting)
     }
 
-    /// The phase the sidebar's Advance button would move to, named the way the
-    /// sidebar names it.
+    /// The phase the sidebar's Advance button would move to.
     ///
     /// Read off `SeasonPhaseGroup.preDraft.subPhases` — the pre-draft calendar,
-    /// in order — so this card cannot drift from the real phase order, and
-    /// through `TimelineTasksPanel.phaseName` so it cannot drift from the
-    /// sidebar's wording either.
+    /// in order — so this card cannot drift from the real phase order.
+    ///
+    /// #fleet review F19d: named through `SeasonPhase.displayName`, the same
+    /// accessor the card's own subtitle two lines up uses. It used to go through
+    /// `TimelineTasksPanel.phaseName`, which calls `.proDays` "Pro Days &
+    /// Workouts" — so one card could read "Pro Days · 42% scouted" in its
+    /// subtitle and offer "Advance to Pro Days & Workouts" underneath, two names
+    /// for the week the user is being moved into.
     private var nextPreDraftPhaseName: String? {
         let window = SeasonPhaseGroup.preDraft.subPhases
         guard let i = window.firstIndex(of: career.currentPhase),
               i + 1 < window.count else { return nil }
-        return TimelineTasksPanel.phaseName(window[i + 1])
+        return window[i + 1].displayName
     }
 
     /// Gold primary capsule — the shape `heroActionLink` draws, over an

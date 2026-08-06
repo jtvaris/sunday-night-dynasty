@@ -655,8 +655,17 @@ struct FilmStudySelectionView<Board: View>: View {
     /// the list whose run bar can only say "nothing you can still afford". While
     /// slots and money remain there is work to do here and the run bar is the
     /// thing to look at.
+    ///
+    /// #fleet review F6: **and the club has to have reached this stage.** The
+    /// calendar clamp in `advanceTarget` lands on `.filmStudy` itself in combine
+    /// week, so a club still standing in `.interviews` cleared `target.order >
+    /// prepStep.order` and was offered "Complete Film Study — Advance" — a
+    /// button that moves him INTO the stage while claiming he has finished it,
+    /// with 50-odd interview slots still unspent behind him.
     private var showsAdvanceStage: Bool {
-        canAct && cycleIsSpent && !hubPinsAdvanceBar && advanceTarget != nil
+        canAct
+            && career.prepStep.order >= DraftPrepStep.filmStudy.order
+            && cycleIsSpent && !hubPinsAdvanceBar && advanceTarget != nil
     }
 
     @ViewBuilder
@@ -666,8 +675,15 @@ struct FilmStudySelectionView<Board: View>: View {
                 // When the calendar clamped the target, say so: the user is
                 // being moved onto film study rather than past it, and the
                 // reason is the season, not anything he failed to do.
+                //
+                // #fleet review F18: the sentence comes from
+                // `DraftPrepProgress.opensSentence` now. The local copy said
+                // "the pro-day circuit opens with the pro-day window", which
+                // tells a club standing in combine week nothing it did not
+                // already know — free agency runs between the two, and naming it
+                // is the whole point of that table.
                 if target == .filmStudy {
-                    Text("The pro-day circuit opens with the pro-day window \u{2014} this closes the combine block.")
+                    Text("\(DraftPrepProgress.opensSentence(for: .proDayFocus)) This closes the combine block.")
                         .font(.system(size: DSType.Size.micro, weight: .semibold))
                         .foregroundStyle(Color.textTertiaryReadable)
                         .fixedSize(horizontal: false, vertical: true)
@@ -978,9 +994,11 @@ struct FilmStudySelectionView<Board: View>: View {
         .padding(.top, 4)
     }
 
-    /// Column labels. The leading four and the trailing three are PINNED — the
+    /// Column labels. The leading four and the trailing block are PINNED — the
     /// checkbox, the man, and what a report on him costs are the same question
-    /// in every mode — and the block between them follows the mode chips.
+    /// in every mode — and the block between them follows the mode chips. RPTS
+    /// is the one exception: the Work-up block prints that count itself, so the
+    /// pinned copy stands down there (#fleet review F19a).
     private var tableHeader: some View {
         HStack(spacing: 0) {
             Color.clear.frame(width: 22)
@@ -995,7 +1013,12 @@ struct FilmStudySelectionView<Board: View>: View {
             ProspectColumns.headers(mode: mode)
 
             Text("TAPE").frame(width: 46, alignment: .center)
-            Text("RPTS").frame(width: 38, alignment: .center)
+            // #fleet review F19a: the Work-up block opens with the same n/3, so
+            // in that mode the pinned column would print the count twice on
+            // every row. The block owns it there; this column covers the others.
+            if mode != .workup {
+                Text("RPTS").frame(width: 38, alignment: .center)
+            }
             Text("NEXT").frame(width: 48, alignment: .trailing)
         }
         .font(.system(size: 9, weight: .heavy))
@@ -1081,10 +1104,15 @@ struct FilmStudySelectionView<Board: View>: View {
                 // what the next report on him costs.
                 ProspectTapeCell(prospect: prospect, width: 46)
 
-                Text("\(filed)/\(ScoutEvaluationBudget.maxReportsPerProspect)")
-                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
-                    .foregroundStyle(maxed ? Color.success : Color.textSecondary)
-                    .frame(width: 38, alignment: .center)
+                // Dropped in Work-up mode — the block's own RPT cell already
+                // prints this exact fraction (#fleet review F19a). See
+                // `tableHeader`, which drops the label in lockstep.
+                if mode != .workup {
+                    Text("\(filed)/\(ScoutEvaluationBudget.maxReportsPerProspect)")
+                        .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(maxed ? Color.success : Color.textSecondary)
+                        .frame(width: 38, alignment: .center)
+                }
 
                 Text(maxed ? "\u{2014}" : "$\(cost)K")
                     .font(.system(size: 12, weight: .heavy).monospacedDigit())

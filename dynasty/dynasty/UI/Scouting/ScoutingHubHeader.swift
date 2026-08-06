@@ -88,7 +88,12 @@ struct ScoutingStageGate {
         let blockedReason: String = {
             guard let next else { return "" }
             switch next.phase {
-            case .proDays: return "The pro-day circuit does not open until the pro-day window."
+            // #fleet review F18: through `opensSentence` rather than a local
+            // copy that said only "the pro-day circuit does not open until the
+            // pro-day window". Free agency runs between combine week and the
+            // circuit, and naming it is the one version of this sentence that
+            // tells the user how far away it is.
+            case .proDays: return DraftPrepProgress.opensSentence(for: .proDayFocus)
             case .draft:
                 // `.mockTwo` is the last stop of the spring and it ends in a
                 // wait, not in a button: the Final Mock is printed with the

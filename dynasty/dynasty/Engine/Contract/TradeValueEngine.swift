@@ -2220,6 +2220,13 @@ enum TradeValueEngine {
         /// 32 under the cap, and 665-3 799 candidate deals a year rejected for the
         /// buyer's cap alone).
         capReliefSalary: Int = 0,
+        /// #100: open the package with a PLAYER who fills a hole on the seller's
+        /// roster instead of reaching for picks first. This is the needs swap —
+        /// the shape the market could not previously express — and it is where
+        /// the surplus that closes it comes from: the seller prices an incoming
+        /// player at his need premium (+28 % at a crisis position) while the
+        /// payer is only giving up a man he is not starting.
+        openWithNeededPlayer: Bool = false,
         /// True only on the AI-vs-AI path, so `MarketFunnel`'s affordability
         /// breakdown measures the league market and is not diluted by the
         /// user-facing offer builders that share this function.
@@ -2274,6 +2281,26 @@ enum TradeValueEngine {
                 .filter { $0.annualSalary >= needed && seller.incomingPlayerValue($0) <= ceiling }
                 .min { $0.annualSalary < $1.annualSalary }
             if let relief { chosenPlayers.append(relief) }
+        }
+
+        // #100: the needs swap opens with football, not paper. The man has to
+        // fill a real hole on the seller's depth chart (severity ≥ 0.30 — a
+        // starter slot he is currently covering below replacement level), and he
+        // must not be one the PAYER is himself starting at a position he cannot
+        // afford to thin out. Everything after this is the ordinary pick top-up.
+        if allowFiller, openWithNeededPlayer {
+            let alreadyIn = Set(chosenPlayers.map(\.id))
+            let swap = fillerPool()
+                .filter { !alreadyIn.contains($0.id) }
+                .filter { seller.needs.severity($0.position) >= 0.30 }
+                .filter { !(payer.isStarter($0) && payer.needs.severity($0.position) >= 0.30) }
+                .filter { seller.incomingPlayerValue($0) <= ceiling }
+                .max { seller.incomingPlayerValue($0) < seller.incomingPlayerValue($1) }
+            // No such man on the roster — this shape does not exist for this
+            // pair, and the builder says so rather than falling through to a
+            // package indistinguishable from the plain rental.
+            guard let swap else { return nil }
+            chosenPlayers.append(swap)
         }
 
         for pick in ordered {
@@ -2343,12 +2370,19 @@ enum TradeValueEngine {
         requireReceivingBar: Bool,
         /// The window's roster bounds (`rosterBounds(for:)`) — 40-75 in-season,
         /// 28-90 in an offseason window.
-        rosterBounds: (floor: Int, ceiling: Int)
+        rosterBounds: (floor: Int, ceiling: Int),
+        /// Task #88b: how the OFFERING club prices its own outgoing side today.
+        /// 1.0 everywhere except deadline day, where a seller who has decided the
+        /// man is going marks him down (see `urgency` in `attemptLeagueDeal`).
+        /// It scales his own bar, not the buyer's — the seller is never made to
+        /// accept less than he thinks the package is worth, his valuation of what
+        /// he is shipping is simply lower at four o'clock than it was in October.
+        sellerUrgency: Double = 1.0
     ) -> Bool {
         // Offering side must want its own proposal.
         let offeringGives = offering.sideValue(
             players: offeringSends.players, picks: offeringSends.picks, incoming: false
-        )
+        ) * sellerUrgency
         var offeringGets = offering.sideValue(
             players: receivingSends.players, picks: receivingSends.picks, incoming: true
         )
@@ -2559,6 +2593,31 @@ enum TradeValueEngine {
         /// Deals executed.
         var executed = 0
 
+        // --- Composition (task #100). ---
+        //
+        // `executed` alone says the market CLEARS; it cannot say the league is
+        // trading like a league. The first 8-year measurement had 285 AI-vs-AI
+        // deals of which every single one was the same sentence — one veteran out,
+        // future picks back — because `attemptLeagueDeal` could only ever build
+        // that sentence. These counters are the instrument that makes the SHAPE of
+        // the market assertable the way its volume already is.
+        /// One or more players out, PICKS ONLY coming back (the classic rental).
+        var shapePlayerForPicks = 0
+        /// Players both ways, no picks at all (a needs swap).
+        var shapePlayerForPlayer = 0
+        /// Players out, players AND picks back.
+        var shapePlayerForPackage = 0
+        /// …of which the SELLER sweetened his own side with a pick.
+        var shapeSellerSentPick = 0
+        /// Deals where every returned pick was for a LATER league year.
+        var shapeFuturePicksOnly = 0
+        /// Deals with more than one player leaving the seller.
+        var shapeMultiPlayerOut = 0
+        /// Executed deals per in-season week; offseason windows fold into key 0.
+        /// This is the #88b distribution — `last3Share` is a ratio and cannot say
+        /// WHICH weeks carried the season.
+        var executedByWeek: [Int: Int] = [:]
+
         // --- The user's phone (`generateAIOffer`), same idea, separate pipeline.
         /// `generateAIOffer` calls (i.e. hazard rolls that came up).
         var offerRolls = 0
@@ -2621,7 +2680,40 @@ enum TradeValueEngine {
             + "offerBar=\(offerBar) recvBar=\(recvBar) blocker=\(blocker) "
             + "neutral=\(neutral) invalid=\(invalid)"
             + "(cap=\(invalidCap) rosterMin=\(invalidRosterMin) rosterMax=\(invalidRosterMax)) "
-            + "capTight=\(capTight) executed=\(executed)"
+            + "capTight=\(capTight) executed=\(executed) "
+            + "shape(p4pick=\(shapePlayerForPicks) p4p=\(shapePlayerForPlayer) "
+            + "pkg=\(shapePlayerForPackage) sellerPick=\(shapeSellerSentPick) "
+            + "futOnly=\(shapeFuturePicksOnly) multiOut=\(shapeMultiPlayerOut)) "
+            + "byWeek=" + executedByWeek
+                .sorted { $0.key < $1.key }
+                .map { "\($0.key):\($0.value)" }
+                .joined(separator: ",")
+        }
+
+        /// Classifies one executed AI-vs-AI deal into the #100 shape buckets.
+        mutating func recordShape(
+            sellerPlayers: Int,
+            sellerPicks: [DraftPick],
+            buyerPlayers: Int,
+            buyerPicks: [DraftPick],
+            season: Int,
+            week: Int,
+            inSeason: Bool
+        ) {
+            let picks = sellerPicks + buyerPicks
+            if buyerPlayers > 0 && picks.isEmpty {
+                shapePlayerForPlayer += 1
+            } else if buyerPlayers > 0 {
+                shapePlayerForPackage += 1
+            } else {
+                shapePlayerForPicks += 1
+            }
+            if !sellerPicks.isEmpty { shapeSellerSentPick += 1 }
+            if !picks.isEmpty, picks.allSatisfy({ $0.seasonYear > season }) {
+                shapeFuturePicksOnly += 1
+            }
+            if sellerPlayers > 1 { shapeMultiPlayerOut += 1 }
+            executedByWeek[inSeason ? week : 0, default: 0] += 1
         }
     }
 
@@ -2721,6 +2813,16 @@ enum TradeValueEngine {
         let playerID: UUID
         let buyerTeamID: UUID
         let pickDescription: String
+        /// Everything the seller sent BESIDES the headline man, already
+        /// formatted ("RB Smith (74 OVR) and a 2027 round 4 pick"), or "" for a
+        /// straight one-for-picks deal.
+        ///
+        /// #fleet review F9: `sweeten` closes a shortfall by adding a second
+        /// player or a pick off the seller's own board, so the headline asset is
+        /// routinely not the whole outgoing side. `TradeRecord` has always
+        /// carried both sides; the roundup letter named the headline alone and
+        /// understated every sweetened deal in the league.
+        let extraOutgoing: String
     }
 
     /// Everything one market pass produced: the ledger rows (for
@@ -2794,6 +2896,23 @@ enum TradeValueEngine {
             }
             guard base > 0 else { return 0 }
             return min(12, base + max(0, deficit))
+        }
+    }
+
+    /// How many deals one club may complete inside a single market pass
+    /// (task #88b).
+    ///
+    /// This is not a taste knob, it is the pass's arithmetic ceiling: `n` deals
+    /// need `2n` distinct clubs out of 31, so a cap of one puts a hard lid of 15
+    /// on any window — and the ONLY window that aims that high is deadline week.
+    /// It is also the one day of the league year where a real front office does
+    /// two things: a seller who has decided the season is over moves more than
+    /// one veteran before four o'clock. Ordinary weeks and offseason windows keep
+    /// the cap at one, so a single fire sale can never be the whole market.
+    static func dealsPerClub(in window: MarketWindow) -> Int {
+        switch window {
+        case .deadline:          return 2
+        case .week, .offseason:  return 1
         }
     }
 
@@ -2897,21 +3016,32 @@ enum TradeValueEngine {
 
         var sellers = sellerOrder()
         var attempts = 0
-        let attemptBudget = max(10, targetCount * 8)
-        // One deal per club per pass keeps a single fire sale from being the
-        // whole week's market.
-        var usedTeamIDs: Set<UUID> = []
+        let attemptBudget = max(10, targetCount * dealsPerClub(in: window) * 8)
+        // How many deals one club may do in this window (task #88b).
+        //
+        // One, ordinarily: a single fire sale must not be the whole week's
+        // market. But the cap is also an arithmetic CEILING on the pass — `n`
+        // deals need `2n` distinct clubs — and deadline week is the one window
+        // that aims at double digits, so a 12-15 target was being asked of a
+        // structure that had to find 24-30 willing clubs out of 31. Measured, it
+        // converted 4-8 of 12-15 and the §5 5-15 band was missed on the low side
+        // in two of five league years. Two deals per club on deadline day is both
+        // the fix and simply what the real deadline looks like — a club that is
+        // selling is usually selling more than one man.
+        let perClubCap = dealsPerClub(in: window)
+        var dealsByTeam: [UUID: Int] = [:]
+        func isSpent(_ id: UUID) -> Bool { (dealsByTeam[id] ?? 0) >= perClubCap }
 
         while result.count < targetCount, attempts < attemptBudget {
-            if sellers.isEmpty { sellers = sellerOrder().filter { !usedTeamIDs.contains($0) } }
+            if sellers.isEmpty { sellers = sellerOrder().filter { !isSpent($0) } }
             guard !sellers.isEmpty else { break }
             let sellerID = sellers.removeFirst()
             attempts += 1
-            guard !usedTeamIDs.contains(sellerID), let seller = views[sellerID] else { continue }
+            guard !isSpent(sellerID), let seller = views[sellerID] else { continue }
             funnel.turns += 1
 
             let buyers = aiTeams
-                .filter { $0.id != sellerID && !usedTeamIDs.contains($0.id) }
+                .filter { $0.id != sellerID && !isSpent($0.id) }
                 .compactMap { views[$0.id] }
 
             guard let deal = attemptLeagueDeal(
@@ -2931,8 +3061,8 @@ enum TradeValueEngine {
 
             result.records.append(deal.record)
             result.summaries.append(deal.summary)
-            usedTeamIDs.insert(sellerID)
-            usedTeamIDs.insert(deal.buyerID)
+            dealsByTeam[sellerID, default: 0] += 1
+            dealsByTeam[deal.buyerID, default: 0] += 1
 
             // Both clubs changed — re-read their rosters, needs and cap, and
             // re-index the picks the deal just moved.
@@ -2976,14 +3106,45 @@ enum TradeValueEngine {
             return nil
         }
 
+        // Deadline urgency (task #88b). Four o'clock on deadline day is the one
+        // moment in the league year when a seller's reservation price actually
+        // MOVES: he has decided the man is going, there is no next week to shop
+        // him in, and a rental is worth less to the buyer than a whole season of
+        // the same player. So the seller prices his own asset ~8 % below what he
+        // would hold out for in October — the ask, his walk-away floor and the
+        // bar his own side has to clear all shift together, so he is never made
+        // to sell below what he thinks the player is worth TODAY.
+        //
+        // This is what makes the flurry a property of the calendar rather than of
+        // which clubs happened to be rebuilding: measured over five league years,
+        // deadline-day volume swung 4-13 against §5's 5-15 band purely on the
+        // year's stance mix, and the weak years were weak because nobody's price
+        // ever came down.
+        let isDeadline = window == .deadline
+        let urgency = isDeadline ? 0.92 : 1.0
+
+        // Who even takes the call (task #88b). Ordinarily a club has to have a
+        // starter-quality HOLE at the position — the market is about starters,
+        // not depth. On deadline day it is about depth too: a contender adds a
+        // rotational body for January, and a 0.18 severity gate in a league whose
+        // starter rooms mostly sit above `solidStarterOVR` means most positions
+        // read as "set" and nobody picks up. Measured, that gate alone killed
+        // 69-89 % of everything the sellers put on the market, and it was the
+        // binding loss in exactly the league years the deadline came in under
+        // §5's floor.
+        let interestGate = isDeadline ? 0.10 : 0.18
+        // …and how many of them he actually gets through before the hour is up.
+        let callList = isDeadline ? 8 : 5
+
         for asset in shopping {
             funnel.assets += 1
             let ask = seller.outgoingPlayerValue(asset)
                 * seller.persona.leagueAskingPremium
                 * seller.noise
+                * urgency
 
             let ranked = buyers
-                .filter { $0.needs.severity(asset.position) >= 0.18 }
+                .filter { $0.needs.severity(asset.position) >= interestGate }
                 .sorted { lhs, rhs in
                     let lhsScore = lhs.needs.severity(asset.position) * (lhs.stance == .contend ? 1.3 : 1.0)
                     let rhsScore = rhs.needs.severity(asset.position) * (rhs.stance == .contend ? 1.3 : 1.0)
@@ -3006,59 +3167,136 @@ enum TradeValueEngine {
                 }
             }
             funnel.capTight += tight.count
-            let interested = (fits + tight).prefix(5)
+            let interested = (fits + tight).prefix(callList)
             if interested.isEmpty { funnel.noBuyer += 1 }
 
             for buyer in interested {
                 funnel.pairs += 1
                 let buyerPicks = picksByTeam[buyer.team.id] ?? []
+                let sellerPicks = picksByTeam[seller.team.id] ?? []
                 let needsRelief = !canAbsorb(
                     buyer: buyer.team, salary: asset.annualSalary, capMode: capMode
                 )
-                guard let payment = buildPayment(
-                    payer: buyer,
-                    seller: seller,
-                    picks: buyerPicks,
-                    ask: ask,
-                    maxPicks: 3,
-                    allowFiller: true,
-                    preferFuture: seller.stance != .contend,
+
+                // --- The sentences this phone call is allowed to speak (#100) ---
+                //
+                // Before this list existed there was exactly ONE: "your veteran,
+                // my future picks". Measured over five league years that produced
+                // 186 AI-vs-AI deals of which 186 returned nothing but future
+                // picks — no player-for-player, no player+pick either way, no
+                // 2-for-1. That was not a taste the GMs had; it was the only
+                // package the builder could construct, and the buyer's value bar
+                // (`funnel.recvBar`, 88-98 % of everything assembled) then meant
+                // only the one stance pair whose pick leans diverge — a contender
+                // buying from a rebuilder — could ever clear it.
+                //
+                // Each shape below is a real front-office move, tried in the order
+                // a GM would try them, and the FIRST one both clubs sign is the
+                // deal. `askFloor` is the same call made at the seller's walk-away
+                // number instead of his opening ask (the concession a phone call
+                // makes and a one-shot builder cannot).
+                let askFloor = seller.outgoingPlayerValue(asset)
+                    * seller.persona.leagueAcceptRatio
+                    * 0.99
+                    * urgency
+                let wantsFuture = prefersFuturePicks(seller: seller)
+
+                var shapes: [DealShape] = []
+
+                // 1. THE NEEDS SWAP. The seller has a hole; the buyer has a body
+                //    for it. Football back for football — and because the rosters
+                //    net out, the buyer pays no roster-spot penalty either.
+                if let payment = buildPayment(
+                    payer: buyer, seller: seller, picks: buyerPicks, ask: ask,
+                    maxPicks: 2, allowFiller: true, preferFuture: wantsFuture,
+                    contracts: contracts,
+                    capReliefSalary: needsRelief ? asset.annualSalary : 0,
+                    openWithNeededPlayer: true,
+                    funnelCounted: false
+                ), !payment.players.isEmpty {
+                    shapes.append(DealShape(out: [asset], outPicks: [], payment: payment))
+                }
+
+                // 2. THE RENTAL, at the asking price. The classic deadline deal.
+                if let payment = buildPayment(
+                    payer: buyer, seller: seller, picks: buyerPicks, ask: ask,
+                    maxPicks: 3, allowFiller: true, preferFuture: wantsFuture,
                     contracts: contracts,
                     capReliefSalary: needsRelief ? asset.annualSalary : 0,
                     funnelCounted: true
-                ) else {
+                ) {
+                    shapes.append(DealShape(out: [asset], outPicks: [], payment: payment))
+                } else {
                     funnel.payFail += 1
-                    continue
                 }
-                funnel.built += 1
 
-                let proposal = TradeProposal(
-                    offeringTeamID: seller.team.id,
-                    receivingTeamID: buyer.team.id,
-                    sendingPlayers: [asset.id],
-                    receivingPlayers: payment.players.map(\.id),
-                    sendingPicks: [],
-                    receivingPicks: payment.picks.map(\.id)
-                )
-
-                guard dealIsCoherent(
-                    proposal: proposal,
-                    offering: seller,
-                    receiving: buyer,
-                    offeringSends: ([asset], []),
-                    receivingSends: (payment.players, payment.picks),
-                    allPlayers: allPlayers,
-                    allPicks: allPicks,
-                    allTeams: allTeams,
-                    capMode: capMode,
+                // 3. THE SAME DEAL AT THE SELLER'S FLOOR. He opened at a premium;
+                //    this is where he actually signs.
+                if askFloor < ask * 0.99, let payment = buildPayment(
+                    payer: buyer, seller: seller, picks: buyerPicks, ask: askFloor,
+                    maxPicks: 3, allowFiller: true, preferFuture: wantsFuture,
                     contracts: contracts,
-                    requireReceivingBar: true,
-                    rosterBounds: rosterBounds(for: window)
-                ) else { continue }
+                    capReliefSalary: needsRelief ? asset.annualSalary : 0,
+                    funnelCounted: false
+                ) {
+                    shapes.append(DealShape(out: [asset], outPicks: [], payment: payment))
+                }
 
+                var closed: DealShape?
+                for var shape in shapes {
+                    funnel.built += 1
+                    // Cheap pre-screen on the buyer's own bar — the same
+                    // arithmetic `dealIsCoherent` runs, but without building a
+                    // proposal or re-indexing contracts. A shape the buyer will
+                    // not sign gets ONE concession attempt: the seller closes the
+                    // gap from his own side, which is where the player+pick and
+                    // 2-for-1 packages in this league come from.
+                    if buyerShortfall(buyer: buyer, shape: shape) > 0 {
+                        guard let sweetened = sweeten(
+                            shape: shape, seller: seller, buyer: buyer,
+                            sellerPicks: sellerPicks, asset: asset,
+                            shoppingList: listed
+                        ) else {
+                            funnel.recvBar += 1
+                            continue
+                        }
+                        shape = sweetened
+                    }
+                    if dealIsCoherent(
+                        proposal: shape.proposal(seller: seller, buyer: buyer),
+                        offering: seller,
+                        receiving: buyer,
+                        offeringSends: (shape.out, shape.outPicks),
+                        receivingSends: (shape.payment.players, shape.payment.picks),
+                        allPlayers: allPlayers,
+                        allPicks: allPicks,
+                        allTeams: allTeams,
+                        capMode: capMode,
+                        contracts: contracts,
+                        requireReceivingBar: true,
+                        rosterBounds: rosterBounds(for: window),
+                        sellerUrgency: urgency
+                    ) {
+                        closed = shape
+                        break
+                    }
+                }
+                guard let deal = closed else { continue }
+
+                let proposal = deal.proposal(seller: seller, buyer: buyer)
                 let returnText = offerAssetText(
-                    players: payment.players, picks: payment.picks, currentSeason: currentSeason
+                    players: deal.payment.players, picks: deal.payment.picks,
+                    currentSeason: currentSeason
                 )
+                // #fleet review F9: the rest of the seller's side, through the
+                // same formatter the return uses so the letter has one voice.
+                let sweetenerPlayers = deal.out.filter { $0.id != asset.id }
+                let extraOutgoing = (sweetenerPlayers.isEmpty && deal.outPicks.isEmpty)
+                    ? ""
+                    : offerAssetText(
+                        players: sweetenerPlayers, picks: deal.outPicks,
+                        currentSeason: currentSeason
+                    )
                 let outcome = TradeEngine.executeTrade(
                     proposal: proposal,
                     allPlayers: allPlayers,
@@ -3084,13 +3322,165 @@ enum TradeValueEngine {
                     playerOverall: asset.overall,
                     playerID: asset.id,
                     buyerTeamID: buyer.team.id,
-                    pickDescription: returnText
+                    pickDescription: returnText,
+                    extraOutgoing: extraOutgoing
                 )
                 funnel.executed += 1
+                funnel.recordShape(
+                    sellerPlayers: deal.out.count,
+                    sellerPicks: deal.outPicks,
+                    buyerPlayers: deal.payment.players.count,
+                    buyerPicks: deal.payment.picks,
+                    season: currentSeason,
+                    week: week,
+                    inSeason: window.isInSeason
+                )
                 return (record, summary, buyer.team.id)
             }
         }
         return nil
+    }
+
+    // MARK: - Deal shapes (#100)
+
+    /// One candidate package: what leaves the seller, and what comes back.
+    private struct DealShape {
+        var out: [Player]
+        var outPicks: [DraftPick]
+        var payment: (players: [Player], picks: [DraftPick])
+
+        func proposal(seller: GMMarketView, buyer: GMMarketView) -> TradeProposal {
+            TradeProposal(
+                offeringTeamID: seller.team.id,
+                receivingTeamID: buyer.team.id,
+                sendingPlayers: out.map(\.id),
+                receivingPlayers: payment.players.map(\.id),
+                sendingPicks: outPicks.map(\.id),
+                receivingPicks: payment.picks.map(\.id)
+            )
+        }
+    }
+
+    /// How far, in the BUYER's own currency, a shape falls short of his value
+    /// bar. Zero or less means he signs. Identical arithmetic to the
+    /// `requireReceivingBar` branch of `dealIsCoherent` — deliberately, so the
+    /// pre-screen and the gate can never disagree.
+    private static func buyerShortfall(buyer: GMMarketView, shape: DealShape) -> Double {
+        let gives = buyer.sideValue(
+            players: shape.payment.players, picks: shape.payment.picks, incoming: false
+        )
+        guard gives > 0 else { return .greatestFiniteMagnitude }
+        var gets = buyer.sideValue(players: shape.out, picks: shape.outPicks, incoming: true)
+        gets -= buyer.rosterSpotPenalty(
+            incomingPlayers: shape.out.count,
+            outgoingPlayers: shape.payment.players.count
+        )
+        return gives * buyer.leagueAcceptBar - gets
+    }
+
+    /// The concession a real phone call makes and a one-shot package builder
+    /// cannot: the seller closes the buyer's gap from his OWN side rather than
+    /// asking for less.
+    ///
+    /// Two currencies, cheapest first — a late pick off his own board ("and
+    /// we'll send a seventh"), or a second, smaller player from the same
+    /// shopping list (the 2-for-1). Exactly ONE asset is added: a market that
+    /// keeps sweetening until the other side says yes is a market with no
+    /// prices in it.
+    private static func sweeten(
+        shape: DealShape,
+        seller: GMMarketView,
+        buyer: GMMarketView,
+        sellerPicks: [DraftPick],
+        asset: Player,
+        /// The seller's own shopping list, already built by the caller — the
+        /// second player in a 2-for-1 has to be someone he was willing to move
+        /// anyway, and rebuilding the list per sweetener call is the pass's most
+        /// expensive avoidable work.
+        shoppingList: [Player]
+    ) -> DealShape? {
+        // The sweetener may never be worth more than the deal it is closing —
+        // a third of the headline asset is the ceiling, which keeps this a
+        // sweetener and not a second trade bolted onto the first.
+        let ceiling = seller.outgoingPlayerValue(asset) * 0.34
+
+        var best: DealShape?
+        var bestCost = Double.greatestFiniteMagnitude
+
+        func consider(_ candidate: DealShape, cost: Double) {
+            guard cost <= ceiling, cost < bestCost else { return }
+            guard buyerShortfall(buyer: buyer, shape: candidate) <= 0 else { return }
+            best = candidate
+            bestCost = cost
+        }
+
+        // a) A pick off the seller's own board. Never his top one: a club does
+        //    not sweeten with the asset it would rather keep.
+        // Scanned cheapest-first and deep enough to REACH a pick that can
+        // actually close a gap: a four-deep prefix only ever sees sevenths and
+        // sixths, which close nothing, so the second player below always won and
+        // "and we'll send a third" never appeared in the league at all.
+        let spendable = sellerPicks
+            .filter { $0.round >= 3 }
+            .sorted { seller.pickValue($0) < seller.pickValue($1) }
+        for pick in spendable.prefix(10) {
+            var candidate = shape
+            candidate.outPicks.append(pick)
+            consider(candidate, cost: seller.pickValue(pick))
+        }
+
+        // b) A second, smaller player — the 2-for-1. He has to be someone the
+        //    seller is already willing to move and cheaper than the headline.
+        //
+        //    `lastManReason` is a PER-PLAYER test against the pre-deal roster,
+        //    so two men who each pass it can still be a club's only two at a
+        //    position — and this shape ships both in one deal, leaving an AI
+        //    roster with zero at a starting spot that `refillAIRosters` (which
+        //    only fires below 53) will never patch. The sweetener therefore
+        //    may not share a position with anything already outgoing unless
+        //    the seller keeps at least two more there after the deal.
+        let alreadyOut = Set(shape.out.map(\.id))
+        let outgoingPositions = Set(shape.out.map(\.position))
+        let seconds = shoppingList
+            .filter { $0.id != asset.id && !alreadyOut.contains($0.id) }
+            .filter { candidate in
+                guard outgoingPositions.contains(candidate.position) else { return true }
+                let keptAtPosition = seller.roster.filter {
+                    $0.position == candidate.position
+                        && !$0.isRetired
+                        && !alreadyOut.contains($0.id)
+                        && $0.id != candidate.id
+                }.count
+                return keptAtPosition >= 2
+            }
+            .filter { seller.outgoingPlayerValue($0) <= ceiling }
+            .sorted { seller.outgoingPlayerValue($0) < seller.outgoingPlayerValue($1) }
+        for player in seconds.prefix(4) {
+            var candidate = shape
+            candidate.out.append(player)
+            consider(candidate, cost: seller.outgoingPlayerValue(player))
+        }
+
+        return best
+    }
+
+    /// Whether this seller wants NEXT April's picks rather than this one's.
+    ///
+    /// It used to be `stance != .contend`, i.e. two thirds of the league, and
+    /// combined with the stance lean on future capital (rebuild ×1.15 against a
+    /// contender's ×0.88) it made the future pick the ONLY currency in which a
+    /// deal could clear — 100 % of five league years' deals returned nothing
+    /// else. A rebuilder still always wants the future; a retooler is genuinely
+    /// indifferent and takes the best board available about half the time, which
+    /// is what puts current-year picks back in circulation without threatening
+    /// the §5 "≥50 % of pick trades carry a future pick" floor (a package of two
+    /// or three picks nearly always carries one either way).
+    private static func prefersFuturePicks(seller: GMMarketView) -> Bool {
+        switch seller.stance {
+        case .rebuild: return true
+        case .retool:  return Double.random(in: 0..<1) < 0.55
+        case .contend: return false
+        }
     }
 
     /// League-office inbox roundup of deadline day.
@@ -3110,7 +3500,14 @@ enum TradeValueEngine {
     ) -> InboxMessage {
         let shown = trades.prefix(8)
         var lines = shown
-            .map { "• \($0.buyerAbbr) acquire \($0.playerPosition.rawValue) \($0.playerName) from \($0.sellerAbbr) for \($0.pickDescription)" }
+            .map { trade -> String in
+                // #fleet review F9: name the WHOLE outgoing side. A sweetened
+                // deal — the second player, the seller's own pick — read as a
+                // straight one-for-picks swap here while the ledger row behind
+                // it carried both.
+                let extras = trade.extraOutgoing.isEmpty ? "" : " and \(trade.extraOutgoing)"
+                return "• \(trade.buyerAbbr) acquire \(trade.playerPosition.rawValue) \(trade.playerName)\(extras) from \(trade.sellerAbbr) for \(trade.pickDescription)"
+            }
             .joined(separator: "\n")
         if trades.count > shown.count {
             lines += "\n• …and \(trades.count - shown.count) more"

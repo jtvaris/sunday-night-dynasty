@@ -2666,7 +2666,12 @@ struct BigBoardRowView: View {
             schemeFit: schemeFit,
             needLevel: needLevel,
             userTeamID: userTeamID,
-            scoutsSentToCombine: scoutsSentToCombine
+            scoutsSentToCombine: scoutsSentToCombine,
+            // Chargeable, like the board's own evaluate gate and both other
+            // list surfaces — without this the board read 1/3 on a man whose
+            // only paper was the inherited baseline, then happily sold him a
+            // "fourth" report (#122 review F4).
+            reportCount: ScoutEvaluationBudget.chargeableReports(prospect)
         )
     }
 
