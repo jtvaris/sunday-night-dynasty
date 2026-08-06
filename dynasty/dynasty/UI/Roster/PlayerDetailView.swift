@@ -2193,9 +2193,15 @@ struct PlayerDetailView: View {
                     .foregroundStyle(Color.textTertiary)
             }
 
-            // Motivation with explanation (#183)
+            // Motivator with explanation (#183).
+            // NOTE (#140): this row is the *trait* — what drives him (Money /
+            // Winning / Stats / Loyalty / Fame). The Overview card's
+            // "Motivation" pill is the transient `motivationState`
+            // (Driven / Focused / …). Two different things, so they must not
+            // share a label or the card reads as a contradiction
+            // ("Motivation: Focused" vs "Motivation: Fame").
             VStack(alignment: .leading, spacing: 4) {
-                LabeledContent("Motivation", value: player.personality.motivation.rawValue)
+                LabeledContent("Motivator", value: player.personality.motivation.rawValue)
                 Text(motivationEffectDescription)
                     .font(.system(size: 10))
                     .foregroundStyle(Color.textTertiary)

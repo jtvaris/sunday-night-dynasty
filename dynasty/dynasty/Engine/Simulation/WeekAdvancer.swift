@@ -1055,6 +1055,10 @@ enum WeekAdvancer {
         for player in allPlayersForReset where player.seasonStatLineData != nil {
             player.seasonStatLineData = nil
         }
+        // #154a: the milestone ledger is scoped to one league year — the
+        // crossings it lists were measured against a career total that resets
+        // its "live" half right above this line.
+        career.announcedMilestoneKeysData = nil
 
         // 0c. R22: a new season reopens every negotiation an insulted agent
         // froze last offseason.
@@ -1517,6 +1521,23 @@ enum WeekAdvancer {
         // rankings, streaks, upsets, MVP race, division races, hot seats).
         lastNewsItems.append(contentsOf: narrativeUpdate.news)
 
+        // 1c. #154a: career milestones crossed THIS week.
+        //
+        // Deliberately after `accumulateSeasonStats` (the box score is already
+        // folded into the live lines) and deliberately NOT at week 18: a man who
+        // passes 10 000 career yards in week 6 should read about it in week 6.
+        // Only the rosters that produce a box score can be measured mid-season —
+        // see `MilestoneNewsFactory.weeklyMilestones` — so the week-18 sweep
+        // still exists for the other 31 clubs, minus whatever went out here.
+        announceWeeklyMilestones(
+            career: career,
+            season: season,
+            week: week,
+            allPlayers: allPlayers,
+            teamsByID: teamsByID,
+            modelContext: modelContext
+        )
+
         // 2. Generate weekly events for the player's team
         if let playerTeamID = career.teamID,
            let playerTeam = teamsByID[playerTeamID] {
@@ -1900,9 +1921,16 @@ enum WeekAdvancer {
                 TrainingFocusEngine.rollBreakout(roster: roster, season: season, teamID: team.id)
             }
             if let breakout {
+                // #154a: four ways to say it, chosen deterministically by player
+                // id. A season produces ~17 of these and every one of them used
+                // to be the same two sentences, which turned the whole Stat
+                // Lines tab into one story printed seventeen times.
+                let copy = breakoutCopy(
+                    player: breakout.player, teamName: team.fullName
+                )
                 lastNewsItems.append(NewsItem(
-                    headline: "Breakout: \(breakout.player.fullName) has arrived",
-                    body: "\(team.fullName) \(breakout.player.position.rawValue) \(breakout.player.fullName) has taken a massive leap in practice — coaches say the game has finally slowed down for the \(max(1, breakout.player.yearsPro))-year pro.",
+                    headline: copy.headline,
+                    body: copy.body,
                     category: .playerPerformance,
                     week: week,
                     season: season,
@@ -3129,6 +3157,35 @@ enum WeekAdvancer {
                             destination: "Hired away by another organization"
                         )
                         career.coachingTree = tree
+
+                        // #143a: TELL HIM. The coaching-tree row above is a
+                        // history entry nobody reads on the advance; the seat
+                        // simply went empty overnight with no explanation, while
+                        // the retirement branch a hundred lines down has always
+                        // sent a message for exactly the same kind of loss.
+                        //
+                        // The hiring club is deliberately not named: the poach
+                        // detaches him to the unemployed bench rather than
+                        // moving him to a roster, so any club named here would
+                        // be contradicted by the coach market the next screen
+                        // over. The copy says exactly what the model recorded.
+                        // `hireSeasonYear == 0` means "never stamped" (legacy
+                        // rows), not "hired in year zero" — fall back to a
+                        // single season rather than printing a four-digit tenure.
+                        let tenure = coach.hireSeasonYear > 0
+                            ? max(1, career.currentSeason - coach.hireSeasonYear + 1)
+                            : 1
+                        newMessages.append(InboxMessage(
+                            sender: .leagueOffice,
+                            subject: "\(coach.fullName) Hired Away",
+                            body: "\(coach.fullName), your \(coach.role.rawValue), "
+                                + "has been hired away by another organization after "
+                                + "\(tenure) season\(tenure == 1 ? "" : "s") on your staff. "
+                                + "The \(coach.role.rawValue) job is now vacant — fill it "
+                                + "before the season starts or the position goes uncoached.",
+                            date: "Offseason - Coaching Changes, Season \(career.currentSeason)",
+                            category: .staffUpdate
+                        ))
                     }
                     coach.teamID = nil
                     CoachChurnDiag.record(CoachChurnDiag.detached)
@@ -6873,6 +6930,35 @@ enum WeekAdvancer {
         return byPlayer
     }
 
+    /// Copy for a weekly breakout leap (#154a).
+    ///
+    /// Deterministic by player id — `MilestoneNewsFactory.templateIndex` is the
+    /// same picker the career-milestone stories use, and for the same reason: a
+    /// per-process hash would give the man a different sentence after a relaunch
+    /// while the persisted `newsLog` still carried the old one.
+    private static func breakoutCopy(
+        player: Player,
+        teamName: String
+    ) -> (headline: String, body: String) {
+        let position = player.position.rawValue
+        let years = max(1, player.yearsPro)
+        let yearLabel = "\(years)-year pro"
+        let headlines = [
+            "Breakout: \(player.fullName) has arrived",
+            "\(player.fullName) is taking off in \(teamName) practice",
+            "The light has come on for \(player.fullName)",
+            "\(teamName) have found something in \(player.fullName)"
+        ]
+        let bodies = [
+            "\(teamName) \(position) \(player.fullName) has taken a massive leap in practice — coaches say the game has finally slowed down for the \(yearLabel).",
+            "Something changed for \(teamName) \(position) \(player.fullName) this week. Position coaches describe a \(yearLabel) who has stopped thinking and started playing.",
+            "\(player.lastName) was the story of the \(teamName) week. The \(yearLabel) \(position) is winning reps he was losing a month ago, and the staff has noticed.",
+            "A quiet \(yearLabel) until now, \(teamName) \(position) \(player.fullName) has forced his way into the conversation with the best stretch of practice of his career."
+        ]
+        let index = MilestoneNewsFactory.templateIndex(for: player.id, salt: years, count: 4)
+        return (headline: headlines[index], body: bodies[index])
+    }
+
     // MARK: - Private: Career Milestone News (#23)
 
     /// Announces the round career numbers the finished season produced.
@@ -6882,6 +6968,47 @@ enum WeekAdvancer {
     /// the whole reason the career-stats wave exists. `MilestoneNewsFactory` owns
     /// the copy and the caps; this is the plumbing that hands it the history and
     /// posts the results to the two surfaces `WeekAdvancer` already publishes.
+    /// In-season half of #154a: announces the round career numbers crossed this
+    /// week, for the players whose games actually produce a box score.
+    ///
+    /// Cheap by construction — the candidate list is filtered to players who
+    /// carry a live season line BEFORE the history fetch, so on a save where the
+    /// user has no team (the harness) it returns without touching the store.
+    private static func announceWeeklyMilestones(
+        career: Career,
+        season: Int,
+        week: Int,
+        allPlayers: [Player],
+        teamsByID: [UUID: Team],
+        modelContext: ModelContext
+    ) {
+        let live = allPlayers.filter {
+            !$0.isRetired && $0.gamesPlayedThisSeason > 0 && $0.seasonStatLineData != nil
+        }
+        guard !live.isEmpty else { return }
+
+        let historyByPlayer = seasonHistoryByPlayer(
+            careerID: career.id,
+            modelContext: modelContext
+        )
+        guard !historyByPlayer.isEmpty else { return }
+
+        let ledger = career.announcedMilestoneKeys
+        let result = MilestoneNewsFactory.weeklyMilestones(
+            players: live,
+            historyByPlayer: historyByPlayer,
+            teamsByID: teamsByID,
+            userTeamID: career.teamID,
+            season: season,
+            week: week,
+            alreadyAnnounced: ledger
+        )
+        guard !result.newKeys.isEmpty else { return }
+        career.announcedMilestoneKeys = ledger.union(result.newKeys)
+        lastNewsItems.append(contentsOf: result.announcement.news)
+        lastInboxMessages.append(contentsOf: result.announcement.inbox)
+    }
+
     private static func announceCareerMilestones(
         career: Career,
         season: Int,
@@ -6900,7 +7027,11 @@ enum WeekAdvancer {
             historyByPlayer: historyByPlayer,
             teamsByID: teamsByID,
             userTeamID: career.teamID,
-            season: season
+            season: season,
+            week: 18,
+            // #154a: whatever already went out during the season does not go out
+            // again in the end-of-year sweep.
+            alreadyAnnounced: career.announcedMilestoneKeys
         )
         lastNewsItems.append(contentsOf: announcement.news)
         lastInboxMessages.append(contentsOf: announcement.inbox)
@@ -7108,7 +7239,18 @@ enum WeekAdvancer {
             // zeros), or he already carries a real line — which is true of the
             // user's OPPONENTS too, since a box score covers both rosters. Their
             // numbers must not be thrown away and re-rolled.
-            let hasRealLine = (userTeamID != nil && row.teamID == userTeamID) || !line.isEmpty
+            //
+            // #156: `!line.isEmpty` alone could not say that. An opponent who
+            // WAS box-scored and produced nothing — a backup corner, a WR
+            // targeted zero times — has an all-zero line that is indistinguishable
+            // from "never recorded", so his genuine 0-yard playoff game was
+            // overwritten with modelled production. `postBoxScoreGames` is the
+            // marker `addPostseasonGame` stamps, and it is the only thing that
+            // separates recorded-as-zero from never-recorded. The `!line.isEmpty`
+            // clause stays as the fallback for rows written before the counter
+            // existed (it defaults to 0 on migration).
+            let wasBoxScored = row.postBoxScoreGames > 0 || !line.isEmpty
+            let hasRealLine = (userTeamID != nil && row.teamID == userTeamID) || wasBoxScored
             if !hasRealLine {
                 row.postStatLine = modelled()
                 row.postStatsAreSynthesized = true

@@ -513,7 +513,14 @@ struct TradeNegotiationView: View {
                     sublabel: "\(player.position.rawValue) · \(player.overall) OVR · Age \(player.age)",
                     valueLabel: "\(TradeValueEngine.playerTradeValue(player: player)) pts",
                     isSelected: selectedPlayers.wrappedValue.contains(player.id),
-                    accentColor: accentColor
+                    accentColor: accentColor,
+                    // #141b: the same rule the Trade Center builder enforces —
+                    // `TradeValueEngine.validationErrors` refuses a tagged man on
+                    // either side, so he must not be checkable into a rework
+                    // either.
+                    blockedReason: player.isFranchiseTagged
+                        ? "Franchise-tagged — can't be traded."
+                        : nil
                 ) {
                     toggle(id: player.id, in: selectedPlayers)
                 }
@@ -522,7 +529,7 @@ struct TradeNegotiationView: View {
             ForEach(picks) { pick in
                 TradeAssetToggleRow(
                     label: TradeAssetFormat.pickLabel(pick),
-                    sublabel: "\(pick.seasonYear)",
+                    sublabel: "\(pick.displayDraftYear)",   // #152: class year
                     valueLabel: "\(TradeValueEngine.pickTradeValue(pick: pick, currentSeason: career.currentSeason)) pts",
                     isSelected: selectedPicks.wrappedValue.contains(pick.id),
                     accentColor: accentColor

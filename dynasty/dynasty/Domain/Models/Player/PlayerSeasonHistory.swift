@@ -144,6 +144,19 @@ final class PlayerSeasonHistory {
     /// only, same as `statsAreSynthesized`.
     var postStatsAreSynthesized: Bool = false
 
+    /// Playoff games a REAL box score was folded in for (#156).
+    ///
+    /// The distinction `postStatLine.isEmpty` cannot make: "the sim never box-
+    /// scored this man" and "the sim box-scored him and he did nothing" both
+    /// read as an empty line, so `finalizePostseasonHistory` treated a genuine
+    /// 0-yard playoff game from a user's OPPONENT as missing data and replaced
+    /// it with invented numbers. Incremented only by ``addPostseasonGame``, so
+    /// `> 0` means the numbers in ``postStatLine`` — zeros included — are real.
+    ///
+    /// Default-valued stored property → lightweight migration; rows written
+    /// before this existed read as 0 and fall back to the old `isEmpty` test.
+    var postBoxScoreGames: Int = 0
+
     // MARK: - Legacy generic slots
 
     /// Position-appropriate primary stat, derived from the typed columns by
@@ -311,5 +324,9 @@ extension PlayerSeasonHistory {
         var line = postStatLine
         line.add(game)
         postStatLine = line
+        // #156: the provenance marker. A real line of zeros must survive
+        // `finalizePostseasonHistory`, and only this counter can tell it apart
+        // from a line that was never written.
+        postBoxScoreGames += 1
     }
 }

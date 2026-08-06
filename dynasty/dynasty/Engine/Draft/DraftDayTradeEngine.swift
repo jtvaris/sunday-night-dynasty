@@ -105,7 +105,7 @@ enum DraftDayTradeEngine {
             switch self {
             case .pick(let pick):
                 if pick.seasonYear > currentSeason {
-                    return "\(pick.seasonYear) R\(pick.round)"
+                    return "\(pick.displayDraftYear) R\(pick.round)"   // #152
                 }
                 return "#\(pick.pickNumber) (R\(pick.round))"
             case .player(let player):
@@ -298,7 +298,7 @@ enum DraftDayTradeEngine {
     /// is still provisional.
     static func pickLabel(_ pick: DraftPick, currentSeason: Int) -> String {
         pick.seasonYear > currentSeason
-            ? "\(pick.seasonYear) Rd\(pick.round)"
+            ? "\(pick.displayDraftYear) Rd\(pick.round)"   // #152
             : "Rd\(pick.round) #\(pick.pickNumber)"
     }
 

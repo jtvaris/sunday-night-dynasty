@@ -279,7 +279,14 @@ enum TeamSeasonArchiveBuilder {
         games: [Game],
         coaches: [Coach],
         history: [PlayerSeasonHistory],
-        userTeamID: UUID?
+        userTeamID: UUID?,
+        /// The user's own name, when he holds the head-coach job himself
+        /// (#154d). A `.gmAndHeadCoach` career has NO `Coach` row for the seat —
+        /// `HireCoachView` and `CoachingStaffView` both say so explicitly — so
+        /// `staffNames` found nothing for the user's club and every one of his
+        /// archived seasons rendered "HC —". Nil for a `.gm` career, where the
+        /// real coach row is the answer.
+        userHeadCoachName: String? = nil
     ) -> [TeamSeasonArchive] {
         guard !teams.isEmpty else { return [] }
 
@@ -321,7 +328,15 @@ enum TeamSeasonArchiveBuilder {
             let finish = playoffResults[team.id] ?? .missed
             let rank = divisionRank[team.id] ?? 4
             let seed = conferenceSeed[team.id] ?? 0
-            let people = staff[team.id] ?? StaffNames()
+            var people = staff[team.id] ?? StaffNames()
+            // #154d: only fills a seat the coach table genuinely left blank, so
+            // a career that later HIRES a head coach keeps that man's name.
+            if team.id == userTeamID,
+               let userHeadCoachName,
+               !userHeadCoachName.isEmpty,
+               people.headCoach == StaffNames().headCoach {
+                people.headCoach = userHeadCoachName
+            }
 
             return TeamSeasonArchive(
                 teamID: team.id,
@@ -392,7 +407,10 @@ enum TeamSeasonArchiveBuilder {
             games: games,
             coaches: coaches,
             history: history,
-            userTeamID: career.teamID
+            userTeamID: career.teamID,
+            // #154d: a GM+HC career has no Coach row for the head-coach seat, so
+            // the archive has to be told who was in charge.
+            userHeadCoachName: career.role == .gmAndHeadCoach ? career.playerName : nil
         )
         guard !rows.isEmpty else { return 0 }
 

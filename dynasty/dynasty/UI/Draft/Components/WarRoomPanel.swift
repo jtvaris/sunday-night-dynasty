@@ -231,7 +231,8 @@ struct WarRoomPanel: View {
             // discount the engine charges — no second opinion in the UI.
             ForEach(userFuturePicks, id: \.id) { pick in
                 HStack {
-                    Text("\(String(pick.seasonYear)) Rd \(pick.round)")
+                    // #152 — display year, not the stored stamp.
+                    Text("\(String(pick.displayDraftYear)) Rd \(pick.round)")
                         .font(.caption.monospaced())
                         .foregroundStyle(Color.textTertiary)
                     Spacer()

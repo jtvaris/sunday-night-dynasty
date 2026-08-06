@@ -18,6 +18,10 @@ enum TradeAssetFormat {
     /// A future pick's number is a round-midpoint placeholder until
     /// `adoptFuturePicks` renumbers it from real standings — quoting it would
     /// invent precision the league doesn't have yet.
+    /// #152: the year PRINTED is `DraftPick.displayDraftYear`, never the stored
+    /// `seasonYear`. The draft room, the war room and this label all have to
+    /// name the same pick the same way, and the draft is named for the season
+    /// its rookies debut in — see `DraftYearLabel`.
     static func pickLabelShort(_ pick: DraftPick) -> String {
         let suffix: String
         switch pick.round {
@@ -27,9 +31,9 @@ enum TradeAssetFormat {
         default: suffix = "\(pick.round)th"
         }
         if pick.isProvisionalOrder {
-            return "\(pick.seasonYear) \(suffix)"
+            return "\(pick.displayDraftYear) \(suffix)"
         }
-        return "\(pick.seasonYear) \(suffix) (#\(pick.pickNumber))"
+        return "\(pick.displayDraftYear) \(suffix) (#\(pick.pickNumber))"
     }
 
     /// Long pick label used by the builder rows.
@@ -42,9 +46,9 @@ enum TradeAssetFormat {
         default: suffix = "\(pick.round)th"
         }
         if pick.isProvisionalOrder {
-            return "\(pick.seasonYear) \(suffix) Rd"
+            return "\(pick.displayDraftYear) \(suffix) Rd"
         }
-        return "\(pick.seasonYear) \(suffix) Rd (#\(pick.pickNumber))"
+        return "\(pick.displayDraftYear) \(suffix) Rd (#\(pick.pickNumber))"
     }
 
     static func positionColor(_ position: Position) -> Color {
@@ -210,38 +214,68 @@ struct TradeAssetToggleRow: View {
     let valueLabel: String
     let isSelected: Bool
     let accentColor: Color
+    /// Why this asset cannot legally be in a package at all (#141b).
+    ///
+    /// A league rule that depends only on the asset — a franchise tag today —
+    /// has to refuse the tap, not decorate the Propose button. The old flow let
+    /// a tagged man be checked, counted him into "You Send" and only then
+    /// printed "Franchise-tagged players can't be traded." next to a Propose
+    /// button that still looked live. Non-nil disables the row and states the
+    /// rule where the mistake is made.
+    var blockedReason: String? = nil
     let action: () -> Void
 
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(isSelected ? accentColor : Color.textTertiary)
-                    .font(.system(size: 16))
+    private var isBlocked: Bool { blockedReason != nil }
 
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(label)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.textPrimary)
-                        .lineLimit(1)
-                    Text(sublabel)
-                        .font(.system(size: 10))
-                        .foregroundStyle(Color.textTertiary)
+    var body: some View {
+        Button(action: { if !isBlocked { action() } }) {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 8) {
+                    Image(systemName: isBlocked
+                          ? "lock.fill"
+                          : (isSelected ? "checkmark.circle.fill" : "circle"))
+                        .foregroundStyle(isBlocked
+                                         ? Color.textTertiary
+                                         : (isSelected ? accentColor : Color.textTertiary))
+                        .font(.system(size: 16))
+
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(label)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(isBlocked ? Color.textTertiary : Color.textPrimary)
+                            .lineLimit(1)
+                        Text(sublabel)
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                    Spacer()
+                    Text(valueLabel)
+                        .font(.system(size: 10).weight(.semibold).monospacedDigit())
+                        .foregroundStyle(isBlocked
+                                         ? Color.textTertiary
+                                         : (isSelected ? accentColor : Color.textSecondary))
                 }
-                Spacer()
-                Text(valueLabel)
-                    .font(.system(size: 10).weight(.semibold).monospacedDigit())
-                    .foregroundStyle(isSelected ? accentColor : Color.textSecondary)
+
+                if let blockedReason {
+                    Text(blockedReason)
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Color.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.leading, 24)
+                }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(isSelected
+                    .fill(isSelected && !isBlocked
                           ? accentColor.opacity(0.12)
                           : Color.backgroundTertiary)
             )
+            .opacity(isBlocked ? 0.55 : 1.0)
         }
         .buttonStyle(.plain)
+        .disabled(isBlocked)
+        .accessibilityHint(blockedReason ?? "")
     }
 }

@@ -1197,6 +1197,7 @@ struct CoachingStaffView: View {
                                 remainingBudget: remainingMedicalBudget,
                                 teamID: teamID,
                                 careerID: career.id,
+                                currentSeason: career.currentSeason,
                                 onHired: { name, roleName in
                                     activeHireSheet = nil
                                     showHiringConfirmation(coachName: name, roleName: roleName)
@@ -4130,6 +4131,15 @@ private struct SimpleMedicalHireSheet: View {
     let teamID: UUID
     /// The save being played — every medical hire is stamped with it.
     let careerID: UUID
+    /// The league year the hire is signed in (#143b).
+    ///
+    /// Every other hiring path stamps `Coach.hireSeasonYear` (`HireCoachView`
+    /// line 1094, the auto-hire pass line 843, `CoachCarouselEngine`), and both
+    /// tenure readouts in `CoachDetailView` are `currentSeason - hireSeasonYear
+    /// + 1`. This sheet never stamped it, so a doctor/physio/trainer kept
+    /// `hireSeasonYear == 0`, the `> 0` guard failed, and the card fell back to
+    /// "1" forever.
+    let currentSeason: Int
     var onHired: ((String, String) -> Void)?
 
     @Environment(\.modelContext) private var modelContext
@@ -4262,6 +4272,9 @@ private struct SimpleMedicalHireSheet: View {
         }
 
         candidate.teamID = teamID
+        // #143b: stamp the hire year like every other hiring path does, or the
+        // staff card reads "Tenure 1" for the rest of his career.
+        candidate.hireSeasonYear = currentSeason
         // Back in work — stop the unemployment clock (task #96). No-op for an
         // invented candidate.
         candidate.unemployedSeasons = 0

@@ -401,7 +401,8 @@ struct TradeView: View {
                         sublabel: "\(player.position.rawValue) · \(player.overall) OVR · Age \(player.age)",
                         valueLabel: "\(TradeValueEngine.playerTradeValue(player: player)) pts",
                         isSelected: selectedPlayers.wrappedValue.contains(player.id),
-                        accentColor: accentColor
+                        accentColor: accentColor,
+                        blockedReason: untradeableReason(for: player)
                     ) {
                         toggle(id: player.id, in: selectedPlayers)
                     }
@@ -417,7 +418,7 @@ struct TradeView: View {
             ForEach(picks) { pick in
                 assetToggleRow(
                     label: pickLabel(pick),
-                    sublabel: "\(pick.seasonYear)",
+                    sublabel: "\(pick.displayDraftYear)",   // #152: class year
                     valueLabel: "\(TradeValueEngine.pickTradeValue(pick: pick, currentSeason: career.currentSeason)) pts",
                     isSelected: selectedPicks.wrappedValue.contains(pick.id),
                     accentColor: accentColor
@@ -444,6 +445,7 @@ struct TradeView: View {
         valueLabel: String,
         isSelected: Bool,
         accentColor: Color,
+        blockedReason: String? = nil,
         action: @escaping () -> Void
     ) -> some View {
         TradeAssetToggleRow(
@@ -452,8 +454,25 @@ struct TradeView: View {
             valueLabel: valueLabel,
             isSelected: isSelected,
             accentColor: accentColor,
+            blockedReason: blockedReason,
             action: action
         )
+    }
+
+    /// Asset-intrinsic league rules that refuse a player at SELECTION time
+    /// (#141b), i.e. the subset of `TradeValueEngine.validationErrors` that
+    /// depends on nothing but the man himself.
+    ///
+    /// The tag is the only one today: `validationErrors` refuses a tagged man on
+    /// either side of any package, so letting him be checked into "You Send"
+    /// only to fail at Propose was a dead end the UI could have named up front.
+    /// Injuries and no-trade clauses stay in `hardBlockersRow` on purpose — the
+    /// first clears with time and the second depends on which club is calling,
+    /// so neither is a property of the row.
+    private func untradeableReason(for player: Player) -> String? {
+        player.isFranchiseTagged
+            ? "Franchise-tagged — can't be traded."
+            : nil
     }
 
     // MARK: Value Meter
@@ -566,22 +585,32 @@ struct TradeView: View {
     private func proposeButton(partner: Team) -> some View {
         let hasAssets = !mySelectedPlayers.isEmpty || !mySelectedPicks.isEmpty ||
                         !theirSelectedPlayers.isEmpty || !theirSelectedPicks.isEmpty
+        // #141b: `hardBlockersRow` above already prints, in red, every reason
+        // the league office would refuse this package — but the button under it
+        // stayed full-opacity gold, so the screen said "no" and "go" at once.
+        // A live blocker now greys the button out; `startNegotiation` keeps its
+        // own guard because a blocker can appear between render and tap.
+        let isBlocked = !currentBlockers(partner: partner).isEmpty
+        let canPropose = hasAssets && !isBlocked
 
         return Button {
             startNegotiation(partner: partner)
         } label: {
-            Label("Propose Trade", systemImage: "bubble.left.and.bubble.right.fill")
+            Label(
+                isBlocked ? "Trade Blocked" : "Propose Trade",
+                systemImage: isBlocked ? "exclamationmark.triangle.fill" : "bubble.left.and.bubble.right.fill"
+            )
                 .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(hasAssets ? Color.backgroundPrimary : Color.textTertiary)
+                .foregroundStyle(canPropose ? Color.backgroundPrimary : Color.textTertiary)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 14)
                 .background(
                     RoundedRectangle(cornerRadius: 12)
-                        .fill(hasAssets ? Color.accentGold : Color.backgroundTertiary)
+                        .fill(canPropose ? Color.accentGold : Color.backgroundTertiary)
                 )
         }
         .buttonStyle(.plain)
-        .disabled(!hasAssets)
+        .disabled(!canPropose)
     }
 
     // MARK: - Incoming Offers Section

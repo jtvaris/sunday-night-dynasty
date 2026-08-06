@@ -312,7 +312,7 @@ struct OwnerGoalsView: View {
                 )
                 summaryStatColumn(
                     label: "Cap Used",
-                    value: String(format: "%.0f%%", capUsagePct(team) * 100),
+                    value: String(format: "%.1f%%", capUsagePct(team) * 100),
                     color: capUsagePct(team) > 0.95 ? .warning : .success
                 )
             }

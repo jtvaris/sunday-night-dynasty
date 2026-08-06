@@ -512,7 +512,11 @@ struct FinalPushView: View {
     private func draftLine(for player: Player) -> String {
         var parts: [String] = ["Rd 1"]
         if let pick = player.draftPickNumber { parts.append("Pick \(pick)") }
-        if let season = player.draftSeason { parts.append("\(season)") }
+        // #152 — the year the league calls that draft, matching the draft room
+        // and every pick label (see `DraftYearLabel`).
+        if let season = player.draftSeason {
+            parts.append("\(DraftYearLabel.classYear(forStamped: season))")
+        }
         return parts.joined(separator: " · ")
     }
 

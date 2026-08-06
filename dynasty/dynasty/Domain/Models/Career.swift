@@ -197,6 +197,17 @@ final class Career {
     /// capped at 150. Written by WeekAdvancer after every advance so the News
     /// screen survives app restarts. Optional attribute → light migration.
     var newsLogData: Data? = nil
+
+    /// JSON-encoded `[String]` — the career-milestone crossings already
+    /// announced THIS season (#154a).
+    ///
+    /// Milestone stories used to be a single week-18 batch because the only
+    /// source of career totals was `PlayerSeasonHistory`, which is written once
+    /// a year. They now also fire the week a total is crossed, for the players
+    /// whose games actually produce a box score, and this is the ledger that
+    /// stops the week-18 pass saying the same thing a second time. Cleared by
+    /// `startNewSeason`. Optional attribute → light migration.
+    var announcedMilestoneKeysData: Data? = nil
     /// JSON-encoded `LeagueNarrativeState` — power rankings (with last week's
     /// order for movement arrows), MVP race, and anti-repeat story markers.
     /// Optional new attribute → lightweight migration.
@@ -660,6 +671,24 @@ extension Career {
         }
         set {
             newsLogData = try? JSONEncoder().encode(Array(newValue.prefix(150)))
+        }
+    }
+
+    /// Milestone crossings already announced this season (#154a).
+    ///
+    /// One key per `player | category | rung`, so a crossing announced in week 6
+    /// is not repeated by the week-18 sweep. Reset every league year by
+    /// `WeekAdvancer.startNewSeason`; capped defensively at 500.
+    var announcedMilestoneKeys: Set<String> {
+        get {
+            guard let data = announcedMilestoneKeysData,
+                  let keys = try? JSONDecoder().decode([String].self, from: data) else {
+                return []
+            }
+            return Set(keys)
+        }
+        set {
+            announcedMilestoneKeysData = try? JSONEncoder().encode(Array(newValue.prefix(500)))
         }
     }
 

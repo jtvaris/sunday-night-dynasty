@@ -115,7 +115,10 @@ struct FAOfferSheet: View {
 
             HStack(spacing: 12) {
                 statPill(label: "Asking", value: formatMillions(marketValue) + "/yr")
-                statPill(label: "Motivation", value: player.personality.motivation.rawValue)
+                // #140: "Motivator" is the personality trait (Money / Winning /
+                // Stats / Loyalty / Fame). "Motivation" is reserved for the
+                // transient MotivationState shown on the player card.
+                statPill(label: "Motivator", value: player.personality.motivation.rawValue)
             }
         }
         .padding(16)

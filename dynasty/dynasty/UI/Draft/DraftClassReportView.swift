@@ -102,7 +102,8 @@ struct DraftClassReportView: View {
         return Button {
             withAnimation(.easeInOut(duration: 0.15)) { selectedSeason = season }
         } label: {
-            Text(String(season))
+            // #152 — class year, not the stored draft-season stamp.
+            Text(String(DraftYearLabel.classYear(forStamped: season)))
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(isSelected ? Color.backgroundPrimary : Color.textSecondary)
                 .padding(.horizontal, DSSpacing.sm)

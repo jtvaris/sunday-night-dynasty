@@ -494,7 +494,15 @@ struct CapOverviewView: View {
     private static let capGrowthRate = 1.0 + ContractEngine.capGrowthPerSeason
 
     private func capOutlookCard(team: Team) -> some View {
-        let expiringPlayers = players.filter { $0.contractYearsRemaining == 1 }
+        // #141a: ONE definition of "expiring", shared with `FranchiseTagView`
+        // (`contractYearsRemaining <= 1 && !isFranchiseTagged`). A tagged man is
+        // under club control for the tag year, so he is NOT expiring — the tag
+        // screen already said "0 expiring" while this card still listed him,
+        // which read as two screens disagreeing about the same roster. `<= 1`
+        // rather than `== 1` for the same reason `applyFranchiseTag` guards it:
+        // a rostered man whose clock has already run to 0 is expiring too.
+        let expiringPlayers = players.filter { $0.contractYearsRemaining <= 1 && !$0.isFranchiseTagged }
+        let taggedCount = players.filter(\.isFranchiseTagged).count
         let totalFreed = expiringPlayers.reduce(0) { $0 + $1.annualSalary }
         let totalReplacement = expiringPlayers.reduce(0) {
             $0 + replacementCost(for: $1, salaryCap: team.salaryCap)
@@ -582,6 +590,22 @@ struct CapOverviewView: View {
                         .padding(.vertical, 3)
                     }
                 }
+            }
+
+            // #141a: the tagged men are the reason this count can differ from a
+            // naive "who is in the last year of his deal" read. Name them here
+            // so the number is explained on the screen rather than looking like
+            // a bug against the franchise-tag screen.
+            if taggedCount > 0 {
+                HStack(spacing: 4) {
+                    Image(systemName: "tag.fill")
+                        .font(.system(size: 9))
+                    Text("\(taggedCount) franchise-tagged player\(taggedCount == 1 ? "" : "s") not counted — under club control for the tag year.")
+                        .font(.system(size: 10))
+                }
+                .foregroundStyle(Color.accentGold)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 4)
             }
 
             Divider().overlay(Color.surfaceBorder.opacity(0.5))

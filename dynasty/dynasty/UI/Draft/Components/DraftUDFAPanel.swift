@@ -36,7 +36,8 @@ struct DraftUDFAPanel: View {
                     .font(.caption.weight(.heavy))
                     .tracking(1.6)
                     .foregroundStyle(Color.accentGold)
-                Text("Undrafted Free Agency — \(String(coordinator.draftYear))")
+                // #152 — printed year is the class year, not the stored one.
+                Text("Undrafted Free Agency — \(String(DraftYearLabel.classYear(forStamped: coordinator.draftYear)))")
                     .font(.title3.weight(.bold))
                     .foregroundStyle(Color.textPrimary)
             }

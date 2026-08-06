@@ -27,7 +27,10 @@ struct DraftDayView: View {
                     .foregroundStyle(Color.textPrimary)
             }
         }
-        .navigationTitle("NFL Draft \(String(career.currentSeason))")
+        // #152: the draft is named for the season its rookies debut in, which is
+        // `currentSeason + 1` — the increment that produces the season these men
+        // actually play does not fire until roster cuts. See `DraftYearLabel`.
+        .navigationTitle("NFL Draft \(String(DraftYearLabel.classYear(duringSeason: career.currentSeason)))")
         .navigationBarTitleDisplayMode(.inline)
         .task {
             if coordinator.coord == nil {

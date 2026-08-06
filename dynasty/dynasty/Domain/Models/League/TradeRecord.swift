@@ -321,7 +321,9 @@ enum TradeLedger {
     /// one-way asset dump is legal and should read as such in history).
     private static func summary(players: [Player], picks: [DraftPick]) -> String {
         var parts = players.map { "\($0.position.rawValue) \($0.fullName) (\($0.overall) OVR)" }
-        parts += picks.map { "\($0.seasonYear) R\($0.round) P\($0.pickNumber)" }
+        // #152: the year the league calls that draft, so a trade in the history
+        // names the same pick the trade screen and the war room named.
+        parts += picks.map { "\($0.displayDraftYear) R\($0.round) P\($0.pickNumber)" }
         return parts.isEmpty ? "nothing" : parts.joined(separator: ", ")
     }
 }

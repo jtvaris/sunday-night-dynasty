@@ -94,3 +94,42 @@ final class DraftPick {
         self.mediaComment = mediaComment
     }
 }
+
+// MARK: - Draft Year Labels (#152)
+
+/// The one place that turns a STORED draft year into the year the league calls
+/// that draft.
+///
+/// The bug this exists for: `Career.currentSeason` is incremented exactly once,
+/// on the roster-cuts → regular-season transition
+/// (`WeekAdvancer.advanceOffseasonPhase`), and a new career starts in
+/// `.coachingChanges`. So the entire first offseason — combine, free agency, the
+/// draft — runs at 2026, the increment then fires, and the first season anybody
+/// actually plays is stamped 2027. The draft room said "NFL Draft 2026" while
+/// every game, recap, archive and `PlayerSeasonHistory` row that class went on to
+/// produce said 2027, and a player's career table jumped 2025 → 2027 with no 2026
+/// season in it because no season was ever played under that number.
+///
+/// The stored years are NOT renumbered — `DraftPick.seasonYear`,
+/// `Player.draftSeason`, `DraftReputation.seasonYear` and every predicate that
+/// matches them against `career.currentSeason` keep working exactly as they did,
+/// and so do the pick-value calculations, which measure distance in years and are
+/// unaffected by a constant offset. Only what is PRINTED moves, and it moves by
+/// the same +1 everywhere: a draft is named for the season its rookies debut in,
+/// which is always the league year after the one the offseason is stamped with.
+enum DraftYearLabel {
+
+    /// The year to print for a draft stamped `season`.
+    static func classYear(forStamped season: Int) -> Int { season + 1 }
+
+    /// The year to print for the draft happening during an offseason whose
+    /// `Career.currentSeason` is `currentSeason`.
+    static func classYear(duringSeason currentSeason: Int) -> Int { currentSeason + 1 }
+}
+
+extension DraftPick {
+
+    /// The year the league calls this pick's draft — see ``DraftYearLabel``.
+    /// Display only; every comparison still uses ``seasonYear``.
+    var displayDraftYear: Int { DraftYearLabel.classYear(forStamped: seasonYear) }
+}

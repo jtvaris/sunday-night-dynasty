@@ -602,10 +602,22 @@ enum NewsGenerator {
         week: Int,
         season: Int
     ) -> NewsItem? {
-        // Pick a high-overall, non-injured player as the standout
+        // #154b: this used to be `overall + random(-10...10)` over the whole
+        // league, with no positional term at all — so the award went to whoever
+        // happened to be the highest-rated body in the file. A 90 OVR kicker and
+        // a 90 OVR safety are exactly as likely to win as a 90 OVR quarterback
+        // under that rule, which is how one K took it twice and one SS three
+        // times in a single season.
+        //
+        // The fix is the same shape `LeagueNarrativeEngine` already uses for the
+        // MVP race: a positional baseline plus REAL production where a box score
+        // exists, and weekly variance wide enough that the same man does not win
+        // every week. Specialists keep a path to the award — a kicker who is
+        // genuinely elite can still out-roll a mediocre skill player — but they
+        // no longer compete on rating alone.
         let eligible = players.filter { !$0.isInjured && $0.teamID != nil }
         guard let standout = eligible.max(by: {
-            ($0.overall + Int.random(in: -10...10)) < ($1.overall + Int.random(in: -10...10))
+            playerOfTheWeekScore($0) < playerOfTheWeekScore($1)
         }) else { return nil }
 
         let teamName = teams.first(where: { $0.id == standout.teamID })?.fullName ?? "his team"
@@ -620,6 +632,47 @@ enum NewsGenerator {
             relatedPlayerID: standout.id,
             sentiment: .positive
         )
+    }
+
+    /// Player-of-the-Week ranking score (#154b).
+    ///
+    /// Three terms:
+    /// 1. **Rating**, the only signal available for 31 of 32 clubs.
+    /// 2. **Positional baseline** — what the award is actually given for. The
+    ///    ladder mirrors `LeagueNarrativeEngine`'s MVP weighting in shape but is
+    ///    flatter, because a Player of the Week is not a Most Valuable Player:
+    ///    a defensive end has a real claim on a weekly award and almost none on
+    ///    the season one. Kickers and punters sit far down it rather than off it.
+    /// 3. **Real production** where a box score exists (the user's roster),
+    ///    scaled to roughly the same band as the positional term so a genuinely
+    ///    huge season can outweigh a rating gap.
+    ///
+    /// Plus weekly variance, which is the whole reason the award moves around.
+    private static func playerOfTheWeekScore(_ player: Player) -> Double {
+        Double(player.overall)
+            + potwPositionBias(player.position)
+            + (LeagueNarrativeEngine.productionStarPower(player: player) ?? 0) * 1.6
+            + Double.random(in: 0...12)
+    }
+
+    /// How much of a weekly award each position can realistically claim.
+    ///
+    /// Negative for the specialists and the interior line — a kicker's five
+    /// field goals do win this award in real leagues, just not one week in four.
+    private static func potwPositionBias(_ position: Position) -> Double {
+        switch position {
+        case .QB:                      return 14
+        case .RB, .WR:                 return 9
+        case .TE:                      return 6
+        case .DE, .OLB:                return 6
+        case .DT, .MLB:                return 4
+        case .CB:                      return 3
+        case .FS, .SS:                 return 1
+        case .FB:                      return -2
+        case .K:                       return -7
+        case .LT, .LG, .C, .RG, .RT:   return -10
+        case .P:                       return -13
+        }
     }
 
     private static func generateInjuryReport(
@@ -1218,12 +1271,132 @@ enum MilestoneNewsFactory {
     ///     crossing measures zero against zero.
     ///   - userTeamID: `nil` for a career with no team (the harness), which then
     ///     produces news only.
+    /// A stable identity for one crossing, so the same milestone is never
+    /// announced twice (#154a: the weekly pass and the week-18 sweep both look
+    /// at the same career totals).
+    static func crossingKey(playerID: UUID, crossing: MilestoneTracker.CareerCrossing) -> String {
+        "\(playerID.uuidString)|\(crossing.category)|\(Int(crossing.milestone.rounded()))"
+    }
+
+    /// The Hall-of-Fame watch has no rung, so it keys on the player alone — it
+    /// is a once-per-career story by construction.
+    static func hallOfFameKey(playerID: UUID) -> String {
+        "\(playerID.uuidString)|hof-watch"
+    }
+
+    /// Milestones crossed DURING the season, announced the week they happen
+    /// (#154a).
+    ///
+    /// Why this cannot cover the whole league: a box score exists for the user's
+    /// game alone. Every other club's season is score-only until week 18 models
+    /// it in one shot, so there is no mid-season career total to cross for them
+    /// and there never was — the "batched at 18" complaint is a symptom of that,
+    /// not of a scheduling mistake. This pass therefore runs on the players who
+    /// really do accumulate week to week (the user's roster, plus anyone traded
+    /// off it mid-season, which is exactly `Player.seasonStatLine`'s domain), and
+    /// `seasonMilestones` still sweeps the rest at the end of the year.
+    ///
+    /// The "after" total is last season's career facts plus the LIVE line, so a
+    /// crossing surfaces on the first advance that clears the rung.
+    ///
+    /// - Parameter alreadyAnnounced: keys from `Career.announcedMilestoneKeys`.
+    /// - Returns: the stories, and the keys the caller must add to that ledger.
+    static func weeklyMilestones(
+        players: [Player],
+        historyByPlayer: [UUID: [PlayerSeasonHistory]],
+        teamsByID: [UUID: Team],
+        userTeamID: UUID?,
+        season: Int,
+        week: Int,
+        alreadyAnnounced: Set<String>
+    ) -> (announcement: Announcement, newKeys: Set<String>) {
+        var news: [NewsItem] = []
+        var inbox: [InboxMessage] = []
+        var newKeys: Set<String> = []
+
+        for player in players where !player.isRetired {
+            let line = player.seasonStatLine
+            // No live line = no box score for him this year = nothing to cross.
+            guard !line.isEmpty, player.gamesPlayedThisSeason > 0 else { continue }
+
+            let history = historyByPlayer[player.id] ?? []
+            let before = MilestoneTracker.careerFacts(history: history, through: season - 1)
+            let after = liveFacts(base: before, player: player, line: line)
+
+            let crossings = MilestoneTracker.careerCrossings(
+                position: player.position, before: before, after: after
+            )
+            // One rung per player per week keeps a monster game from filing four
+            // headlines about the same man.
+            guard let crossing = crossings.first(where: {
+                !alreadyAnnounced.contains(crossingKey(playerID: player.id, crossing: $0))
+            }) else { continue }
+
+            newKeys.insert(crossingKey(playerID: player.id, crossing: crossing))
+            let teamName = player.teamID.flatMap { teamsByID[$0]?.fullName }
+            let copy = crossingCopy(
+                player: player, crossing: crossing, teamName: teamName, inSeason: true
+            )
+            news.append(NewsItem(
+                headline: copy.headline,
+                body: copy.body,
+                category: .award,
+                week: week,
+                season: season,
+                relatedTeamID: player.teamID,
+                relatedPlayerID: player.id,
+                sentiment: .positive
+            ))
+            if userTeamID != nil, player.teamID == userTeamID {
+                inbox.append(InboxMessage(
+                    sender: .leagueOffice,
+                    subject: copy.headline,
+                    body: copy.body,
+                    date: "Week \(week), Season \(season)",
+                    category: .leagueNotice
+                ))
+            }
+        }
+
+        return (Announcement(news: news, inbox: inbox), newKeys)
+    }
+
+    /// Career totals as they stand RIGHT NOW: last season's persisted facts with
+    /// this season's live line folded on top.
+    ///
+    /// Mirrors `MilestoneTracker.careerFacts`' own accumulation, field for field
+    /// — the crossing test compares the two, so they have to be built the same
+    /// way or a rung would appear to move.
+    private static func liveFacts(
+        base: MilestoneTracker.CareerFacts,
+        player: Player,
+        line: SeasonStatLine
+    ) -> MilestoneTracker.CareerFacts {
+        var facts = base
+        facts.peakOverall = max(facts.peakOverall, player.overall)
+        facts.seasons += 1
+        facts.gamesPlayed += player.gamesPlayedThisSeason
+        facts.sacks += line.sacks
+        facts.tackles += line.tackles
+        facts.rushYards += line.rushYards
+        facts.recYards += line.recYards
+        facts.receptions += line.receptions
+        facts.passYards += line.passYards
+        facts.passTDs += line.passTDs
+        facts.defInts += line.defInts
+        facts.fieldGoalsMade += line.fieldGoalsMade
+        facts.lastSeasonRushYards = line.rushYards
+        return facts
+    }
+
     static func seasonMilestones(
         players: [Player],
         historyByPlayer: [UUID: [PlayerSeasonHistory]],
         teamsByID: [UUID: Team],
         userTeamID: UUID?,
-        season: Int
+        season: Int,
+        week: Int = 18,
+        alreadyAnnounced: Set<String> = []
     ) -> Announcement {
         /// One player's worth of findings, before the league-wide cap is applied.
         struct Finding {
@@ -1244,9 +1417,12 @@ enum MilestoneNewsFactory {
             var findings: [Finding] = []
             // The loudest round number he passed. One a season keeps the feed
             // readable even when a monster year clears two rungs at once.
+            // #154a: a rung the weekly pass already announced is not news again.
             if let crossing = MilestoneTracker.careerCrossings(
                 position: player.position, before: before, after: after
-            ).first {
+            ).first(where: {
+                !alreadyAnnounced.contains(crossingKey(playerID: player.id, crossing: $0))
+            }) {
                 findings.append(Finding(player: player, crossing: crossing, hallOfFameSummary: nil))
             }
             // Hall of Fame watch fires on the CROSSING of the threshold, so it
@@ -1254,7 +1430,8 @@ enum MilestoneNewsFactory {
             let caseBefore = MilestoneTracker.hallOfFameCase(position: player.position, facts: before)
             let caseAfter = MilestoneTracker.hallOfFameCase(position: player.position, facts: after)
             if caseBefore < MilestoneTracker.hallOfFameWatchThreshold,
-               caseAfter >= MilestoneTracker.hallOfFameWatchThreshold {
+               caseAfter >= MilestoneTracker.hallOfFameWatchThreshold,
+               !alreadyAnnounced.contains(hallOfFameKey(playerID: player.id)) {
                 findings.append(Finding(
                     player: player,
                     crossing: nil,
@@ -1287,7 +1464,7 @@ enum MilestoneNewsFactory {
         for finding in userFindings + leagueFindings.prefix(maxLeagueItems) {
             let teamName = finding.player.teamID.flatMap { teamsByID[$0]?.fullName }
             let copy = finding.crossing.map {
-                crossingCopy(player: finding.player, crossing: $0, teamName: teamName)
+                crossingCopy(player: finding.player, crossing: $0, teamName: teamName, inSeason: false)
             } ?? hallOfFameCopy(
                 player: finding.player,
                 summary: finding.hallOfFameSummary ?? "",
@@ -1298,7 +1475,7 @@ enum MilestoneNewsFactory {
                 headline: copy.headline,
                 body: copy.body,
                 category: .award,
-                week: 18,
+                week: week,
                 season: season,
                 relatedTeamID: finding.player.teamID,
                 relatedPlayerID: finding.player.id,
@@ -1310,7 +1487,7 @@ enum MilestoneNewsFactory {
                     sender: .leagueOffice,
                     subject: copy.headline,
                     body: copy.body,
-                    date: "Week 18, Season \(season)",
+                    date: "Week \(week), Season \(season)",
                     category: .leagueNotice
                 ))
             }
@@ -1330,30 +1507,79 @@ enum MilestoneNewsFactory {
             : "\(Int(value.rounded()))"
     }
 
+    /// Deterministic template pick (#154a).
+    ///
+    /// Keyed off the player's UUID bytes rather than `hashValue`: Swift's hasher
+    /// is seeded per process, so a `hashValue % count` would hand the same man a
+    /// different sentence every time the app relaunched, and a saved news feed
+    /// would disagree with a regenerated one.
+    static func templateIndex(for id: UUID, salt: Int, count: Int) -> Int {
+        guard count > 0 else { return 0 }
+        var sum = salt
+        withUnsafeBytes(of: id.uuid) { bytes in
+            for byte in bytes { sum = sum &* 31 &+ Int(byte) }
+        }
+        return abs(sum % count)
+    }
+
+    /// Copy for a round career number.
+    ///
+    /// #154a: four bodies, picked deterministically by player id, because a
+    /// season's worth of milestone stories used to close on one identical
+    /// sentence — "the kind of number that turns a good career into a résumé" —
+    /// seventeen times in a row. `inSeason` swaps the tense: a crossing
+    /// announced in week 6 has not "finished the year" on anything.
     private static func crossingCopy(
         player: Player,
         crossing: MilestoneTracker.CareerCrossing,
-        teamName: String?
+        teamName: String?,
+        inSeason: Bool
     ) -> (headline: String, body: String) {
         let milestone = number(crossing.milestone, fractional: false)
         let total = number(crossing.total, fractional: crossing.isFractional)
         let club = teamName.map { "The \($0) " } ?? "The "
-        return (
-            headline: "\(player.fullName) reaches \(milestone) career \(crossing.category)",
-            body: "\(club)\(player.position.rawValue) went past \(milestone) career \(crossing.category) this season and finished the year on \(total). It is the kind of number that turns a good career into a résumé."
-        )
+        let position = player.position.rawValue
+        let name = player.lastName
+        let standing = inSeason
+            ? "and sits on \(total) with the season still running"
+            : "and finished the year on \(total)"
+
+        let headlines = [
+            "\(player.fullName) reaches \(milestone) career \(crossing.category)",
+            "\(milestone) and counting for \(player.fullName)",
+            "\(player.fullName) joins the \(milestone) \(crossing.category) club",
+            "Milestone night: \(player.fullName) passes \(milestone) \(crossing.category)"
+        ]
+        let bodies = [
+            "\(club)\(position) went past \(milestone) career \(crossing.category) \(standing). It is the kind of number that turns a good career into a résumé.",
+            "\(club)\(position) has \(milestone) career \(crossing.category) behind him \(standing). Very few men at the position ever get to write that sentence.",
+            "\(name) crossed \(milestone) career \(crossing.category) \(standing). \(club)dressing room stopped the session to mark it; the record book will do the rest.",
+            "That is \(milestone) career \(crossing.category) for \(club.lowercased())\(position), \(standing). The counting numbers are starting to argue his case for him."
+        ]
+        let index = templateIndex(for: player.id, salt: Int(crossing.milestone.rounded()), count: 4)
+        return (headline: headlines[index], body: bodies[index])
     }
 
+    /// #154a: three ways to say the same thing, picked by player id.
     private static func hallOfFameCopy(
         player: Player,
         summary: String,
         teamName: String?
     ) -> (headline: String, body: String) {
         let club = teamName.map { "the \($0) " } ?? ""
-        return (
-            headline: "Hall of Fame watch: \(player.fullName)",
-            body: "Voters have started saying the word out loud about \(club)\(player.position.rawValue). \(summary) — at \(player.age), with the career still going, \(player.lastName) has built a case that no longer needs a qualifier."
-        )
+        let position = player.position.rawValue
+        let headlines = [
+            "Hall of Fame watch: \(player.fullName)",
+            "\(player.fullName) is building a Canton case",
+            "The gold-jacket question has reached \(player.fullName)"
+        ]
+        let bodies = [
+            "Voters have started saying the word out loud about \(club)\(position). \(summary) — at \(player.age), with the career still going, \(player.lastName) has built a case that no longer needs a qualifier.",
+            "\(summary). That is a Hall of Fame line for \(club)\(position), and at \(player.age) he is not finished adding to it.",
+            "Ask a voter about \(club)\(position) now and the answer comes with a pause. \(summary) — and \(player.lastName) is still playing."
+        ]
+        let index = templateIndex(for: player.id, salt: 7, count: 3)
+        return (headline: headlines[index], body: bodies[index])
     }
 
 }

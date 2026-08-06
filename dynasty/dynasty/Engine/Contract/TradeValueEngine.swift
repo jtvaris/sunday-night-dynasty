@@ -1507,7 +1507,8 @@ enum TradeValueEngine {
         }) {
             var counter = proposal
             counter.sendingPicks.append(addition.id)
-            let label = "\(addition.seasonYear) round \(addition.round) pick"
+            // #152: the year the league calls that draft, not the stored stamp.
+            let label = "\(addition.displayDraftYear) round \(addition.round) pick"
             return (
                 counter,
                 "\(counterLead(view: view, round: round)) add your \(label) and \(view.persona.name) signs it."
@@ -1523,7 +1524,7 @@ enum TradeValueEngine {
             removables.append((
                 pick.id, false,
                 view.pickValue(pick),
-                "their \(pick.seasonYear) round \(pick.round) pick"
+                "their \(pick.displayDraftYear) round \(pick.round) pick"   // #152
             ))
         }
 
@@ -3916,7 +3917,8 @@ enum TradeValueEngine {
         picks: [DraftPick],
         currentSeason: Int
     ) -> String {
-        var parts: [String] = picks.map { "a \($0.seasonYear) round \($0.round) pick" }
+        // #152: printed as the class year, matching every pick label in the UI.
+        var parts: [String] = picks.map { "a \($0.displayDraftYear) round \($0.round) pick" }
         parts.append(contentsOf: players.map { "\($0.position.rawValue) \($0.fullName) (\($0.overall) OVR)" })
         guard !parts.isEmpty else { return "nothing" }
         if parts.count == 1 { return parts[0] }

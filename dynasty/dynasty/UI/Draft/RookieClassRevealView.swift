@@ -481,7 +481,8 @@ struct RookieClassRevealView: View {
                 Text(String(localized: "Rookies Report to Camp"))
                     .font(.title2.weight(.heavy))
                     .foregroundStyle(Color.textPrimary)
-                Text(String(localized: "\(summary.teamName) · \(String(summary.season)) draft class"))
+                // #152 — the class is named for the season it debuts in.
+                Text(String(localized: "\(summary.teamName) · \(String(DraftYearLabel.classYear(forStamped: summary.season))) draft class"))
                     .font(.subheadline)
                     .foregroundStyle(Color.textSecondary)
             }

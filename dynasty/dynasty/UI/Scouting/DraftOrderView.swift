@@ -136,7 +136,7 @@ struct DraftOrderView: View {
                     .font(.title3.weight(.heavy))
                     .foregroundStyle(Color.textPrimary)
 
-                Text("Season \(String(displayedSeason == 0 ? career.currentSeason : displayedSeason)) \u{2022} \(draftPicks.count) total picks")
+                Text("\(String(DraftYearLabel.classYear(forStamped: displayedSeason == 0 ? career.currentSeason : displayedSeason))) Draft \u{2022} \(draftPicks.count) total picks")
                     .font(.caption)
                     .foregroundStyle(Color.accentGold)
             }

@@ -704,7 +704,10 @@ enum LeagueNarrativeEngine {
     /// lands in the same 0...5.25 band as `ratingStarPower`. Linemen and punters
     /// return `nil`: nothing they produce has ever won this award, so they fall
     /// back to the rating proxy like everyone else without a box score.
-    private static func productionStarPower(player: Player) -> Double? {
+    /// Internal (not private) since #154b: `NewsGenerator`'s Player-of-the-Week
+    /// ranking reads the same real-production term, so the two awards cannot
+    /// drift into measuring production two different ways.
+    static func productionStarPower(player: Player) -> Double? {
         let games = Double(player.gamesPlayedThisSeason)
         guard games > 0 else { return nil }
         let line = player.seasonStatLine

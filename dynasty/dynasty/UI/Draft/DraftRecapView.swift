@@ -106,7 +106,8 @@ struct DraftRecapView: View {
                 Image(systemName: "checkmark.seal.fill")
                     .font(.system(size: 16, weight: .bold))
                     .foregroundStyle(Color.success)
-                Text(recapSeason.map { "\(String($0)) Draft complete" } ?? "No draft on the books yet")
+                // #152 — printed as the class year (see `DraftYearLabel`).
+                Text(recapSeason.map { "\(String(DraftYearLabel.classYear(forStamped: $0))) Draft complete" } ?? "No draft on the books yet")
                     .font(.headline.weight(.bold))
                     .foregroundStyle(Color.textPrimary)
                 Spacer(minLength: 0)
@@ -276,7 +277,7 @@ struct DraftRecapView: View {
 
             ForEach(upcomingCapital, id: \.season) { entry in
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(String(entry.season))
+                    Text(String(DraftYearLabel.classYear(forStamped: entry.season)))
                         .font(.subheadline.weight(.bold).monospacedDigit())
                         .foregroundStyle(Color.accentGold)
 
@@ -312,15 +313,19 @@ struct DraftRecapView: View {
     // MARK: - Results By Round
 
     private func resultsSection(season: Int) -> some View {
-        VStack(alignment: .leading, spacing: DSSpacing.sm) {
-            SectionHeaderText(title: "\(season) Draft Results")
+        // #152 — every year PRINTED on this screen is the class year; `season`
+        // itself stays the stored stamp because `recapIsCurrentLeagueYear`
+        // compares it against `career.currentSeason`.
+        let label = DraftYearLabel.classYear(forStamped: season)
+        return VStack(alignment: .leading, spacing: DSSpacing.sm) {
+            SectionHeaderText(title: "\(label) Draft Results")
 
             if !recapIsCurrentLeagueYear {
                 // The term comes from the slot chart and cannot drift, but the
                 // salary and cap share are read live off the player row, so for
                 // an older class they are what he is paid NOW — say so instead
                 // of calling them the deal he signed.
-                Text("Salaries shown are current, not as signed — these men have been on the books since \(season).")
+                Text("Salaries shown are current, not as signed — these men have been on the books since \(label).")
                     .font(.caption2)
                     .foregroundStyle(Color.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)

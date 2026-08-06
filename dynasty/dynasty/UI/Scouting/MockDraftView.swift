@@ -315,7 +315,7 @@ struct MockDraftView: View {
                     .font(.title3.weight(.heavy))
                     .foregroundStyle(Color.textPrimary)
 
-                Text("Season \(String(career.currentSeason)) \u{2022} Week \(String(career.currentWeek))")
+                Text("\(String(DraftYearLabel.classYear(duringSeason: career.currentSeason))) Draft Class \u{2022} Week \(String(career.currentWeek))")
                     .font(.caption)
                     .foregroundStyle(Color.textSecondary)
             }
