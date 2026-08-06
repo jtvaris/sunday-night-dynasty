@@ -17,6 +17,25 @@ struct TimelineTasksPanel: View {
     /// still allowed (it sims the game), it just stops competing for the eye.
     var advanceIsPrimary: Bool = true
 
+    /// A gate OTHER than the required-task list that is holding the advance
+    /// (#154f). `nil` when the task list is the only thing in the way.
+    ///
+    /// The panel counts required tasks and nothing else, so when the caller
+    /// blocked the advance for its own reason — a staff-budget overage, say —
+    /// the banner printed the arithmetic it did know: "Complete 0 required tasks
+    /// to advance", over a disabled button, with no hint anywhere that $49K of
+    /// coaching salary was the actual problem. The caller passes the sentence it
+    /// already shows in its own blocker banner, so the two cannot drift.
+    var advanceBlocker: AdvanceBlocker? = nil
+
+    /// A non-task reason the advance is refused, in the caller's own words.
+    struct AdvanceBlocker: Equatable {
+        /// Headline, e.g. "Resolve coaching budget overage first".
+        let title: String
+        /// What to do about it, in one sentence.
+        let detail: String
+    }
+
     /// How many upcoming phases (beyond current) to show fully expanded.
     private let upcomingPhaseCount = 3
 
@@ -438,12 +457,28 @@ struct TimelineTasksPanel: View {
             if !canAdvance {
                 let count = TaskGenerator.incompleteRequiredCount(in: tasks)
                 VStack(alignment: .leading, spacing: 4) {
-                    Label(
-                        "Complete \(count) required task\(count == 1 ? "" : "s") to advance",
-                        systemImage: "exclamationmark.triangle.fill"
-                    )
-                    .font(.system(size: 12, weight: .heavy))
-                    .foregroundStyle(Color.danger)
+                    // Only claim the task list is the blocker when it actually
+                    // is. A zero-count sentence over a disabled button is worse
+                    // than silence — it sends the user hunting through a list
+                    // where every row is already ticked (#154f).
+                    if count > 0 {
+                        Label(
+                            "Complete \(count) required task\(count == 1 ? "" : "s") to advance",
+                            systemImage: "exclamationmark.triangle.fill"
+                        )
+                        .font(.system(size: 12, weight: .heavy))
+                        .foregroundStyle(Color.danger)
+                    }
+
+                    if let blocker = advanceBlocker {
+                        Label(blocker.title, systemImage: "exclamationmark.octagon.fill")
+                            .font(.system(size: 12, weight: .heavy))
+                            .foregroundStyle(Color.danger)
+                        Text(blocker.detail)
+                            .font(.system(size: 11))
+                            .foregroundStyle(Color.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
 
                     // Next-action hint: tappable row that jumps directly to the
                     // first incomplete & unlocked required task. Helps users who

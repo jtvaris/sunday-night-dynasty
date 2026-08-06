@@ -19,6 +19,19 @@ struct GameTask: Identifiable, Codable, Equatable {
     var status: TaskStatus
     let weekAvailable: Int?   // nil = available entire phase
 
+    /// `true` when **opening the task's screen is the work** — "Check Salary Cap
+    /// Outlook", "Review Position Group Grades", "Review Pro Day results".
+    ///
+    /// Declared on the task rather than inferred by the shell, because it is the
+    /// generator that knows whether a row is asking for a decision or for a
+    /// read. Before this, a visit only ever produced `.inProgress`, and the two
+    /// halves of the app disagreed about what that meant: the advance gate
+    /// treated it as satisfied while the row went on drawing the red "Required"
+    /// pill and the rail counter went on excluding it (#138b). A read task now
+    /// goes straight to `.done` on the visit — one state, one predicate, one
+    /// thing the user sees.
+    let completesOnVisit: Bool
+
     init(
         phase: SeasonPhase,
         title: String,
@@ -27,7 +40,8 @@ struct GameTask: Identifiable, Codable, Equatable {
         destination: TaskDestination,
         isRequired: Bool,
         status: TaskStatus = .todo,
-        weekAvailable: Int? = nil
+        weekAvailable: Int? = nil,
+        completesOnVisit: Bool = false
     ) {
         self.id = UUID()
         self.phase = phase
@@ -38,6 +52,7 @@ struct GameTask: Identifiable, Codable, Equatable {
         self.isRequired = isRequired
         self.status = status
         self.weekAvailable = weekAvailable
+        self.completesOnVisit = completesOnVisit
     }
 }
 
@@ -45,6 +60,116 @@ enum TaskStatus: String, Codable {
     case todo
     case inProgress
     case done
+}
+
+// MARK: - Durable Task Progress (#138a)
+
+/// The one part of a task's state **nothing in the game world can re-derive**:
+/// that the user opened the screen the task pointed him at.
+///
+/// Every other completion in `CareerShellView.refreshTaskCompletionStatus` is
+/// read back out of the save — a coach exists, a depth chart was written, the
+/// franchise tag is on a player — so it survives a cold launch for free. A view
+/// visit leaves no such trace. It lived only in the shell's `@State` task array,
+/// which dies with the process, so quitting the app rolled "Check Salary Cap
+/// Outlook", "Review Position Group Grades" and "Analyze Contract Situations"
+/// back to untouched, dropped the rail counter and re-locked the phase advance
+/// behind tasks the user had already done — while "Franchise Tag Decisions",
+/// whose screen writes a scoped default, came back ticked.
+///
+/// Three properties, each of them a bug this codebase has already shipped once:
+///
+/// * **Career-scoped.** Written through `CareerScopedDefaults`, so a second save
+///   cannot inherit the first one's ticked boxes, and deleting a save purges
+///   them — the key is on `CareerScopedDefaults.keys`.
+/// * **Cycle-stamped** with `season | phase | week`. Season 2's Review Roster
+///   opens as untouched as season 1's did, and each regular-season week gets its
+///   own row rather than inheriting Week 1's game plan.
+/// * **Self-pruning.** Every write drops the cycles from earlier seasons, so a
+///   thirty-season save does not carry thirty seasons of ticks.
+enum TaskProgressStore {
+
+    /// Unsuffixed key, as listed in `CareerScopedDefaults.keys`.
+    static let defaultsKey = "taskProgress"
+
+    // MARK: Cycle identity
+
+    /// `"2027|reviewRoster|22"` — the identity of one pass through one phase.
+    ///
+    /// The week is part of it because `WeekAdvancer` only moves `currentWeek`
+    /// inside the regular season and the playoffs; every offseason phase holds
+    /// it still. So the stamp is stable exactly where a phase is one visit and
+    /// changes exactly where the phase repeats itself week after week.
+    static func cycle(season: Int, phase: SeasonPhase, week: Int) -> String {
+        "\(season)|\(phase.rawValue)|\(week)"
+    }
+
+    static func cycle(for career: Career) -> String {
+        cycle(season: career.currentSeason, phase: career.currentPhase, week: career.currentWeek)
+    }
+
+    // MARK: Read
+
+    /// Statuses recorded for `cycle`, keyed by ``GameTask/matchKey``.
+    static func statuses(in cycle: String) -> [String: TaskStatus] {
+        (load()[cycle] ?? [:]).compactMapValues(TaskStatus.init(rawValue:))
+    }
+
+    // MARK: Write
+
+    /// Files `statuses` against `cycle`, keeping only the open season's rows.
+    ///
+    /// **Never lowers a recorded status and never writes when nothing moved.**
+    /// The call sites are `onAppear` handlers and the completion refresh, which
+    /// run on every navigation; `CareerScopedDefaults.set` republishes to every
+    /// view holding a scoped key, so a write per refresh would be a re-render
+    /// per refresh.
+    static func merge(_ statuses: [String: TaskStatus], in cycle: String, season: Int) {
+        guard !statuses.isEmpty else { return }
+        var all = load()
+        var row = all[cycle] ?? [:]
+        var changed = false
+        for (key, status) in statuses {
+            let existing = row[key].flatMap(TaskStatus.init(rawValue:))
+            guard rank(status) > rank(existing) else { continue }
+            row[key] = status.rawValue
+            changed = true
+        }
+        guard changed else { return }
+        all[cycle] = row
+        // Anything stamped with another season is a concluded cycle.
+        let prefix = "\(season)|"
+        let pruned = all.filter { $0.key.hasPrefix(prefix) }
+        save(pruned)
+    }
+
+    /// Files a single task's status. Convenience over ``merge(_:in:season:)``.
+    static func record(_ status: TaskStatus, for matchKey: String, in cycle: String, season: Int) {
+        merge([matchKey: status], in: cycle, season: season)
+    }
+
+    // MARK: Storage
+
+    private static func rank(_ status: TaskStatus?) -> Int {
+        switch status {
+        case .none:       return 0
+        case .todo:       return 1
+        case .inProgress: return 2
+        case .done:       return 3
+        }
+    }
+
+    private static func load() -> [String: [String: String]] {
+        guard let raw = CareerScopedDefaults.string(defaultsKey),
+              let decoded = try? JSONDecoder().decode([String: [String: String]].self, from: Data(raw.utf8))
+        else { return [:] }
+        return decoded
+    }
+
+    private static func save(_ value: [String: [String: String]]) {
+        guard let data = try? JSONEncoder().encode(value) else { return }
+        CareerScopedDefaults.set(String(decoding: data, as: UTF8.self), defaultsKey)
+    }
 }
 
 enum TaskDestination: String, Codable, CaseIterable {
@@ -677,7 +802,8 @@ enum TaskGenerator {
                 description: "Start here: next league year's cap, your projected space, and what free agency will cost. Every call below is made against this number.",
                 icon: "chart.pie.fill",
                 destination: .capOverview,
-                isRequired: false
+                isRequired: false,
+                completesOnVisit: true
             ),
             // The two events that fired on the way INTO this phase, and which the
             // task list never mentioned: underclassmen declared for the draft
@@ -700,15 +826,25 @@ enum TaskGenerator {
                 description: "Underclassmen have declared and the Senior Bowl has been played. See how deep the class is now at every position \u{2014} it is not the one you scouted in the autumn.",
                 icon: "chart.bar.doc.horizontal",
                 destination: .classDepth,
-                isRequired: false
+                isRequired: false,
+                completesOnVisit: true
             ),
+            // Both of these are READS of the roster-evaluation screen, and both
+            // are now completed by the visit (#138b). They used to wait on
+            // `rosterEvaluationConfirmed` — a confirm button at the bottom of
+            // that screen — while the advance gate counted the visit alone as
+            // satisfaction, so the phase unlocked with two required rows still
+            // wearing the red "Required" pill and missing from the rail counter.
+            // The confirm button still completes them; it is no longer the only
+            // thing that does.
             GameTask(
                 phase: .reviewRoster,
                 title: "Review Position Group Grades",
                 description: "Check which position groups need depth and which are strengths.",
                 icon: "chart.bar.doc.horizontal",
                 destination: .rosterEvaluation,
-                isRequired: true
+                isRequired: true,
+                completesOnVisit: true
             ),
             GameTask(
                 phase: .reviewRoster,
@@ -716,7 +852,8 @@ enum TaskGenerator {
                 description: "Review expiring contracts, overpaid and underpaid players.",
                 icon: "dollarsign.circle.fill",
                 destination: .rosterEvaluation,
-                isRequired: true
+                isRequired: true,
+                completesOnVisit: true
             ),
             GameTask(
                 phase: .reviewRoster,
@@ -775,7 +912,8 @@ enum TaskGenerator {
                 description: "Check pro day performances and compare to Combine results.",
                 icon: "chart.bar.doc.horizontal.fill",
                 destination: .scouting,
-                isRequired: true
+                isRequired: true,
+                completesOnVisit: true
             ),
             // Stage: workouts.
             stageTask(
@@ -1235,17 +1373,29 @@ enum TaskGenerator {
 
     // MARK: - Helpers
 
-    /// Returns the count of required tasks that have not been started.
-    /// A task is considered "started" once it reaches `.inProgress` (visited)
-    /// or `.done` (verified by game state). Only `.todo` tasks block advancement.
+    /// Returns the count of required tasks that are not `.done`.
+    ///
+    /// **`.inProgress` no longer opens the gate (#138b).** It used to: a task
+    /// was "started" the moment its screen appeared, and started was good enough
+    /// to advance the phase. That put the gate and every visual in the app on
+    /// two different predicates — the row kept its red "Required" pill and its
+    /// dotted circle (both keyed on `.done`), the rail's "2/6" kept excluding
+    /// it, and the phase unlocked anyway. Worse, `.inProgress` was pure view
+    /// state, so a relaunch dropped it and re-locked a phase the user had
+    /// already worked through (#138a).
+    ///
+    /// One predicate now: `.done`, which is durable
+    /// (``TaskProgressStore``) and which the pill, the tick, the strikethrough
+    /// and the counter already read. Tasks whose completion IS the visit carry
+    /// ``GameTask/completesOnVisit`` and reach `.done` on the visit, so nothing
+    /// that used to unlock by looking at a screen stopped unlocking.
     static func incompleteRequiredCount(in tasks: [GameTask]) -> Int {
-        tasks.filter { $0.isRequired && $0.status == .todo }.count
+        tasks.filter { $0.isRequired && $0.status != .done }.count
     }
 
-    /// Returns true when all required tasks have been at least started
-    /// (`.inProgress` or `.done`). The user must still tap the explicit
-    /// "Advance" button to transition phases -- this only controls whether
-    /// the button is enabled.
+    /// Returns true when every required task is `.done`. The user must still tap
+    /// the explicit "Advance" button to transition phases -- this only controls
+    /// whether the button is enabled.
     static func allRequiredComplete(in tasks: [GameTask]) -> Bool {
         incompleteRequiredCount(in: tasks) == 0
     }

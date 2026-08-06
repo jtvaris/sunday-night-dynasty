@@ -477,6 +477,12 @@ enum CareerScopedDefaults {
         "interviewReportReviewed",
         "rosterEvaluationConfirmed",
         "franchiseTagVisited",
+        // `TaskProgressStore.defaultsKey` (#138a) — which phase tasks this save
+        // has worked, stamped `season | phase | week`. Career state in the
+        // strongest sense: it is the only record that the user opened the screen
+        // a task pointed him at, and a deleted save must not hand a new career a
+        // Review Roster somebody else already ticked off.
+        "taskProgress",
         "rosterNotes",
         "rosterPriorities",
         "rosterOwnAssessments",

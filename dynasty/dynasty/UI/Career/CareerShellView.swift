@@ -14,6 +14,17 @@ struct CareerShellView: View {
     @State private var showQuitConfirmation = false
     @State private var team: Team?
     @State private var upcomingGames: [Game] = []
+
+    /// **The one fixture every week-scoped label in the career reads** (#154).
+    ///
+    /// This week's game whether or not it has been played, falling back to the
+    /// next one scheduled — exactly the pick `CareerDashboardView`'s hero card
+    /// makes. `upcomingGames.first` is NOT that fixture: it only holds unplayed
+    /// games, so the moment Sunday's result lands it jumps to next week's
+    /// opponent. That is how one dashboard came to name three different clubs at
+    /// once — hero "Week 16 · @ SF", Opponent Scout tile "Vs IND", task list
+    /// "Set game plan for Seattle Seahawks".
+    @State private var currentWeekGame: Game?
     @State private var allTeamsByID: [UUID: Team] = [:]
 
     /// Navigation path for bookmark quick-nav.
@@ -30,6 +41,14 @@ struct CareerShellView: View {
 
     /// Tracks the last phase we generated tasks for, so we can detect phase changes.
     @State private var lastGeneratedPhase: SeasonPhase?
+
+    /// Tracks the week the list was generated for (#154).
+    ///
+    /// A phase alone is not enough identity for the regular season: it stays
+    /// `.regularSeason` for eighteen weeks, so a list built once at kickoff went
+    /// on naming Week 1's opponent — "Set game plan for Seattle Seahawks" over a
+    /// Week 16 trip to San Francisco — until a phase flip happened to rebuild it.
+    @State private var lastGeneratedWeek: Int?
 
     /// Accumulated inbox messages across all phase transitions, OLDEST FIRST.
     ///
@@ -266,6 +285,12 @@ struct CareerShellView: View {
             collectInboxMessages()
         }
         .onChange(of: career.currentWeek) { _, _ in
+            // #154: the weekly list names the week's opponent, and the phase
+            // does not move between Week 1 and Week 18. Without this the game-plan
+            // and week-prep rows kept pointing at whichever club was next when
+            // the phase was last entered.
+            regenerateTasks(for: career.currentPhase)
+            refreshTaskCompletionStatus()
             collectInboxMessages()
         }
         .sheet(isPresented: $showCalendar) {
@@ -1456,25 +1481,61 @@ struct CareerShellView: View {
         }
     }
 
-    /// When a destination view appears, mark matching tasks as in-progress
-    /// (if todo) so the sidebar reflects that the player has visited the view.
-    private func markTaskVisited(for destination: TaskDestination) {
-        for index in currentTasks.indices {
-            if currentTasks[index].destination == destination && currentTasks[index].status == .todo {
-                currentTasks[index].status = .inProgress
-            }
+    /// The cycle stamp every task write and read in this shell is filed under.
+    private var taskCycle: String { TaskProgressStore.cycle(for: career) }
+
+    /// Files the task list's current statuses so they survive a cold launch
+    /// (#138a). Only the visit/complete states need this — every other
+    /// completion is re-derived from the save by `refreshTaskCompletionStatus`
+    /// — but recording all of them is free (`merge` never lowers a status and
+    /// never writes when nothing moved) and it keeps one rule instead of two.
+    private func persistTaskProgress() {
+        var statuses: [String: TaskStatus] = [:]
+        for task in currentTasks where task.status != .todo {
+            // The group banner ships `.done` and is a label, not a step.
+            guard !task.title.hasPrefix("\u{2500}") else { continue }
+            // Draft-prep stages already have a durable authority of their own
+            // (`DraftPrepProgress`, off per-cycle counters), and it is allowed to
+            // pull a stage BACK to `.todo` when the club's reach no longer covers
+            // it. A recorded `.done` here would out-rank that and re-open a
+            // locked stage, so the store deliberately does not carry them.
+            guard DraftPrepStep.stage(forTaskKey: task.matchKey) == nil else { continue }
+            statuses[task.matchKey] = task.status
         }
+        TaskProgressStore.merge(statuses, in: taskCycle, season: career.currentSeason)
+    }
+
+    /// When a destination view appears, record that the player has been there.
+    ///
+    /// A task whose completion IS the visit (`completesOnVisit`) goes straight
+    /// to `.done`; everything else records `.inProgress`, which is now purely
+    /// cosmetic — the advance gate reads `.done` only (#138b). Both are written
+    /// through ``TaskProgressStore`` so a relaunch does not undo them.
+    private func markTaskVisited(for destination: TaskDestination) {
+        var touched = false
+        for index in currentTasks.indices {
+            guard currentTasks[index].destination == destination,
+                  currentTasks[index].status != .done else { continue }
+            let visited: TaskStatus = currentTasks[index].completesOnVisit ? .done : .inProgress
+            guard currentTasks[index].status != visited else { continue }
+            currentTasks[index].status = visited
+            touched = true
+        }
+        if touched { persistTaskProgress() }
     }
 
     /// Mark a task as completed by its destination. Call this from specific
     /// view actions (e.g., after actually setting the depth chart, signing a
     /// player, completing the draft, etc.).
     func markTaskCompleted(for destination: TaskDestination) {
+        var touched = false
         for index in currentTasks.indices {
             if currentTasks[index].destination == destination && currentTasks[index].status != .done {
                 currentTasks[index].status = .done
+                touched = true
             }
         }
+        if touched { persistTaskProgress() }
     }
 
     // MARK: - Task Completion Refresh
@@ -1518,6 +1579,28 @@ struct CareerShellView: View {
         // numbers, one answer.
         let prepProgress = draftPrepProgress()
 
+        // #138a — replay what this save has already recorded for THIS cycle
+        // before deriving anything. The derivations below can only re-discover
+        // completions the game world still carries (a coach was hired, a chart
+        // was written); "the user opened this screen" leaves no such trace, so
+        // without this replay a cold launch reopened finished tasks and re-locked
+        // the phase advance behind them.
+        let recorded = TaskProgressStore.statuses(in: taskCycle)
+        if !recorded.isEmpty {
+            for index in currentTasks.indices {
+                let key = currentTasks[index].matchKey
+                // Stage tasks answer to `DraftPrepProgress` alone — see
+                // `persistTaskProgress`, which does not file them either.
+                guard DraftPrepStep.stage(forTaskKey: key) == nil,
+                      let saved = recorded[key] else { continue }
+                // Raise only: a derivation below may legitimately push a task
+                // further than the record goes.
+                if saved == .done || (saved == .inProgress && currentTasks[index].status == .todo) {
+                    currentTasks[index].status = saved
+                }
+            }
+        }
+
         for index in currentTasks.indices {
             guard currentTasks[index].status != .done else { continue }
             let task = currentTasks[index]
@@ -1549,6 +1632,28 @@ struct CareerShellView: View {
             // live progress counter ("… (12/60 done)") and an exact-title switch
             // silently stopped completing them the moment one appeared.
             switch task.matchKey {
+            // Cap compliance — the cross-phase overlay `TaskGenerator
+            // .capComplianceTasks` emits. It had no completion case at all,
+            // which was survivable only while a mere visit satisfied the advance
+            // gate: now that the gate reads `.done`, a REQUIRED row nothing can
+            // tick is a phase nobody can leave.
+            //
+            // Delegated to the engine's own gate rather than to
+            // `complianceStatus` alone, so the two cannot disagree. It returns
+            // `nil` both when the books are legal and in the fully-guaranteed
+            // corner where no lever exists — which is exactly the anti-deadlock
+            // rule the advance already honours (`WeekAdvancer
+            // .userCapComplianceViolation`), and the one case where leaving the
+            // task open would strand the career.
+            case "Get under the salary cap":
+                let violation = WeekAdvancer.userCapComplianceViolation(
+                    career: career,
+                    modelContext: modelContext
+                )
+                if violation == nil {
+                    currentTasks[index].status = .done
+                }
+
             // Coaching Changes — verified by actual game state (coach exists)
             case "Hire Head Coach":
                 if hasHC { currentTasks[index].status = .done }
@@ -1780,9 +1885,18 @@ struct CareerShellView: View {
     // MARK: - Task Generation
 
     /// Regenerate the task list for the given phase using current game state.
+    ///
+    /// Rebuilt on a phase change **or a week change**: several titles name the
+    /// week's opponent, and in the regular season the phase does not move for
+    /// eighteen of them (#154). Completion is not lost by the rebuild — the
+    /// statuses are re-derived from the save and from ``TaskProgressStore``
+    /// immediately afterwards, and the store is stamped per week, so the new
+    /// week's list correctly opens fresh.
     private func regenerateTasks(for phase: SeasonPhase) {
-        guard phase != lastGeneratedPhase else { return }
+        let week = career.currentWeek
+        guard phase != lastGeneratedPhase || week != lastGeneratedWeek else { return }
         lastGeneratedPhase = phase
+        lastGeneratedWeek = week
 
         let rosterCount: Int
         if let teamID = career.teamID {
@@ -1851,9 +1965,11 @@ struct CareerShellView: View {
             return ((try? modelContext.fetchCount(descriptor)) ?? 1) == 0
         }()
 
-        // Determine opponent name for game-week phases
+        // Determine opponent name for game-week phases. `currentWeekGame`, not
+        // `upcomingGames.first`: the same fixture the hero card and the Opponent
+        // Scout tile name, so the three cannot describe three different Sundays.
         var opponentName: String? = nil
-        if let nextGame = upcomingGames.first {
+        if let nextGame = currentWeekGame {
             let isHome = nextGame.homeTeamID == career.teamID
             let opponentID = isHome ? nextGame.awayTeamID : nextGame.homeTeamID
             opponentName = allTeamsByID[opponentID]?.fullName
@@ -2005,9 +2121,14 @@ struct CareerShellView: View {
         })
         let allGames = (try? modelContext.fetch(gameDescriptor)) ?? []
 
-        upcomingGames = allGames
-            .filter { ($0.homeTeamID == teamID || $0.awayTeamID == teamID) && !$0.isPlayed && $0.week >= career.currentWeek }
+        let myGames = allGames.filter { $0.homeTeamID == teamID || $0.awayTeamID == teamID }
+        upcomingGames = myGames
+            .filter { !$0.isPlayed && $0.week >= career.currentWeek }
             .sorted { $0.week < $1.week }
+        // This week's fixture whether or not it has been played; only once the
+        // week itself is empty (a bye, or the schedule has run out) does the
+        // next one on the card stand in. See `currentWeekGame`.
+        currentWeekGame = myGames.first { $0.week == career.currentWeek } ?? upcomingGames.first
 
         // Generate tasks on initial load, then re-derive completion from
         // persisted game state so a relaunch doesn't reset finished tasks.

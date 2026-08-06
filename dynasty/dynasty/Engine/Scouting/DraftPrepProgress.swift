@@ -199,7 +199,31 @@ struct DraftPrepProgress {
         let mockOneRead = (CareerScopedDefaults.value(Key.mockOneRead) as Int?) == season
         let mockTwoRead = (CareerScopedDefaults.value(Key.mockTwoRead) as Int?) == season
 
+        /// A stage the club has explicitly walked PAST, inside the phase that
+        /// stage belongs to.
+        ///
+        /// **This is what makes a skip settle its task (#154e).** Every stage is
+        /// skippable by design — the pro-day tour's "Or watch it on the feed"
+        /// is the loudest of them — and a skip writes `Career.advancePrepStep`,
+        /// which is the club stating it is done with that room. But the counters
+        /// below only know about work: a club that skipped the circuit reserved
+        /// no focus slots, so `proDayFocus` stayed unsatisfied and its REQUIRED
+        /// task "Choose pro-day schools" stayed red with the one control that
+        /// could have cleared it now behind the club.
+        ///
+        /// Restricted to `s.phase == phase` on purpose. `Career.prepStep` is
+        /// floored by `SeasonPhase.minimumPrepStep`, so simply arriving in the
+        /// pro days lifts the stored step to `.proDayFocus` — and a rule that
+        /// ignored the phase would read that floor as "the combine stages were
+        /// walked past" for a club that never opened one. Within a single phase
+        /// the floor sits at the phase's FIRST stage, so anything above it was
+        /// reached by the user, not by the calendar.
+        func passed(_ s: DraftPrepStep) -> Bool {
+            s.phase == phase && s.order < step.order
+        }
+
         func satisfied(_ s: DraftPrepStep) -> Bool {
+            if passed(s) { return true }
             switch s {
             case .combineReview: return combineReviewed
             case .interviews:    return interviewsDone > 0

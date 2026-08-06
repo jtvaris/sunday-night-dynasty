@@ -487,11 +487,24 @@ struct CalendarSidebarView: View {
 
     // MARK: - Task Mutation
 
+    /// Records the tap the same way the shell records a screen visit (#138a):
+    /// a read task goes straight to `.done`, everything else to `.inProgress`,
+    /// and both are filed against the cycle so a relaunch does not undo them.
+    /// This sheet used to write `.inProgress` into view state and nothing else,
+    /// which is one of the two paths a completed task leaked out of.
     private func markInProgress(_ task: GameTask) {
-        guard task.status == .todo else { return }
-        if let index = tasks.firstIndex(where: { $0.id == task.id }) {
-            tasks[index].status = .inProgress
-        }
+        guard task.status != .done,
+              let index = tasks.firstIndex(where: { $0.id == task.id }) else { return }
+        let visited: TaskStatus = task.completesOnVisit ? .done : .inProgress
+        guard tasks[index].status != visited else { return }
+        tasks[index].status = visited
+        guard DraftPrepStep.stage(forTaskKey: task.matchKey) == nil else { return }
+        TaskProgressStore.record(
+            visited,
+            for: task.matchKey,
+            in: TaskProgressStore.cycle(for: career),
+            season: career.currentSeason
+        )
     }
 
 }

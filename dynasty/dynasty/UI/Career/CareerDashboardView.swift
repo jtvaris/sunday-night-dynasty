@@ -226,6 +226,21 @@ struct CareerDashboardView: View {
         career.currentPhase == .coachingChanges && coachingOverage > 0
     }
 
+    /// The non-task reason the advance is refused, in one place (#154f).
+    ///
+    /// Read by BOTH `coachingBudgetBlockerBanner` and the tasks panel, so the
+    /// rail cannot go on printing "Complete 0 required tasks to advance" beside
+    /// a banner naming a $49K staff overage. Nil when the required-task list is
+    /// the only gate.
+    private var advanceBlocker: TimelineTasksPanel.AdvanceBlocker? {
+        guard isBlockedByCoachingBudget else { return nil }
+        return TimelineTasksPanel.AdvanceBlocker(
+            title: "Resolve coaching budget overage first",
+            detail: "You are \(formatCap(coachingOverage)) over the staff budget. "
+                + "Release staff or reduce salaries to advance."
+        )
+    }
+
     private var canAdvance: Bool {
         guard TaskGenerator.allRequiredComplete(in: tasks) else { return false }
         if isBlockedByCoachingBudget { return false }
@@ -354,6 +369,22 @@ struct CareerDashboardView: View {
     /// The player's own game for the current week, if it hasn't been played yet.
     private var currentWeekPlayerGame: Game? {
         upcomingGames.first { $0.week == career.currentWeek && !$0.isPlayed }
+    }
+
+    /// **The one fixture every week-scoped label on this screen names** (#154).
+    ///
+    /// This week's game whether or not it has been played, falling back to the
+    /// next one scheduled. `upcomingGames` holds only UNPLAYED games, so reading
+    /// `.first` off it directly — which the Opponent Scout tile did — skips to
+    /// next week's opponent the instant Sunday's result lands. That is how one
+    /// screen came to show hero "Week 16 · @ SF (Away)" over a tile reading
+    /// "Vs IND": same week, two different clubs, two different lookups.
+    ///
+    /// `CareerShellView.currentWeekGame` makes the same pick for the task list,
+    /// so the third label agrees as well.
+    private var currentWeekFixture: Game? {
+        let playedThisWeek = lastGame.flatMap { $0.week == career.currentWeek ? $0 : nil }
+        return currentWeekPlayerGame ?? playedThisWeek ?? upcomingGames.first
     }
 
     /// Gathers teams, staffs and prep boosts, then presents the live match.
@@ -657,7 +688,8 @@ struct CareerDashboardView: View {
                         onTaskSelected: onTaskSelected,
                         onAdvance: { performAdvance() },
                         canAdvance: canAdvance,
-                        advanceIsPrimary: !weeklyGameUnplayed
+                        advanceIsPrimary: !weeklyGameUnplayed,
+                        advanceBlocker: advanceBlocker
                     )
                 }
                 .padding(.leading, 8)
@@ -730,7 +762,8 @@ struct CareerDashboardView: View {
                     onTaskSelected: onTaskSelected,
                     onAdvance: { performAdvance() },
                     canAdvance: canAdvance,
-                    advanceIsPrimary: !weeklyGameUnplayed
+                    advanceIsPrimary: !weeklyGameUnplayed,
+                    advanceBlocker: advanceBlocker
                 )
             }
             .frame(width: 300)
@@ -786,7 +819,8 @@ struct CareerDashboardView: View {
                         onTaskSelected: onTaskSelected,
                         onAdvance: { performAdvance() },
                         canAdvance: canAdvance,
-                        advanceIsPrimary: !weeklyGameUnplayed
+                        advanceIsPrimary: !weeklyGameUnplayed,
+                        advanceBlocker: advanceBlocker
                     )
                 }
                 .frame(minWidth: 320, minHeight: 280, maxHeight: 460)
@@ -1710,7 +1744,11 @@ struct CareerDashboardView: View {
         } label: {
             DashboardTile(icon: "binoculars.fill", title: "Opponent Scout") {
                 VStack(alignment: .leading, spacing: 4) {
-                    let opponent = upcomingGames.first.flatMap { game in
+                    // #154: `currentWeekFixture`, not `upcomingGames.first` —
+                    // the tile used to name next week's opponent the moment this
+                    // week's game was played, while the hero card above it still
+                    // named this week's.
+                    let opponent = currentWeekFixture.flatMap { game in
                         allTeamsByID[game.homeTeamID == team?.id ? game.awayTeamID : game.homeTeamID]
                     }
                     Text(opponent.map { "Vs \($0.abbreviation)" } ?? "Vs \u{2014}")
@@ -2304,8 +2342,12 @@ struct CareerDashboardView: View {
                                 RoundedRectangle(cornerRadius: 5)
                                     .fill(capBarColor(usedFraction))
                                     .frame(width: geo.size.width * min(usedFraction, 1.0), height: 12)
-                                // Percentage label inside bar
-                                Text("\(Int(usedFraction * 100))%")
+                                // Percentage label inside bar. One decimal, not
+                                // `Int(...)`: truncation printed "80%" for the
+                                // same 214.6/265 the Cap screen calls "81.0%",
+                                // and two screens disagreeing about one division
+                                // reads as a bug in the money, not in the format.
+                                Text(String(format: "%.1f%%", usedFraction * 100))
                                     .font(.system(size: 8, weight: .bold).monospacedDigit())
                                     .foregroundStyle(.white.opacity(0.9))
                                     .padding(.leading, 4)
@@ -3178,16 +3220,16 @@ struct CareerDashboardView: View {
     /// Blocker banner shown when advance is gated by coaching-budget overage. (#54)
     @ViewBuilder
     private var coachingBudgetBlockerBanner: some View {
-        if isBlockedByCoachingBudget {
+        if let blocker = advanceBlocker {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "exclamationmark.octagon.fill")
                     .font(.system(size: 14, weight: .bold))
                     .foregroundStyle(Color.danger)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Resolve coaching budget overage first")
+                    Text(blocker.title)
                         .font(.system(size: 12, weight: .bold))
                         .foregroundStyle(Color.danger)
-                    Text("You are \(formatCap(coachingOverage)) over the staff budget. Release staff or reduce salaries to advance.")
+                    Text(blocker.detail)
                         .font(.system(size: 11))
                         .foregroundStyle(Color.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -3198,7 +3240,7 @@ struct CareerDashboardView: View {
             .padding(.vertical, 8)
             .background(Color.danger.opacity(0.10))
             .accessibilityElement(children: .combine)
-            .accessibilityHint("Resolve coaching budget overage first")
+            .accessibilityHint(blocker.title)
         }
     }
 
@@ -4097,7 +4139,7 @@ struct CareerDashboardView: View {
         // (upcomingGames only holds unplayed ones, so it alone would skip
         // ahead to next week's opponent as soon as the game finishes).
         let currentWeekPlayed = lastGame.flatMap { $0.week == career.currentWeek ? $0 : nil }
-        let heroGame = currentWeekPlayerGame ?? currentWeekPlayed ?? upcomingGames.first
+        let heroGame = currentWeekFixture
         let week = heroGame?.week ?? career.currentWeek
         let nextOpponent = heroGame.flatMap { game -> (abbr: String, isHome: Bool)? in
             let isHome = game.homeTeamID == career.teamID
