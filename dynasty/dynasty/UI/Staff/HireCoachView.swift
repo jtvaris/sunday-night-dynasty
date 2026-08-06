@@ -1093,6 +1093,10 @@ struct HireCoachView: View {
         candidate.careerID = career.id
         candidate.hireSeasonYear = career.currentSeason
         candidate.contractYearsRemaining = 3
+        // Task #133: he keeps the job through the advance out of this phase.
+        // Rival clubs poach on that advance, and a man signed an hour ago has
+        // not yet coached anything to be poached out of.
+        candidate.signedThisOffseason = true
         // Task #96: back in work, so his time on the bench stops counting toward
         // `CoachMarketEngine.settleUnemployment`'s attrition roll. No-op for an
         // invented candidate, which has never been out of work.

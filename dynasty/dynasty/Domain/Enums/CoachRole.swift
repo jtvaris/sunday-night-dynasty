@@ -177,3 +177,58 @@ enum CoachRole: String, Codable, CaseIterable, Identifiable {
         }
     }
 }
+
+// MARK: - Staff Slots (task #133)
+
+/// The ONE definition of "the staff" — the seats a front office is responsible
+/// for filling — that every counter in the game reads.
+///
+/// Four surfaces used to answer "how big is my staff?" four different ways on
+/// the same save: the team overview said 16 (raw `CoachRole.allCases`, i.e. it
+/// counted the head-coach chair the GM+HC player is sitting in), the staff
+/// screen and its auto-hire button said 23 (coaches + scouts), and the coaching
+/// staff review sheet said 15 (coaches only). Three of those numbers were
+/// individually defensible and together they read as a bug, because nothing
+/// said which population each was counting.
+///
+/// So the numbers are unified on their SOURCE, not on their value: everything
+/// labelled "Coaching Staff" counts `coachRoles`, everything labelled "Staff"
+/// counts `coachRoles + scoutRoles`, and both lists live here. A career that
+/// coaches its own team never has a head-coach slot to fill in either.
+enum StaffSlots {
+
+    /// Coaching seats this career is responsible for filling.
+    ///
+    /// A GM+HC career occupies the head-coach chair himself, so it is not a
+    /// vacancy, not a slot, and must not appear in any denominator — showing
+    /// "0 / 16" to a man who can never reach 16 is the whole of bug #133(a).
+    static func coachRoles(for careerRole: CareerRole) -> [CoachRole] {
+        careerRole == .gmAndHeadCoach
+            ? CoachRole.allCases.filter { $0 != .headCoach }
+            : CoachRole.allCases
+    }
+
+    /// Scouting seats. Every career fills all of them itself.
+    static let scoutRoles: [ScoutRole] = ScoutRole.allCases
+
+    /// Coaching seats + scouting seats — the denominator behind any "Staff x/y".
+    static func totalSlots(for careerRole: CareerRole) -> Int {
+        coachRoles(for: careerRole).count + scoutRoles.count
+    }
+
+    /// How many coaching seats are actually occupied.
+    ///
+    /// Counts SEATS, not rows: a duplicate row for the same role (or a stray
+    /// head-coach row in a GM+HC save) can no longer push a filled count above
+    /// its own total, which is what made the tile render "24 / 23".
+    static func filledCoachSlots(coaches: [Coach], careerRole: CareerRole) -> Int {
+        let filled = Set(coaches.map(\.role))
+        return coachRoles(for: careerRole).filter { filled.contains($0) }.count
+    }
+
+    /// How many scouting seats are actually occupied.
+    static func filledScoutSlots(scouts: [Scout]) -> Int {
+        let filled = Set(scouts.map(\.scoutRole))
+        return scoutRoles.filter { filled.contains($0) }.count
+    }
+}

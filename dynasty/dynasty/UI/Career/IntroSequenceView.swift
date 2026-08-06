@@ -495,7 +495,7 @@ private struct TeamOverviewStep: View {
     }
 
     private var filledCoachingSlots: Int {
-        coaches.count
+        StaffSlots.filledCoachSlots(coaches: coaches, careerRole: career.role)
     }
 
     // MARK: - #20 Roster Age & Contract Summary
@@ -599,7 +599,11 @@ private struct TeamOverviewStep: View {
     ]
 
     /// Total coaching staff positions expected (HC + OC + DC + STC + position coaches).
-    private var totalCoachingSlots: Int { CoachRole.allCases.count }
+    /// #133: the same seat list the staff screen and the dashboard tile count.
+    /// This used to be raw `CoachRole.allCases`, so a GM+HC career was told
+    /// "0 / 16 filled" for a staff that tops out at 15 — the head-coach chair in
+    /// the denominator is the one he is sitting in.
+    private var totalCoachingSlots: Int { StaffSlots.coachRoles(for: career.role).count }
 
     private var capAvailableFormatted: String {
         let available = team.availableCap

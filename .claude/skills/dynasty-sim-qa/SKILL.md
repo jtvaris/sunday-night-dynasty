@@ -246,6 +246,16 @@ tap that opens/dismisses a sheet, wait ~1s and re-snapshot (or use `wait-for-ui`
 
 ## When you still need coordinates (fallback only)
 
+⚠️ **SCROLLING: XcodeBuildMCP `swipe` and `gesture` presets silently FAIL on this app's SwiftUI
+Lists** (verified 2026-08-06 on PlayerDetailView: 6 swipes + 4 gesture presets moved nothing, no
+error reported — a QA run falsely concluded the card's Actions section didn't exist because it
+never actually scrolled). **Scroll with `idb ui swipe` coordinates instead**, e.g. full-page down:
+```bash
+idb ui swipe --udid <UDID> 516 1000 516 300 --duration 0.3
+```
+After an intended scroll, ALWAYS confirm content moved (screenshot or AX diff) before concluding
+anything about what a screen does or doesn't contain.
+
 Semantic taps covered **100%** of the tested flow, so this should be rare — needed only if a control
 has no accessibility label, or `snapshot-ui` is unavailable. XcodeBuildMCP's `tap` takes **only**
 `--element-ref` (no x/y); its `gesture` command is preset scroll/swipe only. So coordinate taps mean

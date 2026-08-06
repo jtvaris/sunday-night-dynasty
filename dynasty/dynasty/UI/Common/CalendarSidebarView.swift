@@ -26,11 +26,14 @@ struct CalendarSidebarView: View {
     }
 
     private var requiredTasks: [GameTask] {
-        tasks.filter { $0.isRequired }
+        actionableTasks.filter { $0.isRequired }
     }
 
+    /// #134: the group banner is `isRequired: false`, so before this it was
+    /// rendered as an actual (already ticked) card under "Optional" — the seventh
+    /// task in a six-task phase.
     private var optionalTasks: [GameTask] {
-        tasks.filter { !$0.isRequired }
+        actionableTasks.filter { !$0.isRequired }
     }
 
     private var incompleteRequiredCount: Int {
@@ -41,8 +44,23 @@ struct CalendarSidebarView: View {
         TaskGenerator.allRequiredComplete(in: tasks)
     }
 
+    /// The steps this phase actually asks the user to do.
+    ///
+    /// #134: `TaskGenerator` pins a read-only group banner ("─ Offseason ─") to
+    /// the top of every phase list and ships it pre-`.done` so it renders as a
+    /// label. The left rail has always excluded it (`TimelineTasksPanel`
+    /// `actionableTasks`); this sheet counted it, so the same six-step phase read
+    /// "0/6" in the rail and "1/7 tasks done" here. One list, one predicate.
+    private var actionableTasks: [GameTask] {
+        TimelineTasksPanel.actionableTasks(tasks)
+    }
+
+    private var totalCount: Int {
+        actionableTasks.count
+    }
+
     private var completedCount: Int {
-        tasks.filter { $0.status == .done }.count
+        actionableTasks.filter { $0.status == .done }.count
     }
 
     // MARK: - Body
@@ -114,9 +132,9 @@ struct CalendarSidebarView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(Color.textTertiary)
                 Spacer()
-                Text("\(completedCount)/\(tasks.count) tasks done")
+                Text("\(completedCount)/\(totalCount) tasks done")
                     .font(.caption.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(completedCount == tasks.count ? Color.accentGold : Color.textTertiary)
+                    .foregroundStyle(completedCount == totalCount ? Color.accentGold : Color.textTertiary)
             }
 
             // Phase progress bar
@@ -129,7 +147,7 @@ struct CalendarSidebarView: View {
                     RoundedRectangle(cornerRadius: 3)
                         .fill(Color.accentGold)
                         .frame(
-                            width: tasks.isEmpty ? 0 : geo.size.width * CGFloat(completedCount) / CGFloat(tasks.count),
+                            width: totalCount == 0 ? 0 : geo.size.width * CGFloat(completedCount) / CGFloat(totalCount),
                             height: 6
                         )
                         .animation(.easeInOut(duration: 0.3), value: completedCount)

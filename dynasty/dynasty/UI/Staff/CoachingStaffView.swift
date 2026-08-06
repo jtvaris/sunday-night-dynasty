@@ -270,19 +270,19 @@ struct CoachingStaffView: View {
 
     // MARK: - Vacant roles
 
+    /// #133: the seat list comes from `StaffSlots` so this screen's "23
+    /// vacancies", the dashboard tile's "x / 23" and the review sheet's
+    /// coaching count are three readings of ONE definition. (`StaffSlots`
+    /// already drops the head-coach chair for a GM+HC career — the player is
+    /// sitting in it.)
     private var vacantCoachRoles: [CoachRole] {
         let filledRoles = Set(coaches.map { $0.role })
-        var allRoles = CoachRole.allCases.filter { !filledRoles.contains($0) }
-        // If GM+HC, the head coach slot is the player — not vacant
-        if career.role == .gmAndHeadCoach {
-            allRoles.removeAll { $0 == .headCoach }
-        }
-        return allRoles
+        return StaffSlots.coachRoles(for: career.role).filter { !filledRoles.contains($0) }
     }
 
     private var vacantScoutRoles: [ScoutRole] {
         let filledRoles = Set(scouts.map { $0.scoutRole })
-        return ScoutRole.allCases.filter { !filledRoles.contains($0) }
+        return StaffSlots.scoutRoles.filter { !filledRoles.contains($0) }
     }
 
     // MARK: - Staff Tier Headers
@@ -635,6 +635,13 @@ struct CoachingStaffView: View {
         // for the second pass below.
         var unfilled: [StaffVacancy] = []
 
+        // Task #135: who the rest of the staff is judged for fit against.
+        // Tracked locally rather than re-read off `headCoach` between jobs
+        // because the `@Query` behind it does not refresh inside this loop —
+        // the head coach is the FIRST job in `autoHireCoachOrder` precisely so
+        // everyone hired after him can be measured against him.
+        var hcPersonality = autoHireReferencePersonality
+
         for vacancy in plan {
             autoHireStatus = "Hiring \(vacancy.displayName)…"
             await Task.yield()
@@ -642,13 +649,18 @@ struct CoachingStaffView: View {
             let potKey = pot(for: vacancy)
             let allocation = (allocations[vacancy.id] ?? 0) + (carry[potKey] ?? 0)
             let cap = min(wallet[potKey] ?? 0, allocation)
-            guard cap > 0, let salary = signBest(for: vacancy, cap: cap, teamID: teamID) else {
+            guard cap > 0,
+                  let result = signBest(for: vacancy, cap: cap, teamID: teamID, hcPersonality: hcPersonality)
+            else {
                 unfilled.append(vacancy)
                 continue
             }
-            wallet[potKey] = (wallet[potKey] ?? 0) - salary
-            carry[potKey] = max(0, allocation - salary)
-            spent += salary
+            if case .coach(.headCoach) = vacancy, let hired = result.hired {
+                hcPersonality = hired.personality
+            }
+            wallet[potKey] = (wallet[potKey] ?? 0) - result.salary
+            carry[potKey] = max(0, allocation - result.salary)
+            spent += result.salary
             hires += 1
         }
 
@@ -679,9 +691,14 @@ struct CoachingStaffView: View {
             autoHireStatus = "Hiring \(vacancy.displayName)…"
             await Task.yield()
 
-            guard let salary = signBest(for: vacancy, cap: cap, teamID: teamID) else { continue }
-            wallet[potKey] = walletLeft - salary
-            spent += salary
+            guard let result = signBest(
+                for: vacancy, cap: cap, teamID: teamID, hcPersonality: hcPersonality
+            ) else { continue }
+            if case .coach(.headCoach) = vacancy, let hired = result.hired {
+                hcPersonality = hired.personality
+            }
+            wallet[potKey] = walletLeft - result.salary
+            spent += result.salary
             hires += 1
         }
 
@@ -711,10 +728,15 @@ struct CoachingStaffView: View {
     }
 
     /// Signs the best candidate `cap` can buy for one open job and returns his
-    /// salary; nil when nothing on that market fits the cap. Shared by both
-    /// auto-hire passes so the planned offer and the leftover-wallet offer shop
-    /// the exact same pool.
-    private func signBest(for vacancy: StaffVacancy, cap: Int, teamID: UUID) -> Int? {
+    /// salary (and, for a coach, the man himself); nil when nothing on that
+    /// market fits the cap. Shared by both auto-hire passes so the planned offer
+    /// and the leftover-wallet offer shop the exact same pool.
+    private func signBest(
+        for vacancy: StaffVacancy,
+        cap: Int,
+        teamID: UUID,
+        hcPersonality: PersonalityArchetype?
+    ) -> (salary: Int, hired: Coach?)? {
         switch vacancy {
         case .coach(let role):
             // Task #96: auto-hire shops the same market the manual sheet
@@ -727,9 +749,11 @@ struct CoachingStaffView: View {
                     teamWins: team?.wins ?? 8,
                     teamReputation: career.reputation
                 )
-            guard let pick = bestAffordableCoach(in: pool, cap: cap) else { return nil }
+            guard let pick = bestAffordableCoach(in: pool, cap: cap, hcPersonality: hcPersonality) else {
+                return nil
+            }
             hire(coach: pick, teamID: teamID)
-            return pick.salary
+            return (pick.salary, pick)
 
         case .scout(let role):
             // Same seeded pool the manual sheet shows for this team/role/season.
@@ -744,18 +768,57 @@ struct CoachingStaffView: View {
             )
             guard let pick = bestAffordableScout(in: pool, cap: cap) else { return nil }
             hire(scout: pick, teamID: teamID)
-            return pick.salary
+            return (pick.salary, nil)
         }
     }
 
-    /// Best man the allocation can buy: highest overall inside the cap, and
-    /// the cheaper of two equals — the same ranking the hire sheet's default
-    /// OVR sort puts on top.
-    private func bestAffordableCoach(in pool: [Coach], cap: Int) -> Coach? {
+    /// The personality every auto-hire is judged for fit against: the user
+    /// himself when he coaches the team, otherwise whoever holds the HC chair.
+    ///
+    /// Deliberately the same reference `chemistryWithHC` uses to draw the
+    /// ✓ / ⚠ Tension / ✗ Conflict badge on the staff rows, so the button cannot
+    /// hire a man the screen then flags as a clash.
+    private var autoHireReferencePersonality: PersonalityArchetype? {
+        if career.role == .gmAndHeadCoach {
+            return coachingStylePersonality(career.coachingStyle)
+        }
+        return headCoach?.personality
+    }
+
+    /// Ranking score for the auto-hire pass: overall rating, adjusted for how
+    /// the man fits the head coach he would work for.
+    ///
+    /// Task #135: the button promised "the best affordable candidate for each"
+    /// and delivered it on OVR alone, which is how one pass could hand a GM+HC
+    /// player three coordinators the very next screen labelled ⚠ Tension and
+    /// ✗ Conflict. The adjustment is small on purpose — a Conflict hire has to
+    /// be ~11 OVR better than a good fit to still win the job, so this breaks
+    /// ties and near-ties toward a staff that can work together without ever
+    /// turning into "hire the agreeable mediocrity". Budget is untouched: the
+    /// cap filter still runs first and nothing here can raise a bid.
+    ///
+    /// The thresholds mirror `CoachingEngine.chemistryLabel` exactly, so the
+    /// bands this penalises are the bands the UI names.
+    private func autoHireRank(_ coach: Coach, hcPersonality: PersonalityArchetype?) -> Int {
+        let ovr = coachOverall(coach)
+        guard let hcPersonality else { return ovr }
+        switch CoachingEngine.coachChemistry(coachA: hcPersonality, coachB: coach.personality) {
+        case 0.3...:       return ovr + 2   // "Good fit"
+        case -0.29...0.29: return ovr - 4   // "Tension"
+        default:           return ovr - 9   // "Conflict"
+        }
+    }
+
+    /// Best man the allocation can buy: highest fit-adjusted rating inside the
+    /// cap, and the cheaper of two equals.
+    private func bestAffordableCoach(in pool: [Coach], cap: Int, hcPersonality: PersonalityArchetype?) -> Coach? {
         pool.filter { $0.salary <= cap }
             .max { a, b in
-                let (oa, ob) = (coachOverall(a), coachOverall(b))
-                if oa != ob { return oa < ob }
+                let (ra, rb) = (
+                    autoHireRank(a, hcPersonality: hcPersonality),
+                    autoHireRank(b, hcPersonality: hcPersonality)
+                )
+                if ra != rb { return ra < rb }
                 return a.salary > b.salary
             }
     }
@@ -779,6 +842,10 @@ struct CoachingStaffView: View {
         candidate.careerID = career.id
         candidate.hireSeasonYear = career.currentSeason
         candidate.contractYearsRemaining = 3
+        // Task #133 — see `Coach.signedThisOffseason`. Without this the rival
+        // poaching pass on the very next advance took ~2 of a 15-man auto-hired
+        // staff back off the board before they had coached a practice.
+        candidate.signedThisOffseason = true
         // Task #96 — stop the unemployment clock, and do not re-insert a coach
         // signed off the league's market (he is already a row in this store).
         candidate.unemployedSeasons = 0
@@ -2809,7 +2876,7 @@ struct CoachingStaffView: View {
                         .foregroundStyle(Color.textPrimary)
                     Text(isAutoHiring
                          ? (autoHireStatus ?? "Working through the vacancies…")
-                         : "Fills all \(orderedVacancies.count) vacant roles with the best affordable candidate for each.")
+                         : "Fills all \(orderedVacancies.count) vacant roles with the best affordable candidate who fits your staff.")
                         .font(.caption)
                         .foregroundStyle(Color.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)

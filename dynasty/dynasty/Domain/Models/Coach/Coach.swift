@@ -51,6 +51,25 @@ final class Coach {
     /// Defaults to 3 for newly hired coaches.
     var contractYearsRemaining: Int = 3
 
+    /// `true` between the moment this coach signs and the end of the offseason
+    /// he signed in. Consumed by `CoachingEngine.developCoach`, the pass that
+    /// closes out every coach's season.
+    ///
+    /// Task #133: the user hires his staff DURING the coaching-changes phase,
+    /// and the rival-poaching pass (`CoachingEngine.checkCoordinatorPoaching`)
+    /// runs when he advances OUT of that same phase — so men signed minutes
+    /// earlier were being hired away by other clubs before they had coached a
+    /// single practice, silently and with no news item. A fresh GM+HC save that
+    /// auto-hired all 15 seats lost ~2 of them on the very next advance, which
+    /// is what read to players as "my hires did not save".
+    ///
+    /// AI clubs never had this problem: the carousel and `refillAIStaffVacancies`
+    /// both run AFTER the poaching pass, so an AI hire always gets a full season
+    /// before the market can touch him. This flag gives the user's hires the same
+    /// grace, rather than a privilege.
+    /// Stored property with an inline default → safe lightweight migration.
+    var signedThisOffseason: Bool = false
+
     /// Annual salary in thousands (e.g. 2500 = $2.5M).
     var salary: Int
 

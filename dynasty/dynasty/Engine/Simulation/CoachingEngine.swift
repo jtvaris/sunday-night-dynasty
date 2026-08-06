@@ -614,6 +614,11 @@ enum CoachingEngine {
     ///   - assistantHC: The team's assistant head coach (for mentorship bonus).
     ///   - wonSuperBowl: Whether the team won the Super Bowl this season.
     static func developCoach(_ coach: Coach, teamWins: Int, headCoach: Coach? = nil, assistantHC: Coach? = nil, wonSuperBowl: Bool = false) {
+        // Task #133: this is the once-per-offseason pass over EVERY coach in the
+        // league (attached and unattached alike), and it runs after the poaching
+        // pass — so it is where a new hire's one-offseason grace expires. From
+        // the next offseason on he is an ordinary employee the market can chase.
+        coach.signedThisOffseason = false
         CoachDevelopmentEngine.applySeasonalDevelopment(
             coach: coach,
             teamWins: teamWins,
@@ -1619,8 +1624,17 @@ enum CoachingEngine {
         // one fifth with nowhere to be re-hired: `CoachRole.hiringFamilies` keeps
         // medical seats medical, so a poached physio could only ever be replaced
         // by an invented one.
+        // Task #133: a man cannot be hired away from a job he has not started.
+        // The user fills his staff DURING the coaching-changes phase and this
+        // pass runs on the advance OUT of it, so without the `signedThisOffseason`
+        // clause his brand-new position coaches were on the market the same
+        // evening they signed — two of fifteen, on average, on a fresh save.
+        // The flag is cleared by `developCoach` further down the same advance,
+        // so the grace is exactly one offseason and every AI hire (which lands
+        // after this pass anyway) is unaffected.
         let candidates = coaches.filter {
             $0.role != .headCoach && $0.role != .assistantHeadCoach && $0.role.family != .medical
+                && !$0.signedThisOffseason
         }
 
         // Win bonus: teams on winning records attract more HC searches

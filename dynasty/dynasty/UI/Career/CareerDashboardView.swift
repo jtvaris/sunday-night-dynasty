@@ -2127,12 +2127,12 @@ struct CareerDashboardView: View {
                     }
 
                     // Fix #61: Prominent filled/total staff display (coaches + scouts)
-                    let totalCoachSlots = allRoles.count
                     // #106: read the scouting department off the enum — it grew
                     // two extra slots (chief + 5 regional + 2 extra) and the
                     // hardcoded 6 rendered a filled count above the total.
-                    let totalScoutSlots = ScoutRole.allCases.count
-                    let totalSlots = totalCoachSlots + totalScoutSlots
+                    // #133: both halves now come from `StaffSlots`, the same seat
+                    // list the staff screen counts its vacancies against.
+                    let totalSlots = StaffSlots.totalSlots(for: career.role)
                     let filledSlots = coachCount + scoutCount
                     let isFullyStaffed = filledSlots >= totalSlots
                     HStack(spacing: 6) {
@@ -3540,8 +3540,13 @@ struct CareerDashboardView: View {
                 return "#\(idx + 1)"
             }
         }
-        // Fallback to simple wins sort when records aren't available yet
-        let sorted = divisionTeams.sorted { $0.wins > $1.wins }
+        // Fallback to simple wins sort when records aren't available yet.
+        // #134: the id tiebreaker matters most exactly here — before Week 1 every
+        // team has 0 wins, and without it this sort was an unordered shuffle that
+        // moved the badge on every render.
+        let sorted = divisionTeams.sorted {
+            $0.wins != $1.wins ? $0.wins > $1.wins : $0.id.uuidString < $1.id.uuidString
+        }
         if let idx = sorted.firstIndex(where: { $0.id == myTeam.id }) {
             return "#\(idx + 1)"
         }
@@ -3613,7 +3618,10 @@ struct CareerDashboardView: View {
         )
         let coaches = (try? modelContext.fetch(coachDescriptor)) ?? []
         allCoaches = coaches
-        coachCount = coaches.count
+        // #133: SEATS filled, not rows fetched — counted against the same
+        // `StaffSlots` list the tile's denominator comes from, so the two can
+        // never disagree about what a "staff" is.
+        coachCount = StaffSlots.filledCoachSlots(coaches: coaches, careerRole: career.role)
         headCoach = coaches.first(where: { $0.role == .headCoach })
 
         // Coaching budget (#147) — the coaching pot only, counted exactly the
@@ -3631,7 +3639,7 @@ struct CareerDashboardView: View {
             predicate: #Predicate { $0.careerID == cid && $0.teamID == teamID }
         )
         let fetchedScouts = (try? modelContext.fetch(scoutDescriptor)) ?? []
-        scoutCount = fetchedScouts.count
+        scoutCount = StaffSlots.filledScoutSlots(scouts: fetchedScouts)
         // Handed to `DraftPrepProgress` by the Path to the Draft hero card;
         // re-assigned here so popping back from the scouting hub (which runs
         // `refreshStaffTile` via `.onAppear`) re-evaluates the card.
@@ -3929,12 +3937,7 @@ struct CareerDashboardView: View {
         career.role == .gmAndHeadCoach
     }
 
-    private var allRoles: [CoachRole] {
-        if isGMAndHC {
-            return CoachRole.allCases.filter { $0 != .headCoach }
-        }
-        return CoachRole.allCases
-    }
+    private var allRoles: [CoachRole] { StaffSlots.coachRoles(for: career.role) }
 
     // MARK: - Phase-Aware Hero Card
 
@@ -4631,12 +4634,7 @@ private struct CoachingStaffReviewSheet: View {
         career.role == .gmAndHeadCoach
     }
 
-    private var allRoles: [CoachRole] {
-        if isGMAndHC {
-            return CoachRole.allCases.filter { $0 != .headCoach }
-        }
-        return CoachRole.allCases
-    }
+    private var allRoles: [CoachRole] { StaffSlots.coachRoles(for: career.role) }
 
     private var filledRoles: Set<CoachRole> {
         Set(coaches.map { $0.role })
@@ -4747,12 +4745,16 @@ private struct CoachingStaffReviewSheet: View {
                 Image(systemName: "person.2.fill")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Color.accentGold)
-                Text("STAFF")
+                // #133: labelled for the population it counts. Bare "STAFF"
+                // here read as a contradiction of the dashboard tile's
+                // "23 / 23 Staff" — that one includes the scouting department,
+                // this list is the coaching seats it enumerates below.
+                Text("COACHING STAFF")
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(Color.accentGold)
                     .tracking(0.5)
                 Spacer()
-                Text("\(coaches.count)/\(allRoles.count) filled")
+                Text("\(StaffSlots.filledCoachSlots(coaches: coaches, careerRole: career.role))/\(allRoles.count) filled")
                     .font(.system(size: 11, weight: .semibold).monospacedDigit())
                     .foregroundStyle(Color.textSecondary)
             }

@@ -71,7 +71,14 @@ enum StandingsCalculator {
             }
         }
 
-        return Array(records.values)
+        // Task #134: emitted in the caller's team order, NOT `records.values`.
+        // Dictionary iteration order depends on Swift's per-process hash seed, so
+        // the old `Array(records.values)` handed `divisionStandings` a differently
+        // shuffled array on every launch. That is invisible once teams have
+        // records — but before Week 1 every comparison in `nflTiebreaker` is a tie,
+        // `sorted(by:)` is not stable, and the dashboard's division rank flickered
+        // #3 → #2 → #3 across a phase advance and a relaunch at 0-0.
+        return teams.compactMap { records[$0.id] }
     }
 
     /// Returns the teams in a given division sorted by NFL tiebreaker rules.
@@ -174,6 +181,15 @@ enum StandingsCalculator {
     ///   2. Division win percentage
     ///   3. Conference win percentage
     ///   4. Point differential
+    ///   5. Team id — the coin toss, frozen (task #134)
+    ///
+    /// The last step is not a sporting rule, it is a determinism rule. The real
+    /// NFL settles a total tie with a coin toss; this game re-sorted the array on
+    /// every screen load, and `sorted(by:)` gives no stability guarantee when the
+    /// comparator returns false both ways — so a 0-0 preseason division came back
+    /// in a different order each time and the dashboard's rank badge flickered.
+    /// Falling through to the (stable, persisted) team id makes the toss happen
+    /// once per league instead of once per render.
     private static func nflTiebreaker(_ lhs: StandingsRecord, _ rhs: StandingsRecord) -> Bool {
         if lhs.winPercentage != rhs.winPercentage {
             return lhs.winPercentage > rhs.winPercentage
@@ -184,6 +200,9 @@ enum StandingsCalculator {
         if lhs.conferenceWinPercentage != rhs.conferenceWinPercentage {
             return lhs.conferenceWinPercentage > rhs.conferenceWinPercentage
         }
-        return lhs.pointDifferential > rhs.pointDifferential
+        if lhs.pointDifferential != rhs.pointDifferential {
+            return lhs.pointDifferential > rhs.pointDifferential
+        }
+        return lhs.teamID.uuidString < rhs.teamID.uuidString
     }
 }
