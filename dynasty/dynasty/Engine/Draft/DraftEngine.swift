@@ -119,6 +119,37 @@ enum DraftEngine {
     /// model and for the list of things deliberately left un-fogged (the user's
     /// picks, every trade valuation, the public `draftProjection`).
     ///
+    /// ## Why the score is a SUM and not a product (task #155)
+    ///
+    /// This used to read `perceivedOverall * needMultiplier`, where the
+    /// multiplier is `teamNeedComponents`' `multiplier × weight` — evidence
+    /// times *league positional value*, the latter running 0.3 (K/P) to 1.0
+    /// (QB/DE/CB/WR/LT). Multiplying a 40-99 rating by 0.3-1.0 does not tilt a
+    /// board, it replaces it: two men the media had within a slot of each other
+    /// came out 40 points apart if one played end and the other centre. The
+    /// measured consequence, from the `perception` scenario's public-board
+    /// diagnostic, was a round 1 that was **93 % premium-weight positions**
+    /// (DE 30 %, QB 24 %, LT 13 %, WR 10 %, CB 8 %) with *zero* interior
+    /// linemen, tackles, safeties or backs, and AI picks sitting a mean **61
+    /// slots** off the public board in round 1 — every club reaching, every
+    /// year, in the same direction.
+    ///
+    /// Positional value is real, and `DraftIntel.mediaConsensusOrder` leaves it
+    /// out of the public board *on purpose* ("positional value is baked into the
+    /// class blueprint"). So it belongs here — as an ADDITIVE tilt in rating
+    /// points, the currency a war room actually argues in ("we'd take the end a
+    /// round early"), where its size is legible and bounded. Every term below is
+    /// in OVR points for the same reason.
+    ///
+    /// ## The consensus anchor was inert (task #155)
+    ///
+    /// The old "consensus value" term read `(100 - draftProjection) * 0.05`.
+    /// `draftProjection` is a ROUND, 1...8 — never a pick number — so the bonus
+    /// was 4.60...4.95 for the entire class: a constant, added to every score,
+    /// cancelling out of every comparison. The AI board was anchored to nothing
+    /// public at all. It now reads the media's published opinion at the
+    /// resolution the media actually has it (`consensusSlot` below).
+    ///
     /// - Parameters:
     ///   - team: The team making the pick.
     ///   - availableProspects: Prospects still on the board.
@@ -137,10 +168,65 @@ enum DraftEngine {
             fatalError("aiMakePick called with no available prospects")
         }
 
-        let needs = evaluateTeamNeeds(roster: teamRoster)
+        // EVIDENCE and OPINION kept apart (see `teamNeedComponents`): the
+        // multiplier is a fact about this roster, the weight is the league-wide
+        // positional-value ranking every club shares. They are priced
+        // separately below because they are not the same kind of claim.
+        let needs = teamNeedComponents(roster: teamRoster)
         // One lens per pick, not per prospect — the archetype draw is the same
         // for all 300 names on the board.
         let lens = perceptionEnabled ? AIDraftPerception.lens(forTeam: team.id) : nil
+
+        // --- Scoring weights, all in OVR points --------------------------------
+        // They live here rather than at file scope because `sync_sources.sh`
+        // slices this function into the balance harness by name; a `static let`
+        // outside it would not come across and the `perception` scenario — the
+        // instrument that measured every number below — would not compile.
+        //
+        //   deficitPoints        a genuine hole is worth up to ~+3.8 (a club with
+        //                        nobody at the position at all), a one-body
+        //                        shortfall +0.75 ≈ eight slots of board. Clubs
+        //                        reach for needs; they do not reach a round.
+        //   positionalValue*     the league premium, centred on the modal 0.8
+        //                        weight: +1.6 for QB/DE/CB/WR/LT, 0 for the
+        //                        second tier, -1.6 for backs and interior line.
+        //   specialistDiscount   kickers and punters are not competing with an
+        //                        end for the same roster spot. -8.0 on top of
+        //                        their -4.0 tilt puts them past pick 130.
+        //   quarterbackPremium   on top of the need bonus, for a club that
+        //                        actually has a quarterback problem.
+        //   consensusPull*       the public anchor: see `consensusSlot`.
+        let potentialWeight = 0.15
+        let deficitPoints = 5.0
+        let positionalValuePivot = 0.8
+        let positionalValuePoints = 8.0
+        let specialistWeightCeiling = 0.35
+        let specialistDiscount = 8.0
+        let quarterbackPremium = 2.0
+        let consensusPullPoints = 12.0
+        let consensusDecayPicks = 64.0
+        // Picks in a full round — `DraftIntel.picksPerRound`, restated locally
+        // for the same slice reason as the weights above.
+        let picksPerRound = 32.0
+
+        /// Where the MEDIA has this man, in pick numbers — the same published
+        /// opinion `DraftIntel.consensusWindow` reads, and nothing else.
+        ///
+        /// A mock slot is a POINT opinion ("he goes 14th") and is used as-is. A
+        /// projected round is a BAND opinion, and inside that band the media has
+        /// no further view — so every man in a band gets his band's centre and
+        /// the club's own board decides the order within it. That is the correct
+        /// division of labour: the anchor supplies what is public, scouting
+        /// supplies what is not.
+        ///
+        /// Duplicated in shape, not in code, from `DraftIntel.consensusWindow`:
+        /// `DraftIntel` is a UI-facing type that this function cannot reach from
+        /// inside the balance harness's engine-only slice.
+        func consensusSlot(_ prospect: CollegeProspect) -> Double {
+            if let mock = prospect.mockDraftPickNumber, mock > 0 { return Double(mock) }
+            let round = Double(max(1, min(9, prospect.draftProjection ?? 9)))
+            return (round - 1.0) * picksPerRound + picksPerRound / 2.0
+        }
 
         // Score each prospect: combination of PERCEIVED talent and positional need.
         let scored = availableProspects.map { prospect -> (CollegeProspect, Double) in
@@ -161,26 +247,40 @@ enum DraftEngine {
                 perceivedPotential = Double(prospect.truePotential)
             }
 
-            var score = perceivedOverall
+            // Talent, as this club reads it. Prospects with higher ceilings are
+            // more attractive, at the long-standing 0.15 weight.
+            var score = perceivedOverall + perceivedPotential * potentialWeight
 
-            // Boost score for positions the team needs.
-            let needMultiplier = needs[prospect.position] ?? 1.0
-            score *= needMultiplier
+            let need = needs[prospect.position] ?? (multiplier: 1.0, weight: positionalValuePivot)
 
-            // QB premium: if team needs a QB, boost significantly.
-            if prospect.position == .QB && (needs[.QB] ?? 1.0) > 1.2 {
-                score *= 1.15
+            // EVIDENCE — a body short of the ideal count, or a group grading
+            // under 70, or nobody there at all. Exactly 0 when the club has no
+            // problem at the position, which is the common case on a full
+            // roster and is why this is additive: a club with no hole should
+            // draft the best man, not a discounted version of him.
+            score += deficitPoints * max(0.0, need.multiplier - 1.0)
+
+            // OPINION — the league-wide positional premium, the same for all 32
+            // clubs. Bounded and legible: at most ±1.6 rating points, roughly
+            // half a round of board, instead of the 0.3-1.0 factor that used to
+            // rewrite the board outright.
+            score += (need.weight - positionalValuePivot) * positionalValuePoints
+            if need.weight <= specialistWeightCeiling { score -= specialistDiscount }
+
+            // QB premium: a club with an actual quarterback problem will take
+            // one ahead of a better player at another position. Read off the
+            // EVIDENCE half — the old test used `multiplier × weight > 1.2`,
+            // which for a weight-1.0 position is the same number, so the gate is
+            // unchanged in behaviour and now says what it means.
+            if prospect.position == .QB, (needs[.QB]?.multiplier ?? 1.0) > 1.2 {
+                score += quarterbackPremium
             }
 
-            // Factor in potential (prospects with higher ceilings are more attractive).
-            score += perceivedPotential * 0.15
-
-            // Slight bonus for prospects projected to go in this range (consensus value).
-            if let projection = prospect.draftProjection, projection > 0 {
-                // Lower projection number = better prospect. Give a small bump.
-                let projectionBonus = max(0.0, Double(100 - projection) * 0.05)
-                score += projectionBonus
-            }
+            // The PUBLIC anchor. Decays over ~two rounds, so it dominates at the
+            // top of the board — where the media has a sharp opinion and the
+            // league is watching — and fades to noise by day three, where need
+            // and positional value are all that is left to go on.
+            score += consensusPullPoints * exp(-consensusSlot(prospect) / consensusDecayPicks)
 
             return (prospect, score)
         }

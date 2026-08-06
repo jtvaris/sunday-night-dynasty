@@ -54,6 +54,32 @@ private func pxTrueValue(_ p: CollegeProspect) -> Double {
     Double(p.trueOverall) + 0.15 * Double(p.truePotential)
 }
 
+/// The PUBLIC (media) board's ordering — a literal transcription of
+/// `DraftIntel.mediaConsensusOrder`, which the harness cannot import (DraftIntel
+/// is not on the `sync_sources.sh` keep-list and pulls in the whole scouting/UI
+/// graph). Every field read here is published information: the latest mock's
+/// slot, the projected round band, the combine invite, college production.
+///
+/// This is the yardstick task #155 is about. `pxTrueValue` above measures the AI
+/// against OMNISCIENCE, which no fan and no beat writer has; this measures it
+/// against the board the room, the user and the media all actually see. An AI
+/// club may legitimately disagree with the consensus — that is what scouting is
+/// for — but a whole league disagreeing by 100+ slots on every round-1 pick is
+/// not disagreement, it is an anchor that is not attached to anything.
+private func pxMediaConsensusOrder(_ lhs: CollegeProspect, _ rhs: CollegeProspect) -> Bool {
+    let lhsMock = lhs.mockDraftPickNumber ?? Int.max
+    let rhsMock = rhs.mockDraftPickNumber ?? Int.max
+    if lhsMock != rhsMock { return lhsMock < rhsMock }
+    let lhsRound = lhs.draftProjection ?? 9
+    let rhsRound = rhs.draftProjection ?? 9
+    if lhsRound != rhsRound { return lhsRound < rhsRound }
+    if lhs.combineInvite != rhs.combineInvite { return lhs.combineInvite }
+    if lhs.collegeProductionScore != rhs.collegeProductionScore {
+        return lhs.collegeProductionScore > rhs.collegeProductionScore
+    }
+    return lhs.id.uuidString < rhs.id.uuidString
+}
+
 /// Deterministic UUIDs so the 32 personas are the same league every run.
 private func pxUUID(_ rng: inout SeededLeagueRandom) -> UUID {
     var bytes = [UInt8](repeating: 0, count: 16)
@@ -110,6 +136,16 @@ private struct PXDraftResult {
     var round1MeanRank = 0.0
     /// Mean true ceiling of the 32 men taken in round 1.
     var round1MeanPotential = 0.0
+    /// Task #155: |pickNumber − PUBLIC board rank|, collected per round for
+    /// rounds 1-3 (index 0 = round 1). The public board is the only board a
+    /// draft-day card, a fan reaction or a pick grade can be argued against.
+    var publicGapByRound: [[Double]] = [[], [], []]
+    /// Signed (pick − publicRank) over rounds 1-3 pooled: negative = the AI
+    /// takes men the media has LATER than the slot (reaching), positive = it
+    /// lets consensus men slide.
+    var publicSignedR13: [Double] = []
+    /// Position of every round-1 pick, to expose the premium-position skew.
+    var round1Positions: [Position] = []
 }
 
 private func pxRunDraft(
@@ -124,6 +160,10 @@ private func pxRunDraft(
     var trueRank: [UUID: Int] = [:]
     for (i, p) in ranked.enumerated() { trueRank[p.id] = i + 1 }
     let bestID = ranked.first?.id
+
+    // PUBLIC board rank, 1-based, over the same declared class (#155).
+    var publicRank: [UUID: Int] = [:]
+    for (i, p) in board.sorted(by: pxMediaConsensusOrder).enumerated() { publicRank[p.id] = i + 1 }
 
     var available = board
     var rosters = baseRosters
@@ -153,8 +193,16 @@ private func pxRunDraft(
             round1Gaps.append(Double(abs(rank - pickNumber)))
             round1Ranks.append(Double(rank))
             round1Pot.append(Double(chosen.truePotential))
+            result.round1Positions.append(chosen.position)
         }
         if pickNumber - rank >= cfg.stealGap { result.steals += 1 }
+
+        // #155: the same pick measured against the PUBLIC board.
+        if pickNumber <= 96, let pub = publicRank[chosen.id] {
+            let round = (pickNumber - 1) / 32
+            result.publicGapByRound[round].append(Double(abs(pickNumber - pub)))
+            result.publicSignedR13.append(Double(pickNumber - pub))
+        }
 
         let player = pxPlayer(from: chosen, teamID: club.id)
         if pickNumber <= 32 { round1OVR.append(Double(player.overall)) }
@@ -281,6 +329,48 @@ func scenarioPerception(_ flags: [String: String]) {
     print("--- DRAFT OUTCOMES (both arms, identical boards + rosters) --------------------")
     summarize(armOff, label: "fog off")
     summarize(armOn, label: "fog ON")
+
+    // --- #155: AI board vs the PUBLIC board ----------------------------------
+    func pctl(_ xs: [Double], _ q: Double) -> Double {
+        guard !xs.isEmpty else { return 0 }
+        let s = xs.sorted()
+        let i = min(s.count - 1, max(0, Int((Double(s.count - 1) * q).rounded())))
+        return s[i]
+    }
+    func publicReport(_ arm: [PXDraftResult], label: String) {
+        var pooled: [Double] = []
+        var perRound: [[Double]] = [[], [], []]
+        var signed: [Double] = []
+        for d in arm {
+            for r in 0..<3 { perRound[r] += d.publicGapByRound[r] }
+            pooled += d.publicGapByRound.flatMap { $0 }
+            signed += d.publicSignedR13
+        }
+        let rounds = (0..<3).map { r -> String in
+            String(format: "R%d %.1f", r + 1, mean(perRound[r]))
+        }.joined(separator: " | ")
+        print(String(format: "  %-8@ mean |pick-publicRank| %.1f  (%@)   median %.0f  p90 %.0f  max %.0f",
+                     label, mean(pooled), rounds,
+                     pctl(pooled, 0.5), pctl(pooled, 0.90), pooled.max() ?? 0))
+        let ahead = signed.filter { $0 < -20 }.count
+        print(String(format: "           signed mean %+.1f | taken >20 slots AHEAD of the media on %.0f%% of R1-3 picks (n=%d)",
+                     mean(signed),
+                     signed.isEmpty ? 0 : Double(ahead) / Double(signed.count) * 100,
+                     signed.count))
+        // Positional census of round 1 — the premium-position skew, if any.
+        var posCount: [String: Int] = [:]
+        var total = 0
+        for d in arm { for p in d.round1Positions { posCount[p.rawValue, default: 0] += 1; total += 1 } }
+        let top = posCount.sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }.prefix(6)
+        let census = top.map { String(format: "%@ %.0f%%", $0.key, Double($0.value) / Double(max(1, total)) * 100) }
+            .joined(separator: " ")
+        print("           R1 positions: \(census)")
+    }
+
+    print("")
+    print("--- vs THE PUBLIC BOARD (task #155) ------------------------------------------")
+    publicReport(armOff, label: "fog off")
+    publicReport(armOn, label: "fog ON")
 
     print("")
     print("--- READ ERROR ---------------------------------------------------------------")

@@ -93,6 +93,35 @@ enum PlayerDevelopmentEngine {
     ///
     /// The player's `motivationState` is read off the row — it is computed once
     /// per offseason, before this runs (see `assignMotivationState`).
+    ///
+    /// The man who actually coaches this position, resolved so the answer does
+    /// not depend on the order the staff happens to arrive in (task #97).
+    ///
+    /// `CoachingEngine.positionRoleMatch` answers `true` for the STRENGTH COACH
+    /// at every position — he lifts everybody, which is correct for the roles he
+    /// is asked about elsewhere — so a plain `coaches.first { match }` returns
+    /// whichever of {the specialist, the strength coach} sits earlier in the
+    /// array. `tools/balance-harness` builds its staffs position-coaches-first
+    /// with a comment explaining that this is load-bearing; the game builds
+    /// `coachesByTeam` by grouping a SwiftData fetch, whose order is arbitrary,
+    /// so for a club whose strength coach happened to sort first EVERY player's
+    /// "position coach" was the strength coach — who was then counted a second
+    /// time through `strengthBonus`, while the specialist the club actually
+    /// hired went unread by `hierarchicalDevelopmentBonus`, by the
+    /// `realPlayingTimeShare` floor and by `assessedPotentialLabel`.
+    ///
+    /// The specialist wins when there is one; the strength coach remains the
+    /// fallback for the positions no specialist role covers (K, P), which is the
+    /// behaviour the harness already had and is therefore bit-identical there.
+    static func resolvePositionCoach(coaches: [Coach], position: Position) -> Coach? {
+        coaches.first { coach in
+            coach.role != .strengthCoach
+                && CoachingEngine.positionRoleMatch(coachRole: coach.role, playerPosition: position)
+        } ?? coaches.first { coach in
+            CoachingEngine.positionRoleMatch(coachRole: coach.role, playerPosition: position)
+        }
+    }
+
     static func developPlayer(
         _ player: Player,
         coaches: [Coach],
@@ -125,9 +154,7 @@ enum PlayerDevelopmentEngine {
             (player.position.side == .defense && coach.role == .defensiveCoordinator) ||
             (player.position.side == .specialTeams && coach.role == .specialTeamsCoordinator)
         }
-        let positionCoach = coaches.first { coach in
-            CoachingEngine.positionRoleMatch(coachRole: coach.role, playerPosition: player.position)
-        }
+        let positionCoach = resolvePositionCoach(coaches: coaches, position: player.position)
 
         let coachBonus = CoachingEngine.hierarchicalDevelopmentBonus(
             headCoach: hc,
@@ -147,11 +174,26 @@ enum PlayerDevelopmentEngine {
         // below.
         let motivation = player.motivationState
         let clampedHealth = min(1.0, max(0.0, health))
-        let cycleBoost = max(1.0, realizationBoost)
         // The late-bloomer boost lifts the WHOLE cycle, not just the catch-up
         // term. §2.5 targets the year 3-5 breakout, and the catch-up table is
         // zero from the fifth camp on — applying the boost only there would
         // leave the mechanic inert for exactly the players it exists for.
+        //
+        // Task #97: this used to be `max(1.0, realizationBoost)`, which was
+        // right while the argument carried the late-bloomer boost alone (that
+        // one is > 1 by definition). `processOffseason` then started folding
+        // the FACILITY factor into the same argument — a deliberately two-sided
+        // 0.92 / 1.00 / 1.08 lever that it clamps into exactly that range at
+        // the boundary — and the floor silently ate the whole penalty half. The
+        // factor is applied twice per cycle (here and on the catch-up
+        // realization below), so a top building was worth 1.08² = +17 % while a
+        // neglected one paid nothing instead of 0.92² = −15 %. `FacilityEngine`
+        // has AI clubs upgrade a tier a year and only cut when the upkeep bites,
+        // so the league ratcheted toward the premium and could never give it
+        // back: a one-way, league-wide development accelerator the balance
+        // harness does not model at all (it passes no facility, i.e. 1.0, and is
+        // therefore bit-identical either way).
+        let cycleBoost = realizationBoost
         totalPoints *= motivation.developmentMultiplier * clampedHealth * cycleBoost
 
         // --- Strength coach bonus ---
@@ -1514,8 +1556,30 @@ enum PlayerDevelopmentEngine {
         }
 
         // Morale contribution: high morale + good fit boosts ceiling.
+        //
+        // Task #97 — the positive rung has to sit ABOVE the healthy band, not
+        // inside it. `MultiSeasonSmokeTest.printMoraleDiagnostics` states the
+        // league's own contract: a healthy morale distribution is mean 60-75.
+        // With the positive rung at 80 the entire healthy range graded
+        // neutral-or-better, so in the shipped league — which runs mean 72.5,
+        // p25 70, p05 **60** — roughly a fifth of the roster took +1 ceiling
+        // every single camp and essentially nobody took the penalty, because
+        // the app's morale distribution has no lower tail to take it with.
+        // Measured: `SMOKE: diag devsource` books
+        // `pot/player: offseasonDevelop = +0.34…+0.42` against the `career`
+        // rig's `E[dPot] +0.285`, and the whole of that excess is this term —
+        // the rig's scheme-fit half alone accounts for +0.284, i.e. its morale
+        // half nets ~0 because its morale really does span 41…97.
+        //
+        // A ceiling that only ever ratchets up is the mechanism behind the 80+
+        // share climbing past its 12-19 band while `leaguePot` climbs with it.
+        // At 85 the rung means what it says — a genuinely exceptional room,
+        // clear of the healthy band's own 75 ceiling — and the term becomes
+        // mean-reverting instead of one-way. The negative rungs are deliberately
+        // left where they are: the defect is that the PAYOUT fired on an
+        // ordinary locker room, not that the penalties were mis-placed.
         let moraleModifier: Int
-        if moraleAverage >= 80 {
+        if moraleAverage >= 85 {
             moraleModifier = 1
         } else if moraleAverage >= 60 {
             moraleModifier = 0
@@ -1780,9 +1844,7 @@ enum PlayerDevelopmentEngine {
         for player in players {
             let playerInputs = inputs[player.id] ?? OffseasonInputs()
             let role = roles[player.id] ?? .depth
-            let positionCoach = coaches.first { coach in
-                CoachingEngine.positionRoleMatch(coachRole: coach.role, playerPosition: player.position)
-            }
+            let positionCoach = resolvePositionCoach(coaches: coaches, position: player.position)
             let overallBefore = player.overall
 
             // 1. Where his head is at — scored off the season just finished.

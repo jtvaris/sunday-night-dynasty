@@ -74,21 +74,60 @@ enum PickGradeCalculator {
     }
 
     /// Letter mapping per Design §5. Order matters — checked top-down.
+    ///
+    /// ## A reach is a BOARD fact, not a need fact (task #155)
+    ///
+    /// The `C Reach` row used to read `valueDelta <= -6 || needScore <= 0.3`.
+    /// The second half of that `||` graded a pick on need ALONE, and
+    /// `DraftDayCoordinator.computePickGrade` feeds it
+    /// `DraftIntel.teamNeedScores(roster:)[position] ?? 0.2` — a table with only
+    /// six rows, whose sixth entry is exactly `0.3`. So every pick at a position
+    /// outside the club's top FIVE needs arrived with `needScore <= 0.3` and was
+    /// stamped REACH before the public board was consulted at all: a man taken
+    /// dead on his mock slot, a man who slid two rounds, a man nobody in the
+    /// building disagreed about.
+    ///
+    /// It is worse than a sixth-place cutoff sounds, because `teamNeedScores`
+    /// ranks on `topTeamNeeds`, which on a full 53-man roster collapses to the
+    /// positional-value quintet {QB, DE, CB, WR, LT} for *every club in the
+    /// league* (see `DraftEngine.teamNeedComponents`). Fourteen of the nineteen
+    /// positions could therefore never be graded better than REACH by anybody,
+    /// in any year — which is precisely the systematic REACH the AI draft cards
+    /// were reported to show.
+    ///
+    /// A reach means one thing: **the club took him ahead of where the market
+    /// had him.** That is `valueDelta`, and only `valueDelta` can open the door.
+    /// Need still speaks — it decides how far ahead of the board counts as too
+    /// far, and it is 25 % of `compositeScore` — but it no longer convicts on
+    /// its own.
     private static func letterGrade(from inputs: Inputs) -> PickGrade {
-        // A+ Steal
+        // A+ Steal — he lasted past the media's window and fills a hole.
         if inputs.valueDelta >= 6 && inputs.needScore >= 0.6 {
+            return .stealAPlus
+        }
+        // A+ Steal — or the board simply fell to him. At a full round past the
+        // window the value is the story whatever the roster looked like; this is
+        // the "best value of the round" card, which the need-gated row above
+        // could never award to a club that was already set at the position.
+        if inputs.valueDelta >= 12 {
             return .stealAPlus
         }
         // D Big Reach (check before C so it wins when both fire)
         if inputs.valueDelta <= -10 && inputs.needScore <= 0.3 {
             return .bigReach
         }
-        // C Reach
-        if inputs.valueDelta <= -6 || inputs.needScore <= 0.3 {
+        // C Reach — a long jump ahead of the market on its own, or a short one
+        // the roster gives no reason for.
+        if inputs.valueDelta <= -6 || (inputs.valueDelta <= -2 && inputs.needScore <= 0.3) {
             return .reach
         }
         // A Smart Pick
         if inputs.valueDelta >= 0 && inputs.needScore >= 0.5 && inputs.publicOVR >= 75 {
+            return .smartA
+        }
+        // A Smart Pick — good value on a good player, even where the club was
+        // not shopping. Taking the better man is not a mistake.
+        if inputs.valueDelta >= 4 && inputs.publicOVR >= 75 {
             return .smartA
         }
         // B Solid
