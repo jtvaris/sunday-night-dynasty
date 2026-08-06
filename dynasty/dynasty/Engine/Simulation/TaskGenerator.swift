@@ -660,6 +660,18 @@ enum TaskGenerator {
 
     private static func reviewRosterTasks() -> [GameTask] {
         [
+            // Money first (#127): every decision below — which groups to grade
+            // harshly, who to tag, who to let walk — is made AGAINST next
+            // year's cap, so the outlook is the first thing a GM reads, not an
+            // optional footnote after the tag is already applied.
+            GameTask(
+                phase: .reviewRoster,
+                title: "Check Salary Cap Outlook",
+                description: "Start here: next league year's cap, your projected space, and what free agency will cost. Every call below is made against this number.",
+                icon: "chart.pie.fill",
+                destination: .capOverview,
+                isRequired: false
+            ),
             // The two events that fired on the way INTO this phase, and which the
             // task list never mentioned: underclassmen declared for the draft
             // (the class the user has been scouting just changed shape) and the
@@ -697,14 +709,6 @@ enum TaskGenerator {
                 icon: "tag.fill",
                 destination: .franchiseTag,
                 isRequired: true
-            ),
-            GameTask(
-                phase: .reviewRoster,
-                title: "Check Salary Cap Outlook",
-                description: "Review cap space projections and budget for upcoming free agency.",
-                icon: "chart.pie.fill",
-                destination: .capOverview,
-                isRequired: false
             ),
             GameTask(
                 phase: .reviewRoster,
