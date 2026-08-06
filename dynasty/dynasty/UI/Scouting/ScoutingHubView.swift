@@ -744,30 +744,45 @@ struct ScoutingHubView: View {
                 header: { hubHeader() }
             )
         case .film:
-            // The film-study stage screen IS the board, opened on the work-up
-            // columns with the evaluate action promoted into the row. One
-            // surface, one board order, one set of marks — a second list over
-            // the same men is the mistake this overhaul deleted.
-            BigBoardView(
+            // The film-study stage screen is the BATCH ORDER surface (#119):
+            // pick the men, read what the order costs, run it once, read the
+            // report — the same shape the interview room has always had.
+            //
+            // It used to be the board alone, opened on the work-up columns with
+            // a priced button welded onto every row. That is the right economy
+            // in the wrong shape: ordering tape on fifteen men was fifteen taps
+            // on fifteen rows of a 350-row table, each silently spending a slot
+            // and a fee, with no running total and no report at the end.
+            //
+            // The board is NOT deleted — `DraftPrepStep.filmStudy.actionLabel`
+            // promises ordering "on your board", and the work-up columns are the
+            // read that says which men still need tape — it is the tab's second
+            // surface, one tap away behind the header's Order / Board picker.
+            FilmStudySelectionView(
                 career: career,
-                prospects: prospects,
-                teamRoster: teamPlayers,
-                scoutsSentToCombine: scoutsSentToCombine,
-                onSwitchTab: { selectedTab = $0 },
-                scoutCount: scouts.count,
                 positionFilter: $positionFilter,
-                initialAttributeTab: .workup,
-                isFilmStudy: true,
-                // Shut only while the stage is LOCKED. `career.prepStep !=
-                // .filmStudy` was the shipped test and it is B3 exactly: the
-                // step is a floor, so a save that reached the pro days had the
-                // film screen bolted shut for the rest of the spring with a
-                // REQUIRED task pointing at it. `canAct` keeps every stage the
-                // club has reached workable and only refuses the ones ahead of
-                // its reach.
-                isStageClosed: !progress.canAct(.filmStudy),
-                header: { hubHeader() }
-            )
+                // The ONE gate every stage screen asks, of the same struct the
+                // process bar draws its `.open` puck from. Shut only while the
+                // stage is LOCKED: `career.prepStep != .filmStudy` was the
+                // shipped test and it is B3 exactly — the step is a floor, so a
+                // save that reached the pro days had the film screen bolted shut
+                // for the rest of the spring with a REQUIRED task pointing at it.
+                canAct: progress.canAct(.filmStudy)
+            ) {
+                BigBoardView(
+                    career: career,
+                    prospects: prospects,
+                    teamRoster: teamPlayers,
+                    scoutsSentToCombine: scoutsSentToCombine,
+                    onSwitchTab: { selectedTab = $0 },
+                    scoutCount: scouts.count,
+                    positionFilter: $positionFilter,
+                    initialAttributeTab: .workup,
+                    isFilmStudy: true,
+                    isStageClosed: !progress.canAct(.filmStudy),
+                    header: { hubHeader() }
+                )
+            }
         case .combine:
             CombineResultsView(
                 career: career,
