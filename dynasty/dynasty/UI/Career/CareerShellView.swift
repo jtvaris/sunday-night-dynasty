@@ -913,7 +913,6 @@ struct CareerShellView: View {
         /// Wave 2 UX: the 32-roster league browser (`LeagueRostersView`).
         case leagueRosters
         case depthChart, gamePlan, coachingStaff, hireCoach
-        case hireHC, hireOC, hireDC
         case prospectList, bigBoard, capOverview, freeAgency
         case contractTimeline, mentoring, trades, news
         case ownerMeeting, lockerRoom, inbox, rosterEvaluation
@@ -1018,12 +1017,6 @@ struct CareerShellView: View {
             .onDisappear {
                 refreshTaskCompletionStatus()
             }
-        case .hireHC:
-            hireCoachDestination(role: .headCoach, taskDestination: .hireHC)
-        case .hireOC:
-            hireCoachDestination(role: .offensiveCoordinator, taskDestination: .hireOC)
-        case .hireDC:
-            hireCoachDestination(role: .defensiveCoordinator, taskDestination: .hireDC)
         case .prospectList:
             ScoutingHubView(career: career)
             .onAppear {
@@ -1362,43 +1355,6 @@ struct CareerShellView: View {
             if week.opponentPct >= 70 { streak += 1 } else { break }
         }
         return streak
-    }
-
-    // MARK: - Hire Coach Destination Helper
-
-    /// Creates a HireCoachView destination for a specific coaching role.
-    @ViewBuilder
-    private func hireCoachDestination(role: CoachRole, taskDestination: TaskDestination) -> some View {
-        Group {
-            if let teamID = career.teamID {
-                let budget = team?.owner?.coachingBudget ?? 0
-                let coachDescriptor = FetchDescriptor<Coach>(predicate: #Predicate { $0.teamID == teamID })
-                let coaches = (try? modelContext.fetch(coachDescriptor)) ?? []
-                // R31: medical staff draw from their own pot, not the coaching budget.
-                let medicalRoles: Set<CoachRole> = [.teamDoctor, .physio, .headTrainer]
-                let usedBudget = coaches
-                    .filter { !medicalRoles.contains($0.role) }
-                    .reduce(0) { $0 + $1.salary }
-                HireCoachView(
-                    role: role,
-                    teamID: teamID,
-                    career: career,
-                    remainingBudget: budget - usedBudget,
-                    teamBudget: budget,
-                    teamWins: team?.wins ?? 8,
-                    teamReputation: career.reputation
-                )
-            } else {
-                Text("No team selected")
-            }
-        }
-        .onAppear {
-            markTaskVisited(for: taskDestination)
-            refreshTaskCompletionStatus()
-        }
-        .onDisappear {
-            refreshTaskCompletionStatus()
-        }
     }
 
     // MARK: - Task Navigation

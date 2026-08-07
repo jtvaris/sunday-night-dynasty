@@ -113,9 +113,6 @@ struct CareerDashboardView: View {
     /// Inbox filter for the messages panel
     @State private var inboxFilter: DashboardInboxFilter = .all
 
-    /// Pulsing animation state for advance button guidance
-    @State private var advancePulse = false
-
     @State private var allCoaches: [Coach] = []
     /// The club's scouting department. Loaded by `refreshStaffTile` (which
     /// already fetches it for the staff budget) and read by the Path to the
@@ -299,10 +296,6 @@ struct CareerDashboardView: View {
         let open = openOptionalTaskCount
         return open > 0 ? .optionalOpen(open) : .ready
     }
-
-    /// Advance owns the screen's single gold CTA only once this week's game is
-    /// resolved (coached or simmed).
-    private var advanceIsPrimaryCTA: Bool { canAdvance && !weeklyGameUnplayed }
 
     private var skipGameConfirmTitle: String {
         let opponent = unplayedGameOpponentAbbr.map { " vs \($0)" } ?? ""
@@ -798,213 +791,8 @@ struct CareerDashboardView: View {
         .frame(maxHeight: .infinity)
     }
 
-    // MARK: - Portrait Layout (stacked)
-
-    private var portraitLayout: some View {
-        ScrollView {
-            LazyVStack(spacing: 12) {
-                // Timeline+Tasks panel (full width, collapsible)
-                VStack(spacing: 0) {
-                    #if DEBUG
-                    debugSkipToFABanner
-                    #endif
-                    // Fix #64: Clear guidance when all tasks complete
-                    if canAdvance {
-                        advanceReadinessBanner
-                    }
-                    coachingBudgetBlockerBanner
-                    TimelineTasksPanel(
-                        career: career,
-                        tasks: $tasks,
-                        onTaskSelected: onTaskSelected,
-                        onAdvance: { performAdvance() },
-                        canAdvance: canAdvance,
-                        advanceIsPrimary: !weeklyGameUnplayed,
-                        advanceBlocker: advanceBlocker
-                    )
-                }
-                .frame(minWidth: 320, minHeight: 280, maxHeight: 460)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                // Gold glow only when Advance is genuinely the next step. With
-                // the weekly game unplayed the hero card owns the gold.
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .strokeBorder(advanceIsPrimaryCTA ? Color.accentGold : Color.surfaceBorder,
-                                      lineWidth: advanceIsPrimaryCTA ? 2 : 1)
-                )
-                .shadow(color: advanceIsPrimaryCTA ? Color.accentGold.opacity(advancePulse ? 0.4 : 0.1) : .clear,
-                        radius: advanceIsPrimaryCTA ? 8 : 0)
-                .padding(.horizontal, 16)
-                .onAppear {
-                    withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
-                        advancePulse = true
-                    }
-                }
-
-                // 2-column tile grid
-                centerTilesGrid
-                    .padding(.horizontal, 16)
-
-                // Messages section (full width)
-                messagesPanel
-                    .frame(minHeight: 280)
-                    .background(Color.backgroundSecondary)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .strokeBorder(Color.surfaceBorder, lineWidth: 1)
-                    )
-                    .padding(.horizontal, 16)
-
-                // Division Standings (moved to center column in portrait)
-                divisionStandingsSection
-                    .padding(12)
-                    .background(Color.backgroundSecondary)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .strokeBorder(Color.surfaceBorder, lineWidth: 1)
-                    )
-                    .padding(.horizontal, 16)
-
-                // Schedule only (standings already shown above)
-                rightPanelScheduleOnly
-                    .padding(12)
-                    .background(Color.backgroundSecondary)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .strokeBorder(Color.surfaceBorder, lineWidth: 1)
-                    )
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 16)
-            }
-            .padding(.top, 8)
-        }
-    }
-
     // MARK: - Bottom Bar (legacy, no longer used in main layout)
     // The TimelineTasksPanel now serves as the combined tasks + advance UI.
-
-    // MARK: - 1. Horizontal Timeline Strip
-
-    private var timelineNodes: [(label: String, month: String, phase: SeasonPhase?, weekNum: Int?)] {
-        var nodes: [(String, String, SeasonPhase?, Int?)] = [
-            (String(localized: "Coaching"), "Feb", .coachingChanges, nil),
-            (String(localized: "Review"), "Feb", .reviewRoster, nil),
-            (String(localized: "Combine"), "Mar", .combine, nil),
-            (String(localized: "Free Agency"), "Mar", .freeAgency, nil),
-            (String(localized: "Draft"), "Apr", .draft, nil),
-            (String(localized: "OTAs"), "May", .otas, nil),
-            (String(localized: "Camp"), "Jun", .trainingCamp, nil),
-            (String(localized: "Preseason"), "Aug", .preseason, nil),
-            (String(localized: "Cuts"), "Aug", .rosterCuts, nil),
-        ]
-        // Regular season weeks
-        let weekMonths = ["Sep","Sep","Sep","Sep","Oct","Oct","Oct","Oct","Nov","Nov","Nov","Nov","Dec","Dec","Dec","Dec","Jan","Jan"]
-        for w in 1...18 {
-            let month = w <= weekMonths.count ? weekMonths[w - 1] : "Jan"
-            nodes.append((String(localized: "Wk \(w)"), month, .regularSeason, w))
-        }
-        nodes.append((String(localized: "Playoffs"), "Jan", .playoffs, nil))
-        nodes.append((String(localized: "Super Bowl"), "Feb", .superBowl, nil))
-        return nodes
-    }
-
-    /// Index of the currently active node in the timeline.
-    private var currentNodeIndex: Int {
-        let phase = career.currentPhase
-        let week = career.currentWeek
-
-        // The week nodes are all tagged `.regularSeason`, so the deadline week —
-        // a real `.tradeDeadline` phase now — has to match them as one of its own
-        // or the strip would highlight node 0 (Pro Bowl) for a week.
-        let nodeMatchPhase: SeasonPhase = phase == .tradeDeadline ? .regularSeason : phase
-        for (i, node) in timelineNodes.enumerated() {
-            if let nodePhase = node.phase {
-                if nodePhase == nodeMatchPhase {
-                    if phase == .regularSeason || phase == .tradeDeadline {
-                        if let wk = node.weekNum, wk == week {
-                            return i
-                        }
-                    } else {
-                        return i
-                    }
-                }
-            }
-        }
-        return 0
-    }
-
-    private var timelineStrip: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 0) {
-                    ForEach(Array(timelineNodes.enumerated()), id: \.offset) { index, node in
-                        let isCurrent = index == currentNodeIndex
-                        let isPast = index < currentNodeIndex
-                        let isFuture = index > currentNodeIndex
-
-                        VStack(spacing: 2) {
-                            // Node indicator
-                            ZStack {
-                                if isCurrent {
-                                    Circle()
-                                        .fill(Color.accentGold)
-                                        .frame(width: 22, height: 22)
-                                    Text("NOW")
-                                        .font(.system(size: 6, weight: .black))
-                                        .foregroundStyle(Color.backgroundPrimary)
-                                } else if isPast {
-                                    Circle()
-                                        .fill(Color.backgroundTertiary)
-                                        .frame(width: 16, height: 16)
-                                    Image(systemName: "checkmark")
-                                        .font(.system(size: 8, weight: .bold))
-                                        .foregroundStyle(Color.textTertiary)
-                                } else {
-                                    Circle()
-                                        .strokeBorder(Color.surfaceBorder, lineWidth: 1.5)
-                                        .frame(width: 16, height: 16)
-                                }
-                            }
-                            .frame(height: 24)
-
-                            Text(node.label)
-                                .font(.system(size: 9, weight: isCurrent ? .heavy : .medium))
-                                .foregroundStyle(isCurrent ? Color.accentGold : (isPast ? Color.textTertiary : Color.textSecondary))
-                                .lineLimit(1)
-
-                            Text(node.month)
-                                .font(.system(size: 8, weight: .regular))
-                                .foregroundStyle(Color.textTertiary)
-                        }
-                        .frame(width: 52)
-                        .opacity(isFuture ? 0.6 : 1.0)
-                        .id(index)
-
-                        // Connecting line
-                        if index < timelineNodes.count - 1 {
-                            Rectangle()
-                                .fill(isPast ? Color.textTertiary.opacity(0.4) : Color.surfaceBorder)
-                                .frame(width: 12, height: 2)
-                                .offset(y: -12)
-                        }
-                    }
-                }
-                .padding(.horizontal, 16)
-            }
-            .frame(height: 60)
-            .background(Color.backgroundSecondary)
-            .onAppear {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    withAnimation(.easeInOut(duration: 0.3)) {
-                        proxy.scrollTo(currentNodeIndex, anchor: .center)
-                    }
-                }
-            }
-        }
-    }
 
     // MARK: - 2. Messages Panel
 
@@ -1892,13 +1680,6 @@ struct CareerDashboardView: View {
             scheduleSection
             Divider().overlay(Color.surfaceBorder.opacity(0.6))
             divisionStandingsSection
-        }
-    }
-
-    /// Schedule-only right panel (used in portrait where standings move to center)
-    private var rightPanelScheduleOnly: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            scheduleSection
         }
     }
 

@@ -19,7 +19,6 @@ final class DraftDayCoordinator: ObservableObject {
         case playing
         case paused
         case userPick
-        case roundTransition(round: Int)
         case complete
     }
 
