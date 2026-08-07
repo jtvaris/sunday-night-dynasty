@@ -43,6 +43,15 @@ struct DraftPrepStageCell: Identifiable, Equatable {
     }
 
     let step: DraftPrepStep
+    /// The slat's position in the band, 1-based — **not** `step.order + 1`.
+    ///
+    /// The band draws six of the pipeline's nine steps (#164): the two mocks are
+    /// filed in the War Room and `.ready` has no room of its own, so
+    /// `top30Visits`, whose engine order is 6, is the SIXTH slat. Numbering the
+    /// slats off the engine's order printed "7" on the last of six, which is a
+    /// count the user cannot reconcile with what he can see. The engine's order
+    /// is untouched — this is where the band is drawn, and only that.
+    let displayIndex: Int
     let state: State
     /// "30/60 interviews", or "Done" / "Not read" for the stages that are a read
     /// rather than a spend — or "Opens at combine" for a stage the season has
@@ -66,7 +75,7 @@ struct DraftPrepStageCell: Identifiable, Equatable {
 
     /// Screen-reader sentence: state, name, progress, and the unlock clause.
     var accessibilityText: String {
-        var parts = ["Stage \(step.order + 1), \(step.displayName)"]
+        var parts = ["Stage \(displayIndex) of \(DraftPrepStageCell.bandSteps.count), \(step.displayName)"]
         switch state {
         case .done:    parts.append("complete")
         case .current: parts.append("current stage")
@@ -74,8 +83,27 @@ struct DraftPrepStageCell: Identifiable, Equatable {
         case .locked:  parts.append(isWaitingOnCalendar ? "waiting for the calendar" : "locked")
         }
         parts.append(counterText)
-        if !lockReason.isEmpty { parts.append(lockReason) }
+        if !spokenLockSentence.isEmpty { parts.append(spokenLockSentence) }
         return parts.joined(separator: ", ")
+    }
+
+    /// The unlock clause the screen reader speaks.
+    ///
+    /// Normally the engine's `lockReason`, which is the fuller sentence. The one
+    /// exception is the case ``unlockCaption(for:stage:)`` was written for: when
+    /// the blocker is a mock, the engine says "Finish or skip Mock 1.0 first."
+    /// and Mock 1.0 has no slat, so that instruction cannot be followed from the
+    /// band. The visible caption already names the ACT instead; the spoken one
+    /// says the same thing rather than keeping the unfollowable version alive
+    /// for VoiceOver only. A calendar wait keeps the engine's sentence — that
+    /// one names a phase, which is on the calendar whether or not it is a slat.
+    private var spokenLockSentence: String {
+        guard state == .locked, !isWaitingOnCalendar,
+              let previous = step.previous,
+              DraftPrepStageCell.mockSteps.contains(previous),
+              let caption = subcaption, !caption.isEmpty
+        else { return lockReason }
+        return caption
     }
 
     /// The short form of "what opens this stage", sized for a slat caption.
@@ -100,11 +128,36 @@ struct DraftPrepStageCell: Identifiable, Equatable {
         // comment was written about.
         if stage.isCalendarLocked { return stage.waitLabel }
         guard let previous = step.previous else { return "Not open yet" }
+        // THE BLOCKER MAY BE A STAGE THAT HAS NO SLAT (#164). Both mocks were
+        // taken off the band — they are filed in the War Room, not worked in a
+        // room — so "Finish Mock 1.0" over the Top-30 slat pointed at a slat
+        // that is not on screen. Naming the ACT instead is the only version of
+        // the sentence a user can follow: it is the same words the hub's action
+        // bar and the Mock Draft tab's badge use for the same obligation.
+        if mockSteps.contains(previous) { return "Opens after \(previous.displayName) is filed" }
         return "Finish \(previous.displayName)"
     }
 
-    init(step: DraftPrepStep, state: State, stage: DraftPrepProgress.Stage) {
+    // MARK: - Which steps the band draws (#164)
+
+    /// The six stages the band renders, in pipeline order.
+    ///
+    /// `DraftPrepStep` still has nine cases and `DraftPrepProgress` still
+    /// computes all nine — the machine, `canAct`, `satisfied`, the mock-read
+    /// keys and the calendar gates are byte-identical. This is the band's slat
+    /// list and nothing else: a stage the club WORKS gets a slat, and the two
+    /// mocks (a read, filed in the War Room) and `.ready` (a state, not a room)
+    /// do not.
+    static let bandSteps: [DraftPrepStep] =
+        [.combineReview, .interviews, .filmStudy, .proDayFocus, .workouts, .top30Visits]
+
+    /// The two stages whose obligation surfaces in the War Room instead of on a
+    /// slat. Named here because the unlock caption has to say so.
+    static let mockSteps: Set<DraftPrepStep> = [.mockOne, .mockTwo]
+
+    init(step: DraftPrepStep, displayIndex: Int, state: State, stage: DraftPrepProgress.Stage) {
         self.step = step
+        self.displayIndex = displayIndex
         // LOCKED WINS OVER CURRENT (#107). `Career.prepStep` is a floor, so
         // outside the pre-draft window it still points at stage 1 — and the bar
         // drew that stage in February with the gold "1" puck, the current-stage
@@ -161,7 +214,7 @@ extension DraftPrepStageCell {
         }
         return DSSlat(
             id: step.rawValue,
-            index: "\(step.order + 1)",
+            index: "\(displayIndex)",
             title: step.displayName,
             subcaption: subcaption,
             state: state,
@@ -169,7 +222,7 @@ extension DraftPrepStageCell {
             outcome: outcome,
             // NO "NOW" PILL HERE. The band's `live` pill is a gold fill, and on
             // this hub gold already has its two jobs — the action bar's commit
-            // and the surface switcher's active slot. The current slat is
+            // and the War Room strip's active tab. The current slat is
             // already marked three ways (gold top rule, lifted gradient, 3x
             // width); a fourth marker that costs a third gold fill is exactly
             // the drift P5/P7 exist to stop. The pill stays in the component for
@@ -184,8 +237,17 @@ extension DraftPrepStageCell {
 // MARK: - Process bar
 
 /// The scouting hub's primary navigation: the pre-draft calendar as a
-/// ``DSSlatBand`` — nine parallelogram slats, in order, each carrying its own
-/// state and its own count of work.
+/// ``DSSlatBand`` — **six** parallelogram slats, in order, each carrying its own
+/// state and its own count of work, and each opening its stage's surface.
+///
+/// **The band IS the stage navigation (#164).** It draws the six rooms the club
+/// works — combine review, interviews, film, pro-day focus, private workouts,
+/// Top-30 visits — and nothing else. `Mock 1.0`, `Final Mock` and `Ready` are
+/// still nine-ninths of `DraftPrepProgress`; they simply have no slat, because
+/// two of them are a read filed in the War Room and the third is a state rather
+/// than a room. Their obligations surface where the act happens: the next locked
+/// slat's caption names an unfiled mock, the hub's action bar states it, and the
+/// War Room's Mock Draft tab carries a needs-filing badge.
 ///
 /// This replaces the flat eleven-tab picker. The picker was a list of places,
 /// which is the wrong shape for a process — it said nothing about order, nothing
@@ -208,14 +270,14 @@ struct DraftPrepProcessBar: View {
     /// The stage whose screen is currently showing — not necessarily the stage
     /// the club is standing in: a done stage opens read-only.
     let selected: DraftPrepStep?
-    /// "Stage 4 of 9". **The one place the hub prints its count** — it used to
+    /// "Stage 4 of 6". **The one place the hub prints its count** — it used to
     /// appear three times on this screen (the switcher subtitle, the metrics
     /// strip, the prep card's collapsed line).
     let headline: String
-    /// The spring's nine scouting weeks. A filled pip is a spent pip.
+    /// The spring's six working weeks. A filled pip is a spent pip.
     let meter: DSResourceMeter
-    /// Demoted rendering for the surfaces the pipeline is not the subject of
-    /// (#130).
+    /// Demoted rendering for the War Room tabs, which the pipeline is not the
+    /// subject of (#130, #164).
     ///
     /// The band is the wizard's spine and it stays on every screen — the user
     /// asked to always see how much of each stage is done — but on the Big Board
@@ -240,216 +302,118 @@ struct DraftPrepProcessBar: View {
     }
 }
 
-// MARK: - Primary surface switcher
+// MARK: - War Room tab strip
 
-/// The hub's ONE primary navigation control (#130).
+/// The hub's **destination** navigation (#164): the five War Room surfaces, in
+/// one strip, above the band.
 ///
-/// It replaces a six-chip reference row that sat under a nine-cell process bar
-/// under a five-chip mode row: four stacked strips of equally-sized capsules,
-/// each drawn in the same 11 pt semibold, each differing from the others only by
-/// a fill colour. The user's verdict was exact — *"when is Big Board selected,
-/// when Combine"* — and the answer, on the shipped build, was a 1 pt hue
-/// difference on a chip in whichever of the four rows happened to own it.
+/// The split this replaces is the point. #130 gave the hub one three-slot
+/// switcher — Big Board · the stage surface · a Tools menu — which answered
+/// *"where am I"* but folded the club's five permanent reference screens behind
+/// a chevron and made the stage surface a slot that changed its own label. The
+/// user's direction is blunter and better: the **band** is the stage navigation
+/// (six rooms, always on screen, each one tap), and everything that is not a
+/// room lives here, named, at all times.
 ///
-/// Three slots now, and the active one is loud by SIZE and FILL, not by hue:
+/// Exactly five tabs, and they are the war room: the board you build, the class
+/// behind it, the order you pick in, the mock the league prints, and the
+/// department that does the work. Nothing is behind a menu.
 ///
-///  * **Big Board** — the club's own board, the reference surface every user
-///    comes back to.
-///  * **The stage surface** — labelled by the stage it shows ("Combine",
-///    "Private Workouts"), carrying that stage's number and state, so the
-///    pipeline's *current work* is always one tap away and always named.
-///  * **Tools** — the remaining reference surfaces (class depth, the mocks, the
-///    draft order, the department, next year) behind one labelled menu. They are
-///    read-only lookups; none of them is where the spring is won, and none of
-///    them earned a permanent quarter of the chrome.
-struct ScoutingSurfaceSwitcher: View {
+/// **Gold discipline (P5).** The active tab's fill is the current-marker for the
+/// destination layer, and it appears only while a War Room tab owns the screen —
+/// on a stage surface no tab is active, so the band's gold current rule and the
+/// action bar's primary are the only gold on the screen. There is never a third
+/// gold fill in the hub's chrome.
+struct ScoutingWarRoomTabs: View {
 
-    /// Which of the three slots owns the screen underneath.
-    enum Slot: Equatable { case board, stage, tools }
-
-    let boardSubtitle: String
-    /// The tab the stage segment shows — the stage screen the user is standing
-    /// on, or the club's current stage when he is somewhere else.
-    let stageTab: ScoutingTab
-    /// "3/11 focus slots" — the segment's second line.
+    let tabs: [ScoutingTab]
+    /// The tab that owns the screen, or `nil` when a stage surface does.
+    let selected: ScoutingTab?
+    /// Tabs carrying an obligation the user has not settled — today exactly one:
+    /// Mock Draft, while a mock is unfiled and its calendar window is open.
     ///
-    /// It used to lead with "Stage 4 of 9", which made this the second of three
-    /// places the hub printed its own count. The band head owns the count now
-    /// (#105 wave 0).
-    let stageSubtitle: String
-    /// The reference surfaces behind the menu, in the order they are drawn.
-    let toolTabs: [ScoutingTab]
-    let selected: ScoutingTab
-    let active: Slot
+    /// A dot, not a word: P7's legibility floor puts the condensed display voice
+    /// at 11 pt, which is the tab label's own size, so a text badge would be as
+    /// loud as the tab. `alertOrange` rather than gold — gold has three jobs and
+    /// "something is owed here" is not one of them.
+    var badgedTabs: Set<ScoutingTab> = []
+    /// Spoken suffix for a badged tab, e.g. "Mock 1.0 has not been filed".
+    var badgeAccessibilityText: String = ""
     var onSelect: (ScoutingTab) -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
-            segment(
-                icon: ScoutingTab.board.icon,
-                title: ScoutingTab.board.label,
-                subtitle: boardSubtitle,
-                chip: nil,
-                chipTint: .accentGold,
-                isActive: active == .board,
-                action: { onSelect(.board) }
-            )
+        HStack(spacing: DSSpacing.xs) {
+            // A section head, in the section-head voice: textSecondary, tracked,
+            // 11 pt (P5). It is a label for the strip, not a control, and it is
+            // deliberately not gold.
+            Text("WAR ROOM")
+                .font(DSType.display(11, .heavy))
+                .tracking(0.7)
+                .foregroundStyle(Color.textSecondary)
+                .lineLimit(1)
+                .fixedSize()
+                .accessibilityHidden(true)
 
-            // NO STATE CHIP (#105 wave 0). This segment used to carry a
-            // CURRENT / DONE / OPEN / LOCKED capsule, which was a second
-            // rendering of a state the band states in three channels one row
-            // below — and whose CURRENT variant was a gold tint on a screen
-            // where gold has exactly three jobs. The segment's job is "you are
-            // here", and it does that by size and fill.
-            segment(
-                icon: stageTab.icon,
-                title: stageTab.label,
-                subtitle: stageSubtitle,
-                chip: nil,
-                chipTint: .accentGold,
-                isActive: active == .stage,
-                action: { onSelect(stageTab) }
-            )
-
-            toolsMenu
+            ForEach(tabs) { tab in
+                tabButton(tab)
+            }
         }
     }
 
-    // MARK: - Segment
-
-    /// One big surface button.
-    ///
-    /// Active and inactive differ in three dimensions at once — height (56 vs
-    /// 44), fill (gold vs tertiary) and type size (16 black vs 13 semibold) —
-    /// because a single dimension is what failed here before. Hue alone also
-    /// fails colour-blind users and reads as decoration on a screen that already
-    /// spends gold on the pipeline.
-    private func segment(
-        icon: String,
-        title: String,
-        subtitle: String,
-        chip: String?,
-        chipTint: Color,
-        isActive: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                Image(systemName: icon)
-                    .font(.system(size: isActive ? 17 : 13, weight: .bold))
-                    .foregroundStyle(isActive ? Color.backgroundPrimary : Color.textSecondary)
-                    .frame(width: isActive ? 22 : 16)
-
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 5) {
-                        Text(title)
-                            .font(.system(size: isActive ? DSType.Size.callout : DSType.Size.footnote,
-                                          weight: isActive ? .black : .semibold))
-                            .foregroundStyle(isActive ? Color.backgroundPrimary : Color.textPrimary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
-                        if let chip {
-                            Text(chip)
-                                .font(.system(size: 8, weight: .black))
-                                .foregroundStyle(isActive ? Color.backgroundPrimary.opacity(0.75) : chipTint)
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 1)
-                                .background(
-                                    Capsule().fill(
-                                        isActive
-                                            ? Color.backgroundPrimary.opacity(0.18)
-                                            : chipTint.opacity(0.15)
-                                    )
-                                )
-                        }
-                    }
-                    Text(subtitle)
-                        .font(.system(size: isActive ? DSType.Size.micro : 9, weight: .semibold))
-                        .foregroundStyle(isActive
-                                         ? Color.backgroundPrimary.opacity(0.8)
-                                         : Color.textTertiaryReadable)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.75)
+    private func tabButton(_ tab: ScoutingTab) -> some View {
+        let isActive = selected == tab
+        let isBadged = badgedTabs.contains(tab)
+        return Button {
+            onSelect(tab)
+        } label: {
+            HStack(spacing: DSSpacing.xxs) {
+                Image(systemName: tab.icon)
+                    .font(.system(size: DSType.Size.micro, weight: .bold))
+                // NO `minimumScaleFactor`. 11 pt IS the condensed display
+                // voice's floor (P7), so a scale factor here can only render
+                // BELOW it — the flex the band refuses to take. Five tabs get
+                // ~184 pt each at 1032 pt portrait and the longest label
+                // ("CLASS DEPTH") needs ~110, so the strip has the headroom; a
+                // sixth tab must scroll or wrap rather than shrink.
+                Text(tab.label.uppercased())
+                    .font(DSType.display(11, .heavy))
+                    .tracking(0.6)
+                    .lineLimit(1)
+                if isBadged {
+                    // The dot is a foreground mark, so it takes the foreground's
+                    // plate ink on the gold active fill — alertOrange on
+                    // accentGold is ~1.4:1 and disappears exactly where the tab
+                    // is loudest.
+                    Circle()
+                        .fill(isActive ? Color.backgroundPlate : Color.alertOrange)
+                        .frame(width: 7, height: 7)  // ds-lint:allow(spacing) obligation dot: a 44 pt tab has no room for a second text tier
                 }
-
-                Spacer(minLength: 0)
             }
-            .padding(.horizontal, isActive ? 12 : 10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .frame(height: isActive ? 56 : 44)
+            .foregroundStyle(isActive ? Color.backgroundPlate : Color.textSecondary)
+            .padding(.horizontal, DSSpacing.xs)
+            // §2.12 has no exceptions: every tab is a legal touch target whether
+            // it is active or not.
+            .frame(maxWidth: .infinity, minHeight: 44)
             .background(
-                RoundedRectangle(cornerRadius: DSCornerRadius.card)
+                RoundedRectangle(cornerRadius: DSCornerRadius.inline)
                     .fill(isActive ? Color.accentGold : Color.backgroundTertiary)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: DSCornerRadius.card)
+                RoundedRectangle(cornerRadius: DSCornerRadius.inline)
                     .strokeBorder(isActive ? Color.clear : Color.surfaceBorder, lineWidth: 1)
             )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(title). \(subtitle)")
+        .accessibilityLabel(
+            isBadged && !badgeAccessibilityText.isEmpty
+                ? "\(tab.label). \(badgeAccessibilityText)"
+                : tab.label
+        )
         .accessibilityAddTraits(isActive ? [.isButton, .isSelected] : .isButton)
     }
-
-    // MARK: - Tools
-
-    /// The reference surfaces, behind one labelled menu.
-    ///
-    /// It draws itself with the ACTIVE surface's name and icon whenever one of
-    /// them owns the screen, so "you are here" is never a claim only a chip two
-    /// rows up could make.
-    private var toolsMenu: some View {
-        let activeTool = active == .tools ? selected : nil
-        return Menu {
-            ForEach(toolTabs) { tab in
-                Button {
-                    onSelect(tab)
-                } label: {
-                    if selected == tab {
-                        Label("\(tab.label)  \u{2713}", systemImage: tab.icon)
-                    } else {
-                        Label(tab.label, systemImage: tab.icon)
-                    }
-                }
-            }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: activeTool?.icon ?? "square.grid.2x2")
-                    .font(.system(size: activeTool != nil ? 15 : 12, weight: .bold))
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(activeTool?.label ?? "Tools")
-                        .font(.system(size: activeTool != nil ? DSType.Size.body : DSType.Size.caption,
-                                      weight: activeTool != nil ? .black : .semibold))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                    if activeTool != nil {
-                        Text("Reference")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(Color.backgroundPrimary.opacity(0.8))
-                    }
-                }
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .black))
-            }
-            .foregroundStyle(activeTool != nil ? Color.backgroundPrimary : Color.textSecondary)
-            .padding(.horizontal, 10)
-            .frame(minWidth: 104)
-            .frame(height: activeTool != nil ? 56 : 44)
-            .background(
-                RoundedRectangle(cornerRadius: DSCornerRadius.card)
-                    .fill(activeTool != nil ? Color.accentGold : Color.backgroundTertiary)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: DSCornerRadius.card)
-                    .strokeBorder(activeTool != nil ? Color.clear : Color.surfaceBorder, lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(activeTool.map { "Tools. \($0.label) selected" } ?? "Tools. Reference surfaces")
-        .accessibilityAddTraits(activeTool != nil ? [.isButton, .isSelected] : .isButton)
-    }
 }
+
 
 // MARK: - Insights section
 

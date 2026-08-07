@@ -4081,8 +4081,11 @@ struct CareerDashboardView: View {
 
             heroStatRow("Current stage", value: stage.step.displayName)
             heroStatRow("Progress", value: stage.counter)
+            // Denominator is the BAND's six working stages, not the engine's
+            // nine steps — the hub one tap away says "Stage N of 6" (#164), and
+            // two totals for one pipeline is the exact defect the band killed.
             heroStatRow("Stages worked",
-                        value: "\(progress.satisfiedStageCount) / \(progress.stages.count)")
+                        value: "\(DraftPrepStageCell.bandSteps.filter { progress[$0].isSatisfied }.count) / \(DraftPrepStageCell.bandSteps.count)")
 
             if hasWorkLeft, let action = draftPrepStageAction(for: stage.step) {
                 // The stage still has room: ONE button, naming the work, deep
