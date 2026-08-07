@@ -95,11 +95,6 @@ extension SeasonPhase {
         }
     }
 
-    /// Ordinal index of this sub-phase within its group (0-based).
-    var orderInGroup: Int {
-        group.subPhases.firstIndex(of: self) ?? 0
-    }
-
     /// Overall ordinal across all phases (0..14). Used for UI progress bars.
     var overallOrdinal: Int {
         SeasonPhase.allCases.firstIndex(of: self) ?? 0

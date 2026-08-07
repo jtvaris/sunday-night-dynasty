@@ -185,62 +185,55 @@ struct CoachingStaffView: View {
 
     // MARK: - Budget Calculations
 
+    /// #133: THE staff reading for this club — seats, all three pots, the
+    /// required-seat list and the advance gate. Everything below is a name for
+    /// a field of it.
+    ///
+    /// This screen used to own its own copy of each: a role filter for the
+    /// medical split, a `?? 20_000` / `?? 4_000` / `?? 2_500` invented envelope
+    /// per pot, and a per-ROW salary sum that charged duplicate and
+    /// out-of-seat rows to a budget whose denominator excluded them. The
+    /// dashboard tile, the hire flows, the review sheet and the owner's budget
+    /// screen each had their own variant of the same three, which is why the
+    /// four surfaces printed four numbers for one club.
+    private var ledger: StaffLedger {
+        StaffLedger(careerRole: career.role, coaches: coaches, scouts: scouts, owner: owner)
+    }
+
     /// R31: Roles paid from the medical pot rather than the coaching pot.
-    private static let medicalRoles: Set<CoachRole> = [.teamDoctor, .physio, .headTrainer]
+    private static var medicalRoles: Set<CoachRole> { StaffLedger.medicalRoles }
 
     /// Total coaching salary currently committed (in thousands).
     /// R31: medical staff no longer draw from this pot — they have their own budget.
-    private var totalCoachSalaryUsed: Int {
-        coaches.filter { !Self.medicalRoles.contains($0.role) }
-            .reduce(0) { $0 + $1.salary }
-    }
+    private var totalCoachSalaryUsed: Int { ledger.committedCoaching }
 
     /// Total scouting salary currently committed (in thousands).
-    private var totalScoutSalaryUsed: Int {
-        scouts.reduce(0) { $0 + $1.salary }
-    }
+    private var totalScoutSalaryUsed: Int { ledger.committedScouting }
 
     /// R31: Total medical staff salary currently committed (in thousands).
-    private var totalMedicalSalaryUsed: Int {
-        coaches.filter { Self.medicalRoles.contains($0.role) }
-            .reduce(0) { $0 + $1.salary }
-    }
+    private var totalMedicalSalaryUsed: Int { ledger.committedMedical }
 
     /// Total staff salary used (coaches + medical + scouts).
-    private var totalStaffSalaryUsed: Int {
-        totalCoachSalaryUsed + totalMedicalSalaryUsed + totalScoutSalaryUsed
-    }
+    private var totalStaffSalaryUsed: Int { ledger.committedTotal }
 
     /// Coaching budget from the owner (in thousands).
-    private var coachingBudget: Int {
-        owner?.coachingBudget ?? 20_000
-    }
+    private var coachingBudget: Int { ledger.coachingBudget }
 
     /// R27: Dedicated scouting budget from the owner (in thousands).
-    private var scoutingBudget: Int {
-        owner?.scoutingBudget ?? 4_000
-    }
+    private var scoutingBudget: Int { ledger.scoutingBudget }
 
     /// R31: Dedicated medical budget from the owner (in thousands).
-    private var medicalBudget: Int {
-        owner?.medicalBudget ?? 2_500
-    }
+    private var medicalBudget: Int { ledger.medicalBudget }
 
     /// Remaining coaching budget available for new coach hires.
     /// R27: scouts no longer draw from this pot — they have their own budget.
-    private var remainingBudget: Int {
-        coachingBudget - totalCoachSalaryUsed
-    }
+    private var remainingBudget: Int { ledger.remainingCoaching }
 
     /// R27: Remaining scouting budget available for new scout hires.
-    private var remainingScoutBudget: Int {
-        scoutingBudget - totalScoutSalaryUsed
-    }
+    private var remainingScoutBudget: Int { ledger.remainingScouting }
 
     /// R31: Remaining medical budget available for new medical hires.
-    private var remainingMedicalBudget: Int {
-        medicalBudget - totalMedicalSalaryUsed
-    }
+    private var remainingMedicalBudget: Int { ledger.remainingMedical }
 
     // MARK: - Grouped coaches
 
@@ -287,15 +280,9 @@ struct CoachingStaffView: View {
     /// coaching count are three readings of ONE definition. (`StaffSlots`
     /// already drops the head-coach chair for a GM+HC career — the player is
     /// sitting in it.)
-    private var vacantCoachRoles: [CoachRole] {
-        let filledRoles = Set(coaches.map { $0.role })
-        return StaffSlots.coachRoles(for: career.role).filter { !filledRoles.contains($0) }
-    }
+    private var vacantCoachRoles: [CoachRole] { ledger.vacantCoachRoles }
 
-    private var vacantScoutRoles: [ScoutRole] {
-        let filledRoles = Set(scouts.map { $0.scoutRole })
-        return StaffSlots.scoutRoles.filter { !filledRoles.contains($0) }
-    }
+    private var vacantScoutRoles: [ScoutRole] { ledger.vacantScoutRoles }
 
     // MARK: - Staff Tier Headers
     //
@@ -336,30 +323,17 @@ struct CoachingStaffView: View {
     // MARK: - Hiring priority & budget helpers
 
     /// Whether any staff budget is over (negative remaining). (R27/R31: split pots)
-    private var isBudgetOverspent: Bool {
-        remainingBudget < 0 || remainingScoutBudget < 0 || remainingMedicalBudget < 0
-    }
+    private var isBudgetOverspent: Bool { ledger.isOverspent }
 
     /// Required roles that must be filled before locking in staff.
-    private var requiredCoachRoles: [CoachRole] {
-        if career.role == .gmAndHeadCoach {
-            return [.offensiveCoordinator, .defensiveCoordinator]
-        } else {
-            return [.headCoach, .offensiveCoordinator, .defensiveCoordinator]
-        }
-    }
+    /// #158: the same list the calendar's advance gate blocks on.
+    private var requiredCoachRoles: [CoachRole] { ledger.requiredCoachRoles }
 
     /// Whether all required coaching positions are filled.
-    private var allRequiredRolesFilled: Bool {
-        let filledRoles = Set(coaches.map { $0.role })
-        return requiredCoachRoles.allSatisfy { filledRoles.contains($0) }
-    }
+    private var allRequiredRolesFilled: Bool { ledger.allRequiredRolesFilled }
 
     /// Missing required roles for display in the warning.
-    private var missingRequiredRoles: [CoachRole] {
-        let filledRoles = Set(coaches.map { $0.role })
-        return requiredCoachRoles.filter { !filledRoles.contains($0) }
-    }
+    private var missingRequiredRoles: [CoachRole] { ledger.missingRequiredRoles }
 
     /// Whether the device is in iPad portrait (regular width) for 2-column layout.
     private var isIPadPortrait: Bool {
@@ -642,6 +616,10 @@ struct CoachingStaffView: View {
         var carry: [StaffPot: Int] = [.coaching: 0, .medical: 0, .scouting: 0]
         var hires = 0
         var spent = 0
+        /// Task #135: seats that could only be filled by a man the staff screen
+        /// will badge ✗ Conflict. Counted so the toast can say so — a hole is
+        /// worse than a clash, but an unannounced clash is worse than both.
+        var conflictHires = 0
 
         // Jobs the planned allocation could not buy, kept in priority order
         // for the second pass below.
@@ -674,6 +652,7 @@ struct CoachingStaffView: View {
             carry[potKey] = max(0, allocation - result.salary)
             spent += result.salary
             hires += 1
+            if result.wasConflict { conflictHires += 1 }
         }
 
         // Task #106: second pass. A job whose allocation lands under every
@@ -712,6 +691,7 @@ struct CoachingStaffView: View {
             wallet[potKey] = walletLeft - result.salary
             spent += result.salary
             hires += 1
+            if result.wasConflict { conflictHires += 1 }
         }
 
         try? modelContext.save()
@@ -731,6 +711,14 @@ struct CoachingStaffView: View {
         if hires > 0 && stillOpen > 0 {
             message += " \(stillOpen) role\(stillOpen == 1 ? "" : "s") left open — no room in the budget."
         }
+        // Task #135: the pass refuses a Conflict fit while any workable
+        // candidate is affordable. When it took one anyway, that was the whole
+        // market for the chair — say so rather than let the user find the ✗
+        // himself two rows down.
+        if conflictHires > 0 {
+            message += " \(conflictHires) hire\(conflictHires == 1 ? "" : "s") clash with your head coach"
+                + " — nobody else was affordable for those chairs."
+        }
         withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
             recentHireMessage = message
         }
@@ -748,7 +736,7 @@ struct CoachingStaffView: View {
         cap: Int,
         teamID: UUID,
         hcPersonality: PersonalityArchetype?
-    ) -> (salary: Int, hired: Coach?)? {
+    ) -> (salary: Int, hired: Coach?, wasConflict: Bool)? {
         switch vacancy {
         case .coach(let role):
             // Task #96: auto-hire shops the same market the manual sheet
@@ -764,8 +752,8 @@ struct CoachingStaffView: View {
             guard let pick = bestAffordableCoach(in: pool, cap: cap, hcPersonality: hcPersonality) else {
                 return nil
             }
-            hire(coach: pick, teamID: teamID)
-            return (pick.salary, pick)
+            hire(coach: pick.coach, teamID: teamID)
+            return (pick.coach.salary, pick.coach, pick.wasConflict)
 
         case .scout(let role):
             // Same seeded pool the manual sheet shows for this team/role/season.
@@ -780,7 +768,7 @@ struct CoachingStaffView: View {
             )
             guard let pick = bestAffordableScout(in: pool, cap: cap) else { return nil }
             hire(scout: pick, teamID: teamID)
-            return (pick.salary, nil)
+            return (pick.salary, nil, false)
         }
     }
 
@@ -797,35 +785,65 @@ struct CoachingStaffView: View {
         return headCoach?.personality
     }
 
+    /// Which band the staff row for this man would wear, against the head coach
+    /// he would work for. `nil` when there is nobody to judge him against.
+    ///
+    /// The SAME call `chemistryWithHC` makes for the ✓ / ⚠ / ✗ badge, so a
+    /// candidate cannot be classified one way by the hiring pass and another by
+    /// the screen it hands him to.
+    private func autoHireBand(
+        _ coach: Coach,
+        hcPersonality: PersonalityArchetype?
+    ) -> CoachingEngine.ChemistryBand? {
+        guard let hcPersonality else { return nil }
+        return CoachingEngine.chemistryBand(
+            score: CoachingEngine.coachChemistry(coachA: hcPersonality, coachB: coach.personality)
+        )
+    }
+
     /// Ranking score for the auto-hire pass: overall rating, adjusted for how
     /// the man fits the head coach he would work for.
     ///
     /// Task #135: the button promised "the best affordable candidate for each"
     /// and delivered it on OVR alone, which is how one pass could hand a GM+HC
     /// player three coordinators the very next screen labelled ⚠ Tension and
-    /// ✗ Conflict. The adjustment is small on purpose — a Conflict hire has to
-    /// be ~11 OVR better than a good fit to still win the job, so this breaks
-    /// ties and near-ties toward a staff that can work together without ever
-    /// turning into "hire the agreeable mediocrity". Budget is untouched: the
-    /// cap filter still runs first and nothing here can raise a bid.
-    ///
-    /// The thresholds mirror `CoachingEngine.chemistryLabel` exactly, so the
-    /// bands this penalises are the bands the UI names.
+    /// ✗ Conflict. A Tension pick is a trade-off worth paying for talent; a
+    /// Conflict pick is not, so Conflict is no longer a penalty at all — it is
+    /// a REFUSAL, applied in `bestAffordableCoach` before this ranking runs.
+    /// Budget is untouched: the cap filter still runs first and nothing here can
+    /// raise a bid.
     private func autoHireRank(_ coach: Coach, hcPersonality: PersonalityArchetype?) -> Int {
         let ovr = coachOverall(coach)
-        guard let hcPersonality else { return ovr }
-        switch CoachingEngine.coachChemistry(coachA: hcPersonality, coachB: coach.personality) {
-        case 0.3...:       return ovr + 2   // "Good fit"
-        case -0.29...0.29: return ovr - 4   // "Tension"
-        default:           return ovr - 9   // "Conflict"
+        switch autoHireBand(coach, hcPersonality: hcPersonality) {
+        case .good:     return ovr + 2
+        case .tension:  return ovr - 4
+        case .conflict: return ovr - 9
+        case nil:       return ovr
         }
     }
 
     /// Best man the allocation can buy: highest fit-adjusted rating inside the
     /// cap, and the cheaper of two equals.
-    private func bestAffordableCoach(in pool: [Coach], cap: Int, hcPersonality: PersonalityArchetype?) -> Coach? {
-        pool.filter { $0.salary <= cap }
-            .max { a, b in
+    ///
+    /// Task #135 — **a Conflict fit is refused outright.** The pass shops the
+    /// non-conflicting half of the affordable pool first, and only when that
+    /// half is empty does it fall back to the conflicting half, because an
+    /// EMPTY seat is worse than a bad one: a vacant coordinator costs -20%
+    /// offence/defence efficiency and slower development every week, where a
+    /// clash costs harmony the user can fix by replacing one man. The fallback
+    /// is reported (`wasConflict`) rather than taken silently — the toast names
+    /// how many chairs were filled that way, so the ✗ badges the user is about
+    /// to see on the staff list are ones he was told about.
+    private func bestAffordableCoach(
+        in pool: [Coach],
+        cap: Int,
+        hcPersonality: PersonalityArchetype?
+    ) -> (coach: Coach, wasConflict: Bool)? {
+        let affordable = pool.filter { $0.salary <= cap }
+        guard !affordable.isEmpty else { return nil }
+
+        func best(_ candidates: [Coach]) -> Coach? {
+            candidates.max { a, b in
                 let (ra, rb) = (
                     autoHireRank(a, hcPersonality: hcPersonality),
                     autoHireRank(b, hcPersonality: hcPersonality)
@@ -833,6 +851,14 @@ struct CoachingStaffView: View {
                 if ra != rb { return ra < rb }
                 return a.salary > b.salary
             }
+        }
+
+        let workable = affordable.filter {
+            autoHireBand($0, hcPersonality: hcPersonality) != .conflict
+        }
+        if let pick = best(workable) { return (pick, false) }
+        guard let pick = best(affordable) else { return nil }
+        return (pick, true)
     }
 
     /// Scouts rank on evaluation accuracy — the hire sheet's default sort.
@@ -2486,8 +2512,8 @@ struct CoachingStaffView: View {
                         .foregroundStyle(Color.accentGold)
 
                     HStack(spacing: 20) {
-                        reviewStatBadge(value: "\(StaffSlots.filledCoachSlots(coaches: coaches, careerRole: career.role))", label: "Coaches", color: .accentGold)
-                        reviewStatBadge(value: "\(StaffSlots.filledScoutSlots(scouts: scouts))", label: "Scouts", color: .accentBlue)
+                        reviewStatBadge(value: "\(ledger.filledCoachSlots)", label: "Coaches", color: .accentGold)
+                        reviewStatBadge(value: "\(ledger.filledScoutSlots)", label: "Scouts", color: .accentBlue)
                         reviewStatBadge(value: "\(vacantCoachRoles.count)", label: "Vacant", color: vacantCoachRoles.isEmpty ? .success : .warning)
                     }
                     .frame(maxWidth: .infinity)
@@ -2921,7 +2947,7 @@ struct CoachingStaffView: View {
         // Never run against an unloaded/empty staff — closing every open
         // entry because the query hasn't populated yet would corrupt the tree.
         guard !coaches.isEmpty else { return }
-        let medicalRoles: Set<CoachRole> = [.teamDoctor, .physio, .headTrainer]
+        let medicalRoles = StaffLedger.medicalRoles
         var tree = career.coachingTree
         var changed = false
 

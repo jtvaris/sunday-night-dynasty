@@ -1433,21 +1433,42 @@ enum CoachingEngine {
         }
     }
 
+    /// How a pairing reads: the three bands every staff surface names.
+    ///
+    /// Task #135: the thresholds used to be spelled out three times — once in
+    /// `chemistryLabel`, once in `chemistrySymbol`, once in the auto-hire's
+    /// ranking switch — so "the badge the row will wear" and "the band the
+    /// hiring pass penalises" were two independent definitions of one thing.
+    /// One switch now, three readers.
+    enum ChemistryBand {
+        case good
+        case tension
+        case conflict
+    }
+
+    static func chemistryBand(score: Double) -> ChemistryBand {
+        switch score {
+        case 0.3...:       return .good
+        case -0.29...0.29: return .tension
+        default:           return .conflict
+        }
+    }
+
     /// Returns a chemistry label string for display in the UI.
     static func chemistryLabel(score: Double) -> String {
-        switch score {
-        case 0.3...:   return "Good fit"
-        case -0.29...0.29: return "Tension"
-        default:        return "Conflict"
+        switch chemistryBand(score: score) {
+        case .good:     return "Good fit"
+        case .tension:  return "Tension"
+        case .conflict: return "Conflict"
         }
     }
 
     /// Returns a chemistry symbol for compact display.
     static func chemistrySymbol(score: Double) -> String {
-        switch score {
-        case 0.3...:   return "\u{2713}"  // checkmark
-        case -0.29...0.29: return "\u{26A0}"  // warning
-        default:        return "\u{2717}"  // X mark
+        switch chemistryBand(score: score) {
+        case .good:     return "\u{2713}"  // checkmark
+        case .tension:  return "\u{26A0}"  // warning
+        case .conflict: return "\u{2717}"  // X mark
         }
     }
 

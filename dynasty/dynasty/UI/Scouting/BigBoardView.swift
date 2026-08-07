@@ -147,17 +147,17 @@ struct BigBoardView<Header: View>: View {
     /// Value-vs-my-grade read per prospect, computed once per refresh so a row
     /// never re-derives it and the sort has one source.
     @State private var cachedValueReads: [UUID: ProspectFog.ValueRead] = [:]
-    /// The club's three holes, ranked once per data version. See
-    /// ``computeTeamNeeds()`` for why this is state rather than a computed
-    /// property, and why it is not `DraftEngine.topTeamNeeds`.
-    @State private var cachedTeamNeeds: [Position] = []
-    /// `Set(cachedTeamNeeds)` — every board ROW asks this, so it is built once
-    /// rather than re-ranking the roster 350 times a pass.
-    @State private var cachedNeedPositions: Set<Position> = []
-    /// Best man on the board per need position, and overall, ordered by what the
-    /// user can actually see. See ``bestByRead(_:)``.
-    @State private var cachedBestByPosition: [Position: CollegeProspect] = [:]
-    @State private var cachedBestAvailable: CollegeProspect?
+    /// The derived read over the board — the club's three holes, the need SET
+    /// every row's NEED chip asks, the best man per hole, the depth rows and
+    /// the club's remaining picks — computed once per data version in
+    /// ``refreshNeedReads()``.
+    ///
+    /// A value rather than five `@State` caches because it is no longer this
+    /// screen's private answer: `ScoutNotesView` renders the recommendation and
+    /// depth blocks that used to live in this list, off the SAME factory. See
+    /// `ScoutBoardReads` for why a second walk would have been a defect rather
+    /// than a duplication.
+    @State private var reads = ScoutBoardReads.empty
 
     // MARK: - Prospect Notes Storage
 
@@ -188,7 +188,6 @@ struct BigBoardView<Header: View>: View {
     /// prospect that only this screen could see.
     @CareerScopedStorage("prospectWatchlist") private var prospectWatchlistJSON: String = "[]"
     @CareerScopedStorage("prospectCustomBoard") private var prospectCustomBoardJSON: String = "[]"
-    @CareerScopedStorage("rosterPriorities") private var rosterPrioritiesJSON: String = "{}"
 
 
     private var prospectOwnAssessments: [String: String] {
@@ -375,8 +374,11 @@ struct BigBoardView<Header: View>: View {
     /// information ONLY — the latest mock's pick number, then the projected
     /// round — never `scoutedOverall`. Routed through one call site so the
     /// board, the value chip and the seed all read the same number.
+    ///
+    /// One implementation, on `ScoutBoardReads`, so the board's sorts and the
+    /// notes screen's "best available" tie-break cannot drift.
     private func marketRank(for prospect: CollegeProspect) -> Int? {
-        DraftIntel.consensusRank(for: prospect.id)
+        ScoutBoardReads.marketRank(for: prospect)
     }
 
     /// The value read for a row, or `nil` when there is nothing honest to show.
@@ -384,11 +386,8 @@ struct BigBoardView<Header: View>: View {
         cachedValueReads[prospect.id]
     }
 
-    // MARK: - User Roster Priorities
-
-    private var rosterPriorities: [String: String] {
-        (try? JSONDecoder().decode([String: String].self, from: Data(rosterPrioritiesJSON.utf8))) ?? [:]
-    }
+    // The user's own roster priorities moved to `ScoutNotesView` with the depth
+    // block that was their only reader on this screen.
 
     // MARK: - Film study (the evaluate action, promoted into the row)
     //
@@ -816,156 +815,41 @@ struct BigBoardView<Header: View>: View {
     // value below used to be a computed property re-evaluated on every body
     // pass — and `teamNeedPositions`, which each of ~350 rows asks, re-ranked
     // the whole roster once per ROW.
+    //
+    // The computation itself now lives in `ScoutBoardReads`, because the
+    // recommendation and depth blocks it fed have moved off this list onto
+    // `ScoutNotesView` while the NEED chip on every row still needs the need
+    // SET. One factory, two renderers — the determinism guarantee (stable need
+    // order) and the fog guarantee (fogged midpoint, never `scoutedOverall`,
+    // never `trueOverall`) are documented there, on the code that enforces them.
 
-    /// The club's holes, best first, and the SAME answer every visit.
-    ///
-    /// `DraftEngine.topTeamNeeds` was the old source and it is not stable. It
-    /// sorts a `[Position: Double]` on value alone, and on a full roster the
-    /// EVIDENCE half of that score is exactly 1.0 nearly everywhere (the ideal
-    /// counts sum to 48 against a 53-man roster), so the ranking collapses onto
-    /// the five weight-1.0 positions {QB, DE, CB, WR, LT} — five EQUAL scores,
-    /// handed back in whatever order `Dictionary` iteration and an unstable
-    /// `sorted` produce. "Your #1 need" therefore read LT, then CB, then LT,
-    /// then DE over four visits with nothing about the roster changed, and the
-    /// "Scout: Need" trio reshuffled underneath it.
-    ///
-    /// `teamNeedDeficits` is the deterministic sibling and the one the rest of
-    /// this hub already reads (`ClassDepthView`, the interview room's NEED
-    /// column): only positions whose evidence half clears 1.0 survive, and equal
-    /// scores tiebreak on `rawValue`. Three surfaces of one hub now name the
-    /// same holes.
-    ///
-    /// An empty deficit list is a real and common answer — a well-built roster
-    /// has no holes — and the fallback is exact rather than arbitrary: deficits
-    /// come back empty only when every multiplier is exactly 1.0, which is
-    /// precisely the case where `topTeamNeeds`' scores ARE the bare positional
-    /// weights and its top five tie. Sorting those five by `rawValue` loses no
-    /// ordering, because there was none to lose.
-    private func computeTeamNeeds() -> [Position] {
-        let deficits = DraftEngine.teamNeedDeficits(roster: teamRoster, limit: 3)
-        if !deficits.isEmpty { return deficits }
-        return Array(
-            DraftEngine.topTeamNeeds(roster: teamRoster, limit: 5)
-                .sorted { $0.rawValue < $1.rawValue }
-                .prefix(3)
-        )
-    }
-
-    /// How the recommendation strip ranks two men: the fogged band's MIDPOINT
-    /// first, the media's consensus slot second, the prospect's own id last so
-    /// two identical reads still order the same way twice.
-    private struct BoardReadKey {
-        /// `ProspectFog.Read.rank` — the mid-grade of the band the row prints.
-        /// Higher is better.
-        let readRank: Int
-        /// `DraftIntel.consensusRank`. Public by contract; lower is better.
-        let marketRank: Int
-        let id: UUID
-
-        func beats(_ other: BoardReadKey) -> Bool {
-            if readRank != other.readRank { return readRank > other.readRank }
-            if marketRank != other.marketRank { return marketRank < other.marketRank }
-            return id.uuidString < other.id.uuidString
-        }
-    }
-
-    /// The best man in a pool AS THE USER SEES HIM.
-    ///
-    /// These three answers used to sort on raw `scoutedOverall` — a number this
-    /// screen never prints — while `bestAvailableGradeText` printed the FOGGED
-    /// band beside the name. One point of a hidden integer could therefore hand
-    /// the "Best:" chip to a man whose visible band ("B-/B+") was plainly worse
-    /// than the next man's ("A-/A+"): the strip contradicted itself on one line.
-    /// Ordering by the read's own midpoint makes the recommendation and the
-    /// grade beside it the same claim.
-    private func bestByRead(_ pool: [CollegeProspect]) -> CollegeProspect? {
-        var best: (prospect: CollegeProspect, key: BoardReadKey)?
-        for prospect in pool {
-            let read = ProspectFog.read(prospect)
-            // Our own paper only. A media projection is not a scouting answer,
-            // and `bestAvailableGradeText` would print "—" beside the name.
-            guard read.source == .scouts, read.band != nil else { continue }
-            let key = BoardReadKey(
-                readRank: read.rank,
-                marketRank: marketRank(for: prospect) ?? Int.max,
-                id: prospect.id
-            )
-            if best == nil || key.beats(best!.key) {
-                best = (prospect, key)
-            }
-        }
-        return best?.prospect
-    }
-
-    private var topNeedPosition: Position? {
-        cachedTeamNeeds.first
-    }
-
-    private var bestAtNeed: CollegeProspect? {
-        guard let need = topNeedPosition else { return nil }
-        return cachedBestByPosition[need]
-    }
-
-    private var bestPlayerAvailable: CollegeProspect? {
-        cachedBestAvailable
-    }
-
+    /// Every board ROW asks this, so it is read off the cached value rather
+    /// than re-ranking the roster 350 times a pass.
     private var teamNeedPositions: Set<Position> {
-        cachedNeedPositions
-    }
-
-    /// Best available prospect on the board for a given position.
-    private func bestAvailableForPosition(_ pos: Position) -> CollegeProspect? {
-        cachedBestByPosition[pos]
-    }
-
-    /// Grade text for a prospect — the stored band, else the letter its scouted
-    /// overall implies, else nothing at all.
-    ///
-    /// The old last resort was `LetterGrade.from(numericValue: … ?? trueOverall)`,
-    /// which would have printed the generator's grade for a man nobody had filed
-    /// on. Unreachable behind the `scoutedProspects` filter, and removed for the
-    /// same reason `boardCompositeScore`'s twin was: fail soft, never fall back
-    /// to the truth.
-    private func bestAvailableGradeText(_ prospect: CollegeProspect) -> String {
-        // Through the fog, not around it. Reading `scoutedOverallGrade` straight
-        // skipped the confidence widening `ProspectFog.read` applies, so this
-        // strip printed a pinpoint "B+" for a man whose own board row, two
-        // inches away, correctly read "B-/A-" — the same prospect, two
-        // certainties, on one screen.
-        let read = ProspectFog.read(prospect)
-        return read.source == .scouts ? read.text : "\u{2014}"
-    }
-
-    /// Format the team's draft picks for display.
-    private var draftPicksSummary: String {
-        let sorted = teamDraftPicks
-            .filter { !$0.isComplete }
-            .sorted { $0.pickNumber < $1.pickNumber }
-        if sorted.isEmpty { return "No picks" }
-        return sorted.map { "Rd \($0.round) #\($0.pickNumber)" }.joined(separator: ", ")
+        reads.needPositions
     }
 
     // MARK: - Body
 
     private func refreshCachedBoard() {
         // Value reads first: the `.valueDelta` sort reads them, so they have to
-        // exist before `orderedBoard` runs.
-        var reads: [UUID: ProspectFog.ValueRead] = [:]
+        // exist before `orderedBoard` runs. Named `valueReads` rather than
+        // `reads`, which is now the board's `ScoutBoardReads` state.
+        var valueReads: [UUID: ProspectFog.ValueRead] = [:]
         for prospect in scoutedProspects {
             if let read = ProspectFog.valueRead(
                 for: prospect,
                 marketRank: marketRank(for: prospect),
                 myGrade: userGradeStore.grade(for: prospect.id)
             ) {
-                reads[prospect.id] = read
+                valueReads[prospect.id] = read
             }
         }
-        cachedValueReads = reads
+        cachedValueReads = valueReads
 
         refreshNeedReads()
 
-        let ordered = orderedBoard(valueReads: reads)
+        let ordered = orderedBoard(valueReads: valueReads)
         let custom = customOrderedBoard
         cachedOrderedBoard = ordered
         cachedCustomOrderedBoard = custom
@@ -987,40 +871,22 @@ struct BigBoardView<Header: View>: View {
         cachedCustomRankMap = UserDraftBoard.slotMap(among: prospects)
     }
 
-    /// The recommendation strip's three answers, in ONE pass over the board.
+    /// The board's derived read, rebuilt in ONE pass over the board.
     ///
     /// One pass because `ProspectFog.read` widens a stored band by
     /// `DraftIntel.scoutConfidence` for every man it is asked about, and the old
     /// shape asked once per candidate per strip line, per body pass.
+    ///
+    /// The pass itself is `ScoutBoardReads.make`, which `ScoutNotesView` calls
+    /// too. That is the whole point: the NEED chip this screen draws on 350 rows
+    /// and the "your #1 need" line that screen prints are now one answer, so
+    /// they cannot name different positions on the same night.
     private func refreshNeedReads() {
-        let needs = computeTeamNeeds()
-        cachedTeamNeeds = needs
-        // An empty roster is "we do not know", not "we need nothing" — the NEED
-        // badge on a row must stay dark until the club has players to compare.
-        cachedNeedPositions = teamRoster.isEmpty ? [] : Set(needs)
-
-        let wanted = Set(needs)
-        var bestByPosition: [Position: (prospect: CollegeProspect, key: BoardReadKey)] = [:]
-        var bestOverall: (prospect: CollegeProspect, key: BoardReadKey)?
-
-        for prospect in scoutedProspects {
-            let read = ProspectFog.read(prospect)
-            guard read.source == .scouts, read.band != nil else { continue }
-            let key = BoardReadKey(
-                readRank: read.rank,
-                marketRank: marketRank(for: prospect) ?? Int.max,
-                id: prospect.id
-            )
-            if bestOverall == nil || key.beats(bestOverall!.key) {
-                bestOverall = (prospect, key)
-            }
-            guard wanted.contains(prospect.position) else { continue }
-            if let current = bestByPosition[prospect.position], !key.beats(current.key) { continue }
-            bestByPosition[prospect.position] = (prospect, key)
-        }
-
-        cachedBestByPosition = bestByPosition.mapValues(\.prospect)
-        cachedBestAvailable = bestOverall?.prospect
+        reads = ScoutBoardReads.make(
+            prospects: prospects,
+            teamRoster: teamRoster,
+            teamDraftPicks: teamDraftPicks
+        )
     }
 
     // MARK: - Board Row
@@ -1399,8 +1265,24 @@ struct BigBoardView<Header: View>: View {
                             .listRowBackground(Color.clear)
                             .listRowSeparator(.hidden)
                         } else {
-                        recommendationsSection
-                        depthAnalysisSection
+                        // "Recommendations" and "Position Depth Analysis" used
+                        // to sit here, above the first tier. They are reads
+                        // ABOUT the board rather than the board, they pushed
+                        // the #1 prospect a screen and a half down, and the
+                        // user met them on every single visit to the one
+                        // surface he opens to work. They are `ScoutNotesView`
+                        // now, off the same `ScoutBoardReads`.
+                        //
+                        // The board diff below stays. It is the same KIND of
+                        // derived read, but it is not the same kind of block:
+                        // its header names the board mode this screen is in
+                        // ("Board Diff: My vs Media"), it is drawn only while
+                        // the toolbar toggle is on, and the rank it prints has
+                        // to be the number the rows a few inches below print —
+                        // see `boardComparisonEntries`, where `myRank` reads
+                        // `customRankFor` for exactly that reason. Off this
+                        // list it would be a diff against numbers the user
+                        // cannot see.
                         if showBoardComparison {
                             boardComparisonSection
                         }
@@ -1770,248 +1652,6 @@ struct BigBoardView<Header: View>: View {
     // The five per-mode header blocks moved to `ProspectColumns.headers` in
     // `ProspectListControls.swift`, beside the cells they label.
 
-    // MARK: - Recommendations Section (#216)
-
-    private var recommendationsSection: some View {
-        Section {
-            if let need = topNeedPosition {
-                HStack(spacing: 10) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(Color.warning)
-                        .font(.caption)
-                    Text("Your #1 need: **\(need.rawValue)** (weakest group)")
-                        .font(.subheadline)
-                        .foregroundStyle(Color.textPrimary)
-                }
-                .listRowBackground(Color.backgroundSecondary)
-            }
-
-            if let prospect = bestAtNeed, let need = topNeedPosition {
-                HStack(spacing: 10) {
-                    Image(systemName: "target")
-                        .foregroundStyle(Color.success)
-                        .font(.caption)
-                    // The BAND, not the tier. These two lines pick their man by
-                    // the midpoint of the fogged read now, so printing
-                    // `scoutedTier` — a bucketing of the raw scouted integer —
-                    // put a second, tighter yardstick on the same line as the
-                    // first: the depth list three rows down already prints the
-                    // band, for the same prospect, off the same instrument.
-                    Text("Best available at \(need.rawValue): **\(prospect.fullName)** (\(bestAvailableGradeText(prospect)))")
-                        .font(.subheadline)
-                        .foregroundStyle(Color.textPrimary)
-                }
-                .listRowBackground(Color.backgroundSecondary)
-            }
-
-            if let prospect = bestPlayerAvailable {
-                HStack(spacing: 10) {
-                    Image(systemName: "star.fill")
-                        .foregroundStyle(Color.accentGold)
-                        .font(.caption)
-                    Text("Best player available: **\(prospect.fullName)** (\(bestAvailableGradeText(prospect)))")
-                        .font(.subheadline)
-                        .foregroundStyle(Color.textPrimary)
-                }
-                .listRowBackground(Color.backgroundSecondary)
-            }
-
-            // #71: Show team's draft picks
-            HStack(spacing: 10) {
-                Image(systemName: "list.number")
-                    .foregroundStyle(Color.accentBlue)
-                    .font(.caption)
-                Text("Your picks: \(draftPicksSummary)")
-                    .font(.subheadline)
-                    .foregroundStyle(Color.textPrimary)
-            }
-            .listRowBackground(Color.backgroundSecondary)
-        } header: {
-            Label("Recommendations", systemImage: "lightbulb.fill")
-                .font(.caption.weight(.bold))
-                .foregroundStyle(Color.textSecondary)
-                .textCase(nil)
-        }
-    }
-
-    // MARK: - Depth Analysis (#227)
-
-    /// Position needs mapped to how many are on the board vs how many are needed.
-    private var positionDepthItems: [(position: Position, onBoard: Int, needed: Int)] {
-        cachedTeamNeeds.map { pos in
-            let onBoard = scoutedProspects.filter { $0.position == pos }.count
-            // Estimate need count from roster deficit (1-3 range).
-            let rosterCount = teamRoster.filter { $0.position == pos }.count
-            let idealCounts: [Position: Int] = [
-                .QB: 2, .RB: 3, .FB: 1, .WR: 5, .TE: 3,
-                .LT: 2, .LG: 2, .C: 2, .RG: 2, .RT: 2,
-                .DE: 4, .DT: 3, .OLB: 4, .MLB: 2,
-                .CB: 5, .FS: 2, .SS: 2, .K: 1, .P: 1
-            ]
-            let ideal = idealCounts[pos] ?? 2
-            let needed = max(1, ideal - rosterCount)
-            return (position: pos, onBoard: onBoard, needed: needed)
-        }
-    }
-
-    private var mediaTopProspect: CollegeProspect? {
-        // Media board = sorted by draftProjection (lowest = best).
-        prospects
-            .filter { $0.draftProjection != nil }
-            .sorted { ($0.draftProjection ?? Int.max) < ($1.draftProjection ?? Int.max) }
-            .first
-    }
-
-    /// Map a Position to its EvalPositionGroup id for roster priority lookup.
-    private func positionGroupID(for position: Position) -> String {
-        switch position {
-        case .QB: return "QB"
-        case .RB, .FB: return "RB"
-        case .WR: return "WR"
-        case .TE: return "TE"
-        case .LT, .LG, .C, .RG, .RT: return "OL"
-        case .DE, .DT: return "DL"
-        case .OLB, .MLB: return "LB"
-        case .CB, .FS, .SS: return "DB"
-        case .K, .P: return "ST"
-        }
-    }
-
-    /// User's priority positions from Roster Evaluation, formatted for display.
-    ///
-    /// HIGH only, top-3: Auto-Set Priorities stamps every group with SOME
-    /// priority, so listing everything non-"none" would read "Priority QB,
-    /// RB, WR, TE, OL, DL, LB, DB, ST" — a signal with no information in it.
-    /// This line is the counterpoint to the scouts' top-3 need call above it.
-    private var userPriorityPositions: [String] {
-        Array(
-            rosterPriorities
-                .filter { $0.value == "high" }
-                .map { $0.key }
-                .sorted()   // dictionary order is unstable frame to frame
-                .prefix(3)
-        )
-    }
-
-    private func priorityRank(_ priority: String) -> Int {
-        switch priority {
-        case "high": return 0
-        case "medium": return 1
-        case "low": return 2
-        default: return 3
-        }
-    }
-
-    private var depthAnalysisSection: some View {
-        Section {
-            // Staff vs User needs comparison
-            HStack(spacing: 8) {
-                Image(systemName: "person.2.fill")
-                    .font(.caption)
-                    .foregroundStyle(Color.accentBlue)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Scout: Need \(cachedTeamNeeds.map { $0.rawValue }.joined(separator: ", "))")
-                        .font(.caption)
-                        .foregroundStyle(Color.textPrimary)
-                    if userPriorityPositions.isEmpty {
-                        Text("You: Set your priorities in Roster Evaluation")
-                            .font(.caption)
-                            .foregroundStyle(Color.textTertiary)
-                    } else {
-                        Text("You: Priority \(userPriorityPositions.joined(separator: ", "))")
-                            .font(.caption)
-                            .foregroundStyle(Color.accentBlue)
-                    }
-                }
-            }
-            .listRowBackground(Color.backgroundSecondary)
-
-            // Position depth summary
-            ForEach(positionDepthItems, id: \.position) { item in
-                HStack(spacing: 8) {
-                    Text(item.position.rawValue)
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(Color.textPrimary)
-                        .frame(width: 32)
-
-                    let sufficient = item.onBoard >= item.needed
-                    Text("\(item.onBoard) on board (need \(item.needed))")
-                        .font(.caption)
-                        .foregroundStyle(sufficient ? Color.success : Color.warning)
-
-                    Text(sufficient ? "\u{2713}" : "\u{26A0}\u{FE0F}")
-                        .font(.caption)
-
-                    // #72: Best available prospect for this position need
-                    if let best = bestAvailableForPosition(item.position) {
-                        Text("Best: \(best.lastName) (\(bestAvailableGradeText(best)))")
-                            .font(.caption2)
-                            .foregroundStyle(Color.textSecondary)
-                    }
-
-                    let groupID = positionGroupID(for: item.position)
-                    if let userPriority = rosterPriorities[groupID], userPriority != "none" {
-                        Text("You: \(userPriority)")
-                            .font(.caption2)
-                            .foregroundStyle(userPriority == "high" ? Color.danger : userPriority == "medium" ? Color.warning : Color.accentBlue)
-                            .padding(.horizontal, 4)
-                            .background(Color.backgroundTertiary, in: Capsule())
-                    }
-                }
-                .listRowBackground(Color.backgroundSecondary)
-            }
-
-            // Your #1 vs Media #1 comparison (#15)
-            if let myTop = cachedOrderedBoard.first, let mediaTop = mediaTopProspect {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "arrow.left.arrow.right")
-                            .font(.caption)
-                            .foregroundStyle(Color.accentBlue)
-
-                        if myTop.id == mediaTop.id {
-                            Text("Your #1 matches media consensus: **\(myTop.fullName)**")
-                                .font(.caption)
-                                .foregroundStyle(Color.textPrimary)
-                        } else {
-                            Text("Your #1: **\(myTop.fullName)** vs Media #1: **\(mediaTop.fullName)**")
-                                .font(.caption)
-                                .foregroundStyle(Color.textPrimary)
-                        }
-                    }
-                    // Media projection for #1 (#15)
-                    if let proj = mediaTop.draftProjection {
-                        Text("Media projects \(mediaTop.lastName) at Pick #\(proj <= 3 ? proj : proj * 5)")
-                            .font(.caption2)
-                            .foregroundStyle(Color.textTertiary)
-                            .padding(.leading, 26)
-                    }
-                }
-                .listRowBackground(Color.backgroundSecondary)
-            }
-
-            // Available at your pick probability (#18)
-            if let myTop = cachedOrderedBoard.first,
-               let prob = availableAtPickProbability(for: myTop),
-               let firstPick = teamDraftPicks.filter({ !$0.isComplete }).sorted(by: { $0.pickNumber < $1.pickNumber }).first {
-                HStack(spacing: 8) {
-                    Image(systemName: "percent")
-                        .font(.caption)
-                        .foregroundStyle(Color.accentBlue)
-                    Text("**\(myTop.lastName)** available at Rd \(firstPick.round) #\(firstPick.pickNumber): \(Int(prob * 100))%")
-                        .font(.caption)
-                        .foregroundStyle(Color.textPrimary)
-                }
-                .listRowBackground(Color.backgroundSecondary)
-            }
-        } header: {
-            Label("Position Depth Analysis", systemImage: "chart.bar.fill")
-                .font(.caption.weight(.bold))
-                .foregroundStyle(Color.accentBlue)
-                .textCase(nil)
-        }
-    }
-
     // MARK: - #2: Board Comparison Section (MyBoard vs Media Board)
 
     /// Disagreements between user's board rank and media's draft projection.
@@ -2149,10 +1789,7 @@ struct BigBoardView<Header: View>: View {
         let needCount = tierProspects.filter { teamNeedPositions.contains($0.position) }.count
         let markedCount = tierProspects.filter(\.isMarked).count
         // Availability summary: prospects in this tier likely available at user's first pick (#1)
-        let firstPick = teamDraftPicks
-            .filter { !$0.isComplete }
-            .sorted { $0.pickNumber < $1.pickNumber }
-            .first
+        let firstPick = reads.firstPick
         let availableAtPickCount: Int? = firstPick.map { _ in
             tierProspects.filter { p in
                 guard let prob = availableAtPickProbability(for: p) else { return false }
@@ -2554,15 +2191,11 @@ struct BigBoardView<Header: View>: View {
     /// Need level: High / Med / Set based on roster depth (#4)
     private func needLevel(for position: Position) -> String {
         guard !teamRoster.isEmpty else { return "Set" }
-        let idealCounts: [Position: Int] = [
-            .QB: 2, .RB: 3, .FB: 1, .WR: 5, .TE: 3,
-            .LT: 2, .LG: 2, .C: 2, .RG: 2, .RT: 2,
-            .DE: 4, .DT: 3, .OLB: 4, .MLB: 2,
-            .CB: 5, .FS: 2, .SS: 2, .K: 1, .P: 1
-        ]
+        // One table, in `ScoutBoardReads`. This function and the depth rows
+        // both measure a hole as `ideal - onRoster`, and they used to carry two
+        // hand-copied copies of the same 19 numbers.
         let rosterCount = teamRoster.filter { $0.position == position }.count
-        let ideal = idealCounts[position] ?? 2
-        let deficit = ideal - rosterCount
+        let deficit = ScoutBoardReads.idealRosterCount(for: position) - rosterCount
         if deficit >= 2 { return "High" }
         if deficit >= 1 { return "Med" }
         return "Set"
@@ -2602,23 +2235,12 @@ struct BigBoardView<Header: View>: View {
 
     /// Probability prospect is available at user's first pick (#18).
     ///
-    /// ONE availability model, shared with the Mock Draft and the war room's
-    /// pick sheet (`DraftAvailability`). This used to bucket off the ROUND —
-    /// `boardProjectedRound` vs the pick's round → 0.95/0.75/0.40/0.15/0.05 —
-    /// so a man the media mocked at #18 read 40 % here and 76 % on the Mock
-    /// Draft, and the two screens contradicted each other about the same
-    /// player on the same day. The curve now reads the media's published
-    /// window and is as flat as that window is wide.
+    /// The model, and the reason there is only one of it, live on
+    /// `ScoutBoardReads.availableAtPickProbability(for:)` — the tier headers
+    /// here and the notes screen's availability line read the same curve
+    /// against the same first pick.
     private func availableAtPickProbability(for prospect: CollegeProspect) -> Double? {
-        let sortedPicks = teamDraftPicks
-            .filter { !$0.isComplete }
-            .sorted { $0.pickNumber < $1.pickNumber }
-        guard let firstPick = sortedPicks.first else { return nil }
-        return DraftAvailability.probability(
-            for: prospect,
-            atPick: firstPick.pickNumber,
-            consensusRank: marketRank(for: prospect)
-        )
+        reads.availableAtPickProbability(for: prospect)
     }
 
     private func loadCoaches() {
@@ -2627,26 +2249,12 @@ struct BigBoardView<Header: View>: View {
         coaches = (try? modelContext.fetch(desc)) ?? []
     }
 
-    /// The club's picks in the draft this cycle is building toward — and ONLY
-    /// those.
-    ///
-    /// This used to fetch every `DraftPick` the team owned, in any year. The
-    /// pick pool always holds three future drafts as well (`futureDraftPicks`,
-    /// the tradable horizon), and each of those rows carries a *provisional*
-    /// slot: the midpoint of its round, `round * 32 - 16`. So the Draft Prep
-    /// card listed "Rd 1 #16, Rd 1 #16, Rd 1 #16, Rd 2 #48, Rd 2 #48…" — 28
-    /// picks in triplicate — and "available at your first pick" was computed
-    /// against a fabricated #16 belonging to a draft three years out, on a team
-    /// that in this year's draft was picking fourth.
+    /// The club's picks in THIS cycle's draft. The season scoping, and the
+    /// triplicated-future-picks bug that bought it, are documented on
+    /// `ScoutBoardReads.teamPicks(career:in:)` — the notes screen fetches
+    /// through the same door.
     private func loadDraftPicks() {
-        guard let teamID = career.teamID else { return }
-        let season = career.currentSeason
-        let desc = FetchDescriptor<DraftPick>(
-            predicate: #Predicate<DraftPick> {
-                $0.currentTeamID == teamID && $0.seasonYear == season
-            }
-        )
-        teamDraftPicks = (try? modelContext.fetch(desc)) ?? []
+        teamDraftPicks = ScoutBoardReads.teamPicks(career: career, in: modelContext)
     }
 
     /// Compute scheme fit label for a prospect based on team's coordinators.

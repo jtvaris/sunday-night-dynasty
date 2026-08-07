@@ -20,8 +20,6 @@ struct CareerDashboardView: View {
 
     @State private var team: Team?
     @State private var rosterCount: Int = 0
-    @State private var coachCount: Int = 0
-    @State private var scoutCount: Int = 0
     @State private var headCoach: Coach?
     @State private var divisionTeams: [Team] = []
     @State private var divisionRecords: [StandingsRecord] = []
@@ -32,11 +30,14 @@ struct CareerDashboardView: View {
     @State private var startingQB: Player?
     @State private var bestPlayer: Player?
     @State private var bestDefensivePlayer: Player?
-    @State private var coachingBudgetRemaining: Int = 0
-    @State private var coachingBudgetTotal: Int = 0
-    /// Combined overspend across the coaching, medical and scouting pots —
-    /// what the `.coachingChanges` advance gate actually blocks on.
-    @State private var staffPotOverage: Int = 0
+    /// #133: the ONE staff reading this screen has — seats, pots and the
+    /// advance gate all come off it. It used to be four loose `@State` ints
+    /// (`coachCount`, `scoutCount`, `coachingBudgetTotal`,
+    /// `coachingBudgetRemaining`, `staffPotOverage`) computed here with a role
+    /// filter and a `?? 0` fallback of this screen's own, which is how the tile
+    /// and the Staff screen printed different money for the same club.
+    /// Rebuilt by `refreshStaffTile`.
+    @State private var staffLedger: StaffLedger?
     @State private var expiringContractPlayers: [Player] = []
     @State private var positionGroupGrades: [(group: String, starterGrade: String, depthGrade: String, starterOVR: Int, depthOVR: Int)] = []
     @State private var teamMorale: Int = 70
@@ -207,41 +208,26 @@ struct CareerDashboardView: View {
 
     // MARK: - Derived
 
-    /// Staff budget overage in thousands, summed across all three pots
-    /// (coaching, medical, scouting) — the same three the staff screen's own
-    /// overspend banner checks. Returns 0 when every pot is within budget.
-    /// Only relevant during the `.coachingChanges` phase.
-    private var coachingOverage: Int {
-        guard coachingBudgetTotal > 0 else { return 0 }
-        return staffPotOverage
-    }
-
-    /// True when the user is in coachingChanges phase and has overspent the
-    /// staff budget. Blocks advancement until staff are released or salaries
-    /// reduced. (#54)
-    private var isBlockedByCoachingBudget: Bool {
-        career.currentPhase == .coachingChanges && coachingOverage > 0
-    }
-
-    /// The non-task reason the advance is refused, in one place (#154f).
+    /// The non-task reason the advance is refused (#154f, #158).
     ///
     /// Read by BOTH `coachingBudgetBlockerBanner` and the tasks panel, so the
     /// rail cannot go on printing "Complete 0 required tasks to advance" beside
     /// a banner naming a $49K staff overage. Nil when the required-task list is
     /// the only gate.
-    private var advanceBlocker: TimelineTasksPanel.AdvanceBlocker? {
-        guard isBlockedByCoachingBudget else { return nil }
-        return TimelineTasksPanel.AdvanceBlocker(
-            title: "Resolve coaching budget overage first",
-            detail: "You are \(formatCap(coachingOverage)) over the staff budget. "
-                + "Release staff or reduce salaries to advance."
-        )
+    ///
+    /// #158: the predicate itself now lives on ``StaffLedger`` — the same value
+    /// the Season Guide sheet gates on and the same one
+    /// `CareerShellView.performShellAdvance` refuses on. This screen used to own
+    /// a private copy that only knew about the budget, so the sidebar (which
+    /// knew about neither the budget nor the vacant coordinator seats) offered
+    /// an advance this one would have declined.
+    private var advanceBlocker: AdvanceBlocker? {
+        staffLedger?.advanceBlocker(phase: career.currentPhase)
     }
 
     private var canAdvance: Bool {
         guard TaskGenerator.allRequiredComplete(in: tasks) else { return false }
-        if isBlockedByCoachingBudget { return false }
-        return true
+        return advanceBlocker == nil
     }
 
     /// Topmost incomplete required task (mirrors TimelineTasksPanel.nextActionableTask).
@@ -579,6 +565,12 @@ struct CareerDashboardView: View {
                     career: career,
                     coaches: allCoaches,
                     players: players,
+                    ledger: staffLedger ?? StaffLedger(
+                        careerRole: career.role,
+                        coaches: allCoaches,
+                        scouts: scouts,
+                        owner: team?.owner
+                    ),
                     onConfirm: {
                         activeSheet = nil
                         confirmCoachingAdvance()
@@ -1953,11 +1945,14 @@ struct CareerDashboardView: View {
                     // #106: read the scouting department off the enum — it grew
                     // two extra slots (chief + 5 regional + 2 extra) and the
                     // hardcoded 6 rendered a filled count above the total.
-                    // #133: both halves now come from `StaffSlots`, the same seat
-                    // list the staff screen counts its vacancies against.
-                    let totalSlots = StaffSlots.totalSlots(for: career.role)
-                    let filledSlots = coachCount + scoutCount
-                    let isFullyStaffed = filledSlots >= totalSlots
+                    // #133: every number on this tile — both halves of the slot
+                    // count AND the two money figures below — comes off the one
+                    // `StaffLedger` the Staff screen reads. The tile no longer
+                    // owns a role filter or a fallback of its own.
+                    let ledger = staffLedger
+                    let totalSlots = ledger?.totalSlots ?? StaffSlots.totalSlots(for: career.role)
+                    let filledSlots = ledger?.filledSlots ?? 0
+                    let isFullyStaffed = ledger?.isFullyStaffed ?? false
                     HStack(spacing: 6) {
                         HStack(spacing: 2) {
                             Text("\(filledSlots)")
@@ -1997,23 +1992,26 @@ struct CareerDashboardView: View {
                     }
                     .frame(height: 5)
 
-                    // Coaching budget remaining (#147)
-                    if coachingBudgetTotal > 0 {
+                    // Coaching budget remaining (#147). Hidden — not faked —
+                    // until the owner has actually resolved (#133).
+                    if let ledger, ledger.isResolved, ledger.coachingBudget > 0 {
+                        let remaining = ledger.remainingCoaching
+                        let budgetColor = remaining > 10_000 ? Color.success : remaining > 5_000 ? Color.accentGold : Color.warning
                         HStack(spacing: 4) {
                             Image(systemName: "dollarsign.square.fill")
                                 .font(.system(size: 10))
-                                .foregroundStyle(coachingBudgetRemaining > 10_000 ? Color.success : coachingBudgetRemaining > 5_000 ? Color.accentGold : Color.warning)
+                                .foregroundStyle(budgetColor)
                             Text("Budget")
                                 .font(.system(size: 9))
                                 .foregroundStyle(Color.textTertiary)
                             Spacer()
-                            Text(formatCap(coachingBudgetRemaining))
+                            Text(StaffLedger.money(remaining))
                                 .font(.system(size: 11, weight: .bold).monospacedDigit())
-                                .foregroundStyle(coachingBudgetRemaining > 10_000 ? Color.success : coachingBudgetRemaining > 5_000 ? Color.accentGold : Color.warning)
+                                .foregroundStyle(budgetColor)
                             Text("/")
                                 .font(.system(size: 9))
                                 .foregroundStyle(Color.textTertiary)
-                            Text(formatCap(coachingBudgetTotal))
+                            Text(StaffLedger.money(ledger.coachingBudget))
                                 .font(.system(size: 9, weight: .medium).monospacedDigit())
                                 .foregroundStyle(Color.textTertiary)
                         }
@@ -3445,47 +3443,36 @@ struct CareerDashboardView: View {
         )
         let coaches = (try? modelContext.fetch(coachDescriptor)) ?? []
         allCoaches = coaches
-        // #133: SEATS filled, not rows fetched — counted against the same
-        // `StaffSlots` list the tile's denominator comes from, so the two can
-        // never disagree about what a "staff" is.
-        coachCount = StaffSlots.filledCoachSlots(coaches: coaches, careerRole: career.role)
         headCoach = coaches.first(where: { $0.role == .headCoach })
 
-        // Coaching budget (#147) — the coaching pot only, counted exactly the
-        // way CoachingStaffView counts it (#106). Medical staff draw from the
-        // owner's medical budget and scouts from the scouting budget, so
-        // charging either to this pot made the tile read millions lower than
-        // the staff screen right after an auto-hire.
-        let budgetTotal = team?.owner?.coachingBudget ?? 0
-        // R31: medical staff draw from their own pot, not the coaching budget.
-        let medicalRoles: Set<CoachRole> = [.teamDoctor, .physio, .headTrainer]
-        let coachSalaryUsed = coaches
-            .filter { !medicalRoles.contains($0.role) }
-            .reduce(0) { $0 + $1.salary }
         let scoutDescriptor = FetchDescriptor<Scout>(
             predicate: #Predicate { $0.careerID == cid && $0.teamID == teamID }
         )
         let fetchedScouts = (try? modelContext.fetch(scoutDescriptor)) ?? []
-        scoutCount = StaffSlots.filledScoutSlots(scouts: fetchedScouts)
         // Handed to `DraftPrepProgress` by the Path to the Draft hero card;
         // re-assigned here so popping back from the scouting hub (which runs
         // `refreshStaffTile` via `.onAppear`) re-evaluates the card.
         scouts = fetchedScouts
-        coachingBudgetTotal = budgetTotal
-        coachingBudgetRemaining = budgetTotal - coachSalaryUsed
 
-        // The advance gate must still catch an overspent medical or scouting
-        // pot even though the tile shows the coaching pot alone — narrowing
-        // the tile's formula must not silently widen what the week lets pass.
-        let medicalUsed = coaches
-            .filter { medicalRoles.contains($0.role) }
-            .reduce(0) { $0 + $1.salary }
-        let scoutUsed = fetchedScouts.reduce(0) { $0 + $1.salary }
-        let medicalRemaining = (team?.owner?.medicalBudget ?? 0) - medicalUsed
-        let scoutingRemaining = (team?.owner?.scoutingBudget ?? 0) - scoutUsed
-        staffPotOverage = max(0, -(budgetTotal - coachSalaryUsed))
-            + max(0, -medicalRemaining)
-            + max(0, -scoutingRemaining)
+        // #133: ONE reading — seats, all three pots and the advance gate. The
+        // owner is resolved from the store rather than from the `team` @State,
+        // which is written by `loadAllDataBody`: reading it here made the tile's
+        // money depend on which of the two load paths had run first on a given
+        // launch, and that is half of "the budget is different after a
+        // relaunch". The other half was the per-surface fallback the ledger now
+        // owns.
+        let clubOwner = team?.owner ?? {
+            let teamDescriptor = FetchDescriptor<Team>(
+                predicate: #Predicate<Team> { $0.careerID == cid && $0.id == teamID }
+            )
+            return (try? modelContext.fetch(teamDescriptor))?.first?.owner
+        }()
+        staffLedger = StaffLedger(
+            careerRole: career.role,
+            coaches: coaches,
+            scouts: fetchedScouts,
+            owner: clubOwner
+        )
 
         // Last, because it reads the `scouts` this function just wrote. Hung
         // here rather than on `loadAllDataBody` alone so the pop-back path —
@@ -4113,7 +4100,7 @@ struct CareerDashboardView: View {
                 if !canAdvance {
                     // #fleet review F19e: no coaching-budget branch here. This
                     // card renders for `.combine` and `.proDays` only, and
-                    // `isBlockedByCoachingBudget` is `.coachingChanges`-only, so
+                    // `advanceBlocker` is `.coachingChanges`-only, so
                     // the other half of that ternary was unreachable — the
                     // remaining required tasks are the only thing that can be
                     // holding an advance on this screen.
@@ -4527,6 +4514,12 @@ private struct CoachingStaffReviewSheet: View {
     let career: Career
     let coaches: [Coach]
     let players: [Player]
+    /// #133/#158: the club's one staff reading, handed down. This sheet used to
+    /// carry its own `requiredRoles` / `filledRoles` / `vacantRoles` copies —
+    /// the fourth set — and they are exactly the seats the advance gate blocks
+    /// on, so the two had to be the same list or the sheet would warn about a
+    /// hole the gate ignored.
+    let ledger: StaffLedger
     let onConfirm: () -> Void
     let onCancel: () -> Void
 
@@ -4536,26 +4529,13 @@ private struct CoachingStaffReviewSheet: View {
         career.role == .gmAndHeadCoach
     }
 
-    private var allRoles: [CoachRole] { StaffSlots.coachRoles(for: career.role) }
+    private var allRoles: [CoachRole] { ledger.coachRoles }
 
-    private var filledRoles: Set<CoachRole> {
-        Set(coaches.map { $0.role })
-    }
+    private var filledRoles: Set<CoachRole> { ledger.filledCoachRoles }
 
-    private var requiredRoles: [CoachRole] {
-        if isGMAndHC {
-            return [.offensiveCoordinator, .defensiveCoordinator]
-        }
-        return [.headCoach, .offensiveCoordinator, .defensiveCoordinator]
-    }
+    private var missingRequiredRoles: [CoachRole] { ledger.missingRequiredRoles }
 
-    private var missingRequiredRoles: [CoachRole] {
-        requiredRoles.filter { !filledRoles.contains($0) }
-    }
-
-    private var vacantRoles: [CoachRole] {
-        allRoles.filter { !filledRoles.contains($0) }
-    }
+    private var vacantRoles: [CoachRole] { ledger.vacantCoachRoles }
 
     private var oc: Coach? {
         coaches.first { $0.role == .offensiveCoordinator }
@@ -4656,7 +4636,7 @@ private struct CoachingStaffReviewSheet: View {
                     .foregroundStyle(Color.accentGold)
                     .tracking(0.5)
                 Spacer()
-                Text("\(StaffSlots.filledCoachSlots(coaches: coaches, careerRole: career.role))/\(allRoles.count) filled")
+                Text("\(ledger.filledCoachSlots)/\(ledger.totalCoachSlots) filled")
                     .font(.system(size: 11, weight: .semibold).monospacedDigit())
                     .foregroundStyle(Color.textSecondary)
             }
@@ -4691,7 +4671,7 @@ private struct CoachingStaffReviewSheet: View {
                         overall: coachOverall(coach),
                         schemeName: schemeName,
                         isFilled: true,
-                        isRequired: requiredRoles.contains(role)
+                        isRequired: ledger.requiredCoachRoles.contains(role)
                     )
                 } else {
                     staffRow(
@@ -4700,7 +4680,7 @@ private struct CoachingStaffReviewSheet: View {
                         overall: nil,
                         schemeName: nil,
                         isFilled: false,
-                        isRequired: requiredRoles.contains(role)
+                        isRequired: ledger.requiredCoachRoles.contains(role)
                     )
                 }
             }

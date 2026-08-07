@@ -5896,7 +5896,12 @@ enum WeekAdvancer {
                 contracts: contracts,
                 week: thread.openedWeek,
                 rememberLowballs: false,
-                round: thread.round + 1
+                round: thread.round + 1,
+                // Ask MOOD is pinned to the opening week (#150c) but deadline
+                // URGENCY must read the calendar the GM actually lives in — a
+                // comeback in deadline week priced from a week-3 opening would
+                // never feel the clock.
+                pressureWeek: week
             )
 
             switch response {

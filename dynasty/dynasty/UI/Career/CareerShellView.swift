@@ -92,6 +92,20 @@ struct CareerShellView: View {
     /// over-limit roster. Presented as an alert, cleared on dismissal.
     @State private var pendingRosterLimit: WeekAdvancer.RosterLimitViolation?
 
+    /// #158: the club's staff gate, refreshed alongside the task statuses.
+    ///
+    /// The Season Guide sheet gates its Advance button on this, and
+    /// `performShellAdvance` refuses on it — the same predicate the dashboard's
+    /// own button already reads (`CareerDashboardView.advanceBlocker`), because
+    /// all three now come off ``StaffLedger/advanceBlocker(phase:)``. Before,
+    /// the sheet knew nothing about staff at all and called
+    /// `performShellAdvance` straight past the dashboard's gate.
+    @State private var staffAdvanceBlocker: AdvanceBlocker?
+
+    /// The blocker the sheet is refused with, if the user opened it right after
+    /// an unrelated alert cleared. Presented as an alert from the sheet path.
+    @State private var pendingStaffBlock: AdvanceBlocker?
+
     /// Set when `performShellAdvance` refuses to advance a club that is over the
     /// salary cap (#102, the GATE half of the cap-compliance design). Presented
     /// as an alert whose primary action deep-links to the workspace that fixes
@@ -118,7 +132,15 @@ struct CareerShellView: View {
                 teamAbbreviation: team?.abbreviation ?? "???",
                 teamName: team?.fullName ?? "No Team",
                 pendingTaskCount: pendingTaskCount,
-                onCalendarTapped: { showCalendar = true },
+                // #158: the top bar is OUTSIDE the navigation stack, so this
+                // sheet can be opened from a pushed screen — including the very
+                // Staff screen that just filled the seat its advance gate is
+                // refused on. Re-derive before presenting, or the sheet argues
+                // with work the user did ten seconds ago.
+                onCalendarTapped: {
+                    refreshTaskCompletionStatus()
+                    showCalendar = true
+                },
                 onQuitTapped: { showQuitConfirmation = true },
                 unreadInboxCount: inboxMessages.filter { !$0.isRead }.count,
                 onInboxTapped: {
@@ -169,6 +191,25 @@ struct CareerShellView: View {
         }
         .background(Color.backgroundPrimary)
         .navigationBarBackButtonHidden(true)
+        // #158 — the staff gate's voice. Same shape as the two gates below it:
+        // `performShellAdvance` is a precheck, and a refusal the user cannot
+        // read is a button that "just doesn't work".
+        .alert(
+            "Staff Not Ready",
+            isPresented: Binding(
+                get: { pendingStaffBlock != nil },
+                set: { if !$0 { pendingStaffBlock = nil } }
+            ),
+            presenting: pendingStaffBlock
+        ) { _ in
+            Button("Go to Staff") {
+                pendingStaffBlock = nil
+                navigationPath.append(ShellDestination.coachingStaff)
+            }
+            Button("Cancel", role: .cancel) { pendingStaffBlock = nil }
+        } message: { blocker in
+            Text(blocker.detail)
+        }
         .alert(
             "Roster Over the Limit",
             isPresented: Binding(
@@ -302,6 +343,7 @@ struct CareerShellView: View {
                 upcomingGames: upcomingGames,
                 allTeams: allTeamsByID,
                 tasks: $currentTasks,
+                advanceBlocker: staffAdvanceBlocker,
                 onTaskSelected: { destination in
                     handleTaskNavigation(destination)
                 },
@@ -561,6 +603,18 @@ struct CareerShellView: View {
 
     /// Performs the week/phase advance from the TimelineTasksPanel.
     private func performShellAdvance() {
+        // #158 staff gate. The dashboard's Advance button already disables
+        // itself on this value, and the Season Guide sheet now does too — but
+        // the sheet calls straight in here, so the refusal has to live on the
+        // path that actually mutates the calendar and not only on the two
+        // buttons that lead to it. `advanceBlocker` is `.coachingChanges`-only
+        // and clears the moment the seat is filled or the pot is back in the
+        // black, so nothing can latch.
+        if let blocker = staffAdvanceBlocker {
+            pendingStaffBlock = blocker
+            return
+        }
+
         // 53-man gate. `WeekAdvancer.trimAIRosters` enforces the ceiling for the
         // other 31 clubs only — the user does his own cuts, and until now nothing
         // checked that he had. Refuse the advance rather than start a season on an
@@ -1529,12 +1583,29 @@ struct CareerShellView: View {
         // Ensure any pending inserts/updates are committed before querying
         try? modelContext.save()
 
-        // Fetch current coaches
-        let coachDescriptor = FetchDescriptor<Coach>(predicate: #Predicate { $0.teamID == teamID })
+        // Fetch current coaches. #133: scoped to the open save as well as the
+        // club, exactly like the dashboard's and the Staff screen's fetches —
+        // `teamID` alone is the same cross-save leak the tile was cured of.
+        let cid = career.id
+        let coachDescriptor = FetchDescriptor<Coach>(
+            predicate: #Predicate<Coach> { $0.careerID == cid && $0.teamID == teamID }
+        )
         let coaches = (try? modelContext.fetch(coachDescriptor)) ?? []
-        let hasHC = coaches.contains { $0.role == .headCoach }
-        let hasOC = coaches.contains { $0.role == .offensiveCoordinator }
-        let hasDC = coaches.contains { $0.role == .defensiveCoordinator }
+
+        // #158: the staff gate the Season Guide sheet and `performShellAdvance`
+        // both read. Built here because this is the one function that already
+        // runs on every screen entry, every advance and every task refresh.
+        let staffLedger = StaffLedger(
+            careerRole: career.role,
+            coaches: coaches,
+            scouts: teamScouts(),
+            owner: team?.owner
+        )
+        staffAdvanceBlocker = staffLedger.advanceBlocker(phase: career.currentPhase)
+
+        let hasHC = staffLedger.filledCoachRoles.contains(.headCoach)
+        let hasOC = staffLedger.filledCoachRoles.contains(.offensiveCoordinator)
+        let hasDC = staffLedger.filledCoachRoles.contains(.defensiveCoordinator)
 
         // Fetch current roster
         let playerDescriptor = FetchDescriptor<Player>(predicate: #Predicate { $0.teamID == teamID })
@@ -1885,16 +1956,27 @@ struct CareerShellView: View {
         // generates them weekly; TradeView consumes/prunes them).
         let hasPendingTradeOffers = !career.pendingTradeOffers.isEmpty
 
-        // Detect coaching vacancies
+        // Detect coaching vacancies. #133: same scoped fetch and same seat
+        // reading as `refreshTaskCompletionStatus` — these two used to be
+        // separate inline copies, and only one of them carried `careerID`.
         var hasHC = true
         var hasOC = true
         var hasDC = true
         if let teamID = career.teamID {
-            let coachDescriptor = FetchDescriptor<Coach>(predicate: #Predicate { $0.teamID == teamID })
+            let cid = career.id
+            let coachDescriptor = FetchDescriptor<Coach>(
+                predicate: #Predicate<Coach> { $0.careerID == cid && $0.teamID == teamID }
+            )
             let coaches = (try? modelContext.fetch(coachDescriptor)) ?? []
-            hasHC = coaches.contains { $0.role == .headCoach }
-            hasOC = coaches.contains { $0.role == .offensiveCoordinator }
-            hasDC = coaches.contains { $0.role == .defensiveCoordinator }
+            let filled = StaffLedger(
+                careerRole: career.role,
+                coaches: coaches,
+                scouts: [],
+                owner: nil
+            ).filledCoachRoles
+            hasHC = filled.contains(.headCoach)
+            hasOC = filled.contains(.offensiveCoordinator)
+            hasDC = filled.contains(.defensiveCoordinator)
         }
 
         // Check roster for players with 1 year or less remaining on contract
@@ -1985,16 +2067,25 @@ struct CareerShellView: View {
     /// already in memory (`WeekAdvancer.currentDraftClass`) and the only fetch
     /// is the club's own scouts, which the pro-day focus ledger lives on.
     private func draftPrepProgress() -> DraftPrepProgress {
-        let scouts: [Scout] = {
-            guard let teamID = career.teamID else { return [] }
-            let descriptor = FetchDescriptor<Scout>(predicate: #Predicate { $0.teamID == teamID })
-            return (try? modelContext.fetch(descriptor)) ?? []
-        }()
-        return DraftPrepProgress(
+        DraftPrepProgress(
             career: career,
             prospects: WeekAdvancer.currentDraftClass,
-            scouts: scouts
+            scouts: teamScouts()
         )
+    }
+
+    /// The club's scouting department, scoped to the open save (#133).
+    ///
+    /// One fetch, two readers: the draft-prep authority and the staff ledger.
+    /// Both used to spell it out inline, and one of them left the `careerID`
+    /// clause off.
+    private func teamScouts() -> [Scout] {
+        guard let teamID = career.teamID else { return [] }
+        let cid = career.id
+        let descriptor = FetchDescriptor<Scout>(
+            predicate: #Predicate<Scout> { $0.careerID == cid && $0.teamID == teamID }
+        )
+        return (try? modelContext.fetch(descriptor)) ?? []
     }
 
     // MARK: - Inbox Collection

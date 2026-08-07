@@ -17,7 +17,6 @@ struct GameTask: Identifiable, Codable, Equatable {
     let destination: TaskDestination
     let isRequired: Bool
     var status: TaskStatus
-    let weekAvailable: Int?   // nil = available entire phase
 
     /// `true` when **opening the task's screen is the work** — "Check Salary Cap
     /// Outlook", "Review Position Group Grades", "Review Pro Day results".
@@ -40,7 +39,6 @@ struct GameTask: Identifiable, Codable, Equatable {
         destination: TaskDestination,
         isRequired: Bool,
         status: TaskStatus = .todo,
-        weekAvailable: Int? = nil,
         completesOnVisit: Bool = false
     ) {
         self.id = UUID()
@@ -51,7 +49,6 @@ struct GameTask: Identifiable, Codable, Equatable {
         self.destination = destination
         self.isRequired = isRequired
         self.status = status
-        self.weekAvailable = weekAvailable
         self.completesOnVisit = completesOnVisit
     }
 }
@@ -1461,14 +1458,6 @@ enum TaskGenerator {
         "Conduct prospect interviews",
         "Review interview report",
     ]
-
-    /// The pre-draft pipeline's required task keys, in stage order (#103).
-    ///
-    /// Derived from ``DraftPrepStep/requiredTaskKey`` rather than typed out a
-    /// second time — this is the same class of bug `combineChain` was extracted
-    /// to kill, one step earlier: a chain that disagrees with the state machine
-    /// it is supposed to describe. Compare against ``GameTask/matchKey``.
-    static let draftPrepChain: [String] = DraftPrepStep.allCases.compactMap(\.requiredTaskKey)
 }
 
 // MARK: - Stable identity

@@ -2896,10 +2896,29 @@ struct PlayerDetailView: View {
     // MARK: - League Ranking (#33, #178)
 
     /// Returns a ranking string like "#3 QB" or "Top 12%" using @Query data.
+    ///
+    /// **#134a: the OVR comparison alone is not a total order.** A position group
+    /// is thick with ties — twenty of the league's linebackers sit on the same
+    /// two or three OVR values — and `sorted(by:)` gives no stability guarantee
+    /// when the comparator answers `false` both ways, so tied players came back
+    /// in whatever order the array happened to arrive in. That array is
+    /// `allLeaguePlayersUnscoped`, a `@Query` with **no sort descriptor**: the
+    /// fetch order is unspecified and re-orders across re-fetches. The badge is
+    /// recomputed on every body pass, so the same 85-OVR receiver read "#3 WR"
+    /// on one render and "#5 WR" on the next without a single attribute moving.
+    ///
+    /// Falling through to the stable, persisted player id makes the ordering
+    /// total, which makes the rank a function of the *set* rather than of the
+    /// order the set was handed over in. Deliberately a tiebreak and not a
+    /// cache: the number still recomputes, it just cannot disagree with itself.
     private var leagueRanking: String? {
         let samePos = allLeaguePlayers.filter { $0.position == player.position }
         guard samePos.count > 1 else { return nil }
-        let sorted = samePos.sorted { $0.overall > $1.overall }
+        let sorted = samePos.sorted {
+            $0.overall != $1.overall
+                ? $0.overall > $1.overall
+                : $0.id.uuidString < $1.id.uuidString
+        }
         guard let rank = sorted.firstIndex(where: { $0.id == player.id }) else { return nil }
         let position = rank + 1
         let total = sorted.count
@@ -3134,12 +3153,22 @@ struct PlayerDetailView: View {
 
     /// Up to 3 players in the league at the same position with OVR within ±3 of this player.
     /// Used to anchor the player's trade value against real peers.
+    ///
+    /// #134a again, and a worse case than the rank badge: the filter is a ±3 OVR
+    /// window, so nearly every candidate ties with several others and `prefix(3)`
+    /// was picking three names out of the unsorted `@Query` order. The line named
+    /// three different peers on three consecutive renders. Same fix, same reason
+    /// — the id makes the ordering total.
     private var comparablePlayers: [Player] {
         allLeaguePlayers
             .filter { $0.id != player.id
                 && $0.position == player.position
                 && abs($0.overall - player.overall) <= 3 }
-            .sorted { $0.overall > $1.overall }
+            .sorted {
+                $0.overall != $1.overall
+                    ? $0.overall > $1.overall
+                    : $0.id.uuidString < $1.id.uuidString
+            }
             .prefix(3)
             .map { $0 }
     }

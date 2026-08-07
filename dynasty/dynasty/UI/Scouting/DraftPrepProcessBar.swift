@@ -499,15 +499,20 @@ struct ScoutingWarRoomTabs: View {
 /// two separate rows for the two would have re-created the stacking the section
 /// exists to remove.
 ///
-/// ## Default state
+/// ## Default state — **CLOSED, on every surface** (#166)
 ///
-/// Expanded the first time a surface is seen **in a phase**, collapsed on every
-/// visit after that. A phase boundary is when the numbers actually change — new
-/// invitations, a new stage, a different set of risers — so that is when the
-/// block earns a second look. `seenToken` records the phase a surface has been
-/// opened for; `openPreference` records what the user last chose inside it.
-/// The two `UserDefaults` keys ``ScoutingInsightsSection`` remembers a surface's
-/// fold state in, and the rule that turns them into an answer.
+/// It used to open itself once per surface per phase, on the theory that a phase
+/// boundary is when the numbers change and so the block has earned a second
+/// look. Live play says otherwise: the hub has eleven surfaces and a phase
+/// boundary re-armed all eleven, so a single advance meant eleven screens that
+/// each opened with a block of prose over the table the user came for — which is
+/// the "content starts below the fold" complaint this section was built to fix,
+/// arriving by a different door.
+///
+/// One rule now: **the block is shut until the user opens it, and then it stays
+/// however he last left THAT surface.** No re-arming, no free expansion, no
+/// phase token. A collapsed block still states its one teaser line, which is the
+/// part that was ever worth an unasked-for row.
 ///
 /// Lifted out of the view so the HOST can ask the same question. The section
 /// resolves in `onAppear`, which is one frame too late for a hub that owns
@@ -517,26 +522,28 @@ struct ScoutingWarRoomTabs: View {
 /// section's own `onAppear` then agrees with it.
 enum ScoutingInsightsDefaults {
 
+    /// The one key. **The caller scopes it to the career** — see
+    /// `ScoutingHubView.insightsSurfaceKey`. This is plain `UserDefaults`, not
+    /// `@CareerScopedStorage`, and it is not on `CareerScopedDefaults.keys`
+    /// either, so an unscoped key would outlive the save that wrote it and hand
+    /// the next career somebody else's open block. The phase token used to mask
+    /// that by re-arming every surface; with the re-arming gone the scoping has
+    /// to be real.
     static func openKey(_ surfaceKey: String) -> String { "scoutInsightsOpen_\(surfaceKey)" }
-    static func seenKey(_ surfaceKey: String) -> String { "scoutInsightsSeen_\(surfaceKey)" }
 
-    /// What `resolveDefault` would land on, computed WITHOUT writing: a surface
-    /// not yet seen in this phase gets its one free expansion, everything else
-    /// gets what the user last chose. The write stays in the view, because
-    /// spending the free expansion is the act of showing it.
-    static func resolvedExpansion(surfaceKey: String, phaseToken: String) -> Bool {
-        let defaults = UserDefaults.standard
-        guard defaults.string(forKey: seenKey(surfaceKey)) == phaseToken else { return true }
-        return defaults.bool(forKey: openKey(surfaceKey))
+    /// What `resolveDefault` would land on, computed WITHOUT writing: whatever
+    /// the user last chose on this surface, and `false` — shut — when he has
+    /// never chosen.
+    static func resolvedExpansion(surfaceKey: String) -> Bool {
+        UserDefaults.standard.bool(forKey: openKey(surfaceKey))
     }
 }
 
 struct ScoutingInsightsSection<Content: View>: View {
 
-    /// Stable identity for the storage keys — the surface's tab rawValue.
+    /// Stable identity for the storage key — "<career-uuid>-<tab rawValue>".
+    /// **Career-scoped by the caller** (#166); see ``ScoutingInsightsDefaults``.
     let surfaceKey: String
-    /// "<season>-<phase>". Changing it re-arms the one free expansion.
-    let phaseToken: String
     let title: String
     let icon: String
     /// "STAGE 4 · CURRENT", or `nil` on a reference surface.
@@ -550,11 +557,9 @@ struct ScoutingInsightsSection<Content: View>: View {
     let content: () -> Content
 
     @AppStorage private var openPreference: Bool
-    @AppStorage private var seenToken: String
 
     init(
         surfaceKey: String,
-        phaseToken: String,
         title: String,
         icon: String,
         stateChip: String? = nil,
@@ -564,7 +569,6 @@ struct ScoutingInsightsSection<Content: View>: View {
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.surfaceKey = surfaceKey
-        self.phaseToken = phaseToken
         self.title = title
         self.icon = icon
         self.stateChip = stateChip
@@ -572,12 +576,12 @@ struct ScoutingInsightsSection<Content: View>: View {
         self.teaser = teaser
         self._isExpanded = isExpanded
         self.content = content
-        // Per-surface keys, exactly like `prepExplainerOpen_<stage>`: collapsing
+        // Per-surface key, exactly like `prepExplainerOpen_<stage>`: collapsing
         // the board's insights must not collapse the combine's. The hub gives
         // this view `.id(surfaceKey)` so a surface switch builds a fresh
-        // instance and these two wrappers re-bind to the new keys.
+        // instance and this wrapper re-binds to the new key. `false` is the
+        // wrappedValue, which IS the new default rule (#166).
         _openPreference = AppStorage(wrappedValue: false, ScoutingInsightsDefaults.openKey(surfaceKey))
-        _seenToken = AppStorage(wrappedValue: "", ScoutingInsightsDefaults.seenKey(surfaceKey))
     }
 
     var body: some View {
@@ -601,21 +605,16 @@ struct ScoutingInsightsSection<Content: View>: View {
                 .strokeBorder(Color.surfaceBorder.opacity(0.8), lineWidth: 1)
         )
         .onAppear { resolveDefault() }
-        .onChange(of: phaseToken) { _, _ in resolveDefault() }
     }
 
-    /// Opens the block once per surface per phase, then honours the user.
+    /// Honours the user, and shows shut when he has never said otherwise (#166).
     ///
-    /// Never called from `body` — it writes two defaults, and a write during a
-    /// body pass is a re-entrant update.
+    /// NO `onChange(of: phaseToken)` any more, and no write. The phase used to
+    /// re-arm a free expansion here — which is exactly the behaviour that put a
+    /// block of prose over eleven tables every time the calendar moved — and the
+    /// re-arm was also the only writer, so this is now a pure read.
     private func resolveDefault() {
-        if seenToken != phaseToken {
-            seenToken = phaseToken
-            openPreference = true
-            isExpanded = true
-        } else {
-            isExpanded = openPreference
-        }
+        isExpanded = openPreference
     }
 
     private var headerRow: some View {

@@ -149,11 +149,6 @@ enum CommittedCapLedger {
         case reserved(remaining: Int)
         /// Hard block — the offer was NOT recorded and must not be submitted.
         case blocked(available: Int, shortfall: Int, message: String)
-
-        var isReserved: Bool {
-            if case .reserved = self { return true }
-            return false
-        }
     }
 
     // MARK: - Storage keys
@@ -383,20 +378,12 @@ enum CommittedCapLedger {
     /// settles the live ones. A save that never reaches another rollover is
     /// purged with the rest of its career state.
 
-    /// Every forward commitment in one save, newest first.
-    static func forwardCommitments(careerID: UUID?) -> [Reservation] {
-        guard let careerID else { return [] }
-        return forwardTable(careerID: careerID)
-            .values
-            .sorted { $0.submittedAt > $1.submittedAt }
-    }
-
-    // There is deliberately NO `forwardCommitments(careerID:season:)` sitting
-    // between the listing above and the sum below, and no club-wide
-    // `forwardCommitted(careerID:season:)` either. Both are the obvious shape
-    // and both are traps: a row can outlive the man it was written for, so any
-    // read that filters by year alone will keep charging a club for a player it
-    // released. Every consumer goes through the player-scoped sum below.
+    // There is deliberately NO year-filtered listing or club-wide
+    // `forwardCommitted(careerID:season:)` reader above the sum below. Both are
+    // the obvious shape and both are traps: a row can outlive the man it was
+    // written for, so any read that filters by year alone will keep charging a
+    // club for a player it released. Every consumer goes through the
+    // player-scoped sum below.
 
     /// **Forward money owed in `season` by these players and nobody else**, in
     /// thousands. The read every cap projection in the app should use.
@@ -498,13 +485,10 @@ enum CommittedCapLedger {
         return due.sorted { $0.annualCapHit > $1.annualCapHit }
     }
 
-    /// Empties the forward table — save reset only. Nothing in normal play calls
-    /// this: the rollover consumes what is due and "Remove Tag" releases what the
-    /// user changed his mind about.
-    static func clearAllForward(careerID: UUID?) {
-        guard let careerID else { return }
-        UserDefaults.standard.removeObject(forKey: forwardStorageKey(careerID))
-    }
+    // There is deliberately no `clearAllForward`. Nothing in normal play would
+    // call it — the rollover consumes what is due and "Remove Tag" releases what
+    // the user changed his mind about — and save deletion already takes the
+    // table with it: `forwardDefaultsKey` is listed on `CareerScopedDefaults`.
 
     // MARK: - Copy
 

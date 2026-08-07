@@ -462,19 +462,30 @@ struct OwnerBudgetView: View {
         medicalAlloc = owner.medicalBudget
         totalEnvelope = coachingAlloc + scoutingAlloc + medicalAlloc
 
-        let medicalRoles: Set<CoachRole> = [.teamDoctor, .physio, .headTrainer]
-        let coachDesc = FetchDescriptor<Coach>(predicate: #Predicate<Coach> { $0.teamID == teamID })
+        // #133: the committed side is ONE computation, shared with the staff
+        // screen and the dashboard tile. This screen used to carry its own
+        // medical-role filter and its own per-ROW sum over an unscoped fetch —
+        // so the pot floor it refuses to slide below could disagree with the
+        // "used $x of $y" the Staff screen printed for the same three pots.
+        let cid = career.id
+        let coachDesc = FetchDescriptor<Coach>(
+            predicate: #Predicate<Coach> { $0.careerID == cid && $0.teamID == teamID }
+        )
         let coaches = (try? modelContext.fetch(coachDesc)) ?? []
-        committedCoaching = coaches
-            .filter { !medicalRoles.contains($0.role) }
-            .reduce(0) { $0 + $1.salary }
-        committedMedical = coaches
-            .filter { medicalRoles.contains($0.role) }
-            .reduce(0) { $0 + $1.salary }
-
-        let scoutDesc = FetchDescriptor<Scout>(predicate: #Predicate<Scout> { $0.teamID == teamID })
+        let scoutDesc = FetchDescriptor<Scout>(
+            predicate: #Predicate<Scout> { $0.careerID == cid && $0.teamID == teamID }
+        )
         let scouts = (try? modelContext.fetch(scoutDesc)) ?? []
-        committedScouting = scouts.reduce(0) { $0 + $1.salary }
+
+        let ledger = StaffLedger(
+            careerRole: career.role,
+            coaches: coaches,
+            scouts: scouts,
+            owner: owner
+        )
+        committedCoaching = ledger.committedCoaching
+        committedMedical = ledger.committedMedical
+        committedScouting = ledger.committedScouting
     }
 
     // MARK: - Formatting

@@ -28,13 +28,10 @@ struct TimelineTasksPanel: View {
     /// already shows in its own blocker banner, so the two cannot drift.
     var advanceBlocker: AdvanceBlocker? = nil
 
-    /// A non-task reason the advance is refused, in the caller's own words.
-    struct AdvanceBlocker: Equatable {
-        /// Headline, e.g. "Resolve coaching budget overage first".
-        let title: String
-        /// What to do about it, in one sentence.
-        let detail: String
-    }
+    // #158: `AdvanceBlocker` used to be declared here. It moved to
+    // ``StaffLedger``'s file, because the Season Guide sheet has to draw the
+    // same sentence and neither surface is allowed to author it — one gate,
+    // one type, both readers.
 
     /// How many upcoming phases (beyond current) to show fully expanded.
     private let upcomingPhaseCount = 3
@@ -137,9 +134,9 @@ struct TimelineTasksPanel: View {
 
             // Counts real steps only — the group banner is a label that ships
             // pre-`.done`, so including it read as "1/5 done" on a fresh week.
-            let real = Self.actionableTasks(tasks)
-            let doneCount = real.filter { $0.status == .done }.count
-            Text("\(doneCount)/\(real.count)")
+            // Shared with the Season Guide sheet (#134b): one function, one pair.
+            let progress = Self.taskProgress(tasks)
+            Text("\(progress.done)/\(progress.total)")
                 .font(.system(size: 11, weight: .semibold).monospacedDigit())
                 .foregroundStyle(Color.textSecondary)
         }
@@ -749,6 +746,26 @@ struct TimelineTasksPanel: View {
     /// step: the panel renders it as a caption instead — see `groupCaption`.
     static func actionableTasks(_ tasks: [GameTask]) -> [GameTask] {
         tasks.filter { !$0.title.hasPrefix("\u{2500}") }
+    }
+
+    /// **The one step counter (#134b).** Every "X/Y" the season guide prints —
+    /// the rail's header pill, the Season Guide sheet's "X/Y tasks done" and the
+    /// progress bar it fills — is this call and nothing else.
+    ///
+    /// It exists because the sheet and the rail each carried their own copy of
+    /// "count the tasks", and the copies disagreed. The rail excluded
+    /// `TaskGenerator`'s group banner — the read-only "─ Offseason ─" row that
+    /// ships pre-`.done` — and the sheet counted it, so one six-step phase read
+    /// `0/6` in the rail and `1/7` in the sheet at the same instant. The rail's
+    /// denominator was the right one: the banner is a label the sheet does not
+    /// even render as a card, so the sheet was counting a step it never showed,
+    /// and counting it as already finished.
+    ///
+    /// Making both call `actionableTasks` first only made the two copies agree
+    /// today. This is the seam that makes them the same number.
+    static func taskProgress(_ tasks: [GameTask]) -> (done: Int, total: Int) {
+        let steps = actionableTasks(tasks)
+        return (steps.filter { $0.status == .done }.count, steps.count)
     }
 
     /// Caption under a phase header explaining what the phase's task list is.

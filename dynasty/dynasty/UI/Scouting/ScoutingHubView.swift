@@ -223,6 +223,7 @@ struct ScoutingHubView: View {
                     // reading "0 of 0 prospects invited" — the league has not
                     // issued an invite list yet, and cannot have. It lands here.
                     case "classDepth": return .classDepth
+                    case "scoutNotes": return .scoutNotes
                     case "mockDraft":  return .mockDraft
                     case "draftOrder": return .draftOrder
                     case "scouts":     return .scouts
@@ -287,8 +288,7 @@ struct ScoutingHubView: View {
             // incoming block open — or shut — for that frame. Seeded from the
             // same two keys the section reads.
             insightsExpanded = ScoutingInsightsDefaults.resolvedExpansion(
-                surfaceKey: newTab.rawValue,
-                phaseToken: insightsPhaseToken
+                surfaceKey: insightsSurfaceKey(newTab)
             )
             // Reviewing is opening the tab and finding numbers in it. It used to
             // additionally require that scouts had been sent, which made the
@@ -673,8 +673,12 @@ struct ScoutingHubView: View {
     /// read one level up: the board is 350 rows of men, the depth screen is the
     /// nine sentences those rows add up to. It is the January landing surface for
     /// the declaration / Senior Bowl task (#128), and it is open all year.
+    /// `.scoutNotes` sits third because the row reads outward from the board:
+    /// the 350 men you rank, the shape of the class behind them, what the
+    /// department makes of both — then the order you pick in, the mock the
+    /// league prints, and the staff who do the work.
     private static let warRoomTabs: [ScoutingTab] =
-        [.board, .classDepth, .draftOrder, .mockDraft, .scouts]
+        [.board, .classDepth, .scoutNotes, .draftOrder, .mockDraft, .scouts]
 
     // NO `stageTabs` SET (#165). It existed to answer "is a stage surface
     // showing", and its one reader was the band's `isCompact`, which is gone —
@@ -707,24 +711,24 @@ struct ScoutingHubView: View {
     /// would be a second answer to a question that already has one.
     private var isWarRoomSelected: Bool { Self.warRoomTabs.contains(selectedTab) }
 
-    /// "<career>-<season>-<phase>" — the token that re-arms one free Insights
-    /// expansion.
+    /// "<career>-<tab>" — the Insights fold key for one surface of THIS save.
     ///
-    /// **The career id is load-bearing.** `ScoutingInsightsDefaults`' two keys
-    /// (`scoutInsightsOpen_<surface>` / `scoutInsightsSeen_<surface>`) are plain
-    /// `UserDefaults`, not `@CareerScopedStorage`, and they are not on
-    /// `CareerScopedDefaults.keys` either — so deleting a save leaves them
-    /// behind and the next career inherits them. With a bare "<season>-<phase>"
-    /// token that is not a cosmetic leak: a new career started in the same
-    /// league year and phase reads a seen-token that MATCHES, spends the one
-    /// free expansion it never had, and falls through to the previous career's
-    /// `openPreference`. That is exactly the reported symptom — the Big Board
-    /// and Class Depth opened expanded on their first visit while the combine
-    /// surface, the one block a player is most likely to have folded away once,
-    /// opened shut. Scoping the TOKEN rather than the keys re-arms every surface
-    /// for every career without a migration, and leaves the stale rows inert.
-    private var insightsPhaseToken: String {
-        "\(career.id.uuidString)-\(career.currentSeason)-\(career.currentPhase.rawValue)"
+    /// **The career id is load-bearing.** `ScoutingInsightsDefaults.openKey` is
+    /// plain `UserDefaults`, not `@CareerScopedStorage`, and it is not on
+    /// `CareerScopedDefaults.keys` either — so deleting a save leaves the row
+    /// behind and the next career would inherit it.
+    ///
+    /// This used to be a "<career>-<season>-<phase>" token, because the rule was
+    /// "open once per surface per phase" and the token was what re-armed it; the
+    /// career id got folded in to fix the leak (a new career in the same league
+    /// year and phase read a MATCHING seen-token, spent a free expansion it
+    /// never had, and fell through to the previous career's preference). #166
+    /// deleted the free expansion — the block is shut until the user opens it —
+    /// so there is nothing left to re-arm and the season/phase parts had no
+    /// remaining job. The scoping moves onto the key itself, which is where it
+    /// always belonged.
+    private func insightsSurfaceKey(_ tab: ScoutingTab) -> String {
+        "\(career.id.uuidString)-\(tab.rawValue)"
     }
 
     // MARK: - Progress
@@ -889,8 +893,7 @@ struct ScoutingHubView: View {
             // Layer 2: the surface's title, and behind one chevron everything
             // that used to be stacked above the list unasked.
             ScoutingInsightsSection(
-                surfaceKey: selectedTab.rawValue,
-                phaseToken: insightsPhaseToken,
+                surfaceKey: insightsSurfaceKey(selectedTab),
                 title: selectedTab.label,
                 icon: selectedTab.icon,
                 stateChip: insightsStateChip(progress: progress),
@@ -900,7 +903,7 @@ struct ScoutingHubView: View {
                 insightsBody(progress: progress, stage: stage, coverage: coverage)
             }
             // A fresh instance per surface: `ScoutingInsightsSection` binds its
-            // two `@AppStorage` keys at init, so without this the board's flags
+            // `@AppStorage` key at init, so without this the board's fold state
             // would follow the user onto the combine.
             .id(selectedTab.rawValue)
             .padding(.horizontal, 12)
@@ -1518,6 +1521,20 @@ struct ScoutingHubView: View {
                 canAct: progress.canAct(.proDayFocus),
                 onRefresh: loadData
             )
+        case .scoutNotes:
+            // #166. The two blocks that used to be pinned above the Big Board's
+            // 350 rows. They are DERIVED READS over the board, not the board, so
+            // they get their own surface rather than the top third of the one
+            // screen that is always true. `ScoutBoardReads` is the single walk
+            // both this and the board's NEED chips are computed from — one
+            // answer, so the notes and the rows can never disagree.
+            ScoutNotesView(
+                career: career,
+                prospects: prospects,
+                teamRoster: teamPlayers,
+                onSwitchTab: { selectedTab = $0 },
+                onInterview: interviewJump(progress)
+            )
         case .classDepth:
             // #128. `prospects` is already the DECLARED class (`loadData` filters
             // on `isDeclaringForDraft`), which is the whole point of the screen
@@ -1750,6 +1767,12 @@ enum ScoutingTab: String, CaseIterable, Identifiable {
     /// The class one level up from the board: how deep the DECLARED pool is per
     /// position, by projected-round tier, against the club's own holes (#128).
     case classDepth = "classDepth"
+    /// What the department makes of the board (#166): the club's #1 hole, the
+    /// best man on it, the best man anywhere, the depth behind each need, and
+    /// where your #1 sits against the market. Derived reads, not the board —
+    /// they were two unconditional blocks pinned above 350 rows, so the first
+    /// prospect started below the fold on the one surface that is always true.
+    case scoutNotes = "scoutNotes"
     case combine    = "combine"
     case film       = "film"
     case interviews = "interviews"
@@ -1766,6 +1789,7 @@ enum ScoutingTab: String, CaseIterable, Identifiable {
         switch self {
         case .board:      return "Big Board"
         case .classDepth: return "Class Depth"
+        case .scoutNotes: return "Scout Notes"
         case .combine:    return "Combine"
         case .film:       return "Film Study"
         case .interviews: return "Interviews"
@@ -1782,6 +1806,7 @@ enum ScoutingTab: String, CaseIterable, Identifiable {
         switch self {
         case .board:      return "list.number"
         case .classDepth: return "chart.bar.fill"
+        case .scoutNotes: return "note.text"
         case .combine:    return "figure.run"
         case .film:       return "film"
         case .interviews: return "bubble.left.and.bubble.right"
@@ -1812,7 +1837,7 @@ enum ScoutingTab: String, CaseIterable, Identifiable {
         // being read, which the hub handles when the tab is opened; hiding the
         // screen until then would put the autumn mocks behind a gate they were
         // never behind.
-        case .board, .classDepth, .mockDraft, .draftOrder, .scouts:
+        case .board, .classDepth, .scoutNotes, .mockDraft, .draftOrder, .scouts:
             return nil
         }
     }

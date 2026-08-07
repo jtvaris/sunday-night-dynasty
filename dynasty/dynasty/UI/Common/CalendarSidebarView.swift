@@ -11,6 +11,17 @@ struct CalendarSidebarView: View {
     let upcomingGames: [Game]
     let allTeams: [UUID: Team]
     @Binding var tasks: [GameTask]
+    /// #158: the staff gate, computed once by the shell and handed down.
+    ///
+    /// This sheet used to gate its own Advance button on
+    /// `TaskGenerator.allRequiredComplete` alone while the dashboard's button
+    /// ALSO consulted the club's staff state — so the sheet offered a gold,
+    /// enabled "Advance to Next Phase" for a club with a vacant coordinator or
+    /// an overspent pot, and `performShellAdvance` (which this sheet calls
+    /// directly, bypassing the dashboard entirely) went ahead and ran it. Same
+    /// predicate on both surfaces now, and the same predicate the shell refuses
+    /// on.
+    var advanceBlocker: AdvanceBlocker? = nil
     let onTaskSelected: (TaskDestination) -> Void
     let onAdvancePhase: () -> Void
     let onDismiss: () -> Void
@@ -41,12 +52,12 @@ struct CalendarSidebarView: View {
     }
 
     private var canAdvance: Bool {
-        TaskGenerator.allRequiredComplete(in: tasks)
+        TaskGenerator.allRequiredComplete(in: tasks) && advanceBlocker == nil
     }
 
     /// The steps this phase actually asks the user to do.
     ///
-    /// #134: `TaskGenerator` pins a read-only group banner ("─ Offseason ─") to
+    /// #134b: `TaskGenerator` pins a read-only group banner ("─ Offseason ─") to
     /// the top of every phase list and ships it pre-`.done` so it renders as a
     /// label. The left rail has always excluded it (`TimelineTasksPanel`
     /// `actionableTasks`); this sheet counted it, so the same six-step phase read
@@ -55,13 +66,15 @@ struct CalendarSidebarView: View {
         TimelineTasksPanel.actionableTasks(tasks)
     }
 
-    private var totalCount: Int {
-        actionableTasks.count
+    /// #134b: not a second count that happens to match the rail's — literally
+    /// the rail's, via ``TimelineTasksPanel/taskProgress(_:)``.
+    private var progress: (done: Int, total: Int) {
+        TimelineTasksPanel.taskProgress(tasks)
     }
 
-    private var completedCount: Int {
-        actionableTasks.filter { $0.status == .done }.count
-    }
+    private var totalCount: Int { progress.total }
+
+    private var completedCount: Int { progress.done }
 
     // MARK: - Body
 
@@ -454,12 +467,32 @@ struct CalendarSidebarView: View {
     private var advanceButton: some View {
         VStack(spacing: 8) {
             if !canAdvance {
-                Label(
-                    "\(incompleteRequiredCount) required task\(incompleteRequiredCount == 1 ? "" : "s") remaining",
-                    systemImage: "exclamationmark.triangle.fill"
-                )
-                .font(.caption.weight(.medium))
-                .foregroundStyle(Color.accentGold)
+                // #158: name the REAL reason. With the staff gate wired in, this
+                // label could otherwise read "0 required tasks remaining" over a
+                // dead button — the same lie the left rail was cured of in
+                // #154f — while the actual refusal was a vacant coordinator or
+                // an overspent pot.
+                if incompleteRequiredCount > 0 {
+                    Label(
+                        "\(incompleteRequiredCount) required task\(incompleteRequiredCount == 1 ? "" : "s") remaining",
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(Color.accentGold)
+                }
+
+                if let advanceBlocker {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Label(advanceBlocker.title, systemImage: "exclamationmark.octagon.fill")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(Color.danger)
+                        Text(advanceBlocker.detail)
+                            .font(.system(size: 11))
+                            .foregroundStyle(Color.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
 
             Button {

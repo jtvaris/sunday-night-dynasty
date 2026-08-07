@@ -688,7 +688,11 @@ struct TradeNegotiationView: View {
             // every further one walks toward the bar he signs at.
             round: updated.round,
             // Task #150a: if this IS the package he demanded, he signs it.
-            standingCounter: baseThread.pendingCounter
+            standingCounter: baseThread.pendingCounter,
+            // Task #36: the pricing mood is frozen at `openedWeek`, but the
+            // deadline is a fact about TODAY — a conversation started in week 3
+            // and still live in week 9 is a deadline conversation.
+            pressureWeek: career.currentWeek
         )
 
         switch response {

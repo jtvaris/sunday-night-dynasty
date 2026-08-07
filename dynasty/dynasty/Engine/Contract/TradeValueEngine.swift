@@ -276,6 +276,33 @@ enum TradeValueEngine {
             }
         }
 
+        /// TOTAL share of the opening-to-floor gap this GM will hand back for
+        /// nothing but talk (task #36 anti-exploit cap).
+        ///
+        /// `concessionRate` alone is a geometric walk that CONVERGES on the
+        /// floor: measured before this existed, a balanced GM had given back
+        /// 98 % of his gap by round 10 and an aggressive one 100 %, so a user who
+        /// re-sent the same package often enough talked every persona in the
+        /// league down to its walk-away number at zero cost. The premium the
+        /// negotiation header advertises ("opens ~16 % above value") was
+        /// therefore a lie with a stopwatch on it.
+        ///
+        /// This is the share he concedes with NO leverage against him. Real
+        /// pressure — the deadline closing, a hole he needs this player to fill
+        /// — lifts the ceiling (`concessionCeiling`), and his patience caps even
+        /// that. Each value is set BELOW its archetype's patience-limited walk
+        /// (`1 − (1 − rate)^maxRounds` = 0.44 / 0.82 / 0.53 / 0.83) so the cap is
+        /// what binds a pressure-free conversation and leverage is what unbinds
+        /// it.
+        var concessionCap: Double {
+            switch self {
+            case .oldSchool:  return 0.35
+            case .balanced:   return 0.55
+            case .analytics:  return 0.40
+            case .aggressive: return 0.65
+            }
+        }
+
         /// Patience: how many rounds/insults he tolerates before the phone
         /// stops being answered for the rest of the league year.
         var maxRounds: Int {
@@ -325,6 +352,9 @@ enum TradeValueEngine {
         /// 1.05-1.25 band, so two old-school GMs are not interchangeable.
         let askingPremium: Double
         let concessionRate: Double
+        /// `GMArchetype.concessionCap` — the pressure-free ceiling on the total
+        /// concession a conversation can extract (task #36).
+        let concessionCap: Double
         let maxRounds: Int
         let insultCutoff: Double
         let pickLean: Double
@@ -378,6 +408,7 @@ enum TradeValueEngine {
                 name: gmNamePool[nameIndex],
                 askingPremium: premium,
                 concessionRate: archetype.concessionRate,
+                concessionCap: archetype.concessionCap,
                 maxRounds: archetype.maxRounds,
                 insultCutoff: archetype.insultCutoff,
                 pickLean: archetype.pickLean,
@@ -1177,7 +1208,18 @@ enum TradeValueEngine {
         /// with a HIGHER ask — his week-to-week asking noise moves, and the
         /// package-decay ladder re-ranks the assets he himself added, so the
         /// deal he authored no longer cleared the bar he authored it against.
-        standingCounter: TradeProposal? = nil
+        standingCounter: TradeProposal? = nil,
+        /// The week the CALENDAR is actually on, when that differs from the week
+        /// the conversation is priced in (task #36).
+        ///
+        /// `week` above is the pricing mood and is deliberately frozen at
+        /// `thread.openedWeek` (#150c) so an untouched package does not re-read
+        /// "they like it" one week and "on the fence" the next. Deadline pressure
+        /// is the opposite kind of fact — it is about today, not about the day
+        /// the phone first rang — so `concessionCeiling` reads this instead.
+        /// Defaults to the pricing week, which is right for every caller that
+        /// prices and acts in the same week.
+        pressureWeek: Int? = nil
     ) -> AIResponse {
         let view = marketView(
             team: aiTeam, allPlayers: allPlayers, season: currentSeason, week: week
@@ -1250,6 +1292,7 @@ enum TradeValueEngine {
             gives: gives,
             gets: gets,
             round: round,
+            pressureWeek: pressureWeek ?? week,
             allPlayers: allPlayers,
             allPicks: allPicks
         ) {
@@ -1372,16 +1415,104 @@ enum TradeValueEngine {
     /// The rejection memory (`+5 %` a strike) and the hidden weekly noise ride on
     /// BOTH ends, exactly as `userAcceptBar` carries them, so a lowballer's whole
     /// curve shifts up rather than only its floor.
-    private static func concessionTarget(view: GMMarketView, round: Int) -> Double {
+    ///
+    /// TWO BOUNDS, both added because the bare geometric walk was farmable
+    /// (measured: balanced gave back 98 % of its gap by round 10, aggressive
+    /// 100 %, which is the whole premium for the price of tapping Counter):
+    ///
+    /// 1. **Patience is the round budget.** A round past `maxRounds` buys
+    ///    nothing — `moved` clamps there, so the ask flattens at the point where
+    ///    the man stops listening rather than sliding forever. This is what the
+    ///    patience meter in the negotiation header has always claimed to mean.
+    /// 2. **`ceiling` is the total he will ever concede**, from
+    ///    `concessionCeiling` — his archetype's pressure-free cap, lifted by
+    ///    leverage that actually exists in the world (the deadline, his own
+    ///    hole at that position). Spamming the phone is not leverage.
+    ///
+    /// Both bounds sit ABOVE the floor by construction, so the walk-away number
+    /// is still the walk-away number: `buildCounter`'s floor fallback is the one
+    /// path that reaches it, and only when the user's cupboard cannot cover the
+    /// ask he is actually making.
+    private static func concessionTarget(
+        view: GMMarketView, round: Int, ceiling: Double
+    ) -> Double {
         let floor = view.userAcceptBar + 0.02
         let memory = 1.0 + 0.05 * Double(view.strikes)
         let opening = view.persona.askingPremium * view.noise * memory
         guard opening > floor else { return floor }
-        let split = pow(
-            max(0.0, 1.0 - view.persona.concessionRate),
-            Double(max(0, round - 1))
+
+        let moved = min(max(0, round - 1), view.persona.maxRounds)
+        let walked = 1.0 - pow(
+            max(0.0, 1.0 - view.persona.concessionRate), Double(moved)
         )
-        return floor + (opening - floor) * split
+        let share = min(walked, max(0.0, min(1.0, ceiling)))
+        return opening - (opening - floor) * share
+    }
+
+    /// How far this GM can be talked down in THIS conversation, as a share of the
+    /// opening-to-floor gap (task #36).
+    ///
+    /// Base is the archetype's `concessionCap` — what he gives to a patient
+    /// negotiator with nothing on his side. Everything above that has to be paid
+    /// for with something real:
+    ///
+    /// - **`deadlinePressure`** — a club four weeks from the deadline is
+    ///   shopping; a club in deadline week is out of weeks. Worth up to +0.18.
+    /// - **`needPressure`** — how badly the players HE would be receiving fit the
+    ///   holes his own starter-quality need model found. A GM chasing the corner
+    ///   he actually needs takes a thinner margin to get him. Worth up to +0.12.
+    ///
+    /// Hard-clamped at 0.90: no combination of pressure hands back the entire
+    /// premium, because a GM who ends every negotiation at his walk-away number
+    /// has no negotiating position at all.
+    ///
+    /// NOT a #150-style ratchet, even though the ceiling is package-dependent: the
+    /// only way to lower it mid-conversation is to take the player he needs back
+    /// OFF the table, and a GM who gets less accommodating when you withdraw the
+    /// thing he wanted is behaving, not hardening. Complying with his counter adds
+    /// a pick or drops one of HIS assets — neither touches `needPressure`.
+    static func concessionCeiling(
+        view: GMMarketView, proposal: TradeProposal, allPlayers: [Player],
+        pressureWeek: Int
+    ) -> Double {
+        concessionCeiling(
+            cap: view.persona.concessionCap,
+            deadline: deadlinePressure(week: pressureWeek),
+            need: needPressure(view: view, proposal: proposal, allPlayers: allPlayers)
+        )
+    }
+
+    /// The arithmetic of the ceiling, with no model types in sight — the shape
+    /// the measurement harness can compile against the shipped bytes instead of
+    /// re-typing the weights.
+    static func concessionCeiling(cap: Double, deadline: Double, need: Double) -> Double {
+        min(0.90, cap + 0.18 * deadline + 0.12 * need)
+    }
+
+    /// 0 … 1 over the last four weeks of the trade window (week 6 → 0.25, the
+    /// deadline week itself → 1.0). Zero everywhere else, which covers both the
+    /// early season and every offseason week — `Career.currentWeek` only ever
+    /// holds 1…9 during the regular season (it is set to 1 at the rollover and
+    /// jumps to 19 at the playoffs), so the range test doubles as a phase test
+    /// without `respond` having to be handed a `SeasonPhase` it never took.
+    static func deadlinePressure(week: Int) -> Double {
+        let ramp = 4
+        guard week <= deadlineWeek, week > deadlineWeek - ramp else { return 0 }
+        return Double(ramp - (deadlineWeek - week)) / Double(ramp)
+    }
+
+    /// 0 … 1: the worst hole on this GM's roster that the incoming players would
+    /// plug. Read off the same `NeedProfile.severity` the valuation already uses,
+    /// so "he wants this guy" means one thing everywhere.
+    static func needPressure(
+        view: GMMarketView, proposal: TradeProposal, allPlayers: [Player]
+    ) -> Double {
+        let incoming = Set(proposal.sendingPlayers)
+        guard !incoming.isEmpty else { return 0 }
+        return allPlayers
+            .filter { incoming.contains($0.id) }
+            .map { min(1.0, max(0.0, view.needs.severity($0.position))) }
+            .max() ?? 0
     }
 
     /// Builds the counter this GM makes in `round`: the concession target first,
@@ -1393,27 +1524,45 @@ enum TradeValueEngine {
     /// can offer right now" and end the conversation on the opening call. He asks
     /// high, and if nothing on the board closes THAT gap he still makes the deal
     /// he was always willing to make.
+    ///
+    /// Task #36's cap means a late round can ask for EXACTLY what the last one
+    /// asked for — he has conceded everything this conversation is worth to him.
+    /// That is a legitimate outcome, but it must not be narrated as movement, so
+    /// the ask is compared with the previous round's and `counterLead` says which
+    /// of the two happened.
     private static func buildCounter(
         proposal: TradeProposal,
         view: GMMarketView,
         gives: Int,
         gets: Int,
         round: Int,
+        pressureWeek: Int,
         allPlayers: [Player],
         allPicks: [DraftPick]
     ) -> (proposal: TradeProposal, message: String)? {
         let floor = view.userAcceptBar + 0.02
-        let aim = concessionTarget(view: view, round: round)
+        let ceiling = concessionCeiling(
+            view: view, proposal: proposal, allPlayers: allPlayers,
+            pressureWeek: pressureWeek
+        )
+        let aim = concessionTarget(view: view, round: round, ceiling: ceiling)
+        let previous = concessionTarget(
+            view: view, round: max(1, round - 1), ceiling: ceiling
+        )
+        // A thousandth of a ratio point is rounding, not a concession.
+        let softened = round > 1 && previous - aim > 0.001
         if aim > floor,
            let holding = counterOffer(
                proposal: proposal, view: view, gives: gives, gets: gets,
-               target: aim, round: round, allPlayers: allPlayers, allPicks: allPicks
+               target: aim, round: round, softened: softened,
+               allPlayers: allPlayers, allPicks: allPicks
            ) {
             return holding
         }
         return counterOffer(
             proposal: proposal, view: view, gives: gives, gets: gets,
-            target: floor, round: round, allPlayers: allPlayers, allPicks: allPicks
+            target: floor, round: round, softened: round > 1,
+            allPlayers: allPlayers, allPicks: allPicks
         )
     }
 
@@ -1445,6 +1594,7 @@ enum TradeValueEngine {
         gets: Int,
         target: Double,
         round: Int,
+        softened: Bool,
         allPlayers: [Player],
         allPicks: [DraftPick]
     ) -> (proposal: TradeProposal, message: String)? {
@@ -1511,7 +1661,7 @@ enum TradeValueEngine {
             let label = "\(addition.displayDraftYear) round \(addition.round) pick"
             return (
                 counter,
-                "\(counterLead(view: view, round: round)) add your \(label) and \(view.persona.name) signs it."
+                "\(counterLead(view: view, round: round, softened: softened)) add your \(label) and \(view.persona.name) signs it."
             )
         }
 
@@ -1559,7 +1709,7 @@ enum TradeValueEngine {
             }
             return (
                 counter,
-                "\(counterLead(view: view, round: round)) \(removal.label) stays out of the deal."
+                "\(counterLead(view: view, round: round, softened: softened)) \(removal.label) stays out of the deal."
             )
         }
 
@@ -1569,8 +1719,21 @@ enum TradeValueEngine {
     /// Lead-in for a counter line. Round 1 is a posture; later rounds have to
     /// READ as movement, because the softening itself is invisible — the user
     /// sees a smaller ask, not the ratio behind it.
-    private static func counterLead(view: GMMarketView, round: Int) -> String {
+    ///
+    /// And when he has stopped moving (task #36's cap or his spent patience), the
+    /// line has to say SO. "They come down:" over an identical ask is the tell
+    /// that would teach a user to keep tapping Counter forever; a GM who says
+    /// this is where he stops is the honest version of the same screen.
+    private static func counterLead(view: GMMarketView, round: Int, softened: Bool) -> String {
         guard round > 1 else { return "\(view.abbreviation) counter:" }
+        guard softened else {
+            switch view.persona.archetype {
+            case .oldSchool:  return "\(view.abbreviation) don't budge — \(view.persona.name) says the chart hasn't changed since your last call:"
+            case .balanced:   return "\(view.abbreviation) hold where they are — this is their number:"
+            case .analytics:  return "\(view.abbreviation) are done moving — \(view.persona.name) says the model says what it says:"
+            case .aggressive: return "\(view.abbreviation) hold firm — \(view.persona.name) has given you everything he's going to:"
+            }
+        }
         switch view.persona.archetype {
         case .oldSchool:  return "\(view.abbreviation) move a little — \(view.persona.name) will meet you here:"
         case .balanced:   return "\(view.abbreviation) come down:"

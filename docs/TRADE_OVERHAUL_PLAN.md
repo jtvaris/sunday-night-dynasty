@@ -260,7 +260,20 @@ No behaviour changed; no band asserts yet (Wave 2).*
 5. Need model upgrade: starter-quality-aware (not roster counts), and needs
    make a team's own players *harder* to buy, not just incoming ones cheaper.
 
-**Wave 3 — Negotiation UX (the contract-negotiation port). — DONE 2026-07-30 (TradeNegotiationView threads + persisted inbox; #36 concession softening and #38 on-sim check open).**
+**Wave 3 — Negotiation UX (the contract-negotiation port). — DONE 2026-07-30 (TradeNegotiationView threads + persisted inbox; #38 on-sim check still open).**
+**#36 concession softening — DONE.** The geometric per-round walk
+(`GMPersona.concessionRate`) shipped 2026-07-30; 2026-08-07 bounded it, because
+unbounded it converged on the walk-away number — measured, a balanced GM had
+given back 98 % of his opening-to-floor gap by round 10 and an aggressive one
+100 %, so re-sending a package was free leverage. Now: `moved` clamps at
+`maxRounds` (a round past his patience buys nothing), and
+`concessionCeiling` caps the TOTAL concession at the archetype's
+`concessionCap` (35/55/40/65 %) plus real leverage only — up to +0.18 for
+deadline proximity (`deadlinePressure`, weeks 6→9) and +0.12 for how well the
+incoming players fit his own starter-quality holes (`needPressure`), hard-clamped
+at 0.90. Ceiling-bound at rest, patience-bound under full pressure; the floor
+(`userAcceptBar + 0.02`) is reachable only through `buildCounter`'s fallback,
+i.e. when the user's cupboard cannot cover the ask he is actually making.
 Port the proven stack: `TradeMessage` transcript with offer-snapshot bubbles,
 rounds + persona patience, GM identity header (name, style chip, one-liner),
 concession curve (open ~125 %, concede toward ~105 %), structural objections

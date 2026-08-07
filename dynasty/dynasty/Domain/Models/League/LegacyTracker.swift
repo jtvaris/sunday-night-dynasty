@@ -105,9 +105,4 @@ struct LegacyTracker: Codable, Equatable {
         default:        return "Villain"
         }
     }
-
-    /// Outstanding promises that have not yet been resolved.
-    var pendingPromises: [PressPromise] {
-        pressPromises.filter { $0.isDelivered == nil }
-    }
 }
