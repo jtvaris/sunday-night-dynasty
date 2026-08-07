@@ -26,6 +26,45 @@ import SwiftUI
 //   current  lifted gradient + DSElevation.bar  · 3 pt GOLD rule · expands · sub-caption
 //   future   the track value                     · no rule       · label only
 //   locked   below the track + diagonal hatch    · no rule       · the unlock condition
+//
+// ## The place slat (#165) — ADDITIVE, opt-in, off by default
+//
+// A band is sometimes the WHOLE navigation of a screen rather than only its
+// process: the scouting hub used to carry two permanent nav rows — a tab strip
+// of destinations over a band of stages — and two rows of navigation for one
+// screen is one row too many. Unifying them means the band has to be able to
+// hold one thing that is **a place, not a step**.
+//
+// So `DSSlat` gained a ``DSSlat/Role``. `.step` is everything above and is the
+// default; `.place` is a slat that:
+//
+//   * has NO state channels — no numeral, no check, no rule, no lift, no hatch,
+//     no sub-caption. It cannot be `done`, it is never `current`, and it never
+//     counts in the head's "STAGE N OF M" or in the meter, because the band's
+//     arithmetic is computed by the caller and a place is not part of the run.
+//   * draws an SF Symbol where a step draws its position numeral, on a flat
+//     `backgroundTertiary` — a surface value none of the four states uses, so
+//     the place reads as "not on this ladder" at peripheral distance.
+//   * takes a FIXED width (`DSSlatGeometry.placeWidth`) instead of a share of
+//     the flex, and is followed by a wider seam with a skewed hairline in it
+//     (`DSSlatGeometry.placeSeam`), so the ordered pipeline still reads as its
+//     own contiguous run.
+//   * may carry `hasObligation`, a 7 pt dot for "something is owed in here" —
+//     the only mark it has, because a place has no progress to report.
+//
+// Selection is the band's existing 2 pt `accentBlue` ring, unchanged. A place
+// slat is deliberately NOT given the gold current rule: gold marks where the
+// process is standing, and a destination is not a position in a process.
+//
+// **Backward compatibility.** The three new `DSSlat` properties are declared
+// LAST and all carry defaults, so the synthesized memberwise initializer keeps
+// its existing parameter list and order; every existing call site compiles and
+// yields `role == .step`. Every new branch in the layout and the renderer is
+// guarded on `role == .place`, and each guard's `.step` path is the previous
+// expression verbatim: with no place slat in the array `placeCount` and
+// `seamCount` are both 0, so `slatWidths` reduces to the arithmetic it had
+// before, and `DSSlatButton` takes none of the new branches. A band that does
+// not use the capability renders byte-identically.
 
 // MARK: - Geometry
 
@@ -63,6 +102,27 @@ enum DSSlatGeometry {
     /// 125 pt each and nothing scrolls.
     static let minSlatWidth: CGFloat = 112
     static let minCompactSlatWidth: CGFloat = 112
+
+    /// A `place` slat's fixed width — it takes no share of the flex (#165).
+    ///
+    /// Below `minSlatWidth`, and legitimately so: that floor exists because a
+    /// two-word stage name has to wrap to two lines at the 11 pt type floor. A
+    /// place slat carries ONE short word and a glyph and never wraps, so it is
+    /// measured against its own content instead. "WAR ROOM" at the 11 pt
+    /// condensed heavy voice with +0.6 tracking is ~62 pt, the leading glyph and
+    /// its gap another 18, and the parallelogram plus its optical margin 22 —
+    /// 102. 104 is that with a point of slack, and taking it out of the flex is
+    /// what keeps the ordered slats wide.
+    static let placeWidth: CGFloat = 104
+
+    /// The seam after a `place` slat: wider than the 2 pt slat gap, with a
+    /// skewed hairline in it (#165).
+    ///
+    /// The whole point of the place slat is that the numbered run beside it is a
+    /// separate thing. At the standard 2 pt gap the eye reads seven slats in one
+    /// ribbon and starts counting from the wrong end; at 10 pt with a rule in
+    /// the middle it reads one destination, then a pipeline.
+    static let placeSeam: CGFloat = 10
 
     /// Horizontal displacement of each corner from the vertical centre line.
     ///
@@ -138,6 +198,17 @@ struct DSSlat: Identifiable, Equatable {
         case locked
     }
 
+    /// What KIND of thing this slat is (#165). See the file header.
+    ///
+    /// Additive and defaulted: everything written before #165 is a `.step`.
+    enum Role: Equatable {
+        /// A position in the ordered run. All four ``State`` channels apply.
+        case step
+        /// A destination that happens to live on the same ribbon. No state
+        /// channels at all — see ``DSSlat/place(id:title:icon:hasObligation:accessibilityText:)``.
+        case place
+    }
+
     let id: String
     /// Position in the band — "4". Drawn as the slat's leading numeral so every
     /// slat states where it sits without a second component.
@@ -161,6 +232,48 @@ struct DSSlat: Identifiable, Equatable {
     /// The whole screen-reader sentence: state, title, and the sub-caption or
     /// the unlock condition.
     var accessibilityText: String = ""
+
+    // MARK: - #165 additions
+    //
+    // DECLARED LAST, ON PURPOSE. `DSSlat` is built through its synthesized
+    // memberwise initializer, whose parameter order is declaration order, so
+    // appending defaulted properties leaves every existing call site — and the
+    // order it passes its labels in — compiling unchanged.
+
+    /// Step or place. See ``Role`` and the file header.
+    var role: Role = .step
+    /// SF Symbol drawn where a step draws its position numeral. `place` only.
+    var icon: String?
+    /// "Something is owed in here" — a 7 pt dot, the place slat's only mark.
+    var hasObligation: Bool = false
+
+    /// A destination slat: an icon, a word, and no state channels (#165).
+    ///
+    /// A factory rather than a memberwise call because `state` has no default
+    /// and a place has no state: this is the only way to build one without a
+    /// caller having to pick a `State` value that the renderer then ignores.
+    /// `.future` is what it stores, and nothing reads it — `slatWidths` looks
+    /// for a `current` **step**, and every channel in `DSSlatButton` is
+    /// short-circuited by the role.
+    static func place(
+        id: String,
+        title: String,
+        icon: String,
+        hasObligation: Bool = false,
+        accessibilityText: String = ""
+    ) -> DSSlat {
+        DSSlat(
+            id: id,
+            index: nil,
+            title: title,
+            subcaption: nil,
+            state: .future,
+            accessibilityText: accessibilityText,
+            role: .place,
+            icon: icon,
+            hasObligation: hasObligation
+        )
+    }
 }
 
 // MARK: - Resource meter
@@ -289,6 +402,10 @@ struct DSSlatBand: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: DSSlatGeometry.gap) {
                         ForEach(Array(slats.enumerated()), id: \.element.id) { index, slat in
+                            // #165: the wider seam after a place slat. Nothing
+                            // is inserted when the band has no place slat, so
+                            // the ribbon is the one it was.
+                            if isSeamBreak(before: index) { seamRule }
                             slatView(slat, width: widths[index])
                                 .id(slat.id)
                         }
@@ -319,17 +436,51 @@ struct DSSlatBand: View {
         .frame(height: height)
     }
 
+    /// Whether the slat at `index` opens a new run — i.e. the one before it is a
+    /// place (#165). Always false on a band of pure steps.
+    private func isSeamBreak(before index: Int) -> Bool {
+        index > 0 && slats[index - 1].role == .place
+    }
+
+    /// The skewed hairline that sits in the wider seam after a place slat.
+    ///
+    /// A `DSSlatShape` rather than a plain `Rectangle` so the rule leans with
+    /// the ribbon; a vertical line inside a −11° band reads as a rendering
+    /// fault, which is the same reason the locked hatch is drawn on the slant.
+    private var seamRule: some View {
+        DSSlatShape(slant: slant)
+            .fill(Color.surfaceBorder)
+            .frame(width: 1, height: height)
+            // ds-lint:allow(spacing) half the place seam either side of a 1 pt rule
+            .padding(.horizontal, (DSSlatGeometry.placeSeam - 1) / 2)
+    }
+
     /// Widths that fill the band when they can, and fall back to a scrollable
     /// minimum when nine slats will not fit.
+    ///
+    /// #165 adds two terms, both zero on a band of pure steps: place slats take
+    /// a fixed width off the top instead of a share of the flex, and each seam
+    /// break costs `placeSeam` plus the extra `HStack` gap the inserted rule
+    /// brings with it.
     private func slatWidths(available: CGFloat) -> [CGFloat] {
         let count = slats.count
         guard count > 0 else { return [] }
-        let currentIndex = slats.firstIndex { $0.state == .current }
+        // The current marker belongs to the ORDERED run. A place slat stores
+        // `.future` and can never match, but stating the role makes the rule
+        // explicit rather than incidental.
+        let currentIndex = slats.firstIndex { $0.role == .step && $0.state == .current }
+        let placeCount = slats.filter { $0.role == .place }.count
+        let seamCount = slats.indices.filter { isSeamBreak(before: $0) }.count
         let gaps = CGFloat(count - 1) * DSSlatGeometry.gap + slant * 2
-        let units = CGFloat(count - (currentIndex == nil ? 0 : 1))
+            + CGFloat(seamCount) * (DSSlatGeometry.gap + DSSlatGeometry.placeSeam)
+        let fixed = CGFloat(placeCount) * DSSlatGeometry.placeWidth
+        let units = CGFloat(count - placeCount - (currentIndex == nil ? 0 : 1))
             + (currentIndex == nil ? 0 : DSSlatGeometry.currentFlex)
-        let unit = max((available - gaps) / max(units, 1), minWidth)
-        return slats.indices.map { $0 == currentIndex ? unit * DSSlatGeometry.currentFlex : unit }
+        let unit = max((available - gaps - fixed) / max(units, 1), minWidth)
+        return slats.indices.map { index in
+            if slats[index].role == .place { return DSSlatGeometry.placeWidth }
+            return index == currentIndex ? unit * DSSlatGeometry.currentFlex : unit
+        }
     }
 
     private func scroll(_ proxy: ScrollViewProxy, animated: Bool) {
@@ -337,7 +488,7 @@ struct DSSlatBand: View {
         // band six steps in opens parked on step 1 and the user has to hunt for
         // himself.
         let target = selectedID
-            ?? slats.first(where: { $0.state == .current })?.id
+            ?? slats.first(where: { $0.role == .step && $0.state == .current })?.id
             ?? slats.first?.id
         guard let target else { return }
         if animated {
@@ -392,11 +543,14 @@ private struct DSSlatButton: View {
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 
+    /// A place, not a step (#165). Short-circuits every state channel.
+    private var isPlace: Bool { slat.role == .place }
+
     private var content: some View {
         ZStack(alignment: .topLeading) {
             DSSlatShape(slant: slant).fill(surface)
 
-            if slat.state == .locked {
+            if !isPlace, slat.state == .locked {
                 DSSlatHatch()
                     .stroke(Color.textTertiary.opacity(0.30), lineWidth: 1)
             }
@@ -425,12 +579,54 @@ private struct DSSlatButton: View {
             DSSlatShape(slant: slant)
                 .strokeBorder(isSelected ? Color.accentBlue : Color.clear, lineWidth: 2)
         )
-        .modifier(DSSlatLift(isCurrent: slat.state == .current))
+        .modifier(DSSlatLift(isCurrent: !isPlace && slat.state == .current))
         .contentShape(DSSlatShape(slant: slant))
     }
 
     /// The counter-skewed content: upright, LEFT-aligned, never centred.
+    @ViewBuilder
     private var slatContent: some View {
+        if isPlace { placeContent } else { stepContent }
+    }
+
+    /// A destination: glyph, word, and at most an obligation dot (#165).
+    ///
+    /// **The dot is `alertOrange` in both states, and that is the finding, not a
+    /// miss.** The rule the tab strip carries is that an obligation dot is a
+    /// FOREGROUND mark, so on a control whose active state is a loud gold fill
+    /// it has to take the foreground's plate ink — `alertOrange` on `accentGold`
+    /// is ~1.4:1 and vanishes exactly where the control is loudest. A place slat
+    /// never takes a gold fill: gold marks where the PROCESS is standing, and
+    /// selection here is the band's `accentBlue` ring over the same dark
+    /// `backgroundTertiary` surface. So the dark-surface value is the correct
+    /// one in both states, and the plate-ink variant stays where a gold fill
+    /// actually exists.
+    private var placeContent: some View {
+        HStack(spacing: DSSpacing.xxs) {
+            if let icon = slat.icon {
+                Image(systemName: icon)
+                    .font(DSType.display(11, .black))
+                    .foregroundStyle(titleColor)
+                    .fixedSize()
+            }
+            Text(slat.title.uppercased())
+                .font(DSType.display(11, .heavy))
+                .tracking(0.6)
+                .foregroundStyle(titleColor)
+                .lineLimit(1)
+                .fixedSize()
+                .layoutPriority(1)
+            if slat.hasObligation {
+                Circle()
+                    .fill(Color.alertOrange)
+                    .frame(width: 7, height: 7)  // ds-lint:allow(spacing) obligation dot: a place slat has no second text tier to put this in
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxHeight: .infinity)
+    }
+
+    private var stepContent: some View {
         VStack(alignment: .leading, spacing: 0) {
             Spacer(minLength: 0)
             HStack(spacing: DSSpacing.xxs) {
@@ -501,6 +697,10 @@ private struct DSSlatButton: View {
     // MARK: Channel 1 — surface value
 
     private var surface: AnyShapeStyle {
+        // #165. A value none of the four states uses, so a place reads as "not
+        // on this ladder" before a single word is legible: one step above `done`
+        // (`backgroundSecondary`) and flat, where `current` is a gradient.
+        if isPlace { return AnyShapeStyle(Color.backgroundTertiary) }
         switch slat.state {
         case .current:
             return AnyShapeStyle(
@@ -519,6 +719,9 @@ private struct DSSlatButton: View {
     // MARK: Channel 2 — top rule
 
     private var ruleHeight: CGFloat {
+        // A place has no position in the run, so it never carries the run's
+        // marker — least of all the gold one (#165).
+        if isPlace { return 0 }
         switch slat.state {
         case .current: return 3
         case .done:    return 2
@@ -537,6 +740,10 @@ private struct DSSlatButton: View {
     // MARK: Channel 3 — the words
 
     private var titleColor: Color {
+        // The place slat's only two readings are "you are standing here" and
+        // "you are not", and the ring already says which. The ink follows it so
+        // the answer survives at a distance where a 2 pt stroke does not.
+        if isPlace { return isSelected ? .textPrimary : .textSecondary }
         switch slat.state {
         case .current: return .textPrimary
         case .done:    return .textSecondary
@@ -600,6 +807,35 @@ private struct DSSlatPressStyle: ButtonStyle {
             headline: "Stage 3 of 5",
             meter: DSResourceMeter(spent: 3, total: 5, unit: "scouting weeks"),
             selectedID: "c",
+            onSelect: { _ in }
+        )
+        .padding()
+    }
+}
+
+#Preview("Place slat + run") {
+    ZStack {
+        Color.backgroundPrimary.ignoresSafeArea()
+        DSSlatBand(
+            slats: [
+                DSSlat.place(id: "warRoom", title: "War Room", icon: "square.grid.2x2.fill",
+                             hasObligation: true,
+                             accessibilityText: "War Room. Mock 1.0 has not been filed"),
+                DSSlat(id: "a", index: "1", title: "Combine Review", state: .done, outcome: "Read"),
+                DSSlat(id: "b", index: "2", title: "Interviews", state: .done, outcome: "12 interviews"),
+                DSSlat(id: "c", index: "3", title: "Film Study",
+                       subcaption: "4 of 25 reports \u{00B7} spends 1 scouting week",
+                       state: .current),
+                DSSlat(id: "d", index: "4", title: "Pro Day Focus",
+                       subcaption: "After FA", state: .locked),
+                DSSlat(id: "e", index: "5", title: "Private Workouts",
+                       subcaption: "After FA", state: .locked),
+                DSSlat(id: "f", index: "6", title: "Top-30 Visits",
+                       subcaption: "After FA", state: .locked)
+            ],
+            headline: "Stage 3 of 6",
+            meter: DSResourceMeter(spent: 3, total: 6, unit: "scouting weeks"),
+            selectedID: "warRoom",
             onSelect: { _ in }
         )
         .padding()

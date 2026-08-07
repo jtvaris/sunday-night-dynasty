@@ -236,9 +236,19 @@ extension DraftPrepStageCell {
 
 // MARK: - Process bar
 
-/// The scouting hub's primary navigation: the pre-draft calendar as a
-/// ``DSSlatBand`` — **six** parallelogram slats, in order, each carrying its own
-/// state and its own count of work, and each opening its stage's surface.
+/// The scouting hub's **whole** navigation: one ribbon carrying the War Room and
+/// the pre-draft calendar — a place slat, a seam, then six numbered parallelogram
+/// slats, each carrying its own state and its own count of work, and each opening
+/// its stage's surface.
+///
+/// **ONE NAV ROW, NOT TWO (#165).** #164 shipped the band under a permanent War
+/// Room tab strip, and live play made the cost obvious: two full-width, always-on
+/// navigation rows above every surface in the hub, ~100 pt of chrome before the
+/// screen's own title, and no statement anywhere of how the two related. They are
+/// one navigation. The band holds all of it: `WAR ROOM` is its first slat — a
+/// PLACE, unnumbered, stateless, outside the count and outside the meter — and
+/// the five reference tabs appear beneath the band only while that slat is
+/// selected, which is the only time they are the question.
 ///
 /// **The band IS the stage navigation (#164).** It draws the six rooms the club
 /// works — combine review, interviews, film, pro-day focus, private workouts,
@@ -246,8 +256,10 @@ extension DraftPrepStageCell {
 /// still nine-ninths of `DraftPrepProgress`; they simply have no slat, because
 /// two of them are a read filed in the War Room and the third is a state rather
 /// than a room. Their obligations surface where the act happens: the next locked
-/// slat's caption names an unfiled mock, the hub's action bar states it, and the
-/// War Room's Mock Draft tab carries a needs-filing badge.
+/// slat's caption names an unfiled mock, the hub's action bar states it, the War
+/// Room's Mock Draft tab carries a needs-filing badge — and, since that tab is
+/// only on screen while the War Room slat is selected, the SLAT carries a dot so
+/// the obligation is visible from a stage surface too.
 ///
 /// This replaces the flat eleven-tab picker. The picker was a list of places,
 /// which is the wrong shape for a process — it said nothing about order, nothing
@@ -266,35 +278,87 @@ extension DraftPrepStageCell {
 /// state, every counter, every tap target and the whole accessibility sentence
 /// come through the same ``DraftPrepStageCell`` the hub already computed.
 struct DraftPrepProcessBar: View {
+
+    /// The band's first slat's id. A `DraftPrepStep` raw value can never collide
+    /// with it — the enum's cases are `combineReview`…`ready` — so the one
+    /// `onSelect` closure can route by id without a second channel.
+    static let warRoomSlatID = "warRoom"
+
     let cells: [DraftPrepStageCell]
     /// The stage whose screen is currently showing — not necessarily the stage
-    /// the club is standing in: a done stage opens read-only.
+    /// the club is standing in: a done stage opens read-only. `nil` while the
+    /// War Room slat owns the band.
     let selected: DraftPrepStep?
     /// "Stage 4 of 6". **The one place the hub prints its count** — it used to
     /// appear three times on this screen (the switcher subtitle, the metrics
     /// strip, the prep card's collapsed line).
+    ///
+    /// SIX, and the place slat does not move it. `WAR ROOM` is not a working
+    /// week: it is outside this count and outside the meter, which is precisely
+    /// what makes the seam beside it honest rather than decorative.
     let headline: String
     /// The spring's six working weeks. A filled pip is a spent pip.
     let meter: DSResourceMeter
-    /// Demoted rendering for the War Room tabs, which the pipeline is not the
-    /// subject of (#130, #164).
+    /// Whether the place slat is the selected one — i.e. a reference surface is
+    /// on screen and the five War Room tabs are drawn beneath the band.
+    var isWarRoomSelected: Bool = false
+    /// A dot on the War Room slat: an unfiled mock inside its window (#165).
     ///
-    /// The band is the wizard's spine and it stays on every screen — the user
-    /// asked to always see how much of each stage is done — but on the Big Board
-    /// or the draft order it is *context*, not the control the eye should land
-    /// on first. Compact keeps the geometry, the states and the targets, and
-    /// drops the sub-captions and 12 pt of height.
+    /// The same predicate the Mock Draft tab's badge reads
+    /// (`ScoutingHubView.pendingMock`), because it is the same obligation seen
+    /// from one level up — the tab is only on screen while the War Room slat is
+    /// selected, so without this the club can stand in a stage room all week
+    /// with an unfiled mock and no mark anywhere in the chrome.
+    var warRoomHasObligation: Bool = false
+    /// Spoken suffix for the War Room slat while it is badged.
+    var warRoomObligationText: String = ""
+    /// Demoted rendering. **The scouting hub never passes it (#165).**
+    ///
+    /// #130 and #164 used it for the War Room surfaces, on the reasoning that
+    /// the pipeline is context there rather than the subject. That held while a
+    /// second full-size strip above the band carried the navigation. It does not
+    /// now: this band IS the hub's navigation on every one of its surfaces, and
+    /// a navigation row that loses 12 pt and its sub-captions depending on which
+    /// of its own destinations is selected is a control that changes shape under
+    /// the finger. The parameter stays because `DSSlatBand` is domain-agnostic
+    /// and a band genuinely CAN be context on a screen it does not navigate —
+    /// the season ladder over a game recap, say. That consumer has not shipped
+    /// yet; when it does, this is how it asks.
     var isCompact: Bool = false
     var onSelect: (DraftPrepStep) -> Void
+    /// Tapping the place slat. Opens the War Room's tab row and its surface.
+    var onSelectWarRoom: () -> Void = {}
+
+    /// The War Room as `DSSlatBand` draws it (#165).
+    ///
+    /// `DSSlat.place` is the additive role: no numeral, no check, no rule, no
+    /// lift, no sub-caption, a fixed width off the flex and a wider seam behind
+    /// it. It is prepended to the six stage slats, and it is deliberately NOT in
+    /// `cells` — `cells` is what the head's "Stage N of 6" and the six-pip meter
+    /// are counted from, and a place is not a working week.
+    private var warRoomSlat: DSSlat {
+        DSSlat.place(
+            id: Self.warRoomSlatID,
+            title: "War Room",
+            // A room of screens, not a step: the grid glyph is the one thing on
+            // the ribbon that is not an instrument or a stage.
+            icon: "square.grid.2x2.fill",
+            hasObligation: warRoomHasObligation,
+            accessibilityText: warRoomHasObligation && !warRoomObligationText.isEmpty
+                ? "War Room. \(warRoomObligationText)"
+                : "War Room"
+        )
+    }
 
     var body: some View {
         DSSlatBand(
-            slats: cells.map(\.slat),
+            slats: [warRoomSlat] + cells.map(\.slat),
             headline: headline,
             meter: meter,
             isCompact: isCompact,
-            selectedID: selected?.rawValue,
+            selectedID: isWarRoomSelected ? Self.warRoomSlatID : selected?.rawValue,
             onSelect: { id in
+                if id == Self.warRoomSlatID { onSelectWarRoom(); return }
                 guard let step = DraftPrepStep(rawValue: id) else { return }
                 onSelect(step)
             }
@@ -304,26 +368,38 @@ struct DraftPrepProcessBar: View {
 
 // MARK: - War Room tab strip
 
-/// The hub's **destination** navigation (#164): the five War Room surfaces, in
-/// one strip, above the band.
+/// The five War Room surfaces — **the War Room slat's own contents** (#165).
+///
+/// #164 drew this as a permanent strip ABOVE the band, which put two full-width
+/// navigation rows on every surface in the hub. It is now a sub-row of one slat:
+/// it is drawn directly beneath the band, and only while the band's `WAR ROOM`
+/// place slat is selected. On a stage surface it is not on screen at all,
+/// because on a stage surface it is not the question — and the obligation it
+/// used to carry alone (the Mock Draft badge) is mirrored onto the slat so
+/// nothing is lost by hiding the row.
 ///
 /// The split this replaces is the point. #130 gave the hub one three-slot
 /// switcher — Big Board · the stage surface · a Tools menu — which answered
 /// *"where am I"* but folded the club's five permanent reference screens behind
 /// a chevron and made the stage surface a slot that changed its own label. The
-/// user's direction is blunter and better: the **band** is the stage navigation
-/// (six rooms, always on screen, each one tap), and everything that is not a
-/// room lives here, named, at all times.
+/// **band** is the navigation now — six rooms and one place, always on screen,
+/// each one tap — and this is what is inside the place.
 ///
 /// Exactly five tabs, and they are the war room: the board you build, the class
 /// behind it, the order you pick in, the mock the league prints, and the
 /// department that does the work. Nothing is behind a menu.
 ///
+/// NO "WAR ROOM" HEAD LABEL. It had one while it was a top-level strip and
+/// needed to name itself; the slat directly above it now says the word, and a
+/// section head repeating its own parent one row down is the kind of duplicate
+/// this hub has spent three tasks removing. Dropping it also returns ~90 pt to
+/// the row, which is about what a sixth tab needs.
+///
 /// **Gold discipline (P5).** The active tab's fill is the current-marker for the
-/// destination layer, and it appears only while a War Room tab owns the screen —
-/// on a stage surface no tab is active, so the band's gold current rule and the
-/// action bar's primary are the only gold on the screen. There is never a third
-/// gold fill in the hub's chrome.
+/// destination layer, and the row exists only while a War Room tab owns the
+/// screen — on a stage surface there is no row, so the band's gold current rule
+/// and the action bar's primary are the only gold on that screen. There is never
+/// a third gold fill in the hub's chrome.
 struct ScoutingWarRoomTabs: View {
 
     let tabs: [ScoutingTab]
@@ -343,21 +419,12 @@ struct ScoutingWarRoomTabs: View {
 
     var body: some View {
         HStack(spacing: DSSpacing.xs) {
-            // A section head, in the section-head voice: textSecondary, tracked,
-            // 11 pt (P5). It is a label for the strip, not a control, and it is
-            // deliberately not gold.
-            Text("WAR ROOM")
-                .font(DSType.display(11, .heavy))
-                .tracking(0.7)
-                .foregroundStyle(Color.textSecondary)
-                .lineLimit(1)
-                .fixedSize()
-                .accessibilityHidden(true)
-
             ForEach(tabs) { tab in
                 tabButton(tab)
             }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("War Room")
     }
 
     private func tabButton(_ tab: ScoutingTab) -> some View {
@@ -372,9 +439,10 @@ struct ScoutingWarRoomTabs: View {
                 // NO `minimumScaleFactor`. 11 pt IS the condensed display
                 // voice's floor (P7), so a scale factor here can only render
                 // BELOW it — the flex the band refuses to take. Five tabs get
-                // ~184 pt each at 1032 pt portrait and the longest label
-                // ("CLASS DEPTH") needs ~110, so the strip has the headroom; a
-                // sixth tab must scroll or wrap rather than shrink.
+                // ~195 pt each at 1032 pt portrait (the head label went with
+                // #165) and the longest label ("CLASS DEPTH") needs ~110, so the
+                // row has the headroom for a sixth; a seventh must scroll or
+                // wrap rather than shrink.
                 Text(tab.label.uppercased())
                     .font(DSType.display(11, .heavy))
                     .tracking(0.6)

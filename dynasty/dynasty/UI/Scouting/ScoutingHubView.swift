@@ -51,6 +51,18 @@ struct ScoutingHubView: View {
     // state had no reader left, and dead `@State` is not something the compiler
     // warns about.
 
+    /// The War Room surface to return to when the WAR ROOM slat is tapped (#165).
+    ///
+    /// The mirror image of the argument above, and the reason it is right here
+    /// and was wrong there. The six stage rooms each own a slat, so the band
+    /// remembers where the user was by SHOWING it; the five War Room surfaces
+    /// share ONE slat, and a one-slot control that always dumps the user on the
+    /// Big Board would make "look at the class-depth read, check a stage, come
+    /// back" a three-tap round trip in the reference direction and a one-tap
+    /// round trip in the stage direction. Big Board is the seed, per the landing
+    /// rule; after that it is wherever the user last stood.
+    @State private var lastWarRoomTab: ScoutingTab = .board
+
     /// The man a board row sent to the interview room (#125), ticked on arrival
     /// and cleared the moment the user leaves the room — otherwise walking back
     /// in a week later would re-tick a name he never asked for again.
@@ -86,37 +98,54 @@ struct ScoutingHubView: View {
 
     // MARK: - Body
     //
-    // TWO NAVIGATION LAYERS, AND THEY ANSWER DIFFERENT QUESTIONS (#164).
+    // ONE NAVIGATION ROW (#165).
     //
-    //   1. the WAR ROOM strip     — the five permanent destinations: Big Board ·
+    //   1. the slat band          — THE WHOLE NAVIGATION. `[WAR ROOM]‖[1 COMBINE
+    //                               REVIEW][2 INTERVIEWS][3 FILM STUDY][4 PRO DAY
+    //                               FOCUS][5 PRIVATE WORKOUTS][6 TOP-30 VISITS]`.
+    //                               Six numbered slats, one per room the club
+    //                               works, each carrying its state and its own
+    //                               count of work; and, before a wider seam, one
+    //                               PLACE slat — unnumbered, stateless, outside
+    //                               "STAGE N OF 6" and outside the meter. FULL
+    //                               height on every hub surface, because it is
+    //                               the navigation (see `isCompact` below)
+    //   1a. the War Room tab row  — the five permanent destinations: Big Board ·
     //                               Class Depth · Draft Order · Mock Draft ·
-    //                               Scout Team. The active tab's gold fill is the
-    //                               current-marker for this layer
-    //   2. the slat band          — THE STAGE NAVIGATION. Six slats, one per room
-    //                               the club works, each carrying its state and
-    //                               its own count of work, each opening its
-    //                               surface. Full on a stage surface, compact on
-    //                               a War Room tab
-    //   3. Insights               — the surface's title bar, and behind its
+    //                               Scout Team. Drawn directly under the band and
+    //                               ONLY while the War Room slat is selected,
+    //                               because only then are they the question. The
+    //                               active tab's gold fill is that row's
+    //                               current-marker
+    //   2. Insights               — the surface's title bar, and behind its
     //                               chevron everything that used to stack above
     //                               the list: the stage explainer, the
     //                               "N % scouted · phase" strip, the Draft Prep
     //                               card, the combine's risers/fallers, the
     //                               class-depth declaration header
-    //   4. the position chips     — directly on top of the table, so the shared
+    //   3. the position chips     — directly on top of the table, so the shared
     //                               filter reads as part of the list's own
-    //                               controls rather than as a fourth nav row
+    //                               controls rather than as a third nav row
     //
     //   … then the surface, whose own controls (mode chips, search, sortable
     //   column labels) live in ITS pinned list header, and finally the action
     //   bar, which is a transition and not an insight and therefore never folds.
     //
-    // What this replaced: #130's three-slot switcher, whose middle slot changed
-    // its own label depending on which room you were last in and whose third
-    // slot was a chevron menu hiding five permanent screens. Both problems have
-    // the same cause — a stage is a *step in a process* and a war-room screen is
-    // a *place*, and one control cannot be the navigation for both. The band is
-    // the process; the strip is the places.
+    // What this replaced, twice over. #130's three-slot switcher hid five
+    // permanent screens behind a chevron and gave the stage surface a slot that
+    // changed its own label. #164 fixed the hiding by giving the stages a band
+    // and the places a strip — and shipped TWO permanent, full-width navigation
+    // rows stacked on every surface in the hub, with nothing anywhere saying how
+    // the two related. They do not need to relate: they are one navigation. A
+    // stage is a step in a process and a war-room screen is a place, and one
+    // ribbon can carry both as long as the place is drawn as a place — no
+    // number, no state, no gold, its own seam. That is `DSSlat.Role.place`.
+    //
+    // THE SELECTION MODEL IS `selectedTab`, STILL. There is no second piece of
+    // state for "which slat is lit": `warRoomTabs.contains(selectedTab)` selects
+    // the place slat, and `selectedTab.stage` selects a numbered one. The two
+    // sets partition all eleven tabs, so the band always has exactly one
+    // selection and it can never disagree with the screen underneath it.
 
     var body: some View {
         ZStack {
@@ -167,33 +196,50 @@ struct ScoutingHubView: View {
                !pending.isEmpty {
                 // `bigBoard` / `prospects` are the two legacy hints: the tab
                 // they named is one surface now, so both land on the board.
+                // TOTAL OVER ALL ELEVEN TABS (#165). Every `ScoutingTab` has a
+                // hint string, plus the three legacy aliases, so no writer can
+                // name a surface the hub cannot open. `default` stays — a hint
+                // is untrusted input from a career-scoped default that can
+                // outlive the build that wrote it.
                 let hinted: ScoutingTab? = {
                     switch pending {
+                    // --- the six stage rooms → their numbered slat's surface ---
                     // No longer phase-gated: an earlier stage is never shut, so
                     // a task that points at the interview room can always open
                     // it. Refusing the hint outside the combine is what made a
                     // REQUIRED task deep-link into nothing.
-                    case "interviews": return .interviews
                     case "combine":    return .combine
-                    case "bigBoard", "prospects", "board": return .board
+                    case "interviews": return .interviews
                     case "film":       return .film
                     case "proDays":    return .proDays
                     case "workouts":   return .workouts
                     case "top30":      return .top30
-                    case "mockDraft":  return .mockDraft
+                    // --- the five War Room tabs → the place slat + that tab ---
+                    // `bigBoard` / `prospects` are the two legacy hints: the tab
+                    // they named is one surface now, so both land on the board.
+                    case "bigBoard", "prospects", "board": return .board
                     // #128. The January "Senior Bowl & declarations" task used to
                     // land on `.combine`, which in `.reviewRoster` is a screen
                     // reading "0 of 0 prospects invited" — the league has not
                     // issued an invite list yet, and cannot have. It lands here.
                     case "classDepth": return .classDepth
+                    case "mockDraft":  return .mockDraft
+                    case "draftOrder": return .draftOrder
+                    case "scouts":     return .scouts
+                    // The Tools menu's sixth entry, folded into the draft-order
+                    // surface's NEXT YEAR horizon by #164. A hint written by an
+                    // older build (or left in a save's defaults by one) still
+                    // names the screen the user asked for rather than nothing.
+                    case "nextYear":   return .draftOrder
                     default:           return nil
                     }
                 }()
                 // Every stage room is reachable from the band and every War Room
-                // surface from the strip — nothing is behind a menu and nothing
-                // is hidden — so a hint is simply obeyed. `mockDraft` and
-                // `classDepth` now land on their War Room tabs; the six stage
-                // hints land on their slat's surface.
+                // surface from the band's place slat — nothing is behind a menu
+                // and nothing is hidden — so a hint is simply obeyed. A War Room
+                // hint selects the place slat implicitly: the band's selection is
+                // read off `selectedTab`, and `onChange` seeds `lastWarRoomTab`
+                // so walking out to a stage and back returns here.
                 if let hinted { selectedTab = hinted }
                 CareerScopedDefaults.remove("scoutingPendingTab")
             } else {
@@ -205,13 +251,16 @@ struct ScoutingHubView: View {
                 // screen reading "0 of 0 prospects invited" — and the user's own
                 // board, the one surface that is always true, took two taps.
                 //
-                // Live work wins; otherwise the War Room, on the Big Board — its
-                // first tab and the one surface that is always true (#164).
+                // Live work wins; otherwise the WAR ROOM SLAT, on the Big Board —
+                // its first tab and the one surface that is always true (#164,
+                // #165).
                 //
                 // "Live work" is still `Career.prepStep`'s room, and for the two
                 // mock stages that room is the War Room's Mock Draft tab: an
                 // unfiled mock IS the work in front of the club, and it is where
-                // the stage's one act lives.
+                // the stage's one act lives. So a mock landing selects the place
+                // slat with the Mock Draft tab active, and the numbered run
+                // stays exactly one tap away either way.
                 let progress = prepProgress
                 let current = progress.current
                 selectedTab = (progress[current].unlocked && !progress[current].isSatisfied)
@@ -221,6 +270,12 @@ struct ScoutingHubView: View {
             isLoading = false
         }
         .onChange(of: selectedTab) { _, newTab in
+            // Where the WAR ROOM slat goes back to (#165). Recorded here rather
+            // than at the five tap sites, so a route into a reference surface
+            // that does NOT come from the tab row — the action bar's "Open Mock
+            // 1.0", a board empty-state CTA, the class-depth hand-off, a
+            // deep-link hint — is remembered on exactly the same terms.
+            if Self.warRoomTabs.contains(newTab) { lastWarRoomTab = newTab }
             // A board row's interview hand-off is spent the moment the room is
             // built; leaving clears it so a later visit opens on a clean slate.
             if newTab != .interviews { interviewFocusProspectID = nil }
@@ -604,9 +659,9 @@ struct ScoutingHubView: View {
         try? modelContext.save()
     }
 
-    // MARK: - The two navigation layers (#164)
+    // MARK: - The one navigation row (#164, unified #165)
 
-    /// **The War Room** — the five permanent destinations, in strip order.
+    /// **The War Room** — the five permanent destinations, in row order.
     ///
     /// Not a pipeline and not a menu: the board you build, the class behind it,
     /// the order you pick in, the mock the league prints, and the department
@@ -621,13 +676,12 @@ struct ScoutingHubView: View {
     private static let warRoomTabs: [ScoutingTab] =
         [.board, .classDepth, .draftOrder, .mockDraft, .scouts]
 
-    /// The tabs that are a band stage's own working surface — one per slat.
-    ///
-    /// `.mockDraft` is deliberately NOT here any more. It is a War Room tab: the
-    /// two mock stages are a READ that is filed, not a room that is worked, and
-    /// the band draws only rooms (#164).
-    private static let stageTabs: Set<ScoutingTab> =
-        [.combine, .interviews, .film, .proDays, .workouts, .top30]
+    // NO `stageTabs` SET (#165). It existed to answer "is a stage surface
+    // showing", and its one reader was the band's `isCompact`, which is gone —
+    // the band is the navigation and is full-height everywhere. The complement
+    // of `warRoomTabs` over the eleven tabs is the same answer, computed from
+    // one list instead of two that could drift apart: a tab added to
+    // `ScoutingTab` and to neither set used to be silently "a stage".
 
     /// The tab whose screen belongs to the stage the club is standing in.
     ///
@@ -644,12 +698,14 @@ struct ScoutingHubView: View {
     /// selection is exactly "which slat's room is on screen".
     private var selectedStage: DraftPrepStep? { selectedTab.stage }
 
-    /// Whether the screen showing is a stage's own working surface.
+    /// Whether the band's WAR ROOM place slat is the selected one — and so
+    /// whether the five-tab row is drawn beneath the band (#165).
     ///
-    /// Drives the band's size: the pipeline is the SUBJECT there, so it gets its
-    /// full slats and their sub-captions. On a War Room tab it is context and
-    /// demotes to the compact ribbon.
-    private var isOnStageSurface: Bool { Self.stageTabs.contains(selectedTab) }
+    /// Derived, not stored. The eleven tabs partition into the five War Room
+    /// surfaces and the six stage rooms, so `selectedTab` alone decides which
+    /// slat is lit and whether the row is on screen; a second `@State` for it
+    /// would be a second answer to a question that already has one.
+    private var isWarRoomSelected: Bool { Self.warRoomTabs.contains(selectedTab) }
 
     /// "<career>-<season>-<phase>" — the token that re-arms one free Insights
     /// expansion.
@@ -776,38 +832,61 @@ struct ScoutingHubView: View {
         let stage = selectedStage
         let coverage = coverageReadout()
         let owedMock = pendingMock(progress)
+        let owedMockText = owedMock.map { "\($0.displayName) has not been filed" } ?? ""
         return VStack(spacing: 0) {
-            // Layer 1: THE WAR ROOM. Five destinations, named, always. The gold
-            // fill marks the active one and appears only while one of them owns
-            // the screen — on a stage surface this strip is entirely un-gold, so
-            // the band's current rule and the action bar's primary are the whole
-            // of the screen's gold (P5).
-            ScoutingWarRoomTabs(
-                tabs: Self.warRoomTabs,
-                selected: Self.warRoomTabs.contains(selectedTab) ? selectedTab : nil,
-                badgedTabs: owedMock == nil ? [] : [.mockDraft],
-                badgeAccessibilityText: owedMock.map { "\($0.displayName) has not been filed" } ?? "",
-                onSelect: { selectedTab = $0 }
+            // Layer 1: THE NAVIGATION. One row: the War Room place slat, a seam,
+            // then the six rooms in calendar order, each carrying its state and
+            // its own count of work, none ever hidden.
+            //
+            // ALWAYS FULL HEIGHT (#165). #164 demoted it to the compact ribbon on
+            // a War Room tab, on the reasoning that the pipeline is context there
+            // rather than the subject. That reasoning was sound while a second,
+            // full-size strip sat above it carrying the navigation — it is not
+            // now: this row IS the navigation on every surface in the hub, and a
+            // navigation that shrinks 12 pt and drops its sub-captions depending
+            // on which of its own destinations you picked is a control that
+            // changes shape under the finger. `DSSlatBand.isCompact` stays in the
+            // component for the consumers it was written for — a band that is
+            // genuinely context on someone else's screen.
+            DraftPrepProcessBar(
+                cells: cells,
+                selected: stage,
+                // Counted off `cells`, which is the SIX rooms — the place slat
+                // is not a working week and never appears in either number.
+                headline: bandHeadline(cells: cells),
+                meter: stageWeeks(cells: cells),
+                isWarRoomSelected: isWarRoomSelected,
+                // The obligation, one level up. `pendingMock` is the ONE
+                // predicate (see its doc comment); the tab below and this dot are
+                // two readers of it, not two tests.
+                warRoomHasObligation: owedMock != nil,
+                warRoomObligationText: owedMockText,
+                onSelect: { selectStage($0) },
+                onSelectWarRoom: { selectWarRoom() }
             )
             .padding(.horizontal, 12)
             .padding(.top, 2)
             .padding(.bottom, 8)
 
-            // Layer 2: THE STAGE NAVIGATION. Six rooms in calendar order, each
-            // carrying its state and its own count of work, none ever hidden —
-            // but sized for whether it is the subject of the screen or context.
-            DraftPrepProcessBar(
-                cells: cells,
-                selected: stage,
-                headline: bandHeadline(cells: cells),
-                meter: stageWeeks(cells: cells),
-                isCompact: !isOnStageSurface,
-                onSelect: { selectStage($0) }
-            )
-            .padding(.horizontal, 12)
-            .padding(.bottom, 8)
+            // Layer 1a: what is INSIDE the War Room. Five destinations, named,
+            // and on screen only while their slat is selected — the one moment
+            // they are the question the user is asking. The gold fill marks the
+            // active one, so on a stage surface (no row at all) the band's
+            // current rule and the action bar's primary are the whole of the
+            // screen's gold (P5).
+            if isWarRoomSelected {
+                ScoutingWarRoomTabs(
+                    tabs: Self.warRoomTabs,
+                    selected: selectedTab,
+                    badgedTabs: owedMock == nil ? [] : [.mockDraft],
+                    badgeAccessibilityText: owedMockText,
+                    onSelect: { selectedTab = $0 }
+                )
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
+            }
 
-            // Layer 3: the surface's title, and behind one chevron everything
+            // Layer 2: the surface's title, and behind one chevron everything
             // that used to be stacked above the list unasked.
             ScoutingInsightsSection(
                 surfaceKey: selectedTab.rawValue,
@@ -827,7 +906,7 @@ struct ScoutingHubView: View {
             .padding(.horizontal, 12)
             .padding(.bottom, hostsPositionFilterChips ? 6 : 8)
 
-            // Layer 4: the shared filter, LAST, so it sits on the table rather
+            // Layer 3: the shared filter, LAST, so it sits on the table rather
             // than between two blocks of prose. The table's own controls (mode
             // chips, search, sortable column labels) are pinned inside its list
             // header directly underneath, and the two read as one strip.
@@ -1026,6 +1105,20 @@ struct ScoutingHubView: View {
     /// are, and say what opens them.
     private func selectStage(_ step: DraftPrepStep) {
         selectedTab = ScoutingTab.forStage(step)
+    }
+
+    /// Tapping the WAR ROOM slat (#165): the five-tab row appears under the band
+    /// and the surface below it is the one the user last stood in — the Big
+    /// Board on a fresh visit, per `lastWarRoomTab`.
+    ///
+    /// Note what this does NOT do: it does not clear the band's stage selection,
+    /// because there is nothing to clear. The band's selection is `selectedTab`,
+    /// and moving `selectedTab` into the War Room set moves the ring onto the
+    /// place slat in the same pass. The gold current rule stays where it is —
+    /// the club is still standing in the stage it was standing in, and the slat
+    /// that says so is one tap away.
+    private func selectWarRoom() {
+        selectedTab = lastWarRoomTab
     }
 
     // MARK: - The hub's one commit surface (§2.5, P5)
