@@ -156,10 +156,16 @@ struct DraftPrepStageExplainer: View {
                         text: lockReason
                     )
                 } else if state == .done {
+                    // ONE STAGE-COMPLETE VISUAL (#105 wave 0). This used to draw
+                    // a green "Stage complete" seal one row under a band whose
+                    // `done` slat — check glyph, top rule, outcome — already
+                    // makes the claim. What is left here is the only part the
+                    // band cannot say: that the room is still open to walk into,
+                    // and that its priced actions are not.
                     statusLine(
-                        icon: "checkmark.seal.fill",
-                        tint: .success,
-                        text: "Stage complete \u{2014} open for review. Its priced actions are shut."
+                        icon: "eye",
+                        tint: .textSecondary,
+                        text: "Open for review \u{2014} its priced actions are shut."
                     )
                 } else if state == .open {
                     // Says only what is true of BOTH open cases — the stages
@@ -209,10 +215,14 @@ struct DraftPrepStageExplainer: View {
 
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 6) {
+                        // No state chip. The band's slat carries the state in
+                        // three channels at once, one row above this card; a
+                        // CURRENT/DONE/OPEN/LOCKED capsule here was a second
+                        // rendering of it — and the gold CURRENT fill was a
+                        // third gold on the screen (#105 wave 0, P5/P7).
                         Text(step.displayName.uppercased())
                             .font(.system(size: DSType.Size.micro, weight: .black))
                             .foregroundStyle(state == .locked ? Color.textTertiaryReadable : Color.accentGold)
-                        stateChip
                     }
                     Text(copy.headline)
                         .font(.system(size: DSType.Size.caption, weight: .semibold))
@@ -245,33 +255,6 @@ struct DraftPrepStageExplainer: View {
         .accessibilityLabel("\(step.displayName) explainer. \(isExpanded ? "Collapse" : "Expand")")
     }
 
-    @ViewBuilder
-    private var stateChip: some View {
-        switch state {
-        case .current:
-            chip("CURRENT", fill: .accentGold, ink: .backgroundPrimary)
-        case .done:
-            chip("DONE", fill: .success, ink: .backgroundPrimary)
-        case .open:
-            chip("OPEN", fill: .accentBlue, ink: .backgroundPrimary)
-        case .locked:
-            // Same chip styling either way — a wait is drawn locked. Only the
-            // word changes: LOCKED reads as "you have not got here yet", which
-            // is untrue of a club standing in November.
-            chip(isWaitingOnCalendar ? "WAITING" : "LOCKED",
-                 fill: .backgroundTertiary, ink: .textTertiaryReadable)
-        }
-    }
-
-    private func chip(_ text: String, fill: Color, ink: Color) -> some View {
-        Text(text)
-            .font(.system(size: 8, weight: .black))
-            .foregroundStyle(ink)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 1)
-            .background(Capsule().fill(fill))
-    }
-
     private func statusLine(icon: String, tint: Color, text: String) -> some View {
         HStack(alignment: .top, spacing: 5) {
             Image(systemName: icon)
@@ -285,110 +268,11 @@ struct DraftPrepStageExplainer: View {
     }
 }
 
-// MARK: - Advance bar
-
-/// The stage's forward transition, pinned to the bottom of the hub.
-///
-/// It used to live in `ScoutingHubHeader`, i.e. inside the Big Board list's
-/// FIRST SECTION — a 12 pt greyed button that scrolled away with the header. On
-/// a brand-new career that button was the only exit from stage 1, and finding it
-/// required scrolling back up a 350-row list. That is the whole of bug B3: film
-/// study was not broken, it was three taps behind a control the user could not
-/// see. A transition is the most important thing on a process screen, so it gets
-/// the bottom bar and it states its own requirement.
-struct DraftPrepAdvanceBar: View {
-    let stepName: String
-    let nextName: String?
-    /// What the user still has to do, in one sentence.
-    let requirement: String
-    /// What walking past this stage costs him.
-    let skipCost: String
-    let isComplete: Bool
-    let isBlocked: Bool
-    let blockedReason: String
-    /// `false` for the stages whose own screen owns the transition (the pro-day
-    /// tour spends its reservations *in* the advance) — then the bar routes to
-    /// that screen instead of transitioning.
-    let ownsTransition: Bool
-    var onAdvance: () -> Void
-    var onSkip: () -> Void
-    var onOpen: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(isBlocked ? blockedReason : requirement)
-                .font(.system(size: DSType.Size.micro, weight: .semibold))
-                .foregroundStyle(isBlocked ? Color.textTertiaryReadable : Color.textSecondary)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-
-            HStack(spacing: 8) {
-                if let nextName {
-                    if ownsTransition {
-                        primary(
-                            title: "Advance \u{2014} \(nextName)",
-                            enabled: isComplete && !isBlocked,
-                            action: onAdvance
-                        )
-                        skipButton
-                    } else {
-                        primary(title: "Open \(stepName)", enabled: !isBlocked, action: onOpen)
-                    }
-                } else {
-                    primary(title: "The board is closed", enabled: false, action: {})
-                }
-                Spacer(minLength: 0)
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.backgroundSecondary)
-        .overlay(alignment: .top) {
-            Rectangle().fill(Color.surfaceBorder).frame(height: 1)
-        }
-    }
-
-    private func primary(title: String, enabled: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: DSType.Size.footnote, weight: .bold))
-                .foregroundStyle(enabled ? Color.backgroundPrimary : Color.textTertiary)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(
-                    enabled ? Color.accentGold : Color.backgroundTertiary,
-                    in: RoundedRectangle(cornerRadius: DSCornerRadius.inline)
-                )
-        }
-        .buttonStyle(.plain)
-        .disabled(!enabled)
-        .accessibilityHint(enabled ? requirement : (isBlocked ? blockedReason : requirement))
-    }
-
-    @ViewBuilder
-    private var skipButton: some View {
-        if !isBlocked {
-            Button(action: onSkip) {
-                VStack(alignment: .leading, spacing: 0) {
-                    Text("Skip this stage")
-                        .font(.system(size: DSType.Size.caption, weight: .semibold))
-                        .foregroundStyle(Color.textSecondary)
-                    Text(skipCost)
-                        .font(.system(size: 9))
-                        .foregroundStyle(Color.textTertiaryReadable)
-                        .lineLimit(1)
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: DSCornerRadius.inline))
-                .overlay(
-                    RoundedRectangle(cornerRadius: DSCornerRadius.inline)
-                        .strokeBorder(Color.surfaceBorder, lineWidth: 1)
-                )
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Skip \(stepName). \(skipCost)")
-        }
-    }
-}
+// MARK: - Advance bar (deleted)
+//
+// `DraftPrepAdvanceBar` lived here: a bespoke bottom bar with its own gold
+// recipe, its own corner radius and its own two-line skip chip. Wave 0 of #105
+// moved the hub's commit onto the shared `DSActionBar` (§2.5): one explainer
+// slot, one ghost carrying the hub's single skip, one gold primary, and a
+// genuinely grey disabled state instead of dimmed gold. See
+// `ScoutingHubView.advanceBar`.

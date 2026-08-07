@@ -55,6 +55,12 @@ struct DraftPrepStageCell: Identifiable, Equatable {
     /// `true` when the calendar, not the club's own work, is what shuts this
     /// stage. Changes the words, never the state: a wait is drawn locked.
     let isWaitingOnCalendar: Bool
+    /// The slat's second line: what the current stage COSTS, or what opens a
+    /// locked one. `nil` on a future stage, which is label-only by spec.
+    let subcaption: String?
+    /// What a finished stage produced, for the `done` slat's outcome slot. Empty
+    /// for the read-only stages, whose check glyph already says everything.
+    let outcome: String
 
     var id: String { step.rawValue }
 
@@ -72,6 +78,31 @@ struct DraftPrepStageCell: Identifiable, Equatable {
         return parts.joined(separator: ", ")
     }
 
+    /// The short form of "what opens this stage", sized for a slat caption.
+    ///
+    /// The twin of ``DraftPrepProgress/Stage/waitLabel``: `lockReason` is the
+    /// sentence the explainer has room for ("The pro-day circuit opens after
+    /// free agency."), and this is the clause the band has room for. Both are
+    /// derived from the same fact — the phase that has to pass — so the strip
+    /// and the card can never describe one wait two ways.
+    ///
+    /// It names the phase that has to pass, not the stage: "opens at pro days"
+    /// over the pro-day slat says only that the pro days open when the pro days
+    /// open, and the fact a user in combine week actually needs is that FREE
+    /// AGENCY comes first (#123).
+    static func unlockCaption(for step: DraftPrepStep, stage: DraftPrepProgress.Stage) -> String {
+        guard !stage.unlocked else { return "" }
+        // ONE wait vocabulary, and it is the engine's: `waitLabel` is already
+        // sized for a small cell ("Combine week" / "After FA" / "Draft week")
+        // and already names the phase that has to pass rather than the stage
+        // (#123). A second short table here would be a second place the same
+        // wait could be described, which is the exact defect this file's header
+        // comment was written about.
+        if stage.isCalendarLocked { return stage.waitLabel }
+        guard let previous = step.previous else { return "Not open yet" }
+        return "Finish \(previous.displayName)"
+    }
+
     init(step: DraftPrepStep, state: State, stage: DraftPrepProgress.Stage) {
         self.step = step
         // LOCKED WINS OVER CURRENT (#107). `Career.prepStep` is a floor, so
@@ -82,18 +113,79 @@ struct DraftPrepStageCell: Identifiable, Equatable {
         // because the cell holds both facts and no caller should be able to draw
         // an invitation over a shut stage. A satisfied stage keeps its tick —
         // `done` is a claim about work, and the work happened.
-        self.state = (state == .current && !stage.unlocked) ? .locked : state
+        let resolved: State = (state == .current && !stage.unlocked) ? .locked : state
+        self.state = resolved
         self.counterText = stage.counter
         self.fraction = stage.fraction
         self.lockReason = stage.lockReason ?? ""
         self.isWaitingOnCalendar = stage.isCalendarLocked
+        // COST on the stage you are standing in, UNLOCK on the ones you are not.
+        // A future stage carries neither: §2.1's `future` is label-only, and a
+        // price tag on a room nobody is standing in is the noise the merged
+        // explainer/counter/meter stack used to be.
+        switch resolved {
+        case .current:
+            self.subcaption = step.next == nil
+                ? stage.counter
+                : "\(stage.counter) \u{00B7} spends 1 scouting week"
+        case .locked:
+            self.subcaption = DraftPrepStageCell.unlockCaption(for: step, stage: stage)
+        case .done, .open:
+            self.subcaption = nil
+        }
+        // A counted stage says what it banked; a read says nothing beyond its
+        // tick, because "Done" next to a check glyph is the same claim twice.
+        self.outcome = (resolved == .done && stage.isCounted) ? stage.counter : ""
+    }
+}
+
+// MARK: - Slat adapter
+
+extension DraftPrepStageCell {
+
+    /// The cell as the shared band draws it.
+    ///
+    /// `DSSlatBand` has four states and the pipeline has four; `.open` maps onto
+    /// `future` with `isAvailable`, because "you may already work here" is a
+    /// promise about the SCREEN (`DraftPrepProgress.canAct`), not a fifth
+    /// position in the process. §2.1 gives `future` a label and nothing else, so
+    /// the promise rides on the label's text tier rather than on a colour of its
+    /// own.
+    var slat: DSSlat {
+        let state: DSSlat.State
+        switch self.state {
+        case .done:    state = .done
+        case .current: state = .current
+        case .open:    state = .future
+        case .locked:  state = .locked
+        }
+        return DSSlat(
+            id: step.rawValue,
+            index: "\(step.order + 1)",
+            title: step.displayName,
+            subcaption: subcaption,
+            state: state,
+            isAvailable: self.state == .open,
+            outcome: outcome,
+            // NO "NOW" PILL HERE. The band's `live` pill is a gold fill, and on
+            // this hub gold already has its two jobs — the action bar's commit
+            // and the surface switcher's active slot. The current slat is
+            // already marked three ways (gold top rule, lifted gradient, 3x
+            // width); a fourth marker that costs a third gold fill is exactly
+            // the drift P5/P7 exist to stop. The pill stays in the component for
+            // the season ladder, where "the week being played" and "the week
+            // being looked at" are genuinely two different slats.
+            isLive: false,
+            accessibilityText: accessibilityText
+        )
     }
 }
 
 // MARK: - Process bar
 
-/// The scouting hub's primary navigation: the pre-draft calendar as a strip of
-/// stage cells, in order, each carrying its own state and its own count of work.
+/// The scouting hub's primary navigation: the pre-draft calendar as a
+/// ``DSSlatBand`` — nine parallelogram slats, in order, each carrying its own
+/// state and its own count of work.
 ///
 /// This replaces the flat eleven-tab picker. The picker was a list of places,
 /// which is the wrong shape for a process — it said nothing about order, nothing
@@ -103,217 +195,48 @@ struct DraftPrepStageCell: Identifiable, Equatable {
 /// user looking at a screen that had silently deleted the thing he was looking
 /// for. Here every stage is always on screen, in calendar order, and a stage the
 /// club cannot work yet says so in words.
+///
+/// **Wave 0 (#105) replaced the drawing, not the information.** What used to be
+/// a row of 24 pt numbered pucks on a gold connector rail — the Bootstrap wizard,
+/// a shape whose only differentiator at distance was fill hue — is now the shared
+/// slat band, which is the same component the season ladder, free agency, the
+/// draft board and negotiation will mount. Every semantic is unchanged: every
+/// state, every counter, every tap target and the whole accessibility sentence
+/// come through the same ``DraftPrepStageCell`` the hub already computed.
 struct DraftPrepProcessBar: View {
     let cells: [DraftPrepStageCell]
     /// The stage whose screen is currently showing — not necessarily the stage
     /// the club is standing in: a done stage opens read-only.
     let selected: DraftPrepStep?
+    /// "Stage 4 of 9". **The one place the hub prints its count** — it used to
+    /// appear three times on this screen (the switcher subtitle, the metrics
+    /// strip, the prep card's collapsed line).
+    let headline: String
+    /// The spring's nine scouting weeks. A filled pip is a spent pip.
+    let meter: DSResourceMeter
     /// Demoted rendering for the surfaces the pipeline is not the subject of
     /// (#130).
     ///
-    /// The bar is the wizard's spine and it stays on every screen — the user
+    /// The band is the wizard's spine and it stays on every screen — the user
     /// asked to always see how much of each stage is done — but on the Big Board
     /// or the draft order it is *context*, not the control the eye should land
-    /// on first. Compact keeps the puck (state + stage number) and the counter,
-    /// drops the meter, and names only the cell that is selected or current, so
-    /// the strip halves in height without losing a single semantic: every state,
-    /// every counter, every tap target and the whole accessibility sentence are
-    /// unchanged.
+    /// on first. Compact keeps the geometry, the states and the targets, and
+    /// drops the sub-captions and 12 pt of height.
     var isCompact: Bool = false
     var onSelect: (DraftPrepStep) -> Void
 
-    private var cellWidth: CGFloat { isCompact ? 60 : 92 }
-
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 0) {
-                    ForEach(Array(cells.enumerated()), id: \.element.id) { index, cell in
-                        if index > 0 { connector(before: cell) }
-                        cellView(cell)
-                            .id(cell.step)
-                    }
-                }
-                .padding(.vertical, 2)
-            }
-            .onAppear { scroll(proxy, animated: false) }
-            .onChange(of: selected) { _, _ in scroll(proxy, animated: true) }
-        }
-        .mask(
-            HStack(spacing: 0) {
-                Color.white
-                LinearGradient(colors: [.white, .clear], startPoint: .leading, endPoint: .trailing)
-                    .frame(width: 20)
+        DSSlatBand(
+            slats: cells.map(\.slat),
+            headline: headline,
+            meter: meter,
+            isCompact: isCompact,
+            selectedID: selected?.rawValue,
+            onSelect: { id in
+                guard let step = DraftPrepStep(rawValue: id) else { return }
+                onSelect(step)
             }
         )
-    }
-
-    private func scroll(_ proxy: ScrollViewProxy, animated: Bool) {
-        // Follow the SELECTED stage, falling back to the current one. Without
-        // this the bar opens parked on stage 1 and a club six stages in has to
-        // hunt for itself. Outside the pre-draft window there IS no current
-        // cell — the whole strip is shut — so the head of the pipeline is the
-        // honest place to park.
-        let target = selected
-            ?? cells.first(where: { $0.state == .current })?.step
-            ?? cells.first?.step
-        guard let target else { return }
-        if animated {
-            withAnimation(.easeInOut(duration: 0.22)) { proxy.scrollTo(target, anchor: .center) }
-        } else {
-            proxy.scrollTo(target, anchor: .center)
-        }
-    }
-
-    // MARK: - Connector
-
-    /// The rail between two cells: gold behind work already done, hairline ahead
-    /// of it. It is what makes the strip read as a pipeline rather than as a row
-    /// of buttons.
-    private func connector(before cell: DraftPrepStageCell) -> some View {
-        Rectangle()
-            .fill(cell.state == .done || cell.state == .current ? Color.accentGold : Color.surfaceBorder)
-            .frame(width: 10, height: 1.5)
-            .accessibilityHidden(true)
-    }
-
-    // MARK: - Cell
-
-    private func cellView(_ cell: DraftPrepStageCell) -> some View {
-        let isSelected = selected == cell.step
-        // Compact reserves the name slot on EVERY cell even when it prints
-        // nothing, so the pucks stay on one line across the strip — a row of
-        // markers that jog up and down reads as a rendering fault.
-        let namesThisCell = !isCompact || isSelected || cell.state == .current
-        return Button {
-            onSelect(cell.step)
-        } label: {
-            VStack(spacing: isCompact ? 2 : 3) {
-                marker(cell, isSelected: isSelected)
-
-                Text(namesThisCell ? cell.step.displayName : "")
-                    .font(.system(size: isCompact ? 9 : DSType.Size.micro,
-                                  weight: isSelected ? .heavy : .semibold))
-                    .foregroundStyle(nameColor(cell, isSelected: isSelected))
-                    .lineLimit(isCompact ? 1 : 2)
-                    .minimumScaleFactor(isCompact ? 0.75 : 1)
-                    .multilineTextAlignment(.center)
-                    .frame(height: isCompact ? 11 : 24, alignment: .top)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                counterLine(cell)
-                if !isCompact { meter(cell) }
-            }
-            .frame(width: cellWidth)
-            .padding(.vertical, isCompact ? 3 : 6)
-            .background(
-                RoundedRectangle(cornerRadius: DSCornerRadius.tight)
-                    .fill(isSelected ? Color.backgroundTertiary : Color.clear)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: DSCornerRadius.tight)
-                    .strokeBorder(
-                        isSelected ? Color.accentGold.opacity(0.55) : Color.clear,
-                        lineWidth: 1
-                    )
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(cell.accessibilityText)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
-    }
-
-    /// The numbered puck: a check when the stage is finished, a lock when it is
-    /// ahead, the stage number otherwise.
-    private func marker(_ cell: DraftPrepStageCell, isSelected: Bool) -> some View {
-        let puck: CGFloat = isCompact ? 16 : 20
-        let ring: CGFloat = isCompact ? 20 : 24
-        let glyph: CGFloat = isCompact ? 8 : DSType.Size.micro
-        return ZStack {
-            Circle()
-                .fill(markerFill(cell))
-                .frame(width: puck, height: puck)
-            Circle()
-                .strokeBorder(
-                    cell.state == .current ? Color.accentGold
-                        : cell.state == .open ? Color.accentGold.opacity(0.5) : Color.clear,
-                    lineWidth: 1.5
-                )
-                .frame(width: ring, height: ring)
-            switch cell.state {
-            case .done:
-                Image(systemName: "checkmark")
-                    .font(.system(size: glyph, weight: .black))
-                    .foregroundStyle(Color.backgroundPrimary)
-            case .current:
-                Text("\(cell.step.order + 1)")
-                    .font(.system(size: glyph, weight: .black).monospacedDigit())
-                    .foregroundStyle(Color.backgroundPrimary)
-            case .open:
-                Text("\(cell.step.order + 1)")
-                    .font(.system(size: glyph, weight: .black).monospacedDigit())
-                    .foregroundStyle(Color.accentGold)
-            case .locked:
-                Image(systemName: "lock.fill")
-                    .font(.system(size: isCompact ? 7 : 9, weight: .bold))
-                    .foregroundStyle(Color.textTertiary)
-            }
-        }
-        .frame(height: ring)
-    }
-
-    private func markerFill(_ cell: DraftPrepStageCell) -> Color {
-        switch cell.state {
-        case .done:    return Color.success
-        case .current: return Color.accentGold
-        // Outlined, not filled: the room is open, nobody is standing in it yet.
-        case .open:    return Color.backgroundTertiary
-        case .locked:  return Color.backgroundTertiary
-        }
-    }
-
-    private func nameColor(_ cell: DraftPrepStageCell, isSelected: Bool) -> Color {
-        switch cell.state {
-        case .current: return .accentGold
-        case .open:    return .textPrimary
-        case .done:    return isSelected ? .textPrimary : .textSecondary
-        case .locked:  return .textTertiaryReadable
-        }
-    }
-
-    private func counterLine(_ cell: DraftPrepStageCell) -> some View {
-        // The counter is the whole point of the bar: the user asked to always
-        // see "how much is done per stage", and a chevron between two tab names
-        // never said that. The string is `DraftPrepProgress`'s, so the required
-        // task in the left bar reads the same numbers.
-        Text(cell.counterText)
-            .font(.system(size: isCompact ? 9 : DSType.Size.micro, weight: .heavy).monospacedDigit())
-            .foregroundStyle(counterColor(cell))
-            .lineLimit(1)
-            .minimumScaleFactor(0.7)
-    }
-
-    private func counterColor(_ cell: DraftPrepStageCell) -> Color {
-        switch cell.state {
-        case .locked:  return .textTertiaryReadable
-        case .done:    return cell.fraction > 0 ? .success : .textTertiaryReadable
-        case .current: return .textPrimary
-        case .open:    return .textSecondary
-        }
-    }
-
-    private func meter(_ cell: DraftPrepStageCell) -> some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                Capsule().fill(Color.backgroundTertiary)
-                Capsule()
-                    .fill(cell.state == .done ? Color.success : Color.accentGold)
-                    .frame(width: geo.size.width * cell.fraction)
-            }
-        }
-        .frame(width: cellWidth - 24, height: 2.5)
-        .accessibilityHidden(true)
     }
 }
 
@@ -348,14 +271,12 @@ struct ScoutingSurfaceSwitcher: View {
     /// The tab the stage segment shows — the stage screen the user is standing
     /// on, or the club's current stage when he is somewhere else.
     let stageTab: ScoutingTab
-    /// "Stage 4 of 9 · Current" — the segment's second line.
+    /// "3/11 focus slots" — the segment's second line.
+    ///
+    /// It used to lead with "Stage 4 of 9", which made this the second of three
+    /// places the hub printed its own count. The band head owns the count now
+    /// (#105 wave 0).
     let stageSubtitle: String
-    let stageState: DraftPrepStageCell.State
-    /// `true` when the CALENDAR, not the club's own work, is what shuts the
-    /// stage. Same rule as the process bar: a wait is drawn locked, only the word
-    /// changes — LOCKED reads as "you have not got here yet", which is untrue of
-    /// a club standing in November.
-    var stageIsWaiting: Bool = false
     /// The reference surfaces behind the menu, in the order they are drawn.
     let toolTabs: [ScoutingTab]
     let selected: ScoutingTab
@@ -374,37 +295,23 @@ struct ScoutingSurfaceSwitcher: View {
                 action: { onSelect(.board) }
             )
 
+            // NO STATE CHIP (#105 wave 0). This segment used to carry a
+            // CURRENT / DONE / OPEN / LOCKED capsule, which was a second
+            // rendering of a state the band states in three channels one row
+            // below — and whose CURRENT variant was a gold tint on a screen
+            // where gold has exactly three jobs. The segment's job is "you are
+            // here", and it does that by size and fill.
             segment(
                 icon: stageTab.icon,
                 title: stageTab.label,
                 subtitle: stageSubtitle,
-                chip: stageChipText,
-                chipTint: stageChipTint,
+                chip: nil,
+                chipTint: .accentGold,
                 isActive: active == .stage,
                 action: { onSelect(stageTab) }
             )
 
             toolsMenu
-        }
-    }
-
-    // MARK: - Stage chip
-
-    private var stageChipText: String? {
-        switch stageState {
-        case .current: return "CURRENT"
-        case .done:    return "DONE"
-        case .open:    return "OPEN"
-        case .locked:  return stageIsWaiting ? "WAITING" : "LOCKED"
-        }
-    }
-
-    private var stageChipTint: Color {
-        switch stageState {
-        case .current: return .accentGold
-        case .done:    return .success
-        case .open:    return .accentBlue
-        case .locked:  return .textTertiaryReadable
         }
     }
 
@@ -687,11 +594,17 @@ struct ScoutingInsightsSection<Content: View>: View {
             }
         } label: {
             HStack(spacing: 9) {
+                // Neither the commit nor the current step, so not gold (#105
+                // wave 0, P5). This drew a gold glyph on a gold plate directly
+                // above a band whose one gold rule marks where the club is
+                // standing — the audit's "all section header icons are the same
+                // yellow tint … they compete for attention instead of guiding
+                // it", reproduced one row apart.
                 Image(systemName: icon)
                     .font(.system(size: DSType.Size.footnote, weight: .bold))
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.textSecondary)
                     .frame(width: 20, height: 20)
-                    .background(Color.accentGold.opacity(0.14), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
+                    .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
 
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 6) {
@@ -721,7 +634,7 @@ struct ScoutingInsightsSection<Content: View>: View {
                     .foregroundStyle(Color.textTertiaryReadable)
                 Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                     .font(.system(size: 10, weight: .black))
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.textSecondary)
             }
             .contentShape(Rectangle())
         }

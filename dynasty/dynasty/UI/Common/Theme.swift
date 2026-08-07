@@ -5,6 +5,14 @@ import SwiftUI
 extension Color {
 
     // MARK: Backgrounds
+    /// The value floor `#060B16` — top chrome, the slat band, full-bleed moments.
+    ///
+    /// UI_REDESIGN_VISION §2.11. The palette had three background steps and every
+    /// one of them was in use as a *card*, so nothing on a screen was ever darker
+    /// than the page and the working area read as uniformly grey-blue rather than
+    /// lit from within. This is the step below the page: the plate the chrome and
+    /// the `DSSlatBand` sit on, and the ink colour a gold fill prints against.
+    static let backgroundPlate = Color(red: 0.02353, green: 0.04314, blue: 0.08627)
     /// Deep midnight navy — the night sky over the stadium `#0B1222`
     static let backgroundPrimary = Color(red: 0.043, green: 0.071, blue: 0.133)
     /// Darker card surface `#141E30`
@@ -52,6 +60,15 @@ extension Color {
     // MARK: Surface
     /// Subtle card borders `#1E293B`
     static let surfaceBorder = Color(red: 0.118, green: 0.161, blue: 0.231)
+
+    /// A genuinely disabled control fill `#131C2C` — never dimmed gold.
+    ///
+    /// UI_REDESIGN_VISION §2.12, and five separate audit findings asking for the
+    /// same thing. A disabled gold button at 40 % opacity still reads as the
+    /// screen's call to action from two feet away; this does not. Its label is
+    /// `textTertiaryReadable #7C8BA1`, which clears AA on it — a disabled label
+    /// is still information.
+    static let controlDisabled = Color(red: 0.07451, green: 0.10980, blue: 0.17255)
 }
 
 // MARK: - Card Background Modifier

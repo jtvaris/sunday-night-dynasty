@@ -253,10 +253,9 @@ struct ScoutingHubHeader: View {
                 .frame(width: 1, height: 14)
             metricItem(icon: "calendar", label: phaseLabel, color: .textSecondary)
             Spacer(minLength: 0)
-            Text("\(career.prepStep.order + 1)/\(DraftPrepStep.allCases.count)")
-                .font(.system(size: DSType.Size.micro, weight: .heavy).monospacedDigit())
-                .foregroundStyle(Color.textTertiaryReadable)
-                .accessibilityLabel("Stage \(career.prepStep.order + 1) of \(DraftPrepStep.allCases.count)")
+            // The "5/9" stage counter that stood here is gone. It was the third
+            // printing of the pipeline's position on one screen; the band head
+            // renders it once (#105 wave 0).
         }
         .frame(height: 28)
         .padding(.horizontal, 12)

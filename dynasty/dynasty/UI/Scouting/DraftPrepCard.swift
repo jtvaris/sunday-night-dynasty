@@ -391,7 +391,6 @@ struct DraftPrepCard: View {
                             .font(.system(size: 9))
                             .foregroundStyle(Color.textTertiary)
                             .lineLimit(1)
-                        stageProgressBar
                     }
                 }
                 Spacer()
@@ -415,42 +414,28 @@ struct DraftPrepCard: View {
         .accessibilityLabel(isExpanded ? "Collapse draft prep" : "Expand draft prep")
     }
 
-    /// Collapsed, the card is the pipeline's progress line and nothing else:
-    /// "Stage 4 of 9 — Pro Day Focus · 3 of 11 focus slots used".
+    /// Collapsed, the card names the room the club is standing in and how much
+    /// of it is done: "Pro Day Focus · 3/11 focus slots".
+    ///
+    /// **It no longer counts the stages.** It used to open with "Stage 4 of 9"
+    /// and close with "3 of 9 stages done" — two of the three places the hub
+    /// printed its position, over a gold capsule meter that was a fifth progress
+    /// metaphor on one screen. The band head states the count once and the band
+    /// itself IS the progress; this line says what the count cannot, which is
+    /// the room's own currency (#105 wave 0).
     private func collapsedSummary(_ snapshot: Snapshot) -> String {
         let progress = snapshot.progress
         let step = progress.current
-        var parts = [
-            "Stage \(step.order + 1) of \(DraftPrepStep.allCases.count) \u{2014} \(step.displayName)",
-            // `DraftPrepProgress`'s own counter string. This used to be a
-            // hand-rolled switch with its own denominators ("of 30 workouts",
-            // "of 60 interviews"), i.e. a fifth place the same numbers were
-            // written down and could drift.
-            progress[step].counter,
-            "\(progress.satisfiedStageCount) of \(DraftPrepStep.allCases.count) stages done"
-        ]
+        var parts = [step.displayName]
+        // `DraftPrepProgress`'s own counter string — but only when it IS a
+        // count. For the read-only stages it is the word "Done", and a third
+        // "Done" on a screen whose band already ticks the slat is the duplicate
+        // #105 wave 0 exists to remove.
+        if progress[step].isCounted { parts.append(progress[step].counter) }
         if !snapshot.attention.isEmpty {
             parts.append("\(snapshot.attention.count) to fix")
         }
         return parts.joined(separator: " \u{00B7} ")
-    }
-
-    /// One-line pipeline progress. Nine stages, filled to where the club is.
-    private var stageProgressBar: some View {
-        let total = DraftPrepStep.allCases.count
-        let done = career.prepStep.order
-        return GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(Color.backgroundTertiary)
-                Capsule()
-                    .fill(Color.accentGold)
-                    .frame(width: geo.size.width * CGFloat(done) / CGFloat(max(total - 1, 1)))
-            }
-        }
-        .frame(height: 3)
-        .padding(.top, 3)
-        .accessibilityHidden(true)
     }
 
     // MARK: - Coverage

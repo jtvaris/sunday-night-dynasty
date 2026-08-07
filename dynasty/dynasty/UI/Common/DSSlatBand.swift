@@ -1,0 +1,626 @@
+import SwiftUI
+
+// MARK: - DSSlatBand — the spine of every ordered thing
+//
+// UI_REDESIGN_VISION §2.1. **The geometry is the identity.** A contiguous ribbon
+// of parallelogram slats skewed −11°, butted with a 2 pt gap, on the darkest
+// surface in the app (`plate #060B16`). Nothing else in the app is skewed, so
+// the band is recognisable in peripheral vision, and the skew reads as forward
+// motion — which is literally what it encodes.
+//
+// It replaces the seven progress metaphors the audit counted: four
+// `GeometryReader` bars in two accent colours, a capsule, two dot-rails and a
+// family of bare "N/M" counters. It is deliberately **domain-agnostic** — draft
+// prep is only its first consumer; season weeks, free-agency waves, draft picks,
+// the current drive and negotiation rounds are the same component at other
+// scales.
+//
+// ## Three channels, not one
+//
+// State is carried by surface value, top rule AND a glyph/caption at the same
+// time, so it survives distance and colour-blindness. A row of identical shapes
+// differing only in fill hue — the Bootstrap/Material wizard — is the thing this
+// component exists to not be.
+//
+//   done     surface one step up from the track · 2 pt textSecondary rule · check + outcome
+//   current  lifted gradient + DSElevation.bar  · 3 pt GOLD rule · expands · sub-caption
+//   future   the track value                     · no rule       · label only
+//   locked   below the track + diagonal hatch    · no rule       · the unlock condition
+
+// MARK: - Geometry
+
+/// The band's measurements, in one place, because every consumer has to agree
+/// about them (the shape, the clip, the top rule and the layout all read the
+/// same slant).
+enum DSSlatGeometry {
+    /// The skew, in degrees. Negative in CSS terms: the top edge leans right.
+    static let skewDegrees: Double = 11
+    /// Band height on a surface the band is the subject of.
+    static let fullHeight: CGFloat = 56
+    /// Band height where the band is context — still ≥ 44 pt, so a compact slat
+    /// is a legal touch target (§2.12 has no exceptions).
+    static let compactHeight: CGFloat = 44
+    /// The seam between two slats.
+    static let gap: CGFloat = 2
+    /// How much wider the current slat is than a future one. §2.1 asks for 2–4×.
+    ///
+    /// 2.5 rather than 3, measured on the 9-stage draft-prep band at a 1032 pt
+    /// portrait iPad: at 3× the eight remaining slats get 81 pt, which is 54 pt
+    /// of text, and INTERVIEWS is 57 pt at the 11 pt floor — the band broke the
+    /// word across two lines. The floor cannot move, so the flex did.
+    static let currentFlex: CGFloat = 2.5
+    /// The width below which the ribbon scrolls instead of breaking words.
+    ///
+    /// **Measured on device, not guessed.** SF Pro condensed heavy at the 11 pt
+    /// floor with +0.6 tracking runs ~7.7 pt per uppercase character, so
+    /// INTERVIEWS is 77 pt, the leading index numeral and its gap are another
+    /// 12, and the parallelogram plus its optical margin take 22. A slat narrower
+    /// than this breaks a stage name across two lines mid-word — which the band
+    /// did at 1032 pt portrait — and the type floor means the text cannot shrink
+    /// to meet it. So the band scrolls, and every stage stays reachable.
+    ///
+    /// At the 1376 pt landscape iPad the app is built for, nine stages fit at
+    /// 125 pt each and nothing scrolls.
+    static let minSlatWidth: CGFloat = 112
+    static let minCompactSlatWidth: CGFloat = 112
+
+    /// Horizontal displacement of each corner from the vertical centre line.
+    ///
+    /// The skew is anchored on the slat's middle, so a corner moves by
+    /// `(height / 2) · tan(11°)` — 5.4 pt at the 56 pt band height, which is the
+    /// number §2.1 quotes and the reason a slat must clip its own content: 5.4 pt
+    /// of unclipped counter-skewed text paints across the 2 pt seam onto the
+    /// neighbouring slat.
+    static func slant(height: CGFloat) -> CGFloat {
+        (height / 2) * CGFloat(tan(skewDegrees * .pi / 180))
+    }
+}
+
+/// One slat of the ribbon: a parallelogram whose corners are displaced by
+/// `slant` about the vertical centre.
+///
+/// Insettable so the focus ring strokes *inside* the slat rather than half a
+/// line-width into the 2 pt seam.
+struct DSSlatShape: InsettableShape {
+    var slant: CGFloat
+    var inset: CGFloat = 0
+
+    func path(in rect: CGRect) -> Path {
+        let box = rect.insetBy(dx: inset, dy: inset)
+        var path = Path()
+        path.move(to: CGPoint(x: box.minX + slant, y: box.minY))
+        path.addLine(to: CGPoint(x: box.maxX + slant, y: box.minY))
+        path.addLine(to: CGPoint(x: box.maxX - slant, y: box.maxY))
+        path.addLine(to: CGPoint(x: box.minX - slant, y: box.maxY))
+        path.closeSubpath()
+        return path
+    }
+
+    func inset(by amount: CGFloat) -> DSSlatShape {
+        DSSlatShape(slant: slant, inset: inset + amount)
+    }
+}
+
+/// The locked state's second channel: diagonal hatch, drawn on the same lean as
+/// the slat so it reads as texture rather than as a rendering fault.
+private struct DSSlatHatch: Shape {
+    var spacing: CGFloat = 7
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        var x = rect.minX - rect.height
+        while x < rect.maxX + rect.height {
+            path.move(to: CGPoint(x: x, y: rect.maxY))
+            path.addLine(to: CGPoint(x: x + rect.height, y: rect.minY))
+            x += spacing
+        }
+        return path
+    }
+}
+
+// MARK: - Slat model
+
+/// One step of an ordered thing, as the band draws it.
+///
+/// The band is a dumb renderer: everything here is computed once by the screen
+/// that owns the process and handed down as a value, so the band cannot disagree
+/// with the surface underneath it.
+struct DSSlat: Identifiable, Equatable {
+
+    enum State: Equatable {
+        /// Behind the club.
+        case done
+        /// Where the club is standing **and may work**.
+        case current
+        /// Ahead of the club, and reachable in principle.
+        case future
+        /// Shut — by the pipeline or by the calendar.
+        case locked
+    }
+
+    let id: String
+    /// Position in the band — "4". Drawn as the slat's leading numeral so every
+    /// slat states where it sits without a second component.
+    var index: String?
+    /// Display voice: condensed, uppercased by the band, tracked, tabular.
+    let title: String
+    /// The cost / unlock line. Drawn on the current slat (what this step spends)
+    /// and on a locked one (what opens it). Never in the compact variant.
+    var subcaption: String?
+    var state: State
+    /// A `future` slat the club may already act in. Raises the label one text
+    /// tier; it is never a fourth state and never a colour of its own.
+    var isAvailable: Bool = false
+    /// What a `done` slat produced — "W 27–13", "$16.0M × 3", "12 interviews".
+    var outcome: String?
+    /// Optional tint for a `done` slat's top rule (W green / L red at season
+    /// scale). `nil` keeps the neutral `textSecondary` rule.
+    var tint: Color?
+    /// Draws the "NOW" pill on the current slat.
+    var isLive: Bool = false
+    /// The whole screen-reader sentence: state, title, and the sub-caption or
+    /// the unlock condition.
+    var accessibilityText: String = ""
+}
+
+// MARK: - Resource meter
+
+/// The band head's meter. **One meaning on every scale: a filled pip is a spent
+/// pip.**
+///
+/// §2.13: across three screens the same pips meant "spent" twice and "remaining"
+/// once, and one of the fills was gold — a fourth job for a colour that has
+/// three. Here the brightest filled pip is the one being spent now, a tick marks
+/// half-way, and the value line always reads `<spent> spent · <left> left`, so
+/// the pips and the words can never disagree.
+struct DSResourceMeter: Equatable {
+    /// Units already committed, **including the one in progress** — the brightest
+    /// pip is spent, not pending, which is what makes `spent + left == total`.
+    let spent: Int
+    let total: Int
+    /// Plural noun: "scouting weeks", "cap room", "patience".
+    let unit: String
+
+    var left: Int { max(0, total - spent) }
+
+    var valueLine: String { "\(spent) spent \u{00B7} \(left) left" }
+
+    var accessibilityText: String { "\(unit): \(spent) spent, \(left) left" }
+}
+
+// MARK: - The band
+
+struct DSSlatBand: View {
+
+    let slats: [DSSlat]
+    /// The band head's left-hand line — "STAGE 4 OF 9". **The one place a
+    /// process prints its count.**
+    var headline: String?
+    var meter: DSResourceMeter?
+    /// Demoted rendering for the surfaces the process is not the subject of:
+    /// shorter slats, no sub-captions, same geometry, same targets.
+    var isCompact: Bool = false
+    var selectedID: String?
+    var onSelect: ((String) -> Void)?
+
+    private var height: CGFloat {
+        isCompact ? DSSlatGeometry.compactHeight : DSSlatGeometry.fullHeight
+    }
+
+    private var slant: CGFloat { DSSlatGeometry.slant(height: height) }
+
+    private var minWidth: CGFloat {
+        isCompact ? DSSlatGeometry.minCompactSlatWidth : DSSlatGeometry.minSlatWidth
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DSSpacing.xxs) {
+            if headline != nil || meter != nil { head }
+            ribbon
+        }
+        .padding(.horizontal, DSSpacing.xs)
+        .padding(.vertical, DSSpacing.xs)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.backgroundPlate, in: RoundedRectangle(cornerRadius: DSCornerRadius.card))
+    }
+
+    // MARK: Head
+
+    private var head: some View {
+        HStack(alignment: .center, spacing: 12) {
+            if let headline {
+                Text(headline.uppercased())
+                    .font(DSType.display(11, .heavy))
+                    .tracking(0.7)
+                    .foregroundStyle(Color.textSecondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            if let meter { meterView(meter) }
+        }
+        .frame(height: 14)
+    }
+
+    /// Pips, a half-way tick, and the value line — right-aligned, in the same
+    /// slot on every scale.
+    private func meterView(_ meter: DSResourceMeter) -> some View {
+        HStack(spacing: 8) {
+            HStack(spacing: 2) {  // ds-lint:allow(spacing) pip gap: the meter is a 5 pt-wide rail, 4 pt reads as a dashed line
+                ForEach(0..<max(meter.total, 1), id: \.self) { i in
+                    if meter.total > 3 && i == meter.total / 2 {
+                        Rectangle()
+                            .fill(Color.textTertiary)
+                            .frame(width: 1, height: 12)
+                            .padding(.horizontal, 1)  // ds-lint:allow(spacing) half-way tick sits inside the pip gap
+                    }
+                    pip(index: i, meter: meter)
+                }
+            }
+            Text(meter.valueLine)
+                .font(DSType.display(11, .heavy))
+                .foregroundStyle(Color.textTertiaryReadable)
+                .lineLimit(1)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(meter.accessibilityText)
+    }
+
+    private func pip(index: Int, meter: DSResourceMeter) -> some View {
+        // The brightest filled pip is the one being spent NOW. Never gold — gold
+        // has three jobs and a pip fill is not one of them (§2.13).
+        let isFilled = index < meter.spent
+        let isCurrent = index == meter.spent - 1
+        let fill: Color = isCurrent ? .textPrimary : (isFilled ? .textSecondary : .clear)
+        return DSSlatShape(slant: DSSlatGeometry.slant(height: 11))
+            .fill(fill)
+            .overlay(
+                DSSlatShape(slant: DSSlatGeometry.slant(height: 11))
+                    .strokeBorder(isFilled ? Color.clear : Color.surfaceBorder, lineWidth: 1)
+            )
+            .frame(width: 5, height: 11)
+    }
+
+    // MARK: Ribbon
+
+    private var ribbon: some View {
+        GeometryReader { geo in
+            let widths = slatWidths(available: geo.size.width)
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: DSSlatGeometry.gap) {
+                        ForEach(Array(slats.enumerated()), id: \.element.id) { index, slat in
+                            slatView(slat, width: widths[index])
+                                .id(slat.id)
+                        }
+                    }
+                    // The first slat's bottom-left corner and the last slat's
+                    // top-right corner overhang their frames by `slant`; the
+                    // inset keeps the ribbon inside the plate.
+                    .padding(.horizontal, slant)
+                }
+                .onAppear { scroll(proxy, animated: false) }
+                .onChange(of: selectedID) { _, _ in scroll(proxy, animated: true) }
+                // The trailing fade is the only affordance saying the ribbon
+                // runs on. A hard edge at the band's right-hand rule reads as
+                // "that is all of them".
+                .mask(
+                    HStack(spacing: 0) {
+                        Color.white
+                        LinearGradient(
+                            colors: [.white, .clear],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                        .frame(width: 16)
+                    }
+                )
+            }
+        }
+        .frame(height: height)
+    }
+
+    /// Widths that fill the band when they can, and fall back to a scrollable
+    /// minimum when nine slats will not fit.
+    private func slatWidths(available: CGFloat) -> [CGFloat] {
+        let count = slats.count
+        guard count > 0 else { return [] }
+        let currentIndex = slats.firstIndex { $0.state == .current }
+        let gaps = CGFloat(count - 1) * DSSlatGeometry.gap + slant * 2
+        let units = CGFloat(count - (currentIndex == nil ? 0 : 1))
+            + (currentIndex == nil ? 0 : DSSlatGeometry.currentFlex)
+        let unit = max((available - gaps) / max(units, 1), minWidth)
+        return slats.indices.map { $0 == currentIndex ? unit * DSSlatGeometry.currentFlex : unit }
+    }
+
+    private func scroll(_ proxy: ScrollViewProxy, animated: Bool) {
+        // Follow the selection, falling back to the current step. Without this a
+        // band six steps in opens parked on step 1 and the user has to hunt for
+        // himself.
+        let target = selectedID
+            ?? slats.first(where: { $0.state == .current })?.id
+            ?? slats.first?.id
+        guard let target else { return }
+        if animated {
+            withAnimation(.easeInOut(duration: 0.22)) { proxy.scrollTo(target, anchor: .center) }
+        } else {
+            proxy.scrollTo(target, anchor: .center)
+        }
+    }
+
+    // MARK: Slat
+
+    private func slatView(_ slat: DSSlat, width: CGFloat) -> some View {
+        DSSlatButton(
+            slat: slat,
+            width: width,
+            height: height,
+            slant: slant,
+            isCompact: isCompact,
+            isSelected: selectedID == slat.id,
+            action: onSelect.map { handler in { handler(slat.id) } }
+        )
+    }
+}
+
+// MARK: - One slat
+
+/// A slat is a **Button**, and it looks like one: pressed and focus states, and
+/// a 44 pt minimum target that both band heights already satisfy.
+///
+/// §2.12 named this exactly: the signature element must be the most obviously
+/// interactive thing on the screen, and the pressed state moves the
+/// *counter-skewed content*, not the parallelogram.
+private struct DSSlatButton: View {
+    let slat: DSSlat
+    let width: CGFloat
+    let height: CGFloat
+    let slant: CGFloat
+    let isCompact: Bool
+    let isSelected: Bool
+    let action: (() -> Void)?
+
+    var body: some View {
+        Button {
+            action?()
+        } label: {
+            content
+        }
+        .buttonStyle(DSSlatPressStyle())
+        .disabled(action == nil)
+        .frame(width: width, height: height)
+        .accessibilityLabel(slat.accessibilityText.isEmpty ? slat.title : slat.accessibilityText)
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+    }
+
+    private var content: some View {
+        ZStack(alignment: .topLeading) {
+            DSSlatShape(slant: slant).fill(surface)
+
+            if slat.state == .locked {
+                DSSlatHatch()
+                    .stroke(Color.textTertiary.opacity(0.30), lineWidth: 1)
+            }
+
+            if ruleHeight > 0 {
+                Rectangle()
+                    .fill(ruleColor)
+                    .frame(height: ruleHeight)
+                    .offset(x: slant)
+            }
+
+            slatContent
+                // `slant` is what the parallelogram takes off each side; the
+                // rest is the optical margin. Both are as tight as the geometry
+                // allows, because every point here comes off the stage name.
+                .padding(.leading, slant + 6)
+                .padding(.trailing, slant + 5)
+                .padding(.vertical, isCompact ? 4 : 7)
+                .frame(width: width, height: height, alignment: .leading)
+        }
+        .frame(width: width, height: height)
+        // THE PARALLELOGRAM CLIPS ITS OWN CONTENT. At 56 pt a −11° skew displaces
+        // each corner 5.4 pt, so unclipped text paints across the 2 pt seam.
+        .clipShape(DSSlatShape(slant: slant))
+        .overlay(
+            DSSlatShape(slant: slant)
+                .strokeBorder(isSelected ? Color.accentBlue : Color.clear, lineWidth: 2)
+        )
+        .modifier(DSSlatLift(isCurrent: slat.state == .current))
+        .contentShape(DSSlatShape(slant: slant))
+    }
+
+    /// The counter-skewed content: upright, LEFT-aligned, never centred.
+    private var slatContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Spacer(minLength: 0)
+            HStack(spacing: DSSpacing.xxs) {
+                // ONE leading glyph slot. The check REPLACES the position
+                // numeral on a done slat rather than sitting after the title:
+                // a third element in the row costs 16 pt, and at nine stages
+                // across a portrait iPad that is the 16 pt that broke
+                // INTERVIEWS across two lines. §2.1's `done` row is "check glyph
+                // + the outcome" — the position of finished work is carried by
+                // where the slat sits and by the accessibility sentence.
+                if slat.state == .done {
+                    Image(systemName: "checkmark")
+                        .font(DSType.display(11, .black))
+                        .foregroundStyle(slat.tint ?? Color.textSecondary)
+                } else if let index = slat.index {
+                    Text(index)
+                        .font(DSType.display(11, .heavy))
+                        .foregroundStyle(indexColor)
+                        // The title has the layout priority, so without this the
+                        // numeral is the thing that gets squeezed — and a clipped
+                        // "4" beside a full stage name reads as a rendering bug.
+                        .fixedSize()
+                }
+                Text(slat.title.uppercased())
+                    .font(DSType.display(11, .heavy))
+                    .tracking(0.6)
+                    .foregroundStyle(titleColor)
+                    .lineLimit(titleLines)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .layoutPriority(1)
+                if slat.isLive && !isCompact {
+                    Text("NOW")
+                        .font(DSType.display(11, .black))
+                        .foregroundStyle(Color.backgroundPlate)
+                        .padding(.horizontal, DSSpacing.xxs)
+                        .padding(.vertical, 1)  // ds-lint:allow(spacing) the live pill must not grow the 56 pt slat
+                        .background(Capsule().fill(Color.accentGold))
+                }
+                Spacer(minLength: 0)
+            }
+            if !isCompact, let line = secondLine {
+                Text(line)
+                    .font(DSType.display(11, .semibold))
+                    .foregroundStyle(Color.textTertiaryReadable)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    /// The done slat says what it produced; every other state says what it costs
+    /// or what opens it.
+    private var secondLine: String? {
+        if slat.state == .done, let outcome = slat.outcome, !outcome.isEmpty { return outcome }
+        return slat.subcaption
+    }
+
+    /// Two lines, always.
+    ///
+    /// Measured, not guessed: at nine slats across a 1032 pt iPad the text box is
+    /// ~82 pt wide, which is 12 uppercase condensed characters at the 11 pt
+    /// floor — and PRIVATE WORKOUTS is sixteen. One line means the band
+    /// truncates the stage names it exists to show, and the floor is a floor, so
+    /// the type cannot shrink to meet it. Two 11 pt lines plus an 11 pt
+    /// sub-caption is 39 pt inside a 42 pt content box.
+    private var titleLines: Int { 2 }
+
+    // MARK: Channel 1 — surface value
+
+    private var surface: AnyShapeStyle {
+        switch slat.state {
+        case .current:
+            return AnyShapeStyle(
+                LinearGradient(
+                    colors: [Color.backgroundTertiary, Color.backgroundSecondary],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+        case .done:   return AnyShapeStyle(Color.backgroundSecondary)
+        case .future: return AnyShapeStyle(Color.backgroundPrimary)
+        case .locked: return AnyShapeStyle(Color.backgroundPlate)
+        }
+    }
+
+    // MARK: Channel 2 — top rule
+
+    private var ruleHeight: CGFloat {
+        switch slat.state {
+        case .current: return 3
+        case .done:    return 2
+        default:       return 0
+        }
+    }
+
+    private var ruleColor: Color {
+        switch slat.state {
+        case .current: return .accentGold
+        case .done:    return slat.tint ?? .textSecondary
+        default:       return .clear
+        }
+    }
+
+    // MARK: Channel 3 — the words
+
+    private var titleColor: Color {
+        switch slat.state {
+        case .current: return .textPrimary
+        case .done:    return .textSecondary
+        case .future:  return slat.isAvailable ? .textPrimary : .textTertiaryReadable
+        case .locked:  return .textTertiaryReadable
+        }
+    }
+
+    private var indexColor: Color {
+        slat.state == .current ? .accentGold : .textTertiaryReadable
+    }
+}
+
+/// The current slat lifts; nothing else does. Kept as a modifier so the shadow
+/// is applied to the clipped parallelogram rather than to its content.
+private struct DSSlatLift: ViewModifier {
+    let isCurrent: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if isCurrent {
+            content.dsElevation(.bar)
+        } else {
+            content
+        }
+    }
+}
+
+/// Pressed moves the CONTENT by 1 pt. The parallelogram stays put — the ribbon
+/// is a fixed rail and a slat that jumps out of it reads as a layout bug.
+private struct DSSlatPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .offset(x: configuration.isPressed ? 1 : 0, y: configuration.isPressed ? 1 : 0)
+            .animation(.easeOut(duration: 0.08), value: configuration.isPressed)
+    }
+}
+
+// MARK: - Preview
+
+#Preview("Full") {
+    ZStack {
+        Color.backgroundPrimary.ignoresSafeArea()
+        DSSlatBand(
+            slats: [
+                DSSlat(id: "a", index: "1", title: "Combine Review", state: .done,
+                       outcome: "Read", accessibilityText: "Stage 1, Combine Review, complete"),
+                DSSlat(id: "b", index: "2", title: "Interviews", state: .done,
+                       outcome: "12 interviews", accessibilityText: "Stage 2, Interviews, complete"),
+                DSSlat(id: "c", index: "3", title: "Film Study",
+                       subcaption: "4 of 25 reports \u{00B7} spends 1 scouting week",
+                       state: .current, isLive: true,
+                       accessibilityText: "Stage 3, Film Study, current stage"),
+                DSSlat(id: "d", index: "4", title: "Pro Day Focus",
+                       subcaption: "Opens after free agency", state: .locked,
+                       accessibilityText: "Stage 4, Pro Day Focus, locked"),
+                DSSlat(id: "e", index: "5", title: "Private Workouts",
+                       subcaption: "Opens after free agency", state: .locked,
+                       accessibilityText: "Stage 5, Private Workouts, locked")
+            ],
+            headline: "Stage 3 of 5",
+            meter: DSResourceMeter(spent: 3, total: 5, unit: "scouting weeks"),
+            selectedID: "c",
+            onSelect: { _ in }
+        )
+        .padding()
+    }
+}
+
+#Preview("Compact") {
+    ZStack {
+        Color.backgroundPrimary.ignoresSafeArea()
+        DSSlatBand(
+            slats: [
+                DSSlat(id: "a", index: "1", title: "Combine Review", state: .done),
+                DSSlat(id: "b", index: "2", title: "Interviews", state: .current),
+                DSSlat(id: "c", index: "3", title: "Film Study", state: .future, isAvailable: true),
+                DSSlat(id: "d", index: "4", title: "Pro Day Focus", state: .locked)
+            ],
+            headline: "Stage 2 of 4",
+            meter: DSResourceMeter(spent: 2, total: 4, unit: "scouting weeks"),
+            isCompact: true,
+            onSelect: { _ in }
+        )
+        .padding()
+    }
+}

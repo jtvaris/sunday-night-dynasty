@@ -249,32 +249,18 @@ struct ScoutingHubView: View {
             if newTab == .combine && prospects.contains(where: { $0.fortyTime != nil }) {
                 combineResultsReviewed = true
             }
-            // Both mock stages complete by being READ — there is nothing to buy
-            // and nothing to run — so opening the tab IS the act, and the act is
-            // RECORDED before the stage moves.
+            // NO INVISIBLE COMPLETIONS (P1, wave 0 of #105).
             //
-            // Recording it matters more than moving: `.ready` is calendar-gated,
-            // so `advance` correctly refuses to unlock the draft room in March,
-            // and without the stamp the last stage of the spring was a button
-            // that visibly did nothing, forever. Both stamps are read by
-            // `DraftPrepProgress` and by `Career.derivedPrepStepFloor`, so they
-            // are also what heals a save whose stage string is stale.
-            if newTab == .mockDraft {
-                // Stamp whichever mock the club may ACT in, not only the one it
-                // is standing in. A mock stage the process bar draws `.open` —
-                // the common case, since `reach` opens the next room as soon as
-                // the current stage is satisfied — would otherwise be a room the
-                // user walks into and out of with nothing recorded, and the
-                // cell would still read "Not read" after he read it.
-                let progress = prepProgress
-                if progress.canAct(.mockOne) { mockOneReadSeason = career.currentSeason }
-                if progress.canAct(.mockTwo) { finalMockReadSeason = career.currentSeason }
-                switch career.prepStep {
-                case .mockOne: advance(to: .top30Visits)
-                case .mockTwo: advance(to: .ready)
-                default:       break
-                }
-            }
+            // The two mock stages used to complete HERE, on `newTab ==
+            // .mockDraft`: opening the tab stamped the read and moved the
+            // pipeline, so two of the spring's nine stages were satisfied by an
+            // act the user never performed and never saw acknowledged. The stamp
+            // is now `MockDraftView`'s "File this mock" primary — same key, same
+            // season value, same forward move — so the required tasks, the
+            // stage gates and `Career.derivedPrepStepFloor` all read exactly
+            // what they read before, and the user has to mean it.
+            //
+            // See `mockFiling(_:)` and `fileMock(_:)`.
         }
         .onChange(of: career.prepStep) { oldStep, newStep in
             // Advancing carries the user forward with the process rather than
@@ -517,6 +503,50 @@ struct ScoutingHubView: View {
     @CareerScopedStorage(DraftPrepProgress.Key.mockTwoRead)
     private var finalMockReadSeason: Int = 0
 
+    // MARK: - Filing a mock (#105 wave 0 — P1, no invisible completions)
+
+    /// The mock stage the Mock Draft screen can close right now, or `nil` when
+    /// there is no honest one.
+    ///
+    /// The rule is the one the tab-open stamp used: whichever mock stage the club
+    /// may ACT in, not only the one it is standing in — `reach` opens the next
+    /// room as soon as the current stage is satisfied, so `.mockOne` and
+    /// `.mockTwo` are both commonly actionable. The first unfiled one wins;
+    /// with both filed the screen has nothing to offer and the band's `done`
+    /// slat is what says so.
+    private func mockFiling(_ progress: DraftPrepProgress) -> MockDraftFiling? {
+        let actionable = [DraftPrepStep.mockOne, .mockTwo].filter { progress.canAct($0) }
+        guard let step = actionable.first(where: { !progress[$0].isSatisfied }) else { return nil }
+        return MockDraftFiling(
+            stageName: step.displayName,
+            explainer: step == .mockOne
+                ? "Records that you have read where the league has your board, and moves the club to **Top-30 Visits**."
+                : "Records your last read on the market. The draft room opens on the clock in **draft week**.",
+            file: { fileMock(step) }
+        )
+    }
+
+    /// Stamps the read and takes the forward step — **exactly what opening the
+    /// tab used to do**, on a button the user pressed on purpose.
+    ///
+    /// Same two career-scoped keys (`DraftPrepProgress.Key.mockOneRead` /
+    /// `.mockTwoRead`), same season value, same `advance(to:)` cap. So
+    /// `DraftPrepProgress.satisfied(.mockOne/.mockTwo)`, the required tasks keyed
+    /// on "Read the mock" / "Read the final mock", and
+    /// `Career.derivedPrepStepFloor`'s evidence read are all unchanged — a filed
+    /// mock satisfies precisely as the old stamp did.
+    private func fileMock(_ step: DraftPrepStep) {
+        switch step {
+        case .mockOne: mockOneReadSeason = career.currentSeason
+        case .mockTwo: finalMockReadSeason = career.currentSeason
+        default:       return
+        }
+        // `.mockTwo` -> `.ready` is calendar-gated and `advance` refuses to cross
+        // in March; recording the read is what matters, and it has already
+        // happened above.
+        if career.prepStep == step, let next = step.next { advance(to: next) }
+    }
+
     /// The coverage strip and the Draft Prep card.
     ///
     /// It used to be handed by closure into whichever surface owned the scroll,
@@ -737,8 +767,6 @@ struct ScoutingHubView: View {
                 boardSubtitle: boardSegmentSubtitle(coverage),
                 stageTab: stageSegmentTab,
                 stageSubtitle: stageSegmentSubtitle(step: segmentStep, progress: progress),
-                stageState: stageState(segmentStep, progress: progress),
-                stageIsWaiting: progress[segmentStep].isCalendarLocked,
                 toolTabs: Self.toolTabs,
                 selected: selectedTab,
                 active: activeSurfaceSlot,
@@ -751,17 +779,20 @@ struct ScoutingHubView: View {
             // Layer 2: the pipeline. Every stage in calendar order, each carrying
             // its state and its own count of work, none ever hidden — but sized
             // for whether it is the subject of the screen or its context.
+            let cells = DraftPrepStep.allCases
+                .sorted { $0.order < $1.order }
+                .map { step in
+                    DraftPrepStageCell(
+                        step: step,
+                        state: stageState(step, progress: progress),
+                        stage: progress[step]
+                    )
+                }
             DraftPrepProcessBar(
-                cells: DraftPrepStep.allCases
-                    .sorted { $0.order < $1.order }
-                    .map { step in
-                        DraftPrepStageCell(
-                            step: step,
-                            state: stageState(step, progress: progress),
-                            stage: progress[step]
-                        )
-                    },
+                cells: cells,
                 selected: stage,
+                headline: bandHeadline(cells: cells),
+                meter: scoutingWeeks(cells: cells),
                 isCompact: !isOnStageSurface,
                 onSelect: { selectStage($0) }
             )
@@ -776,7 +807,6 @@ struct ScoutingHubView: View {
                 title: selectedTab.label,
                 icon: selectedTab.icon,
                 stateChip: insightsStateChip(progress: progress),
-                stateChipTint: insightsStateChipTint(progress: progress),
                 teaser: insightsTeaser(progress: progress, stage: stage, coverage: coverage),
                 isExpanded: $insightsExpanded
             ) {
@@ -806,15 +836,61 @@ struct ScoutingHubView: View {
         }
     }
 
+    // MARK: - The spring's arithmetic, computed once
+    //
+    // THE BAND HEAD, THE METER AND THE ACTION BAR READ THE SAME TWO FUNCTIONS.
+    // §2.13's arithmetic gate is the reason they are functions at all: the
+    // shipped hub printed its stage count three times on one screen (the
+    // switcher's subtitle, the metrics strip and the prep card's collapsed line)
+    // and its progress as three different metaphors. Now the count is rendered
+    // ONCE — here — and every other surface reads what this returns or says
+    // nothing.
+    //
+    // The model: **the pre-draft spring is nine scouting weeks, and the week you
+    // are standing in is already spent.** So `spent + left == 9` at every moment,
+    // the brightest pip is the stage you are in, and "Stage 5 of 9" over
+    // "5 spent · 4 left" is one claim stated twice rather than two claims that
+    // can drift.
+
+    /// The stage the band draws as `current`, or `nil` outside the pre-draft
+    /// window — where the pipeline has not started at all and nothing has been
+    /// spent, whatever `Career.prepStep`'s floor says.
+    private func bandCurrentStep(cells: [DraftPrepStageCell]) -> DraftPrepStep? {
+        cells.first(where: { $0.state == .current })?.step
+    }
+
+    private func scoutingWeeks(cells: [DraftPrepStageCell]) -> DSResourceMeter {
+        scoutingWeeks(currentStep: bandCurrentStep(cells: cells))
+    }
+
+    private func scoutingWeeks(currentStep: DraftPrepStep?) -> DSResourceMeter {
+        let total = DraftPrepStep.allCases.count
+        // No current stage: the calendar has not opened the pipeline, so the only
+        // honest "spent" is the work already banked.
+        let spent = currentStep.map { $0.order + 1 } ?? 0
+        return DSResourceMeter(spent: spent, total: total, unit: "scouting weeks")
+    }
+
+    private func bandHeadline(cells: [DraftPrepStageCell]) -> String {
+        let total = DraftPrepStep.allCases.count
+        guard let step = bandCurrentStep(cells: cells) else {
+            return "Draft prep \u{00B7} \(total) stages"
+        }
+        return "Stage \(step.order + 1) of \(total)"
+    }
+
     // MARK: - Insights composition (#130)
 
-    /// The stage segment's second line — where it sits in the pipeline and how
-    /// much of it is done. The counter is `DraftPrepProgress`'s own string, so
-    /// the segment, the process-bar cell and the required task in the left bar
-    /// can never print three different numbers for one stage.
+    /// The stage segment's second line — how much of that stage is done.
+    ///
+    /// The stage's POSITION used to live here as well ("Stage 4 of 9 · 3/11
+    /// focus slots"), which made this the second of three places the hub printed
+    /// its count. The band head owns it now; the segment says only what its own
+    /// room is worth. The counter is `DraftPrepProgress`'s own string, so the
+    /// segment, the slat and the required task in the left bar can never print
+    /// three different numbers for one stage.
     private func stageSegmentSubtitle(step: DraftPrepStep, progress: DraftPrepProgress) -> String {
-        let total = DraftPrepStep.allCases.count
-        return "Stage \(step.order + 1) of \(total) \u{00B7} \(progress[step].counter)"
+        progress[step].counter
     }
 
     /// The board segment's second line — the size of the pool it holds.
@@ -824,29 +900,14 @@ struct ScoutingHubView: View {
             : "\(prospects.count) declared \u{00B7} \(coverage.percent)% scouted"
     }
 
-    /// "STAGE 4 · CURRENT" over a stage surface, nothing over a reference one.
-    private func insightsStateChip(progress: DraftPrepProgress) -> String? {
-        guard let stage = selectedStage else { return nil }
-        let word: String = {
-            switch stageState(stage, progress: progress) {
-            case .current: return "CURRENT"
-            case .done:    return "DONE"
-            case .open:    return "OPEN"
-            case .locked:  return progress[stage].isCalendarLocked ? "WAITING" : "LOCKED"
-            }
-        }()
-        return "STAGE \(stage.order + 1) \u{00B7} \(word)"
-    }
-
-    private func insightsStateChipTint(progress: DraftPrepProgress) -> Color {
-        guard let stage = selectedStage else { return .accentGold }
-        switch stageState(stage, progress: progress) {
-        case .current: return .accentGold
-        case .done:    return .success
-        case .open:    return .accentBlue
-        case .locked:  return .textTertiaryReadable
-        }
-    }
+    /// Nothing. **Kept as a seam, deliberately empty.**
+    ///
+    /// It used to draw "STAGE 4 · CURRENT" — a third printing of the stage count
+    /// and a second rendering of stage state, one row under a band whose whole
+    /// job is to say both. Wave 0's rule is one stage-complete visual (the slat's
+    /// `done` state) and one stage count (the band head), so the insights header
+    /// is now the surface's title and nothing else.
+    private func insightsStateChip(progress: DraftPrepProgress) -> String? { nil }
 
     /// The one line that has to survive the collapse.
     ///
@@ -908,7 +969,12 @@ struct ScoutingHubView: View {
                 DraftPrepStageExplainer(
                     step: stage,
                     state: stageState(stage, progress: progress),
-                    counterText: row.counter,
+                    // ONE STAGE-COMPLETE VISUAL (#105 wave 0). An UNCOUNTED
+                    // stage's counter is literally the word "Done" (or "Not
+                    // read"), so this pill was a second done treatment printed
+                    // one row under the band's done slat. A counted stage's
+                    // counter is a real number and stays.
+                    counterText: row.isCounted ? row.counter : nil,
                     lockReason: row.lockReason ?? "",
                     // The gate's requirement is a TARGET — "Open the Combine tab
                     // and read the numbers" — so it may only be printed over a
@@ -957,21 +1023,53 @@ struct ScoutingHubView: View {
         return false
     }
 
-    /// The pinned transition for the stage the club is standing in.
+    /// The pinned transition for the stage the club is standing in — **the hub's
+    /// one commit surface** (§2.5, P5).
+    ///
+    /// It used to be a bespoke bar with its own gold recipe and its own skip
+    /// chip. On `DSActionBar` it is: an explainer stating what advancing does and
+    /// what it costs, ONE ghost carrying the single skip the hub offers (labelled
+    /// with what skipping forfeits), and ONE gold primary. A blocked commit
+    /// swaps the explainer to its warn variant and states the reason, and the
+    /// primary goes genuinely grey rather than dimmed gold.
     private var advanceBar: some View {
         let gate = stageGate
-        return DraftPrepAdvanceBar(
-            stepName: gate.step.displayName,
-            nextName: gate.next?.displayName,
-            requirement: gate.requirement,
-            skipCost: gate.skipCost,
-            isComplete: gate.isComplete,
-            isBlocked: gate.isPhaseBlocked,
-            blockedReason: gate.phaseBlockedReason,
-            ownsTransition: true,
-            onAdvance: { if let next = gate.next { advance(to: next) } },
-            onSkip: { if let next = gate.next { advance(to: next) } },
-            onOpen: { if case let .open(tab, _) = gate.action { selectedTab = tab } }
+        let weeks = scoutingWeeks(currentStep: gate.step)
+        let nextName = gate.next?.displayName ?? "the draft room"
+        let canCommit = gate.isComplete && !gate.isPhaseBlocked
+
+        let message: String = {
+            if gate.isPhaseBlocked { return gate.phaseBlockedReason }
+            if !gate.isComplete { return gate.requirement }
+            return "Closes **\(gate.step.displayName)** and opens **\(nextName)**. "
+                + "Spends **1 of the \(weeks.left) scouting weeks** left in the spring."
+        }()
+
+        return DSActionBar(
+            explainer: DSActionBar.Explainer(
+                title: "Advance \u{2014} \(nextName)",
+                message: message,
+                isWarning: gate.isPhaseBlocked
+            ),
+            // THE HUB'S ONE SKIP. Every stage is skippable and none of them is
+            // silently skippable, so the ghost says what walking past costs. The
+            // in-surface skips (the pro-day tour's "or watch it on the feed", the
+            // workout room's "done with the workouts") stay where they are —
+            // those are their screens' own flow, and for the tour the transition
+            // is destructive and lives behind that screen's confirmation.
+            ghost: gate.offersHeaderSkip && gate.next != nil
+                ? DSActionBar.Action(
+                    title: "Skip this stage",
+                    caption: gate.skipCost,
+                    accessibilityLabel: "Skip \(gate.step.displayName). \(gate.skipCost)",
+                    handler: { if let next = gate.next { advance(to: next) } }
+                )
+                : nil,
+            primary: DSActionBar.Action(
+                title: gate.next == nil ? "The board is closed" : "Advance \u{2014} \(nextName)",
+                isEnabled: canCommit && gate.next != nil,
+                handler: { if let next = gate.next { advance(to: next) } }
+            )
         )
     }
 
@@ -1127,7 +1225,8 @@ struct ScoutingHubView: View {
             MockDraftView(
                 career: career,
                 prospects: prospects,
-                onInterview: interviewJump(progress)
+                onInterview: interviewJump(progress),
+                filing: mockFiling(progress)
             )
         case .draftOrder:
             DraftOrderView(career: career)

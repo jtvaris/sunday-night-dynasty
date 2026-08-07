@@ -1,6 +1,21 @@
 import SwiftUI
 import SwiftData
 
+/// What the Mock Draft screen can close, handed down by the hub.
+///
+/// **The two mock stages used to complete invisibly** — opening this tab stamped
+/// the read and moved the pipeline, so two of the spring's nine stages were
+/// satisfied by an act the user never performed and never saw acknowledged (P1,
+/// UI_REDESIGN_VISION §4 wave 0). Reading a mock is a real act; it now takes a
+/// button.
+struct MockDraftFiling {
+    /// "Mock 1.0" / "Final Mock".
+    let stageName: String
+    /// What filing does, for the action bar's explainer. Markdown emphasis.
+    let explainer: String
+    let file: () -> Void
+}
+
 struct MockDraftView: View {
     let career: Career
     let prospects: [CollegeProspect]
@@ -9,6 +24,9 @@ struct MockDraftView: View {
     /// screen never has to know the interview economy; `nil` and the menu item
     /// is not drawn at all.
     var onInterview: ((CollegeProspect) -> Void)? = nil
+    /// The stage this screen can close, or `nil` when there is nothing to file —
+    /// the mock is then the permanent reference screen it has always also been.
+    var filing: MockDraftFiling? = nil
 
     @Environment(\.modelContext) private var modelContext
     @State private var teams: [Team] = []
@@ -291,6 +309,24 @@ struct MockDraftView: View {
                     }
                     .scrollContentBackground(.hidden)
                     .listStyle(.insetGrouped)
+                }
+
+                // The stage's commit, where a commit belongs (§2.5). Drawn only
+                // while there is something to file: once the read is recorded
+                // the band's `done` slat is the ONE place that says so.
+                if let filing {
+                    DSActionBar(
+                        explainer: DSActionBar.Explainer(
+                            title: "File \(filing.stageName)",
+                            message: filing.explainer
+                        ),
+                        primary: DSActionBar.Action(
+                            title: "File this mock",
+                            accessibilityLabel: "File \(filing.stageName). "
+                                + DSActionBar.Explainer.spoken(filing.explainer),
+                            handler: filing.file
+                        )
+                    )
                 }
             }
             } // end else (not loading)

@@ -139,6 +139,36 @@ enum DSType {
         static let hero: CGFloat = 48
     }
 
+    // MARK: The two voices (UI_REDESIGN_VISION §2.10)
+    //
+    // One face at nine weights is the single biggest reason the app read as a
+    // dashboard rather than as a sports product, while the shipped HUD had
+    // already committed to a display voice (`clock` 34 heavy mono, `score` 30
+    // black mono). Two voices, no third:
+    //
+    //   display  SF Pro CONDENSED, always tabular — scoreboard numerals, team
+    //            codes, screen idents, section heads, band labels, table cells.
+    //            UPPERCASE at the call site, tracking ≈ +0.06 em, NEVER below 11.
+    //   text     SF Pro Text — prose, player names, chip captions, button
+    //            titles. Sentence case, NEVER above 18.
+    //
+    // **The floor is enforced on the leaf, not on the container.** Iteration 2 of
+    // the vision wrote the 11 pt rule as a container rule and 57 of 62 second-line
+    // values fell straight through it, which is why `max`/`min` live inside these
+    // two functions rather than in a comment above them.
+
+    /// Display voice — condensed, tabular, clamped to the 11 pt floor.
+    static func display(_ size: CGFloat, _ weight: Font.Weight = .bold) -> Font {
+        Font.system(size: max(size, 11), weight: weight).width(.condensed).monospacedDigit()
+    }
+
+    /// Text voice — SF Pro Text, clamped to the 18 pt ceiling. `prose` opts out
+    /// of tabular figures; everything else lines up.
+    static func text(_ size: CGFloat, _ weight: Font.Weight = .regular, prose: Bool = false) -> Font {
+        let font = Font.system(size: min(size, 18), weight: weight)
+        return prose ? font : font.monospacedDigit()
+    }
+
     /// 9 pt black — tracked micro-labels: stakes/weather badges, overlines.
     static let overline = Font.system(size: 9, weight: .black)
     /// 11 pt semibold — captions, secondary meta.
@@ -175,6 +205,10 @@ enum DSElevation {
         let radius: CGFloat
         let y: CGFloat
 
+        /// No lift. A step rather than a conditional modifier, so a call site
+        /// can pick an elevation in an expression without branching the view
+        /// tree (and losing its identity across the branch).
+        static let none = Shadow(color: .clear, radius: 0, y: 0)
         /// Subtle lift for pills / chips / action buttons.
         static let chip = Shadow(color: DSElevation.shadowTint.opacity(0.40), radius: 3, y: 1)
         /// Card / lower-third lift (result banner).
