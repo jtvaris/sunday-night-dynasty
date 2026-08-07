@@ -190,6 +190,8 @@ extension TaskDestination {
         case .schedule:             return "Schedule"
         case .standings:            return "Standings"
         case .coachingStaff:        return "Coaching Staff"
+        case .coachingStaffReview:  return "Staff Review"
+        case .coordinatorSchemes:   return "Coordinator Schemes"
         case .hireCoach:            return "Hire Coach"
         case .hireHC:               return "Hire Head Coach"
         case .hireOC:               return "Hire Offensive Coordinator"

@@ -246,6 +246,11 @@ tap that opens/dismisses a sheet, wait ~1s and re-snapshot (or use `wait-for-ui`
 
 ## When you still need coordinates (fallback only)
 
+⚠️ **RUNNER INTERFERENCE (2026-08-07):** the XCUITest runtime behind `snapshot-ui` has been seen
+DRIVING the app on its own — unrequested navigations and a rotation to landscape mid-run. If the
+app starts moving without your taps, abandon the semantic session and drive the whole run with
+`idb ui tap` coordinates instead (that is how the #162 verification was completed).
+
 ⚠️ **SCROLLING: XcodeBuildMCP `swipe` and `gesture` presets silently FAIL on this app's SwiftUI
 Lists** (verified 2026-08-06 on PlayerDetailView: 6 swipes + 4 gesture presets moved nothing, no
 error reported — a QA run falsely concluded the card's Actions section didn't exist because it

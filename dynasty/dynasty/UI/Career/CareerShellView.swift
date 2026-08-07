@@ -1369,6 +1369,17 @@ struct CareerShellView: View {
         case .schedule:           shellDest = .schedule
         case .standings:          shellDest = .standings
         case .coachingStaff:      shellDest = .coachingStaff
+        // #162. Same screen, different tab. The hint is the `scoutingPendingTab`
+        // mechanism exactly: a career-scoped one-shot the destination view reads
+        // and clears in its `.task`, so nothing has to be threaded through
+        // `NavigationPath` and a hint left over from a cancelled navigation
+        // cannot survive into the next visit.
+        case .coachingStaffReview:
+            CareerScopedDefaults.set("review", "coachingPendingTab")
+            shellDest = .coachingStaff
+        case .coordinatorSchemes:
+            CareerScopedDefaults.set("schemes", "coachingPendingTab")
+            shellDest = .coachingStaff
         case .hireCoach:          shellDest = .coachingStaff
         case .hireHC:             shellDest = .coachingStaff
         case .hireOC:             shellDest = .coachingStaff

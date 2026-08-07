@@ -83,6 +83,18 @@ struct CoachingStaffView: View {
     /// Transient one-liner explaining why a locked tab cannot be opened.
     @State private var lockedTabHint: String?
 
+    // MARK: - Task Confirms (#162)
+
+    /// ``GameTask/matchKey``s this cycle has already had confirmed, read out of
+    /// ``TaskProgressStore`` when the screen opens and updated in place by
+    /// `confirmTask`.
+    ///
+    /// Held in `@State` rather than recomputed off the store on every redraw:
+    /// `CareerScopedDefaults` is not observable, so a computed read would draw
+    /// the pre-confirm bar forever and the tab tick would never appear until the
+    /// screen was left and re-entered.
+    @State private var confirmedTaskKeys: Set<String> = []
+
     // MARK: - Hiring Confirmation State (#49)
     @State private var recentHireMessage: String?
 
@@ -1100,6 +1112,12 @@ struct CoachingStaffView: View {
                     // R30: coaching tree + legacy score
                     CoachingTreeView(career: career, embedded: true)
                 }
+
+                // The tab's commit, where a commit belongs (§2.5): the foot of
+                // the surface, pinned, one gold primary. Drawn only on the two
+                // tabs a Coaching Changes task points at, and only while that
+                // task is live (#162).
+                taskConfirmBar
             }
 
             // MARK: - Hiring Confirmation Toast (#49)
@@ -1141,7 +1159,15 @@ struct CoachingStaffView: View {
         .toolbarColorScheme(.dark, for: .navigationBar)
         // R30: keep the coaching tree in sync with the actual staff
         // (backfills open entries for careers that predate the tree).
-        .task { syncCoachingTree() }
+        .task {
+            syncCoachingTree()
+            // #162: what this cycle has already confirmed, and which tab the
+            // rail asked for. Order matters — the hint is refused for a locked
+            // tab, and `isTabLocked` reads the staff the sync above may have
+            // just repaired.
+            loadConfirmedTasks()
+            applyPendingTabHint()
+        }
         // Coach detail stays as navigation push (works correctly)
         .navigationDestination(item: $detailCoachID) { coachID in
             if let coach = allCoaches.first(where: { $0.id == coachID }) {
@@ -1237,6 +1263,14 @@ struct CoachingStaffView: View {
 
     // MARK: - Tab Bar (#107)
 
+    /// Whether a tab refuses to open. One predicate, read by the tab bar and by
+    /// the deep-link hint — a hint that opened a locked tab would land the user
+    /// on a screen whose own rule says it has nothing to show yet.
+    private func isTabLocked(_ tab: StaffTab) -> Bool {
+        (tab == .schemes && !isSchemesTabAvailable) ||
+        (tab == .review && !isReviewTabAvailable)
+    }
+
     /// Why a locked tab is locked — shown as a one-line hint when it is tapped.
     private func lockHint(for tab: StaffTab) -> String {
         tab == .schemes
@@ -1258,9 +1292,9 @@ struct CoachingStaffView: View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
                 ForEach(StaffTab.allCases, id: \.self) { tab in
-                    let isLocked = (tab == .schemes && !isSchemesTabAvailable) ||
-                                   (tab == .review && !isReviewTabAvailable)
+                    let isLocked = isTabLocked(tab)
                     let isSelected = selectedTab == tab
+                    let isConfirmed = isTabTaskConfirmed(tab)
 
                     Button {
                         if isLocked {
@@ -1279,6 +1313,17 @@ struct CoachingStaffView: View {
                                 }
                                 Text(tab.rawValue)
                                     .font(.subheadline.weight(isSelected ? .bold : .medium))
+                                // The tick is a statement about a TASK, not about
+                                // the tab: it appears only while this cycle has a
+                                // live Coaching Changes row pointing here and the
+                                // user has confirmed it. In every other season and
+                                // phase the tab bar is undecorated, because there
+                                // is nothing for a tick to be true of (#162).
+                                if isConfirmed {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(Color.success)
+                                }
                             }
                             .foregroundStyle(
                                 isSelected ? Color.accentGold :
@@ -1291,10 +1336,14 @@ struct CoachingStaffView: View {
                                 .frame(height: 2)
                         }
                         .frame(maxWidth: .infinity)
+                        .frame(minHeight: 44)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .opacity(isLocked ? 0.5 : 1.0)
+                    .accessibilityLabel(
+                        isConfirmed ? "\(tab.rawValue), reviewed" : tab.rawValue
+                    )
                     .accessibilityHint(isLocked ? lockHint(for: tab) : "")
                 }
             }
@@ -1311,6 +1360,150 @@ struct CoachingStaffView: View {
         .padding(.horizontal, 16)
         .padding(.top, 8)
         .background(Color.backgroundSecondary)
+    }
+
+    // MARK: - Task Confirms (#162)
+    //
+    // The two Coaching Changes reads — "Review coaching staff" and "Review
+    // coordinator schemes" — are closed here, by a button, on the tab that
+    // actually carries the thing they name. They used to be closed by nothing at
+    // all: their destination was the bare coaching screen, so a visit stamped
+    // them `.inProgress` and no rule anywhere could ever carry them to `.done`.
+    //
+    // The confirm files `.done` into ``TaskProgressStore`` under the generator's
+    // own title. That store is the one #138a built: career-scoped, cycle-stamped
+    // `season | phase | week`, self-pruning — so the tick survives a cold launch,
+    // a second save cannot inherit it, and next February's Coaching Changes opens
+    // untouched. `CareerShellView.refreshTaskCompletionStatus` replays it into
+    // the live task list on the way back out, which is what puts the check in the
+    // rail and moves its counter. No parallel flag exists.
+
+    /// What one tab's confirm says and which task it closes.
+    private struct StaffTaskConfirm {
+        /// The generator's ``GameTask/matchKey`` — the identity everything in the
+        /// app matches a task on.
+        let taskKey: String
+        /// Action-bar explainer title, before and after.
+        let title: String
+        let confirmedTitle: String
+        /// What confirming records, and what it has recorded once done.
+        let message: String
+        let confirmedMessage: String
+        /// The gold primary's label.
+        let buttonTitle: String
+    }
+
+    /// The confirm a tab owns, or `nil` for the tabs that close nothing.
+    private func taskConfirm(for tab: StaffTab) -> StaffTaskConfirm? {
+        switch tab {
+        case .review:
+            return StaffTaskConfirm(
+                taskKey: TaskGenerator.staffReviewTaskKey,
+                title: "Confirm \u{2014} Staff Review",
+                confirmedTitle: "Staff Review Confirmed",
+                message: "Records that you have read your staff's **ratings, budget and readiness**, and ticks **Review coaching staff** off this phase.",
+                confirmedMessage: "**Review coaching staff** is ticked off this phase. You can still hire and replace anybody.",
+                buttonTitle: "Confirm Staff Review"
+            )
+        case .schemes:
+            return StaffTaskConfirm(
+                taskKey: TaskGenerator.schemeReviewTaskKey,
+                title: "Confirm \u{2014} Scheme Review",
+                confirmedTitle: "Scheme Review Confirmed",
+                message: "Records that you have read both coordinators' **schemes and roster fit**, and ticks **Review coordinator schemes** off this phase.",
+                confirmedMessage: "**Review coordinator schemes** is ticked off this phase. Changing a scheme afterwards costs nothing here.",
+                buttonTitle: "Confirm Scheme Review"
+            )
+        case .staff, .tree:
+            return nil
+        }
+    }
+
+    /// Whether the two review rows exist for the club right now.
+    ///
+    /// `TaskGenerator.coachingChangesTasks` emits them unconditionally inside
+    /// `.coachingChanges` and nowhere else, so this is the exact liveness test —
+    /// and it is the reason the coaching screen is undecorated for the other
+    /// fourteen phases rather than carrying a tick year-round.
+    private var reviewTasksAreLive: Bool {
+        career.currentPhase == .coachingChanges
+    }
+
+    /// Whether `tab`'s task has been confirmed in the CURRENT cycle.
+    private func isTabTaskConfirmed(_ tab: StaffTab) -> Bool {
+        guard reviewTasksAreLive, let confirm = taskConfirm(for: tab) else { return false }
+        return confirmedTaskKeys.contains(confirm.taskKey)
+    }
+
+    /// Replays this cycle's recorded completions into view state.
+    private func loadConfirmedTasks() {
+        let recorded = TaskProgressStore.statuses(in: TaskProgressStore.cycle(for: career))
+        confirmedTaskKeys = Set(recorded.filter { $0.value == .done }.map(\.key))
+    }
+
+    /// Files the confirm. **Idempotent** — a second press is refused here as
+    /// well as being unreachable through the disabled button, so nothing can
+    /// spend twice if the bar is ever driven from somewhere else.
+    private func confirmTask(_ key: String) {
+        guard !confirmedTaskKeys.contains(key) else { return }
+        TaskProgressStore.record(
+            .done,
+            for: key,
+            in: TaskProgressStore.cycle(for: career),
+            season: career.currentSeason
+        )
+        withAnimation(.easeInOut(duration: 0.2)) {
+            confirmedTaskKeys.insert(key)
+        }
+    }
+
+    /// Honors the one-shot tab hint `CareerShellView.handleTaskNavigation`
+    /// writes, exactly as `ScoutingHubView` honors `scoutingPendingTab`. Read
+    /// once and cleared, so a hint cannot outlive the navigation that set it.
+    private func applyPendingTabHint() {
+        guard let pending = CareerScopedDefaults.string("coachingPendingTab"),
+              !pending.isEmpty else { return }
+        let hinted: StaffTab? = {
+            switch pending {
+            case "staff":   return .staff
+            case "schemes": return .schemes
+            case "review":  return .review
+            case "tree":    return .tree
+            default:        return nil
+            }
+        }()
+        // A locked tab is refused rather than forced: Review is locked only when
+        // the club has hired nobody at all, and dropping the user on an empty
+        // evaluation would be a worse answer than the hiring list plus the lock's
+        // own sentence.
+        if let hinted, !isTabLocked(hinted) { selectedTab = hinted }
+        CareerScopedDefaults.remove("coachingPendingTab")
+    }
+
+    /// The pinned confirm bar for the selected tab, or nothing.
+    @ViewBuilder
+    private var taskConfirmBar: some View {
+        if reviewTasksAreLive, let confirm = taskConfirm(for: selectedTab), !isTabLocked(selectedTab) {
+            let isConfirmed = confirmedTaskKeys.contains(confirm.taskKey)
+            DSActionBar(
+                explainer: DSActionBar.Explainer(
+                    title: isConfirmed ? confirm.confirmedTitle : confirm.title,
+                    message: isConfirmed ? confirm.confirmedMessage : confirm.message
+                ),
+                primary: DSActionBar.Action(
+                    // A done affirmation, not a second spend: the primary goes
+                    // to the style's genuine disabled grey and says what already
+                    // happened (§2.8).
+                    title: isConfirmed ? "Confirmed" : confirm.buttonTitle,
+                    isEnabled: !isConfirmed,
+                    accessibilityLabel: isConfirmed
+                        ? DSActionBar.Explainer.spoken(confirm.confirmedMessage)
+                        : "\(confirm.buttonTitle). "
+                            + DSActionBar.Explainer.spoken(confirm.message),
+                    handler: { confirmTask(confirm.taskKey) }
+                )
+            )
+        }
     }
 
     // MARK: - Staff Tab Content

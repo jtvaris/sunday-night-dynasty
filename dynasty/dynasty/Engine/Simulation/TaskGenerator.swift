@@ -179,6 +179,19 @@ enum TaskDestination: String, Codable, CaseIterable {
     case schedule
     case standings
     case coachingStaff
+    /// #162: the Coaching Changes staff read, landing on `CoachingStaffView`'s
+    /// **Review** tab — the surface that actually carries the evaluation (staff
+    /// overview, budget summary, every coach's overall, readiness check). The
+    /// Staff tab is where a GM *changes* the staff; Review is where he reads it.
+    case coachingStaffReview
+    /// #162: the Coaching Changes scheme read, landing on the **Schemes** tab —
+    /// the offensive/defensive scheme cards, the family trees and the two roster
+    /// fit tables the task's own copy describes.
+    ///
+    /// Both of these open the same shell destination as `.coachingStaff`; they
+    /// exist as separate cases because the destination is the ONLY thing the
+    /// rail hands the shell, so tab-accurate routing has nowhere else to live.
+    case coordinatorSchemes
     case hireCoach
     case hireHC
     case hireOC
@@ -610,27 +623,53 @@ enum TaskGenerator {
             ))
         }
 
-        // Optional: review and schemes
+        // The two reads of the coaching screen. **Confirm-only (#162).**
+        //
+        // They used to point at the bare `.coachingStaff` destination, which had
+        // two consequences and no upside. Routing: both rows opened the same
+        // screen on whatever tab it happened to default to (`.staff`), so
+        // "Review coordinator schemes" landed on the hiring list and the user had
+        // to go find the schemes himself. Completion: `markTaskVisited` stamped
+        // both `.inProgress` the moment the screen appeared — a state change the
+        // user never asked for and which was worth nothing, because no case
+        // anywhere could carry either row to `.done`. The rows could not be
+        // ticked off by any action in the game.
+        //
+        // Each now points at its own tab and is closed by the explicit confirm
+        // bar at the foot of that tab (`CoachingStaffView`), which files `.done`
+        // against `TaskProgressStore` under the title below — the same durable,
+        // career-scoped, cycle-stamped record #138a built, so a cold launch keeps
+        // the tick. The P1 principle in one line: no invisible completions, and
+        // no completion the user cannot see himself make.
         tasks.append(GameTask(
             phase: .coachingChanges,
-            title: "Review coaching staff",
-            description: "Evaluate your coordinators and position coaches.",
+            title: staffReviewTaskKey,
+            description: "Evaluate your coordinators and position coaches, then confirm the review on the Review tab.",
             icon: "person.3.fill",
-            destination: .coachingStaff,
+            destination: .coachingStaffReview,
             isRequired: false
         ))
 
         tasks.append(GameTask(
             phase: .coachingChanges,
-            title: "Review coordinator schemes",
-            description: "Check offensive and defensive scheme fit with your roster.",
+            title: schemeReviewTaskKey,
+            description: "Check offensive and defensive scheme fit with your roster, then confirm the review on the Schemes tab.",
             icon: "gearshape.2.fill",
-            destination: .coachingStaff,
+            destination: .coordinatorSchemes,
             isRequired: false
         ))
 
         return tasks
     }
+
+    /// The two Coaching Changes rows `CoachingStaffView` can close (#162).
+    ///
+    /// Declared here rather than typed out a second time in the view, for the
+    /// reason `combineChain` was extracted: every completion check in this app
+    /// keys off ``GameTask/matchKey``, so a confirm button filing a string the
+    /// generator does not emit is a button that silently does nothing.
+    static let staffReviewTaskKey = "Review coaching staff"
+    static let schemeReviewTaskKey = "Review coordinator schemes"
 
     /// Decorates a ``DraftPrepStep``'s task with its live counter and completes
     /// it from ``DraftPrepProgress`` — the one authority on whether the stage's

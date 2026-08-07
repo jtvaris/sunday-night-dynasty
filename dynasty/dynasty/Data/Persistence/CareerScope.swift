@@ -520,6 +520,11 @@ enum CareerScopedDefaults {
         // behind for the next career that reuses the slot.
         "prospectBandRepairVersion",
         "scoutingPendingTab",
+        // #162 — the same one-shot tab hint for `CoachingStaffView`, written by
+        // `CareerShellView.handleTaskNavigation` and cleared by the view. Listed
+        // for the same reason as its scouting twin: a deleted save must not leave
+        // a pending tab behind for whoever opens the slot next.
+        "coachingPendingTab",
         "negotiationLockedPlayerIDs",
         // TODO §5.5 — `ContractIncentiveRegistry.defaultsKey`. Listed so a
         // deleted save purges its incentive packages with everything else.
