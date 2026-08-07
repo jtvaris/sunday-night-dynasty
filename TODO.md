@@ -4041,3 +4041,15 @@ Viisi rinnakkaista agenttia, viisi slicea, kaikki portit vihreät joka välissä
 - [x] **#138/#154-loput** (`36b3c43`): TaskProgressStore (career-scoped, sykli-leimattu, raise-only) — view-valmistumiset kestävät kylmärelaunchin (verifioitu laitteella, 3/6 + on-disk-avain); yksi done-predikaatti gatelle ja visuaaleille + completesOnVisit; auditin löytämä aito deadlock (cap-compliance ilman completion-casea) korjattu; skip settlaa stagensa (passed(), vaihe-scoped); advance-blokkerin oikea lause; yksi current-week-fixture herolle+tilelle+taskeille.
 - [x] **#155 + #97-osa** (`ce5ad57`): AI-draftin julkinen ankkuri (R1-poikkeama 60.9→21.8, positiomix uskottava, sweep-mitattu voima; REACH vaatii board-faktan — 14/19 positiota oli lukittu REACHiin ikuisesti); realisaatioviat (facility-sakon syönyt lattia, voimavalmentajan tuplalasku, moraaliporras healthy-bändin sisällä) → 80+-nousu puolittui 1.4pp:iin.
 - [ ] **AUKI:** #97-jäännös + #157 (keepScore-upsidePremium) = seuraava balanssiaalto — 75+-lattia sitoo, vaatii rigin revalidoinnin; #158 (sidebar-canAdvance ei tunne staff-gatea, pieni); #105 (odottaa käyttäjän suuntapäätöstä mallikuvista); käyttäjä #5/#74.
+
+## AUKI NYT (2026-08-07 ilta — tämä osio korvaa aiemmat AUKI-rivit; ne edeltävät päivän auditteja)
+
+Pushattu `fa12446` asti. Järjestysehdotus:
+1. **#167 Legal-aalto 1** (~1 pv, ei pelilogiikkaa): 32 nimeä NFLTeamData:an publish-jsonista, 8 toimittajaa pois, bg_draft.jpg (NFL-shield!) + 15 referoimatonta imagesetiä pois, ~150 NFL/Super Bowl -stringiä (suppilo SeasonPhase:73-76), TARGETED_DEVICE_FAMILY "2", PrivacyInfo.xcprivacy, ITSAppUsesNonExemptEncryption. HUOM: muuttaa Generated-liigan nimet fiktiivisiksi — käyttäjän ajoituspäätös. + IP-juristi liikkeelle (lead time!).
+2. **#171 SwiftData-migraatiosuunnitelma** (HIGH — portittaa betan: testaajien savet on säilytettävä).
+3. **#168/#169/#173 korrektius**: Team.players-treidistaleus (VERIFIOI — plan-doc voi olla vanhentunut), kuolleet statsinäkymät, playoffsHeroCardin kovakoodaus + Cap Scenarion valhe-checkmark (TODO(#252)-stub).
+4. **#170/#172**: Settings-siivous, crash-raportointi (MetricKit riittänee).
+5. **#105 W1-W5**: listastandardi → hubi → flow't → detaljit → häntä (DSSlatBand/DSActionBar nyt 3/6 tiedostossa 156:sta).
+6. **#97+#157 balanssiaalto** (75+-lattia sitoo molempia → rigin revalidointi) + #163-jälkiseuranta.
+7. Pienet: #158, #166 (press-scroll), #137-perhe done.
+Käyttäjältä: W0+v4-silmäys, Big Boardin Recommendations-lohkojen taittopäätös (Insights vs Scout Notes -tab), #167-ajoitus, #74 musiikit, #5 (iPad-katselmus).
