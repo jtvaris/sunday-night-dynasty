@@ -272,6 +272,90 @@ enum ContractEngine {
         return Swift.min(18.0, top.pct + slope * (o - top.ovr))
     }
 
+    /// The quarterback scarcity floor — what a LEGITIMATE STARTER costs, over
+    /// and above what the shared ladder charges for his rating (task #163).
+    ///
+    /// `marketBasePercent` is one table for twenty positions and it is convex by
+    /// construction: the last five rating points cost more than the previous
+    /// five, everywhere, for everyone. That is the right shape for the positions
+    /// a club can replace. It is the wrong shape for the one it cannot.
+    ///
+    /// **What the real market pays.** Against the 2025 cap (~$279M) the men who
+    /// hold the job are bunched at the top and the ladder between them is nearly
+    /// flat: Prescott 21.5 %, Allen / Burrow / Love / Lawrence 19.7 %, Tagovailoa
+    /// 19.0 %, Goff 19.0 %, Herbert 18.8 %, Hurts 18.3 %, Watson 16.5 %, Cousins
+    /// 16.1 % — and then a cliff down to the bridge tier (Carr 13.4 %, Darnold
+    /// 12.0 %, Mayfield 11.9 %). A proven starter who is plainly not the best
+    /// quarterback alive still signs for ~$50-53M, because the club that lets him
+    /// go is not choosing between him and a better one; it is choosing between
+    /// him and not having one. That premium is paid for the SCARCITY of the job
+    /// being filled at all, so it does NOT scale with quality the way every other
+    /// position's pay does.
+    ///
+    /// **What the ladder charged.** At × 2.2 × `leagueAffordabilityScale` the
+    /// shared curve read 85 → 10.9 %, 87 → 12.1 %, 89 → 14.5 %, 91 → 16.9 %,
+    /// 92 → 18.1 % of cap. The 92+ tail was calibrated in task #82 and is right.
+    /// The 85-91 band — an unambiguous franchise starter, the tier the list above
+    /// is made of — sat ~25 % under its comps: an 89 asked $38.4M against a real
+    /// $50-53M.
+    ///
+    /// **The shape.** This replaces the shared curve's 85→92 stretch with an S: a
+    /// `blend` fraction of the way from the standard 85 price to the standard 92
+    /// price. Both endpoints are READ from `marketBasePercent`, so the shoulder
+    /// cannot drift from the table it hangs off, and neither endpoint moves —
+    /// nothing below 85 and nothing at or above 92 changes, at quarterback or
+    /// anywhere else. It is applied as a `max` floor in `estimateMarketValue`, so
+    /// it can only ever RAISE a price: the ladder stays strictly monotone and an
+    /// 89 ($45.0M) still cannot out-earn a 92 ($47.9M).
+    ///
+    /// **What it costs, and why that is forced.** The shoulder is CONCAVE, which
+    /// the rest of the ladder is not. That is arithmetic, not sloppiness. With
+    /// the 85 and 92 prices pinned, the highest an 89 can sit while the curve
+    /// through them stays convex is the straight chord, (3·p85 + 4·p92)/7 = 9.089
+    /// → **15.0 % of cap** ($39.7M) — barely half a point above what the convex
+    /// table already charged. Every point above that has to be bought with
+    /// concavity; buying it convexly instead means dragging 92 to ~21.6 % and 96
+    /// to ~27.7 % ($73M), i.e. re-pricing the tail #82 calibrated and putting the
+    /// top of this market above the top of the real one. The concavity is not a
+    /// defect in the fit — it IS the fact being encoded: quarterback pay
+    /// saturates, because past "he is a franchise quarterback" there is very
+    /// little left to buy.
+    ///
+    /// At `openingSalaryCap` ($265M) the quarterback ladder now reads
+    /// 85 $28.9M · 86 $31.7M · 87 $36.9M · 88 $42.2M · 89 $45.0M · 90 $46.7M ·
+    /// 91 $47.5M · 92 $47.9M · 96 $60.8M. The inflection sits at 87-88, which is
+    /// where the shared table's own comment puts "the second contract that resets
+    /// a market" — the rating at which a club stops asking whether he is the
+    /// answer.
+    ///
+    /// Returns 0 outside the shoulder, which is what makes `max` a no-op there.
+    private static func quarterbackScarcityFloor(overall: Int) -> Double {
+        // Fraction of the way from the standard 85 price to the standard 92
+        // price, indexed by OVR 85...92. STRICTLY INCREASING (the ladder stays
+        // monotone) and pinned at 0.00 / 1.00 (the endpoints do not move).
+        //
+        // The S is deliberate: convex to the inflection at 87-88 — the club is
+        // still buying quality, and each point costs more than the last — then
+        // concave above it, where it is buying a filled job and the remaining
+        // rating points are nearly free. Any edit MUST keep the sequence
+        // increasing and the endpoints at 0 and 1.
+        let blend: [Double] = [
+            0.00,  // 85 — the shared ladder's own price, untouched
+            0.15,  // 86
+            0.42,  // 87 — "top ~4 %", where the shared table says a market resets
+            0.70,  // 88
+            0.85,  // 89 — 17.0 % of cap, the tier the recalibration was aimed at
+            0.94,  // 90
+            0.98,  // 91
+            1.00,  // 92 — the #82 tail's own price, untouched
+        ]
+        let band = 85...92
+        guard band.contains(overall) else { return 0 }
+        let low = marketBasePercent(overall: band.lowerBound)
+        let high = marketBasePercent(overall: band.upperBound)
+        return low + (high - low) * blend[overall - band.lowerBound]
+    }
+
     /// League affordability scalar — what makes the price ladder above a price
     /// ladder for THIS league rather than an unbounded one (task #27).
     ///
@@ -467,7 +551,14 @@ enum ContractEngine {
     static func estimateMarketValue(
         overall: Int, position: Position, age: Int, salaryCap: Int
     ) -> Int {
-        let basePercent = marketBasePercent(overall: overall)
+        // The shared ladder's price for the rating, then the quarterback-only
+        // scarcity shoulder over OVR 85-92 (task #163). `max` keeps it a FLOOR:
+        // it can raise a quarterback's price inside the band and can do nothing
+        // at all anywhere else, so no other position moves by a cent.
+        var basePercent = marketBasePercent(overall: overall)
+        if position == .QB {
+            basePercent = Swift.max(basePercent, quarterbackScarcityFloor(overall: overall))
+        }
 
         // Convert cap percentage to thousands, denominated in a league that can
         // afford its own roster (see `leagueAffordabilityScale`).
