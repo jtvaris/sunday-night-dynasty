@@ -243,6 +243,19 @@ final class Career {
     /// shell shows the final summary screen. Default → lightweight migration.
     var isGameOver: Bool = false
 
+    // MARK: - Press Conference (#161)
+    /// JSON-encoded `[ResponseTone.RawValue]` — the coach's recent press-room
+    /// tones, NEWEST FIRST, capped at `PressConferenceEngine.toneLedgerDepth`.
+    /// Drives the repetition ratchet: a coach who answers everything the same
+    /// way watches the payoff decay and eventually earns a "vanilla" label.
+    /// Optional new attribute → lightweight migration.
+    var pressToneHistoryData: Data? = nil
+    /// JSON-encoded `[PressConferenceEngine.PressPromiseRecord]` — measurable
+    /// claims made at a podium and their settlement, capped at 40. Settled once
+    /// a season in `WeekAdvancer.recordSeasonSummary`.
+    /// Optional new attribute → lightweight migration.
+    var pressPromiseLedgerData: Data? = nil
+
     // MARK: - League History & Hall of Fame (R32)
     /// JSON-encoded `[SeasonSummary]` — one entry per completed season,
     /// newest first, capped at 20. Written during the `.superBowl` phase.
@@ -689,6 +702,41 @@ extension Career {
         }
         set {
             announcedMilestoneKeysData = try? JSONEncoder().encode(Array(newValue.prefix(500)))
+        }
+    }
+
+    /// The coach's recent press-room tones, NEWEST FIRST (#161).
+    ///
+    /// Career-scoped and deliberately NOT reset at the season rollover — "he
+    /// has said the same thing at every podium since he got here" is a fair
+    /// thing for a beat writer to notice across a January.
+    var pressToneHistory: [ResponseTone] {
+        get {
+            guard let data = pressToneHistoryData,
+                  let raw = try? JSONDecoder().decode([String].self, from: data) else {
+                return []
+            }
+            return raw.compactMap(ResponseTone.init(rawValue:))
+        }
+        set {
+            let capped = Array(newValue.prefix(PressConferenceEngine.toneLedgerDepth))
+            pressToneHistoryData = try? JSONEncoder().encode(capped.map(\.rawValue))
+        }
+    }
+
+    /// Measurable promises made at a podium, oldest first (#161).
+    var pressPromiseLedger: [PressConferenceEngine.PressPromiseRecord] {
+        get {
+            guard let data = pressPromiseLedgerData,
+                  let records = try? JSONDecoder().decode(
+                      [PressConferenceEngine.PressPromiseRecord].self, from: data
+                  ) else {
+                return []
+            }
+            return records
+        }
+        set {
+            pressPromiseLedgerData = try? JSONEncoder().encode(Array(newValue.suffix(40)))
         }
     }
 

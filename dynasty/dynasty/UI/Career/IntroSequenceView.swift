@@ -35,6 +35,11 @@ struct IntroSequenceView: View {
                         career: career,
                         team: team!,
                         owner: owner,
+                        // #161: the inherited roster is what the engine reads
+                        // the locker-room band and the rebuild/contender
+                        // standing off — a championship promise is priced
+                        // against the players who would have to deliver it.
+                        roster: players,
                         onComplete: { result in
                             applyPressConferenceResult(result)
                             advanceStep()
@@ -99,6 +104,10 @@ struct IntroSequenceView: View {
     }
 
     private func applyPressConferenceResult(_ result: PressConferenceResult) {
+        // #161: tone ledger + promise ledger, in the engine, so both press
+        // screens book the same things.
+        PressConferenceEngine.commit(result: result, to: career)
+
         // Apply effects to career legacy
         career.legacy.applyPressConferenceResult(result, season: career.currentSeason)
 

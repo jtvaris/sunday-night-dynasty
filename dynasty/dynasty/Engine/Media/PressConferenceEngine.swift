@@ -114,7 +114,9 @@ struct PressConferenceResult: Codable {
     let selectedResponses: [SelectedResponse]
     let totalEffects: PressEffects
     let dominantTone: ResponseTone
-    let promises: [LegacyTracker.PressPromise]
+    /// #161: measurable claims, with the kind and threshold attached. Written
+    /// into `Career.pressPromiseLedger` by `PressConferenceEngine.commit`.
+    let promises: [PressConferenceEngine.PressPromiseRecord]
 
     struct SelectedResponse: Codable, Identifiable {
         let id: UUID
@@ -122,19 +124,25 @@ struct PressConferenceResult: Codable {
         let responseText: String
         let tone: ResponseTone
         let mediaReaction: String
+        /// #161: the CONTEXT-RESOLVED cost of this answer — what the reveal
+        /// prints after the player has committed to it. The authored base
+        /// effects on `PressResponse` are an input to this, never the answer.
+        let effects: PressEffects
 
         init(
             id: UUID = UUID(),
             questionSummary: String,
             responseText: String,
             tone: ResponseTone,
-            mediaReaction: String
+            mediaReaction: String,
+            effects: PressEffects = PressEffects()
         ) {
             self.id = id
             self.questionSummary = questionSummary
             self.responseText = responseText
             self.tone = tone
             self.mediaReaction = mediaReaction
+            self.effects = effects
         }
     }
 }
@@ -371,97 +379,54 @@ enum PressConferenceEngine {
         return questions
     }
 
-    // MARK: - Promise Evaluation
-
-    /// Evaluate whether the player delivered on press conference promises.
-    static func evaluateDelivery(
-        career: Career,
-        promises: [LegacyTracker.PressPromise]
-    ) -> [LegacyTracker.LegacyAchievement] {
-        var achievements: [LegacyTracker.LegacyAchievement] = []
-
-        for promise in promises where promise.isDelivered == nil {
-            // Check championship / parade promise — true high risk/high reward
-            if promise.statement.lowercased().contains("championship") ||
-               promise.statement.lowercased().contains("parade") ||
-               promise.statement.lowercased().contains("super bowl") {
-                if career.championships > 0 {
-                    achievements.append(LegacyTracker.LegacyAchievement(
-                        title: "Promise Keeper",
-                        description: "You promised a championship and delivered.",
-                        points: 20,
-                        season: career.currentSeason
-                    ))
-                } else {
-                    achievements.append(LegacyTracker.LegacyAchievement(
-                        title: "Broken Promise",
-                        description: "You promised a championship but fell short.",
-                        points: -15,
-                        season: career.currentSeason
-                    ))
-                }
-            }
-
-            // Check patience / process promise
-            if promise.statement.lowercased().contains("process") ||
-               promise.statement.lowercased().contains("patience") ||
-               promise.statement.lowercased().contains("build") {
-                if career.totalWins > career.totalLosses {
-                    achievements.append(LegacyTracker.LegacyAchievement(
-                        title: "The Process Works",
-                        description: "You asked for patience and built a winner.",
-                        points: 30,
-                        season: career.currentSeason
-                    ))
-                }
-            }
-        }
-
-        return achievements
-    }
-
     // MARK: - Aggregate Results
 
-    /// Build a `PressConferenceResult` from the questions and the indices the player chose.
+    /// Build a `PressConferenceResult` from the questions, the indices the
+    /// player chose, and the context the conference opened in.
+    ///
+    /// #161: the effects here are CONTEXT-RESOLVED (`PressEngine.swift`), not
+    /// the authored literals on `PressResponse`, and the context walks forward
+    /// question by question exactly the way the screen walked it — so the
+    /// repetition ratchet that dimmed the fourth Diplomatic answer on screen is
+    /// the same one that books the totals.
     static func buildResult(
         questions: [PressQuestion],
-        selectedIndices: [Int]
+        selectedIndices: [Int],
+        context: PressContext
     ) -> PressConferenceResult {
         var selected: [PressConferenceResult.SelectedResponse] = []
         var total = PressEffects()
         var toneCounts: [ResponseTone: Int] = [:]
-        var promises: [LegacyTracker.PressPromise] = []
+        var promises: [PressPromiseRecord] = []
+        var live = context
 
         for (qi, si) in selectedIndices.enumerated() where qi < questions.count {
             let question = questions[qi]
             guard si < question.responses.count else { continue }
             let response = question.responses[si]
 
+            let effects = resolvedEffects(for: response, question: question, context: live)
+
             selected.append(PressConferenceResult.SelectedResponse(
                 questionSummary: question.question,
                 responseText: response.text,
                 tone: response.tone,
-                mediaReaction: response.mediaReaction
+                mediaReaction: response.mediaReaction,
+                effects: effects
             ))
 
-            total = total + response.effects
-
+            total = total + effects
             toneCounts[response.tone, default: 0] += 1
 
-            // Track bold promises
-            let lower = response.text.lowercased()
-            if lower.contains("championship") || lower.contains("parade") || lower.contains("super bowl") {
-                promises.append(LegacyTracker.PressPromise(
+            if let kind = promiseKind(for: response) {
+                promises.append(PressPromiseRecord(
+                    kind: kind,
                     statement: response.text,
-                    season: 0 // caller should set the real season
+                    season: context.season
                 ))
             }
-            if lower.contains("process") || lower.contains("patience") || lower.contains("earn your support") {
-                promises.append(LegacyTracker.PressPromise(
-                    statement: response.text,
-                    season: 0
-                ))
-            }
+
+            live = live.appending(tone: response.tone)
         }
 
         let dominant = toneCounts.max(by: { $0.value < $1.value })?.key ?? .diplomatic

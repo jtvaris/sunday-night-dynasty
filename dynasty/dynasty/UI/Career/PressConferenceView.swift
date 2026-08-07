@@ -9,6 +9,10 @@ struct PressConferenceView: View {
     let career: Career
     let team: Team
     let owner: Owner?
+    /// #161: the roster the new coach just inherited. Feeds the engine's
+    /// `standing` and `lockerRoom` bands — the two context axes the fogged
+    /// hints are read off. Empty is safe (both fall back to neutral bands).
+    var roster: [Player] = []
     let onComplete: (PressConferenceResult) -> Void
 
     @State private var questions: [PressQuestion] = []
@@ -16,14 +20,25 @@ struct PressConferenceView: View {
     @State private var selectedIndices: [Int] = []
     @State private var phase: Phase = .intro
 
+    /// #161: the engine context, advanced one tone at a time as the coach
+    /// answers. Everything on screen — hints, resolved deltas, the vanilla
+    /// label — is computed from this and nothing else.
+    @State private var context: PressConferenceEngine.PressContext = .neutral
+
     // Animation states
     @State private var showHeader = false
     @State private var showReporter = false
     @State private var showQuestion = false
     @State private var showResponses = false
+    /// P5 step 1: the card the coach has picked but not yet said out loud.
+    @State private var pendingResponseIndex: Int? = nil
+    /// P5 step 2: the answer he committed to. `nil` until "Say it".
     @State private var selectedResponseIndex: Int? = nil
     @State private var showReaction = false
     @State private var reactionText = ""
+    /// The real, context-resolved deltas of the committed answer — revealed
+    /// only after the words have left his mouth.
+    @State private var revealedEffects: PressEffects? = nil
     /// Index of the response whose headline preview is currently expanded.
     /// Tapping a response card's "preview headline" chevron toggles this.
     @State private var headlinePreviewIndex: Int? = nil
@@ -34,16 +49,33 @@ struct PressConferenceView: View {
         case summary
     }
 
-    // MARK: - Running totals (computed from selectedIndices so far)
+    // MARK: - Running totals (revealed answers only)
 
     private var runningTotals: PressEffects {
         var totals = PressEffects()
+        var live = context
         for (qIdx, respIdx) in selectedIndices.enumerated() {
             guard qIdx < questions.count,
                   respIdx < questions[qIdx].responses.count else { continue }
-            totals = totals + questions[qIdx].responses[respIdx].effects
+            let response = questions[qIdx].responses[respIdx]
+            totals = totals + PressConferenceEngine.resolvedEffects(
+                for: response, question: questions[qIdx], context: live
+            )
+            live = live.appending(tone: response.tone)
         }
         return totals
+    }
+
+    /// The context question N is answered in — the opening context plus every
+    /// tone already used. Mirrors `PressConferenceEngine.buildResult` exactly.
+    private var liveContext: PressConferenceEngine.PressContext {
+        var live = context
+        for (qIdx, respIdx) in selectedIndices.enumerated() {
+            guard qIdx < questions.count,
+                  respIdx < questions[qIdx].responses.count else { continue }
+            live = live.appending(tone: questions[qIdx].responses[respIdx].tone)
+        }
+        return live
     }
 
     var body: some View {
@@ -241,13 +273,25 @@ struct PressConferenceView: View {
 
     // MARK: - Questioning Phase
 
+    /// Scroll anchors. The reveal is the payoff of the whole screen and it is
+    /// appended BELOW four response cards — on a first commit it landed under
+    /// the action bar, off-screen, so the numbers the player just paid for were
+    /// only visible if he thought to scroll. Both transitions are driven here.
+    private enum Anchor {
+        static let question = "press.question"
+        static let reveal = "press.reveal"
+    }
+
     private var questioningContent: some View {
         GeometryReader { geometry in
+        VStack(spacing: 0) {
+        ScrollViewReader { proxy in
         ScrollView {
             VStack(spacing: 0) {
                 // Top bar with current stats (#61)
                 questioningHeader
                     .padding(.top, 16)
+                    .id(Anchor.question)
 
                 currentStatsBar
                     .padding(.top, 12)
@@ -272,7 +316,7 @@ struct PressConferenceView: View {
                     if showResponses {
                         VStack(spacing: 14) {
                             ForEach(Array(question.responses.enumerated()), id: \.element.id) { index, response in
-                                responseCard(response: response, index: index)
+                                responseCard(response: response, question: question, index: index)
                             }
                         }
                         .padding(.horizontal, 20)
@@ -280,22 +324,91 @@ struct PressConferenceView: View {
                         .transition(.opacity.combined(with: .move(edge: .bottom)))
                     }
 
-                    // Media reaction
+                    // What actually happened — headline + the real numbers.
                     if showReaction {
-                        mediaReactionBanner
+                        resultReveal
                             .padding(.top, 20)
+                            .id(Anchor.reveal)
                             .transition(.opacity.combined(with: .scale(scale: 0.95)))
                     }
                 }
 
-                Spacer().frame(height: 40)
+                Spacer().frame(height: 24)
             }
             .frame(maxWidth: DSLayout.wideMeasure)
             .frame(maxWidth: .infinity)
-            .frame(minHeight: geometry.size.height)
         }
         .scrollIndicators(.hidden)
+        .onChange(of: showReaction) { _, isShowing in
+            guard isShowing else { return }
+            // The reveal is inserted with a delayed transition, so its anchor
+            // is not in the scroll view's layout on the same run loop turn —
+            // scrolling immediately is a no-op (observed on device). Wait out
+            // the insertion, then bring it up.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                withAnimation(.easeInOut(duration: 0.45)) {
+                    proxy.scrollTo(Anchor.reveal, anchor: .bottom)
+                }
+            }
         }
+        .onChange(of: currentQuestionIndex) { _, _ in
+            withAnimation(.easeInOut(duration: 0.3)) {
+                proxy.scrollTo(Anchor.question, anchor: .top)
+            }
+        }
+        }
+
+        // P5: the ONE commit surface. Tapping a card selects; this says it.
+        commitBar
+        }
+        .frame(minHeight: geometry.size.height)
+        }
+    }
+
+    // MARK: - P5 Commit Bar
+
+    /// Select-then-commit. An answer used to fire on first tap — irreversible,
+    /// no confirmation, on a screen whose whole point is that words are
+    /// remembered. The two-step IS the confirmation; there is no dialog.
+    private var commitBar: some View {
+        let question = currentQuestionIndex < questions.count
+            ? questions[currentQuestionIndex] : nil
+        let isCommitted = selectedResponseIndex != nil
+        let isLast = currentQuestionIndex + 1 >= questions.count
+
+        return DSActionBar(
+            explainer: commitExplainer(question: question, isCommitted: isCommitted),
+            primary: .init(
+                title: isCommitted ? (isLast ? "Wrap it up" : "Next question") : "Say it",
+                isEnabled: isCommitted || pendingResponseIndex != nil,
+                handler: { isCommitted ? advanceAfterAnswer() : commitPendingResponse() }
+            )
+        )
+    }
+
+    private func commitExplainer(
+        question: PressQuestion?,
+        isCommitted: Bool
+    ) -> DSActionBar.Explainer {
+        if isCommitted {
+            return .init(
+                title: "On the record",
+                message: "That is what ran, and what it cost. It cannot be taken back."
+            )
+        }
+        guard let question,
+              let index = pendingResponseIndex,
+              index < question.responses.count else {
+            return .init(
+                title: "Your answer",
+                message: "Pick a line. Nothing is said until you **say it**."
+            )
+        }
+        let tone = question.responses[index].tone
+        return .init(
+            title: "\(tone.label) answer",
+            message: "You will say it in front of **\(question.outlet)**. The room reacts after."
+        )
     }
 
     // MARK: - Running Totals Strip
@@ -533,39 +646,65 @@ struct PressConferenceView: View {
         .padding(.horizontal, 20)
     }
 
-    private func responseCard(response: PressResponse, index: Int) -> some View {
-        let isSelected = selectedResponseIndex == index
-        let isDisabled = selectedResponseIndex != nil && !isSelected
+    private func responseCard(
+        response: PressResponse,
+        question: PressQuestion,
+        index: Int
+    ) -> some View {
+        // Two distinct states now: PICKED (step 1, reversible) and SAID
+        // (step 2, on the record).
+        let isPending = pendingResponseIndex == index && selectedResponseIndex == nil
+        let isSaid = selectedResponseIndex == index
+        let isDisabled = selectedResponseIndex != nil && !isSaid
+        let isHighlighted = isPending || isSaid
         let isHeadlineExpanded = headlinePreviewIndex == index
+        let preview = PressConferenceEngine.preview(
+            for: response, question: question, context: liveContext
+        )
 
-        return Button(action: { selectResponse(index: index) }) {
+        return Button(action: { pickResponse(index: index) }) {
             VStack(alignment: .leading, spacing: 12) {
                 // Tone badge
-                HStack(spacing: 4) {
-                    Image(systemName: response.tone.icon)
-                        .font(.caption)
-                    Text(response.tone.label)
-                        .font(.subheadline.weight(.bold))
+                HStack(spacing: 8) {
+                    HStack(spacing: 4) {
+                        Image(systemName: response.tone.icon)
+                            .font(.caption)
+                        Text(response.tone.label)
+                            .font(.subheadline.weight(.bold))
+                    }
+                    .foregroundStyle(toneColor(response.tone))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule()
+                            .fill(toneColor(response.tone).opacity(0.15))
+                    )
+
+                    if preview.isVanilla, let label = preview.vanillaLabel {
+                        vanillaChip(label)
+                    }
+
+                    Spacer()
+
+                    if isPending {
+                        Label("Picked", systemImage: "checkmark.circle.fill")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(Color.accentGold)
+                    }
                 }
-                .foregroundStyle(toneColor(response.tone))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(
-                    Capsule()
-                        .fill(toneColor(response.tone).opacity(0.15))
-                )
 
                 // Response text
                 Text("\"\(response.text)\"")
                     .font(.body.weight(.medium))
-                    .foregroundStyle(isDisabled ? Color.textTertiary : Color.textPrimary)
+                    .foregroundStyle(isDisabled ? Color.textTertiaryReadable : Color.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
                     .multilineTextAlignment(.leading)
 
-                // Effect preview pills
-                effectPreview(effects: response.effects)
+                // #161 B: fogged reaction hints — direction, never numbers.
+                hintRow(preview)
 
-                // Headline preview toggle — shows what the media headline COULD be
+                // Headline preview toggle — the strongest read available before
+                // answering: the fiction of the consequence, not its arithmetic.
                 headlinePreviewSection(
                     response: response,
                     index: index,
@@ -577,14 +716,14 @@ struct PressConferenceView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 14)
-                    .fill(isSelected ? toneColor(response.tone).opacity(0.12) : Color.backgroundSecondary)
+                    .fill(isHighlighted ? toneColor(response.tone).opacity(0.12) : Color.backgroundSecondary)
                     .overlay(
                         RoundedRectangle(cornerRadius: 14)
                             .strokeBorder(
                                 // Audit: default stroke tinted by the archetype color so the
                                 // four cards can be pre-scanned by personality, not just read.
-                                isSelected ? toneColor(response.tone).opacity(0.6) : toneColor(response.tone).opacity(0.28),
-                                lineWidth: isSelected ? 2 : 1
+                                isHighlighted ? toneColor(response.tone).opacity(0.75) : toneColor(response.tone).opacity(0.28),
+                                lineWidth: isHighlighted ? 2 : 1
                             )
                     )
                     .overlay(alignment: .leading) {
@@ -599,8 +738,79 @@ struct PressConferenceView: View {
         }
         .buttonStyle(.plain)
         .disabled(selectedResponseIndex != nil)
+        .accessibilityLabel("\(response.tone.label) answer. \(response.text)")
+        .accessibilityHint(hintSpeech(preview))
+        .animation(.easeInOut(duration: 0.25), value: pendingResponseIndex)
         .animation(.easeInOut(duration: 0.25), value: selectedResponseIndex)
         .animation(.easeInOut(duration: 0.2), value: headlinePreviewIndex)
+    }
+
+    // MARK: - #161 B: Fogged Hints
+
+    /// Direction markers only. What a coach can plausibly read in the room —
+    /// his owner's known persona, the mood in his own building, the stance on
+    /// the reporter's chip — and a dash for the audiences he cannot.
+    private func hintRow(_ preview: PressConferenceEngine.ReactionPreview) -> some View {
+        HStack(spacing: 6) {
+            ForEach(preview.hints) { hint in
+                HStack(spacing: 4) {
+                    Image(systemName: hint.audience.icon)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.textSecondary)
+                    Text(hint.audience.label)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Color.textSecondary)
+                    Image(systemName: hint.direction.glyph)
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(hintColor(hint.direction))
+                    Text(hint.phrase)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(hintColor(hint.direction))
+                }
+                .padding(.horizontal, 9)
+                .padding(.vertical, 5)
+                .background(
+                    Capsule()
+                        .fill(hintColor(hint.direction).opacity(0.10))
+                        .overlay(
+                            Capsule()
+                                .strokeBorder(hintColor(hint.direction).opacity(0.28), lineWidth: 1)
+                        )
+                )
+            }
+        }
+    }
+
+    private func hintColor(_ direction: PressConferenceEngine.ReactionHint.Direction) -> Color {
+        switch direction {
+        case .up:      return Color.success
+        case .down:    return Color.dangerText
+        case .neutral: return Color.textSecondary
+        case .unknown: return Color.textTertiaryReadable
+        }
+    }
+
+    private func hintSpeech(_ preview: PressConferenceEngine.ReactionPreview) -> String {
+        preview.hints
+            .map { "\($0.audience.label): \($0.phrase)" }
+            .joined(separator: ". ")
+    }
+
+    private func vanillaChip(_ label: String) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: "text.badge.xmark")
+                .font(.system(size: 10, weight: .bold))
+            Text(label)
+                .font(.system(size: 11, weight: .bold))
+        }
+        .foregroundStyle(Color.alertOrange)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            Capsule()
+                .fill(Color.alertOrange.opacity(0.12))
+                .overlay(Capsule().strokeBorder(Color.alertOrange.opacity(0.35), lineWidth: 1))
+        )
     }
 
     /// Headline preview section under each response. Tapping the chevron toggles
@@ -669,50 +879,76 @@ struct PressConferenceView: View {
         }
     }
 
-    private func effectPreview(effects: PressEffects) -> some View {
-        // Determine the metric this answer hurts most (most negative). Ties broken by order.
-        let weakestKey = weakestMetricKey(for: effects)
-        return HStack(spacing: 6) {
-            if effects.ownerSatisfaction != 0 {
-                effectPill(icon: "building.2.fill", label: "Owner", value: effects.ownerSatisfaction,
-                           isWeakest: weakestKey == "owner")
+    // MARK: - #161 C: The Reveal
+
+    /// AFTER the answer. The headline that ran, and — for the first time on
+    /// this screen — the real numbers. This is the learning loop: the player
+    /// finds out what "Diplomatic, on a crisis question, in front of a hostile
+    /// writer" actually costs by paying it once.
+    private var resultReveal: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                Image(systemName: "newspaper.fill")
+                    .font(.title3)
+                    .foregroundStyle(Color.accentGold)
+
+                Text(reactionText)
+                    .font(.subheadline.weight(.medium))
+                    .italic()
+                    .foregroundStyle(Color.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            if effects.playerMorale != 0 {
-                effectPill(icon: "person.3.fill", label: "Morale", value: effects.playerMorale,
-                           isWeakest: weakestKey == "morale")
-            }
-            if effects.fanExcitement != 0 {
-                effectPill(icon: "hands.clap.fill", label: "Fans", value: effects.fanExcitement,
-                           isWeakest: weakestKey == "fans")
-            }
-            if effects.mediaPerception != 0 {
-                effectPill(icon: "newspaper.fill", label: "Media", value: effects.mediaPerception,
-                           isWeakest: weakestKey == "media")
+
+            if let effects = revealedEffects {
+                Divider().overlay(Color.accentGold.opacity(0.2))
+
+                Text("WHAT IT ACTUALLY COST")
+                    .font(.system(size: 10, weight: .bold))
+                    .tracking(1.5)
+                    .foregroundStyle(Color.textTertiaryReadable)
+
+                effectPillRow(effects: effects)
             }
         }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.accentGold.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(Color.accentGold.opacity(0.2), lineWidth: 1)
+                )
+        )
+        .padding(.horizontal, 20)
     }
 
-    /// Returns the metric key (or nil) for the most-negative effect on a response.
-    /// Only flags the worst metric when there is at least one negative effect.
-    private func weakestMetricKey(for effects: PressEffects) -> String? {
-        let candidates: [(key: String, value: Int)] = [
-            ("owner",  effects.ownerSatisfaction),
-            ("morale", effects.playerMorale),
-            ("fans",   effects.fanExcitement),
-            ("media",  effects.mediaPerception)
-        ]
-        let negatives = candidates.filter { $0.value < 0 }
-        guard let worst = negatives.min(by: { $0.value < $1.value }) else { return nil }
-        return worst.key
+    private func effectPillRow(effects: PressEffects) -> some View {
+        HStack(spacing: 6) {
+            if effects.ownerSatisfaction != 0 {
+                effectPill(icon: "building.2.fill", label: "Owner", value: effects.ownerSatisfaction)
+            }
+            if effects.playerMorale != 0 {
+                effectPill(icon: "person.3.fill", label: "Morale", value: effects.playerMorale)
+            }
+            if effects.fanExcitement != 0 {
+                effectPill(icon: "hands.clap.fill", label: "Fans", value: effects.fanExcitement)
+            }
+            if effects.mediaPerception != 0 {
+                effectPill(icon: "newspaper.fill", label: "Media", value: effects.mediaPerception)
+            }
+            if effects.legacyPoints != 0 {
+                effectPill(icon: "star.fill", label: "Legacy", value: effects.legacyPoints)
+            }
+        }
     }
 
     // #116: Larger pill fonts; #118: Intensity scaling for negative effects
     // Audit follow-ups: 12-13pt type at iPad distance, lighter error red on dark
     // navy (Color.danger sat at the WCAG borderline at these sizes), and neutral
     // icon/label hue so the colored delta value is the single scannable signal.
-    private func effectPill(icon: String, label: String, value: Int, isWeakest: Bool = false) -> some View {
-        let negativeRed = Color(red: 1.0, green: 0.45, blue: 0.45)
-        let pillColor: Color = value > 0 ? Color.success : negativeRed
+    private func effectPill(icon: String, label: String, value: Int) -> some View {
+        let pillColor: Color = value > 0 ? Color.success : Color.dangerText
         let isStrongNegative = value <= -6
 
         return HStack(spacing: 4) {
@@ -736,44 +972,6 @@ struct PressConferenceView: View {
                         .strokeBorder(pillColor.opacity(isStrongNegative ? 0.55 : 0.3), lineWidth: isStrongNegative ? 1.5 : 1)
                 )
         )
-        .overlay(alignment: .topTrailing) {
-            // Red dot marks the metric this answer hurts the most.
-            if isWeakest {
-                Circle()
-                    .fill(Color.danger)
-                    .frame(width: 8, height: 8)
-                    .overlay(
-                        Circle().strokeBorder(Color.backgroundSecondary, lineWidth: 1.5)
-                    )
-                    .offset(x: 3, y: -3)
-                    .accessibilityLabel("Weakest impact")
-            }
-        }
-    }
-
-    private var mediaReactionBanner: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "newspaper.fill")
-                .font(.title3)
-                .foregroundStyle(Color.accentGold)
-
-            Text(reactionText)
-                .font(.subheadline.weight(.medium))
-                .italic()
-                .foregroundStyle(Color.textPrimary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.accentGold.opacity(0.08))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .strokeBorder(Color.accentGold.opacity(0.2), lineWidth: 1)
-                )
-        )
-        .padding(.horizontal, 20)
     }
 
     // MARK: - Summary Phase
@@ -781,7 +979,8 @@ struct PressConferenceView: View {
     private var summaryContent: some View {
         let result = PressConferenceEngine.buildResult(
             questions: questions,
-            selectedIndices: selectedIndices
+            selectedIndices: selectedIndices,
+            context: context
         )
 
         return ScrollView {
@@ -899,20 +1098,30 @@ struct PressConferenceView: View {
                         HStack(spacing: 10) {
                             Image(systemName: "exclamationmark.triangle.fill")
                                 .foregroundStyle(Color.warning)
-                            Text("These will be remembered. Deliver on them to boost your legacy -- or suffer the consequences.")
+                            Text("These are settled in the season review. Deliver and the quote holds up; fall short and it runs next to the final standings.")
                                 .font(.caption)
                                 .foregroundStyle(Color.textSecondary)
                         }
 
+                        // #161 D: the bar, in the coach's own words, next to
+                        // the line that set it. Nothing vague — the season
+                        // either clears it or the quote comes back.
                         ForEach(result.promises) { promise in
-                            HStack(spacing: 10) {
-                                Image(systemName: "bookmark.fill")
-                                    .font(.caption)
-                                    .foregroundStyle(Color.accentGold)
-                                Text("\"\(promise.statement)\"")
-                                    .font(.caption)
-                                    .italic()
-                                    .foregroundStyle(Color.textPrimary)
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack(spacing: 10) {
+                                    Image(systemName: "bookmark.fill")
+                                        .font(.caption)
+                                        .foregroundStyle(Color.accentGold)
+                                    Text("\"\(promise.statement)\"")
+                                        .font(.caption)
+                                        .italic()
+                                        .foregroundStyle(Color.textPrimary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                Text("\(promise.kind.shortLabel) \u{00B7} \(promise.kind.thresholdCopy)")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(Color.warning)
+                                    .padding(.leading, 24)
                             }
                         }
                     }
@@ -1035,6 +1244,16 @@ struct PressConferenceView: View {
             owner: effectiveOwner,
             career: career
         )
+        // #161: the intro presser has no season history — no last game, no
+        // record, no streak — so its context is the simplified one. It is the
+        // SAME engine path as the weekly presser, which is the whole point:
+        // whatever the matrix says here, it says in week 9 too.
+        context = PressConferenceEngine.introContext(
+            career: career,
+            team: team,
+            owner: owner,
+            roster: roster
+        )
     }
 
     private func beginQuestioning() {
@@ -1049,7 +1268,9 @@ struct PressConferenceView: View {
         showQuestion = false
         showResponses = false
         showReaction = false
+        pendingResponseIndex = nil
         selectedResponseIndex = nil
+        revealedEffects = nil
         headlinePreviewIndex = nil
 
         withAnimation(.easeOut(duration: 0.5).delay(0.2)) { showReporter = true }
@@ -1057,37 +1278,53 @@ struct PressConferenceView: View {
         withAnimation(.easeOut(duration: 0.5).delay(1.0)) { showResponses = true }
     }
 
-    private func selectResponse(index: Int) {
+    /// P5 step 1 — reversible. Tapping a different card just moves the pick.
+    private func pickResponse(index: Int) {
         guard selectedResponseIndex == nil,
+              currentQuestionIndex < questions.count,
+              index < questions[currentQuestionIndex].responses.count else { return }
+        withAnimation(.easeInOut(duration: 0.2)) {
+            pendingResponseIndex = index
+        }
+    }
+
+    /// P5 step 2 — irreversible, and the only place this screen commits.
+    private func commitPendingResponse() {
+        guard selectedResponseIndex == nil,
+              let index = pendingResponseIndex,
               currentQuestionIndex < questions.count else { return }
 
         let question = questions[currentQuestionIndex]
         guard index < question.responses.count else { return }
 
+        let response = question.responses[index]
+        // Resolved in the context this question was ASKED in — before this
+        // answer's own tone joins the ledger.
+        revealedEffects = PressConferenceEngine.resolvedEffects(
+            for: response, question: question, context: liveContext
+        )
+        reactionText = response.mediaReaction
+
         withAnimation(.easeInOut(duration: 0.3)) {
             selectedResponseIndex = index
         }
-
         selectedIndices.append(index)
 
-        let response = question.responses[index]
-        reactionText = response.mediaReaction
-
-        withAnimation(.easeOut(duration: 0.5).delay(0.5)) {
+        withAnimation(.easeOut(duration: 0.5).delay(0.35)) {
             showReaction = true
         }
+    }
 
-        // Advance to next question or summary after a delay
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-            if currentQuestionIndex + 1 < questions.count {
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    currentQuestionIndex += 1
-                }
-                animateQuestion()
-            } else {
-                withAnimation(.easeInOut(duration: 0.4)) {
-                    phase = .summary
-                }
+    private func advanceAfterAnswer() {
+        guard selectedResponseIndex != nil else { return }
+        if currentQuestionIndex + 1 < questions.count {
+            withAnimation(.easeInOut(duration: 0.3)) {
+                currentQuestionIndex += 1
+            }
+            animateQuestion()
+        } else {
+            withAnimation(.easeInOut(duration: 0.4)) {
+                phase = .summary
             }
         }
     }
@@ -1095,45 +1332,23 @@ struct PressConferenceView: View {
     private func finishConference() {
         let result = PressConferenceEngine.buildResult(
             questions: questions,
-            selectedIndices: selectedIndices
+            selectedIndices: selectedIndices,
+            context: context
         )
         onComplete(result)
     }
 
     // MARK: - Helpers
 
-    /// Reporter "tone" hint — derived from the outlet (and reporter style).
-    /// Engine doesn't expose this directly, so we use a stable mapping based on outlet.
-    private enum ReporterTone {
-        case friendly
-        case neutral
-        case hostile
-
-        var label: String {
-            switch self {
-            case .friendly: return "Friendly"
-            case .neutral:  return "Neutral"
-            case .hostile:  return "Tough"
-            }
-        }
+    /// #161: the stance chip is an ENGINE input now, not a view decoration —
+    /// hostile reporters punish evasion and reward candor in
+    /// `PressConferenceEngine.stanceAdjustment`. Both press screens read the
+    /// same mapping, so the chip can never disagree with the math.
+    private func reporterTone(for question: PressQuestion) -> PressConferenceEngine.ReporterStance {
+        PressConferenceEngine.stance(for: question)
     }
 
-    /// Maps a reporter/outlet to a tone. Local outlets lean friendly,
-    /// FOX/CBS lean tough/hostile, the rest stay neutral.
-    private func reporterTone(for question: PressQuestion) -> ReporterTone {
-        let outlet = question.outlet.lowercased()
-        let local = ["local press", "city tribune", "local news 9"]
-        if local.contains(where: { outlet.contains($0) }) {
-            return .friendly
-        }
-        let toughOutlets = ["fox sports", "cbs sports"]
-        if toughOutlets.contains(where: { outlet.contains($0) }) {
-            return .hostile
-        }
-        return .neutral
-    }
-
-    private func reporterToneColor(_ tone: ReporterTone) -> Color {
+    private func reporterToneColor(_ tone: PressConferenceEngine.ReporterStance) -> Color {
         switch tone {
         case .friendly: return Color.success
         case .neutral:  return Color.textSecondary
@@ -1142,42 +1357,24 @@ struct PressConferenceView: View {
     }
 
     /// Real-time session feedback derived from accumulated running totals.
-    /// Returns a short verdict on how the player's answers are landing.
+    /// #161: the thresholds live in `PressConferenceEngine.sessionFeedback` —
+    /// this screen only paints the severity the engine returned.
     private func sessionFeedback(
         for totals: PressEffects
     ) -> (text: String, icon: String, color: Color) {
-        let owner = totals.ownerSatisfaction
-        let morale = totals.playerMorale
-        let fans = totals.fanExcitement
-        let media = totals.mediaPerception
-        let net = owner + morale + fans + media
+        let feedback = PressConferenceEngine.sessionFeedback(for: totals)
+        return (feedback.text, feedback.icon, feedbackColor(feedback.severity))
+    }
 
-        // Highlight the strongest signal first, otherwise summarize overall trend.
-        if owner <= -8 {
-            return ("Owner growing impatient", "exclamationmark.triangle.fill", Color.danger)
+    private func feedbackColor(
+        _ severity: PressConferenceEngine.SessionFeedback.Severity
+    ) -> Color {
+        switch severity {
+        case .good:    return Color.success
+        case .warning: return Color.warning
+        case .bad:     return Color.danger
+        case .neutral: return Color.textSecondary
         }
-        if morale <= -10 {
-            return ("Locker room is restless", "person.3.fill", Color.danger)
-        }
-        if media >= 15 {
-            return ("Media buzzing — you're driving headlines", "newspaper.fill", Color.warning)
-        }
-        if fans >= 15 {
-            return ("Fans are fired up", "hands.clap.fill", Color.success)
-        }
-        if owner >= 10 && morale >= 5 {
-            return ("Front office and locker room aligned", "checkmark.seal.fill", Color.success)
-        }
-        if net >= 10 {
-            return ("Landing well across the board", "hand.thumbsup.fill", Color.success)
-        }
-        if net <= -10 {
-            return ("Tough room — losing them", "hand.thumbsdown.fill", Color.danger)
-        }
-        if net == 0 {
-            return ("Reporters waiting for a real take", "ellipsis.circle.fill", Color.textSecondary)
-        }
-        return ("Steady so far", "equal.circle.fill", Color.textSecondary)
     }
 
     private func toneColor(_ tone: ResponseTone) -> Color {

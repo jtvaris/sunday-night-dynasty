@@ -49,6 +49,13 @@ enum WeekAdvancer {
     /// Press questions generated after the player's game, pending UI presentation.
     static var pendingPressConference: [PressQuestion]?
 
+    /// #161: the context those questions were generated in — situation, team
+    /// standing, locker-room band, owner persona, tone ledger. Travels with the
+    /// questions so `WeeklyPressConferenceView` resolves effects and fogged
+    /// hints from the SAME inputs the engine used, instead of re-deriving a
+    /// second, drifting copy in the view.
+    static var pendingPressContext: PressConferenceEngine.PressContext?
+
     /// Tracks whether a draft class has been generated for the current offseason cycle.
     static var draftClassGenerated: Bool = false
 
@@ -163,6 +170,7 @@ enum WeekAdvancer {
         lastInboxMessages = []
         wasFired = false
         pendingPressConference = nil
+        pendingPressContext = nil
 
         currentDraftClass = []
         currentDraftPicks = []
@@ -873,6 +881,7 @@ enum WeekAdvancer {
         lastInboxMessages = []
         wasFired = false
         pendingPressConference = nil
+        pendingPressContext = nil
 
         switch career.currentPhase {
 
@@ -1499,6 +1508,20 @@ enum WeekAdvancer {
                 career: career,
                 team: playerTeam,
                 lastGameResult: lastGameWon,
+                week: week,
+                facts: gameFacts
+            )
+
+            // #161: the context is assembled HERE, next to the questions, from
+            // the state that produced them — the same `facts` that chose the
+            // post-game question decide whether the room is `.afterBadLoss` or
+            // `.highStakes`, and the live roster is what says whether the
+            // locker room is fragile.
+            pendingPressContext = PressConferenceEngine.weeklyContext(
+                career: career,
+                team: playerTeam,
+                owner: playerTeam.owner,
+                roster: allPlayers.filter { $0.teamID == playerTeamID },
                 week: week,
                 facts: gameFacts
             )
@@ -6030,6 +6053,44 @@ enum WeekAdvancer {
                 date: "Super Bowl, Season \(season)",
                 category: .leagueNotice
             ))
+        }
+
+        // #161 D: settle the promises the coach made at a podium this year.
+        //
+        // THE one check site. This is the only moment in the calendar where the
+        // championship, the playoff run and the final record are all known at
+        // the same time, and `recordSeasonSummary` is already idempotent per
+        // season — so a promise resurfaces exactly once, in the season review,
+        // quoted back in the coach's own words.
+        if let userTeamID = career.teamID, let userTeam = teamsByID[userTeamID] {
+            // Last year's win column, for the "big changes" bar. The season
+            // summaries are written newest-first and this year's row was pushed
+            // on above, so the previous season is the next one down.
+            let priorWins = career.seasonSummaries
+                .first { $0.season == season - 1 }?.userWins
+                ?? (userTeam.hasLastSeasonRecord ? userTeam.lastSeasonWins : nil)
+
+            let settlement = PressConferenceEngine.settlePromises(
+                career: career,
+                season: season,
+                userWins: userWins,
+                userLosses: userLosses,
+                priorSeasonWins: priorWins,
+                madePlayoffs: madePlayoffs,
+                wonChampionship: wonChampionship,
+                teamName: userTeam.fullName
+            )
+            if !settlement.resolved.isEmpty {
+                career.legacy.totalPoints += settlement.legacyDelta
+                career.legacy.mediaReputation = max(-100, min(100,
+                    career.legacy.mediaReputation + settlement.mediaDelta))
+                if let owner = userTeam.owner {
+                    owner.satisfaction = max(0, min(100,
+                        owner.satisfaction + settlement.ownerDelta))
+                }
+                lastNewsItems.append(contentsOf: settlement.news)
+                lastInboxMessages.append(contentsOf: settlement.inbox)
+            }
         }
 
         // Championship headline for the league feed.
