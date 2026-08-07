@@ -73,7 +73,10 @@ struct LegacyTracker: Codable, Equatable {
         totalPoints += result.totalEffects.legacyPoints
         mediaReputation = max(-100, min(100, mediaReputation + result.totalEffects.mediaPerception))
 
-        // Record promises with the correct season
+        // Record promises with the correct season. #161: the authoritative
+        // ledger (with kind, threshold and settlement) is
+        // `Career.pressPromiseLedger`; this list stays the flat, display-only
+        // history the legacy screens already read.
         for promise in result.promises {
             pressPromises.append(PressPromise(
                 statement: promise.statement,

@@ -60,6 +60,8 @@ struct CareerShellView: View {
 
     /// Pending weekly press conference questions (shown after advancing a regular-season week).
     @State private var pendingPressQuestions: [PressQuestion]?
+    /// #161: the engine context those questions were generated in.
+    @State private var pendingPressContext: PressConferenceEngine.PressContext?
     @State private var showWeeklyPressConference = false
 
     /// #38 — Post-game round recap (this week's scores + power ranking + MVP
@@ -317,6 +319,7 @@ struct CareerShellView: View {
                 WeeklyPressConferenceView(
                     questions: questions,
                     career: career,
+                    context: pendingPressContext ?? .neutral,
                     onComplete: { result in
                         applyPressConferenceEffects(result)
                         showWeeklyPressConference = false
@@ -662,8 +665,10 @@ struct CareerShellView: View {
         // Check for pending press conference
         if let questions = WeekAdvancer.pendingPressConference {
             pendingPressQuestions = questions
+            pendingPressContext = WeekAdvancer.pendingPressContext
             showWeeklyPressConference = true
             WeekAdvancer.pendingPressConference = nil
+            WeekAdvancer.pendingPressContext = nil
         }
 
         // #38: no press conference intercepting the flow → show the recap now
@@ -893,6 +898,9 @@ struct CareerShellView: View {
 
     /// Apply the effects from a weekly press conference result to career state.
     private func applyPressConferenceEffects(_ result: PressConferenceResult) {
+        // #161: tone ledger + promise ledger, in the engine.
+        PressConferenceEngine.commit(result: result, to: career)
+
         // Owner satisfaction (clamped 0-100, stored on Owner)
         if let ownerObj = team?.owner {
             ownerObj.satisfaction = min(100, max(0,
