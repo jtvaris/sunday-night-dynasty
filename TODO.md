@@ -4074,6 +4074,20 @@ Numerovaraus: `#166` oli jo varattu (press-scroll), joten tämän aallon UI-työ
 
 **Kuva-epävarmuus:** käyttäjän kolme kuvaviestiä (Image #8/#9/#10) eivät välittyneet agentille. Scout Notes -irrotus tehtiin päättelyllä (kolme viestiä osoittivat johdonmukaisesti Big Boardin lohkoihin + agentin oma screenshot samasta ruudusta). **Jos kohde oli muu, pinta on väärä.**
 
-## Markkinointisuunnitelma 2026-08-07 (agenttiajo, ei tiedostoa — tiivistelmä tähän)
+## Julkaisu- ja markkinointidokumentit (2026-08-07 auditit → omat tiedostot)
 
-Kärki: **"You never see a true rating. Neither does a real GM."** Sumutettu skouttaus on ainoa asia jota yksikään App Storen kilpailija (Pocket GM 3, Ultimate Pro Football GM, Blitz Football Franchise) ei tee — kaikki näyttävät numeron. Kolme joka ratkaisee: (1) 100-300 oikeaa pelaajaa TestFlightiin ENNEN julkaisua ja heistä julkaisupäivän arvostelijat; (2) ilmainen kokeilu + **14,99 € kertaoston avaus ensimmäisen runkosarjan lopussa** (Small Business Program: 15 % eikä 30 %); (3) julkaisu **maaliskuu 2027** (uusi liigavuosi = cap ja roster-rakennus uutisissa), EI syyskuu (Madden omistaa ilmatilan) eikä huhtikuun draft-piikkiin (menisi hukkaan ilman arvosteluja). Ajanhukkaa: lyhytvideo, maksettu UA ennen orgaanista todistetta, lokalisointi/Android/Mac v1:een. Vahvin markkinointivaltti jota ei ole tunnistettu sellaiseksi: `docs/BALANCE_REPORT_2026-07.md` + harness — kukaan genressä ei voi julkaista monikausikonvergenssilukuja.
+Molemmat päivän agenttiajot on kirjoitettu auki omiksi dokumenteikseen; **TODO ei ole enää niiden
+lähde** — päivitä tiedostoja, älä tätä riviä.
+
+- **`docs/APP_STORE_COMPLIANCE_AUDIT.md`** — IP-/tietosuoja-/App Review -auditti todisteineen
+  (file:line). Ydin: **liigavalitsin on väärinpäin** — "Generated" (oletus!) rakentaa
+  `NFLTeamData.allTeams`ista OIKEAT 32 seuranimeä, kun "Fixed 2026" on jo täysin fiktiivinen. Pienin
+  julkaisukelpoiseksi tekevä muutos on **32 stringiä `NFLTeamData.swift:125-173`** (kopioi nimet
+  `league_2026_publish.json`ista) → molemmat polut turvallisiksi kerralla. Aalto 1 ≈ 1 pv, ei
+  pelilogiikkaa. Ks. #167.
+- **`docs/MARKETING_AND_LAUNCH_PLAN.md`** — positiointi, esilanseeraus, ASO, julkaisu,
+  hinnoittelu, jälkihoito, 90 päivän viikkosuunnitelma. Kolme ratkaisevaa: (1) 100-300 oikeaa
+  pelaajaa TestFlightiin ENNEN julkaisua → julkaisupäivän arvostelijat; (2) ilmainen kokeilu +
+  **14,99 € avaus ensimmäisen runkosarjan lopussa**, Small Business Program (15 % eikä 30 %);
+  (3) julkaisu **maaliskuu 2027** (uusi liigavuosi), ei syyskuu eikä huhtikuun draft-piikkiin.
+  Kärki kaikkialla sama: **"You never see a true rating. Neither does a real GM."**
