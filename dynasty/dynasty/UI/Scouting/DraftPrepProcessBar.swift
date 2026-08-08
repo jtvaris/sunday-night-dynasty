@@ -499,7 +499,7 @@ struct ScoutingWarRoomTabs: View {
 /// two separate rows for the two would have re-created the stacking the section
 /// exists to remove.
 ///
-/// ## Default state — **CLOSED, on every surface** (#166)
+/// ## Default state — **CLOSED, on every surface** (#174)
 ///
 /// It used to open itself once per surface per phase, on the theory that a phase
 /// boundary is when the numbers change and so the block has earned a second
@@ -542,7 +542,7 @@ enum ScoutingInsightsDefaults {
 struct ScoutingInsightsSection<Content: View>: View {
 
     /// Stable identity for the storage key — "<career-uuid>-<tab rawValue>".
-    /// **Career-scoped by the caller** (#166); see ``ScoutingInsightsDefaults``.
+    /// **Career-scoped by the caller** (#174); see ``ScoutingInsightsDefaults``.
     let surfaceKey: String
     let title: String
     let icon: String
@@ -580,7 +580,7 @@ struct ScoutingInsightsSection<Content: View>: View {
         // the board's insights must not collapse the combine's. The hub gives
         // this view `.id(surfaceKey)` so a surface switch builds a fresh
         // instance and this wrapper re-binds to the new key. `false` is the
-        // wrappedValue, which IS the new default rule (#166).
+        // wrappedValue, which IS the new default rule (#174).
         _openPreference = AppStorage(wrappedValue: false, ScoutingInsightsDefaults.openKey(surfaceKey))
     }
 
@@ -607,7 +607,7 @@ struct ScoutingInsightsSection<Content: View>: View {
         .onAppear { resolveDefault() }
     }
 
-    /// Honours the user, and shows shut when he has never said otherwise (#166).
+    /// Honours the user, and shows shut when he has never said otherwise (#174).
     ///
     /// NO `onChange(of: phaseToken)` any more, and no write. The phase used to
     /// re-arm a free expansion here — which is exactly the behaviour that put a

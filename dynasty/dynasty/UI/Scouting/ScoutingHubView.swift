@@ -722,7 +722,7 @@ struct ScoutingHubView: View {
     /// "open once per surface per phase" and the token was what re-armed it; the
     /// career id got folded in to fix the leak (a new career in the same league
     /// year and phase read a MATCHING seen-token, spent a free expansion it
-    /// never had, and fell through to the previous career's preference). #166
+    /// never had, and fell through to the previous career's preference). #174
     /// deleted the free expansion — the block is shut until the user opens it —
     /// so there is nothing left to re-arm and the season/phase parts had no
     /// remaining job. The scoping moves onto the key itself, which is where it
@@ -1522,7 +1522,7 @@ struct ScoutingHubView: View {
                 onRefresh: loadData
             )
         case .scoutNotes:
-            // #166. The two blocks that used to be pinned above the Big Board's
+            // #174. The two blocks that used to be pinned above the Big Board's
             // 350 rows. They are DERIVED READS over the board, not the board, so
             // they get their own surface rather than the top third of the one
             // screen that is always true. `ScoutBoardReads` is the single walk
@@ -1767,7 +1767,7 @@ enum ScoutingTab: String, CaseIterable, Identifiable {
     /// The class one level up from the board: how deep the DECLARED pool is per
     /// position, by projected-round tier, against the club's own holes (#128).
     case classDepth = "classDepth"
-    /// What the department makes of the board (#166): the club's #1 hole, the
+    /// What the department makes of the board (#174): the club's #1 hole, the
     /// best man on it, the best man anywhere, the depth behind each need, and
     /// where your #1 sits against the market. Derived reads, not the board —
     /// they were two unconditional blocks pinned above 350 rows, so the first
