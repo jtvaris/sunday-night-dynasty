@@ -1,32 +1,6 @@
 import SwiftUI
 
-// MARK: - Setting Enums
-
-/// Simulation pacing — affects how long week advancement animations linger.
-enum GameSpeed: String, CaseIterable, Identifiable {
-    case fast, normal, slow
-    var id: String { rawValue }
-    var label: String {
-        switch self {
-        case .fast:   return String(localized: "Fast")
-        case .normal: return String(localized: "Normal")
-        case .slow:   return String(localized: "Slow")
-        }
-    }
-}
-
-/// User-facing color scheme override.
-enum ThemePreference: String, CaseIterable, Identifiable {
-    case dark, auto, system
-    var id: String { rawValue }
-    var label: String {
-        switch self {
-        case .dark:   return String(localized: "Dark")
-        case .auto:   return String(localized: "Auto")
-        case .system: return String(localized: "System")
-        }
-    }
-}
+// MARK: - Play Clock Setting
 
 /// Live-game decision clock: how long the coach gets to call a play before
 /// the QB (offense) or the DC (defense) checks into a simple base call and
@@ -46,35 +20,13 @@ enum PlayClockSetting: String, CaseIterable, Identifiable {
     }
 }
 
-/// Difficulty tier — drives AI strength multipliers across systems.
-enum Difficulty: String, CaseIterable, Identifiable {
-    case easy, normal, hard, realistic
-    var id: String { rawValue }
-    var label: String {
-        switch self {
-        case .easy:      return String(localized: "Easy")
-        case .normal:    return String(localized: "Normal")
-        case .hard:      return String(localized: "Hard")
-        case .realistic: return String(localized: "Realistic")
-        }
-    }
-    var subtitle: String {
-        switch self {
-        case .easy:      return String(localized: "Forgiving CPU rivals")
-        case .normal:    return String(localized: "Balanced league")
-        case .hard:      return String(localized: "Sharper opponents")
-        case .realistic: return String(localized: "Unforgiving simulation")
-        }
-    }
-}
-
 // MARK: - Settings View
 
 struct SettingsView: View {
 
     @Environment(\.dismiss) private var dismiss
 
-    // General
+    // Audio
     @AppStorage("soundEnabled") private var soundEnabled = true
     /// Master game-sounds volume (0…1): every match SFX and the crowd bed.
     /// Read by `AudioDirector` on every cue, so changes apply mid-game.
@@ -85,24 +37,12 @@ struct SettingsView: View {
     /// Music level (0…1). Defaults lower than the game-sounds slider because
     /// the score is background by design and the crowd is the star of a match.
     @AppStorage("musicVolume") private var musicVolume = AudioSettings.musicVolumeDefault
-    @AppStorage("hapticsEnabled") private var hapticsEnabled = true
 
     // Gameplay
-    @AppStorage("gameSpeed") private var gameSpeedRaw: String = GameSpeed.normal.rawValue
-    @AppStorage("difficulty") private var difficultyRaw: String = Difficulty.normal.rawValue
     @AppStorage("playClockSetting") private var playClockRaw: String = PlayClockSetting.ten.rawValue
     /// Live-game quarter reports (end of Q1/Q3 player situation card).
     /// Read by `CoachedGameView` via the shared "quarterReportsEnabled" key.
     @AppStorage("quarterReportsEnabled") private var quarterReportsEnabled = true
-
-    // Appearance
-    @AppStorage("themePreference") private var themeRaw: String = ThemePreference.dark.rawValue
-
-    // Notifications
-    @AppStorage("notificationsEnabled") private var notificationsEnabled = true
-    @AppStorage("notifyCapWarnings") private var notifyCapWarnings = true
-    @AppStorage("notifyContractExpirations") private var notifyContractExpirations = true
-    @AppStorage("notifyDraftPicks") private var notifyDraftPicks = true
 
     // Tutorial replay flag — picked up by MainMenuView to re-present the tutorial sheet.
     @AppStorage("pendingTutorialReplay") private var pendingTutorialReplay = false
@@ -120,36 +60,14 @@ struct SettingsView: View {
         return "\(version) (\(build))"
     }
 
-    private var gameSpeed: GameSpeed {
-        GameSpeed(rawValue: gameSpeedRaw) ?? .normal
-    }
-
-    private var difficulty: Difficulty {
-        Difficulty(rawValue: difficultyRaw) ?? .normal
-    }
-
-    private var theme: ThemePreference {
-        ThemePreference(rawValue: themeRaw) ?? .dark
-    }
-
-    private var resolvedColorScheme: ColorScheme? {
-        switch theme {
-        case .dark:   return .dark
-        case .auto:   return .dark   // app is dark-first; "Auto" follows app default
-        case .system: return nil     // honor system
-        }
-    }
-
     var body: some View {
         NavigationStack {
             ZStack {
                 Color.backgroundPrimary.ignoresSafeArea()
 
                 Form {
-                    generalSection
+                    audioSection
                     gameplaySection
-                    appearanceSection
-                    notificationsSection
                     tutorialSection
                     dataSection
                     aboutSection
@@ -193,12 +111,12 @@ struct SettingsView: View {
                 ChangelogSheet()
             }
         }
-        .preferredColorScheme(resolvedColorScheme)
+        .preferredColorScheme(.dark)
     }
 
     // MARK: - Sections
 
-    private var generalSection: some View {
+    private var audioSection: some View {
         Section {
             // "Game Sounds", not "Sound": the row below it is a *separate*
             // level from Music, and a toggle called "Sound" reads like a
@@ -224,15 +142,8 @@ struct SettingsView: View {
             volumeRow(title: "Music Volume",
                       value: $musicVolume,
                       enabled: musicEnabled)
-
-            Toggle(isOn: $hapticsEnabled) {
-                Label("Haptics", systemImage: "iphone.radiowaves.left.and.right")
-                    .foregroundStyle(Color.textPrimary)
-            }
-            .tint(Color.accentGold)
-            .listRowBackground(Color.backgroundSecondary)
         } header: {
-            sectionHeader("General")
+            sectionHeader("Audio")
         } footer: {
             Text("Two independent levels. Game Sounds covers the live-game stadium — crowd, whistles, hits, and horns. Music is the menu and front-office score; it steps aside completely during a coached game, so the two are never loud at the same time. Both respect the mute switch and never interrupt your own music.")
                 .foregroundStyle(Color.textTertiary)
@@ -277,39 +188,6 @@ struct SettingsView: View {
 
     private var gameplaySection: some View {
         Section {
-            Picker(selection: $gameSpeedRaw) {
-                ForEach(GameSpeed.allCases) { speed in
-                    Text(speed.label).tag(speed.rawValue)
-                }
-            } label: {
-                Label("Simulation Speed", systemImage: "hare.fill")
-                    .foregroundStyle(Color.textPrimary)
-            }
-            .pickerStyle(.menu)
-            .tint(Color.accentGold)
-            .listRowBackground(Color.backgroundSecondary)
-
-            Picker(selection: $difficultyRaw) {
-                ForEach(Difficulty.allCases) { level in
-                    Text(level.label).tag(level.rawValue)
-                }
-            } label: {
-                Label("Difficulty", systemImage: "flame.fill")
-                    .foregroundStyle(Color.textPrimary)
-            }
-            .pickerStyle(.menu)
-            .tint(Color.accentGold)
-            .listRowBackground(Color.backgroundSecondary)
-
-            HStack {
-                Spacer().frame(width: 28)
-                Text(difficulty.subtitle)
-                    .font(.caption)
-                    .foregroundStyle(Color.textSecondary)
-                Spacer()
-            }
-            .listRowBackground(Color.backgroundSecondary)
-
             Picker(selection: $playClockRaw) {
                 ForEach(PlayClockSetting.allCases) { option in
                     Text(option.label).tag(option.rawValue)
@@ -331,62 +209,8 @@ struct SettingsView: View {
         } header: {
             sectionHeader("Gameplay")
         } footer: {
-            Text("Difficulty affects AI roster construction, trade valuation, and free-agent competition. Play Clock limits live-game decision time — when it runs out, the QB or defense checks into a simple base call (never a penalty). Quarter Reports pause a live game after Q1 and Q3 with a player situation card.")
+            Text("Play Clock limits live-game decision time — when it runs out, the QB or defense checks into a simple base call (never a penalty). Quarter Reports pause a live game after Q1 and Q3 with a player situation card.")
                 .foregroundStyle(Color.textTertiary)
-        }
-    }
-
-    private var appearanceSection: some View {
-        Section {
-            Picker(selection: $themeRaw) {
-                ForEach(ThemePreference.allCases) { option in
-                    Text(option.label).tag(option.rawValue)
-                }
-            } label: {
-                Label("Theme", systemImage: "paintbrush.fill")
-                    .foregroundStyle(Color.textPrimary)
-            }
-            .pickerStyle(.segmented)
-            .listRowBackground(Color.backgroundSecondary)
-        } header: {
-            sectionHeader("Appearance")
-        }
-    }
-
-    private var notificationsSection: some View {
-        Section {
-            Toggle(isOn: $notificationsEnabled) {
-                Label("Enable Notifications", systemImage: "bell.fill")
-                    .foregroundStyle(Color.textPrimary)
-            }
-            .tint(Color.accentGold)
-            .listRowBackground(Color.backgroundSecondary)
-
-            Toggle(isOn: $notifyCapWarnings) {
-                Label("Cap Warnings", systemImage: "dollarsign.circle.fill")
-                    .foregroundStyle(notificationsEnabled ? Color.textPrimary : Color.textTertiary)
-            }
-            .tint(Color.accentGold)
-            .disabled(!notificationsEnabled)
-            .listRowBackground(Color.backgroundSecondary)
-
-            Toggle(isOn: $notifyContractExpirations) {
-                Label("Contract Expirations", systemImage: "doc.text.fill")
-                    .foregroundStyle(notificationsEnabled ? Color.textPrimary : Color.textTertiary)
-            }
-            .tint(Color.accentGold)
-            .disabled(!notificationsEnabled)
-            .listRowBackground(Color.backgroundSecondary)
-
-            Toggle(isOn: $notifyDraftPicks) {
-                Label("Draft Picks", systemImage: "star.fill")
-                    .foregroundStyle(notificationsEnabled ? Color.textPrimary : Color.textTertiary)
-            }
-            .tint(Color.accentGold)
-            .disabled(!notificationsEnabled)
-            .listRowBackground(Color.backgroundSecondary)
-        } header: {
-            sectionHeader("Notifications")
         }
     }
 
@@ -511,16 +335,8 @@ struct SettingsView: View {
         soundVolume = AudioSettings.soundVolumeDefault
         musicEnabled = true
         musicVolume = AudioSettings.musicVolumeDefault
-        hapticsEnabled = true
-        gameSpeedRaw = GameSpeed.normal.rawValue
-        difficultyRaw = Difficulty.normal.rawValue
         playClockRaw = PlayClockSetting.ten.rawValue
         quarterReportsEnabled = true
-        themeRaw = ThemePreference.dark.rawValue
-        notificationsEnabled = true
-        notifyCapWarnings = true
-        notifyContractExpirations = true
-        notifyDraftPicks = true
         pendingTutorialReplay = false
         showResetSuccess = true
     }
