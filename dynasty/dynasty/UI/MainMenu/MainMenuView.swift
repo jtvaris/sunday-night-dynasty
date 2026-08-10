@@ -5,9 +5,26 @@ struct MainMenuView: View {
 
     @Query(sort: \Career.currentSeason, order: .reverse) private var careers: [Career]
     @Query private var teams: [Team]
-    @State private var showSettings = false
-    @State private var showTutorial = false
-    @State private var showSlotPicker = false
+
+    /// **The one sheet on this screen** (§2.8, and the house rule three separate
+    /// `.sheet(isPresented:)` modifiers on one node keeps breaking).
+    ///
+    /// Settings, the tutorial and the save-slot picker are peer side-tasks off
+    /// the same button stack, so they get the same presentation weight — one
+    /// enum-shaped `.sheet(item:)` point. Stacked `isPresented` sheets are the
+    /// bug this codebase has now found five times: SwiftUI honours one per view
+    /// and the rest open blank or dismiss silently.
+    private enum MenuSheet: String, Identifiable {
+        case settings, tutorial, loadCareer
+        var id: String { rawValue }
+    }
+
+    @State private var activeSheet: MenuSheet?
+
+    /// The career the slot picker chose, held only for as long as the sheet
+    /// takes to leave the screen. See `openPendingCareer`.
+    @State private var pendingCareer: Career?
+
     @State private var continueCareer: Career?
 
     var body: some View {
@@ -91,28 +108,44 @@ struct MainMenuView: View {
             // both the app's first music state and its fallback.
             MusicDirector.shared.setBaseContext(.menu)
         }
-        .sheet(isPresented: $showSettings) {
-            SettingsView()
-        }
-        .sheet(isPresented: $showTutorial) {
-            TutorialSheet()
-        }
-        .sheet(isPresented: $showSlotPicker) {
-            SaveSlotPickerSheet(
-                onContinue: { career in
-                    showSlotPicker = false
-                    // Defer presentation of the full-screen cover until the sheet
-                    // has dismissed to avoid a presentation conflict.
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                        PerfLog.mark("career_open")   // R39 (b): slot-picker path
-                        continueCareer = career
+        // §2.8 — one presentation point for the three peer side-tasks, and the
+        // hand-off to the career process happens in `onDismiss`, which is what
+        // retires the 350 ms `asyncAfter` this screen used to guess with.
+        //
+        // The old shape was structural, not cosmetic: the picker is a *side
+        // task* that returns a selection and the career shell is the *process*
+        // that selection starts, and the code tried to run both from the same
+        // event. Presenting a cover in the same turn a sheet is dismissing is a
+        // conflict UIKit resolves by dropping one of them, so a timer was added
+        // to out-wait the transition — a number that is too long on a fast
+        // device and too short on a loaded one. `onDismiss` fires when the sheet
+        // has actually gone, so there is nothing left to race.
+        .sheet(item: $activeSheet, onDismiss: openPendingCareer) { sheet in
+            switch sheet {
+            case .settings:
+                SettingsView()
+            case .tutorial:
+                TutorialSheet()
+            case .loadCareer:
+                SaveSlotPickerSheet(
+                    onContinue: { career in
+                        pendingCareer = career
+                        activeSheet = nil
                     }
-                }
-            )
+                )
+            }
         }
         .fullScreenCover(item: $continueCareer) { career in
             CareerShellView(career: career)
         }
+    }
+
+    /// Opens the career the slot picker chose, once its sheet is off screen.
+    private func openPendingCareer() {
+        guard let career = pendingCareer else { return }
+        pendingCareer = nil
+        PerfLog.mark("career_open")   // R39 (b): slot-picker path
+        continueCareer = career
     }
 
     // MARK: - Subviews
@@ -132,6 +165,13 @@ struct MainMenuView: View {
             .shadow(color: .black.opacity(0.5), radius: 6, y: 3)
             .padding(.bottom, 6)
 
+            // The wordmark is a LOCKUP, not type — three lines set at fixed
+            // sizes and fixed tracking that only read as one mark at those exact
+            // values. §2.10's two voices govern the app's *type*; a logo is the
+            // one place a bespoke setting is the correct answer, and routing it
+            // through `DSType.display` (condensed) at tracking 12 would redraw
+            // the brand rather than systematise it. Everything BELOW this block
+            // is on the ladder.
             Text("SUNDAY NIGHT")
                 .font(.system(size: 22, weight: .bold))
                 .tracking(10)
@@ -162,17 +202,17 @@ struct MainMenuView: View {
     private var continueHintBlock: some View {
         if careers.count > 1 {
             Text("\(careers.count) ACTIVE DYNASTIES")
-                .font(.system(size: 13, weight: .medium))
+                .font(DSType.display(DSType.Size.body, .semibold))
                 .tracking(1.5)
-                .foregroundStyle(Color.white.opacity(0.75))
+                .foregroundStyle(Color.white.opacity(0.85))
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 32)
                 .padding(.bottom, 12)
         } else if let mostRecent = careers.first {
             Text(continueHintText(for: mostRecent))
-                .font(.system(size: 13, weight: .medium))
+                .font(DSType.display(DSType.Size.body, .semibold))
                 .tracking(1.5)
-                .foregroundStyle(Color.white.opacity(0.75))
+                .foregroundStyle(Color.white.opacity(0.85))
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 32)
                 .padding(.bottom, 12)
@@ -229,19 +269,21 @@ struct MainMenuView: View {
     }
 
     private var buttonsBlock: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: DSSpacing.md) {
             if careers.count > 1 {
                 // Multiple saved careers — open the save slot picker
                 Button {
-                    showSlotPicker = true
+                    activeSheet = .loadCareer
                 } label: {
-                    MenuButton(title: "Continue / Load", icon: "play.circle.fill", isPrimary: true)
+                    MenuButton(title: "Continue / Load", icon: "play.circle.fill")
                 }
+                .buttonStyle(.dsPrimary)
                 .accessibilityLabel("Continue or Load Career")
 
                 NavigationLink(destination: NewCareerView()) {
-                    MenuButton(title: "New Career", icon: "plus.circle.fill", isPrimary: false)
+                    MenuButton(title: "New Career", icon: "plus.circle.fill")
                 }
+                .buttonStyle(.dsSecondary)
                 .accessibilityLabel("New Career")
             } else if let mostRecentCareer = careers.first {
                 // Exactly one saved career — keep simple Continue behavior
@@ -249,49 +291,58 @@ struct MainMenuView: View {
                     PerfLog.mark("career_open")   // R39 (b): Continue tap
                     continueCareer = mostRecentCareer
                 } label: {
-                    MenuButton(title: "Continue Career", icon: "play.circle.fill", isPrimary: true)
+                    MenuButton(title: "Continue Career", icon: "play.circle.fill")
                 }
+                .buttonStyle(.dsPrimary)
                 .accessibilityLabel("Continue Career")
 
                 NavigationLink(destination: NewCareerView()) {
-                    MenuButton(title: "New Career", icon: "plus.circle.fill", isPrimary: false)
+                    MenuButton(title: "New Career", icon: "plus.circle.fill")
                 }
+                .buttonStyle(.dsSecondary)
                 .accessibilityLabel("New Career")
             } else {
                 // No saved careers — New Career is the primary action
                 NavigationLink(destination: NewCareerView()) {
-                    MenuButton(title: "New Career", icon: "plus.circle.fill", isPrimary: true)
+                    MenuButton(title: "New Career", icon: "plus.circle.fill")
                 }
+                .buttonStyle(.dsPrimary)
                 .accessibilityLabel("New Career")
             }
 
             Button {
-                showTutorial = true
+                activeSheet = .tutorial
             } label: {
-                MenuButton(title: "How to Play", icon: "questionmark.circle.fill", isPrimary: false)
+                MenuButton(title: "How to Play", icon: "questionmark.circle.fill")
             }
+            .buttonStyle(.dsSecondary)
             .accessibilityLabel("How to Play")
 
             Button {
-                showSettings = true
+                activeSheet = .settings
             } label: {
-                MenuButton(title: "Settings", icon: "gearshape.fill", isPrimary: false)
+                MenuButton(title: "Settings", icon: "gearshape.fill")
             }
+            .buttonStyle(.dsSecondary)
             .accessibilityLabel("Settings")
         }
         .padding(.horizontal, 40)
-        .padding(.bottom, 24)
+        .padding(.bottom, DSSpacing.lg)
         .frame(maxWidth: 480)
     }
 
     private var footerBlock: some View {
         VStack(spacing: 2) {
+            // §2.13's floor: nothing informational is quieter than `textQuiet`.
+            // The build stamp is the line QA reads off a screenshot to know which
+            // binary it is looking at, and at 25–35 % white over a photo it was
+            // not reliably legible at all.
             Text("Sunday Night Dynasty  v\(Self.appVersion) (\(Self.buildNumber))\(Self.buildStamp)")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(Color.white.opacity(0.35))
+                .font(DSType.text(DSType.Size.caption, .medium, prose: true))
+                .foregroundStyle(Color.white.opacity(0.60))
             Text("\u{00A9} \(Self.currentYear) Sunday Night Dynasty")
-                .font(.system(size: 10))
-                .foregroundStyle(Color.white.opacity(0.25))
+                .font(DSType.text(DSType.Size.micro, .regular, prose: true))
+                .foregroundStyle(Color.white.opacity(0.50))
         }
         .padding(.bottom, 16)
     }
@@ -329,37 +380,33 @@ struct MainMenuView: View {
 
 // MARK: - Menu Button Style
 
+/// The menu's row label — **chrome comes from the shared button styles**.
+///
+/// This used to be a fourth hand-copied gold recipe: its own `accentGold` fill,
+/// its own `cornerRadius: 12`, its own glow, and a secondary variant (black 30 %
+/// + white 8 % + a white hairline) that existed nowhere else in the app. §2.8's
+/// whole point is that the first screen a player sees should be built out of the
+/// same four styles as the last one, so the recipe is gone and the call sites
+/// carry `.dsPrimary` / `.dsSecondary`.
+///
+/// What is left is the menu's own FORMAT — a 22 pt tracked title beside a 22 pt
+/// glyph on a 40 pt row. That is a legitimate size decision (a title screen's
+/// row is not a toolbar's) and it is now expressed as sizes rather than as
+/// chrome.
 private struct MenuButton: View {
     let title: LocalizedStringKey
     let icon: String
-    let isPrimary: Bool
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: DSSpacing.sm) {
             Image(systemName: icon)
                 .font(.system(size: 22, weight: .semibold))
             Text(title)
-                .font(.system(size: 22, weight: .semibold))
+                .font(DSType.text(DSType.Size.title3, .semibold))
                 .tracking(2)
         }
-        .foregroundStyle(isPrimary ? Color.backgroundPrimary : .white)
-        .frame(maxWidth: 400)
-        .frame(height: 56)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                // Secondary buttons: dark base + frosted tint so white labels stay
-                // legible against busy photo areas (persona audit contrast fix).
-                .fill(isPrimary ? Color.accentGold : Color.black.opacity(0.30))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(isPrimary ? Color.clear : Color.white.opacity(0.08))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .strokeBorder(isPrimary ? Color.clear : Color.white.opacity(0.35), lineWidth: 1)
-                )
-                .shadow(color: isPrimary ? Color.accentGold.opacity(0.3) : Color.clear, radius: 12, y: 4)
-        )
+        .frame(maxWidth: .infinity)
+        .frame(minHeight: 40)
     }
 }
 
@@ -399,59 +446,44 @@ private struct TutorialSheet: View {
                 }
                 .padding(.vertical, 12)
 
-                // Navigation buttons (Back / Next or Done)
-                HStack(spacing: 12) {
+                // Navigation buttons (Back / Next or Done) — §2.5's order and
+                // §2.8's style set. The blue-filled Next/Get Started was the
+                // third hand-copied commit recipe (`cornerRadius: 10` again, a
+                // third corner value on one screen); the tutorial's one primary
+                // is now the same gold as every other primary in the app.
+                HStack(spacing: DSSpacing.sm) {
                     if currentPage > 0 {
                         Button {
                             withAnimation { currentPage -= 1 }
                         } label: {
                             Label("Back", systemImage: "chevron.left")
-                                .font(.subheadline.weight(.semibold))
                                 .frame(maxWidth: .infinity)
-                                .frame(height: 48)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 10)
-                                        .fill(Color.secondary.opacity(0.15))
-                                )
                         }
+                        .buttonStyle(.dsGhost)
                     }
 
                     if currentPage < pages.count - 1 {
                         Button {
                             withAnimation { currentPage += 1 }
                         } label: {
-                            HStack {
-                                Text("Next")
-                                Image(systemName: "chevron.right")
-                            }
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.white)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 48)
-                            .background(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .fill(Color.accentBlue)
-                            )
+                            Label("Next", systemImage: "chevron.right")
+                                .labelStyle(.titleAndIcon)
+                                .frame(maxWidth: .infinity)
                         }
+                        .buttonStyle(.dsPrimary)
                     } else {
                         Button {
                             dismiss()
                         } label: {
                             Label("Get Started", systemImage: "checkmark.circle.fill")
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(.white)
                                 .frame(maxWidth: .infinity)
-                                .frame(height: 48)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 10)
-                                        .fill(Color.accentBlue)
-                                )
                         }
+                        .buttonStyle(.dsPrimary)
                     }
                 }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 20)
-                .padding(.top, 4)
+                .padding(.horizontal, DSSpacing.md)
+                .padding(.bottom, DSSpacing.md)
+                .padding(.top, DSSpacing.xxs)
             }
             .navigationTitle("How to Play")
             .navigationBarTitleDisplayMode(.inline)
@@ -826,7 +858,7 @@ private struct SaveSlotCard: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(team?.fullName ?? "Free Agent")
-                        .font(.system(size: 18, weight: .bold))
+                        .font(DSType.text(DSType.Size.title3, .bold))
                         .foregroundStyle(Color.textPrimary)
                         .lineLimit(1)
 
@@ -840,7 +872,7 @@ private struct SaveSlotCard: View {
                         Text(roleLabel)
                             .lineLimit(1)
                     }
-                    .font(.system(size: 13, weight: .medium))
+                    .font(DSType.text(DSType.Size.footnote, .medium))
                     .foregroundStyle(Color.textSecondary)
                 }
 
@@ -881,47 +913,36 @@ private struct SaveSlotCard: View {
             }
 
             // Actions
-            HStack(spacing: 10) {
-                Button(action: onContinue) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "play.fill")
-                        Text("Continue")
-                    }
-                    .font(.system(size: 15, weight: .semibold))
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 40)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10)
-                            .fill(Color.accentGold)
-                    )
-                    .foregroundStyle(Color.backgroundPrimary)
-                }
-                .buttonStyle(.plain)
-
+            // §2.5's button order — destructive first, separated, never
+            // adjacent to the primary — on §2.8's one style set. This card
+            // carried the app's second hand-copied gold recipe (`cornerRadius:
+            // 10` + a raw `Color.red` border, both off the token scale) and had
+            // Delete sitting shoulder to shoulder with Continue.
+            HStack(spacing: DSSpacing.xs) {
                 Button(action: onDelete) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "trash")
-                        Text("Delete")
-                    }
-                    .font(.system(size: 15, weight: .semibold))
-                    .frame(width: 110)
-                    .frame(height: 40)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10)
-                            .strokeBorder(Color.red.opacity(0.6), lineWidth: 1)
-                    )
-                    .foregroundStyle(Color.red.opacity(0.9))
+                    Label("Delete", systemImage: "trash")
+                        .frame(width: 96)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.dsDestructive)
+
+                Rectangle()
+                    .fill(Color.surfaceBorder)
+                    .frame(width: 1, height: 28)
+
+                Button(action: onContinue) {
+                    Label("Continue", systemImage: "play.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.dsPrimary)
             }
         }
-        .padding(16)
+        .padding(DSSpacing.md)
         .background(
-            RoundedRectangle(cornerRadius: 16)
+            RoundedRectangle(cornerRadius: DSCornerRadius.card)
                 .fill(Color.backgroundSecondary)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .strokeBorder(Color.white.opacity(0.06), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: DSCornerRadius.card)
+                        .strokeBorder(Color.surfaceBorder, lineWidth: 1)
                 )
         )
     }
@@ -936,18 +957,19 @@ private struct SaveSlotCard: View {
 
     private func statBlock(title: String, value: String, detail: String?) -> some View {
         VStack(alignment: .leading, spacing: 2) {
+            // §2.3's stat grammar: LABEL / value / context, one voice each.
             Text(title.uppercased())
-                .font(.system(size: 10, weight: .bold))
-                .tracking(1)
-                .foregroundStyle(Color.textSecondary.opacity(0.7))
+                .font(DSType.display(DSType.Size.caption, .heavy))
+                .tracking(0.7)
+                .foregroundStyle(Color.textTertiaryReadable)
             Text(value)
-                .font(.system(size: 16, weight: .bold))
+                .font(DSType.display(DSType.Size.callout, .black))
                 .foregroundStyle(Color.textPrimary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
             if let detail {
                 Text(detail)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(DSType.display(DSType.Size.caption, .semibold))
                     .foregroundStyle(Color.textSecondary)
             }
         }

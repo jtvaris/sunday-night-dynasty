@@ -24,7 +24,27 @@ struct TeamSelectionView: View {
     @State private var selectedCareer: Career?
     @State private var isLoading = false
     @State private var selectedConference: Conference = .AFC
-    @State private var detailTeam: NFLTeamDefinition?
+    /// **The one cover slot.** Two sibling `.fullScreenCover` modifiers on one
+    /// node cannot both win: the loser of a same-transaction race is dropped
+    /// silently. One `item`-driven slot makes the exclusion structural, and the
+    /// pending draft rides in the enum rather than in a second `@State` that has
+    /// to be timed against the first.
+    private enum ActiveCover: Identifiable {
+        case teamDetail(NFLTeamDefinition)
+        case fantasyDraft(PendingFantasyDraft)
+
+        var id: String {
+            switch self {
+            case .teamDetail(let team):   return "team-\(team.abbreviation)"
+            case .fantasyDraft(let p):    return "fantasy-\(p.id)"
+            }
+        }
+    }
+
+    @State private var activeCover: ActiveCover?
+    /// The draft staged by `startCareer` while the detail cover is still on
+    /// screen. Handed to the slot from the cover's own `onDismiss`.
+    @State private var stagedFantasy: PendingFantasyDraft?
     @State private var situationFilter: String = "All"
     @State private var sortMode: TeamSortMode = .division
     @State private var viewWidth: CGFloat = 0
@@ -36,7 +56,6 @@ struct TeamSelectionView: View {
 
     // R40 — Fantasy Draft hand-off: the generated league waits here (nothing
     // inserted into the model context yet) while the draft screen runs.
-    @State private var pendingFantasy: PendingFantasyDraft? = nil
 
     // MARK: - League source state (phase 3)
 
@@ -187,26 +206,20 @@ struct TeamSelectionView: View {
             if compareModeOn && selectedForCompare.count >= 2 {
                 VStack {
                     Spacer()
+                    // §2.8: another hand-rolled gold capsule, retired. It is
+                    // still the one gold fill on this surface — it only exists
+                    // while compare mode has two teams picked.
                     Button {
                         showCompareSheet = true
                     } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "rectangle.split.3x1.fill")
-                                .font(.system(size: 14, weight: .bold))
-                            Text("Compare (\(selectedForCompare.count))")
-                                .font(.system(size: 15, weight: .bold))
-                                .tracking(0.5)
-                        }
-                        .foregroundStyle(Color.backgroundPrimary)
-                        .padding(.horizontal, 22)
-                        .padding(.vertical, 12)
-                        .background(
-                            Capsule().fill(Color.accentGold)
+                        Label(
+                            "Compare (\(selectedForCompare.count))",
+                            systemImage: "rectangle.split.3x1.fill"
                         )
-                        .shadow(color: Color.black.opacity(0.35), radius: 8, x: 0, y: 4)
                     }
-                    .buttonStyle(.plain)
-                    .padding(.bottom, 24)
+                    .buttonStyle(.dsPrimary)
+                    .dsElevation(.card)
+                    .padding(.bottom, DSSpacing.lg)
                 }
             }
 
@@ -235,38 +248,47 @@ struct TeamSelectionView: View {
         .navigationTitle("Choose Your Team")
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
-        .fullScreenCover(item: $detailTeam) { team in
-            NavigationStack {
-                TeamDetailSheet(
-                    team: team,
-                    catalog: catalog,
-                    setupSummary: setupSummary,
-                    selectTitle: gameMode == .fantasyDraft ? "START FANTASY DRAFT" : "SELECT THIS TEAM"
-                ) {
-                    detailTeam = nil
-                    startCareer(with: team)
-                }
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Back") { detailTeam = nil }
-                            .foregroundStyle(Color.textSecondary)
+        // ONE cover slot (§2.8 and the sibling-modifier bug class). The detail
+        // sheet and the Fantasy Draft used to be two `.fullScreenCover` modifiers
+        // on this node, and the second could only be raised from inside the
+        // first's dismissal — which is why `startCareer` carried a 0.55 s
+        // `asyncAfter` before staging the draft. One slot, and the hand-off is an
+        // assignment in `onDismiss` that runs when the cover has actually gone.
+        .fullScreenCover(item: $activeCover, onDismiss: handleCoverDismiss) { cover in
+            switch cover {
+            case .teamDetail(let team):
+                NavigationStack {
+                    TeamDetailSheet(
+                        team: team,
+                        catalog: catalog,
+                        setupSummary: setupSummary,
+                        selectTitle: gameMode == .fantasyDraft ? "START FANTASY DRAFT" : "SELECT THIS TEAM"
+                    ) {
+                        activeCover = nil
+                        startCareer(with: team)
                     }
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Back") { activeCover = nil }
+                                .foregroundStyle(Color.textSecondary)
+                        }
+                    }
+                    .toolbarColorScheme(.dark, for: .navigationBar)
                 }
-                .toolbarColorScheme(.dark, for: .navigationBar)
+
+            // R40 — Fantasy Draft runs before anything is persisted; cancelling
+            // abandons the un-inserted league and returns to team selection.
+            case .fantasyDraft(let pending):
+                FantasyDraftView(
+                    teams: pending.result.teams,
+                    userTeamID: pending.chosenTeamID,
+                    poolPlayers: pending.result.players,
+                    onComplete: { rosters in
+                        completeFantasyDraft(pending: pending, rosters: rosters)
+                    },
+                    onCancel: { activeCover = nil }
+                )
             }
-        }
-        // R40 — Fantasy Draft runs before anything is persisted; cancelling
-        // abandons the un-inserted league and returns to team selection.
-        .fullScreenCover(item: $pendingFantasy) { pending in
-            FantasyDraftView(
-                teams: pending.result.teams,
-                userTeamID: pending.chosenTeamID,
-                poolPlayers: pending.result.players,
-                onComplete: { rosters in
-                    completeFantasyDraft(pending: pending, rosters: rosters)
-                },
-                onCancel: { pendingFantasy = nil }
-            )
         }
         .navigationDestination(item: $selectedCareer) { career in
             IntroSequenceView(career: career)
@@ -279,6 +301,17 @@ struct TeamSelectionView: View {
         }
     }
 
+    /// Hands the cover slot from the team-detail sheet to the Fantasy Draft,
+    /// once the first is off screen.
+    private func handleCoverDismiss() {
+        // CONSUMED, not merely read: this handler also runs when the draft cover
+        // itself closes, and a staged value left behind would re-present the
+        // draft the user just cancelled — forever.
+        guard let pending = stagedFantasy else { return }
+        stagedFantasy = nil
+        activeCover = .fantasyDraft(pending)
+    }
+
     // MARK: - Row builder (handles compare-mode tap behavior)
 
     @ViewBuilder
@@ -287,7 +320,7 @@ struct TeamSelectionView: View {
             if compareModeOn {
                 toggleCompare(team)
             } else {
-                detailTeam = team
+                activeCover = .teamDetail(team)
             }
         } label: {
             CompactTeamRow(
@@ -313,10 +346,10 @@ struct TeamSelectionView: View {
                     .foregroundStyle(Color.warning)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("\(leagueSource.displayName) league unavailable — starting a Generated league instead.")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(DSType.text(DSType.Size.footnote, .semibold, prose: true))
                         .foregroundStyle(Color.textPrimary)
                     Text(templateLoadError)
-                        .font(.system(size: 10))
+                        .font(DSType.text(DSType.Size.micro, .regular, prose: true))
                         .foregroundStyle(Color.textTertiary)
                 }
                 Spacer(minLength: 0)
@@ -340,12 +373,12 @@ struct TeamSelectionView: View {
                 Image(systemName: leagueSource.icon)
                     .font(.system(size: 11, weight: .semibold))
                 Text(leagueSource.summaryLabel)
-                    .font(.system(size: 12, weight: .bold))
+                    .font(DSType.display(DSType.Size.footnote, .bold))
                     .tracking(0.5)
                 Text(leagueSource.isTemplate
                      ? "Real 2025 records and rosters"
                      : "Freshly rolled rosters")
-                    .font(.system(size: 11))
+                    .font(DSType.text(DSType.Size.caption, .regular, prose: true))
                     .foregroundStyle(Color.textTertiary)
                 Spacer(minLength: 0)
             }
@@ -378,7 +411,7 @@ struct TeamSelectionView: View {
                 .frame(width: 42, alignment: .center)
             Spacer().frame(width: 16) // matches chevron column
         }
-        .font(.system(size: 9, weight: .heavy))
+        .font(DSType.display(DSType.Size.caption, .heavy))
         .tracking(1.2)
         // R39 device coverage: "DIFFICULTY" wrapped to "DIFFICULT/Y" inside
         // its 60 pt column on iPad mini — scale down instead of wrapping.
@@ -411,7 +444,7 @@ struct TeamSelectionView: View {
                     Image(systemName: "line.3.horizontal.decrease")
                         .font(.system(size: 11, weight: .semibold))
                     Text(situationFilter == "All" ? "Filter" : situationFilter)
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(DSType.text(DSType.Size.footnote, .semibold))
                     Image(systemName: "chevron.down")
                         .font(.system(size: 9, weight: .bold))
                 }
@@ -444,7 +477,7 @@ struct TeamSelectionView: View {
                     Image(systemName: "arrow.up.arrow.down")
                         .font(.system(size: 11, weight: .semibold))
                     Text(sortMode.label)
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(DSType.text(DSType.Size.footnote, .semibold))
                     Image(systemName: "chevron.down")
                         .font(.system(size: 9, weight: .bold))
                 }
@@ -473,7 +506,7 @@ struct TeamSelectionView: View {
                     Image(systemName: compareModeOn ? "checkmark.square.fill" : "square.grid.2x2")
                         .font(.system(size: 11, weight: .semibold))
                     Text(compareModeOn ? "Compare On" : "Compare")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(DSType.text(DSType.Size.footnote, .semibold))
                 }
                 .foregroundStyle(compareModeOn ? Color.accentBlue : Color.textSecondary)
                 .padding(.horizontal, 10)
@@ -503,10 +536,10 @@ struct TeamSelectionView: View {
                     // Team-count chip beside the conference name (persona audit).
                     HStack(spacing: 6) {
                         Text(conference.rawValue)
-                            .font(.system(size: 16, weight: .bold))
+                            .font(DSType.display(DSType.Size.callout, .black))
                             .tracking(2)
                         Text("\(allTeams.filter { $0.conference == conference }.count)")
-                            .font(.system(size: 11, weight: .bold).monospacedDigit())
+                            .font(DSType.display(DSType.Size.caption, .bold))
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(
@@ -528,10 +561,10 @@ struct TeamSelectionView: View {
         }
         .padding(3)
         .background(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: DSCornerRadius.card)
                 .fill(Color.backgroundSecondary)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 10)
+                    RoundedRectangle(cornerRadius: DSCornerRadius.card)
                         .strokeBorder(Color.surfaceBorder, lineWidth: 1)
                 )
         )
@@ -547,7 +580,7 @@ struct TeamSelectionView: View {
                 .fill(Color.surfaceBorder)
                 .frame(height: 1)
             Text(name)
-                .font(.system(size: 12, weight: .bold))
+                .font(DSType.display(DSType.Size.footnote, .bold))
                 .tracking(2)
                 .textCase(.uppercase)
                 .foregroundStyle(Color.textSecondary)
@@ -696,11 +729,11 @@ struct TeamSelectionView: View {
                 chosenTeamID: chosenTeam.id,
                 seasonHistory: seasonHistory
             )
-            // Deferred: the team-detail cover is still dismissing — presenting
-            // a second fullScreenCover in the same transaction can be dropped.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) {
-                pendingFantasy = pending
-            }
+            // The detail cover is on its way out; the slot is handed over in
+            // `handleCoverDismiss`, which fires once it has actually gone. No
+            // timer — the 0.55 s guess this replaces was too long on a fast
+            // device and too short on a loaded one.
+            stagedFantasy = pending
             return
         }
 
@@ -734,7 +767,8 @@ struct TeamSelectionView: View {
             )
         }
 
-        pendingFantasy = nil
+        stagedFantasy = nil
+        activeCover = nil
         finalizeCareer(
             career: pending.career,
             result: pending.result,
@@ -895,24 +929,24 @@ private struct CompactTeamRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(team.name)
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(DSType.text(DSType.Size.body, .semibold))
                         .foregroundStyle(Color.textPrimary)
                     Text(preview.lastSeasonRecord)
-                        .font(.system(size: 11, weight: .medium).monospacedDigit())
+                        .font(DSType.display(DSType.Size.caption, .semibold))
                         .foregroundStyle(Color.textTertiary)
                 }
                 HStack(spacing: 6) {
                     Text(team.city)
-                        .font(.system(size: 11))
+                        .font(DSType.text(DSType.Size.caption, .regular))
                         .foregroundStyle(Color.textSecondary)
                     Text("\u{2022}")
-                        .font(.system(size: DSType.Size.micro))
-                        .foregroundStyle(Color.textTertiary)
+                        .font(DSType.text(DSType.Size.micro, .regular))
+                        .foregroundStyle(Color.textTertiaryReadable)
                     Text(preview.startingQBName)
-                        .font(.system(size: 10, weight: .medium))
+                        .font(DSType.text(DSType.Size.micro, .medium))
                         .foregroundStyle(Color.textSecondary)
                     Text("\(preview.startingQBOverall)")
-                        .font(.system(size: 10, weight: .bold).monospacedDigit())
+                        .font(DSType.display(DSType.Size.micro, .bold))
                         .foregroundStyle(Color.forRating(preview.startingQBOverall))
                 }
             }
@@ -935,18 +969,18 @@ private struct CompactTeamRow: View {
             VStack(spacing: 2) {
                 HStack(spacing: 3) {
                     Text("CAP")
-                        .font(.system(size: DSType.Size.micro, weight: .bold))
-                        .foregroundStyle(Color.textTertiary)
+                        .font(DSType.display(DSType.Size.micro, .bold))
+                        .foregroundStyle(Color.textTertiaryReadable)
                     Text("$\(preview.estimatedCapSpace)M")
-                        .font(.system(size: 11, weight: .bold).monospacedDigit())
+                        .font(DSType.display(DSType.Size.caption, .bold))
                         .foregroundStyle(preview.estimatedCapSpace > 30 ? Color.success : preview.estimatedCapSpace > 15 ? Color.accentBlue : Color.warning)
                 }
                 HStack(spacing: 3) {
                     Text("STF")
-                        .font(.system(size: DSType.Size.micro, weight: .bold))
-                        .foregroundStyle(Color.textTertiary)
+                        .font(DSType.display(DSType.Size.micro, .bold))
+                        .foregroundStyle(Color.textTertiaryReadable)
                     Text("$\(preview.coachingBudget)M")
-                        .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                        .font(DSType.display(DSType.Size.micro, .semibold))
                         .foregroundStyle(preview.coachingBudget >= 40 ? Color.success : preview.coachingBudget >= 30 ? Color.accentBlue : Color.warning)
                 }
             }
@@ -958,7 +992,7 @@ private struct CompactTeamRow: View {
                     .font(.system(size: 12))
                     .foregroundStyle(ownerPatienceColor)
                 Text("\(preview.patienceSeasons)yr")
-                    .font(.system(size: 9, weight: .medium))
+                    .font(DSType.display(DSType.Size.caption, .semibold))
                     .foregroundStyle(Color.textTertiary)
             }
             .frame(width: 42)
@@ -1040,10 +1074,10 @@ private struct MiniTeamCard: View {
         .frame(maxWidth: .infinity)
         .frame(height: height)
         .background(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: DSCornerRadius.card)
                 .fill(Color.backgroundSecondary)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 10)
+                    RoundedRectangle(cornerRadius: DSCornerRadius.card)
                         .strokeBorder(Color.surfaceBorder, lineWidth: 0.5)
                 )
         )
@@ -1073,12 +1107,12 @@ private struct TeamGridCard: View {
             TeamLogoPlaceholder(abbreviation: team.abbreviation, size: 44)
 
             Text(team.name)
-                .font(.system(size: 14, weight: .bold))
+                .font(DSType.text(DSType.Size.body, .bold))
                 .foregroundStyle(Color.textPrimary)
                 .lineLimit(1)
 
             Text(team.city)
-                .font(.system(size: 11))
+                .font(DSType.text(DSType.Size.caption, .regular))
                 .foregroundStyle(Color.textSecondary)
                 .lineLimit(1)
 
@@ -1093,7 +1127,7 @@ private struct TeamGridCard: View {
 
             // Situation badge
             Text(preview.situation.uppercased())
-                .font(.system(size: 9, weight: .bold))
+                .font(DSType.display(DSType.Size.caption, .bold))
                 .tracking(0.5)
                 .foregroundStyle(situationColor)
                 .padding(.horizontal, 8)
@@ -1104,16 +1138,16 @@ private struct TeamGridCard: View {
 
             // Cap space
             Text("$\(preview.estimatedCapSpace)M cap")
-                .font(.system(size: 10, weight: .medium).monospacedDigit())
+                .font(DSType.display(DSType.Size.micro, .semibold))
                 .foregroundStyle(Color.textTertiary)
         }
-        .padding(12)
+        .padding(DSSpacing.sm)
         .frame(maxWidth: .infinity)
         .background(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: DSCornerRadius.card)
                 .fill(Color.backgroundSecondary)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 12)
+                    RoundedRectangle(cornerRadius: DSCornerRadius.card)
                         .strokeBorder(Color.surfaceBorder, lineWidth: 0.5)
                 )
         )
@@ -1275,43 +1309,28 @@ private struct TeamDetailSheet: View {
         } action: { newWidth in
             viewWidth = newWidth
         }
+        // §2.5: the commit surface. This was a full-width gold slab with its own
+        // `cornerRadius: 12` recipe — the third hand-copy of the same button —
+        // sitting under a centred grey recap line that had no visible connection
+        // to it. `DSActionBar` says the same two things in the app's own grammar:
+        // the R40 setup recap becomes the explainer that states what committing
+        // does, and the commit itself is the one gold fill on the screen.
         .safeAreaInset(edge: .bottom) {
-            VStack(spacing: 8) {
-                // R40 — setup recap so this screen doubles as the final
-                // confirmation step (team + mode + settings in one glance).
-                if !setupSummary.isEmpty {
-                    Text(setupSummary)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(Color.textSecondary)
-                        .multilineTextAlignment(.center)
-                }
-
-                Button(action: onSelect) {
-                    Text(selectTitle)
-                        .font(.system(size: 16, weight: .bold))
-                        .tracking(1.5)
-                        .foregroundStyle(Color.backgroundPrimary)
-                        .frame(maxWidth: 500)
-                        .padding(.vertical, 16)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(Color.accentGold)
-                        )
-                }
-                .buttonStyle(.plain)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, 24)
-            .padding(.top, 8)
-            .padding(.bottom, 16)
-            .background(Color.backgroundPrimary.opacity(0.95))
+            DSActionBar(
+                explainer: setupSummary.isEmpty
+                    ? nil
+                    : .init(title: "Starting this career", message: setupSummary),
+                primary: .init(title: selectTitle, handler: onSelect)
+            )
         }
     }
 
+    /// §2.9: section heads are uppercase, tracked, 11 pt — and `textSecondary`,
+    /// never gold.
     private func sectionLabel(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 11, weight: .bold))
-            .tracking(1.5)
+            .font(DSType.display(DSType.Size.caption, .heavy))
+            .tracking(1.2)
             .textCase(.uppercase)
             .foregroundStyle(Color.textSecondary)
     }
@@ -1323,12 +1342,12 @@ private struct TeamDetailSheet: View {
                     .font(.system(size: 11))
                     .foregroundStyle(Color.textTertiary)
                 Text(label)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(DSType.display(DSType.Size.caption, .semibold))
                     .foregroundStyle(Color.textTertiary)
             }
             Text(value)
                 // Promoted: these three numbers are the core decision data (audit).
-                .font(.system(size: 24, weight: .bold).monospacedDigit())
+                .font(DSType.display(DSType.Size.title2, .black))
                 .foregroundStyle(valueColor)
         }
         .frame(maxWidth: .infinity)
@@ -1347,7 +1366,7 @@ private struct TeamDetailSheet: View {
                 .shadow(color: .black.opacity(0.45), radius: 10, y: 4)
 
             Text("\(team.city) \(team.name)")
-                .font(.system(size: isLandscape ? 22 : 28, weight: .bold))
+                .font(DSType.display(isLandscape ? DSType.Size.title2 : DSType.Size.title1, .black))
                 .foregroundStyle(Color.textPrimary)
 
             Text("\(team.conference.rawValue) \(team.division.rawValue)")
@@ -1355,7 +1374,7 @@ private struct TeamDetailSheet: View {
                 .foregroundStyle(Color.textSecondary)
 
             Text("Last Season: \(preview.lastSeasonRecord)")
-                .font(.system(size: 13, weight: .semibold).monospacedDigit())
+                .font(DSType.display(DSType.Size.body, .semibold))
                 .foregroundStyle(Color.textTertiary)
         }
         .padding(.top, isLandscape ? 12 : 24)
@@ -1369,7 +1388,7 @@ private struct TeamDetailSheet: View {
                 VStack(spacing: 6) {
                     // Scale label so the stars aren't mistaken for talent/prestige (audit).
                     Text("CAREER DIFFICULTY")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(DSType.display(DSType.Size.caption, .heavy))
                         .tracking(1.2)
                         .foregroundStyle(Color.textTertiary)
                     HStack(spacing: 3) {
@@ -1385,7 +1404,7 @@ private struct TeamDetailSheet: View {
                 }
 
                 Text(preview.situation)
-                    .font(.system(size: 14, weight: .bold))
+                    .font(DSType.display(DSType.Size.body, .bold))
                     .textCase(.uppercase)
                     .foregroundStyle(situationColor)
                     .padding(.horizontal, 12)
@@ -1398,7 +1417,7 @@ private struct TeamDetailSheet: View {
 
             // One-line rationale so "Easy"/"Hard" isn't an unexplained verdict (audit).
             Text("Difficulty weighs roster talent, cap room, and draft capital.")
-                .font(.system(size: 11))
+                .font(DSType.text(DSType.Size.caption, .regular, prose: true))
                 .foregroundStyle(Color.textTertiary)
                 .multilineTextAlignment(.center)
         }
@@ -1482,10 +1501,10 @@ private struct TeamDetailSheet: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(preview.startingQBName)
-                        .font(.system(size: 16, weight: .bold))
+                        .font(DSType.text(DSType.Size.callout, .bold))
                         .foregroundStyle(Color.textPrimary)
                     Text("QB")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(DSType.display(DSType.Size.caption, .semibold))
                         .foregroundStyle(Color.textSecondary)
                 }
 
@@ -1493,10 +1512,10 @@ private struct TeamDetailSheet: View {
 
                 VStack(spacing: 2) {
                     Text("\(preview.startingQBOverall)")
-                        .font(.system(size: 22, weight: .black))
+                        .font(DSType.display(DSType.Size.title2, .black))
                         .foregroundStyle(Color.forRating(preview.startingQBOverall))
                     Text("OVR")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(DSType.display(DSType.Size.caption, .heavy))
                         .foregroundStyle(Color.textTertiary)
                 }
             }
@@ -1524,10 +1543,10 @@ private struct TeamDetailSheet: View {
 
                         VStack(alignment: .leading, spacing: 1) {
                             Text("\(rival.city) \(rival.name)")
-                                .font(.system(size: 13, weight: .semibold))
+                                .font(DSType.text(DSType.Size.body, .semibold))
                                 .foregroundStyle(Color.textPrimary)
                             Text(rivalPreview.lastSeasonRecord)
-                                .font(.system(size: 11, weight: .medium).monospacedDigit())
+                                .font(DSType.display(DSType.Size.caption, .semibold))
                                 .foregroundStyle(Color.textTertiary)
                         }
 
@@ -1537,15 +1556,15 @@ private struct TeamDetailSheet: View {
                         // is my division" instead of filler (audit).
                         VStack(spacing: 1) {
                             Text("\(rivalPreview.estimatedOVR)")
-                                .font(.system(size: 14, weight: .bold).monospacedDigit())
+                                .font(DSType.display(DSType.Size.body, .black))
                                 .foregroundStyle(Color.forRating(rivalPreview.estimatedOVR))
                             Text("OVR")
-                                .font(.system(size: DSType.Size.micro, weight: .bold))
+                                .font(DSType.display(DSType.Size.micro, .bold))
                                 .foregroundStyle(Color.textTertiary)
                         }
 
                         Text(rivalPreview.situation.uppercased())
-                            .font(.system(size: 9, weight: .bold))
+                            .font(DSType.display(DSType.Size.caption, .bold))
                             .foregroundStyle(Color.textSecondary)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 3)
@@ -1585,7 +1604,7 @@ private struct TeamDetailSheet: View {
             }
 
             Text("League average: $\(leagueAvgCoachingBudget)M")
-                .font(.system(size: 11, weight: .medium).monospacedDigit())
+                .font(DSType.display(DSType.Size.caption, .semibold))
                 .foregroundStyle(Color.textSecondary)
         }
         .padding(16)
@@ -1603,7 +1622,7 @@ private struct TeamDetailSheet: View {
                     .font(.system(size: 13))
                     .foregroundStyle(Color.warning)
                 Text("Complete one full season to unlock this team")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(DSType.text(DSType.Size.footnote, .medium, prose: true))
                     .foregroundStyle(Color.textSecondary)
             }
             .padding(.horizontal, 16)
@@ -1707,11 +1726,11 @@ private struct CompareTeamsSheet: View {
                                 VStack(spacing: 6) {
                                     TeamLogoPlaceholder(abbreviation: team.abbreviation, size: 44)
                                     Text(team.name)
-                                        .font(.system(size: 13, weight: .bold))
+                                        .font(DSType.text(DSType.Size.body, .bold))
                                         .foregroundStyle(Color.textPrimary)
                                         .lineLimit(1)
                                     Text(team.city)
-                                        .font(.system(size: 10))
+                                        .font(DSType.text(DSType.Size.micro, .regular))
                                         .foregroundStyle(Color.textSecondary)
                                         .lineLimit(1)
                                 }
@@ -1736,47 +1755,47 @@ private struct CompareTeamsSheet: View {
 
                         comparisonRow(label: "Situation") { team in
                             Text(catalog.preview(for: team).situation.uppercased())
-                                .font(.system(size: 10, weight: .bold))
+                                .font(DSType.display(DSType.Size.micro, .bold))
                                 .foregroundStyle(Color.textPrimary)
                         }
 
                         comparisonRow(label: "Last Season") { team in
                             Text(catalog.preview(for: team).lastSeasonRecord)
-                                .font(.system(size: 13, weight: .semibold).monospacedDigit())
+                                .font(DSType.display(DSType.Size.body, .semibold))
                                 .foregroundStyle(Color.textPrimary)
                         }
 
                         comparisonRow(label: "Roster OVR") { team in
                             Text("\(catalog.preview(for: team).estimatedOVR)")
-                                .font(.system(size: 14, weight: .bold).monospacedDigit())
+                                .font(DSType.display(DSType.Size.body, .black))
                                 .foregroundStyle(Color.forRating(catalog.preview(for: team).estimatedOVR))
                         }
 
                         comparisonRow(label: "Cap Space") { team in
                             Text("$\(catalog.preview(for: team).estimatedCapSpace)M")
-                                .font(.system(size: 13, weight: .bold).monospacedDigit())
+                                .font(DSType.display(DSType.Size.body, .bold))
                                 .foregroundStyle(catalog.preview(for: team).estimatedCapSpace > 30 ? Color.success : catalog.preview(for: team).estimatedCapSpace > 15 ? Color.accentBlue : Color.warning)
                         }
 
                         comparisonRow(label: "Coaching Budget") { team in
                             Text("$\(catalog.preview(for: team).coachingBudget)M")
-                                .font(.system(size: 13, weight: .semibold).monospacedDigit())
+                                .font(DSType.display(DSType.Size.body, .semibold))
                                 .foregroundStyle(catalog.preview(for: team).coachingBudget >= 40 ? Color.success : catalog.preview(for: team).coachingBudget >= 30 ? Color.accentBlue : Color.warning)
                         }
 
                         comparisonRow(label: "Draft Picks") { team in
                             Text("\(catalog.preview(for: team).estimatedDraftPicks)")
-                                .font(.system(size: 13, weight: .semibold).monospacedDigit())
+                                .font(DSType.display(DSType.Size.body, .semibold))
                                 .foregroundStyle(Color.textPrimary)
                         }
 
                         comparisonRow(label: "Owner Patience") { team in
                             VStack(spacing: 2) {
                                 Text(catalog.preview(for: team).ownerPatience)
-                                    .font(.system(size: 11, weight: .semibold))
+                                    .font(DSType.text(DSType.Size.caption, .semibold))
                                     .foregroundStyle(Color.textPrimary)
                                 Text("\(catalog.preview(for: team).patienceSeasons)yr")
-                                    .font(.system(size: 10))
+                                    .font(DSType.display(DSType.Size.micro, .semibold))
                                     .foregroundStyle(Color.textTertiary)
                             }
                         }
@@ -1784,18 +1803,18 @@ private struct CompareTeamsSheet: View {
                         comparisonRow(label: "Starting QB") { team in
                             VStack(spacing: 2) {
                                 Text(catalog.preview(for: team).startingQBName)
-                                    .font(.system(size: 11, weight: .semibold))
+                                    .font(DSType.text(DSType.Size.caption, .semibold))
                                     .foregroundStyle(Color.textPrimary)
                                     .lineLimit(1)
                                 Text("\(catalog.preview(for: team).startingQBOverall) OVR")
-                                    .font(.system(size: 10, weight: .bold).monospacedDigit())
+                                    .font(DSType.display(DSType.Size.micro, .bold))
                                     .foregroundStyle(Color.forRating(catalog.preview(for: team).startingQBOverall))
                             }
                         }
 
                         comparisonRow(label: "Market") { team in
                             Text(team.mediaMarket.rawValue)
-                                .font(.system(size: 11, weight: .medium))
+                                .font(DSType.text(DSType.Size.caption, .medium))
                                 .foregroundStyle(Color.textPrimary)
                                 .multilineTextAlignment(.center)
                                 .lineLimit(2)
@@ -1818,7 +1837,7 @@ private struct CompareTeamsSheet: View {
 
     private func rowLabel(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 11, weight: .bold))
+            .font(DSType.display(DSType.Size.caption, .heavy))
             .tracking(1.0)
             .textCase(.uppercase)
             .foregroundStyle(Color.textTertiary)

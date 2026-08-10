@@ -1,9 +1,63 @@
 import SwiftUI
 import SwiftData
 
+// MARK: - FreeAgencyView — Wave 1c, the list standard
+//
+// UI_REDESIGN_VISION §4 puts this screen LAST in Wave 1 and calls it a rebuild
+// rather than a conversion, and the reason is visible in what it replaced: the
+// old row was a four-deck `VStack` — a main line, a badge line, a rumour line, a
+// contract-structure line and a two-column "vs Current Starter" card — roughly
+// 140 pt per free agent. Eight men filled an iPad. There was no header row, so
+// nothing said what any number meant; the widths were nine inline `frame`s that
+// no header could ever agree with; and the row's only tap opened the
+// negotiation sheet, so there was no way to READ a free agent before bidding on
+// him.
+//
+// What the rebuild is, precisely:
+//
+//  1. `DSListRow` at `.scan` — one 44 pt row per man (§2.12: a row is a
+//     control), so the list is scannable instead of readable-one-at-a-time.
+//  2. A header row built from `DSListColumn`, so header and cell read the same
+//     constant. It is hand-rolled out of `DSColumnHeader`'s vocabulary rather
+//     than `DSListHeaderRow` because these header cells SORT — the same reason
+//     the roster hand-rolls `RosterView.sortableHeader`.
+//  3. The row body is a `NavigationLink` into `PlayerDetailView`. Reading a man
+//     and bidding on him are two different acts: the push reads, the trailing
+//     `OFFER` button bids. The negotiation flow itself is untouched — it is the
+//     same `ContractExtensionSheet` with the same arguments.
+//  4. `DSEmptyState` replaces the hand-rolled empty block, and it now answers
+//     the third beat honestly: an empty list because the market is dry is a
+//     different problem from an empty list because the user filtered it down to
+//     kickers.
+//
+// **What the four prose decks became.** Nothing that was a FACT was dropped;
+// what was dropped is prose that repeated per row:
+//
+//   * cap impact % and "cap after" → one `CAP` state slot, tone and value
+//   * scheme fit badge              → the sortable `FIT` column
+//   * starter comparison            → the sortable `VS ST` column
+//   * competition / "Hot" flame     → the sortable `BIDS` column
+//   * desired contract length       → the `YRS` column
+//   * position need                 → the `NEED` state slot
+//   * draft-alternative hint        → ONE screen-level "YOUR PICKS" fact, since
+//     the per-row version printed the same first pick on every expensive row
+//     regardless of position (§2.13's arithmetic gate: a number that says the
+//     same thing on 300 rows is not a per-row number)
+//   * "rumour" line and the guaranteed-money guess are gone. The first was
+//     flavour derived from the two facts either side of it (motivation, market
+//     interest) and the second was an invented 0.5 / 0.35 multiplier that no
+//     engine backs — see the report; if either is wanted back it belongs on the
+//     detail screen or in the offer sheet, not on 400 list rows.
+//
+// Two other §P7 corrections landed on the way through: the motivation badge's
+// invented purple and the `.orange` "Hot" flame are gone (a category is not a
+// status, so motivation is now an uncoloured word), and the gold rail that
+// marked every OVR ≥ 75 row is gone (gold has three jobs and "good player" is
+// none of them — the `OVR` cell already carries the rating ladder).
+
 // MARK: - Position Filter
 
-private enum FAPositionFilter: String, CaseIterable {
+private enum FAPositionFilter: String, CaseIterable, Identifiable {
     case all  = "All"
     case qb   = "QB"
     case skill = "Skill"
@@ -12,6 +66,8 @@ private enum FAPositionFilter: String, CaseIterable {
     case lb   = "LB"
     case db   = "DB"
     case st   = "ST"
+
+    var id: String { rawValue }
 
     /// Display label — adds clarification for the "Skill" group.
     var displayLabel: String {
@@ -35,37 +91,50 @@ private enum FAPositionFilter: String, CaseIterable {
     }
 }
 
-// MARK: - Sort Option
+// MARK: - Sort column
+//
+// One case per COLUMN, because sorting now lives in the header row rather than
+// in a second "Sort:" strip above it. The old strip carried six words that
+// named columns the list did not have — a user who tapped "Scheme" had no way
+// to see the scheme fit he had just sorted by.
 
-private enum FASortOption: String, CaseIterable {
-    case overall       = "OVR"
-    case age           = "Age"
-    case salary        = "Salary"
-    case position      = "Position"
-    case interest      = "Interest"
-    case schemeFit     = "Scheme"
+private enum FASortColumn {
+    case position
+    case name
+    case schemeFit
+    case age
+    case overall
+    case vsStarter
+    case ask
+    case years
+    case interest
 }
 
 // MARK: - Scheme Fit Level
 
 private enum SchemeFitLevel: String {
-    case good = "Good Fit"
+    case good = "Good"
     case ok   = "OK"
-    case poor = "Poor Fit"
+    case poor = "Poor"
 
+    /// Semantic status at a stated threshold (§P7 rule 2) — this is not a 0–100
+    /// rating, so it gets no ladder colour. `ok` is deliberately uncoloured:
+    /// "he fits well enough" is not a caution.
     var color: Color {
         switch self {
         case .good: return .success
-        case .ok:   return .warning
+        case .ok:   return .textSecondary
         case .poor: return .danger
         }
     }
 
-    var sortOrder: Int {
+    /// Higher is better, so the header's default descending tap puts the men
+    /// who fit the scheme at the top.
+    var rank: Int {
         switch self {
-        case .good: return 0
+        case .good: return 2
         case .ok:   return 1
-        case .poor: return 2
+        case .poor: return 0
         }
     }
 }
@@ -76,6 +145,22 @@ private enum NeedLevel: String {
     case high = "High"
     case med  = "Med"
     case low  = "Low"
+
+    var tone: DSStatusPill.Tone {
+        switch self {
+        case .high: return .bad
+        case .med:  return .warn
+        case .low:  return .neutral
+        }
+    }
+
+    var priority: Int {
+        switch self {
+        case .high: return 3
+        case .med:  return 2
+        case .low:  return 1
+        }
+    }
 }
 
 // MARK: - FreeAgencyView
@@ -86,6 +171,12 @@ struct FreeAgencyView: View {
 
     @Environment(\.modelContext) private var modelContext
 
+    /// TRACK B — the same fog port the roster row carries. A rookie who has not
+    /// reported to camp shows his scouting BAND where his OVR would be; nobody
+    /// else changes. Moved here with the list rebuild rather than left behind:
+    /// undrafted rookies land in this pool, and this screen prints an OVR.
+    @Environment(\.rookieFog) private var rookieFog
+
     @State private var allFreeAgents: [Player] = []
     @State private var freeAgentData: [UUID: FreeAgentInfo] = [:]
     @State private var team: Team?
@@ -93,11 +184,39 @@ struct FreeAgencyView: View {
     @State private var teamCoaches: [Coach] = []
     @State private var teamDraftPicks: [DraftPick] = []
     @State private var positionFilter: FAPositionFilter = .all
-    @State private var sortOption: FASortOption = .overall
-    @State private var selectedPlayer: Player?
-    @State private var showNegotiationSheet = false
+    @State private var sortColumn: FASortColumn = .overall
+    @State private var sortAscending: Bool = false
     @State private var targetedPlayerIDs: Set<UUID> = []
     @State private var isLoading: Bool = true
+
+    /// The ONE sheet on this screen, item-driven.
+    ///
+    /// It was `@State selectedPlayer` + `@State showNegotiationSheet`, which is
+    /// the two-variable shape that has produced silently-dismissing sheets four
+    /// times in this codebase. One `.sheet(item:)`, one source of truth: the
+    /// player being negotiated with.
+    @State private var negotiationTarget: Player?
+
+    // MARK: Derived caches
+    //
+    // Every one of these used to be recomputed inside the row body, which meant
+    // `ContractEngine.estimateMarketValue` ran once per visible row per frame
+    // AND `n log n` times inside the sort comparator. They are pure functions of
+    // data that only changes at load, so they are computed once at load. No
+    // engine call changed; only how often it runs.
+
+    /// Estimated market value per year, in thousands, keyed by player.
+    @State private var marketValues: [UUID: Int] = [:]
+    /// Scheme fit against the staff's installed scheme. Absent = no coordinator
+    /// or no scheme on file, and the column prints an honest dash.
+    @State private var schemeFits: [UUID: SchemeFitLevel] = [:]
+    /// Best OVR on the roster at each position — the man a signing would have to
+    /// beat.
+    @State private var starterOVRByPosition: [Position: Int] = [:]
+    /// Team needs, in priority order, and the same reads keyed by position group
+    /// for the row's `NEED` slot.
+    @State private var teamNeeds: [PositionNeed] = []
+    @State private var needByGroup: [String: NeedLevel] = [:]
 
     /// The salary cap to use for market value estimates; updated when team is loaded.
     private var currentSalaryCap: Int {
@@ -112,33 +231,56 @@ struct FreeAgencyView: View {
     /// Total FA rounds.
     private let totalRounds = 6
 
+    /// Inter-column gap in the trailing block. Non-zero for the same reason the
+    /// roster's is: the header is right-anchored against the same edge, and at
+    /// spacing 0 the labels drift left of the numbers they label.
+    private static let columnGap: CGFloat = 6
+    /// The trailing `OFFER` button. Reserved in the header so the last data
+    /// column still sits over its own label.
+    private static let offerColumn: CGFloat = 56
+    /// Row insets, mirrored by the pinned header so each label sits over its
+    /// own column.
+    private static let rowLeadingInset: CGFloat = 8
+    private static let rowTrailingInset: CGFloat = 16
+
     var body: some View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
 
             if isLoading {
-                VStack(spacing: 12) {
+                VStack(spacing: DSSpacing.sm) {
                     ProgressView()
                         .progressViewStyle(.circular)
                         .scaleEffect(1.5)
                         .tint(Color.accentBlue)
-                    Text("Loading Free Agency...")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
+                    Text("Loading Free Agency\u{2026}")
+                        .font(DSType.text(14, .regular, prose: true))
+                        .foregroundStyle(Color.textSecondary)
                 }
             } else {
-            VStack(spacing: 0) {
-                dayIndicator
-                capBanner
-                needsSummaryBar
-                filterBar
-                sortBar
-                playerList
-                if !targetedPlayerIDs.isEmpty {
-                    targetsSummaryBar
+                // Filtered and sorted ONCE per body pass, then threaded down.
+                // The band prints the count, the header only exists when there
+                // are rows to label, and the list draws them — three readers of
+                // one 400-element sort, not three sorts.
+                let rows = filteredAndSorted
+                VStack(spacing: 0) {
+                    statusBand(rowCount: rows.count)
+                    needsStrip
+                    positionLenses
+                    if !rows.isEmpty {
+                        columnHeaders
+                            .padding(.leading, Self.rowLeadingInset)
+                            .padding(.trailing, Self.rowTrailingInset)
+                            .padding(.vertical, 3)
+                            .background(Color.backgroundPrimary)
+                        Divider().overlay(Color.surfaceBorder)
+                    }
+                    playerList(rows)
+                    if !targetedPlayerIDs.isEmpty {
+                        targetsSummaryBar
+                    }
                 }
             }
-            } // end else (not loading)
         }
         .navigationTitle("Free Agency")
         .navigationBarTitleDisplayMode(.large)
@@ -147,8 +289,9 @@ struct FreeAgencyView: View {
             loadData()
             isLoading = false
         }
-        .sheet(isPresented: $showNegotiationSheet) {
-            if let player = selectedPlayer, let team {
+        // ONE sheet on this screen. See `negotiationTarget`.
+        .sheet(item: $negotiationTarget) { player in
+            if let team {
                 NavigationStack {
                     ContractExtensionSheet(
                         player: player,
@@ -160,31 +303,48 @@ struct FreeAgencyView: View {
         }
     }
 
-    // MARK: - Day Indicator
+    // MARK: - Status Band
+    //
+    // The round indicator and the cap banner were two stacked bands saying four
+    // numbers between them. One band, four facts, one type voice — and the
+    // fourth fact ("YOUR PICKS") is the draft-alternative hint, promoted out of
+    // the rows to the one place where it is true exactly once.
 
-    private var dayIndicator: some View {
-        HStack(spacing: 8) {
-            Text(FreeAgencyStep.roundLabel(currentRound))
-                .font(.subheadline.weight(.bold))
-                .foregroundStyle(Color.textPrimary)
-
-            Text("of \(totalRounds)")
-                .font(.subheadline)
-                .foregroundStyle(Color.textSecondary)
-
-            Spacer()
-
-            // Dot indicators
-            HStack(spacing: 4) {
-                ForEach(1...totalRounds, id: \.self) { round in
-                    Circle()
-                        .fill(round <= currentRound ? Color.accentBlue : Color.backgroundTertiary)
-                        .frame(width: 8, height: 8)
+    private func statusBand(rowCount: Int) -> some View {
+        HStack(alignment: .center, spacing: DSSpacing.lg) {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: DSSpacing.xxs) {
+                    Text(FreeAgencyStep.roundLabel(currentRound).uppercased())
+                        .font(DSType.display(13, .heavy))
+                        .tracking(0.6)
+                        .foregroundStyle(Color.textPrimary)
+                    Text("of \(totalRounds)")
+                        .font(DSType.display(13, .semibold))
+                        .foregroundStyle(Color.textTertiary)
                 }
+                roundDots
             }
+
+            Spacer(minLength: DSSpacing.sm)
+
+            bandMetric(
+                "Cap Space",
+                value: formatMillions(team?.availableCap ?? 0),
+                tint: (team?.availableCap ?? 0) >= 0 ? Color.success : Color.danger
+            )
+            bandMetric(
+                "Available",
+                value: formattedCount(rowCount),
+                tint: Color.textPrimary
+            )
+            bandMetric(
+                "Your Picks",
+                value: draftCapitalSummary,
+                tint: Color.textSecondary
+            )
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 10)
+        .padding(.horizontal, DSSpacing.lg)
+        .padding(.vertical, DSSpacing.sm)
         .background(Color.backgroundSecondary)
         .overlay(
             Rectangle()
@@ -194,93 +354,98 @@ struct FreeAgencyView: View {
         )
     }
 
-    // MARK: - Cap Banner
-
-    private var capBanner: some View {
-        HStack(spacing: 20) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Available Cap Space")
-                    .font(.caption)
-                    .foregroundStyle(Color.textSecondary)
-                Text(formatMillions(team?.availableCap ?? 0))
-                    .font(.title3.weight(.bold).monospacedDigit())
-                    .foregroundStyle((team?.availableCap ?? 0) >= 0 ? Color.success : Color.danger)
-            }
-            Spacer()
-            VStack(alignment: .trailing, spacing: 2) {
-                Text("Free Agents")
-                    .font(.caption)
-                    .foregroundStyle(Color.textSecondary)
-                Text(formattedCount(filteredAndSorted.count))
-                    .font(.title3.weight(.bold).monospacedDigit())
-                    .foregroundStyle(Color.textPrimary)
-            }
+    private func bandMetric(_ label: String, value: String, tint: Color) -> some View {
+        VStack(alignment: .trailing, spacing: 2) {
+            Text(label.uppercased())
+                .font(DSType.display(11, .heavy))
+                .tracking(0.5)
+                .foregroundStyle(Color.textTertiary)
+            Text(value)
+                .font(DSType.display(17, .heavy))
+                .foregroundStyle(tint)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 14)
-        .background(Color.backgroundSecondary)
-        .overlay(
-            Rectangle()
-                .fill(Color.surfaceBorder)
-                .frame(height: 1),
-            alignment: .bottom
-        )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(label): \(value)")
     }
 
-    // MARK: - Team Needs Summary Bar
+    private var roundDots: some View {
+        HStack(spacing: 4) {
+            ForEach(1...totalRounds, id: \.self) { round in
+                Circle()
+                    .fill(round <= currentRound ? Color.accentBlue : Color.backgroundTertiary)
+                    .frame(width: 8, height: 8)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Round \(currentRound) of \(totalRounds)")
+    }
 
-    private var needsSummaryBar: some View {
-        let needs = computeTeamNeeds()
-        return Group {
-            if !needs.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        Text("Needs:")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(Color.textSecondary)
-                        ForEach(needs.prefix(6), id: \.position) { need in
-                            HStack(spacing: 2) {
-                                Text(need.position)
-                                    .font(.caption.weight(.bold))
-                                    .foregroundStyle(Color.textPrimary)
-                                Text("(\(need.level.rawValue))")
-                                    .font(.caption2)
-                                    .foregroundStyle(needLevelColor(need.level))
-                            }
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(Color.backgroundTertiary)
-                            )
-                        }
+    /// The draft capital this year, said once. Empty when the user holds no
+    /// picks — an absent line rather than "Rd —".
+    private var draftCapitalSummary: String {
+        let rounds = teamDraftPicks
+            .filter { !$0.isComplete }
+            .map(\.round)
+            .sorted()
+        guard !rounds.isEmpty else { return "None" }
+        return rounds.prefix(4).map { "Rd \($0)" }.joined(separator: " \u{00B7} ")
+    }
+
+    // MARK: - Needs Strip
+
+    @ViewBuilder
+    private var needsStrip: some View {
+        if !teamNeeds.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: DSSpacing.xxs) {
+                    Text("NEEDS")
+                        .font(DSType.display(11, .heavy))
+                        .tracking(0.6)
+                        .foregroundStyle(Color.textSecondary)
+                    // The bespoke need chip is gone: a need level is a state at
+                    // a stated threshold, which is exactly what `DSStatusPill`
+                    // is, and the row's own `NEED` slot now speaks the same
+                    // three words in the same three tones.
+                    ForEach(teamNeeds.prefix(6)) { need in
+                        DSStatusPill(
+                            label: need.position,
+                            tone: need.level.tone,
+                            value: need.level.rawValue,
+                            showsDot: false,
+                            spokenLabel: "\(need.position): \(need.level.rawValue) need"
+                        )
                     }
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 8)
                 }
-                .background(Color.backgroundSecondary)
-                .overlay(
-                    Rectangle()
-                        .fill(Color.surfaceBorder)
-                        .frame(height: 1),
-                    alignment: .bottom
-                )
+                .padding(.horizontal, DSSpacing.lg)
+                .padding(.vertical, DSSpacing.xs)
             }
+            .background(Color.backgroundSecondary)
+            .overlay(
+                Rectangle()
+                    .fill(Color.surfaceBorder)
+                    .frame(height: 1),
+                alignment: .bottom
+            )
         }
     }
 
-    // MARK: - Filter Bar
+    // MARK: - Position Lenses
+    //
+    // §2.2's one control style. The screen shipped its own 30 pt capsule with
+    // its own selected fill; `DSLensTabs` is the capsule the vision sanctions,
+    // measured at 44 pt, with `accentBlue` as the one selected fill.
 
-    private var filterBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(FAPositionFilter.allCases, id: \.self) { filter in
-                    filterChip(filter)
-                }
-            }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 10)
-        }
+    private var positionLenses: some View {
+        DSLensTabs(
+            selection: $positionFilter,
+            lenses: FAPositionFilter.allCases,
+            label: { $0.displayLabel },
+            title: "Position"
+        )
+        .padding(.horizontal, DSSpacing.md)
+        .padding(.vertical, DSSpacing.xxs)
         .background(Color.backgroundSecondary)
         .overlay(
             Rectangle()
@@ -290,583 +455,498 @@ struct FreeAgencyView: View {
         )
     }
 
-    private func filterChip(_ filter: FAPositionFilter) -> some View {
-        Button {
-            positionFilter = filter
+    // MARK: - Column Headers
+    //
+    // Built from `DSListColumn`, in the row's own anatomy order, with the two
+    // leading gutters (the target star, the portrait) RESERVED rather than
+    // labelled — the header-drift bug documented twice in this codebase.
+
+    private var columnHeaders: some View {
+        HStack(spacing: 0) {
+            // The leading star button: unlabelled, but present on every row.
+            Color.clear.frame(width: DSListColumn.leadingAction, height: 1)
+
+            sortHeader("POS", column: .position, width: DSListColumn.position)
+
+            // The portrait slot.
+            Color.clear.frame(width: DSListColumn.scanPortrait, height: 1)
+
+            sortHeader("NAME", column: .name, width: nil, alignment: .leading)
+                .frame(minWidth: DSListColumn.identityMin, alignment: .leading)
+                .padding(.leading, DSListColumn.identityGap)
+
+            Spacer(minLength: 2)
+
+            HStack(spacing: Self.columnGap) {
+                sortHeader("FIT",    column: .schemeFit,   width: DSListColumn.label)
+                sortHeader("AGE",    column: .age,         width: DSListColumn.age)
+                headerLabel("TRD",   width: DSListColumn.glyph)
+                sortHeader("OVR",    column: .overall,     width: DSListColumn.ovr)
+                sortHeader("VS ST",  column: .vsStarter,   width: DSListColumn.meet)
+                sortHeader("ASK/YR", column: .ask, width: DSListColumn.money)
+                sortHeader("YRS",    column: .years,       width: DSListColumn.tight)
+                sortHeader("BIDS",   column: .interest,    width: DSListColumn.meet)
+            }
+
+            // The row's disclosure gutter and the OFFER button: reserved, not
+            // labelled, so `BIDS` stays over its own numbers.
+            Color.clear.frame(width: DSListColumn.affordance, height: 1)
+            Color.clear.frame(width: Self.offerColumn, height: 1)
+        }
+        .font(DSType.display(11, .heavy))
+        .foregroundStyle(Color.textTertiary)
+        .textCase(.uppercase)
+    }
+
+    private func headerLabel(_ title: String, width: CGFloat) -> some View {
+        Text(title)
+            .tracking(0.6)
+            .dsColumn(width)
+            .foregroundStyle(Color.textTertiary)
+    }
+
+    /// A sortable header cell. Same behaviour as the roster's, deliberately: a
+    /// new column starts descending (best first), and tapping the active column
+    /// flips it.
+    private func sortHeader(
+        _ title: String,
+        column: FASortColumn,
+        width: CGFloat?,
+        alignment: Alignment = .center
+    ) -> some View {
+        let isActive = sortColumn == column
+        return Button {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                if isActive {
+                    sortAscending.toggle()
+                } else {
+                    sortColumn = column
+                    sortAscending = false
+                }
+            }
         } label: {
-            Text(filter.displayLabel)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(positionFilter == filter ? Color.backgroundPrimary : Color.textSecondary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(
-                    RoundedRectangle(cornerRadius: 20)
-                        .fill(positionFilter == filter ? Color.accentBlue : Color.backgroundTertiary)
-                )
+            HStack(spacing: 2) {
+                Text(title)
+                    .tracking(0.6)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                if isActive {
+                    Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 11, weight: .bold))
+                }
+            }
+            .frame(width: width, alignment: alignment)
+            .frame(minHeight: 28)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-    }
-
-    // MARK: - Sort Bar
-
-    private var sortBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 0) {
-                Text("Sort:")
-                    .font(.caption)
-                    .foregroundStyle(Color.textTertiary)
-                    .padding(.leading, 24)
-
-                ForEach(FASortOption.allCases, id: \.self) { option in
-                    Button {
-                        sortOption = option
-                    } label: {
-                        Text(option.rawValue)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(sortOption == option ? Color.accentBlue : Color.textSecondary)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 8)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-        .background(Color.backgroundSecondary)
-        .overlay(
-            Rectangle()
-                .fill(Color.surfaceBorder)
-                .frame(height: 1),
-            alignment: .bottom
-        )
+        .foregroundStyle(isActive ? Color.accentBlue : Color.textTertiary)
+        .accessibilityLabel("Sort by \(title)")
+        .accessibilityAddTraits(isActive ? .isSelected : [])
     }
 
     // MARK: - Player List
 
-    private var playerList: some View {
-        Group {
-            if filteredAndSorted.isEmpty {
-                VStack(spacing: 16) {
-                    Image(systemName: "person.slash")
-                        .font(.system(size: 48))
-                        .foregroundStyle(Color.textTertiary)
-                    Text("No free agents available")
-                        .font(.headline)
-                        .foregroundStyle(Color.textSecondary)
-                    Text("Check back after the season ends or adjust your filter.")
-                        .font(.subheadline)
-                        .foregroundStyle(Color.textTertiary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 40)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                List {
-                    ForEach(filteredAndSorted) { player in
-                        Button {
-                            selectedPlayer = player
-                            showNegotiationSheet = true
-                        } label: {
-                            freeAgentRow(player)
+    @ViewBuilder
+    private func playerList(_ rows: [Player]) -> some View {
+        if rows.isEmpty {
+            DSEmptyState(
+                density: .scan,
+                icon: "person.slash",
+                title: positionFilter == .all
+                    ? "No Free Agents Left"
+                    : "No \(positionFilter.rawValue) Free Agents",
+                message: emptyStateMessage,
+                actions: positionFilter == .all
+                    ? []
+                    : [
+                        .init(
+                            title: "Show All Positions",
+                            systemImage: "line.3.horizontal.decrease.circle",
+                            isPrimary: true
+                        ) {
+                            positionFilter = .all
                         }
-                        .buttonStyle(.plain)
-                        .listRowBackground(rowBackground(for: player))
-                        .listRowSeparatorTint(Color.surfaceBorder)
-                        .accessibilityHint("Tap to open contract negotiation")
-                    }
+                    ]
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            List {
+                ForEach(rows) { player in
+                    freeAgentRow(player)
                 }
-                .scrollContentBackground(.hidden)
-                .listStyle(.plain)
             }
+            .scrollContentBackground(.hidden)
+            .listStyle(.plain)
         }
     }
 
-    // MARK: - Row Background (Task 5: visual hierarchy for top FAs)
-
-    private func rowBackground(for player: Player) -> some View {
-        let isTopFA = player.overall >= 75
-        return HStack(spacing: 0) {
-            if isTopFA {
-                Rectangle()
-                    .fill(Color.accentGold.opacity(0.6))
-                    .frame(width: 3)
-            }
-            Rectangle()
-                .fill(isTopFA ? Color.backgroundSecondary.opacity(1) : Color.backgroundSecondary)
+    private var emptyStateMessage: String {
+        if positionFilter == .all {
+            return "Every unsigned veteran has come off the board. New names arrive when contracts expire at the end of the season."
         }
+        return "Nobody left unsigned fits the \(positionFilter.displayLabel) filter. Widen it to see who is still on the market."
     }
 
     // MARK: - Free Agent Row
+    //
+    // Leading action, row, trailing action — the same three-part shape the Big
+    // Board ships (mark button · `NavigationLink` · film-study button), because
+    // a row that both READS and BIDS needs two targets and only one of them can
+    // be the whole row.
 
     private func freeAgentRow(_ player: Player) -> some View {
-        let info = freeAgentData[player.id]
-        let marketValue = ContractEngine.estimateMarketValue(player: player, salaryCap: currentSalaryCap)
-        let starterComparison = computeStarterComparison(for: player)
-        let schemeFit = computeSchemeFit(for: player)
-        let ovrTrend = computeOVRTrend(for: player)
-        let isTargeted = targetedPlayerIDs.contains(player.id)
+        HStack(spacing: 0) {
+            targetButton(for: player)
 
-        return VStack(alignment: .leading, spacing: 6) {
-            // Main row
-            HStack(spacing: 12) {
-                // Position badge
-                Text(player.position.rawValue)
-                    .font(.caption.weight(.bold))
+            NavigationLink(destination: PlayerDetailView(player: player)) {
+                listRow(for: player)
+            }
+
+            offerButton(for: player)
+        }
+        .listRowBackground(Color.backgroundSecondary)
+        .listRowSeparatorTint(Color.surfaceBorder)
+        .listRowInsets(
+            EdgeInsets(
+                top: 0,
+                leading: Self.rowLeadingInset,
+                bottom: 0,
+                trailing: Self.rowTrailingInset
+            )
+        )
+    }
+
+    private func listRow(for player: Player) -> some View {
+        DSListRow(
+            density: .scan,
+            // No rank slot: a free-agent market is filtered and re-sorted eight
+            // ways, so a "#3" would mean something different after every tap.
+            badge: DSRowBadge(
+                text: player.position.rawValue,
+                tint: positionColor(player.position),
+                accessibilityLabel: "\(player.position.rawValue), \(player.position.side.rawValue)"
+            ),
+            // The row DRAWS its own chevron rather than relying on the List to
+            // add one. `DSListRow`'s `.none` is for a link that IS the whole
+            // row (the roster); this link is one of three views in the row's
+            // `HStack`, which is the Big Board's shape — and the board proves
+            // the List adds nothing in that shape, because its header reserves
+            // exactly `DSListColumn.affordance` for a handle the row draws
+            // itself and its columns line up. Same 22 pt, reserved on both
+            // sides, whoever draws it.
+            affordance: .disclosure
+        ) {
+            // Portrait (30 pt) inside the 36 pt slot the header reserves.
+            PersonFaceView(player: player, size: .small)
+                .padding(.leading, DSListColumn.identityGap)
+        } identity: {
+            identityBlock(for: player)
+        } columns: {
+            Spacer(minLength: 2)
+
+            HStack(spacing: Self.columnGap) {
+                fitCell(for: player)
+                ageCell(for: player)
+                trendCell(for: player)
+                ovrCell(for: player)
+                vsStarterCell(for: player)
+                moneyCell(for: player)
+                yearsCell(for: player)
+                bidsCell(for: player)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityText(for: player))
+    }
+
+    // MARK: Identity block
+
+    /// Name line, then the two reserved state slots.
+    ///
+    /// `DSListRow` owns the identity SLOT; the screen owns what goes in it. The
+    /// slot set is chosen ONCE for this list and never per row: `NEED` (does he
+    /// fill a hole in this roster) and `CAP` (can this building afford him). An
+    /// unset `NEED` is a dimmed dashed word, so what the user scans down the
+    /// column is the gap.
+    private func identityBlock(for player: Player) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: DSSpacing.xxs) {
+                Text(player.fullName)
+                    .font(DSType.text(DSListDensity.scan.nameSize, .semibold, prose: true))
                     .foregroundStyle(Color.textPrimary)
-                    .frame(width: 34)
-                    .padding(.vertical, 4)
-                    .background(positionColor(player.position), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
+                    .lineLimit(1)
 
-                // Name + details
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(player.fullName)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(Color.textPrimary)
-                            .lineLimit(1)
-
-                        // Hot indicator (Task 5)
-                        if let info, info.marketInterest >= 6 {
-                            HStack(spacing: 2) {
-                                Image(systemName: "flame.fill")
-                                    .font(.system(size: 10))
-                                Text("Hot")
-                                    .font(.system(size: 9).weight(.bold))
-                            }
-                            .foregroundStyle(.orange)
-                        }
-                    }
-                    HStack(spacing: 8) {
-                        Text("Age \(player.age)")
-                            .font(.caption)
-                            .foregroundStyle(Color.textTertiary)
-                        Text("\u{2022}")
-                            .font(.caption)
-                            .foregroundStyle(Color.textTertiary)
-                        // Contract length clarity (Task 6)
-                        if let info {
-                            Text("Wants: \(info.desiredYears)yr")
-                                .font(.caption)
-                                .foregroundStyle(Color.textTertiary)
-                        }
-                    }
-                }
-
-                Spacer()
-
-                // OVR + trend (Task 12)
-                VStack(alignment: .trailing, spacing: 2) {
-                    HStack(spacing: 2) {
-                        Text("\(player.overall)")
-                            .font(.headline.weight(.bold).monospacedDigit())
-                            .foregroundStyle(Color.forRating(player.overall))
-                        if let trend = ovrTrend {
-                            Image(systemName: trend.iconName)
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundStyle(trend.color)
-                        }
-                    }
-                    Text("OVR")
-                        .font(.system(size: 9).weight(.medium))
-                        .foregroundStyle(Color.textTertiary)
-                }
-                .frame(minWidth: 50)
-
-                Divider()
-                    .frame(height: 32)
-                    .overlay(Color.surfaceBorder)
-
-                // Estimated salary
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text(formatMillions(marketValue))
-                        .font(.subheadline.weight(.semibold).monospacedDigit())
-                        .foregroundStyle(Color.textPrimary)
-                    Text("Est./yr")
-                        .font(.system(size: 9).weight(.medium))
-                        .foregroundStyle(Color.textTertiary)
-                }
-                .frame(minWidth: 60)
-
-                // Target star (Task 14)
-                Button {
-                    toggleTarget(player.id)
-                } label: {
-                    Image(systemName: isTargeted ? "star.fill" : "star")
-                        .font(.system(size: 16))
-                        .foregroundStyle(isTargeted ? Color.accentGold : Color.textTertiary)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(isTargeted ? "Untarget \(player.fullName)" : "Target \(player.fullName)")
+                // What he is chasing. A category, not a status, so it carries
+                // no colour — the old badge invented a purple for "Fame" and
+                // spent gold on "Winning" (§P7, §P5).
+                Text(motivationLabel(player.personality.motivation))
+                    .font(DSType.display(11, .semibold))
+                    .foregroundStyle(Color.textSecondary)
+                    .lineLimit(1)
             }
 
-            // Second row: badges and comparison info
-            HStack(spacing: 6) {
-                // Motivation badge (Task 3)
-                motivationBadge(player.personality.motivation)
-
-                // Scheme fit badge (Task 8)
-                if let fit = schemeFit {
-                    Text(fit.rawValue)
-                        .font(.system(size: 10).weight(.bold))
-                        .foregroundStyle(fit.color)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
-                        .background(
-                            RoundedRectangle(cornerRadius: 5)
-                                .fill(fit.color.opacity(0.15))
-                        )
-                }
-
-                // Starter comparison (Task 7)
-                if let comparison = starterComparison {
-                    Text(comparison.label)
-                        .font(.system(size: 10).weight(.bold))
-                        .foregroundStyle(comparison.color)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
-                        .background(
-                            RoundedRectangle(cornerRadius: 5)
-                                .fill(comparison.color.opacity(0.15))
-                        )
-                }
-
-                Spacer()
-
-                // Competition indicator (Task 15)
-                if let info {
-                    competitionIndicator(info.marketInterest)
-                }
-
-                // Cap impact preview (Task 11): "Will use X% of cap"
-                capImpactPctBadge(asking: marketValue)
-
-                if let teamObj = team {
-                    let capAfter = teamObj.availableCap - marketValue
-                    Text("Cap after: \(formatMillions(capAfter))")
-                        .font(.system(size: 9).monospacedDigit())
-                        .foregroundStyle(capAfter >= 0 ? Color.textTertiary : Color.danger)
-                }
-            }
-
-            // Rumor row (decision support)
-            if let rumor = rumorText(for: player, info: freeAgentData[player.id]) {
-                HStack(spacing: 4) {
-                    Image(systemName: rumor.icon)
-                        .font(.system(size: DSType.Size.micro))
-                    Text(rumor.text)
-                        .font(.system(size: 9).italic())
-                    Spacer()
-                }
-                .foregroundStyle(rumor.color)
-            }
-
-            // Third row: contract structure + draft alternative (Tasks 13, 16)
-            HStack(spacing: 8) {
-                // Contract structure hint (Task 16)
-                if let info {
-                    contractStructureHint(info)
-                }
-
-                Spacer()
-
-                // Draft comparison hint (Task 13)
-                if let draftHint = draftAlternativeHint(for: player) {
-                    Text(draftHint)
-                        .font(.system(size: 9))
-                        .foregroundStyle(Color.textTertiary)
-                        .italic()
-                }
-            }
-
-            // Fourth row: vs Current Starter card (decision support)
-            vsCurrentStarterCard(for: player)
+            DSStateSlotRow(slots: [needSlot(for: player), capSlot(for: player)])
         }
-        .padding(.vertical, 8)
-        .contentShape(Rectangle())
     }
 
-    // MARK: - vs Current Starter Card (decision support — letter-grade comparison)
-
-    @ViewBuilder
-    private func vsCurrentStarterCard(for player: Player) -> some View {
-        let starter = teamRoster
-            .filter { $0.position == player.position }
-            .max(by: { $0.overall < $1.overall })
-
-        if let starter {
-            let diff = player.overall - starter.overall
-            let conclusion = starterConclusionLabel(diff)
-            let conclusionColor = starterConclusionColor(diff)
-            let faGrade = LetterGrade.from(numericValue: player.overall)
-            let starterGrade = LetterGrade.from(numericValue: starter.overall)
-
-            HStack(spacing: 10) {
-                // Free agent side
-                VStack(spacing: 1) {
-                    Text(player.fullName)
-                        .font(.system(size: 11).weight(.semibold))
-                        .foregroundStyle(Color.textPrimary)
-                        .lineLimit(1)
-                    Text(faGrade.rawValue)
-                        .font(.subheadline.weight(.heavy))
-                        .foregroundStyle(rowGradeColor(faGrade))
-                    Text("Free Agent")
-                        .font(.system(size: 9))
-                        .foregroundStyle(Color.textTertiary)
-                }
-                .frame(maxWidth: .infinity)
-
-                // Comparison conclusion
-                VStack(spacing: 1) {
-                    Text("vs")
-                        .font(.system(size: 9))
-                        .foregroundStyle(Color.textTertiary)
-                    Text(conclusion)
-                        .font(.system(size: 11).weight(.heavy))
-                        .foregroundStyle(conclusionColor)
-                        .multilineTextAlignment(.center)
-                }
-
-                // Starter side
-                VStack(spacing: 1) {
-                    Text(starter.fullName)
-                        .font(.system(size: 11).weight(.semibold))
-                        .foregroundStyle(Color.textPrimary)
-                        .lineLimit(1)
-                    Text(starterGrade.rawValue)
-                        .font(.subheadline.weight(.heavy))
-                        .foregroundStyle(rowGradeColor(starterGrade))
-                    Text("Starter")
-                        .font(.system(size: 9))
-                        .foregroundStyle(Color.textTertiary)
-                }
-                .frame(maxWidth: .infinity)
-            }
-            .padding(.vertical, 6)
-            .padding(.horizontal, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.backgroundTertiary.opacity(0.5))
+    private func needSlot(for player: Player) -> DSStateSlot {
+        guard let level = needByGroup[positionGroupName(player.position)] else {
+            return DSStateSlot(
+                label: "NEED",
+                tone: .empty,
+                spokenLabel: "Not a position of need"
             )
+        }
+        return DSStateSlot(
+            label: "NEED",
+            tone: level.tone,
+            value: level.rawValue,
+            spokenLabel: "\(level.rawValue) need at \(positionGroupName(player.position))"
+        )
+    }
+
+    /// What signing him at the estimate does to the cap — the old row's two
+    /// separate reads ("8% of cap" and "Cap after: $12.1M") in one slot, so the
+    /// two can never disagree.
+    private func capSlot(for player: Player) -> DSStateSlot {
+        let asking = askingPrice(for: player)
+        let cap = currentSalaryCap
+        let pct = cap > 0 ? Int((Double(asking) / Double(cap) * 100).rounded()) : 0
+
+        if let team, team.availableCap - asking < 0 {
+            let over = asking - team.availableCap
+            return DSStateSlot(
+                label: "CAP",
+                tone: .bad,
+                value: "OVER",
+                spokenLabel: "Signing him at the estimate puts you \(formatMillions(over)) over the cap"
+            )
+        }
+
+        let tone: DSStatusPill.Tone
+        switch pct {
+        case 12...:  tone = .warn
+        case 7..<12: tone = .neutral
+        default:     tone = .ok
+        }
+        return DSStateSlot(
+            label: "CAP",
+            tone: tone,
+            value: pct <= 0 ? "<1%" : "\(pct)%",
+            spokenLabel: "Uses \(pct) percent of the salary cap"
+        )
+    }
+
+    // MARK: Columns
+
+    private func fitCell(for player: Player) -> some View {
+        Group {
+            if let fit = schemeFits[player.id] {
+                Text(fit.rawValue)
+                    .font(DSType.display(11, .heavy))
+                    .foregroundStyle(fit.color)
+            } else {
+                Text("\u{2014}")
+                    .font(DSType.display(11, .semibold))
+                    .foregroundStyle(Color.textTertiary)
+            }
+        }
+        .dsColumn(DSListColumn.label)
+        .accessibilityLabel(
+            schemeFits[player.id].map { "Scheme fit \($0.rawValue)" }
+                ?? "Scheme fit unknown \u{2014} no coordinator scheme on file"
+        )
+    }
+
+    private func ageCell(for player: Player) -> some View {
+        Text("\(player.age)")
+            .font(DSType.display(13, .semibold))
+            .foregroundStyle(Color.textSecondary)
+            .dsColumn(DSListColumn.age)
+            .accessibilityLabel("Age \(player.age)")
+    }
+
+    /// Where he is on his own age curve. Reserved on every row — an absent
+    /// arrow is drawn as a hidden one, so the column cannot shift.
+    private func trendCell(for player: Player) -> some View {
+        Group {
+            if let trend = ageTrend(for: player) {
+                Image(systemName: trend.iconName)
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(trend.color)
+            } else {
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 11, weight: .bold))
+                    .hidden()
+            }
+        }
+        .dsColumn(DSListColumn.glyph)
+        .accessibilityLabel(ageTrend(for: player)?.spoken ?? "At his peak")
+    }
+
+    /// The OVR cell, fog-aware. A rookie who has not reported to camp shows the
+    /// band your scouts gave him, never an exact number.
+    @ViewBuilder
+    private func ovrCell(for player: Player) -> some View {
+        if rookieFog.isFogged(player) {
+            RookieBandChip(player: player, font: DSType.display(11, .heavy))
+                .dsColumn(DSListColumn.ovr)
         } else {
-            // No starter at this position — clear win
-            HStack(spacing: 8) {
-                Image(systemName: "person.fill.badge.plus")
-                    .font(.caption)
-                    .foregroundStyle(Color.success)
-                Text("No \(player.position.rawValue) on roster — immediate starter")
-                    .font(.system(size: 11).weight(.semibold))
-                    .foregroundStyle(Color.success)
-                Spacer()
-            }
-            .padding(.vertical, 6)
-            .padding(.horizontal, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.success.opacity(0.1))
-            )
+            Text("\(player.overall)")
+                .font(DSType.display(15, .heavy))
+                .foregroundStyle(Color.forRating(player.overall))
+                .dsColumn(DSListColumn.ovr)
+                .accessibilityLabel("Overall \(player.overall)")
         }
     }
 
-    private func starterConclusionLabel(_ diff: Int) -> String {
-        if diff >= 3 { return "Upgrade" }
-        if diff >= -2 { return "Lateral" }
-        return "Downgrade"
-    }
-
-    private func starterConclusionColor(_ diff: Int) -> Color {
-        if diff >= 3 { return .success }
-        if diff >= -2 { return .accentGold }
-        return .textSecondary
-    }
-
-    /// The starter comparison's letters read the ONE ladder. Ranking by
-    /// `LetterGrade.rank` gave the B tier gold where every roster and board
-    /// screen paints it blue, folded `A+` in with `A`, and dropped D in with F.
-    private func rowGradeColor(_ grade: LetterGrade) -> Color {
-        Color.forGrade(grade)
-    }
-
-    // MARK: - Motivation Badge (Task 3)
-
-    private func motivationBadge(_ motivation: Motivation) -> some View {
-        let (label, color) = motivationDisplay(motivation)
-        return Text(label)
-            .font(.system(size: 10).weight(.bold))
-            .foregroundStyle(color)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(color.opacity(0.15))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .strokeBorder(color.opacity(0.3), lineWidth: 0.5)
-                    )
-            )
-    }
-
-    private func motivationDisplay(_ motivation: Motivation) -> (String, Color) {
-        switch motivation {
-        case .money:   return ("Money",   .success)
-        case .fame:    return ("Fame",    Color(red: 0.6, green: 0.4, blue: 0.9))  // purple
-        case .winning: return ("Winning", .accentGold)
-        case .loyalty: return ("Loyalty", .accentBlue)
-        case .stats:   return ("Stats",   .orange)
-        }
-    }
-
-    // MARK: - Competition Indicator (Task 15)
-
-    private func competitionIndicator(_ interest: Int) -> some View {
-        let text: String
-        let color: Color
-        switch interest {
-        case 7...10:
-            text = "\(interest) teams (bidding war!)"
-            color = .danger
-        case 5...6:
-            text = "\(interest) teams interested"
-            color = .warning
-        case 3...4:
-            text = "\(interest) teams interested"
-            color = .textSecondary
-        default:
-            text = "\(interest) team\(interest == 1 ? "" : "s") interested"
-            color = .textTertiary
-        }
-
-        return Text(text)
-            .font(.system(size: 9).weight(interest >= 7 ? .bold : .medium))
-            .foregroundStyle(color)
-    }
-
-    // MARK: - Cap Impact % Badge (Task 1: "Will use X% of cap")
-
-    private func capImpactPctBadge(asking: Int) -> some View {
-        // Task #87 / U13: the fallback was a fourth cap constant ($260M).
-        let cap = team?.salaryCap ?? ContractEngine.openingSalaryCap
-        let pct = cap > 0 ? Double(asking) / Double(cap) * 100 : 0
-        let pctRounded = Int(pct.rounded())
-        let color: Color = {
-            if pct >= 12 { return .danger }
-            if pct >= 7 { return .warning }
-            return .textSecondary
-        }()
-        let labelText = pctRounded <= 0 ? "<1% of cap" : "\(pctRounded)% of cap"
-        return Text(labelText)
-            .font(.system(size: 9, weight: .semibold).monospacedDigit())
-            .foregroundStyle(color)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
-            .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
-    }
-
-    // MARK: - Rumor System (Task 2)
-
-    private struct Rumor {
-        let text: String
-        let icon: String
-        let color: Color
-    }
-
-    private func rumorText(for player: Player, info: FreeAgentInfo?) -> Rumor? {
-        if player.personality.motivation == .loyalty {
-            return Rumor(text: "Hometown discount possible", icon: "house.fill", color: .accentBlue)
-        }
-        if let info = info {
-            if info.marketInterest >= 7 {
-                return Rumor(text: "\(info.marketInterest) teams interested — bidding war", icon: "flame.fill", color: .danger)
-            }
-            if info.marketInterest >= 4 {
-                return Rumor(text: "\(info.marketInterest) teams interested", icon: "person.3.fill", color: .warning)
+    /// What he is against the man currently playing that spot. `NEW` means the
+    /// roster has nobody there at all, which is the strongest read on the row.
+    private func vsStarterCell(for player: Player) -> some View {
+        Group {
+            if let starterOVR = starterOVRByPosition[player.position] {
+                let diff = player.overall - starterOVR
+                Text(diff > 0 ? "+\(diff)" : "\(diff)")
+                    .font(DSType.display(13, .heavy))
+                    .foregroundStyle(starterDiffColor(diff))
+            } else {
+                Text("NEW")
+                    .font(DSType.display(11, .heavy))
+                    .foregroundStyle(Color.accentBlue)
             }
         }
-        if player.personality.motivation == .money && player.overall >= 80 {
-            return Rumor(text: "Wants top-of-market money", icon: "dollarsign.circle.fill", color: .accentGold)
-        }
-        if player.personality.motivation == .winning {
-            return Rumor(text: "Will take less for a contender", icon: "trophy.fill", color: .success)
-        }
-        if player.age >= 32 {
-            return Rumor(text: "Likely short prove-it deal", icon: "clock.fill", color: .textSecondary)
-        }
-        return nil
+        .dsColumn(DSListColumn.meet)
+        .accessibilityLabel(vsStarterSpoken(for: player))
     }
 
-    // MARK: - Contract Structure Hint (Task 16)
-
-    @ViewBuilder
-    private func contractStructureHint(_ info: FreeAgentInfo) -> some View {
-        if info.desiredYears >= 4 {
-            let estGuaranteed = Double(info.askingPrice * info.desiredYears) * 0.5
-            Text("Mostly guaranteed \u{2022} ~\(formatMillions(Int(estGuaranteed))) gtd")
-                .font(.system(size: 9))
-                .foregroundStyle(Color.warning.opacity(0.8))
-        } else if info.desiredYears >= 2 {
-            let estGuaranteed = Double(info.askingPrice * info.desiredYears) * 0.35
-            Text("~\(formatMillions(Int(estGuaranteed))) gtd")
-                .font(.system(size: 9))
-                .foregroundStyle(Color.textTertiary)
-        }
+    private func moneyCell(for player: Player) -> some View {
+        Text(formatMillions(askingPrice(for: player)))
+            .font(DSType.display(13, .heavy))
+            .foregroundStyle(Color.textPrimary)
+            .dsColumn(DSListColumn.money)
+            .accessibilityLabel("Asking \(formatMillions(askingPrice(for: player))) per year")
     }
 
-    // MARK: - Filtering & Sorting
-
-    private var filteredAndSorted: [Player] {
-        let filtered = allFreeAgents.filter { positionFilter.matches($0.position) }
-        switch sortOption {
-        case .overall:
-            return filtered.sorted { $0.overall > $1.overall }
-        case .age:
-            return filtered.sorted { $0.age < $1.age }
-        case .salary:
-            return filtered.sorted {
-                ContractEngine.estimateMarketValue(player: $0, salaryCap: currentSalaryCap) >
-                ContractEngine.estimateMarketValue(player: $1, salaryCap: currentSalaryCap)
-            }
-        case .position:
-            return filtered.sorted { $0.position.rawValue < $1.position.rawValue }
-        case .interest:
-            return filtered.sorted {
-                (freeAgentData[$0.id]?.marketInterest ?? 0) > (freeAgentData[$1.id]?.marketInterest ?? 0)
-            }
-        case .schemeFit:
-            return filtered.sorted {
-                (computeSchemeFit(for: $0)?.sortOrder ?? 3) < (computeSchemeFit(for: $1)?.sortOrder ?? 3)
+    private func yearsCell(for player: Player) -> some View {
+        Group {
+            if let years = freeAgentData[player.id]?.desiredYears {
+                Text("\(years)y")
+                    .font(DSType.display(13, .semibold))
+                    .foregroundStyle(Color.textSecondary)
+            } else {
+                Text("\u{2014}")
+                    .font(DSType.display(11, .semibold))
+                    .foregroundStyle(Color.textTertiary)
             }
         }
+        .dsColumn(DSListColumn.tight)
+        .accessibilityLabel(
+            freeAgentData[player.id].map { "Wants \($0.desiredYears) years" } ?? "Contract length unknown"
+        )
     }
 
-    // MARK: - Targets Summary Bar (Task 14)
+    /// How many clubs are in on him. The old row said this three times — a
+    /// flame, a sentence and a rumour line — in one column now, with the
+    /// threshold tones the sentence used.
+    private func bidsCell(for player: Player) -> some View {
+        Group {
+            if let interest = freeAgentData[player.id]?.marketInterest {
+                Text("\(interest)")
+                    .font(DSType.display(13, .heavy))
+                    .foregroundStyle(interestColor(interest))
+            } else {
+                Text("\u{2014}")
+                    .font(DSType.display(11, .semibold))
+                    .foregroundStyle(Color.textTertiary)
+            }
+        }
+        .dsColumn(DSListColumn.meet)
+        .accessibilityLabel(
+            freeAgentData[player.id].map { info in
+                info.marketInterest >= 7
+                    ? "\(info.marketInterest) teams interested \u{2014} bidding war"
+                    : "\(info.marketInterest) team\(info.marketInterest == 1 ? "" : "s") interested"
+            } ?? "Market interest unknown"
+        )
+    }
+
+    // MARK: Row actions
+
+    /// The leading target star — the one row action that lives OUTSIDE the row
+    /// anatomy, in `DSListColumn.leadingAction`'s 44 pt.
+    private func targetButton(for player: Player) -> some View {
+        let isTargeted = targetedPlayerIDs.contains(player.id)
+        return Button {
+            toggleTarget(player.id)
+        } label: {
+            Image(systemName: isTargeted ? "star.fill" : "star")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(isTargeted ? Color.accentGold : Color.textTertiary)
+                .frame(width: DSListColumn.leadingAction, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(isTargeted ? "Untarget \(player.fullName)" : "Target \(player.fullName)")
+    }
+
+    /// The trailing bid. Secondary styling on purpose: P5 gives gold to the one
+    /// primary commit on a screen, and a market with four hundred rows cannot
+    /// have four hundred of them. The commit itself is inside the sheet.
+    private func offerButton(for player: Player) -> some View {
+        Button {
+            negotiationTarget = player
+        } label: {
+            Text("OFFER")
+                .font(DSType.display(11, .heavy))
+                .tracking(0.5)
+                .foregroundStyle(team == nil ? Color.textTertiary : Color.textPrimary)
+                .frame(width: Self.offerColumn - DSSpacing.xxs, height: 32)
+                .background(
+                    RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                        .fill(Color.backgroundTertiary)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                        .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+                )
+                // 44 pt measured, even though the painted chip is 32 (§2.12).
+                .frame(width: Self.offerColumn, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(team == nil)
+        .accessibilityLabel("Open contract negotiation with \(player.fullName)")
+    }
+
+    // MARK: - Targets Summary Bar
 
     private var targetsSummaryBar: some View {
         let targeted = allFreeAgents.filter { targetedPlayerIDs.contains($0.id) }
-        let totalSalary = targeted.reduce(0) {
-            $0 + ContractEngine.estimateMarketValue(player: $1, salaryCap: currentSalaryCap)
-        }
+        let totalSalary = targeted.reduce(0) { $0 + askingPrice(for: $1) }
         let capRemaining = (team?.availableCap ?? 0) - totalSalary
 
-        return HStack(spacing: 12) {
+        return HStack(spacing: DSSpacing.sm) {
             Image(systemName: "star.fill")
                 .font(.system(size: 14))
                 .foregroundStyle(Color.accentGold)
 
             Text("\(targeted.count) target\(targeted.count == 1 ? "" : "s") selected")
-                .font(.caption.weight(.semibold))
+                .font(DSType.text(13, .semibold, prose: true))
                 .foregroundStyle(Color.textPrimary)
 
-            Text("\u{2022}")
+            Text("\u{00B7}")
                 .foregroundStyle(Color.textTertiary)
 
             Text("~\(formatMillions(totalSalary))/yr")
-                .font(.caption.weight(.semibold).monospacedDigit())
+                .font(DSType.display(13, .heavy))
                 .foregroundStyle(Color.textPrimary)
 
-            Text("\u{2022}")
+            Text("\u{00B7}")
                 .foregroundStyle(Color.textTertiary)
 
             Text("Cap remaining: \(formatMillions(capRemaining))")
-                .font(.caption.weight(.semibold).monospacedDigit())
+                .font(DSType.display(13, .heavy))
                 .foregroundStyle(capRemaining >= 0 ? Color.success : Color.danger)
 
             Spacer()
@@ -875,13 +955,16 @@ struct FreeAgencyView: View {
                 targetedPlayerIDs.removeAll()
             } label: {
                 Text("Clear")
-                    .font(.caption.weight(.semibold))
+                    .font(DSType.text(13, .semibold))
                     .foregroundStyle(Color.textSecondary)
+                    .padding(.horizontal, DSSpacing.sm)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 10)
+        .padding(.horizontal, DSSpacing.lg)
+        .padding(.vertical, DSSpacing.xxs)
         .background(Color.backgroundSecondary)
         .overlay(
             Rectangle()
@@ -891,7 +974,48 @@ struct FreeAgencyView: View {
         )
     }
 
-    // MARK: - Helpers
+    // MARK: - Filtering & Sorting
+    //
+    // One ascending pass, reversed when the header says descending, so every
+    // column flips the same way and no comparator carries a hidden direction.
+
+    private var filteredAndSorted: [Player] {
+        let filtered = allFreeAgents.filter { positionFilter.matches($0.position) }
+        let ascending: [Player]
+
+        switch sortColumn {
+        case .position:
+            ascending = filtered.sorted { $0.position.rawValue < $1.position.rawValue }
+        case .name:
+            ascending = filtered.sorted {
+                $0.fullName.localizedCaseInsensitiveCompare($1.fullName) == .orderedAscending
+            }
+        case .schemeFit:
+            ascending = filtered.sorted {
+                (schemeFits[$0.id]?.rank ?? -1) < (schemeFits[$1.id]?.rank ?? -1)
+            }
+        case .age:
+            ascending = filtered.sorted { $0.age < $1.age }
+        case .overall:
+            ascending = filtered.sorted { $0.overall < $1.overall }
+        case .vsStarter:
+            ascending = filtered.sorted { starterDiff(for: $0) < starterDiff(for: $1) }
+        case .ask:
+            ascending = filtered.sorted { askingPrice(for: $0) < askingPrice(for: $1) }
+        case .years:
+            ascending = filtered.sorted {
+                (freeAgentData[$0.id]?.desiredYears ?? 0) < (freeAgentData[$1.id]?.desiredYears ?? 0)
+            }
+        case .interest:
+            ascending = filtered.sorted {
+                (freeAgentData[$0.id]?.marketInterest ?? 0) < (freeAgentData[$1.id]?.marketInterest ?? 0)
+            }
+        }
+
+        return sortAscending ? ascending : ascending.reversed()
+    }
+
+    // MARK: - Loading
 
     private func loadData() {
         // Load free agents: contractYearsRemaining == 0 and no team
@@ -913,7 +1037,10 @@ struct FreeAgencyView: View {
         allFreeAgents = ((try? modelContext.fetch(descriptor)) ?? []).filter { !$0.isRetired }
 
         // Load player's team for cap info
-        guard let teamID = career.teamID else { return }
+        guard let teamID = career.teamID else {
+            rebuildCaches()
+            return
+        }
         let teamDescriptor = FetchDescriptor<Team>(predicate: #Predicate { $0.id == teamID })
         team = try? modelContext.fetch(teamDescriptor).first
 
@@ -925,7 +1052,7 @@ struct FreeAgencyView: View {
         let coachDescriptor = FetchDescriptor<Coach>(predicate: #Predicate { $0.teamID == teamID })
         teamCoaches = (try? modelContext.fetch(coachDescriptor)) ?? []
 
-        // Load team draft picks for draft alternative hints
+        // Load team draft picks — one screen-level "YOUR PICKS" read.
         let currentSeason = career.currentSeason
         let pickDescriptor = FetchDescriptor<DraftPick>(
             predicate: #Predicate { $0.currentTeamID == teamID && $0.seasonYear == currentSeason && $0.isComplete == false }
@@ -942,41 +1069,93 @@ struct FreeAgencyView: View {
                 marketInterest: fa.marketInterest
             )
         }
+
+        rebuildCaches()
     }
 
-    // MARK: - Starter Comparison (Task 7)
+    /// Everything the rows and the sorts read, computed once.
+    ///
+    /// These are the same functions the old row body called — the change is
+    /// that `estimateMarketValue` and the scheme-fit switch now run once per
+    /// player instead of once per player per frame plus `n log n` times inside
+    /// every sort.
+    private func rebuildCaches() {
+        let cap = currentSalaryCap
 
-    private struct StarterComparisonResult {
-        let label: String
-        let color: Color
-    }
-
-    private func computeStarterComparison(for player: Player) -> StarterComparisonResult? {
-        let starter = teamRoster
-            .filter { $0.position == player.position }
-            .max(by: { $0.overall < $1.overall })
-
-        guard let starter else { return StarterComparisonResult(label: "No starter", color: .accentBlue) }
-
-        let diff = player.overall - starter.overall
-        let label: String
-        let color: Color
-
-        if diff > 2 {
-            label = "+\(diff) vs starter"
-            color = .success
-        } else if diff < -2 {
-            label = "\(diff) vs starter"
-            color = .danger
-        } else {
-            label = diff == 0 ? "= starter" : (diff > 0 ? "+\(diff) vs starter" : "\(diff) vs starter")
-            color = .warning
+        var values: [UUID: Int] = [:]
+        var fits: [UUID: SchemeFitLevel] = [:]
+        values.reserveCapacity(allFreeAgents.count)
+        for player in allFreeAgents {
+            values[player.id] = ContractEngine.estimateMarketValue(player: player, salaryCap: cap)
+            if let fit = computeSchemeFit(for: player) {
+                fits[player.id] = fit
+            }
         }
+        marketValues = values
+        schemeFits = fits
 
-        return StarterComparisonResult(label: label, color: color)
+        var starters: [Position: Int] = [:]
+        for player in teamRoster {
+            starters[player.position] = max(starters[player.position] ?? 0, player.overall)
+        }
+        starterOVRByPosition = starters
+
+        teamNeeds = computeTeamNeeds()
+        needByGroup = Dictionary(
+            teamNeeds.map { ($0.position, $0.level) },
+            uniquingKeysWith: { first, _ in first }
+        )
     }
 
-    // MARK: - Scheme Fit (Task 8)
+    /// What his agent is asking, per year, in thousands.
+    ///
+    /// The old row printed `ContractEngine.estimateMarketValue` — the ladder
+    /// price for his rating, which is NOT the number the agent walks into the
+    /// room with. `FreeAgencyEngine.generateFreeAgentMarket` prices him off
+    /// `agentDemand`, that is what FA Weekly quotes, and that is what a
+    /// settlement is drawn against. One man with two prices on two screens is
+    /// §2.13's arithmetic gate, so the column reads the ASK; the ladder price
+    /// stays as the fallback for anyone the market pass filtered out.
+    private func askingPrice(for player: Player) -> Int {
+        if let ask = freeAgentData[player.id]?.askingPrice { return ask }
+        return marketValues[player.id]
+            ?? ContractEngine.estimateMarketValue(player: player, salaryCap: currentSalaryCap)
+    }
+
+    /// OVR above the incumbent. No incumbent counts as the full OVR, which puts
+    /// "nobody plays this position" at the top of a descending `VS ST` sort —
+    /// which is where it belongs.
+    private func starterDiff(for player: Player) -> Int {
+        player.overall - (starterOVRByPosition[player.position] ?? 0)
+    }
+
+    private func starterDiffColor(_ diff: Int) -> Color {
+        if diff > 2 { return .success }
+        if diff < -2 { return .danger }
+        return .textSecondary
+    }
+
+    private func vsStarterSpoken(for player: Player) -> String {
+        guard let starterOVR = starterOVRByPosition[player.position] else {
+            return "No \(player.position.rawValue) on the roster \u{2014} immediate starter"
+        }
+        let diff = player.overall - starterOVR
+        if diff > 2 { return "\(diff) points better than your starter" }
+        if diff < -2 { return "\(-diff) points worse than your starter" }
+        return "Level with your starter"
+    }
+
+    /// A count of rival clubs under the `BIDS` header, not a rating — P7 rule 2,
+    /// status at a stated threshold. The sign is inverted on purpose (P7 rule 3):
+    /// more bidders is worse news for the user, so a crowded market is `.bad`,
+    /// and the VoiceOver label below says "bidding war" in words.
+    private func interestColor(_ interest: Int) -> Color {
+        if interest >= 7 { return .forStatus(.bad) }  // bidding war
+        if interest >= 5 { return .forStatus(.warn) } // contested
+        return .forStatus(.neutral)                   // quiet market
+    }
+
+    // MARK: - Scheme Fit
 
     private func computeSchemeFit(for player: Player) -> SchemeFitLevel? {
         let position = player.position
@@ -1114,54 +1293,35 @@ struct FreeAgencyView: View {
         }
     }
 
-    // MARK: - OVR Trend (Task 12)
+    // MARK: - Age Trend
 
-    private struct OVRTrend {
+    private struct AgeTrend {
         let iconName: String
         let color: Color
+        let spoken: String
     }
 
-    private func computeOVRTrend(for player: Player) -> OVRTrend? {
+    /// Where he sits on his position's age curve. Semantic status at a stated
+    /// threshold, never the rating ladder — an age is not a 0–100 rating (§P7).
+    private func ageTrend(for player: Player) -> AgeTrend? {
         let peak = player.position.peakAgeRange
         if player.age > peak.upperBound {
-            return OVRTrend(iconName: "arrow.down.right", color: .danger)
+            return AgeTrend(iconName: "arrow.down.right", color: .danger, spoken: "Past his peak years")
         } else if player.age < peak.lowerBound {
-            return OVRTrend(iconName: "arrow.up.right", color: .success)
-        } else {
-            // In peak range, check if near the end
-            if player.age >= peak.upperBound - 1 {
-                return OVRTrend(iconName: "arrow.right", color: .warning)
-            }
-            return nil
+            return AgeTrend(iconName: "arrow.up.right", color: .success, spoken: "Still rising toward his peak")
+        } else if player.age >= peak.upperBound - 1 {
+            return AgeTrend(iconName: "arrow.right", color: .alertOrange, spoken: "At the end of his peak years")
         }
+        return nil
     }
 
-    // MARK: - Draft Alternative Hint (Task 13)
-
-    private func draftAlternativeHint(for player: Player) -> String? {
-        let marketValue = ContractEngine.estimateMarketValue(player: player, salaryCap: currentSalaryCap)
-        // Only show for expensive players (> $5M/yr)
-        guard marketValue > 5000 else { return nil }
-
-        // Check if team has draft picks that could address this position
-        let posGroup = positionGroupName(player.position)
-        let bestPick = teamDraftPicks
-            .filter { !$0.isComplete }
-            .sorted(by: { $0.pickNumber < $1.pickNumber })
-            .first
-
-        guard let pick = bestPick else { return nil }
-
-        let roundLabel = "Rd \(pick.round)"
-        return "Draft alt: ~\(roundLabel) \(posGroup) pick available"
-    }
-
-    // MARK: - Team Needs (Task 9)
+    // MARK: - Team Needs
 
     private struct PositionNeed: Identifiable {
-        let id = UUID()
         let position: String
         let level: NeedLevel
+
+        var id: String { position }
     }
 
     private func computeTeamNeeds() -> [PositionNeed] {
@@ -1174,11 +1334,9 @@ struct FreeAgencyView: View {
             ("WR", [.WR], 4),
             ("TE", [.TE], 2),
             ("OL", [.LT, .LG, .C, .RG, .RT], 8),
-            ("DE", [.DE], 3),
-            ("DT", [.DT], 3),
+            ("DL", [.DE, .DT], 6),
             ("LB", [.OLB, .MLB], 5),
-            ("CB", [.CB], 4),
-            ("S", [.FS, .SS], 3),
+            ("DB", [.CB, .FS, .SS], 7),
         ]
 
         var needs: [PositionNeed] = []
@@ -1203,26 +1361,10 @@ struct FreeAgencyView: View {
         }
 
         // Sort by priority
-        return needs.sorted { needPriority($0.level) > needPriority($1.level) }
+        return needs.sorted { $0.level.priority > $1.level.priority }
     }
 
-    private func needPriority(_ level: NeedLevel) -> Int {
-        switch level {
-        case .high: return 3
-        case .med:  return 2
-        case .low:  return 1
-        }
-    }
-
-    private func needLevelColor(_ level: NeedLevel) -> Color {
-        switch level {
-        case .high: return .danger
-        case .med:  return .warning
-        case .low:  return .textSecondary
-        }
-    }
-
-    // MARK: - Target Toggle (Task 14)
+    // MARK: - Target Toggle
 
     private func toggleTarget(_ playerID: UUID) {
         if targetedPlayerIDs.contains(playerID) {
@@ -1242,6 +1384,16 @@ struct FreeAgencyView: View {
         }
     }
 
+    private func motivationLabel(_ motivation: Motivation) -> String {
+        switch motivation {
+        case .money:   return "Money"
+        case .fame:    return "Fame"
+        case .winning: return "Winning"
+        case .loyalty: return "Loyalty"
+        case .stats:   return "Stats"
+        }
+    }
+
     private func formatMillions(_ thousands: Int) -> String {
         let millions = Double(thousands) / 1000.0
         if millions >= 1.0 {
@@ -1251,7 +1403,7 @@ struct FreeAgencyView: View {
         }
     }
 
-    /// Format count with comma grouping (Task 1).
+    /// Format count with comma grouping.
     private func formattedCount(_ count: Int) -> String {
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
@@ -1260,6 +1412,9 @@ struct FreeAgencyView: View {
         return formatter.string(from: NSNumber(value: count)) ?? "\(count)"
     }
 
+    /// The position GROUP a need is keyed by. The needs table and the row slot
+    /// read the same function, so a row can never claim a need the strip above
+    /// it does not list.
     private func positionGroupName(_ position: Position) -> String {
         switch position {
         case .QB: return "QB"
@@ -1272,6 +1427,26 @@ struct FreeAgencyView: View {
         case .CB, .FS, .SS: return "DB"
         case .K, .P: return "ST"
         }
+    }
+
+    private func accessibilityText(for player: Player) -> String {
+        var parts: [String] = [
+            player.fullName,
+            player.position.rawValue,
+            "age \(player.age)",
+        ]
+        if !rookieFog.isFogged(player) {
+            parts.append("overall \(player.overall)")
+        }
+        parts.append("asking \(formatMillions(askingPrice(for: player))) per year")
+        if let info = freeAgentData[player.id] {
+            parts.append("wants \(info.desiredYears) years")
+            parts.append("\(info.marketInterest) team\(info.marketInterest == 1 ? "" : "s") interested")
+        }
+        if let fit = schemeFits[player.id] {
+            parts.append("\(fit.rawValue) scheme fit")
+        }
+        return parts.joined(separator: ", ")
     }
 }
 

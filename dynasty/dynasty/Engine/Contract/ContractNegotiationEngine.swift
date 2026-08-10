@@ -89,7 +89,7 @@ struct NegotiationMessage: Identifiable {
 
 // MARK: - Negotiation State
 
-enum NegotiationOutcome {
+enum AgentNegotiationOutcome {
     case pending
     case dealReached(NegotiationOffer)
     case walkedAway
@@ -1313,7 +1313,7 @@ enum ContractNegotiationEngine {
     struct AgentResponse {
         let tone: AgentToneKey
         let counterOffer: NegotiationOffer?
-        let outcome: NegotiationOutcome
+        let outcome: AgentNegotiationOutcome
         /// The demand AFTER grading — ratcheted if the offer was an insult,
         /// otherwise unchanged.
         let demand: ContractDemand
@@ -1533,7 +1533,7 @@ enum ContractNegotiationEngine {
 
     /// What a pay-cut ask is answered with.
     ///
-    /// Deliberately NOT ``NegotiationOutcome``: a pay cut is a yes/no question
+    /// Deliberately NOT ``AgentNegotiationOutcome``: a pay cut is a yes/no question
     /// about one number, not a bid/counter loop that can walk away or break off
     /// for the offseason. Reusing the four-way outcome would have made every
     /// downstream `switch` claim to handle states this conversation cannot enter.
@@ -1775,7 +1775,7 @@ enum ContractNegotiationEngine {
     struct ChatVerdict {
         let message: String
         let counterOffer: NegotiationOffer?
-        let outcome: NegotiationOutcome
+        let outcome: AgentNegotiationOutcome
         /// The frame the agent is in — what the bubble, the chip and the border
         /// all key off.
         let tone: AgentToneKey

@@ -1541,33 +1541,31 @@ struct BigBoardView<Header: View>: View {
     @ViewBuilder
     private var bigBoardColumnHeaders: some View {
         HStack(spacing: 0) {
-            // Leading star-button column (44 pt): unlabelled, but in every row.
-            Spacer().frame(width: 44)
+            // Leading star-button column: unlabelled, but in every row.
+            Spacer().frame(width: DSListColumn.leadingAction)
 
             // Rank. The "/350" denominator that used to print under every one
             // of these numbers is gone — same value on every row, at 6 pt.
-            Text("#")
-                .frame(width: 24, alignment: .center)
+            DSColumnHeader("#", width: DSListColumn.rank)
 
             // POS — drawn only when the rows draw it, i.e. when the hub's
             // position chips are NOT already scoping the board to one group.
             if positionFilter == .all {
-                Text("POS")
-                    .frame(width: 36, alignment: .center)
+                DSColumnHeader("POS", width: DSListColumn.position)
             }
 
             // Portrait column — unlabelled, but reserved so the header keeps
             // matching the row (30 pt `PersonFaceView` + 6 pt leading padding).
-            Spacer().frame(width: 36)
+            Spacer().frame(width: DSListColumn.scanPortrait)
 
             // NAME
-            Text("NAME")
-                .frame(minWidth: 80, alignment: .leading)
-                .padding(.leading, 6)
+            DSColumnHeader("NAME", alignment: .leading)
+                .frame(minWidth: DSListColumn.identityMin, alignment: .leading)
+                .padding(.leading, DSListColumn.identityGap)
 
             // OVR — leading, beside the name, in every mode. Mirrors the row's
             // `boardOverallBadge`, same 50 pt.
-            HStack(spacing: 2) {
+            HStack(spacing: 1) {
                 Text("OVR")
                 InfoTooltipButton(
                     text: "Scout's read on the prospect. When you have logged your own grade you'll see \"Yours / Scout\" \u{2014} a wider gap means more uncertainty in the scout's evaluation. Letter grades use the standard A-F tiers (see legend).",
@@ -1575,7 +1573,7 @@ struct BigBoardView<Header: View>: View {
                     size: 9
                 )
             }
-            .frame(width: 50, alignment: .center)
+            .dsColumn(DSListColumn.grade)
 
             Spacer(minLength: 2)
 
@@ -1592,44 +1590,43 @@ struct BigBoardView<Header: View>: View {
             // printed `86 MEET` next to `C-/B+ TAPE` and asked the user to
             // compare a number with a letter in the same strip. Two instruments,
             // two questions, two columns.
-            HStack(spacing: 2) {
+            HStack(spacing: 1) {
                 Text("TAPE")
                 InfoTooltipButton(
                     text: "What your scouting department has on his head off tape \u{2014} a band off awareness and learning, and only as tight as the reports you have paid for. A dash means nobody in your building has filed on him.",
                     size: 9
                 )
             }
-            .frame(width: 42, alignment: .center)
+            .dsColumn(DSListColumn.tape)
 
-            HStack(spacing: 2) {
+            HStack(spacing: 1) {
                 Text("MEET")
                 InfoTooltipButton(
                     text: "What your own people got out of him in a room. An exact football-IQ number, because that is what a meeting produces. A dash means you have not spent an interview slot on him.",
                     size: 9
                 )
             }
-            .frame(width: 38, alignment: .center)
+            .dsColumn(DSListColumn.meet)
 
             // Always-visible: value vs the user's own grade. Blank for anyone
             // he has not graded — the column is a read on HIS opinion, and
             // there is no honest number to print without one.
-            HStack(spacing: 2) {
+            HStack(spacing: 1) {
                 Text("VAL")
                 InfoTooltipButton(
                     text: "Value versus your own grade. The market number is media consensus \u{2014} the latest mock's pick and the projected round, never your scouts' read. A green +18 means the board will let him fall eighteen picks past where you have him; an amber \u{2212}12 means taking him where you rate him is a reach. Blank until you grade him.",
                     size: 9
                 )
             }
-            .frame(width: 34, alignment: .center)
+            .dsColumn(DSListColumn.value)
 
             // OVR moved LEADING, beside NAME — see the block above.
 
             // Always-visible: Proj Rd (overview) or Grade (others)
             if attributeTab == .overview {
-                Text("PROJ")
-                    .frame(width: 52, alignment: .center)
+                DSColumnHeader("PROJ", width: DSListColumn.projection)
             } else {
-                HStack(spacing: 2) {
+                HStack(spacing: 1) {
                     Text("GRD")
                     InfoTooltipButton(
                         text: "Letter grade summarizes the scout's overall evaluation. A = elite / first-round talent, B = quality starter, C = average, D = back-end roster, F = undraftable.",
@@ -1637,14 +1634,19 @@ struct BigBoardView<Header: View>: View {
                         size: 9
                     )
                 }
-                .frame(width: 30, alignment: .center)
+                .dsColumn(DSListColumn.tight)
             }
 
             // Drag handle spacer
-            Text("")
-                .frame(width: 22)
+            Color.clear.frame(width: DSListColumn.affordance, height: 1)
         }
-        .font(.system(size: 8, weight: .bold))
+        // 8 pt → the 11 pt display floor (P7 corollary, and §2.2's first
+        // sanctioned change). The four groups that carry an `InfoTooltipButton`
+        // are `dsColumn`-boxed rather than plain-framed: at 11 pt "MEET" plus
+        // its info glyph measures the full 38 pt of its column, so the cell has
+        // to be able to shrink a hair and clip — a fixed frame with neither is
+        // how a header label paints over its neighbour.
+        .font(DSType.display(11, .heavy))
         .foregroundStyle(Color.textTertiary)
         .textCase(.uppercase)
     }
@@ -2006,42 +2008,34 @@ struct BigBoardView<Header: View>: View {
 
     // MARK: - Empty State
 
+    /// §2.7's model, now mounted as the component it was the model for.
+    ///
+    /// The four beats are unchanged — icon → title → what would fill this →
+    /// the action that fills it — and so is the branch that makes the third
+    /// beat honest: "no scouts on staff" and "no reports on this class" are
+    /// different problems and lead to different buttons. What `DSEmptyState`
+    /// adds is the 44 pt target floor its hand-rolled buttons missed (they
+    /// measured ~39) and the guarantee that the roster, the market and the
+    /// eight other empty lists in Wave 1 say it in the same shape.
     private var emptyState: some View {
-        // The board can only fill up via scouting, so a bare "it's empty"
-        // message left the user staring at a full-screen void with nothing to
-        // press. Both routes out of the dead end are offered here.
-        VStack(spacing: 16) {
-            Image(systemName: "list.star")
-                .font(.system(size: 52))
-                .foregroundStyle(Color.textTertiary)
-
-            Text("Big Board Is Empty")
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(Color.textPrimary)
-
-            Text(emptyStateMessage)
-                .font(.subheadline)
-                .foregroundStyle(Color.textSecondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 40)
-
-            HStack(spacing: 12) {
-                emptyStateButton(
+        DSEmptyState(
+            density: .scan,
+            icon: "list.star",
+            title: "Big Board Is Empty",
+            message: emptyStateMessage,
+            actions: onSwitchTab == nil ? [] : [
+                .init(
                     title: "Hire Scouts",
                     systemImage: "person.badge.plus",
                     isPrimary: scoutCount == 0
-                ) { onSwitchTab?(.scouts) }
-
-                emptyStateButton(
+                ) { onSwitchTab?(.scouts) },
+                .init(
                     title: "Combine Numbers",
                     systemImage: "figure.run",
                     isPrimary: scoutCount > 0
-                ) { onSwitchTab?(.combine) }
-            }
-            .padding(.top, 4)
-            .opacity(onSwitchTab == nil ? 0 : 1)
-            .disabled(onSwitchTab == nil)
-        }
+                ) { onSwitchTab?(.combine) },
+            ]
+        )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
@@ -2050,30 +2044,6 @@ struct BigBoardView<Header: View>: View {
             return "You have no scouts on staff, so nobody is filing reports. Hire a scout, then order film study to build your board."
         }
         return "Nobody in your building has filed on this class yet. Order film study at the film-study stage \u{2014} every report you pay for puts a man on this board."
-    }
-
-    private func emptyStateButton(
-        title: String,
-        systemImage: String,
-        isPrimary: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Label(title, systemImage: systemImage)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(isPrimary ? Color.backgroundPrimary : Color.textPrimary)
-                .padding(.horizontal, 18)
-                .padding(.vertical, 11)
-                .background(
-                    RoundedRectangle(cornerRadius: DSCornerRadius.inline)
-                        .fill(isPrimary ? Color.accentGold : Color.backgroundTertiary)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: DSCornerRadius.inline)
-                        .strokeBorder(isPrimary ? Color.clear : Color.surfaceBorder, lineWidth: 1)
-                )
-        }
-        .buttonStyle(.plain)
     }
 
     // MARK: - Assessment Sheet
@@ -2362,102 +2332,45 @@ struct BigBoardRowView: View {
     var hidesPositionBadge: Bool = false
     var onGradeTap: (() -> Void)? = nil
 
+    /// The board row IS the list standard (`UI_REDESIGN_VISION` §2.2) — the
+    /// anatomy was derived from this row, so the conversion is a re-hosting and
+    /// not a redesign. The column grammar is frozen: rank + hand-move badge ·
+    /// position badge · portrait · identity with mark chip and the three prep
+    /// slots · lens columns · TAPE · MEET · VAL · OVR · PROJ RD · handle, in
+    /// that order, with TAPE and MEET as two separate always-visible columns and
+    /// OVR staying the dual grade.
+    ///
+    /// Exactly the two sanctioned changes landed here, and no third:
+    ///
+    ///  1. the 6–8 pt micro chips rise to the 11 pt display floor (P7);
+    ///  2. `ProspectPrepChips`' icon row becomes three NAMED slots —
+    ///     `RPT` / `CMB` / `MEET` — so an unset slot is a legible dimmed word
+    ///     rather than a missing glyph. See ``prepSlots``.
     var body: some View {
-        HStack(spacing: 0) {
-            // Rank, and the movement badge when the user has hand-moved him.
-            //
-            // The "/350" denominator under every rank is gone: it was the same
-            // number on all 350 rows, printed at 6 pt — below the legibility
-            // floor — and it forced this column into a two-line stack that set
-            // the row's height. The board size belongs in the header, not on
-            // every row of it.
-            VStack(spacing: 0) {
-                Text("\(rank)")
-                    .font(.system(size: DSType.Size.caption, weight: .heavy).monospacedDigit())
-                    .foregroundStyle(manualMoveRankColor)
-                if let orig = originalPosition, orig != rank {
-                    let movedUp = rank < orig
-                    Text("\(movedUp ? "\u{2191}" : "\u{2193}")\(orig)")
-                        .font(.system(size: 8, weight: .semibold).monospacedDigit())
-                        .foregroundStyle(movedUp ? Color.success : Color.dangerText)
-                }
-            }
-            .frame(width: 24, alignment: .center)
-
+        DSListRow(
+            density: .scan,
+            // The movement row is now reserved on EVERY line (`DSRankSlot`).
+            // Before this the first column jittered down the page: a rank with
+            // a `↑6` badge was two lines tall and a rank without one was one.
+            rank: DSRank(value: rank, origin: originalPosition),
             // Position badge — dropped while a position filter is on. The chips
             // above the list already say "QB", and repeating it on every row of
             // a QB-only board is 36 pt of column spent on a constant.
-            if !hidesPositionBadge {
-                boardPositionBadge
-            }
-
-            // Portrait (30 pt — same height as the row's two text lines, so
-            // board rows keep their current density).
+            badge: hidesPositionBadge
+                ? nil
+                : DSRowBadge(
+                    text: prospect.position.rawValue,
+                    tint: positionColor,
+                    accessibilityLabel: "\(prospect.position.rawValue), \(prospect.position.side.rawValue)"
+                ),
+            affordance: .dragHandle
+        ) {
+            // Portrait (30 pt) in the 36 pt slot the header reserves.
             PersonFaceView(prospect: prospect, size: .small)
                 .padding(.leading, 6)
-
-            // Name column (compact)
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 4) {
-                    Text(prospect.fullName)
-                        .font(.system(size: DSType.Size.body, weight: .semibold))
-                        .foregroundStyle(Color.textPrimary)
-                        .lineLimit(1)
-
-                    // The ONE mark, with a dog-ear when a board note exists.
-                    ProspectMarkChip(
-                        mark: prospect.userMark,
-                        showsNote: !prospect.userMarkNote.isEmpty
-                    )
-
-                    if isSelectedForCompare {
-                        Image(systemName: "checkmark.rectangle.stack.fill")
-                            .font(.system(size: 8))
-                            .foregroundStyle(Color.accentBlue)
-                            .accessibilityLabel("In compare tray")
-                    }
-
-                    UserGradeBadge(prospectID: prospect.id)
-                }
-
-                // Compact sub-info icons.
-                //
-                // Two chips left this line. The green "Value" badge duplicated
-                // the VAL column two inches to the right — same fact, two
-                // encodings, one of them a word — and the newspaper glyph said
-                // only "a combine mention exists", which the CMB badge's own
-                // performance tint already carries.
-                HStack(spacing: 4) {
-                    // Prep state: reports filed / room taken / numbers measured.
-                    // Three fixed slots, dimmed when empty — the icons used to
-                    // appear only when the work HAD been done, which made the
-                    // holes in the board invisible, and the holes are the whole
-                    // question the user is scanning for.
-                    ProspectPrepChips(prospect: prospect)
-
-                    // CMB badge with color coding (#7)
-                    if prospect.combineInvite {
-                        Text("CMB")
-                            .font(.system(size: 7, weight: .bold))
-                            .foregroundStyle(Color.backgroundPrimary)
-                            .padding(.horizontal, 3)
-                            .padding(.vertical, 1)
-                            .background(combinePerformanceColor, in: RoundedRectangle(cornerRadius: 2))
-                    }
-                    // Is he even in this draft? (S11)
-                    ProspectDeclarationChip(prospect: prospect)
-
-                    // #6: Current starter comparison
-                    if let comparison = starterComparison {
-                        Text(comparison)
-                            .font(.system(size: 7, weight: .semibold))
-                            .foregroundStyle(comparison.hasPrefix("+") ? Color.success : comparison.contains("Depth") ? Color.dangerText : Color.textTertiaryReadable)
-                    }
-                }
-            }
-            .frame(minWidth: 80, alignment: .leading)
-            .padding(.leading, 6)
-
+        } identity: {
+            identityBlock
+        } columns: {
             // OVR — the FIRST column after the name, in every mode.
             //
             // It used to sit at the trailing edge, eleven columns to the right,
@@ -2474,23 +2387,18 @@ struct BigBoardRowView: View {
             // render the same five blocks from the same fogged accessors.
             ProspectColumns.cells(for: prospect, mode: attributeTab, context: columnContext)
 
-            // Always-visible, and now TWO columns rather than one: the tape read
+            // Always-visible, and TWO columns rather than one: the tape read
             // (a gold band from your scouts) and the meeting read (an exact blue
             // number from your interview). `ProspectIQCell` merged them behind a
             // precedence rule and printed whichever won, which is right for the
             // draft room's tight rows and wrong for a board the user is scanning
             // to find the work he has not done.
-            //
-            // 42 / 38 rather than 40 / 34: the pinned header has always reserved
-            // 42 and 38 for these labels (the tooltip button needs it), so the
-            // cells were running 2 and 4 points narrow and walking every column
-            // to their right off its label.
-            ProspectTapeCell(prospect: prospect, width: 42)
-            ProspectMeetCell(prospect: prospect, width: 38)
+            ProspectTapeCell(prospect: prospect, width: DSListColumn.tape)
+            ProspectMeetCell(prospect: prospect, width: DSListColumn.meet)
 
             // Always-visible: value vs the user's own grade.
             ProspectValueChip(read: valueRead)
-                .frame(width: 34, alignment: .center)
+                .dsColumn(DSListColumn.value)
 
             // Always-visible: Proj Rd or Grade
             if attributeTab == .overview {
@@ -2498,19 +2406,142 @@ struct BigBoardRowView: View {
             } else {
                 boardGradeColumn
             }
-
-            // Drag handle
-            Image(systemName: "line.3.horizontal")
-                .foregroundStyle(Color.textTertiary)
-                .font(.system(size: 10))
-                .frame(width: 22)
         }
-        // 4 → 2. With the rank column back to one line, the 30 pt portrait is
-        // the row's height floor, so this is 4 pt off every row of a 350-row
-        // list — roughly one extra prospect per screen on its own.
-        .padding(.vertical, 2)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityDescription)
+    }
+
+    // MARK: - Identity block
+
+    /// Name line, then the reserved state slots.
+    ///
+    /// `DSListRow` owns the identity SLOT — its minimum width, its alignment and
+    /// its clipping — and the screen owns what goes in it. The board hangs its
+    /// mark chip, compare tick and own-grade badge on the name line, and the
+    /// declaration chip and starter comparison beside the prep slots.
+    private var identityBlock: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 4) {
+                Text(prospect.fullName)
+                    .font(DSType.text(DSType.Size.body, .semibold, prose: true))
+                    .foregroundStyle(Color.textPrimary)
+                    .lineLimit(1)
+
+                // The ONE mark, with a dog-ear when a board note exists.
+                ProspectMarkChip(
+                    mark: prospect.userMark,
+                    showsNote: !prospect.userMarkNote.isEmpty
+                )
+
+                if isSelectedForCompare {
+                    Image(systemName: "checkmark.rectangle.stack.fill")
+                        .font(.system(size: DSType.Size.caption))
+                        .foregroundStyle(Color.accentBlue)
+                        .accessibilityLabel("In compare tray")
+                }
+
+                UserGradeBadge(prospectID: prospect.id)
+            }
+
+            // The reserved slots, plus the two facts that are not slots.
+            //
+            // Two chips left this line in an earlier pass. The green "Value"
+            // badge duplicated the VAL column two inches to the right — same
+            // fact, two encodings, one of them a word — and the newspaper glyph
+            // said only "a combine mention exists".
+            HStack(spacing: 4) {
+                DSStateSlotRow(slots: prepSlots)
+
+                // Is he even in this draft? (S11)
+                ProspectDeclarationChip(prospect: prospect)
+
+                // #6: Current starter comparison
+                if let comparison = starterComparison {
+                    Text(comparison)
+                        .font(DSType.display(11, .semibold))
+                        .foregroundStyle(starterComparisonColor(comparison))
+                        .lineLimit(1)
+                }
+            }
+        }
+    }
+
+    /// The three fixed prep slots — `RPT` / `CMB` / `MEET`.
+    ///
+    /// The second of §2.2's two sanctioned changes to this row. They were four
+    /// SF Symbols at 10 pt that appeared only when the work HAD been done, which
+    /// made the holes in the board invisible — and the holes are the whole
+    /// question the user is scanning 350 rows to answer. Now every slot always
+    /// occupies its position and an unset one is a dimmed, dashed WORD.
+    ///
+    /// Fog: nothing here reads a true attribute. `RPT` counts THIS regime's
+    /// reports — `ScoutEvaluationBudget.chargeableReports`, the same count the
+    /// row's Workup cell carries through `columnContext.reportCount`, so the two
+    /// numbers on one row cannot drift. `DraftIntel.prepStatus`' raw
+    /// `scoutingReports.count` would have counted the "Previous Staff" baseline
+    /// `ScoutingEngine.applyPreScoutedData` stamps on the top ~250 of every
+    /// class, which would have filled the slot on a third of the board before
+    /// the user hired a scout — and the holes are the question. `MEET` is the
+    /// interview flag, and `CMB`'s letter comes from
+    /// `ProspectFog.drillGradeText` at `ProspectFog.combineFidelity` — the same
+    /// accessor and the same fidelity gate the combine table's own Pos Drill
+    /// cell uses, so the slot can never say more than the card does. A club that
+    /// watched the workout on television reads a coarsened tier or nothing.
+    private var prepSlots: [DSStateSlot] {
+        let prep = DraftIntel.prepStatus(for: prospect)
+        let ownReports = ScoutEvaluationBudget.chargeableReports(prospect)
+        return [
+            DSStateSlot.slot(
+                "RPT",
+                isSet: ownReports > 0,
+                tone: ownReports >= 2 ? .ok : .info,
+                value: "\(ownReports)",
+                spoken: ownReports == 0
+                    ? "No reports filed"
+                    : "\(ownReports) report\(ownReports == 1 ? "" : "s") filed"
+            ),
+            combineSlot(measured: prep.hasMeasurables),
+            DSStateSlot.slot(
+                "MEET",
+                isSet: prep.isInterviewed,
+                tone: .info,
+                spoken: prep.isInterviewed ? "Interviewed" : "Not interviewed"
+            ),
+        ]
+    }
+
+    /// `CMB`, carrying the drill read as a LETTER rather than as a tint.
+    ///
+    /// The old badge encoded how the man tested as the fill colour of a 7 pt
+    /// chip, which is a channel nobody can read and which needed a legend the
+    /// row has nowhere to put. The letter is the same fact, printed.
+    private func combineSlot(measured: Bool) -> DSStateSlot {
+        guard prospect.combineInvite else {
+            return DSStateSlot(label: "CMB", tone: .empty, spokenLabel: "Not invited to the combine")
+        }
+        let fidelity = ProspectFog.combineFidelity(
+            for: prospect,
+            scoutsAttended: scoutsSentToCombine
+        )
+        let drill = ProspectFog.drillGradeText(prospect.positionDrillGrade, fidelity: fidelity)
+        return DSStateSlot.slot(
+            "CMB",
+            isSet: measured,
+            tone: .info,
+            value: drill,
+            spoken: measured
+                ? "Combine numbers on file\(drill.map { ", position drill \($0)" } ?? "")"
+                : "Invited to the combine, no numbers yet"
+        )
+    }
+
+    /// The starter-comparison tint. Semantic status against a stated threshold
+    /// (an upgrade on the man in front of him / a depth body), never the rating
+    /// ladder — P7 rule 2.
+    private func starterComparisonColor(_ comparison: String) -> Color {
+        if comparison.hasPrefix("+") { return .success }
+        if comparison.contains("Depth") { return .dangerText }
+        return .textTertiaryReadable
     }
 
     // MARK: - Column context
@@ -2543,14 +2574,9 @@ struct BigBoardRowView: View {
 
     // MARK: - Always-Visible Subviews
 
-    private var boardPositionBadge: some View {
-        Text(prospect.position.rawValue)
-            .font(.caption2)
-            .fontWeight(.bold)
-            .foregroundStyle(Color.textPrimary)
-            .frame(width: 36, height: 24)
-            .background(positionColor, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
-    }
+    // The position badge is `DSPositionBadge` now — same 36 × 24 box, same
+    // radius, same tint — and the rank/movement stack is `DSRankSlot`. Both
+    // moved to `UI/Common/DSListRow.swift` with the row that owns them.
 
     /// The OVR cell — the band the user's own scouts are entitled to, widened by
     /// how confident they are (`ProspectFog.read`, which folds in
@@ -2582,10 +2608,8 @@ struct BigBoardRowView: View {
         let color = boardProjectedRoundColorFromRound
         return VStack(spacing: 0) {
             Text(text)
-                .font(.system(size: 9, weight: .semibold))
+                .font(DSType.display(11, .semibold))
                 .foregroundStyle(color)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
             // Two arrows, two sources: the MEDIA's move on the projected round
             // (blue/amber) beside your own scouts' grade change (green/red).
             HStack(spacing: 3) {
@@ -2593,7 +2617,7 @@ struct BigBoardRowView: View {
                 boardGradeChangeIndicator
             }
         }
-        .frame(width: 52, alignment: .center)
+        .dsColumn(DSListColumn.projection)
     }
 
     private var boardProjectedRoundColorFromRound: Color {
@@ -2611,16 +2635,16 @@ struct BigBoardRowView: View {
         VStack(spacing: 0) {
             if let grade = prospect.scoutGrade {
                 Text(grade)
-                    .font(.system(size: 10, weight: .bold))
+                    .font(DSType.display(11, .bold))
                     .foregroundStyle(Color.textPrimary)
             } else {
                 Text("--")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(DSType.display(11, .medium))
                     .foregroundStyle(Color.textTertiary)
             }
             boardGradeChangeIndicator
         }
-        .frame(width: 30, alignment: .center)
+        .dsColumn(DSListColumn.tight)
     }
 
     // The FIT / NEED / RISK cells moved to `ProspectColumns` with the rest of
@@ -2637,26 +2661,16 @@ struct BigBoardRowView: View {
            preGrade != currentGrade {
             let improved = ProspectRoundFormat.gradeRank(currentGrade) > ProspectRoundFormat.gradeRank(preGrade)
             Text(improved ? "\u{2191}" : "\u{2193}")
-                .font(.system(size: 9, weight: .bold))
+                .font(DSType.display(11, .bold))
                 .foregroundStyle(improved ? Color.success : Color.danger)
         }
     }
 
     // MARK: - Helpers
 
-    private var rankColor: Color {
-        switch rank {
-        case 1:    return .accentGold
-        case 2...5: return .textPrimary
-        default:   return .textSecondary
-        }
-    }
-
-    /// Rank color that reflects manual movement: green if moved up, red if moved down, default otherwise.
-    private var manualMoveRankColor: Color {
-        guard let orig = originalPosition, orig != rank else { return rankColor }
-        return rank < orig ? .success : .danger
-    }
+    // The rank tint (gold for #1, primary for the top five, green/red when the
+    // user has hand-moved him) moved into `DSRankSlot` with the movement badge
+    // it belongs to — see `UI/Common/DSListRow.swift`.
 
     private var positionColor: Color {
         switch prospect.position.side {
@@ -2669,7 +2683,14 @@ struct BigBoardRowView: View {
     // boardProjectedRoundColor replaced by boardProjectedRoundColorFromRound
 
     private var accessibilityDescription: String {
-        let overall = prospect.overallGradeDisplay
+        // The SAME read the OVR cell draws (`ProspectScoutBandCell`): the band
+        // widened by `DraftIntel.scoutConfidence`, accepted only when it came
+        // from this building's scouts. `prospect.overallGradeDisplay` is the
+        // un-widened stored range, so speaking it handed a VoiceOver user a
+        // tighter read than the screen shows — and printed something on a
+        // media-only man whose cell says "?".
+        let read = ProspectFog.read(prospect)
+        let overall = (read.source == .scouts ? read.band?.displayText : nil) ?? "?"
         let mark = prospect.isMarked ? ", marked \(prospect.userMark.label)" : ""
         let value = valueRead.flatMap { $0.isMeaningful ? ", \($0.label)" : nil } ?? ""
         // `totalCount` is spoken here rather than printed on the row: VoiceOver
@@ -2679,33 +2700,11 @@ struct BigBoardRowView: View {
         return "Rank \(rank)\(of), \(prospect.fullName), \(prospect.position.rawValue), \(prospect.college), overall \(overall)\(mark)\(value)"
     }
 
-    /// How the CMB badge is tinted — how the man TESTED, as far as this club is
-    /// entitled to read it (#7).
-    ///
-    /// It used to average `truePhysical`, which is the generator's own attribute
-    /// block: low bandwidth, but a leak all the same, because a club that never
-    /// went to Indianapolis still got a green badge off a 91 speed nobody had
-    /// ever shown it. The signal is the position-drill grade at
-    /// `ProspectFog.combineFidelity` now — the same letter the combine table
-    /// prints in its Pos Drill cell, coarsened to its tier for a club that only
-    /// watched the broadcast — so the tint says exactly what the card says and
-    /// nothing more. Grey when the drill session produced nothing you can read:
-    /// a specialist, or a man who did not work out.
-    private var combinePerformanceColor: Color {
-        let fidelity = ProspectFog.combineFidelity(
-            for: prospect,
-            scoutsAttended: scoutsSentToCombine
-        )
-        guard let text = ProspectFog.drillGradeText(prospect.positionDrillGrade, fidelity: fidelity)
-        else { return Color.textTertiary }
-        // THE grade colour, not a fourth ladder. This used to be a bespoke
-        // three-band switch on `ProspectRoundFormat.gradeRank` — B+ and up
-        // green, C through B yellow, C- and down red — so the same letter that
-        // printed blue in the Pos Drill cell painted the badge yellow two
-        // inches away. The central function already handles "D-", which is the
-        // string the engine writes and which `LetterGrade` has no case for.
-        return PositionGradeCalculator.gradeColorForLetter(text)
-    }
+    // `combinePerformanceColor` deleted with the 7 pt CMB badge whose fill it
+    // was. Wave 1's `CMB` slot prints the same fact — `ProspectFog.drillGradeText`
+    // at `ProspectFog.combineFidelity` — as a LETTER instead of as a chip
+    // colour, which is a channel the row can actually be read in and which
+    // needs no legend. See `BigBoardRowView.combineSlot`.
 
     // `boardMediaColor` deleted with the newspaper glyph it tinted. The glyph
     // said "a combine mention exists" and nothing else; the mention's direction

@@ -505,11 +505,12 @@ struct SchemeSelectionView: View {
         return Int(Double(familiarCount) / Double(starters.count) * 100)
     }
 
+    /// Unified onto `Color.forRating(scale: .percent)`. This bar and
+    /// `schemeExpertiseColor` sat six lines apart in one file and banded the
+    /// same kind of 0–100 percentage differently — 55 % familiarity read gold
+    /// here and red there.
     private func metricColor(_ percent: Int) -> Color {
-        if percent >= 75 { return .success }
-        if percent >= 50 { return .accentGold }
-        if percent >= 25 { return .warning }
-        return .danger
+        Color.forRating(percent, scale: .percent)
     }
 
     /// Unified onto `Color.forRating(scale: .percent)` so coach expertise reads

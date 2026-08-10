@@ -96,29 +96,33 @@ struct StandingsView: View {
                     .frame(maxWidth: .infinity)
                     .background(Color.backgroundSecondary)
 
-                ScrollView {
-                    VStack(spacing: 16) {
-                        wildCardRaceBanner
+                if allTeams.isEmpty {
+                    emptyLeagueState
+                } else {
+                    ScrollView {
+                        VStack(spacing: 16) {
+                            wildCardRaceBanner
 
-                        // Derived once per render, not once per division.
-                        let streaksByTeam = streaks
+                            // Derived once per render, not once per division.
+                            let streaksByTeam = streaks
 
-                        ForEach(Division.allCases, id: \.self) { division in
-                            DivisionStandingsSection(
-                                conference: selectedConference,
-                                division: division,
-                                records: allRecords,
-                                teams: allTeams,
-                                playerTeamID: playerTeamID,
-                                conferenceRankings: conferenceRankings[selectedConference] ?? [],
-                                streaks: streaksByTeam,
-                                onTapRow: { detail in selectedRowDetail = detail }
-                            )
+                            ForEach(Division.allCases, id: \.self) { division in
+                                DivisionStandingsSection(
+                                    conference: selectedConference,
+                                    division: division,
+                                    records: allRecords,
+                                    teams: allTeams,
+                                    playerTeamID: playerTeamID,
+                                    conferenceRankings: conferenceRankings[selectedConference] ?? [],
+                                    streaks: streaksByTeam,
+                                    onTapRow: { detail in selectedRowDetail = detail }
+                                )
+                            }
                         }
+                        .padding(16)
+                        .frame(maxWidth: DSLayout.wideMeasure)
+                        .frame(maxWidth: .infinity)
                     }
-                    .padding(16)
-                    .frame(maxWidth: DSLayout.wideMeasure)
-                    .frame(maxWidth: .infinity)
                 }
             }
         }
@@ -144,6 +148,25 @@ struct StandingsView: View {
         // picker rendered in stock grey.
     }
 
+    // MARK: - Empty State
+
+    /// The one condition under which this screen has nothing to rank: no league
+    /// in the save. `DSEmptyState` (§2.7) rather than a bare label, because the
+    /// third beat — what would fill this — is the only useful thing to say here.
+    private var emptyLeagueState: some View {
+        VStack {
+            Spacer(minLength: 0)
+            DSEmptyState(
+                density: .scan,
+                icon: "tablecells",
+                title: "No Standings Yet",
+                message: "This save has no league loaded, so there is nothing to rank. Once a season starts, every division fills in after week one."
+            )
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
     // MARK: - Wild Card Race Banner
 
     /// Shows a banner highlighting the player team's wild-card situation when relevant.
@@ -160,11 +183,11 @@ struct StandingsView: View {
                     .foregroundStyle(info.tint)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(info.title)
-                        .font(.system(size: 12, weight: .bold))
+                        .font(DSType.display(12, .heavy))
                         .tracking(0.8)
                         .foregroundStyle(info.tint)
                     Text(info.subtitle)
-                        .font(.system(size: 12))
+                        .font(DSType.text(12, .regular, prose: true))
                         .foregroundStyle(Color.textSecondary)
                 }
                 Spacer()
@@ -343,20 +366,18 @@ private struct DivisionStandingsSection: View {
         .cardBackground()
     }
 
+    /// Wave 1b: the division head is `DSGroupRollup` — the same object the Big
+    /// Board's tier header and the roster's position group will use, so a
+    /// division here and a tier there read at one weight (§2.2). The
+    /// "tap for tiebreakers" hint becomes a rollup fact instead of a 9 pt
+    /// label, which was three steps under the display floor.
     private var sectionHeader: some View {
-        HStack {
-            Text("\(conference.rawValue) \(division.rawValue.uppercased())")
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(Color.textSecondary)
-                .tracking(1.5)
-            Spacer()
-            Text("TAP FOR TIEBREAKERS")
-                .font(.system(size: 9, weight: .semibold))
-                .tracking(1)
-                .foregroundStyle(Color.textTertiary)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        DSGroupRollup(
+            title: "\(conference.rawValue) \(division.rawValue)",
+            facts: ["Tap a row for tiebreakers"]
+        )
+        .padding(.horizontal, DSSpacing.md)
+        .padding(.vertical, DSSpacing.sm)
         .background(Color.backgroundTertiary.opacity(0.6))
     }
 }
@@ -364,58 +385,68 @@ private struct DivisionStandingsSection: View {
 // MARK: - Standings Column Widths
 
 /// Shared column widths so the header and the rows can't drift apart.
-/// Total fixed width = 444 pt, leaving ≥ 300 pt for TEAM at every iPad size
-/// the app supports (the table caps at `DSLayout.wideMeasure`).
+///
+/// Wave 1b re-bases them onto `DSListColumn` (`UI/Common/DSListRow.swift`) —
+/// the same move `PlayerRowView.Column` made — so the standings table, the
+/// roster and the Big Board read ONE ladder instead of three that happen to
+/// agree. The names stay: a call site still asks for `pct`, not for `label`.
+///
+/// Total fixed width = 398 pt. With the row's leading slots (rank 24 + team
+/// badge 36 + identity gap 6) and the 80 pt identity floor that is 544 pt
+/// inside a table that caps at `DSLayout.wideMeasure`, so TEAM keeps every
+/// remaining point.
 private enum StandingsColumn {
-    static let seed:   CGFloat = 44
-    static let wlt:    CGFloat = 30
-    static let pct:    CGFloat = 46
-    /// Holds "2-1" and, in a tie year, "2-1-1" at 12 pt.
-    static let record: CGFloat = 46
-    static let streak: CGFloat = 42
-    static let points: CGFloat = 42
-    static let diff:   CGFloat = 46
+    /// The playoff-seed pill, "#12" at most.
+    static let seed   = DSListColumn.ovr        // 40
+    static let wlt    = DSListColumn.tight      // 30
+    static let pct    = DSListColumn.label      // 48
+    /// Holds "2-1" and, in a tie year, "2-1-1".
+    static let record = DSListColumn.tape       // 42
+    /// The streak pill, "W3".
+    static let streak = DSListColumn.attribute  // 34
+    static let points = DSListColumn.attribute  // 34
+    static let diff   = DSListColumn.value      // 34
 }
 
 // MARK: - Standings Header Row
 
+/// Built from `DSListHeaderRow`, which reserves the SAME leading slots the row
+/// mounts — rank gutter, team badge, no portrait — so the labels cannot end up
+/// one column left of the numbers they describe (§2.2, the bug this component
+/// exists to prevent, already documented twice in this codebase).
 private struct StandingsHeaderRow: View {
     var body: some View {
-        HStack(spacing: 0) {
-            // Team column
-            Text("TEAM")
-                .frame(maxWidth: .infinity, alignment: .leading)
-
+        DSListHeaderRow(
+            density: .scan,
+            reservesRank: true,
+            rankLabel: "#",
+            reservesBadge: true,
+            badgeLabel: "TM",
+            // No faces on a standings table; the badge is the club.
+            portraitWidth: 0,
+            identityLabel: "TEAM"
+        ) {
+            Spacer(minLength: DSSpacing.xxs)
             // The old "CONF" header sat over a `#4` badge — that is a seed,
             // not a conference record, and it occupied the name a real
             // standings table needs for the conference W-L.
-            columnHeader("SEED", width: StandingsColumn.seed)
-            columnHeader("W",    width: StandingsColumn.wlt)
-            columnHeader("L",    width: StandingsColumn.wlt)
-            columnHeader("T",    width: StandingsColumn.wlt)
-            columnHeader("PCT",  width: StandingsColumn.pct)
+            DSColumnHeader("SEED", width: StandingsColumn.seed)
+            DSColumnHeader("W",    width: StandingsColumn.wlt)
+            DSColumnHeader("L",    width: StandingsColumn.wlt)
+            DSColumnHeader("T",    width: StandingsColumn.wlt)
+            DSColumnHeader("PCT",  width: StandingsColumn.pct)
             // Division and conference records decide seeding before point
             // differential does; both already lived in `StandingsRecord`,
             // visible only after tapping through to the tiebreaker sheet.
-            columnHeader("DIV",  width: StandingsColumn.record)
-            columnHeader("CONF", width: StandingsColumn.record)
-            columnHeader("STRK", width: StandingsColumn.streak)
-            // PF/PA trimmed 48 → 42 to pay for the three new columns; scores
-            // are three digits at most, so nothing clips.
-            columnHeader("PF",   width: StandingsColumn.points)
-            columnHeader("PA",   width: StandingsColumn.points)
-            columnHeader("DIFF", width: StandingsColumn.diff)
+            DSColumnHeader("DIV",  width: StandingsColumn.record)
+            DSColumnHeader("CONF", width: StandingsColumn.record)
+            DSColumnHeader("STRK", width: StandingsColumn.streak)
+            DSColumnHeader("PF",   width: StandingsColumn.points)
+            DSColumnHeader("PA",   width: StandingsColumn.points)
+            DSColumnHeader("DIFF", width: StandingsColumn.diff)
         }
-        .font(.system(size: 10, weight: .semibold))
-        .foregroundStyle(Color.textTertiary)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .tracking(0.5)
-    }
-
-    private func columnHeader(_ label: String, width: CGFloat) -> some View {
-        Text(label)
-            .frame(width: width, alignment: .trailing)
+        .padding(.horizontal, DSSpacing.md)
+        .padding(.vertical, DSSpacing.xs)
     }
 }
 
@@ -461,69 +492,62 @@ private struct StandingsTeamRow: View {
             : "\(record.conferenceWins)-\(record.conferenceLosses)"
     }
 
+    /// The seed pill's tone. THREE states, not four colours: in the field,
+    /// on the bubble, out. The old ladder painted seeds 1–4 gold, which is a
+    /// fourth job for gold (P7) AND a duplicate of the fact the rank slot
+    /// already carries — a division leader is the row whose `#` is gold.
+    private func seedTone(_ seed: Int) -> DSStatusPill.Tone {
+        switch seed {
+        case 1...7:  return .ok      // in the playoff field
+        case 8...10: return .warn    // on the bubble
+        default:     return .neutral // out, as things stand
+        }
+    }
+
     /// Green while winning, red while losing — the streak is the one column
     /// here that describes momentum rather than the season total.
-    private var streakColor: Color {
-        guard let kind = streak?.first else { return Color.textTertiary }
+    private var streakTone: DSStatusPill.Tone {
+        guard let kind = streak?.first else { return .neutral }
         switch kind {
-        case "W": return Color.success
-        case "L": return Color.danger
-        default:  return Color.textSecondary
+        case "W": return .ok
+        case "L": return .bad
+        default:  return .neutral
         }
     }
 
-    /// Conference rank badge — color-coded by playoff seeding.
-    private var confRankColor: Color {
-        guard let r = conferenceRank else { return Color.textTertiary }
-        switch r {
-        case 1...4:  return Color.accentGold     // division winners
-        case 5...7:  return Color.success        // wild-card seeds
-        case 8...10: return Color.warning        // bubble
-        default:     return Color.textTertiary
-        }
-    }
-
+    /// Wave 1b: `DSListRow` at `scan` density (§2.2/§2.12), so a standings row
+    /// is 44 pt like every other row in the app instead of the ~42 this table
+    /// happened to measure.
+    ///
+    /// What moved, and nothing else:
+    ///
+    ///  1. The hand-drawn rank/crown became the reserved `DSRankSlot`, which is
+    ///     a fixed two-row box — the crown and the digit were different heights
+    ///     and swapped per row.
+    ///  2. The 42 pt abbreviation cell became the row's BADGE slot, in the
+    ///     club's colour, which is the same slot the roster gives the position.
+    ///  3. Seed and streak became `DSStatusPill`s: both are states, and the
+    ///     unset case (a club that has not played) is now a dashed, dimmed
+    ///     marker holding its column rather than a bare em dash.
+    ///  4. Every cell goes through `dsColumn`, which shrinks then clips.
     var body: some View {
-        HStack(spacing: 0) {
-            // Team name column
-            HStack(spacing: 8) {
-                if isLeader {
-                    Image(systemName: "crown.fill")
-                        .font(.system(size: 9))
-                        .foregroundStyle(Color.accentGold)
-                        .frame(width: 12)
-                } else {
-                    Text("\(divisionRank)")
-                        .font(.system(size: 10, weight: .bold).monospacedDigit())
-                        .foregroundStyle(Color.textTertiary)
-                        .frame(width: 12)
-                }
+        DSListRow(
+            density: .scan,
+            rank: DSRank(value: divisionRank, tint: isLeader ? Color.accentGold : nil),
+            badge: DSRowBadge(
+                text: team?.abbreviation ?? "???",
+                tint: TeamColors.color(for: team?.abbreviation ?? ""),
+                accessibilityLabel: team?.fullName ?? "Unknown team"
+            ),
+            portraitWidth: 0
+        ) {
+            EmptyView()
+        } identity: {
+            identityBlock
+        } columns: {
+            Spacer(minLength: DSSpacing.xxs)
 
-                Text(team?.abbreviation ?? "???")
-                    .font(.system(size: 14, weight: isLeader ? .heavy : .semibold))
-                    .foregroundStyle(isLeader ? Color.accentGold : Color.textPrimary)
-                    .frame(width: 42, alignment: .leading)
-
-                // The team column ran ~600pt wide holding a 3-letter code and
-                // nothing else. The full name fills that void and saves the
-                // reader translating "LAC" in their head.
-                Text(team?.fullName ?? "Unknown")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(isLeader ? Color.textPrimary : Color.textSecondary)
-                    .lineLimit(1)
-
-                if isPlayerTeam {
-                    Image(systemName: "star.fill")
-                        .font(.system(size: 9))
-                        .foregroundStyle(Color.accentGold.opacity(0.8))
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            // Playoff seed cell
-            confRankCell
-
-            // Stats columns
+            seedCell
             statCell("\(record.wins)",   width: StandingsColumn.wlt, color: Color.textPrimary)
             statCell("\(record.losses)", width: StandingsColumn.wlt, color: Color.textPrimary)
             statCell("\(record.ties)",   width: StandingsColumn.wlt, color: Color.textSecondary)
@@ -535,9 +559,7 @@ private struct StandingsTeamRow: View {
             statCell("\(record.pointsAgainst)", width: StandingsColumn.points, color: Color.textSecondary)
             statCell(diffFormatted,             width: StandingsColumn.diff,   color: diffColor)
         }
-        .font(.system(size: 14).monospacedDigit())
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.horizontal, DSSpacing.md)
         .background(
             isPlayerTeam
                 ? Color.accentGold.opacity(0.07)
@@ -547,45 +569,65 @@ private struct StandingsTeamRow: View {
         .accessibilityLabel(rowAccessibilityLabel)
     }
 
-    private var confRankCell: some View {
-        Group {
-            if let r = conferenceRank {
-                Text("#\(r)")
-                    .font(.system(size: 11, weight: .bold).monospacedDigit())
-                    .foregroundStyle(confRankColor)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(
-                        Capsule().fill(confRankColor.opacity(0.15))
-                    )
-            } else {
-                Text("—")
-                    .foregroundStyle(Color.textTertiary)
+    /// The one flexible column: the club, and whether it is yours.
+    ///
+    /// The team column ran ~600 pt wide holding a 3-letter code and nothing
+    /// else. The full name fills that void and saves the reader translating
+    /// "LAC" in their head; the abbreviation moved to the badge slot.
+    private var identityBlock: some View {
+        HStack(spacing: DSSpacing.xxs) {
+            Text(team?.fullName ?? "Unknown")
+                .font(DSType.text(DSListDensity.scan.nameSize, .semibold, prose: true))
+                .foregroundStyle(Color.textPrimary)
+                .lineLimit(1)
+
+            if isPlayerTeam {
+                DSStatusPill(label: "You", tone: .info, showsDot: false,
+                             spokenLabel: "Your team")
             }
         }
-        .frame(width: StandingsColumn.seed, alignment: .trailing)
+    }
+
+    private var seedCell: some View {
+        Group {
+            if let r = conferenceRank {
+                DSStatusPill(label: "#\(r)", tone: seedTone(r), showsDot: false,
+                             spokenLabel: "Conference seed \(r)")
+            } else {
+                DSStatusPill(label: "\u{2014}", tone: .empty, showsDot: false,
+                             spokenLabel: "Not seeded yet")
+            }
+        }
+        .dsColumn(StandingsColumn.seed)
     }
 
     private func statCell(_ value: String, width: CGFloat, color: Color) -> some View {
         Text(value)
+            .font(DSType.display(13, .semibold))
             .foregroundStyle(color)
-            .frame(width: width, alignment: .trailing)
+            .dsColumn(width)
     }
 
     /// Sub-records ride one step below the headline W-L-T: same column rhythm,
-    /// smaller type, so the eye still lands on the overall record first.
+    /// lighter weight, so the eye still lands on the overall record first.
     private func recordCell(_ value: String) -> some View {
         Text(value)
-            .font(.system(size: 12, weight: .medium).monospacedDigit())
+            .font(DSType.display(12, .medium))
             .foregroundStyle(Color.textSecondary)
-            .frame(width: StandingsColumn.record, alignment: .trailing)
+            .dsColumn(StandingsColumn.record)
     }
 
     private var streakCell: some View {
-        Text(streak ?? "—")
-            .font(.system(size: 12, weight: .bold).monospacedDigit())
-            .foregroundStyle(streakColor)
-            .frame(width: StandingsColumn.streak, alignment: .trailing)
+        Group {
+            if let streak {
+                DSStatusPill(label: streak, tone: streakTone, showsDot: false,
+                             spokenLabel: "Streak \(streak)")
+            } else {
+                DSStatusPill(label: "\u{2014}", tone: .empty, showsDot: false,
+                             spokenLabel: "No games played yet")
+            }
+        }
+        .dsColumn(StandingsColumn.streak)
     }
 
     private var rowAccessibilityLabel: String {
@@ -675,13 +717,19 @@ private struct StandingsRowDetailSheet: View {
         }
     }
 
+    /// P7 rule 2 names a seed as the textbook thing that gets NO rating
+    /// colour — a #4 is not "a 4 out of 16". What a seed does carry is one
+    /// stated threshold, and it is the only one the league actually enforces:
+    /// `StandingsCalculator.playoffTeams` takes the top **7**.
+    ///
+    /// So: in the field, in the hunt, out. The four-band version this replaces
+    /// split 1–4 from 5–7 with `accentGold`, which invented a "hosting a game"
+    /// tier the bracket does not have (only the #1 seed gets a bye) and spent
+    /// the hue P7 reserves for "primary/current" doing it.
     private func confRankColor(_ rank: Int) -> Color {
-        switch rank {
-        case 1...4:  return Color.accentGold
-        case 5...7:  return Color.success
-        case 8...10: return Color.warning
-        default:     return Color.textTertiary
-        }
+        if rank <= 7  { return .forStatus(.ok) }    // in the playoff field
+        if rank <= 10 { return .forStatus(.warn) }  // in the hunt
+        return Color.textTertiary                   // out
     }
 
     private func rankBadge(label: String, value: String, tint: Color) -> some View {

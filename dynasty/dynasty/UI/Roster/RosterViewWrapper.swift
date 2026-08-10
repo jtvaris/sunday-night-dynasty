@@ -11,6 +11,11 @@ struct RosterViewWrapper: View {
     /// the roster header quotes the league's cap ledger, not its own sum.
     @State private var teamCapUsed: Int? = nil
     @State private var defensiveScheme: DefensiveScheme = .base43
+    /// The offensive coordinator's scheme. Wave 1's roster row prints a `FIT`
+    /// slot off `Player.schemeFamiliarity`, which is keyed by scheme rawValue,
+    /// and without this half the roster could only ever read "unknown". Fetched
+    /// from the same coach query the DC already came out of.
+    @State private var offensiveScheme: OffensiveScheme? = nil
 
     var body: some View {
         RosterView(
@@ -18,6 +23,7 @@ struct RosterViewWrapper: View {
             teamSalaryCap: teamSalaryCap,
             teamCapUsed: teamCapUsed,
             defensiveScheme: defensiveScheme,
+            offensiveScheme: offensiveScheme,
             career: career
         )
             .task {
@@ -40,10 +46,14 @@ struct RosterViewWrapper: View {
                 let coachDescriptor = FetchDescriptor<Coach>(
                     predicate: #Predicate { $0.teamID == teamID }
                 )
-                if let coaches = try? modelContext.fetch(coachDescriptor),
-                   let dc = coaches.first(where: { $0.role == .defensiveCoordinator }),
-                   let scheme = dc.defensiveScheme {
-                    defensiveScheme = scheme
+                if let coaches = try? modelContext.fetch(coachDescriptor) {
+                    if let dc = coaches.first(where: { $0.role == .defensiveCoordinator }),
+                       let scheme = dc.defensiveScheme {
+                        defensiveScheme = scheme
+                    }
+                    offensiveScheme = coaches
+                        .first(where: { $0.role == .offensiveCoordinator })?
+                        .offensiveScheme
                 }
             }
     }

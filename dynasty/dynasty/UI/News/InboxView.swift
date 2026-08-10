@@ -2,9 +2,32 @@ import SwiftUI
 import SwiftData
 
 // MARK: - InboxView
+//
+// Wave 5b. The inbox on the list standard: `DSLensTabs` for the filter strip,
+// `DSListRow` for the message, `DSStatusPill` for "action required",
+// `DSEmptyState` for the empty tray (UI_REDESIGN_VISION §2.2 / §2.3 / §2.7).
+//
+// Three things this conversion fixes, all of them named by the audit:
+//
+//  1. **A fifth tab-bar implementation is gone.** The filter chips were a
+//     hand-rolled capsule strip at 36 pt with a blue count bubble — one of the
+//     five independent tab bars §0 counted, and under the 44 pt target floor
+//     §2.12 says has no exceptions. `DSLensTabs` is the one control style, and
+//     the unread count folds into the label so the strip carries the same fact
+//     with one element instead of two.
+//  2. **The row reserves its slots.** The unread dot used to collapse to
+//     `Color.clear` and the ACTION chip appeared only on the rows that had one,
+//     so the leading edge and the trailing column both jittered down the list.
+//     Both slots are now drawn on every line (§2.2's fixed-slot rule) — the
+//     user reads a column of marks rather than a ragged edge.
+//  3. **The 0.35 s navigation hack is gone.** Tapping a message's action used
+//     to dismiss the sheet and then fire the navigation off a timer, which is
+//     exactly the sequencing hack §2.8 calls out. The destination is now parked
+//     and replayed from `.sheet(onDismiss:)`, so the handoff is ordered by
+//     SwiftUI rather than by a deadline.
+//
+// One `.sheet(item:)` on this view, as the house rule requires.
 
-/// Football Manager-inspired inbox showing messages from the owner, coordinators,
-/// scouts, media, and league office. Provides an immersive management experience.
 struct InboxView: View {
 
     let career: Career
@@ -13,6 +36,9 @@ struct InboxView: View {
 
     @State private var activeFilter: InboxFilter = .all
     @State private var selectedMessage: InboxMessage?
+    /// Where the dismissed message wanted to send the user. Replayed from
+    /// `onDismiss` instead of from a 0.35 s timer.
+    @State private var pendingDestination: TaskDestination?
 
     private var filteredMessages: [InboxMessage] {
         // Newest first, then sort by importance bucket:
@@ -56,20 +82,26 @@ struct InboxView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 if unreadCount > 0 {
                     Text("\(unreadCount) unread")
-                        .font(.caption.weight(.semibold))
+                        .font(DSType.display(DSType.Size.caption, .heavy))
                         .foregroundStyle(Color.accentBlue)
                 }
             }
         }
-        .sheet(item: $selectedMessage) { message in
+        // The ONE modal slot on this view. The destination handoff runs in
+        // `onDismiss`, so the inbox is already gone before the shell navigates —
+        // no timer, no race.
+        .sheet(item: $selectedMessage, onDismiss: {
+            if let destination = pendingDestination {
+                pendingDestination = nil
+                onNavigate?(destination)
+            }
+        }) { message in
             NavigationStack {
                 MessageDetailView(
                     message: message,
                     onNavigate: { destination in
+                        pendingDestination = destination
                         selectedMessage = nil
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                            onNavigate?(destination)
-                        }
                     },
                     onAppear: {
                         markAsRead(messageID: message.id)
@@ -86,20 +118,34 @@ struct InboxView: View {
         }
     }
 
-    // MARK: - Filter Bar
+    // MARK: - Filter strip (§2.2)
+
+    /// The count travels in the label rather than in a second bubble: a lens
+    /// capsule is one control with one reading, and the bubble was the only
+    /// thing in the strip painting `.white` on an accent fill.
+    private func filterLabel(_ filter: InboxFilter) -> String {
+        let unread = messages.filter { !$0.isRead && filter.matches($0) }.count
+        return unread > 0 ? "\(filter.label) \(unread)" : filter.label
+    }
 
     private var filterBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                ForEach(InboxFilter.allCases, id: \.self) { filter in
-                    filterChip(filter)
+        DSLensTabs(
+            selection: $activeFilter,
+            lenses: InboxFilter.allCases,
+            label: filterLabel,
+            icon: { filter in
+                switch filter {
+                case .all:            return "tray.full"
+                case .actionRequired: return "exclamationmark.circle"
+                case .unread:         return "envelope.badge"
                 }
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
-        }
-        // Same 720pt measure as the message list, so "All" starts on the same
-        // vertical as the message cards rather than out at the screen edge.
+            },
+            title: "Filter"
+        )
+        .padding(.horizontal, DSSpacing.md)
+        .padding(.vertical, DSSpacing.xs)
+        // Same measure as the message list, so "All" starts on the same
+        // vertical as the message rows rather than out at the screen edge.
         // The band behind it still spans full width.
         .frame(maxWidth: DSLayout.contentMeasure)
         .frame(maxWidth: .infinity)
@@ -109,40 +155,7 @@ struct InboxView: View {
         }
     }
 
-    private func filterChip(_ filter: InboxFilter) -> some View {
-        let isSelected = activeFilter == filter
-        let filterUnread = messages.filter { !$0.isRead && filter.matches($0) }.count
-
-        return Button {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                activeFilter = filter
-            }
-        } label: {
-            HStack(spacing: 6) {
-                Text(filter.label)
-                    .font(.system(size: 14, weight: isSelected ? .semibold : .regular))
-                    .foregroundStyle(isSelected ? Color.backgroundPrimary : Color.textSecondary)
-
-                if filterUnread > 0 && !isSelected {
-                    Text("\(filterUnread)")
-                        .font(.caption2.weight(.bold).monospacedDigit())
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(Capsule().fill(Color.accentBlue))
-                }
-            }
-            .padding(.horizontal, 16)
-            .frame(minHeight: 36)
-            .background(
-                Capsule()
-                    .fill(isSelected ? Color.accentBlue : Color.backgroundTertiary)
-            )
-        }
-        .buttonStyle(.plain)
-    }
-
-    // MARK: - Message List
+    // MARK: - Message list
 
     private var messageListContent: some View {
         Group {
@@ -150,12 +163,12 @@ struct InboxView: View {
                 emptyState
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 8) {
+                    LazyVStack(spacing: DSSpacing.xs) {
                         ForEach(filteredMessages) { message in
                             messageRow(message)
                         }
                     }
-                    .padding(20)
+                    .padding(DSSpacing.md)
                     .frame(maxWidth: DSLayout.contentMeasure)
                     .frame(maxWidth: .infinity)
                 }
@@ -163,87 +176,125 @@ struct InboxView: View {
         }
     }
 
+    /// Width of the leading slot: the reserved unread dot plus the sender disc.
+    private static let senderSlot: CGFloat = 8 + DSSpacing.xs + 36
+
     private func messageRow(_ message: InboxMessage) -> some View {
         Button {
             // Open the detail sheet — MessageDetailView reports `onAppear`
             // which marks the message as read in the source array.
             selectedMessage = message
         } label: {
-            HStack(spacing: 12) {
-                // Unread indicator
-                Circle()
-                    .fill(message.isRead ? Color.clear : Color.accentBlue)
-                    .frame(width: 8, height: 8)
-
-                // Sender icon
-                Image(systemName: message.sender.icon)
-                    .font(.system(size: 20))
-                    .foregroundStyle(iconColor(for: message.sender))
-                    .frame(width: 36, height: 36)
-                    .background(
-                        Circle()
-                            .fill(iconColor(for: message.sender).opacity(0.15))
-                    )
-
-                // Content
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text(message.sender.displayName)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(Color.textSecondary)
-
-                        if message.actionRequired {
-                            Text("ACTION")
-                                .font(.system(size: DSType.Size.micro, weight: .heavy))
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1)
-                                .background(Capsule().fill(Color.danger))
-                        }
-
-                        Spacer()
-
-                        Text(message.date)
-                            .font(.caption2)
-                            .foregroundStyle(Color.textTertiary)
-                            .lineLimit(1)
-                    }
-
-                    Text(message.subject)
-                        .font(.subheadline.weight(message.isRead ? .regular : .bold))
-                        .foregroundStyle(Color.textPrimary)
-                        .lineLimit(1)
-
-                    // Message bodies open with a salutation on its own line
-                    // ("Coach,\n\n…"), so a raw single-line preview rendered as
-                    // the useless "Coach,…". Flatten the newlines first and
-                    // allow two lines so the preview carries real content.
-                    Text(message.body.replacingOccurrences(of: "\n", with: " ")
-                        .trimmingCharacters(in: .whitespacesAndNewlines))
-                        .font(.caption)
-                        .foregroundStyle(Color.textTertiaryReadable)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                }
-
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 10))
-                    .foregroundStyle(Color.textTertiary)
-            }
-            .padding(12)
+            DSListRow(
+                // A message carries a two-line preview under a subject line, so
+                // it is a card stack, not a scan row (P3).
+                density: .study,
+                portraitWidth: Self.senderSlot,
+                affordance: .disclosure,
+                portrait: { senderSlot(message) },
+                identity: { identity(message) },
+                columns: { actionSlot(message) }
+            )
+            .padding(.horizontal, DSSpacing.sm)
             .background(
-                RoundedRectangle(cornerRadius: 10)
+                RoundedRectangle(cornerRadius: DSCornerRadius.card)
                     .fill(rowFill(for: message))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .strokeBorder(
-                                rowBorderColor(for: message),
-                                lineWidth: message.actionRequired ? 1.5 : 1
-                            )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DSCornerRadius.card)
+                    .strokeBorder(
+                        rowBorderColor(for: message),
+                        lineWidth: message.actionRequired ? 1.5 : 1
                     )
             )
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(spokenLabel(message))
+        .accessibilityHint("Opens the message")
+    }
+
+    /// The reserved unread mark plus the sender's disc. The dot's 8 pt is drawn
+    /// on every row, read or unread — a slot that collapses is the jitter §2.2
+    /// names.
+    private func senderSlot(_ message: InboxMessage) -> some View {
+        HStack(spacing: DSSpacing.xs) {
+            Circle()
+                .fill(message.isRead ? Color.clear : Color.accentBlue)
+                .frame(width: 8, height: 8)
+            Image(systemName: message.sender.icon)
+                .font(.system(size: 18, weight: .regular))
+                .foregroundStyle(iconColor(for: message.sender))
+                .frame(width: 36, height: 36)
+                .background(Circle().fill(iconColor(for: message.sender).opacity(0.15)))
+        }
+    }
+
+    private func identity(_ message: InboxMessage) -> some View {
+        VStack(alignment: .leading, spacing: DSSpacing.xxs) {
+            HStack(spacing: DSSpacing.xxs) {
+                Text(message.sender.displayName.uppercased())
+                    .font(DSType.display(DSType.Size.caption, .heavy))
+                    .tracking(0.5)
+                    .foregroundStyle(Color.textSecondary)
+                    .lineLimit(1)
+                Text("\u{00B7}")
+                    .font(DSType.display(DSType.Size.caption, .heavy))
+                    .foregroundStyle(Color.textTertiary)
+                Text(message.date)
+                    .font(DSType.display(DSType.Size.caption, .semibold))
+                    .foregroundStyle(Color.textTertiaryReadable)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+
+            Text(message.subject)
+                .font(DSType.text(DSType.Size.body, message.isRead ? .regular : .bold, prose: true))
+                .foregroundStyle(Color.textPrimary)
+                .lineLimit(1)
+
+            // Message bodies open with a salutation on its own line
+            // ("Coach,\n\n…"), so a raw single-line preview rendered as the
+            // useless "Coach,…". Flatten the newlines first and allow two lines
+            // so the preview carries real content.
+            Text(previewText(message))
+                .font(DSType.text(DSType.Size.footnote, .regular, prose: true))
+                .foregroundStyle(Color.textTertiaryReadable)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+        }
+        .padding(.vertical, DSSpacing.xs)
+    }
+
+    /// The trailing state column. Always the same width, so the subject lines
+    /// on an action row and a plain row end on the same vertical.
+    private func actionSlot(_ message: InboxMessage) -> some View {
+        Group {
+            if message.actionRequired {
+                DSStatusPill(label: "Action", tone: .bad, showsDot: false)
+            } else {
+                Color.clear
+            }
+        }
+        .dsColumn(DSListColumn.state)
+    }
+
+    private func previewText(_ message: InboxMessage) -> String {
+        message.body
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func spokenLabel(_ message: InboxMessage) -> String {
+        [
+            message.isRead ? nil : "Unread",
+            message.actionRequired ? "Action required" : nil,
+            "\(message.sender.displayName), \(message.date)",
+            message.subject
+        ]
+        .compactMap { $0 }
+        .joined(separator: ". ")
     }
 
     private func rowFill(for message: InboxMessage) -> Color {
@@ -259,22 +310,29 @@ struct InboxView: View {
         return Color.surfaceBorder
     }
 
+    // MARK: - Empty (§2.7)
+
+    /// Beat three is the filter, not the mailbox: "no messages" is a different
+    /// problem from "no messages *matching Action Required*", and only the
+    /// second one has a button that fixes it.
     private var emptyState: some View {
-        VStack(spacing: 16) {
-            Spacer()
-            Image(systemName: "tray")
-                .font(.system(size: 48))
-                .foregroundStyle(Color.textTertiary)
-            Text("No messages")
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(Color.textSecondary)
-            Text("Messages from your staff, owner, scouts, and media will appear here.")
-                .font(.subheadline)
-                .foregroundStyle(Color.textTertiary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 40)
-            Spacer()
+        VStack {
+            Spacer(minLength: 0)
+            DSEmptyState(
+                icon: "tray",
+                title: activeFilter == .all ? "No messages" : "Nothing under \(activeFilter.label)",
+                message: activeFilter == .all
+                    ? "Messages from your staff, owner, scouts and media land here as the season runs."
+                    : "\(messages.count) message\(messages.count == 1 ? "" : "s") in the tray, none of them matching this filter.",
+                actions: activeFilter == .all
+                    ? []
+                    : [.init(title: "Show all messages", systemImage: "tray.full", isPrimary: true) {
+                        withAnimation(.easeInOut(duration: 0.2)) { activeFilter = .all }
+                    }]
+            )
+            Spacer(minLength: 0)
         }
+        .frame(maxWidth: .infinity)
     }
 
     // MARK: - Helpers

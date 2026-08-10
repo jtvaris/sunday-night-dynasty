@@ -93,22 +93,48 @@ struct FACompleteView: View {
                         .foregroundColor(.secondary)
                 }
             } else {
-            ScrollView {
-                LazyVStack(spacing: 20) {
-                    headerSection
-                    if let team { capSummarySection(team: team) }
-                    if let ba = beforeAfter { beforeAfterSection(ba) }
-                    faGradeSection
-                    if !recentSignings.isEmpty { signingsSection }
-                    if !lostPlayers.isEmpty { lostPlayersSection }
-                    if !leagueSignings.isEmpty { leagueSigningsSection }
-                    if !remainingNeeds.isEmpty { remainingNeedsSection }
-                    if !compPickEstimate.isEmpty { compPickSection }
-                    if !mediaQuote.isEmpty { mediaSection }
-                    continueButton
+            VStack(spacing: 0) {
+                // §2.1 — free agency's spine, at its last step. Every slat
+                // behind it is done, which is the point: this screen is where
+                // the run is read back.
+                FAFlowBandView(
+                    step: .complete,
+                    currentSubcaption: "\(recentSignings.count) signed \u{00B7} \(lostPlayers.count) lost"
+                )
+                ScrollView {
+                    LazyVStack(spacing: 20) {
+                        headerSection
+                        if let team { capSummarySection(team: team) }
+                        if let ba = beforeAfter { beforeAfterSection(ba) }
+                        faGradeSection
+                        if !recentSignings.isEmpty { signingsSection }
+                        if !lostPlayers.isEmpty { lostPlayersSection }
+                        if !leagueSignings.isEmpty { leagueSigningsSection }
+                        if !remainingNeeds.isEmpty { remainingNeedsSection }
+                        if !compPickEstimate.isEmpty { compPickSection }
+                        if !mediaQuote.isEmpty { mediaSection }
+                    }
+                    .padding(24)
+                    .frame(maxWidth: .infinity)
                 }
-                .padding(24)
-                .frame(maxWidth: .infinity)
+                // §2.5 — the one commit, pinned. It used to be the last item
+                // under nine optional sections, so a quiet free agency put it
+                // on screen and a busy one buried it.
+                DSActionBar(
+                    explainer: .init(
+                        title: "Free agency is over",
+                        message: "Advancing closes the league year's signing period and opens **Pro Days**."
+                    ),
+                    primary: .init(
+                        title: "Continue \u{2192} Pro Days",
+                        handler: {
+                            WeekAdvancer.advanceWeek(career: career, modelContext: modelContext)
+                            // Pop the FA modal stack back to the Career Dashboard
+                            // so the user can see the new .proDays phase tasks.
+                            dismiss()
+                        }
+                    )
+                )
             }
             } // end else (not loading)
         }
@@ -617,29 +643,10 @@ struct FACompleteView: View {
         .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.surfaceBorder, lineWidth: 1))
     }
 
-    // MARK: - Continue Button
-
-    private var continueButton: some View {
-        Button {
-            WeekAdvancer.advanceWeek(career: career, modelContext: modelContext)
-            // Pop the FA modal stack back to the Career Dashboard so the user
-            // can see the new .proDays phase tasks.
-            dismiss()
-        } label: {
-            HStack(spacing: 10) {
-                Text("Continue to Pro Days")
-                    .font(.headline)
-                Image(systemName: "arrow.right")
-                    .font(.title3)
-            }
-            .foregroundStyle(Color.backgroundPrimary)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 16)
-            .background(Color.accentGold, in: RoundedRectangle(cornerRadius: 14))
-        }
-        .buttonStyle(.plain)
-        .padding(.top, 4)
-    }
+    // MARK: - Continue Button (RETIRED, wave 3)
+    //
+    // The hand-rolled gold recipe at radius 14 is gone; the commit is the
+    // `DSActionBar` primary in `body` (§2.5 / §2.8).
 
     // MARK: - Section Header Helper
 

@@ -82,17 +82,44 @@ struct CapComplianceView: View {
             Color.backgroundPrimary.ignoresSafeArea()
 
             if let team {
-                ScrollView {
-                    VStack(spacing: DSSpacing.lg) {
-                        complianceBanner(team: team)
-                        leverListCard(team: team)
-                        if context == .freeAgencyGate {
-                            enterFAButton
-                        }
+                VStack(spacing: 0) {
+                    // §2.1 — free agency's spine, step 3 of 5. Only on the FA
+                    // gate: deep-linked from the week-advance block this screen
+                    // is not a step in that run, and a band claiming otherwise
+                    // would be lying about where the user stands.
+                    if context == .freeAgencyGate {
+                        FAFlowBandView(
+                            step: .capReview,
+                            currentSubcaption: isOverCap
+                                ? "\(formatMillions(capOverage)) over \u{2014} the market is shut until you are legal"
+                                : "Under the cap \u{2014} the market will take your offers"
+                        )
                     }
-                    .padding(DSSpacing.lg)
-                    .frame(maxWidth: DSLayout.wideMeasure)
-                    .frame(maxWidth: .infinity)
+                    ScrollView {
+                        VStack(spacing: DSSpacing.lg) {
+                            complianceBanner(team: team)
+                            leverListCard(team: team)
+                        }
+                        .padding(DSSpacing.lg)
+                        .frame(maxWidth: DSLayout.wideMeasure)
+                        .frame(maxWidth: .infinity)
+                    }
+                    // §2.5 — the commit surface. Its explainer is where a
+                    // blocked commit says WHY (§2.12); the reason used to be a
+                    // red caption under a dead grey button.
+                    if context == .freeAgencyGate {
+                        DSActionBar(
+                            explainer: enterFAExplainer,
+                            primary: .init(
+                                title: "Enter free agency \u{2192}",
+                                isEnabled: !isOverCap,
+                                handler: {
+                                    career.freeAgencyStep = FreeAgencyStep.signing.rawValue
+                                    career.freeAgencyRound = 1
+                                }
+                            )
+                        )
+                    }
                 }
             } else {
                 ProgressView()
@@ -554,32 +581,28 @@ struct CapComplianceView: View {
 
     // MARK: - Enter FA
 
-    private var enterFAButton: some View {
-        VStack(spacing: DSSpacing.xs) {
-            Button {
-                career.freeAgencyStep = FreeAgencyStep.signing.rawValue
-                career.freeAgencyRound = 1
-            } label: {
-                HStack(spacing: DSSpacing.xs) {
-                    Image(systemName: "person.badge.plus")
-                        .font(.title3)
-                    Text("Enter Free Agency")
-                        .font(.headline)
-                }
-                .foregroundStyle(isOverCap ? Color.textTertiary : Color.backgroundPrimary)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, DSSpacing.md)
-                .background(isOverCap ? Color.backgroundTertiary : Color.accentGold, in: RoundedRectangle(cornerRadius: 14))
-            }
-            .buttonStyle(.plain)
-            .disabled(isOverCap)
-
-            if isOverCap {
-                Text("Must be under the salary cap to enter free agency")
-                    .font(.caption)
-                    .foregroundStyle(Color.danger)
-            }
+    /// What committing does — or, when the gate is shut, exactly what is holding
+    /// it shut and by how much (§2.12: a blocked commit swaps the rule to orange
+    /// and states the reason).
+    private var enterFAExplainer: DSActionBar.Explainer {
+        guard enforcesCap else {
+            return .init(
+                title: "Sandbox \u{2014} no cap to clear",
+                message: "Cap rules are off in this league. The market is open."
+            )
         }
+        if isOverCap {
+            return .init(
+                title: "The gate is shut",
+                message: "You are **\(formatMillions(capOverage)) over** the cap. Release, restructure or renegotiate until you are legal.",
+                isWarning: true
+            )
+        }
+        let room = max(0, team?.availableCap ?? 0)
+        return .init(
+            title: "Open the market",
+            message: "You are legal with **\(formatMillions(room))** of room. Free agency opens on **Day 1** and every outstanding offer will reserve part of it."
+        )
     }
 
     // MARK: - Helpers

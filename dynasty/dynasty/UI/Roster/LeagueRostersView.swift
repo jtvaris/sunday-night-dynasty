@@ -154,11 +154,17 @@ struct LeagueRostersView: View {
                 return lhs.abbreviation < rhs.abbreviation
             }
 
-        return VStack(alignment: .leading, spacing: 10) {
-            Text("\(conference.rawValue) \(division.rawValue)")
-                .font(.system(size: 12, weight: .bold))
-                .tracking(1.0)
-                .foregroundStyle(Color.accentGold)
+        return VStack(alignment: .leading, spacing: DSSpacing.xs) {
+            // The division head is `DSGroupRollup` — Big Board's tier header,
+            // generalised (§2.2), so a division here reads at the same weight
+            // as a position group on the roster.
+            DSGroupRollup(
+                title: "\(conference.rawValue) \(division.rawValue)",
+                facts: ["\(teams.count) clubs"],
+                tint: Color.accentGold
+            )
+
+            LeagueBoardHeaderRow()
 
             ForEach(teams) { team in
                 NavigationLink {
@@ -174,84 +180,166 @@ struct LeagueRostersView: View {
         .cardBackground()
     }
 
+    /// One club on the 32-roster board.
+    ///
+    /// Wave 1b: `DSListRow` at `scan` density. The club abbreviation moved into
+    /// the row's BADGE slot (same slot the roster gives the position, same
+    /// 36 × 24 box), the run-on grey subtitle — "3-1 · 53 players · $12.3M cap
+    /// space" plus a variable number of need capsules — became two RESERVED
+    /// slots, `CAP` and `NEED`, and the record / roster size / OVR became three
+    /// fixed columns under a header. A club with no holes now shows a dimmed
+    /// dashed `NEED` in its position instead of nothing at all, which is the
+    /// difference between "no holes" and "we never looked".
     private func teamRow(_ team: Team, roster: [Player]) -> some View {
         let isUserTeam = team.id == career.teamID
         let strength = startingLineupOverall(roster, chart: userCharts[team.id])
         // The same need model the draft room and the one-team header already
         // use — a club's holes are what makes it a trade partner, and the board
-        // is where you decide WHICH club to open. Two chips, not five: the row
-        // is a shortlist cue, the roster screen is the detail.
+        // is where you decide WHICH club to open. Two, not five: the row is a
+        // shortlist cue, the roster screen is the detail.
         let needs = DraftEngine.topTeamNeeds(roster: roster, limit: 2)
 
-        return HStack(spacing: 12) {
-            Text(team.abbreviation)
-                .font(.system(size: 13, weight: .heavy))
-                .foregroundStyle(.white)
-                .frame(width: 46)
-                .padding(.vertical, 7)
-                .background(
-                    RoundedRectangle(cornerRadius: 7)
-                        .fill(TeamColors.color(for: team.abbreviation))
-                )
-
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
+        return DSListRow(
+            density: .scan,
+            badge: DSRowBadge(
+                text: team.abbreviation,
+                tint: TeamColors.color(for: team.abbreviation),
+                accessibilityLabel: team.fullName
+            ),
+            portraitWidth: 0,
+            affordance: .disclosure
+        ) {
+            EmptyView()
+        } identity: {
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: DSSpacing.xxs) {
                     Text(team.fullName)
-                        .font(.subheadline.weight(.semibold))
+                        .font(DSType.text(DSListDensity.scan.nameSize, .semibold, prose: true))
                         .foregroundStyle(Color.textPrimary)
                         .lineLimit(1)
                     if isUserTeam {
-                        Text("YOUR TEAM")
-                            .font(.system(size: DSType.Size.micro, weight: .heavy))
-                            .foregroundStyle(Color.backgroundPrimary)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(Color.accentGold, in: Capsule())
+                        DSStatusPill(label: "You", tone: .info, showsDot: false,
+                                     spokenLabel: "Your team")
                     }
                 }
-                HStack(spacing: 6) {
-                    Text("\(team.record) · \(roster.count) players · \(capLabel(team.availableCap)) cap space")
-                        .font(.system(size: 10).monospacedDigit())
-                        .foregroundStyle(Color.textTertiary)
-                        .lineLimit(1)
-
-                    ForEach(needs, id: \.self) { position in
-                        Text(position.rawValue)
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(Color.warning)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(Color.warning.opacity(0.15), in: Capsule())
-                    }
-                }
+                DSStateSlotRow(slots: [capSlot(team), needSlot(needs)])
             }
+        } columns: {
+            Spacer(minLength: DSSpacing.xxs)
 
-            Spacer(minLength: 4)
+            Text(team.record)
+                .font(DSType.display(12, .semibold))
+                .foregroundStyle(Color.textSecondary)
+                .dsColumn(LeagueColumn.record)
 
-            VStack(spacing: 0) {
-                Text("\(strength)")
-                    .font(.callout.weight(.bold).monospacedDigit())
-                    .foregroundStyle(Color.forRating(strength))
-                Text("OVR")
-                    .font(.system(size: DSType.Size.micro, weight: .semibold))
-                    .foregroundStyle(Color.textTertiary)
-            }
-            .frame(width: 36)
+            Text("\(roster.count)")
+                .font(DSType.display(12, .semibold))
+                .foregroundStyle(Color.textSecondary)
+                .dsColumn(LeagueColumn.roster)
 
-            Image(systemName: "chevron.right")
-                .font(.caption2)
-                .foregroundStyle(Color.textTertiary)
+            Text("\(strength)")
+                .font(DSType.display(13, .bold))
+                .foregroundStyle(Color.forRating(strength))
+                .dsColumn(LeagueColumn.ovr)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .padding(.horizontal, DSSpacing.xs)
         .background(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: DSCornerRadius.inline)
                 .fill(Color.backgroundTertiary)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: DSCornerRadius.inline)
                 .strokeBorder(isUserTeam ? Color.accentGold.opacity(0.6) : Color.clear, lineWidth: 1)
         )
+    }
+
+    /// Cap room, as a state rather than a sentence: over the cap is a different
+    /// KIND of trade partner from under it.
+    private func capSlot(_ team: Team) -> DSStateSlot {
+        let room = team.availableCap
+        return DSStateSlot(
+            label: "CAP",
+            tone: room >= 0 ? .ok : .bad,
+            value: capLabel(room),
+            spokenLabel: room >= 0
+                ? "\(capLabel(room)) of cap room"
+                : "\(capLabel(-room)) over the cap"
+        )
+    }
+
+    private func needSlot(_ needs: [Position]) -> DSStateSlot {
+        guard !needs.isEmpty else {
+            return DSStateSlot(label: "NEED", tone: .empty,
+                               spokenLabel: "No pressing needs")
+        }
+        return DSStateSlot(
+            label: "NEED",
+            tone: .warn,
+            value: needs.map(\.rawValue).joined(separator: "/"),
+            spokenLabel: "Needs " + needs.map(\.rawValue).joined(separator: " and ")
+        )
+    }
+}
+
+// MARK: - League Board Column Widths
+
+/// Shared widths for both of this screen's lists, read from `DSListColumn`
+/// (§2.2) so the club board, the player search, the roster and the Big Board
+/// are one ladder rather than four sets of literals.
+private enum LeagueColumn {
+    /// `12-4-1`.
+    static let record = DSListColumn.label      // 48
+    /// A roster headcount.
+    static let roster = DSListColumn.tight      // 30
+    static let ovr    = DSListColumn.ovr        // 40
+    /// The club code over its cap room, on a search hit.
+    static let team   = DSListColumn.money      // 52
+    static let age    = DSListColumn.age        // 36
+    /// `$12.3M`.
+    static let money  = DSListColumn.money      // 52
+}
+
+// MARK: - League Board Header Row
+
+private struct LeagueBoardHeaderRow: View {
+    var body: some View {
+        DSListHeaderRow(
+            density: .scan,
+            reservesBadge: true,
+            badgeLabel: "TM",
+            portraitWidth: 0,
+            identityLabel: "CLUB",
+            affordance: .disclosure
+        ) {
+            Spacer(minLength: DSSpacing.xxs)
+            DSColumnHeader("REC", width: LeagueColumn.record)
+            DSColumnHeader("PLR", width: LeagueColumn.roster)
+            DSColumnHeader("OVR", width: LeagueColumn.ovr)
+        }
+        // Matches the row's own inner inset, so the labels sit over their
+        // numbers rather than 8 pt to the left of them.
+        .padding(.horizontal, DSSpacing.xs)
+    }
+}
+
+// MARK: - Player Search Header Row
+
+private struct LeagueSearchHeaderRow: View {
+    var body: some View {
+        DSListHeaderRow(
+            density: .scan,
+            reservesBadge: true,
+            badgeLabel: "POS",
+            identityLabel: "PLAYER",
+            affordance: .disclosure
+        ) {
+            Spacer(minLength: DSSpacing.xxs)
+            DSColumnHeader("CLUB", width: LeagueColumn.team)
+            DSColumnHeader("AGE",  width: LeagueColumn.age)
+            DSColumnHeader("SAL",  width: LeagueColumn.money)
+            DSColumnHeader("OVR",  width: LeagueColumn.ovr)
+        }
+        .padding(.horizontal, DSSpacing.xs)
     }
 }
 
@@ -313,16 +401,14 @@ struct LeagueTeamRosterView: View {
                                 }
                             }
                         } header: {
-                            HStack {
-                                Text(group.name.uppercased())
-                                    .font(.system(size: 10, weight: .bold))
-                                    .tracking(0.8)
-                                    .foregroundStyle(Color.textSecondary)
-                                Spacer()
-                                Text("\(groupPlayers.count)")
-                                    .font(.system(size: 10, weight: .bold).monospacedDigit())
-                                    .foregroundStyle(Color.textTertiary)
-                            }
+                            // Same rollup object as the club board's division
+                            // head and the Big Board's tier head (§2.2) — and
+                            // 11 pt rather than the 10 the group label shipped
+                            // at, which was under the display floor.
+                            DSGroupRollup(
+                                title: group.name,
+                                facts: ["\(groupPlayers.count) player\(groupPlayers.count == 1 ? "" : "s")"]
+                            )
                         }
                         .listRowBackground(Color.backgroundSecondary)
                     }
@@ -392,21 +478,23 @@ struct LeagueTeamRosterView: View {
                 // this is what makes them a plausible trade partner for a
                 // player the user is shopping.
                 let needs = DraftEngine.topTeamNeeds(roster: roster, limit: 3)
-                if !needs.isEmpty {
-                    HStack(spacing: 6) {
-                        Text("NEEDS")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(Color.textTertiary)
+                HStack(spacing: DSSpacing.xxs) {
+                    Text("NEEDS")
+                        .font(DSType.display(11, .heavy))
+                        .tracking(0.6)
+                        .foregroundStyle(Color.textTertiary)
+                    if needs.isEmpty {
+                        // Reserved, not absent: "this club has no holes" and
+                        // "we never asked" were the same blank line before.
+                        DSStatusPill(label: "None", tone: .empty, showsDot: false,
+                                     spokenLabel: "No pressing needs")
+                    } else {
                         ForEach(needs, id: \.self) { position in
-                            Text(position.rawValue)
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundStyle(Color.warning)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.warning.opacity(0.15), in: Capsule())
+                            DSStatusPill(label: position.rawValue, tone: .warn, showsDot: false,
+                                         spokenLabel: "Needs a \(position.rawValue)")
                         }
-                        Spacer()
                     }
+                    Spacer()
                 }
             }
             .padding(.vertical, 4)
@@ -417,10 +505,11 @@ struct LeagueTeamRosterView: View {
     private func headerStat(label: String, value: String) -> some View {
         VStack(spacing: 2) {
             Text(value)
-                .font(.subheadline.weight(.bold).monospacedDigit())
+                .font(DSType.display(15, .bold))
                 .foregroundStyle(Color.textPrimary)
-            Text(label)
-                .font(.system(size: 9, weight: .semibold))
+            Text(label.uppercased())
+                .font(DSType.display(11, .semibold))
+                .tracking(0.5)
                 .foregroundStyle(Color.textTertiary)
         }
         .frame(maxWidth: .infinity)
@@ -469,29 +558,30 @@ extension LeagueRostersView {
             searchControls
 
             if shown.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.title)
-                        .foregroundStyle(Color.textTertiary)
-                    Text("No player in the league matches those filters.")
-                        .font(.footnote)
-                        .foregroundStyle(Color.textSecondary)
+                VStack {
+                    Spacer(minLength: 0)
+                    DSEmptyState(
+                        density: .scan,
+                        icon: "magnifyingglass",
+                        title: "No Player Matches",
+                        message: "Nobody in the league fits every filter at once. Drop the OVR floor or clear a filter and the market comes back.",
+                        actions: emptySearchActions
+                    )
+                    Spacer(minLength: 0)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
                     LazyVStack(spacing: 6) {
-                        HStack {
-                            Text(
-                                results.count > shown.count
-                                    ? "\(shown.count) of \(results.count) matches — narrow the filters to see the rest"
-                                    : "\(results.count) match\(results.count == 1 ? "" : "es")"
-                            )
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(Color.textTertiary)
-                            Spacer()
-                        }
+                        DSGroupRollup(
+                            title: "Matches",
+                            facts: results.count > shown.count
+                                ? ["Showing \(shown.count) of \(results.count)", "Narrow the filters to see the rest"]
+                                : ["\(results.count) player\(results.count == 1 ? "" : "s")"]
+                        )
                         .padding(.bottom, 2)
+
+                        LeagueSearchHeaderRow()
 
                         ForEach(shown) { player in
                             NavigationLink {
@@ -533,8 +623,10 @@ extension LeagueRostersView {
                 }
             }
             .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 8))
+            // 44 pt measured — §2.12 has no exceptions, and a search field is
+            // the first control on this screen. It shipped at ~32.
+            .frame(minHeight: 44)
+            .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: DSCornerRadius.inline))
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
@@ -587,12 +679,7 @@ extension LeagueRostersView {
 
                     if hasActiveFilters {
                         Button {
-                            filterPosition = nil
-                            minOVR = 0
-                            maxAge = 0
-                            maxContractYears = 0
-                            expiringOnly = false
-                            searchText = ""
+                            clearFilters()
                         } label: {
                             filterChipLabel(title: "Clear", isActive: false, systemImage: "arrow.counterclockwise")
                         }
@@ -611,6 +698,30 @@ extension LeagueRostersView {
     private var hasActiveFilters: Bool {
         filterPosition != nil || minOVR > 0 || maxAge > 0
             || maxContractYears > 0 || expiringOnly || !searchText.isEmpty
+    }
+
+    /// One definition, read by the filter strip's Clear chip AND by the empty
+    /// state's primary action — the fourth beat of `DSEmptyState` has to be the
+    /// thing that actually fills the list (§2.7).
+    private func clearFilters() {
+        filterPosition = nil
+        minOVR = 0
+        maxAge = 0
+        maxContractYears = 0
+        expiringOnly = false
+        searchText = ""
+    }
+
+    private var emptySearchActions: [DSEmptyState.Action] {
+        guard hasActiveFilters else { return [] }
+        return [
+            DSEmptyState.Action(
+                title: "Clear Filters",
+                systemImage: "arrow.counterclockwise",
+                isPrimary: true,
+                handler: clearFilters
+            )
+        ]
     }
 
     private func filterMenu<Content: View>(
@@ -632,15 +743,18 @@ extension LeagueRostersView {
     ) -> some View {
         HStack(spacing: 4) {
             Text(title)
-                .font(.system(size: 11, weight: .semibold))
+                .font(DSType.text(13, .semibold))
             if let systemImage {
                 Image(systemName: systemImage)
-                    .font(.system(size: DSType.Size.micro, weight: .bold))
+                    .font(.system(size: 11, weight: .bold))
             }
         }
+        .lineLimit(1)
         .foregroundStyle(isActive ? Color.backgroundPrimary : Color.textSecondary)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.horizontal, DSSpacing.sm)
+        // 44 pt measured. The filter capsules shipped at ~26 — the same finding
+        // §2.12 records against every small control in the app.
+        .frame(minHeight: 44)
         .background(
             Capsule().fill(isActive ? Color.accentGold : Color.backgroundTertiary)
         )
@@ -649,73 +763,118 @@ extension LeagueRostersView {
     /// One hit. Carries the club, the rating, the age and the money — the four
     /// columns the "who can I get, and can they afford to move him" question
     /// needs before the detail screen is worth opening.
+    ///
+    /// Wave 1b: the same `DSListRow` the user's own roster mounts, so a player
+    /// read here and a player read on the roster are the same object — position
+    /// badge, face, name over reserved slots, fixed trailing columns. The
+    /// run-on subtitle ("Age 28 · 2yr · $4.5M · DAL $12.3M cap · INJ 3wk") split
+    /// into the two RESERVED slots the roster already speaks (`EXT` / `HLTH`)
+    /// and four columns; a fact that used to vanish when it was false now shows
+    /// as a dimmed, dashed word holding its place.
     private func searchResultRow(_ player: Player, team: Team?) -> some View {
-        HStack(spacing: 10) {
-            Text(team?.abbreviation ?? "FA")
-                .font(.system(size: 11, weight: .heavy))
-                .foregroundStyle(.white)
-                .frame(width: 40)
-                .padding(.vertical, 5)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(TeamColors.color(for: team?.abbreviation ?? ""))
-                )
-
-            Text(player.position.rawValue)
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(Color.accentBlue)
-                .frame(width: 30)
-
-            VStack(alignment: .leading, spacing: 2) {
+        DSListRow(
+            density: .scan,
+            badge: DSRowBadge(
+                text: player.position.rawValue,
+                tint: TradeAssetFormat.positionColor(player.position),
+                accessibilityLabel: "\(player.position.rawValue), \(player.position.side.rawValue)"
+            ),
+            affordance: .disclosure
+        ) {
+            PersonFaceView(player: player, size: .small)
+        } identity: {
+            VStack(alignment: .leading, spacing: 1) {
                 Text(player.fullName)
-                    .font(.subheadline.weight(.semibold))
+                    .font(DSType.text(DSListDensity.scan.nameSize, .semibold, prose: true))
                     .foregroundStyle(Color.textPrimary)
                     .lineLimit(1)
-                Text(searchRowSubtitle(player, team: team))
-                    .font(.system(size: 10).monospacedDigit())
-                    .foregroundStyle(Color.textTertiary)
-                    .lineLimit(1)
+                DSStateSlotRow(slots: [
+                    LeagueSearchSlots.contract(player),
+                    LeagueSearchSlots.health(player),
+                ])
             }
+        } columns: {
+            Spacer(minLength: DSSpacing.xxs)
 
-            Spacer(minLength: 4)
+            clubCell(team)
 
-            VStack(spacing: 0) {
-                Text("\(player.overall)")
-                    .font(.callout.weight(.bold).monospacedDigit())
-                    .foregroundStyle(Color.forRating(player.overall))
-                Text("OVR")
-                    .font(.system(size: DSType.Size.micro, weight: .semibold))
-                    .foregroundStyle(Color.textTertiary)
-            }
-            .frame(width: 34)
+            Text("\(player.age)")
+                .font(DSType.display(13, .semibold))
+                .foregroundStyle(Color.textSecondary)
+                .dsColumn(LeagueColumn.age)
 
-            Image(systemName: "chevron.right")
-                .font(.caption2)
-                .foregroundStyle(Color.textTertiary)
+            Text(capLabel(player.annualSalary))
+                .font(DSType.display(12, .semibold))
+                .foregroundStyle(Color.textSecondary)
+                .dsColumn(LeagueColumn.money)
+
+            Text("\(player.overall)")
+                .font(DSType.display(13, .bold))
+                .foregroundStyle(Color.forRating(player.overall))
+                .dsColumn(LeagueColumn.ovr)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .padding(.horizontal, DSSpacing.xs)
         .background(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: DSCornerRadius.inline)
                 .fill(Color.backgroundTertiary)
         )
     }
 
-    private func searchRowSubtitle(_ player: Player, team: Team?) -> String {
-        var parts = [
-            "Age \(player.age)",
-            player.contractYearsRemaining <= 1
-                ? "expiring"
-                : "\(player.contractYearsRemaining)yr",
-            capLabel(player.annualSalary),
-        ]
-        if let team {
-            parts.append("\(team.abbreviation) \(capLabel(team.availableCap)) cap")
+    /// The club, and what it can spend — the second half of "can they afford to
+    /// move him". The code is `textPrimary` rather than the club colour: half
+    /// the league's colours are near-black and would vanish on this surface,
+    /// which is what the coloured BADGE is for elsewhere on the screen.
+    private func clubCell(_ team: Team?) -> some View {
+        VStack(spacing: 0) {
+            Text(team?.abbreviation ?? "FA")
+                .font(DSType.display(11, .heavy))
+                .foregroundStyle(Color.textPrimary)
+            Text(team.map { capLabel($0.availableCap) } ?? "\u{2014}")
+                .font(DSType.display(11, .medium))
+                .foregroundStyle(Color.textTertiary)
         }
-        if player.isInjured {
-            parts.append("INJ \(player.injuryWeeksRemaining)wk")
+        .dsColumn(LeagueColumn.team)
+    }
+}
+
+// MARK: - Player Search State Slots
+
+/// The two slots a search hit reserves.
+///
+/// The labels and the thresholds are deliberately the roster's
+/// (`PlayerRowView.extensionSlot` / `.healthSlot`) — the same fact must not be
+/// called `EXT` on one list and "2yr" on another. Those two are `private` to
+/// the row that owns them, so this is a mirror, not a shared definition: if the
+/// roster's bands move, move these with them.
+private enum LeagueSearchSlots {
+
+    static func contract(_ player: Player) -> DSStateSlot {
+        let years = player.contractYearsRemaining
+        guard years > 0 else {
+            return DSStateSlot(label: "EXT", tone: .bad, value: "0",
+                               spokenLabel: "Contract expires this offseason")
         }
-        return parts.joined(separator: " · ")
+        return DSStateSlot(
+            label: "EXT",
+            tone: years <= 1 ? .warn : .ok,
+            value: "\(years)y",
+            spokenLabel: years == 1
+                ? "One year left on his deal"
+                : "\(years) years left on his deal"
+        )
+    }
+
+    static func health(_ player: Player) -> DSStateSlot {
+        guard player.isInjured else {
+            return DSStateSlot(label: "HLTH", tone: .ok, spokenLabel: "Available")
+        }
+        let weeks = player.injuryWeeksRemaining
+        return DSStateSlot(
+            label: "HLTH",
+            tone: weeks >= 4 ? .bad : .warn,
+            value: "\(weeks)w",
+            spokenLabel: "Injured, \(weeks) week\(weeks == 1 ? "" : "s") remaining"
+        )
     }
 }
 

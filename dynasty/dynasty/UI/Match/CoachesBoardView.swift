@@ -132,7 +132,7 @@ struct CoachesBoardView: View {
                     .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(Color.accentGold)
                 Text("COACH'S BOARD · \(teamAbbr)")
-                    .font(.system(size: 14, weight: .black))
+                    .font(DSType.display(DSType.Size.body, .black))
                     .foregroundStyle(Color.textPrimary)
                     .tracking(1.6)
             }
@@ -145,7 +145,7 @@ struct CoachesBoardView: View {
                         .tint(Color.accentGold)
                         .scaleEffect(0.7)
                     Text("Play is live — subs unlock at the whistle")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(DSType.text(DSType.Size.footnote, .semibold, prose: true))
                         .foregroundStyle(Color.textSecondary)
                 }
                 .padding(.horizontal, 10)
@@ -162,7 +162,7 @@ struct CoachesBoardView: View {
                     Text(engine.pendingSubstitutions.count == 1
                          ? "1 sub at next whistle"
                          : "\(engine.pendingSubstitutions.count) subs at next whistle")
-                        .font(.system(size: 12, weight: .bold))
+                        .font(DSType.text(DSType.Size.footnote, .semibold))
                 }
                 .foregroundStyle(Color.warning)
                 .padding(.horizontal, 10)
@@ -200,7 +200,7 @@ struct CoachesBoardView: View {
     private func unitTab(_ title: String, isOn: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 12, weight: .black))
+                .font(DSType.display(DSType.Size.footnote, .black))
                 .tracking(0.8)
                 .foregroundStyle(isOn ? Color.backgroundPrimary : Color.textSecondary)
                 .padding(.horizontal, 16)
@@ -294,7 +294,7 @@ struct CoachesBoardView: View {
                 // Label the line of scrimmage in the top-right corner.
                 context.draw(
                     Text("LOS")
-                        .font(.system(size: 9, weight: .black))
+                        .font(DSType.display(DSType.Size.caption, .black))
                         .foregroundStyle(.white.opacity(0.55)),
                     at: CGPoint(x: size.width - 26, y: losY - 10)
                 )
@@ -321,13 +321,15 @@ struct CoachesBoardView: View {
             VStack(spacing: 3) {
                 gradeRing(grade: grade, fatigue: fatigue, diameter: 44, gradeFontSize: 17)
                 Text(player.shortName)
-                    .font(.system(size: 10, weight: .bold))
+                    .font(DSType.text(DSType.Size.micro, .bold))
                     .foregroundStyle(Color.textPrimary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                 Text("#\(player.displayNumber) \(player.position.rawValue)")
-                    .font(.system(size: DSType.Size.micro, weight: .black).monospacedDigit())
-                    .foregroundStyle(Color.textTertiary)
+                    .font(DSType.display(DSType.Size.caption, .black))
+                    .foregroundStyle(Color.textTertiaryReadable)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
             }
             .padding(.vertical, 7)
             .padding(.horizontal, 3)
@@ -398,7 +400,7 @@ struct CoachesBoardView: View {
                 .stroke(ringColor, style: StrokeStyle(lineWidth: diameter > 60 ? 5 : 3.5, lineCap: .round))
                 .rotationEffect(.degrees(-90))
             Text("\(grade)")
-                .font(.system(size: gradeFontSize, weight: .black).monospacedDigit())
+                .font(DSType.display(gradeFontSize, .black))
                 .foregroundStyle(gradeColor(grade))
         }
         .frame(width: diameter, height: diameter)
@@ -412,7 +414,7 @@ struct CoachesBoardView: View {
             legendDot(color: .textSecondary, label: "55+")
             legendDot(color: .danger, label: "<55")
             Text("· ring = fatigue")
-                .font(.system(size: 10, weight: .semibold))
+                .font(DSType.text(DSType.Size.micro, .semibold, prose: true))
                 .foregroundStyle(.white.opacity(0.5))
         }
         .padding(.horizontal, 12)
@@ -424,7 +426,7 @@ struct CoachesBoardView: View {
         HStack(spacing: 4) {
             Circle().fill(color).frame(width: 7, height: 7)
             Text(label)
-                .font(.system(size: 10, weight: .bold).monospacedDigit())
+                .font(DSType.display(DSType.Size.micro, .bold))
                 .foregroundStyle(.white.opacity(0.7))
         }
     }
@@ -460,7 +462,7 @@ struct CoachesBoardView: View {
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(Color.warning)
                     Text("\(sub.benchName) in for \(sub.fieldName)")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(DSType.text(DSType.Size.body, .semibold))
                         .foregroundStyle(Color.textPrimary)
                         .lineLimit(1)
                     Spacer()
@@ -508,13 +510,13 @@ struct CoachesBoardView: View {
             HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(player.shortName)
-                        .font(.system(size: 19, weight: .black))
+                        .font(DSType.text(DSType.Size.title3, .black))
                         .foregroundStyle(Color.textPrimary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                     HStack(spacing: 6) {
                         Text("#\(player.displayNumber) · \(player.position.rawValue)")
-                            .font(.system(size: 12, weight: .bold).monospacedDigit())
+                            .font(DSType.display(DSType.Size.footnote, .bold))
                             .foregroundStyle(Color.textSecondary)
                         if let archetype = engine.personalityArchetype(for: player.id) {
                             personalityChip(archetype)
@@ -524,18 +526,18 @@ struct CoachesBoardView: View {
                     // #36B mech 4: the player's live mental state, one line.
                     if let mental = mentalStateLine(player) {
                         Text(mental.text)
-                            .font(.system(size: 10.5, weight: .bold))
+                            .font(DSType.text(DSType.Size.caption, .bold, prose: true))
                             .foregroundStyle(mental.tint)
                     }
                 }
                 Spacer()
                 VStack(spacing: 2) {
                     Text("OVR")
-                        .font(.system(size: 9, weight: .black))
+                        .font(DSType.display(DSType.Size.caption, .black))
                         .tracking(1.2)
-                        .foregroundStyle(Color.textTertiary)
+                        .foregroundStyle(Color.textTertiaryReadable)
                     Text("\(player.overall)")
-                        .font(.system(size: 22, weight: .black).monospacedDigit())
+                        .font(DSType.display(DSType.Size.title2, .black))
                         .foregroundStyle(Color.forRating(player.overall))
                 }
             }
@@ -546,20 +548,20 @@ struct CoachesBoardView: View {
                           diameter: 86, gradeFontSize: 36)
                 VStack(alignment: .leading, spacing: 5) {
                     Text("DAY GRADE")
-                        .font(.system(size: 10, weight: .black))
+                        .font(DSType.display(DSType.Size.caption, .black))
                         .tracking(1.4)
-                        .foregroundStyle(Color.textTertiary)
+                        .foregroundStyle(Color.textTertiaryReadable)
                     HStack(spacing: 7) {
                         trendArrow(trend)
                         Text(trendLabel(trend))
-                            .font(.system(size: 13, weight: .bold))
+                            .font(DSType.text(DSType.Size.body, .bold))
                             .foregroundStyle(trendColor(trend))
                     }
                     // Defenders don't get "touches" — an empty line reads
                     // "No stats yet" on that side of the ball.
                     Text(line.map { $0.statLine.isEmpty ? emptyStatLineText : $0.statLine }
                          ?? emptyStatLineText)
-                        .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                        .font(DSType.display(DSType.Size.footnote, .semibold))
                         .foregroundStyle(Color.textSecondary)
                         .lineLimit(2)
                         .minimumScaleFactor(0.8)
@@ -664,7 +666,7 @@ struct CoachesBoardView: View {
         case .neutral:  tint = .textSecondary
         }
         return Text(archetype.shortLabel.uppercased())
-            .font(.system(size: 9, weight: .black))
+            .font(DSType.display(DSType.Size.caption, .black))
             .tracking(0.6)
             .foregroundStyle(tint)
             .padding(.horizontal, 6)
@@ -692,9 +694,9 @@ struct CoachesBoardView: View {
         let total = line.wins + line.losses
         return HStack(spacing: 8) {
             Text(line.category.rawValue.uppercased())
-                .font(.system(size: 10, weight: .black))
+                .font(DSType.display(DSType.Size.micro, .black))
                 .tracking(0.8)
-                .foregroundStyle(total == 0 ? Color.textTertiary : Color.textSecondary)
+                .foregroundStyle(total == 0 ? Color.textTertiaryReadable : Color.textSecondary)
                 .frame(width: 104, alignment: .leading)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
@@ -717,8 +719,8 @@ struct CoachesBoardView: View {
             }
             .frame(height: 7)
             Text(total == 0 ? "—" : "\(line.wins)-\(line.losses)")
-                .font(.system(size: 12, weight: .bold).monospacedDigit())
-                .foregroundStyle(total == 0 ? Color.textTertiary
+                .font(DSType.display(DSType.Size.footnote, .bold))
+                .foregroundStyle(total == 0 ? Color.textTertiaryReadable
                                  : (line.wins >= line.losses ? Color.success : Color.danger))
                 .frame(width: 34, alignment: .trailing)
         }
@@ -728,12 +730,12 @@ struct CoachesBoardView: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(label)
-                    .font(.system(size: 9, weight: .black))
+                    .font(DSType.display(DSType.Size.caption, .black))
                     .tracking(1.2)
-                    .foregroundStyle(Color.textTertiary)
+                    .foregroundStyle(Color.textTertiaryReadable)
                 Spacer()
                 Text("\(value)")
-                    .font(.system(size: 11, weight: .bold).monospacedDigit())
+                    .font(DSType.display(DSType.Size.caption, .bold))
                     .foregroundStyle(color)
             }
             ZStack(alignment: .leading) {
@@ -763,8 +765,8 @@ struct CoachesBoardView: View {
 
             if candidates.isEmpty && out.isEmpty && groupHoldouts.isEmpty {
                 Text("No substitutes in this group.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Color.textTertiary)
+                    .font(DSType.text(DSType.Size.footnote, .regular, prose: true))
+                    .foregroundStyle(Color.textTertiaryReadable)
                     .padding(.vertical, 4)
             }
 
@@ -794,21 +796,21 @@ struct CoachesBoardView: View {
         }
         return HStack(spacing: 8) {
             Text("#\(candidate.displayNumber)")
-                .font(.system(size: 11, weight: .bold).monospacedDigit())
-                .foregroundStyle(Color.textTertiary)
+                .font(DSType.display(DSType.Size.caption, .bold))
+                .foregroundStyle(Color.textTertiaryReadable)
                 .frame(width: 32, alignment: .leading)
             VStack(alignment: .leading, spacing: 1) {
                 Text(candidate.shortName)
-                    .font(.system(size: 13, weight: .bold))
+                    .font(DSType.text(DSType.Size.body, .semibold))
                     .foregroundStyle(Color.textPrimary)
                     .lineLimit(1)
                 HStack(spacing: 6) {
                     Text(candidate.position.rawValue)
-                        .font(.system(size: 9, weight: .black))
-                        .foregroundStyle(Color.textTertiary)
+                        .font(DSType.display(DSType.Size.caption, .black))
+                        .foregroundStyle(Color.textTertiaryReadable)
                     if let line, line.matchupWins + line.matchupLosses > 0 {
                         Text("\(line.matchupWins)-\(line.matchupLosses) battles")
-                            .font(.system(size: 9, weight: .bold).monospacedDigit())
+                            .font(DSType.display(DSType.Size.caption, .bold))
                             .foregroundStyle(line.matchupWins >= line.matchupLosses
                                              ? Color.success : Color.danger)
                     }
@@ -816,7 +818,7 @@ struct CoachesBoardView: View {
             }
             Spacer(minLength: 4)
             Text("\(candidate.overall)")
-                .font(.system(size: 14, weight: .black).monospacedDigit())
+                .font(DSType.display(DSType.Size.body, .black))
                 .foregroundStyle(Color.forRating(candidate.overall))
                 .frame(width: 26, alignment: .trailing)
             benchFatigueBar(line?.fatigue ?? candidate.fatigue)
@@ -825,7 +827,7 @@ struct CoachesBoardView: View {
                     Image(systemName: "clock.fill")
                         .font(.system(size: 9, weight: .bold))
                     Text("QUEUED")
-                        .font(.system(size: 10, weight: .black))
+                        .font(DSType.display(DSType.Size.micro, .black))
                 }
                 .foregroundStyle(Color.warning)
                 .padding(.horizontal, 9)
@@ -844,7 +846,7 @@ struct CoachesBoardView: View {
                         Image(systemName: "arrow.up.circle.fill")
                             .font(.system(size: 11, weight: .bold))
                         Text("SUB IN")
-                            .font(.system(size: 11, weight: .black))
+                            .font(DSType.display(DSType.Size.caption, .black))
                             .tracking(0.5)
                     }
                     .foregroundStyle(subsDisabled ? Color.textTertiary : Color.backgroundPrimary)
@@ -871,19 +873,19 @@ struct CoachesBoardView: View {
     ) -> some View {
         HStack(spacing: 8) {
             Text(number.map { "#\($0)" } ?? "—")
-                .font(.system(size: 11, weight: .bold).monospacedDigit())
-                .foregroundStyle(Color.textTertiary)
+                .font(DSType.display(DSType.Size.caption, .bold))
+                .foregroundStyle(Color.textTertiaryReadable)
                 .frame(width: 32, alignment: .leading)
             Text(name)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Color.textTertiary)
+                .font(DSType.text(DSType.Size.body, .semibold))
+                .foregroundStyle(Color.textTertiaryReadable)
                 .lineLimit(1)
             Text(position)
-                .font(.system(size: 9, weight: .black))
-                .foregroundStyle(Color.textTertiary)
+                .font(DSType.display(DSType.Size.caption, .black))
+                .foregroundStyle(Color.textTertiaryReadable)
             Spacer(minLength: 4)
             Text(badge)
-                .font(.system(size: 9, weight: .black))
+                .font(DSType.display(DSType.Size.caption, .black))
                 .tracking(0.8)
                 .foregroundStyle(tint)
                 .padding(.horizontal, 8)
@@ -916,9 +918,9 @@ struct CoachesBoardView: View {
                 .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(tint)
             Text(text)
-                .font(.system(size: 10, weight: .black))
-                .foregroundStyle(Color.textTertiary)
-                .tracking(1.5)
+                .font(DSType.display(DSType.Size.caption, .heavy))
+                .foregroundStyle(Color.textSecondary)
+                .tracking(1.2)
         }
     }
 }

@@ -1,12 +1,25 @@
 import SwiftUI
 
-/// Draft-day trade offer banner (wired to `pendingTradeOffer`).
-///
-/// Visual contract: gold-bordered card, slides in from the top edge, presents
-/// the GM who called + his motive + outgoing/incoming asset summaries with
-/// Accept / Decline actions. Since Wave 4 the assets on either side can be
-/// picks (this year's or a future one) or veterans, so the columns render
-/// whatever string the offer hands them.
+// MARK: - TradeOfferBanner — the offer card, INSIDE a surface that owns it
+//
+// #105 Wave 3b changed what this component is. It used to be one of the war
+// room's five simultaneous overlay mechanisms: a gold-bordered card floating in
+// over the board on the top edge, carrying the screen's only two commit buttons
+// in a place the screen did not own. That is P5's headline defect, and the room
+// version is gone — `DraftControlBar` raises the same offer as a `DSActionBar`
+// at the bottom, where every other commit in the app lives.
+//
+// What remains is the ONE call site that is not an overlay: `PickSheetView`
+// presents the card inline in its own scroll body while the user is on the
+// clock, because the sheet already owns the screen and its own bottom bar
+// belongs to the pick he came here to make. A card inside a surface is a card;
+// the same card floating over a board is an overlay mechanism.
+//
+// Restyled onto the shared vocabulary: `DSType`'s two voices, `.dsGhost` /
+// `.dsPrimary` (the 44 pt, genuinely-disabled-grey set), and one accent instead
+// of `draftStealGold` on the border, the icon, the eyebrow and the button tint —
+// which was four gold jobs in one card, on a hue that has three in the whole app.
+
 struct TradeOfferBanner: View {
     let motive: String
     let outgoing: String        // e.g. "#5 (R1)"
@@ -21,69 +34,48 @@ struct TradeOfferBanner: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: DSSpacing.sm) {
-            HStack(spacing: DSSpacing.xs) {
-                Image(systemName: "arrow.left.arrow.right.square.fill")
-                    .foregroundStyle(Color.draftStealGold)
-                Text("TRADE OFFER")
-                    .font(.caption.weight(.heavy))
-                    .tracking(1.4)
-                    .foregroundStyle(Color.draftStealGold)
-                Spacer()
-                if let gmLine {
-                    Text(gmLine)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(Color.textSecondary)
-                        .lineLimit(1)
-                }
-            }
+            header
             Text(motive)
-                .font(.callout)
+                .font(DSType.text(14, .regular, prose: true))
                 .foregroundStyle(Color.textPrimary)
                 .lineLimit(3)
                 .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: DSSpacing.sm) {
-                tradeColumn(title: "You Send", value: outgoing)
+            HStack(alignment: .top, spacing: DSSpacing.sm) {
+                tradeColumn(title: "You send", value: outgoing)
                 Image(systemName: "arrow.right")
-                    .foregroundStyle(Color.textTertiary)
-                tradeColumn(title: "You Receive", value: incoming)
+                    .font(DSType.display(14, .heavy))
+                    .foregroundStyle(Color.textTertiaryReadable)
+                    .padding(.top, DSSpacing.md)
+                tradeColumn(title: "You receive", value: incoming)
             }
             if let valueSummary {
                 Text(valueSummary)
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(Color.textSecondary)
+                    .font(DSType.display(11, .semibold))
+                    .foregroundStyle(Color.textTertiaryReadable)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            HStack(spacing: DSSpacing.sm) {
-                Button(role: .cancel) {
-                    onDecline()
-                } label: {
-                    Text("Decline")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                Button {
-                    onAccept()
-                } label: {
-                    Text("Accept")
-                        .frame(maxWidth: .infinity)
-                        .font(.body.weight(.semibold))
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(Color.accentGold)
+            HStack(spacing: DSSpacing.xs) {
+                Spacer(minLength: 0)
+                Button("Decline", action: onDecline)
+                    .buttonStyle(.dsGhost)
+                Button("Accept trade", action: onAccept)
+                    .buttonStyle(.dsPrimary)
             }
         }
         .padding(DSSpacing.md)
-        .frame(maxWidth: 420)
+        .frame(maxWidth: 460, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: DSCornerRadius.card)
                 .fill(Color.backgroundSecondary)
-                .overlay(
-                    RoundedRectangle(cornerRadius: DSCornerRadius.card)
-                        .strokeBorder(Color.draftStealGold, lineWidth: 2)
-                )
         )
-        .shadow(color: Color.draftStealGold.opacity(0.5), radius: 12, x: 0, y: 4)
+        .overlay(
+            RoundedRectangle(cornerRadius: DSCornerRadius.card)
+                .strokeBorder(Color.accentBlue.opacity(0.55), lineWidth: 1)
+        )
+        .dsElevation(.card)
         .opacity(visible ? 1 : 0)
-        .offset(y: visible ? 0 : -40)
+        .offset(y: visible ? 0 : -24)
         .onAppear {
             withAnimation(.easeOut(duration: DraftAnimation.bannerIn)) {
                 visible = true
@@ -91,14 +83,33 @@ struct TradeOfferBanner: View {
         }
     }
 
+    private var header: some View {
+        HStack(spacing: DSSpacing.xs) {
+            Image(systemName: "arrow.left.arrow.right")
+                .font(DSType.display(11, .black))
+                .foregroundStyle(Color.accentBlue)
+            Text("TRADE OFFER")
+                .font(DSType.display(11, .heavy))
+                .tracking(0.7)
+                .foregroundStyle(Color.accentBlue)
+            Spacer(minLength: DSSpacing.xs)
+            if let gmLine {
+                Text(gmLine)
+                    .font(DSType.display(11, .semibold))
+                    .foregroundStyle(Color.textSecondary)
+                    .lineLimit(1)
+            }
+        }
+    }
+
     private func tradeColumn(title: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: DSSpacing.xxs) {
             Text(title.uppercased())
-                .font(.caption2.weight(.heavy))
-                .tracking(0.8)
-                .foregroundStyle(Color.textTertiary)
+                .font(DSType.display(11, .heavy))
+                .tracking(0.7)
+                .foregroundStyle(Color.textTertiaryReadable)
             Text(value)
-                .font(.callout.weight(.semibold))
+                .font(DSType.text(16, .semibold))
                 .foregroundStyle(Color.textPrimary)
                 .lineLimit(3)
                 .fixedSize(horizontal: false, vertical: true)

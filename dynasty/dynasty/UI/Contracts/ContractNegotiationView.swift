@@ -35,6 +35,29 @@ import SwiftData
 // OWNERSHIP: this file writes copy and persists the transcript. Every number in
 // it comes out of `ContractNegotiationEngine` — the opening demand, the
 // counters, the accept/walk/break-off verdicts. Nothing here prices a contract.
+//
+// ---------------------------------------------------------------------------
+// #105 WAVE 3c — the presentation layer moved out; the negotiation did not.
+//
+// `NegotiationChat.swift` now owns the chrome this screen and `TradeNegotiationView`
+// used to own a copy of each: the header, the bubbles, the transcript, the
+// notice banner and the close strip. What changed HERE is only where things are
+// drawn:
+//
+//   * rounds are `DSSlatBand` steps with the agent's patience as its meter,
+//     instead of a "N rounds of patience left" sentence in the header;
+//   * the commit lives in `DSActionBar` — one gold primary, the cap sentence as
+//     its explainer, Walk Away separated as the destructive;
+//   * the ending is a `DSResultSheet` instead of a body swap plus a gold "Done";
+//   * the duplicate dismissal is gone. There was a toolbar "Close" AND an inline
+//     "Done" AND a "Leave It" on the pay-cut path — three doors out of one
+//     screen, which is the defect UI_REDESIGN_VISION §P5 names by file name.
+//     One 44 pt X, top-trailing.
+//
+// **Not one line of negotiation logic moved.** The ratchet, the stance pinning
+// and the pricing ladders (9a53918) are untouched: every `submitCounterOffer`,
+// `submitPayCut`, `pester`, `close` and `commit` below is the code that shipped,
+// and the engine calls inside them have the same arguments in the same order.
 
 struct ContractNegotiationView: View {
 
@@ -111,6 +134,31 @@ struct ContractNegotiationView: View {
     /// composer instead of scrolling away with the transcript.
     @State private var payCutLastOutcome: ContractNegotiationEngine.PayCutOutcome?
 
+    // MARK: - Result presentation (#105 Wave 3c)
+
+    /// **The one sheet on this screen.** Enum-shaped and driven by `.sheet(item:)`
+    /// rather than a second `isPresented` flag: a view hierarchy with two
+    /// `.sheet(isPresented:)` modifiers dismisses one of them silently, which is
+    /// a bug this codebase has now shipped four times.
+    @State private var outcome: NegotiationOutcome?
+
+    /// The status the screen has already reacted to. A result sheet fires on a
+    /// TRANSITION, never on arrival — otherwise re-opening a thread that was
+    /// broken off last month would greet the user with a modal about it.
+    @State private var lastSeenStatus: NegotiationThreadStatus?
+
+    /// Two facts the result sheet needs that the world has already overwritten
+    /// by the time it is built.
+    ///
+    /// `onDealCompleted` / `onPayCutAgreed` fire BEFORE `commit`, and both hosts
+    /// write the new salary onto the player inside them — so by the time the
+    /// sheet asks "what did this cost", `player.annualSalary` is the number the
+    /// deal produced and `capCharge(for:)` reads back ≈ $0. Snapshotting the two
+    /// values at the moment of the handshake is the only honest way to state the
+    /// before and the after.
+    @State private var salaryBeforeClose: Int = 0
+    @State private var capChargeAtClose: Int?
+
     private let salaryStep = 500
     private let bonusStep = 500
     private let guaranteedStep = 5
@@ -125,32 +173,51 @@ struct ContractNegotiationView: View {
 
             VStack(spacing: 0) {
                 playerHeader
-                chatArea
-                if isPayCut {
-                    // One dial, not five. A pay cut has a single term.
-                    if isNegotiationActive && !payCutSettled {
-                        payCutComposer
-                    } else {
-                        closingBar
-                    }
-                } else if isNegotiationActive {
-                    offerBuilder
+                if showsRoundBand { roundBand }
+                NegotiationTranscript(lines: chatLines, scrollTarget: scrollTarget)
+                if isComposerLive {
+                    if isPayCut { payCutComposer } else { offerBuilder }
+                    commitBar
                 } else {
-                    closingBar
+                    closeStrip
                 }
             }
         }
         .navigationTitle("Contact Agent")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarColorScheme(.dark, for: .navigationBar)
-        .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                Button("Close") { dismiss() }
-                    .foregroundStyle(Color.textSecondary)
-            }
+        // P5's corollary: ONE dismissal. The gold "Done" in the old closing bar
+        // and the "Leave It" on the pay-cut composer both said the same thing
+        // this says, in two other places and two other verbs.
+        .negotiationDismissButton(label: "Close the conversation. The thread stays saved.") {
+            dismiss()
+        }
+        // §2.6: a process ends in a result sheet, never in an in-place body swap.
+        .sheet(item: $outcome) { result in
+            DSResultSheet(
+                tone: result.tone,
+                eyebrow: isPayCut ? "Renegotiation" : "Contract talks",
+                headline: result.headline,
+                message: result.message,
+                chips: result.chips,
+                cost: result.cost,
+                onContinue: {
+                    outcome = nil
+                    dismiss()
+                }
+            )
         }
         .task { loadIfNeeded() }
     }
+
+    /// Whether the user still has something to do here.
+    private var isComposerLive: Bool {
+        isPayCut ? (isNegotiationActive && !payCutSettled) : isNegotiationActive
+    }
+
+    /// A pay cut is one question with one answer — it has no round budget to
+    /// draw, so it gets no band. Every other talk does.
+    private var showsRoundBand: Bool { !isPayCut && thread != nil }
 
     /// Whether the composer stays on screen.
     ///
@@ -181,13 +248,12 @@ struct ContractNegotiationView: View {
     /// The character the persona speaks in.
     private var agentVoice: AgentVoice { agentPersona.voice(for: player.id) }
 
-    /// Rounds the agent has left before his patience runs out. Presentation of
-    /// the engine's own `ContractDemand.maxRounds` — a lowball that draws the
-    /// insulted line burns one of these, which is what "the ask hardens" looks
-    /// like from the GM's chair.
-    private var roundsRemaining: Int {
-        max(0, liveDemand.maxRounds - (thread?.round ?? 0))
-    }
+    // Rounds left used to be a sentence in the header ("3 rounds of patience
+    // left"). It is now the round band's `DSResourceMeter` — §2.1's rule that a
+    // process prints its count in exactly one place — computed from the same
+    // `ContractDemand.maxRounds`, which still SHRINKS as `insultCount` climbs.
+    // That is what "the ask hardens" looks like from the GM's chair, and the
+    // band shows it by locking a slat rather than by decrementing a noun.
 
     /// The situation-driven character of this talk, if it has one — the engine's
     /// verdict, rendered as a chip. The chat never derives a stance of its own.
@@ -420,267 +486,162 @@ struct ContractNegotiationView: View {
     // MARK: - Player Header
 
     private var playerHeader: some View {
-        HStack(spacing: 16) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(player.fullName)
-                    .font(.title3.weight(.bold))
-                    .foregroundStyle(Color.textPrimary)
-                HStack(spacing: 8) {
-                    Text(player.position.rawValue)
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(Color.textPrimary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(positionSideColor, in: RoundedRectangle(cornerRadius: 4))
-                    Text("Age \(player.age)")
-                        .font(.subheadline)
-                        .foregroundStyle(Color.textSecondary)
-                    Text("\(formatMillions(player.annualSalary))/yr")
-                        .font(.subheadline.monospacedDigit())
-                        .foregroundStyle(Color.textSecondary)
-                    if player.contractYearsRemaining > 0 {
-                        Text("\(player.contractYearsRemaining)yr left")
-                            .font(.subheadline)
-                            .foregroundStyle(Color.textSecondary)
-                    }
-                }
-                // Agent identity: who he is, how he bargains, how he talks.
-                HStack(spacing: 6) {
-                    Image(systemName: agentPersona.symbolName)
-                        .font(.system(size: 10))
-                        .foregroundStyle(personaColor)
-                    Text("Agent: \(agentName)")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.textSecondary)
-                    Text(agentPersona.styleLabel)
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(personaColor)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(personaColor.opacity(0.12), in: Capsule())
-                    Text(agentVoice.label)
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(Color.textTertiary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.backgroundTertiary, in: Capsule())
-                }
-                // The stance chip. Only shown when the engine says there IS one
-                // — a normal negotiation is the overwhelming majority and must
-                // not be dressed up as a story it isn't.
-                if let stance {
-                    Text(stance.label)
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(Color.accentBlue)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.accentBlue.opacity(0.12), in: Capsule())
-                }
-
-                if refusalReason != nil {
-                    // Patience is meaningless when he is not negotiating; what
-                    // matters is how many times you have asked anyway.
-                    Text(pesterCount == 0
-                         ? agentPersona.styleDescription
-                         : "\(agentPersona.styleDescription)  ·  \(pesterCount) offer\(pesterCount == 1 ? "" : "s") tabled since he declined")
-                        .font(.caption2)
-                        .foregroundStyle(pesterCount >= 2 ? Color.danger : Color.textTertiary)
-                } else if isNegotiationActive {
-                    Text("\(agentPersona.styleDescription)  ·  \(roundsRemaining) round\(roundsRemaining == 1 ? "" : "s") of patience left")
-                        .font(.caption2)
-                        .foregroundStyle(roundsRemaining <= 1 ? Color.warning : Color.textTertiary)
-                } else {
-                    Text(agentPersona.styleDescription)
-                        .font(.caption2)
-                        .foregroundStyle(Color.textTertiary)
-                }
-            }
-            Spacer()
-            VStack(alignment: .trailing, spacing: 4) {
+        NegotiationChatHeader(
+            title: player.fullName,
+            chips: factChips,
+            identityChips: agentChips,
+            note: headerNote,
+            noteColor: headerNoteColor
+        ) {
+            VStack(alignment: .trailing, spacing: DSSpacing.xxs) {
                 Text("\(player.overall)")
-                    .font(.system(size: 36, weight: .bold).monospacedDigit())
+                    .font(DSType.display(DSType.Size.display, .heavy))
                     .foregroundStyle(Color.forRating(player.overall))
                 Text("OVR")
-                    .font(.caption)
-                    .foregroundStyle(Color.textTertiary)
-            }
-        }
-        .padding(16)
-        .background(Color.backgroundSecondary)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(Color.surfaceBorder)
-                .frame(height: 1)
-        }
-    }
-
-    // MARK: - Chat Area
-
-    private var chatArea: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 12) {
-                    ForEach(thread?.messages ?? []) { message in
-                        chatBubble(for: message)
-                            .id(message.id)
-                    }
-                }
-                .padding(16)
-            }
-            .onChange(of: scrollTarget) { _, target in
-                if let target {
-                    withAnimation(.easeOut(duration: 0.3)) {
-                        proxy.scrollTo(target, anchor: .bottom)
-                    }
-                }
+                    .font(DSType.display(11, .heavy))
+                    .tracking(0.6)
+                    .foregroundStyle(Color.textTertiaryReadable)
             }
         }
     }
 
-    // MARK: - Chat Bubble
-
-    @ViewBuilder
-    private func chatBubble(for message: NegotiationThreadMessage) -> some View {
-        if message.isSignedCard {
-            signedCard(message)
-        } else {
-            switch message.sender {
-            case .agent:  agentBubble(message)
-            case .you:    gmBubble(message)
-            case .system: systemBubble(message)
-            }
+    /// The facts about the man: what he plays, how old he is, what he already
+    /// costs. Nothing fogged — a player under contract to the user's club has no
+    /// hidden salary.
+    private var factChips: [NegotiationChatChip] {
+        var chips: [NegotiationChatChip] = [
+            .init(id: "pos", text: player.position.rawValue, color: positionSideColor, style: .solid),
+            .init(id: "age", text: "Age \(player.age)"),
+            .init(id: "pay", text: "\(formatMillions(player.annualSalary))/yr")
+        ]
+        if player.contractYearsRemaining > 0 {
+            chips.append(.init(id: "yrs", text: "\(player.contractYearsRemaining)yr left"))
         }
+        return chips
     }
 
-    private func agentBubble(_ message: NegotiationThreadMessage) -> some View {
-        HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 6) {
-                    Text(thread?.agentName ?? agentName)
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(Color.textTertiary)
-                    if let tone = message.tone, let chip = toneChip(tone) {
-                        Text(chip.label)
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(chip.color)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(chip.color.opacity(0.14), in: Capsule())
-                    }
-                }
-
-                Text(message.text)
-                    .font(.subheadline)
-                    .foregroundStyle(Color.textPrimary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                if let snapshot = message.offer {
-                    offerCard(snapshot.offer, isAgent: true)
-                }
-            }
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color.backgroundSecondary)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .strokeBorder(
-                                message.tone == .insulted ? Color.danger.opacity(0.45) : Color.surfaceBorder,
-                                lineWidth: 1
-                            )
-                    )
-            )
-            .frame(maxWidth: 500, alignment: .leading)
-
-            Spacer(minLength: 60)
+    /// Who is on the phone: his name, how he bargains, how he talks — and the
+    /// situation chip when the engine says this talk has one. A normal
+    /// negotiation is the overwhelming majority and must not be dressed up as a
+    /// story it isn't, so `stance` stays optional.
+    private var agentChips: [NegotiationChatChip] {
+        var chips: [NegotiationChatChip] = [
+            .init(id: "agent", text: agentName, icon: agentPersona.symbolName, color: personaColor, style: .tinted),
+            .init(id: "style", text: agentPersona.styleLabel, color: personaColor, style: .tinted),
+            .init(id: "voice", text: agentVoice.label, color: .textTertiaryReadable, style: .tinted)
+        ]
+        if let stance {
+            chips.append(.init(id: "stance", text: stance.label, color: .accentBlue, style: .tinted))
         }
+        return chips
     }
 
-    private func gmBubble(_ message: NegotiationThreadMessage) -> some View {
-        HStack(alignment: .top) {
-            Spacer(minLength: 60)
-
-            VStack(alignment: .trailing, spacing: 6) {
-                Text("You")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(Color.accentGold.opacity(0.7))
-
-                Text(message.text)
-                    .font(.subheadline)
-                    .foregroundStyle(Color.textPrimary)
-                    .multilineTextAlignment(.trailing)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                if let snapshot = message.offer {
-                    offerCard(snapshot.offer, isAgent: false)
-                }
-            }
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color.accentGold.opacity(0.12))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .strokeBorder(Color.accentGold.opacity(0.25), lineWidth: 1)
-                    )
-            )
-            .frame(maxWidth: 500, alignment: .trailing)
-        }
+    /// The one prose line under the chips.
+    ///
+    /// Patience USED to be spelled out here ("3 rounds of patience left"). It is
+    /// now the round band's meter — the one place a process prints its count —
+    /// so what survives is the character note, plus the pestering tally, which
+    /// the band cannot show because a refusing camp is not spending rounds.
+    private var headerNote: String {
+        guard refusalReason != nil, pesterCount > 0 else { return agentPersona.styleDescription }
+        return "\(agentPersona.styleDescription)  ·  \(pesterCount) offer\(pesterCount == 1 ? "" : "s") tabled since he declined"
     }
 
-    private func systemBubble(_ message: NegotiationThreadMessage) -> some View {
-        Text(message.text)
-            .font(.caption.weight(.medium))
-            .foregroundStyle(Color.textTertiary)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity)
-            .multilineTextAlignment(.center)
+    private var headerNoteColor: Color {
+        (refusalReason != nil && pesterCount >= 2) ? .dangerText : .textTertiaryReadable
     }
 
-    /// The receipt, rendered INSIDE the thread rather than as a screen the sheet
-    /// jumps to — the conversation is the record, so the signature belongs in it.
-    private func signedCard(_ message: NegotiationThreadMessage) -> some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: "checkmark.seal.fill")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(Color.success)
-                Text("Contract Signed")
-                    .font(.subheadline.weight(.bold))
-                    .foregroundStyle(Color.success)
-            }
+    // MARK: - Round Band
 
-            Text(message.text)
-                .font(.caption)
-                .foregroundStyle(Color.textSecondary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-
-            if let snapshot = message.offer {
-                offerCard(snapshot.offer, isAgent: false)
-            }
-        }
-        .padding(14)
-        .frame(maxWidth: 500)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color.success.opacity(0.10))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .strokeBorder(Color.success.opacity(0.35), lineWidth: 1)
-                )
+    /// The agent's patience, as the app's one process spine (§2.1).
+    ///
+    /// Two channels, two quantities, exactly as the band documents. The RIBBON is
+    /// the run this conversation has actually had — every spoken round gets a
+    /// slat, and an open thread always has one more to step into. The METER is
+    /// the resource: `ContractDemand.maxRounds` is the engine's own patience
+    /// model, and it SHRINKS as `insultCount` climbs, which is what a lowball
+    /// costing the man's goodwill looks like from the GM's chair. Feeding that
+    /// shrinking number to the ribbon printed a count the transcript contradicted
+    /// — two lowballs and the band said "Round 2 of 2, done" with the composer
+    /// still live — so it now drives only the meter.
+    private var roundBand: some View {
+        let used = thread?.round ?? 0
+        let patience = max(1, liveDemand.maxRounds)
+        return NegotiationRoundBand(
+            used: used,
+            limit: max(patience, used + (isNegotiationActive ? 1 : 0)),
+            meter: DSResourceMeter(
+                spent: min(used, patience),
+                total: patience,
+                unit: "rounds of patience"
+            ),
+            outcomes: roundOutcomes,
+            isClosed: !isNegotiationActive,
+            unit: "rounds of patience"
         )
-        .frame(maxWidth: .infinity)
+    }
+
+    /// What each finished round produced — the money the club tabled in it, read
+    /// straight off the transcript so the band cannot quote a number the
+    /// conversation does not contain.
+    private var roundOutcomes: [Int: String] {
+        var byRound: [Int: String] = [:]
+        for message in thread?.messages ?? [] where message.sender == .you {
+            guard let offer = message.offer else { continue }
+            byRound[message.round] = formatMillions(offer.offer.annualSalary)
+        }
+        return byRound
+    }
+
+    // MARK: - Transcript
+
+    /// The persisted messages, mapped onto the shared line model. The mapping is
+    /// the whole of what this screen has to say about how a chat looks.
+    private var chatLines: [NegotiationChatLine] {
+        let speaker = thread?.agentName ?? agentName
+        return (thread?.messages ?? []).map { message in
+            var receipt: NegotiationChatLine.Receipt?
+            if message.isSignedCard {
+                receipt = NegotiationChatLine.Receipt(
+                    title: isPayCut ? "Pay cut agreed" : "Contract signed"
+                )
+            }
+            var tone: NegotiationChatLine.Tone?
+            if !message.isSignedCard, let key = message.tone {
+                tone = toneChip(key)
+            }
+            var attachment: AnyView?
+            if let snapshot = message.offer {
+                attachment = AnyView(offerCard(snapshot.offer, isAgent: message.sender == .agent))
+            }
+            return NegotiationChatLine(
+                id: message.id,
+                side: side(for: message.sender),
+                speaker: speaker,
+                text: message.text,
+                tone: tone,
+                isAlarmed: message.tone == .insulted,
+                receipt: receipt,
+                attachment: attachment
+            )
+        }
+    }
+
+    private func side(for sender: NegotiationThreadSender) -> NegotiationChatSide {
+        switch sender {
+        case .agent:  return .them
+        case .you:    return .you
+        case .system: return .system
+        }
     }
 
     /// The badge on an agent line that names the tone it was said in. Only the
-    /// two tones a GM needs to READ are chipped — the rest is in the wording.
-    private func toneChip(_ tone: AgentToneKey) -> (label: String, color: Color)? {
+    /// tones a GM needs to READ are chipped — the rest is in the wording.
+    private func toneChip(_ tone: AgentToneKey) -> NegotiationChatLine.Tone? {
         switch tone {
-        case .insulted: return ("Ask hardened", .danger)
-        case .refusing: return ("Refusing", .warning)
-        case .eager:    return ("Ready to sign", .success)
+        case .insulted: return .init(label: "Ask hardened", color: .dangerText)
+        case .refusing: return .init(label: "Refusing", color: .warning)
+        case .eager:    return .init(label: "Ready to sign", color: .success)
         default:        return nil
         }
     }
@@ -744,66 +705,117 @@ struct ContractNegotiationView: View {
         }
     }
 
-    // MARK: - Closing Bar
+    // MARK: - Close Strip
 
-    /// What replaces the composer once the conversation is over. Deliberately a
-    /// button and not an automatic dismiss: whether the talk ended in a
-    /// signature, a walk-out or a door closed in your face, the last thing the
-    /// agent said is worth reading before the screen goes away.
-    private var closingBar: some View {
-        VStack(spacing: 10) {
-            Rectangle()
-                .fill(Color.surfaceBorder)
-                .frame(height: 1)
+    /// What replaces the composer once the conversation is over.
+    ///
+    /// **No button.** The outcome was delivered by `DSResultSheet` at the moment
+    /// it happened, and the way out is the single X in the corner — the gold
+    /// "Done" that used to sit here was the second half of the "Close"/"Done"
+    /// pair the vision names by file (§P5's dismissal corollary). What survives
+    /// is the reading half: the lingering grudge, and how long the door stays
+    /// shut.
+    private var closeStrip: some View {
+        NegotiationCloseStrip(
+            status: closeStatusLine,
+            note: thread?.lingeringNote
+        )
+    }
 
-            if let note = thread?.lingeringNote {
-                HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.bubble.fill")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Color.warning)
-                    Text(note)
-                        .font(.caption)
-                        .foregroundStyle(Color.textSecondary)
-                    Spacer()
-                }
-                .padding(.horizontal, 4)
-            }
-
-            // `.refused` is deliberately absent: that thread keeps its composer
-            // now, so it never reaches this bar. The only camp that genuinely
-            // will not hear from you again this league year is the one that hung
-            // up on a lowball.
-            if thread?.status == .brokenOff {
-                HStack(spacing: 6) {
-                    Image(systemName: "clock.arrow.circlepath")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Color.textTertiary)
-                    Text("You can reach out again next league year.")
-                        .font(.caption)
-                        .foregroundStyle(Color.textTertiary)
-                    Spacer()
-                }
-                .padding(.horizontal, 4)
-            }
-
-            Button {
-                dismiss()
-            } label: {
-                Text("Done")
-                    .font(.subheadline.weight(.bold))
-                    .foregroundStyle(Color.backgroundPrimary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10)
-                            .fill(Color.accentGold)
-                    )
-            }
-            .accessibilityHint("Closes the conversation. The thread stays saved.")
+    private var closeStatusLine: String {
+        switch thread?.status {
+        case .signed:
+            return isPayCut
+                ? "\(player.firstName) agreed to the reduced salary. The saving is already on your cap."
+                : "\(player.fullName) is signed. The deal is on your books."
+        case .walkedAway:
+            return "You ended these talks. His camp will take another call."
+        case .playerWalked:
+            return "\(player.firstName)'s camp walked. They'll listen again next league year."
+        // `.refused` is deliberately absent: that thread keeps its composer, so
+        // it never reaches this strip. The only camp that genuinely will not
+        // hear from you again this league year is the one that hung up on a
+        // lowball.
+        case .brokenOff:
+            return "\(thread?.agentName ?? agentName) has cut off contract talks. You can reach out again next league year."
+        default:
+            // The pay-cut settled latch: the thread is still `.open`, but the
+            // man has already given this league year's answer.
+            return "\(player.fullName) already agreed to a reduced salary this league year. His camp will not revisit it until the new one."
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(Color.backgroundSecondary)
+    }
+
+    // MARK: - Commit Bar (§2.5)
+
+    /// **The one place this screen commits.** One gold primary, the cap sentence
+    /// as its explainer, and Walk Away as the destructive with the bar's own
+    /// separating rule between them — instead of the three equal-weight
+    /// full-width buttons that shipped.
+    @ViewBuilder
+    private var commitBar: some View {
+        if isPayCut {
+            DSActionBar(
+                explainer: .init(
+                    title: "Ask for a pay cut",
+                    message: payCutExplainer,
+                    isWarning: payCutSavings <= 0
+                ),
+                primary: .init(
+                    title: "Ask for Pay Cut",
+                    isEnabled: payCutSavings > 0,
+                    accessibilityLabel: payCutSavings <= 0
+                        ? "Ask for pay cut. Disabled: move the dial below his current salary first."
+                        : "Asks \(player.firstName)'s agent to take \(formatMillions(payCutSalary)) per year.",
+                    handler: { submitPayCut() }
+                )
+            )
+        } else {
+            DSActionBar(
+                explainer: .init(
+                    title: builderExceedsCap ? "Can't table this" : "Send this offer",
+                    message: commitExplainerMessage,
+                    isWarning: builderExceedsCap
+                ),
+                destructive: .init(
+                    title: "Walk Away",
+                    accessibilityLabel: "Walk away from talks with \(player.fullName)'s camp.",
+                    handler: { walkAway() }
+                ),
+                secondary: acceptAction,
+                primary: .init(
+                    title: "Send Offer",
+                    isEnabled: !builderExceedsCap,
+                    accessibilityLabel: builderExceedsCap
+                        ? "Send offer. Disabled: the offer exceeds your available cap space."
+                        : (refusalReason != nil
+                           ? "Tables this package at a camp that has declined to negotiate. The ask hardens and he loses morale."
+                           : "Sends this package to the agent."),
+                    handler: { submitCounterOffer() }
+                )
+            )
+        }
+    }
+
+    /// "Accept Theirs", but only while there IS a standing number to accept.
+    private var acceptAction: DSActionBar.Action? {
+        guard thread?.pendingAgentOffer != nil else { return nil }
+        return DSActionBar.Action(
+            title: "Accept Theirs",
+            isEnabled: !pendingOfferExceedsCap,
+            accessibilityLabel: pendingOfferExceedsCap
+                ? "Accept their offer. Disabled: the agent's number exceeds your available cap space."
+                : "Signs the agent's standing offer.",
+            handler: { acceptAgentOffer() }
+        )
+    }
+
+    /// The pay-cut bar's cost line: what the ask buys, and where it sits against
+    /// what the league would pay him.
+    private var payCutExplainer: String {
+        guard payCutSavings > 0 else {
+            return "Move the dial **below \(formatMillions(player.annualSalary))** — an ask for more money is an extension, and that talk has its own door."
+        }
+        return "Frees **\(formatMillions(payCutSavings))** this year. \(payCutMarketNote)"
     }
 
     // MARK: - Pay Cut Composer (#102)
@@ -869,65 +881,25 @@ struct ContractNegotiationView: View {
                 .tint(Color.accentGold)
             }
 
-            VStack(spacing: 4) {
-                HStack {
-                    Text("Current: \(formatMillions(player.annualSalary))/yr")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(Color.textSecondary)
-                    Spacer()
-                    Text("Saves \(formatMillions(payCutSavings)) this year")
-                        .font(.caption.weight(.bold).monospacedDigit())
-                        .foregroundStyle(payCutSavings > 0 ? Color.success : Color.textTertiary)
-                }
-                HStack(spacing: 6) {
-                    Image(systemName: "chart.line.uptrend.xyaxis")
-                        .font(.system(size: 10))
-                        .foregroundStyle(Color.textTertiary)
-                    Text(payCutMarketNote)
-                        .font(.system(size: 10))
-                        .foregroundStyle(Color.textTertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer()
-                }
+            // What the dial costs and what it buys now lives in the action bar's
+            // explainer, beside the commit it explains (§2.5) — printing it here
+            // as well would state the same two facts twice on one screen. What
+            // stays is the anchor the dial is measured against.
+            HStack {
+                Text("Current: \(formatMillions(player.annualSalary))/yr")
+                    .font(DSType.display(11, .semibold))
+                    .foregroundStyle(Color.textSecondary)
+                Spacer()
+                Text("Saves \(formatMillions(payCutSavings)) this year")
+                    .font(DSType.display(11, .heavy))
+                    .foregroundStyle(payCutSavings > 0 ? Color.success : Color.textTertiaryReadable)
             }
-            .padding(.horizontal, 4)
-
-            HStack(spacing: 12) {
-                Button {
-                    submitPayCut()
-                } label: {
-                    Text("Ask for Pay Cut")
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(Color.backgroundPrimary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(payCutSavings > 0 ? Color.accentGold : Color.textTertiary)
-                        )
-                }
-                .disabled(payCutSavings <= 0)
-                .accessibilityHint(payCutSavings <= 0
-                                   ? "Disabled: move the dial below his current salary first."
-                                   : "Asks \(player.firstName)'s agent to take \(formatMillions(payCutSalary)) per year.")
-
-                Button {
-                    dismiss()
-                } label: {
-                    Text("Leave It")
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(Color.textSecondary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10)
-                                .strokeBorder(Color.surfaceBorder, lineWidth: 1)
-                        )
-                }
-            }
+            .padding(.horizontal, DSSpacing.xxs)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.horizontal, DSSpacing.md)
+        .padding(.vertical, DSSpacing.sm)
+        .frame(maxWidth: DSLayout.contentMeasure)
+        .frame(maxWidth: .infinity)
         .background(Color.backgroundSecondary)
     }
 
@@ -943,62 +915,36 @@ struct ContractNegotiationView: View {
     }
 
     /// The standing answer, kept under the composer so a release demand does not
-    /// scroll away with the transcript.
+    /// scroll away with the transcript. One shared `NegotiationNotice` shape,
+    /// which is the same banner the refusal and the trade screen's league-office
+    /// blockers now draw.
     @ViewBuilder
     private var payCutOutcomeBanner: some View {
         switch payCutLastOutcome {
         case .demandsRelease:
-            payCutBanner(
+            NegotiationNotice(
                 icon: "person.crop.circle.badge.xmark",
-                color: .danger,
+                color: .dangerText,
                 title: "He wants his release",
-                body: "\(player.firstName) would rather test the market than fund the club's cap. Release him from the Cap Compliance workspace, or leave the contract alone."
+                message: "\(player.firstName) would rather test the market than fund the club's cap. Release him from the Cap Compliance workspace, or leave the contract alone."
             )
         case .countered(let perYear):
-            payCutBanner(
+            NegotiationNotice(
                 icon: "arrow.left.arrow.right",
                 color: .warning,
                 title: "He'll go to \(formatMillions(perYear))",
-                body: "That is his floor. Set the dial there and ask again, or walk away from it."
+                message: "That is his floor. Set the dial there and ask again, or walk away from it."
             )
         case .refused:
-            payCutBanner(
+            NegotiationNotice(
                 icon: "hand.raised.fill",
                 color: .warning,
                 title: "He said no",
-                body: "You can ask again with a softer number. Whether he listens is his agent's call."
+                message: "You can ask again with a softer number. Whether he listens is his agent's call."
             )
         case .accepted, .none:
             EmptyView()
         }
-    }
-
-    private func payCutBanner(icon: String, color: Color, title: String, body: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Image(systemName: icon)
-                    .font(.system(size: 11))
-                    .foregroundStyle(color)
-                Text(title)
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(color)
-                Spacer()
-            }
-            Text(body)
-                .font(.caption2)
-                .foregroundStyle(Color.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(color.opacity(0.10))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .strokeBorder(color.opacity(0.30), lineWidth: 1)
-                )
-        )
     }
 
     // MARK: - Offer Builder
@@ -1073,11 +1019,13 @@ struct ContractNegotiationView: View {
             // Yearly breakdown toggle
             yearlyBreakdownSection
 
-            // Action buttons
-            actionButtons
+            // The commit is NOT here any more — it is the `DSActionBar` below
+            // this panel (§2.5: "the bar is the only place a screen commits").
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.horizontal, DSSpacing.md)
+        .padding(.vertical, DSSpacing.sm)
+        .frame(maxWidth: DSLayout.contentMeasure)
+        .frame(maxWidth: .infinity)
         .background(Color.backgroundSecondary)
     }
 
@@ -1091,40 +1039,14 @@ struct ContractNegotiationView: View {
     @ViewBuilder
     private var refusalBanner: some View {
         if let reason = refusalReason {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 6) {
-                    Image(systemName: reason.neverSignsAtAnyPrice
-                          ? "nosign" : "hand.raised.fill")
-                        .font(.system(size: 11))
-                        .foregroundStyle(reason.neverSignsAtAnyPrice ? Color.danger : Color.warning)
-                    Text(reason.badgeLabel)
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(reason.neverSignsAtAnyPrice ? Color.danger : Color.warning)
-                    Spacer()
-                }
-                Text(reason.exitCondition)
-                    .font(.caption2)
-                    .foregroundStyle(Color.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(reason.neverSignsAtAnyPrice
-                     ? "You can still table an offer. He will not read it as one — the ask hardens, and he hears about every call."
-                     : "You can still table an offer. It will not be graded on the money, the ask hardens, and he hears about every call.")
-                    .font(.system(size: 10))
-                    .foregroundStyle(Color.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill((reason.neverSignsAtAnyPrice ? Color.danger : Color.warning).opacity(0.10))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .strokeBorder(
-                                (reason.neverSignsAtAnyPrice ? Color.danger : Color.warning).opacity(0.30),
-                                lineWidth: 1
-                            )
-                    )
+            NegotiationNotice(
+                icon: reason.neverSignsAtAnyPrice ? "nosign" : "hand.raised.fill",
+                color: reason.neverSignsAtAnyPrice ? .dangerText : .warning,
+                title: reason.badgeLabel,
+                message: reason.exitCondition,
+                footnote: reason.neverSignsAtAnyPrice
+                    ? "You can still table an offer. He will not read it as one — the ask hardens, and he hears about every call."
+                    : "You can still table an offer. It will not be graded on the money, the ask hardens, and he hears about every call."
             )
         }
     }
@@ -1193,20 +1115,25 @@ struct ContractNegotiationView: View {
                 }
             }
 
-            if capMode != .sandbox {
-                HStack(spacing: 6) {
-                    Image(systemName: builderExceedsCap ? "exclamationmark.triangle.fill" : "checkmark.circle")
-                        .font(.system(size: 10))
-                        .foregroundStyle(builderExceedsCap ? Color.danger : Color.textTertiary)
-                    Text(capPreviewSentence(for: offer, startsLater: startsLater))
-                        .font(.system(size: 10))
-                        .foregroundStyle(builderExceedsCap ? Color.danger : Color.textTertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer()
-                }
-            }
+            // The cap SENTENCE moved to the action bar's explainer (§2.5) — it is
+            // what committing costs, so it belongs beside the commit. Printing it
+            // here as well would put the same clause on the screen twice, 40 pt
+            // apart.
         }
-        .padding(.horizontal, 4)
+        .padding(.horizontal, DSSpacing.xxs)
+    }
+
+    /// What tabling this offer does, in the action bar's explainer slot.
+    ///
+    /// Sandbox keeps its own sentence rather than borrowing the cap one: with
+    /// `exceedsCap` short-circuited there is no room to quote, and quoting it
+    /// anyway would tell a sandbox GM he is $12M over something that cannot stop
+    /// him.
+    private var commitExplainerMessage: String {
+        guard capMode != .sandbox else {
+            return "Sends this package to \(thread?.agentName ?? agentName). **Sandbox cap** — no offer is blocked by room."
+        }
+        return capPreviewSentence(for: builderOffer, startsLater: dealStartOffset > 0)
     }
 
     /// One sentence, and it always names the year it is talking about.
@@ -1531,69 +1458,6 @@ struct ContractNegotiationView: View {
         }
     }
 
-    private var actionButtons: some View {
-        HStack(spacing: 12) {
-            // Counter Offer
-            Button {
-                submitCounterOffer()
-            } label: {
-                Text("Send Offer")
-                    .font(.subheadline.weight(.bold))
-                    .foregroundStyle(Color.backgroundPrimary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10)
-                            .fill(builderExceedsCap ? Color.textTertiary : Color.accentGold)
-                    )
-            }
-            .disabled(builderExceedsCap)
-            .accessibilityHint(
-                builderExceedsCap
-                    ? "Disabled: the offer exceeds your available cap space."
-                    : (refusalReason != nil
-                       ? "Tables this package at a camp that has declined to negotiate. The ask hardens and he loses morale."
-                       : "Sends this package to the agent.")
-            )
-
-            // Accept (only when agent has made an offer)
-            if thread?.pendingAgentOffer != nil {
-                Button {
-                    acceptAgentOffer()
-                } label: {
-                    Text("Accept")
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(Color.backgroundPrimary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(pendingOfferExceedsCap ? Color.textTertiary : Color.success)
-                        )
-                }
-                .disabled(pendingOfferExceedsCap)
-                .accessibilityHint(pendingOfferExceedsCap
-                                   ? "Disabled: the agent's number exceeds your available cap space."
-                                   : "Signs the agent's standing offer.")
-            }
-
-            // Walk away
-            Button {
-                walkAway()
-            } label: {
-                Text("Walk Away")
-                    .font(.subheadline.weight(.bold))
-                    .foregroundStyle(Color.danger)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10)
-                            .strokeBorder(Color.danger.opacity(0.5), lineWidth: 1)
-                    )
-            }
-        }
-    }
-
     // MARK: - Load
 
     private func loadIfNeeded() {
@@ -1631,6 +1495,9 @@ struct ContractNegotiationView: View {
                 && !liveDemand.isRefusing
             if !stanceLifted {
                 thread = existing
+                // Arrival, not a transition — the result sheet must not fire for
+                // an ending the user already lived through (#105 Wave 3c).
+                lastSeenStatus = existing.status
                 restoreBuilder(from: existing)
                 scrollTarget = existing.messages.last?.id
                 return
@@ -2172,9 +2039,13 @@ struct ContractNegotiationView: View {
         guard var live = thread, live.status.acceptsOffers, !payCutSettled else { return }
         guard payCutSalary < player.annualSalary else { return }
 
+        // Presentation-only snapshot (#105 Wave 3c) — see `salaryBeforeClose`.
+        // Taken before any consent hook can reprice the man.
+        salaryBeforeClose = player.annualSalary
+
         // #102 F7 — a refusing camp is not a free suggestion box.
         //
-        // `NegotiationStatus.acceptsOffers` is deliberately true for `.refused`
+        // `NegotiationThreadStatus.acceptsOffers` is deliberately true for `.refused`
         // (a front office is always allowed to table something), and
         // `submitCounterOffer` pays for that privilege by forking into
         // `pester`: the ask ratchets, the ledger books an insult, the man loses
@@ -2490,6 +2361,11 @@ struct ContractNegotiationView: View {
             live.lingeringNote = applyCloseEffects(tone: tone, desire: want, ctx: ctx, sel: sel)
         }
 
+        // Presentation-only snapshot (#105 Wave 3c) — see `capChargeAtClose`.
+        // Taken before the host's contract write moves `player.annualSalary`.
+        salaryBeforeClose = player.annualSalary
+        capChargeAtClose = capCharge(for: offer)
+
         onDealCompleted?(offer)
     }
 
@@ -2596,14 +2472,123 @@ struct ContractNegotiationView: View {
     private func commit(_ updated: NegotiationThread, sel: DialogueSelector? = nil) {
         var updated = updated
         if let sel { updated.lastLineIndex = sel.lastIndex }
+        let previous = lastSeenStatus
         thread = updated
         scrollTarget = updated.messages.last?.id
+        announce(status: updated.status, from: previous)
         // Pay-cut talks stay in memory — see `loadIfNeeded` for why writing one
         // would clobber the player's extension transcript.
         guard !isPayCut else { return }
         if let careerID = player.careerID {
             NegotiationThreadStore.upsert(updated, careerID: careerID)
         }
+    }
+
+    // MARK: - Result (#105 Wave 3c)
+
+    /// **Raises the result sheet on a TRANSITION, and never on arrival.**
+    ///
+    /// `previous == nil` is the load pass — a thread that was already broken off
+    /// last month, or a pay-cut thread rebuilt in memory on every open, must not
+    /// greet the user with a modal about something he already knows. `.refused`
+    /// is not an ending either: that camp still has a live composer, and the
+    /// pestering mechanic is the whole point of leaving it there.
+    private func announce(status: NegotiationThreadStatus, from previous: NegotiationThreadStatus?) {
+        lastSeenStatus = status
+        guard let previous, previous != status else { return }
+        guard status.isTerminal, status != .refused else { return }
+        outcome = makeOutcome(for: status)
+    }
+
+    /// The ending, in `DSResultSheet`'s grammar: what happened, what changed,
+    /// what it cost.
+    private func makeOutcome(for status: NegotiationThreadStatus) -> NegotiationOutcome {
+        let signed = thread?.messages.last(where: { $0.isSignedCard })?.offer?.offer
+        switch status {
+        case .signed where isPayCut:
+            return NegotiationOutcome(
+                tone: .good,
+                headline: "\(player.firstName) takes the cut",
+                message: "His camp signed off on **\(formatMillions(payCutSalary))** a year for the rest of the deal.",
+                chips: [
+                    .init(id: "was", label: "Was", value: "\(formatMillions(salaryBeforeClose))/yr"),
+                    .init(id: "now", label: "Now", value: "\(formatMillions(payCutSalary))/yr", valueColor: .accentGold),
+                    .init(
+                        id: "freed",
+                        label: "Freed",
+                        value: formatMillions(max(0, salaryBeforeClose - payCutSalary)),
+                        valueColor: .success
+                    )
+                ],
+                cost: thread?.lingeringNote
+                    ?? "He agreed, and he'll remember who asked. Morale is already booked against him."
+            )
+
+        case .signed:
+            let offer = signed ?? builderOffer
+            return NegotiationOutcome(
+                tone: .good,
+                headline: "\(player.fullName) signs for \(offer.years) year\(offer.years == 1 ? "" : "s")",
+                message: "\(thread?.agentName ?? agentName) closed it after \(roundsSpoken) round\(roundsSpoken == 1 ? "" : "s").",
+                chips: [
+                    .init(id: "years", label: "Years", value: "\(offer.years)"),
+                    .init(id: "aav", label: "Cap hit", value: "\(formatMillions(offer.annualCapHit))/yr", valueColor: .accentGold),
+                    .init(id: "total", label: "Total", value: formatMillions(offer.totalValue)),
+                    .init(id: "gtd", label: "Guaranteed", value: "\(offer.guaranteedPercent)%")
+                ],
+                cost: signedCostLine(offer)
+            )
+
+        case .playerWalked:
+            return NegotiationOutcome(
+                tone: .bad,
+                headline: "\(player.firstName)'s camp walked",
+                message: "They stopped short of a deal. Nothing is signed, and nothing is on your cap.",
+                chips: [],
+                cost: "The talk is over for now. His camp will take another call, and the ask you hardened stays hardened."
+            )
+
+        case .brokenOff:
+            return NegotiationOutcome(
+                tone: .bad,
+                headline: "\(thread?.agentName ?? agentName) hung up",
+                message: "He has cut off contract talks for \(player.fullName) until the new league year.",
+                chips: [],
+                cost: "No further offers this league year — and the insults on the ledger ride into every negotiation the league has with you."
+            )
+
+        case .walkedAway:
+            return NegotiationOutcome(
+                tone: .neutral,
+                headline: "You ended the talks",
+                message: "Nothing was signed. His camp holds no grudge for a front office that says no politely.",
+                chips: [],
+                cost: "The thread stays saved. You can call again from his player card."
+            )
+
+        default:
+            return NegotiationOutcome(
+                tone: .neutral,
+                headline: "Talks are over",
+                message: nil,
+                chips: [],
+                cost: nil
+            )
+        }
+    }
+
+    /// Rounds the two sides actually spoke — `thread.round` counts the club's
+    /// turns, and the opener is round 0.
+    private var roundsSpoken: Int { max(1, thread?.round ?? 1) }
+
+    private func signedCostLine(_ offer: NegotiationOffer) -> String {
+        guard capMode != .sandbox else {
+            return "**Sandbox cap** — the deal is on the roster and charges nothing you have to fit."
+        }
+        if dealStartOffset > 0 {
+            return "Charges **\(formatMillions(offer.annualCapHit))** from \(String(dealStartSeason)), and the new rate goes on this year's books the moment he signs."
+        }
+        return "Charges **\(formatMillions(max(0, capChargeAtClose ?? offer.annualCapHit)))** of your \(formatMillions(teamCapSpace)) in room."
     }
 
     // MARK: - Helpers

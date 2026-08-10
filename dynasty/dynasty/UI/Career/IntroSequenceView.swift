@@ -160,6 +160,18 @@ struct IntroSequenceView: View {
 }
 
 // MARK: - Step 2: Owner Meeting
+//
+// #105 Wave 5a. This step used to be the app's SECOND owner screen: §3 row 12b
+// names it against `News/OwnerMeetingView`, and §5's target is "one owner
+// screen". It is now the intro's *staging* of the shared briefing — the scene,
+// the reveal choreography and the Continue — and draws nothing about the owner
+// itself. Every card below comes from `OwnerBriefing`, the same file the hub
+// screen reads, so the two can no longer disagree about the same man.
+//
+// The explainers this screen used to own (#15's implication lines, #16's
+// personal quote, #129's consequences line) moved INTO the shared briefing
+// rather than being deleted — they were the better half of the pair, and the
+// hub screen never had them.
 
 private struct OwnerMeetingStep: View {
 
@@ -172,101 +184,26 @@ private struct OwnerMeetingStep: View {
     @State private var showHeader = false
     @State private var showTraits = false
     @State private var showGoals = false
-    @State private var showWarning = false
+    @State private var showQuote = false
 
-    private var patienceDescription: String {
-        guard let patience = owner?.patience else { return "a few" }
-        switch patience {
-        case 1...3:  return "\(patience)"
-        case 4...6:  return "\(patience)"
-        case 7...10: return "\(patience)"
-        default:     return "\(patience)"
-        }
-    }
-
-    private var spendingLevel: String {
-        guard let spending = owner?.spendingWillingness else { return "Moderate" }
-        switch spending {
-        case 1...30:  return "Conservative"
-        case 31...60: return "Moderate"
-        case 61...80: return "Aggressive"
-        default:      return "All-In"
-        }
-    }
-
-    // MARK: - #15 Practical Implications
-
-    private var patienceImplication: String {
-        guard let patience = owner?.patience else { return "" }
-        let leagueAvg = 5
-        let comparison: String
-        if patience < leagueAvg - 1 {
-            comparison = "Less patient than most owners"
-        } else if patience > leagueAvg + 1 {
-            comparison = "More patient than most owners"
-        } else {
-            comparison = "About average patience"
-        }
-        switch patience {
-        case 1...3:  return "League avg: \(leagueAvg) seasons — \(comparison). Win fast or face consequences."
-        case 4...6:  return "League avg: \(leagueAvg) seasons — \(comparison). Steady progress expected each year."
-        case 7...10: return "League avg: \(leagueAvg) seasons — \(comparison). Time to build through the draft."
-        default:     return ""
-        }
-    }
-
-    private var visionImplication: String {
-        guard let owner = owner else { return "" }
-        if owner.prefersWinNow {
-            return "Prioritizes free agency spending, expects playoff contention. Veterans favored over draft-and-develop."
-        } else {
-            return "Supports a long-term plan. Draft picks and player development are valued over quick fixes."
-        }
-    }
-
-    private var budgetImplication: String {
-        guard let owner = owner else { return "" }
-        let budgetM = String(format: "$%.1fM", Double(owner.coachingBudget) / 1_000.0)
-        let leagueAvgM = "$38.0M"
-        switch owner.spendingWillingness {
-        case 1...30:  return "Budget: \(budgetM) (league avg: \(leagueAvgM)). Build through the draft — free agency will be tight."
-        case 31...60: return "Budget: \(budgetM) (league avg: \(leagueAvgM)). Modest spending — be strategic with signings."
-        case 61...80: return "Budget: \(budgetM) (league avg: \(leagueAvgM)). Significant resources for roster upgrades."
-        default:      return "Budget: \(budgetM) (league avg: \(leagueAvgM)). Money is no object — the owner backs any move."
-        }
-    }
-
-    private var meddlingImplication: String {
-        guard let meddling = owner?.meddling else { return "" }
-        switch meddling {
-        case 1...30:  return "Full autonomy on roster decisions. The owner trusts your football judgment completely."
-        case 31...60: return "The owner may weigh in on major decisions but generally stays out of the way."
-        case 61...80: return "Expect the owner to have opinions on key signings and draft picks."
-        default:      return "The owner will frequently override your decisions. Pick your battles carefully."
-        }
-    }
-
-    // MARK: - #16 Personal Warning Quote
-
-    private var personalWarningQuote: String {
-        guard let owner = owner else { return "" }
-        let name = owner.name.components(separatedBy: " ").first ?? owner.name
-
-        if owner.prefersWinNow && owner.patience <= 3 {
-            return "\"I didn't buy this team to lose. I want a championship, and I want it now.\" — \(name)"
-        } else if owner.prefersWinNow && owner.meddling > 60 {
-            return "\"I'll be watching every move you make. My fans deserve winners.\" — \(name)"
-        } else if owner.prefersWinNow {
-            return "\"I believe in winning. Show me results and you'll have everything you need.\" — \(name)"
-        } else if owner.patience >= 7 {
-            return "\"Take your time and build this the right way. I'm not going anywhere.\" — \(name)"
-        } else if owner.meddling > 60 {
-            return "\"I trust you, but I like to stay close to the operation. Don't shut me out.\" — \(name)"
-        } else if owner.spendingWillingness < 30 {
-            return "\"Be smart with the money. Every dollar has to count around here.\" — \(name)"
-        } else {
-            return "\"Just give me a team the city can be proud of. That's all I ask.\" — \(name)"
-        }
+    /// The generated goals in the briefing's vocabulary. The intro has a freshly
+    /// built `SeasonGoals` (two strings) rather than the hub's live-evaluated
+    /// `SeasonGoal` list, which is exactly why `OwnerBriefingGoal` exists.
+    private func briefingGoals(_ goals: SeasonGoals) -> [OwnerBriefingGoal] {
+        [
+            OwnerBriefingGoal(
+                id: "primary",
+                title: goals.primaryGoal,
+                priorityLabel: "Primary",
+                isPrimary: true
+            ),
+            OwnerBriefingGoal(
+                id: "secondary",
+                title: goals.secondaryGoal,
+                priorityLabel: "Secondary",
+                isPrimary: false
+            )
+        ]
     }
 
     var body: some View {
@@ -293,158 +230,63 @@ private struct OwnerMeetingStep: View {
             )
             .ignoresSafeArea()
 
-        GeometryReader { geometry in
-        ScrollView {
-            VStack(spacing: 24) {
-                Spacer().frame(height: 8)
+            VStack(spacing: 0) {
+                GeometryReader { geometry in
+                    ScrollView {
+                        VStack(spacing: DSSpacing.md) {
+                            Spacer().frame(height: DSSpacing.xs)
 
-                // Meeting header
-                if showHeader {
-
-                    VStack(spacing: 12) {
-                        // Two people in the room: the owner who just hired you,
-                        // and you. The scene showed only the owner.
-                        HStack(spacing: -14) {
-                            if let owner = owner {
-                                PersonFaceView(owner: owner, size: .large)
-                            } else {
-                                Image(systemName: "person.crop.rectangle")
-                                    .font(.system(size: 36))
-                                    .foregroundStyle(Color.accentGold)
+                            if showHeader, let owner {
+                                OwnerBriefingHeader(
+                                    career: career,
+                                    owner: owner,
+                                    teamName: team.fullName,
+                                    isHero: true
+                                )
+                                .transition(.opacity.combined(with: .move(edge: .top)))
                             }
-                            UserPortraitView(career: career, size: .medium)
-                                .offset(y: 16)
+
+                            if showTraits, let owner {
+                                OwnerPrioritiesCard(owner: owner)
+                                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                                OwnerPatienceCard(owner: owner, career: career)
+                                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                                OwnerBudgetCard(owner: owner)
+                                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                            }
+
+                            if showGoals, let goals = seasonGoals {
+                                OwnerGoalsCard(goals: briefingGoals(goals))
+                                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                            }
+
+                            if showQuote, let owner {
+                                OwnerQuoteCard(owner: owner)
+                                    .transition(.opacity)
+                            }
+
+                            Spacer().frame(height: DSSpacing.lg)
                         }
-
-                        Text("OWNER MEETING")
-                            .font(.system(size: 14, weight: .black))
-                            .tracking(4)
-                            .foregroundStyle(Color.accentGold)
-
-                        if let ownerName = owner?.name {
-                            Text(ownerName)
-                                .font(.title2.weight(.bold))
-                                .foregroundStyle(Color.textPrimary)
-
-                            Text("Owner, \(team.fullName)")
-                                .font(.body)
-                                .foregroundStyle(Color.textSecondary)
-                        }
+                        .padding(.horizontal, DSSpacing.lg)
+                        .frame(maxWidth: DSLayout.contentMeasure)
+                        .frame(maxWidth: .infinity)
+                        .frame(minHeight: geometry.size.height)
                     }
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+                    .scrollIndicators(.hidden)
                 }
 
-                // Owner personality traits + practical implications (#15)
-                if showTraits, let owner = owner {
-                    VStack(spacing: 16) {
-                        // Vision
-                        InfoRow(
-                            icon: "eye.fill",
-                            label: "Owner's Vision",
-                            value: owner.prefersWinNow ? "Win Now" : "Build for the Future"
-                        )
-                        ImplicationRow(text: visionImplication)
-
-                        // Patience
-                        InfoRow(
-                            icon: "clock.fill",
-                            label: "Patience",
-                            value: "Expects results within \(patienceDescription) seasons"
-                        )
-                        ImplicationRow(text: patienceImplication)
-
-                        // Spending
-                        InfoRow(
-                            icon: "dollarsign.circle.fill",
-                            label: "Free Agency Budget",
-                            value: spendingLevel
-                        )
-                        ImplicationRow(text: budgetImplication)
-
-                        // Meddling / Involvement
-                        InfoRow(
-                            icon: "person.badge.key.fill",
-                            label: "Involvement",
-                            value: owner.meddling < 25 ? "Hands Off" : owner.meddling < 50 ? "Occasionally Involved" : owner.meddling < 75 ? "Frequently Involved" : "Highly Controlling"
-                        )
-                        ImplicationRow(text: meddlingImplication)
-                    }
-                    .padding(20)
-                    .cardBackground()
-                    .padding(.horizontal, 24)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
-                }
-
-                // Season goals
-                if showGoals, let goals = seasonGoals {
-                    VStack(alignment: .leading, spacing: 16) {
-                        Text("SEASON GOALS")
-                            .font(.system(size: 12, weight: .black))
-                            .tracking(2)
-                            .foregroundStyle(Color.accentGold)
-
-                        VStack(alignment: .leading, spacing: 12) {
-                            GoalRow(icon: "trophy.fill", label: "Primary", value: goals.primaryGoal)
-                            GoalRow(icon: "star.fill", label: "Secondary", value: goals.secondaryGoal)
-                        }
-                    }
-                    .padding(20)
-                    .cardBackground()
-                    .padding(.horizontal, 24)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
-                }
-
-                // Personal owner quote (#16)
-                if showWarning, let _ = owner {
-                    VStack(spacing: 12) {
-                        HStack(spacing: 12) {
-                            Image(systemName: "quote.opening")
-                                .font(.title3)
-                                .foregroundStyle(Color.accentGold.opacity(0.7))
-                            Text(personalWarningQuote)
-                                .font(.subheadline.italic())
-                                .foregroundStyle(Color.textSecondary)
-                        }
-
-                        // #129: Consequences warning
-                        HStack(spacing: 8) {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .font(.caption)
-                                .foregroundStyle(Color.warning)
-                            Text("Failure may result in: budget cuts, forced trades, or termination")
-                                .font(.caption)
-                                .foregroundStyle(Color.textTertiary)
-                        }
-                    }
-                    .padding(16)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(Color.accentGold.opacity(0.06))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .strokeBorder(Color.accentGold.opacity(0.2), lineWidth: 1)
-                            )
-                    )
-                    .padding(.horizontal, 24)
-                    .transition(.opacity)
-                }
-
-                Spacer().frame(height: 80)
+                // §2.5: the one commit surface. The intro's shared
+                // `IntroContinueButton` is a floating gold capsule in a
+                // `safeAreaInset`; the two screens this wave merged both commit
+                // on the bar, and the owner meeting is one of them.
+                DSActionBar(
+                    explainer: .init(
+                        title: "Owner meeting",
+                        message: "This is the bar you are measured against. **It does not change** because you disagree with it."
+                    ),
+                    primary: .init(title: "Continue", handler: onContinue)
+                )
             }
-            .frame(maxWidth: DSLayout.wideMeasure)
-            .frame(maxWidth: .infinity)
-            .frame(minHeight: geometry.size.height)
-        }
-        .scrollIndicators(.hidden)
-        .safeAreaInset(edge: .bottom) {
-            IntroContinueButton(action: onContinue)
-                .padding(.horizontal, 24)
-                .padding(.bottom, 16)
-                .padding(.top, 12)
-                .frame(maxWidth: .infinity)
-                .background(Color.backgroundPrimary.opacity(0.95))
-        }
-        }
         }
         .onAppear { runAnimations() }
     }
@@ -453,7 +295,7 @@ private struct OwnerMeetingStep: View {
         withAnimation(.easeOut(duration: 0.5).delay(0.2)) { showHeader = true }
         withAnimation(.easeOut(duration: 0.5).delay(0.9)) { showTraits = true }
         withAnimation(.easeOut(duration: 0.5).delay(1.6)) { showGoals = true }
-        withAnimation(.easeOut(duration: 0.5).delay(2.3)) { showWarning = true }
+        withAnimation(.easeOut(duration: 0.5).delay(2.3)) { showQuote = true }
     }
 }
 
@@ -1323,77 +1165,6 @@ private struct ReadyToBeginStep: View {
 
 // MARK: - Shared Components
 
-private struct QuoteBubble: View {
-    let speaker: String
-    let quote: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(speaker)
-                .font(.caption.weight(.bold))
-                .foregroundStyle(Color.accentGold)
-
-            Text("\"\(quote)\"")
-                .font(.body)
-                .italic()
-                .foregroundStyle(Color.textPrimary)
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .cardBackground()
-    }
-}
-
-private struct InfoRow: View {
-    let icon: String
-    let label: String
-    let value: String
-
-    var body: some View {
-        HStack(spacing: 14) {
-            Image(systemName: icon)
-                .font(.body)
-                .foregroundStyle(Color.accentGold)
-                .frame(width: 24)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(label)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Color.textSecondary)
-                Text(value)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(Color.textPrimary)
-            }
-
-            Spacer()
-        }
-    }
-}
-
-private struct GoalRow: View {
-    let icon: String
-    let label: String
-    let value: String
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon)
-                .foregroundStyle(Color.accentGold)
-                .frame(width: 24)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(label.uppercased())
-                    .font(.system(size: 10, weight: .bold))
-                    .tracking(1)
-                    .foregroundStyle(Color.textTertiary)
-                Text(value)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(Color.textPrimary)
-            }
-        }
-    }
-}
-
 private struct SectionLabel: View {
     let text: String
 
@@ -1438,26 +1209,6 @@ private struct TaskRow: View {
             Text(text)
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(Color.textPrimary)
-        }
-    }
-}
-
-/// Shows a subtle implication/tip below an InfoRow (#15).
-private struct ImplicationRow: View {
-    let text: String
-
-    var body: some View {
-        if !text.isEmpty {
-            HStack(spacing: 8) {
-                Image(systemName: "arrow.turn.down.right")
-                    .font(.caption2)
-                    .foregroundStyle(Color.accentGold.opacity(0.6))
-                Text(text)
-                    .font(.caption)
-                    .foregroundStyle(Color.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(.leading, 38)
         }
     }
 }

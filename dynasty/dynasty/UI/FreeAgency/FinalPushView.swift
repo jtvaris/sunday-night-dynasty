@@ -124,6 +124,12 @@ struct FinalPushView: View {
             Color.backgroundPrimary.ignoresSafeArea()
 
             if let team {
+                VStack(spacing: 0) {
+                // §2.1 — free agency's spine. Step 1 of 5.
+                FAFlowBandView(
+                    step: .finalPush,
+                    currentSubcaption: finalPushSubcaption
+                )
                 ScrollView {
                     VStack(spacing: 24) {
                         headerCard(team: team)
@@ -149,10 +155,20 @@ struct FinalPushView: View {
                             }
                         }
 
-                        startLeagueYearButton
                     }
                     .padding(24)
                     .frame(maxWidth: .infinity)
+                }
+                // §2.5 — the commit, pinned. It used to be the last item in a
+                // ScrollView that a club with fifteen expiring men had to scroll
+                // past fifteen cards to reach.
+                DSActionBar(
+                    explainer: startLeagueYearExplainer,
+                    primary: .init(
+                        title: "Start new league year \u{2192}",
+                        handler: { showLeagueYearConfirm = true }
+                    )
+                )
                 }
             } else {
                 ProgressView()
@@ -1011,31 +1027,39 @@ struct FinalPushView: View {
         .padding(.vertical, 10)
     }
 
-    // MARK: - Start League Year Button
+    // MARK: - Start League Year — the band and the bar
 
-    private var startLeagueYearButton: some View {
-        VStack(spacing: 8) {
-            Button {
-                showLeagueYearConfirm = true
-            } label: {
-                HStack(spacing: 10) {
-                    Image(systemName: "calendar.badge.clock")
-                        .font(.title3)
-                    Text("START NEW LEAGUE YEAR")
-                        .font(.headline)
-                }
-                .foregroundStyle(Color.backgroundPrimary)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 16)
-                .background(Color.accentGold, in: RoundedRectangle(cornerRadius: 14))
-            }
-            .buttonStyle(.plain)
+    /// The current slat's sub-caption: what this step is still holding open.
+    private var finalPushSubcaption: String {
+        let undecided = expiringPlayers.filter { decisions[$0.id]?.status == nil || isPending($0.id) }.count
+        if undecided == 0 { return "Every expiring man answered" }
+        return "\(undecided) expiring \(undecided == 1 ? "man" : "men") still undecided"
+    }
 
-            Text("All remaining undecided players will hit the open market")
-                .font(.caption)
-                .foregroundStyle(Color.textTertiary)
-                .multilineTextAlignment(.center)
+    /// What committing does and what it forfeits (P4). The old copy said only
+    /// "All remaining undecided players will hit the open market" and left the
+    /// fifth-year options — which decline silently — unmentioned.
+    private var startLeagueYearExplainer: DSActionBar.Explainer {
+        let undecided = expiringPlayers.filter { decisions[$0.id]?.status == nil || isPending($0.id) }.count
+        let openOptions = fifthYearCandidates.filter { !$0.fifthYearDecided }.count
+        var parts: [String] = []
+        if undecided > 0 {
+            parts.append("**\(undecided) undecided \(undecided == 1 ? "player" : "players")** hit the open market")
         }
+        if openOptions > 0 {
+            parts.append("**\(openOptions) fifth-year \(openOptions == 1 ? "option is" : "options are")** declined")
+        }
+        guard !parts.isEmpty else {
+            return .init(
+                title: "Start the league year",
+                message: "Every decision is made. Contracts roll over and the market opens."
+            )
+        }
+        return .init(
+            title: "Start the league year",
+            message: parts.joined(separator: ", and ") + ". This cannot be undone.",
+            isWarning: true
+        )
     }
 
     // MARK: - Re-Sign Evaluation Logic

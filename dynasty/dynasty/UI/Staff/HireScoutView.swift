@@ -10,6 +10,16 @@ struct HireScoutView: View {
     let remainingBudget: Int
     /// R27: deterministic candidate pool seed (same team/role/season → same pool).
     var poolSeed: UInt64? = nil
+    /// `(name, role)`.
+    ///
+    /// Wave 5b deliberately did NOT widen this to carry the salary the way the
+    /// coach and medical callbacks now do: `ScoutingHubView` presents this same
+    /// view with a two-argument closure and is not this wave's file. The staff
+    /// screen therefore re-reads the signed scout after the fact — with a
+    /// `FetchDescriptor` against the shared context, NOT off its `@Query`,
+    /// because this callback fires inside `hire()`'s own call stack and no view
+    /// update (and so no `@Query` re-fetch) has happened yet. Anything derived
+    /// from that stale snapshot froze into the result sheet as "$0.0M".
     var onHired: ((String, String) -> Void)?
 
     @Environment(\.modelContext) private var modelContext
@@ -206,13 +216,11 @@ struct HireScoutView: View {
         // Save context before dismissing so CoachingStaffView's @Query refreshes
         try? modelContext.save()
 
-        let hiredName = candidate.fullName
-        let hiredRole = scoutRole.displayName
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-            onHired?(hiredName, hiredRole)
-            dismiss()
-        }
+        // Wave 5b: no 0.6 s deadline and no `dismiss()`. The host swaps this
+        // sheet's content to a `DSResultSheet` (§2.6), which is both the
+        // confirmation the delay was buying time for and the one dismissal this
+        // surface is allowed to have (P5's corollary).
+        onHired?(candidate.fullName, scoutRole.displayName)
     }
 }
 

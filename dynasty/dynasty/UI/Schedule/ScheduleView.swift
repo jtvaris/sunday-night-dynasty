@@ -119,7 +119,7 @@ enum TeamStrength {
     /// rather than a scale choice. Absolute wins — the same number is the same
     /// color on every screen. `leagueAverage` is kept in the signature so the
     /// pivot can come back as an opt-in later without re-threading the value
-    /// through `GameCard` / the opponent card.
+    /// through `GameRow` / the next-three rail.
     static func ovrColor(_ ovr: Int, leagueAverage: Int) -> Color {
         Color.forRating(ovr)
     }
@@ -208,27 +208,13 @@ struct ScheduleView: View {
                     emptyStateView
                 } else {
                     ScrollView {
-                        LazyVStack(spacing: 12) {
+                        LazyVStack(spacing: 16) {
                             if !nextThreePlayerGames.isEmpty {
                                 nextGamesPreview
-                                    .padding(.top, 4)
                             }
 
                             if !weekGames.isEmpty {
-                                weekHeader
-                                    .padding(.top, nextThreePlayerGames.isEmpty ? 0 : 8)
-
-                                ForEach(weekGames) { game in
-                                    GameCard(
-                                        game: game,
-                                        teams: allTeams,
-                                        playerTeamID: playerTeamID,
-                                        teamRecords: teamRecords,
-                                        leagueAvgOVR: leagueAvgOVR,
-                                        ovrByTeam: ovrByTeam
-                                    )
-                                    .onTapGesture { previewGame = game }
-                                }
+                                weekTable
                             } else {
                                 emptyWeekInline
                             }
@@ -295,92 +281,147 @@ struct ScheduleView: View {
         }
     }
 
-    // MARK: - Section Headers
+    // MARK: - The Week's Table
 
-    private var weekHeader: some View {
-        HStack {
-            Text("WEEK \(selectedWeek)")
-                .font(.system(size: 11, weight: .bold))
-                .tracking(1.5)
-                .foregroundStyle(Color.textTertiary)
-            if selectedWeek == career.currentWeek {
-                HStack(spacing: 4) {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .bold))
-                    Text("CURRENT")
-                        .font(.system(size: 10, weight: .bold))
-                        .tracking(1)
-                }
-                .foregroundStyle(Color.accentGold)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(
-                    Capsule().fill(Color.accentGold.opacity(0.15))
+    /// Wave 1b: one card, one header, N rows — the list standard (§2.2) rather
+    /// than sixteen individual score cards. A week of football is a LIST of
+    /// matchups, and every matchup carries the same four numbers, so the card
+    /// stack was paying a full container per row to say what a column says.
+    private var weekTable: some View {
+        VStack(spacing: 0) {
+            DSGroupRollup(
+                title: "Week \(selectedWeek)",
+                facts: weekFacts,
+                tint: selectedWeek == career.currentWeek ? Color.accentGold : Color.textSecondary
+            )
+            .padding(.horizontal, DSSpacing.md)
+            .padding(.vertical, DSSpacing.sm)
+            .background(Color.backgroundTertiary.opacity(0.6))
+
+            ScheduleHeaderRow()
+
+            Divider().overlay(Color.surfaceBorder)
+
+            ForEach(Array(weekGames.enumerated()), id: \.element.id) { index, game in
+                GameRow(
+                    game: game,
+                    teams: allTeams,
+                    playerTeamID: playerTeamID,
+                    teamRecords: teamRecords,
+                    leagueAvgOVR: leagueAvgOVR,
+                    ovrByTeam: ovrByTeam
                 )
+                .contentShape(Rectangle())
+                .onTapGesture { previewGame = game }
+
+                if index < weekGames.count - 1 {
+                    Divider()
+                        .overlay(Color.surfaceBorder.opacity(0.5))
+                        .padding(.horizontal, DSSpacing.md)
+                }
             }
-            Spacer()
         }
-        .padding(.horizontal, 4)
+        .cardBackground()
+    }
+
+    /// Pre-formatted rollup facts — `DSGroupRollup` does no arithmetic.
+    private var weekFacts: [String] {
+        var facts = ["\(weekGames.count) game\(weekGames.count == 1 ? "" : "s")"]
+        if selectedWeek == career.currentWeek { facts.insert("Current week", at: 0) }
+        let played = weekGames.filter(\.isPlayed).count
+        if played > 0 { facts.append("\(played) final") }
+        return facts
     }
 
     // MARK: - Next Games Preview
 
+    /// The user's next three, at `glance` density: a rail, not a table. Same
+    /// row component, one density down (§P3) — 32 pt instead of 44, no header,
+    /// no portrait gutter.
     private var nextGamesPreview: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "calendar.badge.clock")
-                    .font(.system(size: 11, weight: .bold))
-                Text("NEXT 3 GAMES")
-                    .font(.system(size: 11, weight: .bold))
-                    .tracking(1.5)
-                Spacer()
-            }
-            .foregroundStyle(Color.accentGold)
-            .padding(.horizontal, 4)
+        VStack(spacing: 0) {
+            DSGroupRollup(
+                title: "Next 3 Games",
+                facts: ["Your schedule from week \(career.currentWeek)"],
+                tint: Color.accentGold
+            )
+            .padding(.horizontal, DSSpacing.md)
+            .padding(.vertical, DSSpacing.sm)
+            .background(Color.backgroundTertiary.opacity(0.6))
 
-            HStack(spacing: 8) {
-                ForEach(nextThreePlayerGames) { game in
-                    NextGamePill(
-                        game: game,
-                        teams: allTeams,
-                        playerTeamID: playerTeamID,
-                        teamRecords: teamRecords,
-                        isCurrentWeek: game.week == career.currentWeek,
-                        leagueAvgOVR: leagueAvgOVR,
-                        ovrByTeam: ovrByTeam
-                    )
-                    .onTapGesture { previewGame = game }
+            ForEach(Array(nextThreePlayerGames.enumerated()), id: \.element.id) { index, game in
+                NextGameRow(
+                    game: game,
+                    teams: allTeams,
+                    playerTeamID: playerTeamID,
+                    teamRecords: teamRecords,
+                    isCurrentWeek: game.week == career.currentWeek,
+                    leagueAvgOVR: leagueAvgOVR,
+                    ovrByTeam: ovrByTeam
+                )
+                .contentShape(Rectangle())
+                .onTapGesture { previewGame = game }
+
+                if index < nextThreePlayerGames.count - 1 {
+                    Divider()
+                        .overlay(Color.surfaceBorder.opacity(0.5))
+                        .padding(.horizontal, DSSpacing.md)
                 }
             }
         }
+        .cardBackground()
     }
 
     // MARK: - Empty State
 
+    /// `DSEmptyState` (§2.7): icon → title → what would fill this → the action
+    /// that fills it. The fourth beat is the one the old label had no answer
+    /// for — an empty week is almost always a week the user scrolled PAST, so
+    /// the action is the way back to the one he is playing.
     private var emptyStateView: some View {
-        VStack(spacing: 16) {
-            Spacer()
-            Image(systemName: "calendar.badge.exclamationmark")
-                .font(.system(size: 48))
-                .foregroundStyle(Color.textTertiary)
-            Text("No games scheduled for Week \(selectedWeek)")
-                .font(.headline)
-                .foregroundStyle(Color.textSecondary)
-            Spacer()
+        VStack {
+            Spacer(minLength: 0)
+            DSEmptyState(
+                density: .scan,
+                icon: "calendar.badge.exclamationmark",
+                title: "Nothing On In Week \(selectedWeek)",
+                message: emptyWeekMessage,
+                actions: jumpToCurrentWeekActions
+            )
+            Spacer(minLength: 0)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    /// The same state one density down, because here it is a gap INSIDE a
+    /// screen that already has content above it (the next-three rail).
     private var emptyWeekInline: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "calendar.badge.exclamationmark")
-                .font(.system(size: 32))
-                .foregroundStyle(Color.textTertiary)
-            Text("No games scheduled for Week \(selectedWeek)")
-                .font(.subheadline)
-                .foregroundStyle(Color.textSecondary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(24)
+        DSEmptyState(
+            density: .glance,
+            icon: "calendar.badge.exclamationmark",
+            title: "No games in week \(selectedWeek)",
+            message: emptyWeekMessage,
+            actions: jumpToCurrentWeekActions
+        )
+    }
+
+    private var emptyWeekMessage: String {
+        selectedWeek == career.currentWeek
+            ? "The league has not scheduled this week yet."
+            : "Week \(selectedWeek) has no fixtures in this season's schedule."
+    }
+
+    private var jumpToCurrentWeekActions: [DSEmptyState.Action] {
+        guard selectedWeek != career.currentWeek else { return [] }
+        return [
+            DSEmptyState.Action(
+                title: "Go To Week \(career.currentWeek)",
+                systemImage: "arrow.uturn.backward",
+                isPrimary: true
+            ) {
+                withAnimation { selectedWeek = career.currentWeek }
+            }
+        ]
     }
 
     // MARK: - Helpers
@@ -405,10 +446,10 @@ private struct WeekChip: View {
     var body: some View {
         VStack(spacing: 2) {
             Text("WK")
-                .font(.system(size: 10, weight: .semibold))
+                .font(DSType.display(11, .semibold))
                 .foregroundStyle(isSelected ? Color.backgroundPrimary : Color.textTertiary)
             Text("\(week)")
-                .font(.system(size: 16, weight: .bold).monospacedDigit())
+                .font(DSType.display(16, .bold))
                 .foregroundStyle(isSelected ? Color.backgroundPrimary : chipTextColor)
         }
         .frame(width: 44, height: 44)
@@ -441,9 +482,59 @@ private struct WeekChip: View {
     }
 }
 
-// MARK: - Next Game Pill
+// MARK: - Schedule Column Widths
 
-private struct NextGamePill: View {
+/// Shared widths, read from `DSListColumn` so the schedule, the standings, the
+/// roster and the board are one ladder (§2.2). Four cells, 128 pt total: the
+/// away pair, then the home pair, mirrored around the score so the row reads in
+/// the same order as the matchup line above it ("Philadelphia at Dallas").
+private enum ScheduleColumn {
+    /// A starters-OVR read.
+    static let ovr    = DSListColumn.attribute  // 34
+    /// A final score — three digits at the very most.
+    static let score  = DSListColumn.tight      // 30
+    /// `W12`, on the next-three rail.
+    static let week   = DSListColumn.tight      // 30
+    /// `3-1`, or `3-1-1` in a tie year.
+    static let record = DSListColumn.label      // 48
+}
+
+// MARK: - Schedule Header Row
+
+/// Built from `DSListHeaderRow`, so the header reserves exactly the slots the
+/// row mounts (badge, no portrait, flexible identity) and cannot drift out of
+/// register with the numbers underneath it.
+private struct ScheduleHeaderRow: View {
+    var body: some View {
+        DSListHeaderRow(
+            density: .scan,
+            reservesBadge: true,
+            badgeLabel: "AWAY",
+            portraitWidth: 0,
+            identityLabel: "MATCHUP"
+        ) {
+            Spacer(minLength: DSSpacing.xxs)
+            // `A`/`H` rather than two columns both headed "OVR": §2.13's
+            // column gate is about clipping, but a header that does not say
+            // WHOSE number it labels is the same failure one step earlier.
+            DSColumnHeader("A OVR", width: ScheduleColumn.ovr)
+            DSColumnHeader("A PTS", width: ScheduleColumn.score)
+            DSColumnHeader("H PTS", width: ScheduleColumn.score)
+            DSColumnHeader("H OVR", width: ScheduleColumn.ovr)
+        }
+        .padding(.horizontal, DSSpacing.md)
+        .padding(.vertical, DSSpacing.xs)
+    }
+}
+
+// MARK: - Next Game Row (glance density)
+
+/// One of the user's next three, on the rail above the week's table.
+///
+/// Same component as the table row, one density down: `glance` is 32 pt with no
+/// portrait gutter and a 12 pt name, which is the whole point of P3 — a rail and
+/// a table are the same object at two declared sizes, not two hand-built cards.
+private struct NextGameRow: View {
     let game: Game
     let teams: [Team]
     let playerTeamID: UUID?
@@ -459,6 +550,7 @@ private struct NextGamePill: View {
     }
 
     private var opponent: Team? { teams.first { $0.id == opponentID } }
+
     private var isHome: Bool {
         guard let pid = playerTeamID else { return false }
         return game.homeTeamID == pid
@@ -476,64 +568,111 @@ private struct NextGamePill: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 4) {
-                Text("WK \(game.week)")
-                    .font(.system(size: 10, weight: .bold))
-                    .tracking(1)
-                    .foregroundStyle(Color.textTertiary)
-                if isCurrentWeek {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: DSType.Size.micro, weight: .bold))
-                        .foregroundStyle(Color.accentGold)
-                }
-                Spacer()
-            }
-
-            HStack(spacing: 4) {
-                Text(isHome ? "vs" : "@")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Color.textTertiary)
-                Text(opponent?.abbreviation ?? "???")
-                    .font(.system(size: 18, weight: .heavy))
+        DSListRow(
+            density: .glance,
+            badge: DSRowBadge(
+                text: opponent?.abbreviation ?? "???",
+                tint: TeamColors.color(for: opponent?.abbreviation ?? ""),
+                accessibilityLabel: opponent?.fullName ?? "Opponent"
+            ),
+            portraitWidth: 0
+        ) {
+            EmptyView()
+        } identity: {
+            HStack(spacing: DSSpacing.xxs) {
+                Text("\(isHome ? "vs" : "at") \(opponent?.city ?? "TBD")")
+                    .font(DSType.text(DSListDensity.glance.nameSize, .semibold, prose: true))
                     .foregroundStyle(Color.textPrimary)
-            }
-
-            HStack(spacing: 6) {
-                if opponentOVR > 0 {
-                    Text("OVR \(opponentOVR)")
-                        .font(.system(size: 10, weight: .bold).monospacedDigit())
-                        .foregroundStyle(ovrColor(opponentOVR))
+                    .lineLimit(1)
+                if isCurrentWeek {
+                    DSStatusPill(label: "Now", tone: .info, showsDot: false,
+                                 spokenLabel: "This week")
                 }
-                Text(opponentRecord)
-                    .font(.system(size: 10, weight: .semibold).monospacedDigit())
-                    .foregroundStyle(Color.textSecondary)
             }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color.backgroundSecondary)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .strokeBorder(
-                            isCurrentWeek ? Color.accentGold.opacity(0.7) : Color.surfaceBorder,
-                            lineWidth: isCurrentWeek ? 1.5 : 1
-                        )
-                )
-        )
-    }
+        } columns: {
+            Spacer(minLength: DSSpacing.xxs)
 
-    /// Opponent OVR badge — `Color.forRating`, same ladder as League Rosters.
-    private func ovrColor(_ ovr: Int) -> Color {
-        TeamStrength.ovrColor(ovr, leagueAverage: leagueAvgOVR)
+            Text("W\(game.week)")
+                .font(DSType.display(11, .semibold))
+                .foregroundStyle(Color.textTertiary)
+                .dsColumn(ScheduleColumn.week)
+
+            ScheduleCells.ovrCell(opponentOVR, leagueAverage: leagueAvgOVR)
+
+            Text(opponentRecord)
+                .font(DSType.display(11, .semibold))
+                .foregroundStyle(Color.textSecondary)
+                .dsColumn(ScheduleColumn.record)
+        }
+        .padding(.horizontal, DSSpacing.md)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            "Week \(game.week), \(isHome ? "home against" : "away at") "
+            + "\(opponent?.fullName ?? "opponent"), \(opponentRecord)"
+        )
     }
 }
 
-// MARK: - Game Card
+// MARK: - Shared Schedule Cells
 
-private struct GameCard: View {
+/// The two cells both densities print, so the rail and the table cannot
+/// disagree about what an OVR looks like.
+private enum ScheduleCells {
+
+    @ViewBuilder
+    static func ovrCell(_ ovr: Int, leagueAverage: Int) -> some View {
+        Group {
+            if ovr > 0 {
+                Text("\(ovr)")
+                    .font(DSType.display(13, .bold))
+                    .foregroundStyle(TeamStrength.ovrColor(ovr, leagueAverage: leagueAverage))
+            } else {
+                Text("\u{2014}")
+                    .font(DSType.display(13, .semibold))
+                    .foregroundStyle(Color.textTertiary)
+            }
+        }
+        .dsColumn(ScheduleColumn.ovr)
+    }
+
+    /// A score, or the reserved gap where one will be. An upcoming game keeps
+    /// its column and prints a dash: the user scans the week for what has been
+    /// played, and a missing cell is invisible while a dash is not.
+    @ViewBuilder
+    static func scoreCell(_ score: Int?, tint: Color) -> some View {
+        Group {
+            if let score {
+                Text("\(score)")
+                    .font(DSType.display(15, .heavy))
+                    .foregroundStyle(tint)
+            } else {
+                Text("\u{2014}")
+                    .font(DSType.display(13, .semibold))
+                    .foregroundStyle(Color.textTertiary)
+            }
+        }
+        .dsColumn(ScheduleColumn.score)
+    }
+}
+
+// MARK: - Game Row
+
+/// One matchup in the week's table.
+///
+/// Wave 1b converts the score CARD to the list standard. What that changed:
+///
+///  1. The card's two 22 pt team blocks and 28 pt score became one 44 pt row
+///     with a colour-chipped away badge, a matchup line and four fixed cells,
+///     so a 16-game week is a table the eye can run down instead of sixteen
+///     containers it has to re-enter.
+///  2. The "YOUR GAME" banner became a reserved `YOURS` state slot. All three
+///     slots — `YOURS` · `DIV` · `FINAL` — are drawn on every row, so the user
+///     scans the column of gaps: which of these are mine, which are divisional,
+///     which have been played (§2.2's load-bearing idea).
+///  3. Every cell goes through `dsColumn`. The card had no fixed columns at
+///     all, so "• OVR 76" and a three-digit score negotiated their own widths
+///     row by row.
+private struct GameRow: View {
     let game: Game
     let teams: [Team]
     let playerTeamID: UUID?
@@ -548,6 +687,11 @@ private struct GameCard: View {
     private var isPlayerGame: Bool {
         guard let pid = playerTeamID else { return false }
         return game.homeTeamID == pid || game.awayTeamID == pid
+    }
+
+    private var isDivisionGame: Bool {
+        guard let home = homeTeam, let away = awayTeam else { return false }
+        return home.conference == away.conference && home.division == away.division
     }
 
     private var playerWon: Bool? {
@@ -566,176 +710,133 @@ private struct GameCard: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Header bar for player games
-            if isPlayerGame {
-                HStack(spacing: 6) {
-                    Image(systemName: "star.fill")
-                        .font(.system(size: 10, weight: .bold))
-                    Text("YOUR GAME")
-                        .font(.system(size: 10, weight: .bold))
-                        .tracking(1)
-                    Spacer()
-                    if game.isPlayed {
-                        resultLabel
-                    } else {
-                        Text("TAP FOR PREVIEW")
-                            .font(.system(size: 9, weight: .semibold))
-                            .tracking(0.8)
-                            .foregroundStyle(Color.accentGold.opacity(0.8))
-                    }
-                }
-                .foregroundStyle(isPlayerGame && game.isPlayed ? resultAccentColor : Color.accentGold)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                .background(
-                    (isPlayerGame && game.isPlayed ? resultAccentColor : Color.accentGold)
-                        .opacity(0.12)
-                )
-            }
+        DSListRow(
+            density: .scan,
+            badge: DSRowBadge(
+                text: awayTeam?.abbreviation ?? "???",
+                tint: TeamColors.color(for: awayTeam?.abbreviation ?? ""),
+                accessibilityLabel: awayTeam?.fullName ?? "Away team"
+            ),
+            portraitWidth: 0
+        ) {
+            EmptyView()
+        } identity: {
+            identityBlock
+        } columns: {
+            Spacer(minLength: DSSpacing.xxs)
 
-            // Score row
-            HStack(spacing: 0) {
-                // Away side
-                teamSide(
-                    team: awayTeam,
-                    score: game.awayScore,
-                    isWinner: game.isPlayed && game.winnerID == game.awayTeamID,
-                    isTie: game.isPlayed && game.winnerID == nil,
-                    alignment: .leading
-                )
-
-                // Divider / @
-                VStack(spacing: 4) {
-                    if game.isPlayed {
-                        Text("FINAL")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(Color.textTertiary)
-                    } else {
-                        Text("@")
-                            .font(.system(size: 18, weight: .bold))
-                            .foregroundStyle(Color.textTertiary)
-                        Text("UPCOMING")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(Color.textTertiary)
-                    }
-                }
-                .frame(width: 56)
-
-                // Home side
-                teamSide(
-                    team: homeTeam,
-                    score: game.homeScore,
-                    isWinner: game.isPlayed && game.winnerID == game.homeTeamID,
-                    isTie: game.isPlayed && game.winnerID == nil,
-                    alignment: .trailing
-                )
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 16)
+            ScheduleCells.ovrCell(teamOVR(awayTeam), leagueAverage: leagueAvgOVR)
+            ScheduleCells.scoreCell(game.awayScore, tint: scoreTint(for: game.awayTeamID))
+            ScheduleCells.scoreCell(game.homeScore, tint: scoreTint(for: game.homeTeamID))
+            ScheduleCells.ovrCell(teamOVR(homeTeam), leagueAverage: leagueAvgOVR)
         }
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.backgroundSecondary)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .strokeBorder(borderColor, lineWidth: isPlayerGame ? 1.5 : 1)
-                )
-        )
-        .contentShape(Rectangle())
+        .padding(.horizontal, DSSpacing.md)
+        .background(rowTint)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityDescription)
     }
 
-    // MARK: - Team Side
+    // MARK: Identity
 
-    private func teamSide(
-        team: Team?,
-        score: Int?,
-        isWinner: Bool,
-        isTie: Bool,
-        alignment: HorizontalAlignment
-    ) -> some View {
-        let frameAlignment: Alignment = alignment == .leading ? .leading : .trailing
-        return VStack(alignment: alignment, spacing: 4) {
-            Text(team?.abbreviation ?? "???")
-                .font(.system(size: 22, weight: .bold))
-                .foregroundStyle(isWinner ? Color.success : Color.textPrimary)
-
-            // Record + OVR context
-            if let team {
-                HStack(spacing: 6) {
-                    if alignment == .trailing { Spacer(minLength: 0) }
-                    Text(recordString(for: team))
-                        .font(.system(size: 11, weight: .semibold).monospacedDigit())
-                        .foregroundStyle(Color.textSecondary)
-                    let ovr = teamOVR(team)
-                    if ovr > 0 {
-                        Text("• OVR \(ovr)")
-                            .font(.system(size: 11, weight: .semibold).monospacedDigit())
-                            .foregroundStyle(ovrColor(ovr))
-                    }
-                    if alignment == .leading { Spacer(minLength: 0) }
-                }
-                Text(team.city)
-                    .font(.system(size: 11))
+    /// The matchup line, then the three reserved slots. The row owns the SLOT;
+    /// this screen owns what goes in it.
+    private var identityBlock: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: DSSpacing.xxs) {
+                Text(awayTeam?.city ?? "Away")
+                    .font(DSType.text(DSListDensity.scan.nameSize, .semibold, prose: true))
+                    .foregroundStyle(Color.textPrimary)
+                Text(recordString(for: awayTeam))
+                    .font(DSType.display(11, .semibold))
                     .foregroundStyle(Color.textTertiary)
-                    .lineLimit(1)
+                Text("at")
+                    .font(DSType.text(12, .regular, prose: true))
+                    .foregroundStyle(Color.textTertiary)
+                Text(homeTeam?.city ?? "Home")
+                    .font(DSType.text(DSListDensity.scan.nameSize, .semibold, prose: true))
+                    .foregroundStyle(Color.textPrimary)
+                Text(recordString(for: homeTeam))
+                    .font(DSType.display(11, .semibold))
+                    .foregroundStyle(Color.textTertiary)
             }
+            .lineLimit(1)
 
-            if let score {
-                Text("\(score)")
-                    .font(.system(size: 28, weight: .heavy).monospacedDigit())
-                    .foregroundStyle(isWinner ? Color.success : isTie ? Color.warning : Color.textSecondary)
-            }
+            DSStateSlotRow(slots: gameSlots)
         }
-        .frame(maxWidth: .infinity, alignment: frameAlignment)
     }
 
-    private func recordString(for team: Team) -> String {
-        guard let rec = teamRecords[team.id] else { return "0-0" }
+    /// The schedule's fixed slot set — `YOURS` · `DIV` · `FINAL` — chosen once
+    /// for the list, never per row.
+    private var gameSlots: [DSStateSlot] {
+        [yoursSlot, divisionSlot, finalSlot]
+    }
+
+    private var yoursSlot: DSStateSlot {
+        DSStateSlot(
+            label: "YOURS",
+            tone: isPlayerGame ? .info : .empty,
+            spokenLabel: isPlayerGame ? "Your game" : "Not your game"
+        )
+    }
+
+    private var divisionSlot: DSStateSlot {
+        DSStateSlot(
+            label: "DIV",
+            tone: isDivisionGame ? .neutral : .empty,
+            spokenLabel: isDivisionGame ? "Division game" : "Not a division game"
+        )
+    }
+
+    /// Played or not — and, when it is the user's game, how it went. A
+    /// non-player final is a fact with no verdict attached, so it stays neutral.
+    private var finalSlot: DSStateSlot {
+        guard game.isPlayed else {
+            return DSStateSlot(label: "FINAL", tone: .empty,
+                               spokenLabel: "Not played yet")
+        }
+        guard isPlayerGame else {
+            return DSStateSlot(label: "FINAL", tone: .neutral, spokenLabel: "Final")
+        }
+        switch playerWon {
+        case .some(true):
+            return DSStateSlot(label: "FINAL", tone: .ok, value: "W", spokenLabel: "Final, you won")
+        case .some(false):
+            return DSStateSlot(label: "FINAL", tone: .bad, value: "L", spokenLabel: "Final, you lost")
+        case .none:
+            return DSStateSlot(label: "FINAL", tone: .warn, value: "T", spokenLabel: "Final, tied")
+        }
+    }
+
+    // MARK: Cells
+
+    private func teamOVR(_ team: Team?) -> Int {
+        guard let team else { return 0 }
+        return ovrByTeam[team.id] ?? 0
+    }
+
+    private func recordString(for team: Team?) -> String {
+        guard let team, let rec = teamRecords[team.id] else { return "0-0" }
         if rec.ties > 0 { return "\(rec.wins)-\(rec.losses)-\(rec.ties)" }
         return "\(rec.wins)-\(rec.losses)"
     }
 
-    private func teamOVR(_ team: Team) -> Int {
-        ovrByTeam[team.id] ?? 0
+    private func scoreTint(for teamID: UUID) -> Color {
+        guard game.isPlayed else { return Color.textTertiary }
+        if game.winnerID == nil { return Color.warning }        // tie
+        return game.winnerID == teamID ? Color.success : Color.textSecondary
     }
 
-    /// Game-card OVR badge — `Color.forRating`, same ladder as League Rosters.
-    private func ovrColor(_ ovr: Int) -> Color {
-        TeamStrength.ovrColor(ovr, leagueAverage: leagueAvgOVR)
+    /// The user's own games carry a tint rather than a banner — one row height
+    /// for the whole table, and the `YOURS` slot says it in words for anyone
+    /// who cannot read the wash.
+    private var rowTint: Color {
+        guard isPlayerGame else { return Color.clear }
+        return game.isPlayed
+            ? resultAccentColor.opacity(0.08)
+            : Color.accentGold.opacity(0.07)
     }
 
-    // MARK: - Result Label
-
-    private var resultLabel: some View {
-        Text(resultText)
-            .font(.system(size: 10, weight: .bold))
-            .foregroundStyle(resultAccentColor)
-    }
-
-    private var resultText: String {
-        switch playerWon {
-        case .some(true):  return "WIN"
-        case .some(false): return "LOSS"
-        case .none:        return game.isPlayed ? "TIE" : ""
-        }
-    }
-
-    // MARK: - Border Color
-
-    private var borderColor: Color {
-        if isPlayerGame {
-            if game.isPlayed {
-                return resultAccentColor.opacity(0.6)
-            }
-            return Color.accentGold.opacity(0.6)
-        }
-        return Color.surfaceBorder
-    }
-
-    // MARK: - Accessibility
+    // MARK: Accessibility
 
     private var accessibilityDescription: String {
         let away = awayTeam?.fullName ?? "Away team"

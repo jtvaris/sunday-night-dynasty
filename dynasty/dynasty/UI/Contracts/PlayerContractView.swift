@@ -9,10 +9,26 @@ struct PlayerContractView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
 
-    @State private var showExtensionSheet = false
     @State private var showCutAlert = false
-    /// #102 — the two cap-relief levers.
-    @State private var showRestructureSheet = false
+
+    /// **The one sheet on this screen** (§2.8 + the house rule).
+    ///
+    /// The extension editor and the restructure quote were two
+    /// `.sheet(isPresented:)` modifiers on the same node — the shape SwiftUI
+    /// resolves by honouring one and dropping the other. They are peer
+    /// side-tasks off the same actions list (edit a deal, take a quote), so they
+    /// keep the same presentation weight and share one `.sheet(item:)` point.
+    ///
+    /// The pay-cut chat stays a `fullScreenCover` and that is deliberate: a
+    /// negotiation has rounds, owns the screen and ends in a result, which is
+    /// §2.8's definition of a process.
+    private enum ContractSheet: String, Identifiable {
+        /// #102 — the two cap-relief levers.
+        case extend, restructure
+        var id: String { rawValue }
+    }
+
+    @State private var activeSheet: ContractSheet?
     @State private var showPayCutChat = false
     @State private var team: Team?
     /// This player's detailed deal, when one exists. Realistic-mode signings
@@ -42,29 +58,32 @@ struct PlayerContractView: View {
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .task { loadTeam() }
-        .sheet(isPresented: $showExtensionSheet) {
-            if let team {
-                NavigationStack {
-                    ContractExtensionSheet(
-                        player: player,
-                        team: team,
-                        capMode: career.capMode
-                    )
-                }
-            }
-        }
         .alert("Cut \(player.fullName)?", isPresented: $showCutAlert) {
             Button("Cut Player", role: .destructive) { cutPlayer() }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(cutAlertMessage)
         }
-        .sheet(isPresented: $showRestructureSheet) {
-            RestructureQuoteSheet(
-                player: player,
-                quote: restructureQuote,
-                onConfirm: { applyRestructure() }
-            )
+        // The one sheet — see `ContractSheet`.
+        .sheet(item: $activeSheet) { sheet in
+            switch sheet {
+            case .extend:
+                if let team {
+                    NavigationStack {
+                        ContractExtensionSheet(
+                            player: player,
+                            team: team,
+                            capMode: career.capMode
+                        )
+                    }
+                }
+            case .restructure:
+                RestructureQuoteSheet(
+                    player: player,
+                    quote: restructureQuote,
+                    onConfirm: { applyRestructure() }
+                )
+            }
         }
         .fullScreenCover(isPresented: $showPayCutChat) {
             // The chat supplies its own "Close" toolbar item — the wrapper must
@@ -166,7 +185,7 @@ struct PlayerContractView: View {
             // `team` itself, so this is a presence gate rather than a binding.
             if team != nil {
                 Button {
-                    showExtensionSheet = true
+                    activeSheet = .extend
                 } label: {
                     Label("Extend Contract", systemImage: "signature")
                         .foregroundStyle(Color.accentGold)
@@ -177,7 +196,7 @@ struct PlayerContractView: View {
                 // workspace uses; this is the per-player door to them.
                 if let quote = restructureQuote {
                     Button {
-                        showRestructureSheet = true
+                        activeSheet = .restructure
                     } label: {
                         VStack(alignment: .leading, spacing: 2) {
                             Label("Restructure Contract", systemImage: "arrow.triangle.2.circlepath")
@@ -401,13 +420,15 @@ struct PlayerContractView: View {
         }
     }
 
+    /// Contract runway is a countdown in years, not a rating — P7 rule 2, the
+    /// status palette at a stated threshold. Twin of
+    /// `CapOverviewView.yearsColor`; the same player must not read amber on one
+    /// screen and gold on the other.
     private func yearsColor(_ years: Int) -> Color {
-        switch years {
-        case 3...: return .success
-        case 2:    return .accentGold
-        case 1:    return .warning
-        default:   return .danger
-        }
+        if years >= 3 { return .forStatus(.ok) }      // comfortably under contract
+        if years == 2 { return .forStatus(.neutral) } // no decision due yet
+        if years == 1 { return .forStatus(.warn) }    // expiring — decide this year
+        return .forStatus(.bad)                       // already off the books
     }
 
     private func formatMillions(_ thousands: Int) -> String {

@@ -313,29 +313,38 @@ struct ProspectDetailView: View {
     }
 
     var body: some View {
-        ZStack {
-            Color.backgroundPrimary.ignoresSafeArea()
-
-            List {
-                headerSection
-                myVerdictSection
-                quickAssessmentRow
-                if isScouted { scoutingReportSection }
-                starterComparisonSection
-                combineSection
-                collegeProductionSummarySection
-                draftSection
-                characterFileSection
-                riskFlagsSection
-                if prospect.interviewCompleted { interviewResultsSection }
-                teamInterestRow
-                actionsSection
+        DSDetailPage {
+            prospectHero
+        } cards: {
+            DSDetailColumns {
+                // LEAD — your read and the decision it feeds.
+                // `myVerdictCard` is this screen's subject (§2.11).
+                myVerdictCard
+                quickAssessmentCard
+                starterComparisonCard
+                draftCard
+            } middle: {
+                // MIDDLE — what your department has actually bought.
+                //
+                // FOG GATE, moved verbatim: the report block renders only when
+                // `ProspectFog.read(prospect).source == .scouts`. Everything
+                // inside it is already fogged per key by
+                // `ProspectFog.AttributeDisclosure`; this outer gate is what
+                // keeps an unscouted man from showing a grade block at all.
+                if isScouted { scoutingReportCard }
+                if prospect.interviewCompleted { interviewResultsCard }
+                characterFileCard
+                riskFlagsCard
+                instrumentsCard
+            } trail: {
+                // TRAIL — what the outside world can see.
+                combineCard
+                collegeProductionCard
+                teamInterestCard
             }
-            .scrollContentBackground(.hidden)
-            .listStyle(.insetGrouped)
         }
         .safeAreaInset(edge: .bottom) {
-            actionButtonBar
+            prospectActionBar
         }
         .navigationTitle(prospect.fullName)
         .navigationBarTitleDisplayMode(.large)
@@ -454,36 +463,42 @@ struct ProspectDetailView: View {
     // four mark systems could not see. This is where the read becomes a verdict.
 
     @ViewBuilder
-    private var myVerdictSection: some View {
-        Section {
+    private var myVerdictCard: some View {
+        DSDetailCard(
+            "My Verdict",
+            icon: "star.circle.fill",
+            explainer: "Your mark is what the war room sorts by on draft night. The note is why.",
+            isSubject: true
+        ) {
             ProspectMarkPicker(prospect: prospect) {
                 try? modelContext.save()
             }
-            .listRowBackground(Color.backgroundSecondary)
 
             Button {
                 activeSheet = .markNote
             } label: {
-                HStack(alignment: .top, spacing: 10) {
+                HStack(alignment: .top, spacing: DSSpacing.xs) {
                     Image(systemName: "note.text")
-                        .font(.caption)
+                        .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(Color.accentGold)
                         .padding(.top, 2)
                     if prospect.userMarkNote.isEmpty {
                         Text("Add a note \u{2014} why he is where he is on your board.")
-                            .font(.subheadline)
-                            .foregroundStyle(Color.textTertiary)
+                            .font(.system(size: DSType.Size.body))
+                            .foregroundStyle(Color.textTertiaryReadable)
                     } else {
                         Text(prospect.userMarkNote)
-                            .font(.subheadline)
+                            .font(.system(size: DSType.Size.body))
                             .foregroundStyle(Color.textPrimary)
                             .multilineTextAlignment(.leading)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer(minLength: 0)
                 }
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
             }
-            .listRowBackground(Color.backgroundSecondary)
+            .buttonStyle(.plain)
 
             // What the market thinks versus what you graded him.
             if let read = ProspectFog.valueRead(
@@ -491,20 +506,18 @@ struct ProspectDetailView: View {
                 marketRank: DraftIntel.consensusRank(for: prospect.id),
                 myGrade: UserProspectGradeStore.shared.grade(for: prospect.id)
             ) {
-                LabeledContent("Value vs My Grade") {
+                Divider().overlay(Color.surfaceBorder)
+                DSDetailRow(label: "Value vs My Grade") {
                     VStack(alignment: .trailing, spacing: 1) {
                         Text(read.label)
-                            .font(.body.weight(.bold))
+                            .font(.system(size: DSType.Size.body, weight: .bold))
                             .foregroundStyle(read.tint)
                         Text("market \u{2248} #\(read.marketRank) \u{00B7} you \u{2248} #\(read.impliedPick)")
-                            .font(.caption2.monospacedDigit())
-                            .foregroundStyle(Color.textTertiary)
+                            .font(.system(size: DSType.Size.caption).monospacedDigit())
+                            .foregroundStyle(Color.textTertiaryReadable)
                     }
                 }
-                .listRowBackground(Color.backgroundSecondary)
             }
-        } header: {
-            Text("My Verdict")
         }
     }
 
@@ -519,14 +532,18 @@ struct ProspectDetailView: View {
     // work has actually been done.
 
     @ViewBuilder
-    private var characterFileSection: some View {
+    private var characterFileCard: some View {
         let medical = prospect.medicalConcerns ?? []
         let character = prospect.redFlags ?? []
         let total = medical.count + character.count
         let disclosure = ProspectFog.flagDisclosure(for: prospect, userTeamID: career.teamID)
 
         if disclosure != .hidden {
-            Section("Medical & Character File") {
+            DSDetailCard(
+                "Medical & Character File",
+                icon: "cross.case",
+                explainer: "The league's paperwork. It opens in three steps \u{2014} the count appears once anybody has been near him, the contents only once the work is done."
+            ) {
                 switch disclosure {
                 case .hidden:
                     EmptyView()
@@ -576,7 +593,6 @@ struct ProspectDetailView: View {
                     }
                 }
             }
-            .listRowBackground(Color.backgroundSecondary)
         }
     }
 
@@ -602,11 +618,11 @@ struct ProspectDetailView: View {
         .accessibilityLabel("\(detail): \(title)")
     }
 
-    // MARK: - Header Section
+    // MARK: - Hero
 
-    private var headerSection: some View {
-        Section {
-            HStack(alignment: .top, spacing: 16) {
+    private var prospectHero: some View {
+        DSDetailHero {
+            HStack(alignment: .top, spacing: DSSpacing.md) {
                 // Portrait — a draft class is 350 faceless names, so the head
                 // shot is the cheapest way to make one prospect memorable.
                 PersonFaceView(prospect: prospect, size: .medium)
@@ -617,7 +633,7 @@ struct ProspectDetailView: View {
                         .font(.title3.weight(.heavy))
                         .foregroundStyle(Color.textPrimary)
                         .frame(width: 54, height: 54)
-                        .background(positionColor, in: RoundedRectangle(cornerRadius: 10))
+                        .background(positionColor, in: RoundedRectangle(cornerRadius: DSCornerRadius.card))
                 }
 
                 VStack(alignment: .leading, spacing: 6) {
@@ -633,7 +649,7 @@ struct ProspectDetailView: View {
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 3)
                                 .background(
-                                    RoundedRectangle(cornerRadius: 6)
+                                    RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                                         .fill((rank <= 3 ? Color.accentGold : Color.textSecondary).opacity(0.15))
                                 )
                         }
@@ -651,7 +667,7 @@ struct ProspectDetailView: View {
                 if let gradeRange = effectiveOverallGrade {
                     VStack(spacing: 2) {
                         Text(gradeRange.displayText)
-                            .font(.system(size: gradeRange.isSingleGrade ? 36 : 28, weight: .heavy))
+                            .font(.system(size: gradeRange.isSingleGrade ? DSType.Size.display : DSType.Size.title1, weight: .heavy))
                             .foregroundStyle(detailGradeColor(gradeRange.midGrade))
                             .lineLimit(1)
                             .minimumScaleFactor(0.7)
@@ -676,7 +692,7 @@ struct ProspectDetailView: View {
                 } else {
                     VStack(spacing: 2) {
                         Text("?")
-                            .font(.system(size: 36, weight: .heavy))
+                            .font(.system(size: DSType.Size.display, weight: .heavy))
                             .foregroundStyle(Color.textTertiary)
                         Text("Unscouted")
                             .font(.caption2)
@@ -684,9 +700,7 @@ struct ProspectDetailView: View {
                     }
                 }
             }
-            .padding(.vertical, 4)
         }
-        .listRowBackground(Color.backgroundSecondary)
     }
 
     // MARK: - Scout Confidence Badge
@@ -713,7 +727,7 @@ struct ProspectDetailView: View {
                 }
             }
             Text("\(confidenceLabel) confidence · \(count)/3 scouts")
-                .font(.system(size: 9, weight: .semibold))
+                .font(.system(size: DSType.Size.micro, weight: .semibold))
                 .foregroundStyle(confidenceColor)
         }
         .padding(.horizontal, 6)
@@ -730,7 +744,7 @@ struct ProspectDetailView: View {
         return Group {
             if label != .unknown {
                 Text(label.rawValue)
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: DSType.Size.micro, weight: .semibold))
                     .foregroundStyle(color)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
@@ -742,12 +756,16 @@ struct ProspectDetailView: View {
     // MARK: - Quick Assessment Row
 
     @ViewBuilder
-    private var quickAssessmentRow: some View {
+    private var quickAssessmentCard: some View {
         let risk = prospect.riskLevel
         let fit = evaluateSchemeFit()
         let readiness = ProspectReadinessBucket(readiness: prospect.nflReadiness)
-        Section {
-            VStack(alignment: .leading, spacing: 8) {
+        DSDetailCard(
+            "Quick Assessment",
+            icon: "gauge.with.dots.needle.bottom.50percent",
+            explainer: "The five one-glance reads: risk profile, scheme fit, athletic profile, where his stock is going, and how much of him plays in year one."
+        ) {
+            VStack(alignment: .leading, spacing: DSSpacing.xs) {
                 HStack(spacing: 8) {
                     // Risk badge
                     if risk != .unknown {
@@ -795,7 +813,6 @@ struct ProspectDetailView: View {
                 }
             }
         }
-        .listRowBackground(Color.backgroundSecondary)
     }
 
     private func assessmentBadge(icon: String, label: String, color: Color) -> some View {
@@ -892,13 +909,17 @@ struct ProspectDetailView: View {
     // MARK: - Starter Comparison Section
 
     @ViewBuilder
-    private var starterComparisonSection: some View {
+    private var starterComparisonCard: some View {
         if isScouted {
             let starters = teamPlayers
                 .filter { $0.position == prospect.position }
                 .sorted { $0.overall > $1.overall }
             if let starter = starters.first {
-                Section("vs Current Starter") {
+                DSDetailCard(
+                    "vs Current Starter",
+                    icon: "arrow.left.arrow.right",
+                    explainer: "Both sides on the same letter ladder \u{2014} his fogged band against the man he would be replacing."
+                ) {
                     HStack(spacing: 12) {
                         // Prospect side — show grade range
                         VStack(spacing: 2) {
@@ -955,61 +976,98 @@ struct ProspectDetailView: View {
                         }
                         .frame(maxWidth: .infinity)
                     }
-                    .padding(.vertical, 4)
                 }
-                .listRowBackground(Color.backgroundSecondary)
             } else {
-                Section("vs Current Starter") {
-                    HStack(spacing: 8) {
+                DSDetailCard("vs Current Starter", icon: "arrow.left.arrow.right") {
+                    HStack(spacing: DSSpacing.xs) {
                         Image(systemName: "person.fill.badge.plus")
-                            .font(.caption)
+                            .font(.system(size: DSType.Size.footnote))
                             .foregroundStyle(Color.success)
                         Text("No \(prospect.position.rawValue) on roster \u{2014} immediate starter")
-                            .font(.subheadline)
+                            .font(.system(size: DSType.Size.body))
                             .foregroundStyle(Color.success)
                     }
                 }
-                .listRowBackground(Color.backgroundSecondary)
+            }
+        }
+    }
+
+    /// The verdict on prospect-vs-starter, as ONE thing.
+    ///
+    /// This was two functions over the same `diff` with **different cut
+    /// points** — the label flipped to "Close" at -5 while the colour stayed
+    /// green until -3 and turned gold until -8 — so a card could print
+    /// "Development Project" in the same green as "Upgrade". One ladder, one
+    /// switch, and it is not a rating ladder (a delta between two grades is not
+    /// a 0–99 read), so it does not go through `Color.forRating`.
+    private enum StarterVerdict {
+        case upgrade, close, developmentProject, longTermProject
+
+        init(diff: Int) {
+            switch diff {
+            case 0...:      self = .upgrade
+            case -4...(-1): self = .close
+            case -11...(-5): self = .developmentProject
+            default:        self = .longTermProject
+            }
+        }
+
+        var label: String {
+            switch self {
+            case .upgrade:            return "Upgrade"
+            case .close:              return "Close"
+            case .developmentProject: return "Development\nProject"
+            case .longTermProject:    return "Long-term\nProject"
+            }
+        }
+
+        var tint: Color {
+            switch self {
+            case .upgrade:            return .success
+            case .close:              return .accentBlue
+            case .developmentProject: return .warning
+            case .longTermProject:    return .textSecondary
             }
         }
     }
 
     private func starterComparisonLabel(_ diff: Int) -> String {
-        if diff >= 0 { return "Upgrade" }
-        if diff > -5 { return "Close" }
-        if diff > -12 { return "Development\nProject" }
-        return "Long-term\nProject"
+        StarterVerdict(diff: diff).label
     }
 
     private func starterComparisonColor(_ diff: Int) -> Color {
-        if diff > -3 { return .success }
-        if diff > -8 { return .accentGold }
-        if diff > -15 { return .warning }
-        return .textSecondary
+        StarterVerdict(diff: diff).tint
     }
 
     // MARK: - Team Interest Row
 
     @ViewBuilder
-    private var teamInterestRow: some View {
+    private var teamInterestCard: some View {
         if !prospect.teamInterest.isEmpty {
-            Section {
-                HStack(spacing: 8) {
+            DSDetailCard(
+                "League Interest",
+                icon: "person.3",
+                explainer: "How many other war rooms have shown their hand on him. It moves where he goes, not how good he is."
+            ) {
+                HStack(spacing: DSSpacing.xs) {
                     InterestBadge(level: prospect.interestLevel)
                     Text("\(prospect.teamInterest.count) team\(prospect.teamInterest.count == 1 ? "" : "s") interested")
-                        .font(.subheadline)
+                        .font(.system(size: DSType.Size.body))
                         .foregroundStyle(Color.textSecondary)
-                    Spacer()
+                    Spacer(minLength: 0)
                 }
             }
-            .listRowBackground(Color.backgroundSecondary)
         }
     }
 
     // MARK: - Combine Section
 
-    private var combineSection: some View {
-        Section("Physical Measurables") {
+    private var combineCard: some View {
+        DSDetailCard(
+            "Physical Measurables",
+            icon: "figure.run",
+            explainer: "Combine and pro-day numbers. Exact times need scouts in the building \u{2014} otherwise these are the broadcast figures, rounded."
+        ) {
             // Athletic profile summary
             if hasCombine {
                 HStack {
@@ -1106,16 +1164,15 @@ struct ProspectDetailView: View {
             }
 
             if !hasCombine {
-                HStack {
+                HStack(spacing: DSSpacing.xs) {
                     Image(systemName: "clock")
-                        .foregroundStyle(Color.textTertiary)
+                        .foregroundStyle(Color.textTertiaryReadable)
                     Text("Combine results pending")
-                        .font(.subheadline)
-                        .foregroundStyle(Color.textTertiary)
+                        .font(.system(size: DSType.Size.body))
+                        .foregroundStyle(Color.textTertiaryReadable)
                 }
             }
         }
-        .listRowBackground(Color.backgroundSecondary)
     }
 
     /// Returns a "Near record!" note if the value is within 5% of the all-time record.
@@ -1133,23 +1190,32 @@ struct ProspectDetailView: View {
 
     // MARK: - Scouting Report Section
 
+    /// **Fog-critical.** Every read below goes through `ProspectFog` /
+    /// `ProspectFog.AttributeDisclosure`; the card gate itself is
+    /// `if isScouted` at the call site. Nothing here reads
+    /// `trueOverall` / `truePhysical` / `trueAttributes`, and wave 4 moved the
+    /// block without touching a single one of those ports.
     @ViewBuilder
-    private var scoutingReportSection: some View {
-        Section("Scouting Report") {
+    private var scoutingReportCard: some View {
+        DSDetailCard(
+            "Scouting Report",
+            icon: "doc.text.magnifyingglass",
+            explainer: "What your department has filed. A locked key is one nobody has bought yet \u{2014} the pills at the bottom say which instruments you have spent."
+        ) {
             // Overall grade
             if let gradeRange = effectiveOverallGrade {
-                LabeledContent("Overall Grade") {
+                DSDetailRow(label: "Overall Grade") {
                     Text(gradeRange.displayText)
-                        .font(.body.weight(.bold))
+                        .font(.system(size: DSType.Size.body, weight: .bold))
                         .foregroundStyle(detailGradeColor(gradeRange.midGrade))
                 }
             }
 
             // Potential
             if let potentialLabel = prospect.scoutedPotentialLabel {
-                LabeledContent("Potential") {
+                DSDetailRow(label: "Potential") {
                     Text(potentialLabel.rawValue)
-                        .font(.body.weight(.semibold))
+                        .font(.system(size: DSType.Size.body, weight: .semibold))
                         .foregroundStyle(potentialLabelColor(potentialLabel))
                 }
             } else if let potential = prospect.scoutedPotential,
@@ -1163,9 +1229,9 @@ struct ProspectDetailView: View {
                 // the previous staff's guess printed as your department's
                 // finding.
                 let potentialGrade = LetterGrade.from(numericValue: potential)
-                LabeledContent("Potential") {
+                DSDetailRow(label: "Potential") {
                     Text(potentialGrade.rawValue)
-                        .font(.body.weight(.bold))
+                        .font(.system(size: DSType.Size.body, weight: .bold))
                         .foregroundStyle(detailGradeColor(potentialGrade))
                 }
             }
@@ -1181,9 +1247,10 @@ struct ProspectDetailView: View {
             // they are not equally good. Naming the instrument is the difference
             // between a read the user knows to discount and a fact he cannot.
             if let personality = prospect.scoutedPersonality {
-                LabeledContent {
+                DSDetailRow(label: "Personality") {
                     VStack(alignment: .trailing, spacing: 1) {
                         Text(personality.displayName)
+                            .font(.system(size: DSType.Size.body, weight: .semibold))
                             .foregroundStyle(Color.textPrimary)
                         // "Scouts' read" is only honest when OUR report exists —
                         // `applyPreScoutedData` hands the class's top names a
@@ -1193,11 +1260,9 @@ struct ProspectDetailView: View {
                         Text(prospect.interviewCompleted
                              ? "From your interview"
                              : (ProspectFog.hasOwnReport(prospect) ? "Scouts' read" : "League consensus"))
-                            .font(.caption2)
-                            .foregroundStyle(Color.textTertiary)
+                            .font(.system(size: DSType.Size.caption))
+                            .foregroundStyle(Color.textTertiaryReadable)
                     }
-                } label: {
-                    Text("Personality")
                 }
             }
 
@@ -1223,7 +1288,6 @@ struct ProspectDetailView: View {
                 StatusPill(label: "Top-30 Visit", completed: hasTop30Visit)
             }
         }
-        .listRowBackground(Color.backgroundSecondary)
     }
 
     /// A tape report THIS regime ordered — the Film Study pill's predicate.
@@ -1373,7 +1437,7 @@ struct ProspectDetailView: View {
                 .padding(.horizontal, 6)
                 .padding(.vertical, 3)
                 .background(
-                    RoundedRectangle(cornerRadius: 6)
+                    RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                         .fill(Color.textTertiary.opacity(0.06))
                 )
             Text(key)
@@ -1392,7 +1456,7 @@ struct ProspectDetailView: View {
                 .padding(.horizontal, 6)
                 .padding(.vertical, 3)
                 .background(
-                    RoundedRectangle(cornerRadius: 6)
+                    RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                         .fill(detailGradeColor(grade.midGrade).opacity(0.12))
                 )
             Text(key)
@@ -1418,27 +1482,24 @@ struct ProspectDetailView: View {
     }
 
     @ViewBuilder
-    private var interviewResultsSection: some View {
-        Section {
-            // Header with interview grade
+    private var interviewResultsCard: some View {
+        DSDetailCard(
+            "Interview",
+            icon: "bubble.left.and.bubble.right",
+            explainer: "What the meeting bought: a football-IQ read, a personality, and five mental keys nothing else on this page can unlock."
+        ) {
+            // Who ran it, and the grade it produced. The card's own
+            // `SectionHeaderText` already says "Interview" — the inner title
+            // that used to sit here said it a second time, in a third type
+            // voice, 4 pt below the first.
             HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "bubble.left.and.bubble.right.fill")
-                            .font(.subheadline)
-                            .foregroundStyle(Color.accentBlue)
-                        Text("Interview")
-                            .font(.headline.weight(.bold))
-                            .foregroundStyle(Color.textPrimary)
-                    }
-                    if let attribution = interviewAttributionLine {
-                        Text(attribution)
-                            .font(.caption2)
-                            .foregroundStyle(Color.textTertiary)
-                            .lineLimit(1)
-                    }
+                if let attribution = interviewAttributionLine {
+                    Text(attribution)
+                        .font(.system(size: DSType.Size.caption))
+                        .foregroundStyle(Color.textTertiaryReadable)
+                        .lineLimit(1)
                 }
-                Spacer()
+                Spacer(minLength: DSSpacing.xxs)
                 if let iq = prospect.interviewFootballIQ {
                     // Overall interview grade
                     let grade = interviewGradeLetter(iq: iq, personality: prospect.scoutedPersonality)
@@ -1448,7 +1509,7 @@ struct ProspectDetailView: View {
                         .padding(.horizontal, 10)
                         .padding(.vertical, 4)
                         .background(
-                            RoundedRectangle(cornerRadius: 8)
+                            RoundedRectangle(cornerRadius: DSCornerRadius.inline)
                                 .fill(interviewDetailGradeColor(grade).opacity(0.15))
                         )
                 }
@@ -1569,10 +1630,10 @@ struct ProspectDetailView: View {
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(
-                        RoundedRectangle(cornerRadius: 8)
+                        RoundedRectangle(cornerRadius: DSCornerRadius.inline)
                             .fill(Color.danger.opacity(0.1))
                             .overlay(
-                                RoundedRectangle(cornerRadius: 8)
+                                RoundedRectangle(cornerRadius: DSCornerRadius.inline)
                                     .strokeBorder(Color.danger.opacity(0.3))
                             )
                     )
@@ -1590,10 +1651,10 @@ struct ProspectDetailView: View {
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(
-                        RoundedRectangle(cornerRadius: 8)
+                        RoundedRectangle(cornerRadius: DSCornerRadius.inline)
                             .fill(Color.success.opacity(0.1))
                             .overlay(
-                                RoundedRectangle(cornerRadius: 8)
+                                RoundedRectangle(cornerRadius: DSCornerRadius.inline)
                                     .strokeBorder(Color.success.opacity(0.3))
                             )
                     )
@@ -1642,14 +1703,13 @@ struct ProspectDetailView: View {
                                 .font(.caption)
                                 .foregroundStyle(Color.textTertiary)
                             Text(note)
-                                .font(.subheadline)
+                                .font(.system(size: DSType.Size.body))
                                 .foregroundStyle(Color.textPrimary)
                         }
                     }
                 }
             }
         }
-        .listRowBackground(Color.backgroundSecondary)
     }
 
     /// The five mental attributes an interview is entitled to read, rendered as
@@ -1678,7 +1738,7 @@ struct ProspectDetailView: View {
                     ForEach(available, id: \.0) { key, grade in
                         VStack(spacing: 2) {
                             Text(grade.displayText)
-                                .font(.system(size: grade.isSingleGrade ? 15 : 12, weight: .heavy))
+                                .font(.system(size: grade.isSingleGrade ? DSType.Size.callout : DSType.Size.footnote, weight: .heavy))
                                 .foregroundStyle(detailGradeColor(grade.midGrade))
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.7)
@@ -1690,7 +1750,7 @@ struct ProspectDetailView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 6)
                         .background(
-                            RoundedRectangle(cornerRadius: 6)
+                            RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                                 .fill(detailGradeColor(grade.midGrade).opacity(0.10))
                         )
                     }
@@ -1818,9 +1878,13 @@ struct ProspectDetailView: View {
     /// as a noisy signal (`collegeProductionScore`) that correlates with — but
     /// does not reveal — the prospect's true grade.
     @ViewBuilder
-    private var collegeProductionSummarySection: some View {
-        Section("College Production") {
-            VStack(alignment: .leading, spacing: 10) {
+    private var collegeProductionCard: some View {
+        DSDetailCard(
+            "College Production",
+            icon: "chart.bar.xaxis",
+            explainer: "A noisy public signal. It correlates with his grade; it does not reveal it."
+        ) {
+            VStack(alignment: .leading, spacing: DSSpacing.xs) {
                 HStack(spacing: 16) {
                     productionTile(label: "Years Started", value: "\(prospect.collegeYearsStarted)/4")
                     productionTile(
@@ -1840,13 +1904,9 @@ struct ProspectDetailView: View {
                         .font(.subheadline.monospacedDigit())
                         .foregroundStyle(Color.textPrimary)
                 }
-                Text("Heavy starter snaps + strong production already factor into the prospect's grade and ceiling.")
-                    .font(.caption2)
-                    .foregroundStyle(Color.textTertiary)
+                DSDetailNote(text: "Heavy starter snaps and strong production already factor into his grade and his ceiling.")
             }
-            .padding(.vertical, 4)
         }
-        .listRowBackground(Color.backgroundSecondary)
     }
 
     private func productionTile(label: String, value: String, color: Color = .textPrimary) -> some View {
@@ -1860,7 +1920,7 @@ struct ProspectDetailView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(8)
-        .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 8))
+        .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: DSCornerRadius.inline))
     }
 
     // MARK: - Scheme Fit
@@ -2027,22 +2087,28 @@ struct ProspectDetailView: View {
     /// your scouts came back saying. Two sections both titled like red flags read
     /// as a duplicate, so the header names the source.
     @ViewBuilder
-    private var riskFlagsSection: some View {
+    private var riskFlagsCard: some View {
         let flags = collectRiskFlags()
         if !flags.isEmpty {
-            Section("Scouting Concerns") {
+            DSDetailCard(
+                "Scouting Concerns",
+                icon: "exclamationmark.triangle",
+                explainer: "What YOUR people came back saying \u{2014} distinct from the league's medical and character file, which is its own card."
+            ) {
                 ForEach(flags, id: \.self) { flag in
-                    HStack(spacing: 10) {
+                    HStack(alignment: .top, spacing: DSSpacing.xs) {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.caption)
+                            .font(.system(size: DSType.Size.footnote))
                             .foregroundStyle(Color.danger)
                         Text(flag)
-                            .font(.subheadline)
+                            .font(.system(size: DSType.Size.body))
                             .foregroundStyle(Color.textPrimary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
                     }
+                    .accessibilityElement(children: .combine)
                 }
             }
-            .listRowBackground(Color.backgroundSecondary)
         }
     }
 
@@ -2086,54 +2152,36 @@ struct ProspectDetailView: View {
 
     // MARK: - Draft Section
 
-    private var draftSection: some View {
-        Section("Draft Information") {
-            LabeledContent("Declaring for Draft") {
-                Text(prospect.isDeclaringForDraft ? "Yes" : "No")
-                    .foregroundStyle(prospect.isDeclaringForDraft ? Color.success : Color.textSecondary)
-            }
+    private var draftCard: some View {
+        DSDetailCard(
+            "Draft Information",
+            icon: "list.number",
+            explainer: "Where the league expects him to go, and what that slot costs the cap."
+        ) {
+            DSDetailRow(
+                "Declaring for Draft",
+                prospect.isDeclaringForDraft ? "Yes" : "No",
+                tint: prospect.isDeclaringForDraft ? .success : .textSecondary
+            )
 
             if let proj = prospect.draftProjection {
-                LabeledContent("Draft Projection") {
-                    Text("Round \(proj)")
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(projectionColor(proj))
-                        .monospacedDigit()
-                }
+                DSDetailRow("Draft Projection", "Round \(proj)", tint: projectionColor(proj))
+                // Rookie money for that slot, at the club's real cap.
+                DSDetailRow("Est. Rookie Deal", rookieContractEstimate(round: proj), tint: .textSecondary)
             } else {
-                LabeledContent("Draft Projection") {
-                    Text("Unknown")
-                        .foregroundStyle(Color.textTertiary)
-                }
-            }
-
-            // Rookie contract estimate
-            if let proj = prospect.draftProjection {
-                LabeledContent("Est. Rookie Deal") {
-                    Text(rookieContractEstimate(round: proj))
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(Color.textSecondary)
-                        .monospacedDigit()
-                }
+                DSDetailRow("Draft Projection", "Unknown", tint: .textTertiaryReadable, weight: .regular)
             }
 
             // Mock draft projection
             if let mockPick = prospect.mockDraftPickNumber,
                let mockTeam = prospect.mockDraftTeam {
-                LabeledContent("Mock Draft") {
-                    Text("Rd1 Pick #\(mockPick) — \(mockTeam)")
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(Color.accentGold)
-                        .monospacedDigit()
-                }
+                DSDetailRow("Mock Draft", "Rd1 Pick #\(mockPick) — \(mockTeam)", tint: .accentGold)
             }
 
-            // Team interest indicator
-            LabeledContent("Team Interest") {
+            DSDetailRow(label: "Team Interest") {
                 InterestBadge(level: prospect.interestLevel)
             }
         }
-        .listRowBackground(Color.backgroundSecondary)
     }
 
     // MARK: - Actions Section
@@ -2237,8 +2285,18 @@ struct ProspectDetailView: View {
         .accessibilityLabel("\(title), unavailable. \(reason)")
     }
 
-    private var actionsSection: some View {
-        Section {
+    /// The instrument ledger: every pre-draft tool the spring offers, live or
+    /// blocked, each one stating its price or its reason.
+    ///
+    /// The *live* ones are also on the action bar (§2.5) — deliberately. The
+    /// bar is where you spend; this card is where you read what is left and
+    /// why the rest is shut.
+    private var instrumentsCard: some View {
+        DSDetailCard(
+            "Instruments",
+            icon: "wrench.and.screwdriver",
+            explainer: "Film study, an interview and a private workout are the three things you can buy on this man. Each is rationed, and a shut one says what shut it."
+        ) {
             evaluationRow
 
             // Interview — combine and pro days, 60 a cycle.
@@ -2318,87 +2376,115 @@ struct ProspectDetailView: View {
                 }
             }
         }
-        .listRowBackground(Color.backgroundSecondary)
     }
 
     // MARK: - Action Button Bar (#48)
 
-    private var actionButtonBar: some View {
-        HStack(spacing: 12) {
-            // The ONE mark — primary CTA. This used to toggle `prospectFlag`
-            // between must-have and none, which the star store, the watchlist
-            // bookmark and the user grade all disagreed with.
-            Menu {
-                ProspectMarkMenu(
-                    prospect: prospect,
-                    onChange: { try? modelContext.save() },
-                    onEditNote: { activeSheet = .markNote }
-                )
-            } label: {
-                let mark = prospect.userMark
-                Label(
-                    mark == .none ? "Mark Prospect" : mark.label,
-                    systemImage: mark == .none ? "circle.dashed" : mark.icon
-                )
-                .font(.body.weight(.bold))
-                .foregroundStyle(mark == .none ? Color.textPrimary : mark.color)
-                .frame(maxWidth: .infinity)
-                .frame(height: 52)
-                .background(
-                    RoundedRectangle(cornerRadius: 14)
-                        .fill(mark == .none ? Color.backgroundSecondary : mark.color.opacity(0.22))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14)
-                        .strokeBorder(
-                            mark == .none ? Color.surfaceBorder : mark.color,
-                            lineWidth: mark == .none ? 1 : 1.5
-                        )
-                )
+    /// **The one commit surface** (§2.5, P5).
+    ///
+    /// Was a bespoke `HStack` on `.ultraThinMaterial` with four hand-rolled
+    /// 52 pt capsules in two private recipes — the fourth hand-rolled button
+    /// style in a file that already had `DSActionBar` available. The set of
+    /// actions is unchanged: the mark is still the primary and still a `Menu`,
+    /// and one CTA appears per instrument whose window is open right now.
+    ///
+    /// The mark keeps its own control rather than becoming a bar `Action`,
+    /// because it is a *menu*, not a commit — `DSActionBar.Action` is a
+    /// closure, and a menu needs to own its label.
+    @ViewBuilder
+    private var prospectActionBar: some View {
+        VStack(spacing: 0) {
+            // The mark strip, above the commits. Marking is free, local and
+            // reversible, and it stays live on draft night when every priced
+            // action below it is shut — so it does not belong in a commit slot.
+            HStack(spacing: DSSpacing.xs) {
+                markMenu
+                Spacer(minLength: 0)
             }
-            .accessibilityLabel(
-                prospect.isMarked
-                    ? "Your mark: \(prospect.userMark.label). Change it"
-                    : "Unmarked. Set your mark"
-            )
+            .padding(.horizontal, DSSpacing.md)
+            .padding(.vertical, DSSpacing.xs)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.backgroundPlate)
 
-            // One CTA per instrument that is live RIGHT NOW (#117) — the bar
-            // used to offer only the interview, so film study and the workout
-            // read as if they did not exist even when their windows were open.
-            // Each button is the same action its Actions-section row runs.
-            if evaluationAvailability.isAvailable {
-                instrumentButton("Film Study", icon: "film") { activeSheet = .sendScout }
-            }
-            if canInterview {
-                instrumentButton("Interview", icon: "bubble.left.fill") { performInterview() }
-            }
-            if canWorkout {
-                instrumentButton("Workout", icon: "figure.run") { performWorkout() }
-            }
+            DSActionBar(
+                explainer: .init(
+                    title: prospect.isMarked ? "Your mark" : "Unmarked",
+                    message: markExplainer,
+                    isWarning: isLiveDraftCard
+                ),
+                ghost: canWorkout ? .init(title: "Workout", handler: { performWorkout() }) : nil,
+                secondary: canInterview ? .init(title: "Interview", handler: { performInterview() }) : nil,
+                primary: evaluationAvailability.isAvailable
+                    ? .init(
+                        title: isScouted ? "Order Another Report" : "Order Film Study",
+                        caption: evaluationCostCaption,
+                        handler: { activeSheet = .sendScout }
+                      )
+                    : nil
+            )
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(.ultraThinMaterial)
     }
 
-    private func instrumentButton(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Label(title, systemImage: icon)
-                .font(.body.weight(.bold))
-                .foregroundStyle(Color.accentBlue)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-                .frame(maxWidth: .infinity)
-                .frame(height: 52)
-                .background(
-                    RoundedRectangle(cornerRadius: 14)
-                        .fill(Color.accentBlue.opacity(0.18))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14)
-                        .strokeBorder(Color.accentBlue.opacity(0.5), lineWidth: 1)
-                )
+    /// What the bar's explainer says. On draft night it is the blocked-commit
+    /// form: orange rule, and the reason spelled out (§2.12).
+    private var markExplainer: String {
+        if isLiveDraftCard { return Self.liveDraftHint }
+        if prospect.isMarked {
+            return "**\(prospect.userMark.label)** on your board\(prospect.userMarkNote.isEmpty ? "" : " \u{00B7} note attached")."
         }
+        return "He is not on your board yet. A mark is what the war room sorts by on the clock."
+    }
+
+    /// "$450K · 4 of 6 evaluations left" — the two numbers the commit spends,
+    /// quoted from the same `ScoutEvaluationBudget` the Instruments card reads
+    /// so the bar and the card cannot disagree (§2.13, arithmetic gate).
+    private var evaluationCostCaption: String? {
+        guard case let .available(cost, slotsLeft) = evaluationAvailability else { return nil }
+        return "$\(cost)K \u{00B7} \(slotsLeft) of \(ScoutEvaluationBudget.slotsPerCycle) left"
+    }
+
+    /// The ONE mark. This used to toggle `prospectFlag` between must-have and
+    /// none, which the star store, the watchlist bookmark and the user grade
+    /// all disagreed with.
+    ///
+    /// It sits in the bar's explainer gutter rather than in a button slot: the
+    /// bar's four slots are for commits, and marking is a picker that is free,
+    /// local and reversible — it stays live even on draft night, when every
+    /// priced action above is shut.
+    private var markMenu: some View {
+        Menu {
+            ProspectMarkMenu(
+                prospect: prospect,
+                onChange: { try? modelContext.save() },
+                onEditNote: { activeSheet = .markNote }
+            )
+        } label: {
+            let mark = prospect.userMark
+            Label(
+                mark == .none ? "Mark" : mark.label,
+                systemImage: mark == .none ? "circle.dashed" : mark.icon
+            )
+            .font(.system(size: DSType.Size.body, weight: .bold))
+            .foregroundStyle(mark == .none ? Color.textPrimary : mark.color)
+            .padding(.horizontal, DSSpacing.sm)
+            .frame(minHeight: 44)
+            .background(
+                RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                    .fill(mark == .none ? Color.backgroundTertiary : mark.color.opacity(0.22))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                    .strokeBorder(
+                        mark == .none ? Color.surfaceBorder : mark.color,
+                        lineWidth: mark == .none ? 1 : 1.5
+                    )
+            )
+        }
+        .accessibilityLabel(
+            prospect.isMarked
+                ? "Your mark: \(prospect.userMark.label). Change it"
+                : "Unmarked. Set your mark"
+        )
     }
 
     // MARK: - Helpers
@@ -2417,7 +2503,10 @@ struct ProspectDetailView: View {
         return "\(feet)'\(inches)\""
     }
 
-    private func projectionColor(_ round: Int) -> Color {
+    /// A draft ROUND is a slot, not a rating: there is no 0–99 read to
+    /// hand `Color.forRating`, and rounds run the wrong way (1 is best). The
+    /// lint pragma is the sanctioned form for exactly this case.
+    private func projectionColor(_ round: Int) -> Color { // ds-lint:allow(ratingfn)
         switch round {
         case 1:    return .accentGold
         case 2...3: return .success
@@ -2688,12 +2777,12 @@ private struct CombineMeasurableRow: View {
         return "\(n)\(suffix)"
     }
 
+    /// A combine percentile is a 0–100 read like any other, so it goes
+    /// through the shared ladder rather than a sixth bespoke one (§4 wave 4).
+    /// The old ladder put 90+ in gold, which is a *fourth* job for the colour
+    /// P5 reserves for the primary action.
     private func percentileColor(_ pct: Int) -> Color {
-        if pct >= 90 { return .accentGold }
-        if pct >= 75 { return .success }
-        if pct >= 50 { return .accentBlue }
-        if pct >= 25 { return .warning }
-        return .danger
+        Color.forRating(pct, scale: .percent)
     }
 }
 
@@ -2714,7 +2803,7 @@ private struct StatusPill: View {
         .padding(.vertical, 8)
         .frame(minHeight: 44)
         .background(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: DSCornerRadius.inline)
                 .fill(completed ? Color.success.opacity(0.15) : Color.backgroundTertiary)
         )
         .accessibilityLabel("\(label) \(completed ? "completed" : "not completed")")
@@ -2736,7 +2825,7 @@ private struct InterestBadge: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
         .background(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: DSCornerRadius.inline)
                 .fill(badgeColor.opacity(0.15))
         )
     }
@@ -2784,7 +2873,7 @@ private struct SendScoutSheet: View {
                 if scouts.isEmpty {
                     VStack(spacing: 16) {
                         Image(systemName: "person.slash")
-                            .font(.system(size: 44))
+                            .font(.system(size: DSType.Size.hero))
                             .foregroundStyle(Color.textTertiary)
                         Text("No Scouts Available")
                             .font(.title3.weight(.semibold))

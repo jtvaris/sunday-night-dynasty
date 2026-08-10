@@ -46,6 +46,17 @@ enum HireSheetType: Identifiable {
     case medical(CoachRole, [Coach])
     case offensiveScheme
     case defensiveScheme
+    /// A result with no hire list behind it (wave 5b). The batch pass and the
+    /// interview decision both end in a `DSResultSheet` without the user ever
+    /// having opened a candidate list, so they need a slot in the ONE sheet
+    /// binding rather than a second `.sheet` modifier of their own. The `UUID`
+    /// is the identity: a second batch run must re-present rather than be
+    /// swallowed as "same item".
+    case result(UUID)
+    /// The head-coach card's portrait picker. Not a hire — but it IS a modal,
+    /// and it used to carry a `.sheet(isPresented:)` of its own buried in the
+    /// `List`, which is a second modal point in one hierarchy.
+    case portrait
 
     var id: String {
         switch self {
@@ -54,8 +65,50 @@ enum HireSheetType: Identifiable {
         case .medical(let r, _): return "medical-\(r.rawValue)"
         case .offensiveScheme:   return "scheme-offense"
         case .defensiveScheme:   return "scheme-defense"
+        case .result(let uuid):  return "result-\(uuid.uuidString)"
+        case .portrait:          return "portrait"
         }
     }
+
+    /// Whether this face brings its own navigation chrome and dismissal, so the
+    /// host must not draw a second bar or a second "Close" over it (P5's
+    /// one-dismissal corollary). `ChangeUserPortraitSheet` ships its own
+    /// `NavigationStack` with Cancel/Done; `DSResultSheet` ends in its own
+    /// action bar and has no dismissal at all.
+    var bringsOwnChrome: Bool {
+        switch self {
+        case .portrait, .result: return true
+        default:                 return false
+        }
+    }
+}
+
+// MARK: - Staff outcome (wave 5b)
+
+/// What a staff process produced, in `DSResultSheet`'s grammar.
+///
+/// UI_REDESIGN_VISION §2.6. This screen used to answer every commit with the
+/// same top toast — a feedback metaphor unique to this file, listed in §0's
+/// four — which meant a hire, a nine-man batch pass and a coordinator walking
+/// out of the building all got one grey line that faded after three seconds.
+/// A batch pass in particular *has* numbers: how many were signed, what it
+/// spent, how many chairs stayed open, how many hires clash with the head
+/// coach. The toast threw all four away.
+///
+/// Deliberately not `Identifiable`: it is never the sheet's item. The sheet's
+/// item is ``HireSheetType``, and this rides alongside it so that a flow which
+/// ENDS (a hire) swaps its content without changing the sheet's identity — the
+/// dismiss-and-re-present race that every timing hack in this file existed to
+/// paper over.
+struct StaffOutcome {
+    var tone: DSResultSheet.Tone = .good
+    /// The screen ident — "STAFF HIRING", "COACHING CAROUSEL".
+    var eyebrow: String
+    var headline: String
+    var message: String?
+    var chips: [DSResultSheet.Chip] = []
+    var cost: String?
+    var continueTitle: String = "Continue"
 }
 
 struct CoachingStaffView: View {
@@ -95,14 +148,14 @@ struct CoachingStaffView: View {
     /// screen was left and re-entered.
     @State private var confirmedTaskKeys: Set<String> = []
 
-    // MARK: - Hiring Confirmation State (#49)
-    @State private var recentHireMessage: String?
+    // MARK: - Hiring Result State (#49, wave 5b)
+
+    /// What the last staff commit produced. Non-nil replaces the sheet's flow
+    /// content with a `DSResultSheet` (§2.6) — the top toast this screen used
+    /// to own is gone.
+    @State private var sheetOutcome: StaffOutcome?
 
     // Lock-in moved to Dashboard workflow (CoachingStaffReviewSheet)
-
-    // MARK: - Scheme Selection State (#67)
-    @State private var showOffensiveSchemeSelection: Bool = false
-    @State private var showDefensiveSchemeSelection: Bool = false
 
     // MARK: - Collapsible Section State (#80, #274: AppStorage to survive sheet dismiss cycles)
     @AppStorage("staff_isCoordinatorsExpanded") private var isCoordinatorsExpanded: Bool = true
@@ -120,9 +173,12 @@ struct CoachingStaffView: View {
     // MARK: - Navigation State
     @State private var activeHireSheet: HireSheetType?  // Single sheet for all hire flows
     @State private var detailCoachID: UUID?             // Pushes CoachDetailView via navigationDestination
-    /// "Change portrait" on the head-coach card — the one place in a running
-    /// career where `Career.avatarID` can still be edited.
-    @State private var showPortraitPicker = false
+    // "Change portrait" on the head-coach card — the one place in a running
+    // career where `Career.avatarID` can still be edited — used to own a
+    // `.sheet(isPresented:)` of its own, deep inside the `List`. That is a
+    // second modal point in one hierarchy, which is the recurring silent-
+    // dismiss bug in this codebase, so it moved into the one sheet enum
+    // (`HireSheetType.portrait`) with everything else.
     @State private var detailScoutID: UUID?             // Pushes ScoutDetailView via navigationDestination
 
     /// Coaches filtered to this team, derived from @Query result.
@@ -152,6 +208,25 @@ struct CoachingStaffView: View {
     private var scouts: [Scout] {
         guard let teamID = career.teamID else { return [] }
         return allScouts.filter { $0.teamID == teamID }
+    }
+
+    /// This team's scouts read straight out of the store instead of off
+    /// `@Query`.
+    ///
+    /// `HireScoutView.hire()` inserts the candidate, saves, and then calls
+    /// `onHired` **synchronously in the same call stack** — before SwiftUI runs
+    /// the view update in which `@Query` re-fetches. Anything the result sheet
+    /// derives from `scouts` at that moment is the pre-insert snapshot, and
+    /// `StaffOutcome` freezes it: the seat still read vacant, so the salary
+    /// chip printed "$0.0M" and the scouting-left chip and the "jobs still
+    /// open" count were both a hire behind. The coach path does not need this
+    /// because it reports from `fullScreenCover(onDismiss:)`, i.e. a later
+    /// runloop, and the batch pass yields between hires. A fetch against the
+    /// same context sees the row the hire view has just saved.
+    private func scoutsFromStore() -> [Scout] {
+        guard let teamID = career.teamID else { return [] }
+        let stored = (try? modelContext.fetch(FetchDescriptor<Scout>())) ?? []
+        return stored.filter { $0.careerID == career.id && $0.teamID == teamID }
     }
 
     /// Players on this team's roster.
@@ -472,11 +547,15 @@ struct CoachingStaffView: View {
         }
     }
 
-    private func remaining(_ pot: StaffPot) -> Int {
+    private func remaining(_ pot: StaffPot) -> Int { remaining(pot, in: ledger) }
+
+    /// Same reading against a supplied book, so a caller holding a fresher
+    /// ledger than `@Query` can ask it (see `scoutsFromStore()`).
+    private func remaining(_ pot: StaffPot, in book: StaffLedger) -> Int {
         switch pot {
-        case .coaching: return remainingBudget
-        case .medical:  return remainingMedicalBudget
-        case .scouting: return remainingScoutBudget
+        case .coaching: return book.remainingCoaching
+        case .medical:  return book.remainingMedical
+        case .scouting: return book.remainingScouting
         }
     }
 
@@ -508,16 +587,14 @@ struct CoachingStaffView: View {
     ]
 
     /// Every open job in hiring order.
-    private var orderedVacancies: [StaffVacancy] {
-        let vacantCoaches = Set(vacantCoachRoles)
-        let vacantScouts = Set(vacantScoutRoles)
+    private var orderedVacancies: [StaffVacancy] { orderedVacancies(in: ledger) }
+
+    /// Same list against a supplied book (see `scoutsFromStore()`).
+    private func orderedVacancies(in book: StaffLedger) -> [StaffVacancy] {
+        let vacantCoaches = Set(book.vacantCoachRoles)
+        let vacantScouts = Set(book.vacantScoutRoles)
         return Self.autoHireCoachOrder.filter { vacantCoaches.contains($0) }.map { StaffVacancy.coach($0) }
             + Self.autoHireScoutOrder.filter { vacantScouts.contains($0) }.map { StaffVacancy.scout($0) }
-    }
-
-    /// The three highest-impact holes — what "Hire these first" points at.
-    private var topPriorityVacancies: [StaffVacancy] {
-        Array(orderedVacancies.prefix(3))
     }
 
     /// Planned spend band per job, in thousands.
@@ -704,27 +781,62 @@ struct CoachingStaffView: View {
         isMedicalExpanded = true
         isScoutingExpanded = true
 
+        // §2.6: a process ends in a result sheet. The batch pass is the one
+        // commit on this screen with real arithmetic behind it — men signed,
+        // money spent, chairs left open, fits it had to swallow — and all four
+        // numbers used to be flattened into one grey line that faded after four
+        // seconds.
         let stillOpen = plan.count - hires
         var message = hires == 0
-            ? "No affordable candidates — nothing hired."
-            : "Hired \(hires) staff for $\(formatBudget(spent))M."
+            ? "Nothing in the market was affordable inside your budget."
+            : "The pass worked down the ladder, most decisive job first."
         if hires > 0 && stillOpen > 0 {
-            message += " \(stillOpen) role\(stillOpen == 1 ? "" : "s") left open — no room in the budget."
+            message += " **\(stillOpen)** role\(stillOpen == 1 ? "" : "s") stayed open — no room in the budget."
         }
         // Task #135: the pass refuses a Conflict fit while any workable
         // candidate is affordable. When it took one anyway, that was the whole
         // market for the chair — say so rather than let the user find the ✗
         // himself two rows down.
         if conflictHires > 0 {
-            message += " \(conflictHires) hire\(conflictHires == 1 ? "" : "s") clash with your head coach"
+            message += " **\(conflictHires)** hire\(conflictHires == 1 ? "" : "s") clash with your head coach"
                 + " — nobody else was affordable for those chairs."
         }
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-            recentHireMessage = message
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
-            withAnimation(.easeOut(duration: 0.4)) { recentHireMessage = nil }
-        }
+
+        presentOutcome(StaffOutcome(
+            tone: hires == 0 ? .bad : (stillOpen > 0 || conflictHires > 0 ? .neutral : .good),
+            eyebrow: "Staff hiring \u{00B7} batch",
+            headline: hires == 0
+                ? "Nobody hired"
+                : "\(hires) hired for $\(formatBudget(spent))M",
+            message: message,
+            chips: [
+                .init(id: "hired", label: "Hired", value: "\(hires)", context: "of \(plan.count) jobs"),
+                .init(
+                    id: "spent",
+                    label: "Spent",
+                    value: "$\(formatBudget(spent))M",
+                    context: "across three pots"
+                ),
+                .init(
+                    id: "open",
+                    label: "Still open",
+                    value: "\(stillOpen)",
+                    context: stillOpen > 0 ? "hire by hand" : "none",
+                    valueColor: stillOpen > 0 ? .alertOrange : .textPrimary
+                ),
+                .init(
+                    id: "clash",
+                    label: "Clashes",
+                    value: "\(conflictHires)",
+                    context: conflictHires > 0 ? "with your HC" : "none",
+                    valueColor: conflictHires > 0 ? .dangerText : .textPrimary
+                )
+            ],
+            cost: "Leaves **$\(formatBudget(max(0, remainingBudget)))M** coaching, "
+                + "**$\(formatBudget(max(0, remainingMedicalBudget)))M** medical and "
+                + "**$\(formatBudget(max(0, remainingScoutBudget)))M** scouting. "
+                + "You can still replace anybody by hand."
+        ))
     }
 
     /// Signs the best candidate `cap` can buy for one open job and returns his
@@ -1146,39 +1258,9 @@ struct CoachingStaffView: View {
                 taskConfirmBar
             }
 
-            // MARK: - Hiring Confirmation Toast (#49)
-            if let message = recentHireMessage {
-                VStack {
-                    HStack(spacing: 10) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 18))
-                            .foregroundStyle(Color.success)
-                        Text(message)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(Color.textPrimary)
-                        Spacer()
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(Color.backgroundSecondary)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .fill(Color.success.opacity(0.15))
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .strokeBorder(Color.success.opacity(0.4), lineWidth: 1)
-                            )
-                    )
-                    .padding(.horizontal, 16)
-                    .padding(.top, 8)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-
-                    Spacer()
-                }
-            }
+            // The top toast that used to live here is gone (wave 5b). Every
+            // staff commit now ends in a `DSResultSheet` — §2.6's one modal
+            // result pattern — presented through the single sheet slot below.
         }
         .navigationTitle("Coaching Staff")
         .navigationBarTitleDisplayMode(.large)
@@ -1206,85 +1288,170 @@ struct CoachingStaffView: View {
                 ScoutDetailView(scout: scout)
             }
         }
-        // Unified hire sheet — single .sheet(item:) avoids SwiftUI multi-sheet conflicts
-        .sheet(item: $activeHireSheet) { sheetType in
+        // THE ONE MODAL SLOT. Every hire flow AND every staff result comes
+        // through this binding — a second `.sheet` on this node is the recurring
+        // silent-dismiss bug, and a result presented as its own sheet would need
+        // the flow's sheet to close first, which is the dismiss-and-re-present
+        // race the 0.6 s / 0.4 s timers in the hire views existed to hide.
+        //
+        // So a flow that ENDS does not change the sheet's identity: `onHired`
+        // writes `sheetOutcome` and the content below swaps to the
+        // `DSResultSheet` in place, over the same presentation (§2.6). The
+        // batch pass and the interview decision, which have no flow behind
+        // them, present `.result(UUID)` from nil.
+        //
+        // `onDismiss` clears the outcome unconditionally: a swipe-down closes
+        // the sheet without going through "Continue", and a stale outcome left
+        // behind would make the NEXT hire list open straight onto the last
+        // hire's result.
+        .sheet(item: $activeHireSheet, onDismiss: { sheetOutcome = nil }) { sheetType in
             if let teamID = career.teamID {
                 NavigationStack {
                     Group {
-                        switch sheetType {
-                        case .coach(let role):
-                            HireCoachView(
-                                role: role,
-                                teamID: teamID,
-                                career: career,
-                                remainingBudget: remainingBudget,
-                                teamBudget: coachingBudget,
-                                teamWins: team?.wins ?? 8,
-                                teamReputation: career.reputation,
-                                onHired: { name, roleName in
-                                    activeHireSheet = nil
-                                    showHiringConfirmation(coachName: name, roleName: roleName)
-                                }
-                            )
-                        case .scout(let role):
-                            HireScoutView(
-                                scoutRole: role,
-                                teamID: teamID,
-                                career: career,
-                                remainingBudget: remainingScoutBudget,
-                                poolSeed: CoachingEngine.scoutPoolSeed(
-                                    teamID: teamID,
-                                    role: role,
-                                    season: career.currentSeason
-                                ),
-                                onHired: { name, roleName in
-                                    activeHireSheet = nil
-                                    showHiringConfirmation(coachName: name, roleName: roleName)
-                                }
-                            )
-                        case .medical(let role, let candidates):
-                            SimpleMedicalHireSheet(
-                                role: role,
-                                candidates: candidates,
-                                remainingBudget: remainingMedicalBudget,
-                                teamID: teamID,
-                                careerID: career.id,
-                                currentSeason: career.currentSeason,
-                                onHired: { name, roleName in
-                                    activeHireSheet = nil
-                                    showHiringConfirmation(coachName: name, roleName: roleName)
-                                }
-                            )
-                        case .offensiveScheme:
-                            if let oc = coaches.first(where: { $0.role == .offensiveCoordinator }) {
-                                SchemeSelectionView(
-                                    coordinator: oc,
-                                    players: offensivePlayers,
-                                    isOffensive: true,
-                                    coaches: coaches
-                                )
-                            }
-                        case .defensiveScheme:
-                            if let dc = coaches.first(where: { $0.role == .defensiveCoordinator }) {
-                                SchemeSelectionView(
-                                    coordinator: dc,
-                                    players: defensivePlayers,
-                                    isOffensive: false,
-                                    coaches: coaches
-                                )
-                            }
+                        if let outcome = sheetOutcome {
+                            staffResultSheet(outcome)
+                        } else {
+                            hireFlow(sheetType, teamID: teamID)
                         }
                     }
                     .toolbar {
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button("Close") { activeHireSheet = nil }
-                                .foregroundStyle(Color.accentGold)
+                        // P5's corollary: the result sheet carries the ONLY
+                        // commit on the surface it covers, and the portrait
+                        // picker brings its own Cancel/Done, so the host's
+                        // "Close" is withdrawn for both.
+                        if sheetOutcome == nil && !sheetType.bringsOwnChrome {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Close") { activeHireSheet = nil }
+                                    .foregroundStyle(Color.accentGold)
+                            }
                         }
                     }
+                    .toolbar(
+                        sheetOutcome != nil || sheetType.bringsOwnChrome ? .hidden : .visible,
+                        for: .navigationBar
+                    )
                 }
             }
         }
         // Lock-in alerts moved to Dashboard workflow (CoachingStaffReviewSheet)
+    }
+
+    // MARK: - The one sheet's two faces (wave 5b)
+
+    @ViewBuilder
+    private func hireFlow(_ sheetType: HireSheetType, teamID: UUID) -> some View {
+        switch sheetType {
+        case .coach(let role):
+            HireCoachView(
+                role: role,
+                teamID: teamID,
+                career: career,
+                remainingBudget: remainingBudget,
+                teamBudget: coachingBudget,
+                teamWins: team?.wins ?? 8,
+                teamReputation: career.reputation,
+                onHired: { name, roleName, salary in
+                    showHireResult(name: name, roleName: roleName, salary: salary, pot: .coaching)
+                }
+            )
+        case .scout(let role):
+            HireScoutView(
+                scoutRole: role,
+                teamID: teamID,
+                career: career,
+                remainingBudget: remainingScoutBudget,
+                poolSeed: CoachingEngine.scoutPoolSeed(
+                    teamID: teamID,
+                    role: role,
+                    season: career.currentSeason
+                ),
+                // `HireScoutView` keeps its two-argument callback because
+                // `ScoutingHubView` shares it, so the signed man is read back
+                // out of the store here. NOT off `scouts`/`ledger`: this
+                // callback runs inside `hire()`'s own call stack, so `@Query`
+                // is still the pre-insert snapshot and the seat reads vacant —
+                // which is how the chip came out "$0.0M". `scoutsFromStore()`
+                // fetches the row the hire view has just saved, and the ledger
+                // built from it is what the scouting-left and jobs-open chips
+                // are counted against.
+                onHired: { name, roleName in
+                    let signed = scoutsFromStore()
+                    let salary = signed.first(where: { $0.scoutRole == role })?.salary ?? 0
+                    let book = StaffLedger(
+                        careerRole: career.role,
+                        coaches: coaches,
+                        scouts: signed,
+                        owner: owner
+                    )
+                    showHireResult(
+                        name: name,
+                        roleName: roleName,
+                        salary: salary,
+                        pot: .scouting,
+                        book: book
+                    )
+                }
+            )
+        case .medical(let role, let candidates):
+            SimpleMedicalHireSheet(
+                role: role,
+                candidates: candidates,
+                remainingBudget: remainingMedicalBudget,
+                teamID: teamID,
+                careerID: career.id,
+                currentSeason: career.currentSeason,
+                onHired: { name, roleName, salary in
+                    showHireResult(name: name, roleName: roleName, salary: salary, pot: .medical)
+                }
+            )
+        case .offensiveScheme:
+            if let oc = coaches.first(where: { $0.role == .offensiveCoordinator }) {
+                SchemeSelectionView(
+                    coordinator: oc,
+                    players: offensivePlayers,
+                    isOffensive: true,
+                    coaches: coaches
+                )
+            }
+        case .defensiveScheme:
+            if let dc = coaches.first(where: { $0.role == .defensiveCoordinator }) {
+                SchemeSelectionView(
+                    coordinator: dc,
+                    players: defensivePlayers,
+                    isOffensive: false,
+                    coaches: coaches
+                )
+            }
+        case .portrait:
+            ChangeUserPortraitSheet(career: career)
+        case .result:
+            // The marker case: the sheet exists only to carry `sheetOutcome`,
+            // which the branch above already drew. Reaching here means the
+            // outcome was cleared without the sheet being dismissed.
+            Color.clear
+        }
+    }
+
+    private func staffResultSheet(_ outcome: StaffOutcome) -> some View {
+        DSResultSheet(
+            tone: outcome.tone,
+            eyebrow: outcome.eyebrow,
+            headline: outcome.headline,
+            message: outcome.message,
+            chips: outcome.chips,
+            cost: outcome.cost,
+            continueTitle: outcome.continueTitle,
+            onContinue: {
+                sheetOutcome = nil
+                activeHireSheet = nil
+            }
+        )
+    }
+
+    /// Opens a result over a screen that has no flow sheet up.
+    private func presentOutcome(_ outcome: StaffOutcome) {
+        sheetOutcome = outcome
+        activeHireSheet = .result(UUID())
     }
 
     // MARK: - Tab Bar (#107)
@@ -1314,77 +1481,71 @@ struct CoachingStaffView: View {
         }
     }
 
-    private var staffTabBar: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 0) {
-                ForEach(StaffTab.allCases, id: \.self) { tab in
-                    let isLocked = isTabLocked(tab)
-                    let isSelected = selectedTab == tab
-                    let isConfirmed = isTabTaskConfirmed(tab)
-
-                    Button {
-                        if isLocked {
-                            flashLockHint(lockHint(for: tab))
-                        } else {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                selectedTab = tab
-                            }
-                        }
-                    } label: {
-                        VStack(spacing: 6) {
-                            HStack(spacing: 4) {
-                                if isLocked {
-                                    Image(systemName: "lock.fill")
-                                        .font(.system(size: 9))
-                                }
-                                Text(tab.rawValue)
-                                    .font(.subheadline.weight(isSelected ? .bold : .medium))
-                                // The tick is a statement about a TASK, not about
-                                // the tab: it appears only while this cycle has a
-                                // live Coaching Changes row pointing here and the
-                                // user has confirmed it. In every other season and
-                                // phase the tab bar is undecorated, because there
-                                // is nothing for a tick to be true of (#162).
-                                if isConfirmed {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .font(.system(size: 10))
-                                        .foregroundStyle(Color.success)
-                                }
-                            }
-                            .foregroundStyle(
-                                isSelected ? Color.accentGold :
-                                isLocked ? Color.textTertiary.opacity(0.5) :
-                                Color.textSecondary
-                            )
-
-                            Rectangle()
-                                .fill(isSelected ? Color.accentGold : Color.clear)
-                                .frame(height: 2)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .frame(minHeight: 44)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .opacity(isLocked ? 0.5 : 1.0)
-                    .accessibilityLabel(
-                        isConfirmed ? "\(tab.rawValue), reviewed" : tab.rawValue
-                    )
-                    .accessibilityHint(isLocked ? lockHint(for: tab) : "")
+    /// The section strip, on the one control style (§2.2, wave 5b).
+    ///
+    /// This was the fourth of the five independent tab-bar implementations §0
+    /// counted: a gold underline rule, a `.subheadline` label that changed
+    /// weight on selection, and a 9 pt lock glyph. Two of those three break a
+    /// rule by themselves — gold has exactly three jobs and "which section am I
+    /// on" is none of them (P5), and 9 pt is a point under the display floor
+    /// (P7's corollary). `DSLensTabs` is what the app already uses to swap what
+    /// a surface is showing, so this strip is now the same capsule, the same
+    /// blue selected fill and the same 44 pt target as the board's.
+    ///
+    /// The lock survives as the capsule's icon rather than as a fourth colour,
+    /// and the refusal lives in the binding: a locked tab flashes its unlock
+    /// sentence instead of switching, which is exactly what the hand-rolled bar
+    /// did and the one behaviour a plain `Binding` would have dropped.
+    private var tabSelection: Binding<StaffTab> {
+        Binding(
+            get: { selectedTab },
+            set: { tab in
+                guard tab != selectedTab else { return }
+                if isTabLocked(tab) {
+                    flashLockHint(lockHint(for: tab))
+                } else {
+                    selectedTab = tab
                 }
             }
+        )
+    }
+
+    private var staffTabBar: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            DSLensTabs(
+                selection: tabSelection,
+                lenses: StaffTab.allCases,
+                label: { $0.rawValue },
+                icon: { tab in
+                    if isTabLocked(tab) { return "lock.fill" }
+                    // The tick is a statement about a TASK, not about the tab:
+                    // it appears only while this cycle has a live Coaching
+                    // Changes row pointing here and the user has confirmed it.
+                    // In every other season and phase the strip is undecorated,
+                    // because there is nothing for a tick to be true of (#162).
+                    if isTabTaskConfirmed(tab) { return "checkmark.circle.fill" }
+                    return nil
+                }
+                // No `title:` line. On a screen where the strip IS the primary
+                // navigation, "SECTION · STAFF" repeats the selected capsule
+                // directly under it — and the staff surface has no spare
+                // vertical on a portrait iPad now that the hiring band sits
+                // above the list.
+            )
 
             // Tapping a locked tab explains itself instead of doing nothing.
             if let hint = lockedTabHint {
                 Text(hint)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(Color.warning)
-                    .padding(.top, 4)
+                    .font(DSType.text(DSType.Size.footnote, .semibold, prose: true))
+                    .foregroundStyle(Color.alertOrange)
+                    .padding(.top, DSSpacing.xxs)
                     .transition(.opacity)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 8)
+        .padding(.horizontal, DSSpacing.md)
+        .padding(.top, DSSpacing.xs)
+        .padding(.bottom, DSSpacing.xxs)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.backgroundSecondary)
     }
 
@@ -1535,7 +1696,12 @@ struct CoachingStaffView: View {
     // MARK: - Staff Tab Content
 
     private var staffTabContent: some View {
-        ZStack(alignment: .bottom) {
+        VStack(spacing: 0) {
+            // §2.1: the process states itself at the top of the surface it owns,
+            // outside the scroll. It used to be five discs inside five section
+            // headers, three of them collapsed.
+            hiringBand
+
             List {
                 // MARK: - Budget Header
                 Section {
@@ -1571,10 +1737,11 @@ struct CoachingStaffView: View {
                 }
                 .listRowBackground(Color.backgroundSecondary)
 
-                // MARK: - Fill Your Staff (Batch 2E): bulk hire + priority strip
+                // MARK: - Fill Your Staff (Batch 2E): the bulk escape hatch.
+                // The per-job priority chips moved into the band above — one
+                // component now answers "what order" and "start here".
                 if !orderedVacancies.isEmpty {
                     Section {
-                        hirePriorityStrip
                         autoHireButton
                     } header: {
                         Text("Fill Your Staff")
@@ -2207,14 +2374,15 @@ struct CoachingStaffView: View {
         .opacity(canChange ? 1.0 : 0.6)
     }
 
-    /// Color for the staff-coverage count.
+    /// Colour for the staff-coverage count. A headcount is not a rating — P7
+    /// rule 2, status at a stated threshold, and the sentence beside it
+    /// ("No staff knows this") states the threshold in words. `accentGold` left
+    /// the two-coach band because this same card paints its ACTIVE state gold,
+    /// so a scheme with two coaches looked selected.
     private func coachCountColor(_ count: Int) -> Color {
-        switch count {
-        case 0:    return .danger
-        case 1:    return .warning
-        case 2:    return .accentGold
-        default:   return .success
-        }
+        if count == 0 { return .forStatus(.bad) }     // nobody knows this scheme
+        if count == 1 { return .forStatus(.warn) }    // one man deep
+        return .forStatus(.ok)                        // covered
     }
 
     // MARK: - Offensive Scheme Card
@@ -2874,9 +3042,19 @@ struct CoachingStaffView: View {
                 sentiment: .neutral
             )] + career.newsLog
 
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-                recentHireMessage = "\(request.coachName) left to coach the \(request.requestingTeamName) — coaching tree updated"
-            }
+            presentOutcome(StaffOutcome(
+                tone: .neutral,
+                eyebrow: "Coaching carousel",
+                headline: "\(request.coachName) takes the \(request.requestingTeamName) job",
+                message: "He leaves your staff as a head coach. Another branch on a coaching tree "
+                    + "the league is starting to talk about — and a **vacant chair** you now have to fill.",
+                chips: [
+                    .init(id: "role", label: "Vacated", value: request.coachName, context: "head coach elsewhere"),
+                    .init(id: "rep", label: "Reputation", value: "\(career.reputation)", context: "+1", contextColor: .success),
+                    .init(id: "tree", label: "Coaching tree", value: "\(career.coachingTree.entries.count)", context: "entries")
+                ],
+                cost: "The seat is open from today. Nothing was charged to your budget \u{2014} his salary comes back into the pot."
+            ))
         } else {
             // Blocked: the coach stays, slightly deflated.
             coach.motivation = max(1, coach.motivation - 5)
@@ -2889,15 +3067,25 @@ struct CoachingStaffView: View {
                 detail: "Interview blocked — staying on your staff (motivation -5)"
             )] + career.coachCarouselLog
 
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-                recentHireMessage = "Blocked the \(request.requestingTeamName)'s interview request for \(request.coachName)"
-            }
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-            withAnimation(.easeOut(duration: 0.4)) {
-                recentHireMessage = nil
-            }
+            presentOutcome(StaffOutcome(
+                tone: .neutral,
+                eyebrow: "Coaching carousel",
+                headline: "Interview blocked",
+                message: "\(request.coachName) stays on your staff. He wanted the \(request.requestingTeamName) "
+                    + "job and you did not let him talk to them.",
+                chips: [
+                    .init(id: "coach", label: "Stays", value: request.coachName, context: "under contract"),
+                    .init(
+                        id: "motivation",
+                        label: "Motivation",
+                        value: "\(coach.motivation)",
+                        context: "\u{2212}5",
+                        valueColor: Color.forRating(coach.motivation),
+                        contextColor: .dangerText
+                    )
+                ],
+                cost: "Costs him **5 motivation**. A man blocked twice remembers it."
+            ))
         }
     }
 
@@ -2988,76 +3176,201 @@ struct CoachingStaffView: View {
         }
     }
 
+    // MARK: - The hiring ladder (§2.1, wave 5b)
+    //
+    // Hiring IS a process — the screen has said so since #50 by numbering its
+    // sections 1 to 5 — and until this wave the only thing that said it was five
+    // gold discs buried in five section headers, three of them inside collapsed
+    // `DisclosureGroup`s. So the order was invisible exactly when it mattered:
+    // on the empty staff of a brand-new career, where "where do I even start" is
+    // the entire question. The band states the ladder once, at the top of the
+    // surface, and every slat is a hire button.
+    //
+    // The predecessor was `hirePriorityStrip` — "HIRE THESE FIRST", three
+    // orange chips at 9 and 10 pt. It answered the same question with a sixth
+    // progress metaphor, under the type floor, in a colour that means "caution"
+    // (P7). The band replaces it: same three jobs reachable, one component.
+    //
+    // **The assistant head coach is not on the ladder**, exactly as the screen
+    // already draws him: a hollow disc outside the 1-2-3 column, because the
+    // chair is optional. He keeps his own section and his own hire button; the
+    // band never counts him, so a club that has filled every required seat reads
+    // "complete" rather than being held open by a job nobody has to fill.
+
+    /// One rung of the ladder — the five numbered sections, as a process.
+    enum StaffTier: String, CaseIterable, Identifiable {
+        case headCoach, coordinators, position, medical, scouting
+
+        var id: String { rawValue }
+
+        /// Display voice, uppercased by the band. Kept to one or two short
+        /// words so a slat never breaks a name across two lines at the 11 pt
+        /// floor (`DSSlatGeometry.minSlatWidth`).
+        var title: String {
+            switch self {
+            case .headCoach:    return "Head Coach"
+            case .coordinators: return "Coordinators"
+            case .position:     return "Position"
+            case .medical:      return "Medical"
+            case .scouting:     return "Scouting"
+            }
+        }
+
+        var spokenTitle: String {
+            self == .position ? "position coaches" : title.lowercased()
+        }
+    }
+
+    /// Which rung a job belongs to. The assistant head coach belongs to none.
+    private func tier(for vacancy: StaffVacancy) -> StaffTier? {
+        switch vacancy {
+        case .coach(.headCoach):          return .headCoach
+        case .coach(.assistantHeadCoach): return nil
+        case .coach(let role):
+            if Self.medicalRoles.contains(role) { return .medical }
+            let coordinatorRoles: [CoachRole] = [
+                .offensiveCoordinator, .defensiveCoordinator, .specialTeamsCoordinator
+            ]
+            if coordinatorRoles.contains(role) { return .coordinators }
+            return .position
+        case .scout:
+            return .scouting
+        }
+    }
+
+    /// Open jobs on one rung, still in hiring order.
+    private func vacancies(in tier: StaffTier) -> [StaffVacancy] {
+        orderedVacancies.filter { self.tier(for: $0) == tier }
+    }
+
+    /// Seats already filled on one rung.
+    private func filledSeats(in tier: StaffTier) -> Int {
+        switch tier {
+        case .headCoach:
+            return (career.role == .gmAndHeadCoach || headCoach != nil) ? 1 : 0
+        case .coordinators:
+            return coordinators.count
+        case .position:
+            return positionCoaches.count
+        case .medical:
+            return medicalStaff.count
+        case .scouting:
+            return scouts.count
+        }
+    }
+
+    /// The rung the club is standing on: the first one with a hole in it.
+    private var currentTier: StaffTier? {
+        StaffTier.allCases.first { !vacancies(in: $0).isEmpty }
+    }
+
+    /// **The one place the ladder prints its count** (§2.1).
+    private var hiringHeadline: String {
+        guard let current = currentTier,
+              let index = StaffTier.allCases.firstIndex(of: current) else {
+            return "Staff complete"
+        }
+        return "Hiring \u{2014} tier \(index + 1) of \(StaffTier.allCases.count)"
+    }
+
+    private func hiringSlat(
+        _ tier: StaffTier,
+        position: Int,
+        allocations: [String: Int],
+        current: StaffTier?
+    ) -> DSSlat {
+        let open = vacancies(in: tier)
+        let filled = filledSeats(in: tier)
+        let state: DSSlat.State
+        if open.isEmpty {
+            state = .done
+        } else if tier == current {
+            state = .current
+        } else {
+            state = .future
+        }
+
+        let planned = open.reduce(0) { $0 + (allocations[$1.id] ?? 0) }
+        let subcaption: String? = {
+            guard state == .current else { return nil }
+            let jobs = "\(open.count) open"
+            return planned > 0 ? "\(jobs) \u{00B7} ~$\(formatBudget(planned))M" : jobs
+        }()
+        let outcome: String? = {
+            guard state == .done else { return nil }
+            if tier == .headCoach && career.role == .gmAndHeadCoach { return "You" }
+            return filled > 0 ? "\(filled) hired" : "None needed"
+        }()
+
+        return DSSlat(
+            id: tier.rawValue,
+            index: "\(position)",
+            title: tier.title,
+            subcaption: subcaption,
+            state: state,
+            // Every rung is reachable by hand at any time — the ladder is
+            // advice about ORDER, not a gate. A later rung the club can already
+            // work in is what `isAvailable` is for.
+            isAvailable: state == .future,
+            outcome: outcome,
+            accessibilityText: [
+                "Hiring tier \(position) of \(StaffTier.allCases.count)",
+                tier.spokenTitle,
+                open.isEmpty
+                    ? "filled"
+                    : "\(open.count) open, \(filled) hired",
+                open.isEmpty ? nil : "opens the hire list for \(open[0].displayName)"
+            ]
+            .compactMap { $0 }
+            .joined(separator: ", ")
+        )
+    }
+
+    /// The ladder, pinned at the top of the staff surface.
+    ///
+    /// `autoHireAllocations` is read ONCE per render and handed down: it is an
+    /// O(vacancies) plan over three budget pots, and letting each slat reach for
+    /// it would rebuild the whole plan five times a frame.
+    private var hiringBand: some View {
+        let allocations = autoHireAllocations
+        let current = currentTier
+        return DSSlatBand(
+            slats: StaffTier.allCases.enumerated().map { index, tier in
+                hiringSlat(tier, position: index + 1, allocations: allocations, current: current)
+            },
+            headline: hiringHeadline,
+            // Demoted to the 44 pt variant once every seat is filled: the
+            // ladder is still the truth of the screen, but it stops being the
+            // thing the screen is about.
+            isCompact: current == nil,
+            selectedID: current?.rawValue,
+            onSelect: { id in
+                guard !isAutoHiring, let tier = StaffTier(rawValue: id) else { return }
+                if let next = vacancies(in: tier).first {
+                    openHireSheet(for: next)
+                } else {
+                    expandSection(for: tier)
+                }
+            }
+        )
+        .padding(.horizontal, DSSpacing.md)
+        .padding(.vertical, DSSpacing.xs)
+    }
+
+    /// A rung with nothing left to hire opens the section it names instead.
+    private func expandSection(for tier: StaffTier) {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            switch tier {
+            case .headCoach:    break
+            case .coordinators: isCoordinatorsExpanded = true
+            case .position:     isPositionCoachesExpanded = true
+            case .medical:      isMedicalExpanded = true
+            case .scouting:     isScoutingExpanded = true
+            }
+        }
+    }
+
     // MARK: - Auto-Hire UI (Batch 2E)
-
-    /// "Hire these first" — the three jobs that decide the most, in order,
-    /// each opening its normal hire sheet. A flat list of 21 identical dashed
-    /// vacancy cards gives no answer to "where do I even start".
-    @ViewBuilder
-    private var hirePriorityStrip: some View {
-        let priorities = topPriorityVacancies
-        if !priorities.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 6) {
-                    Image(systemName: "flag.fill")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(Color.warning)
-                    Text("HIRE THESE FIRST")
-                        .font(.system(size: 9, weight: .bold))
-                        .tracking(0.7)
-                        .foregroundStyle(Color.textTertiary)
-                    Spacer()
-                    Text("\(orderedVacancies.count) vacancies")
-                        .font(.system(size: 9, weight: .semibold).monospacedDigit())
-                        .foregroundStyle(Color.textTertiary)
-                }
-
-                HStack(spacing: 8) {
-                    ForEach(Array(priorities.enumerated()), id: \.element.id) { index, vacancy in
-                        priorityVacancyChip(rank: index + 1, vacancy: vacancy)
-                    }
-                    Spacer(minLength: 0)
-                }
-            }
-            .padding(.vertical, 2)
-        }
-    }
-
-    private func priorityVacancyChip(rank: Int, vacancy: StaffVacancy) -> some View {
-        Button {
-            openHireSheet(for: vacancy)
-        } label: {
-            HStack(spacing: 6) {
-                Text("\(rank)")
-                    .font(.system(size: 9, weight: .black))
-                    .foregroundStyle(Color.backgroundPrimary)
-                    .frame(width: 15, height: 15)
-                    .background(Circle().fill(Color.warning))
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(vacancy.abbreviation)
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(Color.textPrimary)
-                    Text(autoHireAllocations[vacancy.id].map { "~$\(formatBudget($0))M" } ?? "")
-                        .font(.system(size: DSType.Size.micro).monospacedDigit())
-                        .foregroundStyle(Color.textTertiary)
-                }
-            }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.warning.opacity(0.10))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .strokeBorder(Color.warning.opacity(0.4), lineWidth: 1)
-                    )
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(isAutoHiring)
-        .accessibilityLabel("Priority \(rank): hire \(indefiniteArticle(for: vacancy.displayName)) \(vacancy.displayName)")
-    }
 
     /// Routes a vacancy to the hire flow it already had — coordinators and
     /// position coaches to the negotiation table, medical to the simple sheet,
@@ -3136,22 +3449,68 @@ struct CoachingStaffView: View {
         .accessibilityHint("Fills all \(orderedVacancies.count) vacant roles. \(autoHireSpendSubtitle). You can still hire or replace anyone by hand afterwards.")
     }
 
-    // MARK: - Hiring Toast Trigger (#49)
+    // MARK: - How one hire ends (#49, wave 5b)
 
-    /// Call this when returning from a hiring screen to show confirmation toast.
-    func showHiringConfirmation(coachName: String, roleName: String) {
-        // Keep all sections expanded after hiring
+    /// The ending of a single hire, in `DSResultSheet`'s grammar (§2.6).
+    ///
+    /// The old toast said `"<name> hired as <role>!"` and faded after three
+    /// seconds. It never said what the man cost or what was left in the pot —
+    /// which is the only question a user has after signing anybody, and the
+    /// reason the pre-wave flow made him close the sheet and hunt the budget
+    /// header for the answer.
+    ///
+    /// Writing `sheetOutcome` swaps the content of the sheet the hire list was
+    /// already living in. The sheet's identity does not change, so nothing is
+    /// dismissed and nothing is re-presented — which is why the 0.6 s / 0.4 s /
+    /// 0.8 s timers the three hire views used to carry could all be deleted.
+    /// - Parameter book: the staff reading the chips are composed from. Defaults
+    ///   to this screen's `ledger`; the scout path passes a freshly fetched one
+    ///   because its callback fires before `@Query` has seen the hire.
+    private func showHireResult(
+        name: String,
+        roleName: String,
+        salary: Int,
+        pot: StaffPot,
+        book: StaffLedger? = nil
+    ) {
+        let book = book ?? ledger
+        // Keep every section open so the newly filled row is visible behind the
+        // result.
         isCoordinatorsExpanded = true
         isPositionCoachesExpanded = true
         isMedicalExpanded = true
         isScoutingExpanded = true
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-            recentHireMessage = "\(coachName) hired as \(roleName)!"
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-            withAnimation(.easeOut(duration: 0.4)) {
-                recentHireMessage = nil
-            }
+
+        let left = remaining(pot, in: book)
+        let stillOpen = orderedVacancies(in: book).count
+        sheetOutcome = StaffOutcome(
+            tone: .good,
+            eyebrow: "Staff hiring",
+            headline: "\(name) is your \(roleName)",
+            message: stillOpen == 0
+                ? "Every chair on your staff is filled."
+                : "**\(stillOpen)** job\(stillOpen == 1 ? "" : "s") still open on the staff.",
+            chips: [
+                .init(id: "role", label: "Role", value: roleName),
+                .init(id: "salary", label: "Salary", value: coachSalaryText(salary)),
+                .init(
+                    id: "left",
+                    label: "\(potName(pot)) left",
+                    value: "$\(formatBudget(max(0, left)))M",
+                    context: left < 0 ? "over budget" : "this season",
+                    valueColor: left < 0 ? .dangerText : .textPrimary
+                )
+            ],
+            cost: "Charges **\(coachSalaryText(salary))** against your \(potName(pot).lowercased()) budget "
+                + "for \(pot == .scouting ? "as long as he is on staff" : "the length of his deal")."
+        )
+    }
+
+    private func potName(_ pot: StaffPot) -> String {
+        switch pot {
+        case .coaching: return "Coaching"
+        case .medical:  return "Medical"
+        case .scouting: return "Scouting"
         }
     }
 
@@ -3355,7 +3714,7 @@ struct CoachingStaffView: View {
                 // diameter match. Tapping it re-opens the picker: this card is
                 // the only place a running career can change its face.
                 Button {
-                    showPortraitPicker = true
+                    activeHireSheet = .portrait
                 } label: {
                     UserPortraitView(career: career, size: .medium)
                         .overlay(alignment: .bottomTrailing) {
@@ -3417,7 +3776,7 @@ struct CoachingStaffView: View {
             // Discoverable twin of the tap target on the portrait itself — a
             // pencil badge alone is easy to miss on a card this dense.
             Button {
-                showPortraitPicker = true
+                activeHireSheet = .portrait
             } label: {
                 Label("Change portrait", systemImage: "person.crop.circle")
                     .font(.system(size: 11, weight: .semibold))
@@ -3426,9 +3785,6 @@ struct CoachingStaffView: View {
             .buttonStyle(.plain)
         }
         .padding(.vertical, 6)
-        .sheet(isPresented: $showPortraitPicker) {
-            ChangeUserPortraitSheet(career: career)
-        }
     }
 
     // MARK: - Coach Row with Chemistry Indicator
@@ -3632,12 +3988,16 @@ struct CoachingStaffView: View {
         .buttonStyle(.plain)
     }
 
-    /// Returns a color based on the chemistry score.
+    /// Staff chemistry is a SIGNED −1…1 relationship score, not a 0–100 rating,
+    /// so P7 rule 2 applies: status at a stated threshold. The threshold is not
+    /// restated here — `CoachingEngine.chemistryBand` owns it, and the symbol
+    /// and word printed beside this colour already come from that same band, so
+    /// a copy in the view could only ever drift out of step with them.
     private func chemistryColor(for score: Double) -> Color {
-        switch score {
-        case 0.3...:   return .success
-        case -0.29...0.29: return .warning
-        default:        return .danger
+        switch CoachingEngine.chemistryBand(score: score) {
+        case .good:     return .forStatus(.ok)
+        case .tension:  return .forStatus(.warn)
+        case .conflict: return .forStatus(.bad)
         }
     }
 
@@ -4359,7 +4719,9 @@ private struct SimpleMedicalHireSheet: View {
     /// `hireSeasonYear == 0`, the `> 0` guard failed, and the card fell back to
     /// "1" forever.
     let currentSeason: Int
-    var onHired: ((String, String) -> Void)?
+    /// `(name, role, salary in thousands)` — wave 5b: the ending is a
+    /// `DSResultSheet`, whose third beat is what the hire cost.
+    var onHired: ((String, String, Int) -> Void)?
 
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
@@ -4513,13 +4875,9 @@ private struct SimpleMedicalHireSheet: View {
         hiredID = candidate.id
         try? modelContext.save()
 
-        let hiredName = candidate.fullName
-        let hiredRole = role.displayName
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-            onHired?(hiredName, hiredRole)
-            dismiss()
-        }
+        // Wave 5b: no 0.8 s deadline and no `dismiss()` — the host swaps this
+        // sheet's content to a `DSResultSheet` (§2.6).
+        onHired?(candidate.fullName, role.displayName, candidate.salary)
     }
 }
 

@@ -12,6 +12,10 @@ struct RosterView: View {
     var teamCapUsed: Int? = nil
     /// The defensive coordinator's scheme, used to determine correct DL starter counts.
     var defensiveScheme: DefensiveScheme = .base43
+    /// The offensive coordinator's scheme. Only the `FIT` slot reads it; `nil`
+    /// (previews, lightweight call sites) leaves the slot honestly empty on
+    /// offensive rows rather than inventing a number.
+    var offensiveScheme: OffensiveScheme? = nil
     /// R28: career context for the Injury Report (pending return decisions).
     /// Optional so lightweight call sites and previews keep working.
     var career: Career? = nil
@@ -42,12 +46,45 @@ struct RosterView: View {
     /// Custom depth ordering per position. When a user promotes/demotes a player,
     /// their manual ordering is stored here and takes priority over OVR-based sorting.
     @State private var customDepthOrder: [Position: [UUID]] = [:]
-    @State private var positionPickerPlayer: Player? = nil
-    @State private var starterPickerPosition: Position? = nil
-    /// R28: Injury Report sheet.
-    @State private var showInjuryReport = false
-    /// §5.1: Practice squad + league poach board sheet.
-    @State private var showPracticeSquad = false
+    /// **The one modal slot on this screen** (§2.8 + the house rule).
+    ///
+    /// This view carried FIVE presentation modifiers on a single node — two
+    /// `.sheet(item:)` and three `.sheet(isPresented:)` — which is the defect
+    /// this codebase has now found five separate times: SwiftUI honours one
+    /// `.sheet` per view, so the position picker, the starter picker and the
+    /// group-assessment editor were all competing for a slot the injury report
+    /// and the practice squad had already claimed. Whichever lost opened blank
+    /// or dismissed the moment it appeared.
+    ///
+    /// All five stay **sheets** rather than covers or pushes, and that is the
+    /// §2.8 reading, not an accident of what was here: every one of them is a
+    /// short, cancellable side-task off the roster — a picker, an editor, a
+    /// report you glance at — and none of them is a process that owns the
+    /// screen. Peer side-tasks get the same presentation weight.
+    private enum RosterSheet: Identifiable {
+        /// Change a player's listed position.
+        case positionPicker(Player)
+        /// Pick the starters for one position.
+        case starterPicker(Position)
+        /// The group's own assessment / priority / note editor (#283).
+        case groupAssessment
+        /// R28: Injury Report.
+        case injuryReport
+        /// §5.1: practice squad + league poach board.
+        case practiceSquad
+
+        var id: String {
+            switch self {
+            case .positionPicker(let player): return "position-\(player.id)"
+            case .starterPicker(let position): return "starter-\(position.rawValue)"
+            case .groupAssessment:            return "assessment"
+            case .injuryReport:               return "injury"
+            case .practiceSquad:              return "practiceSquad"
+            }
+        }
+    }
+
+    @State private var activeSheet: RosterSheet? = nil
 
     /// Track whether the user has seen the sort hint.
     @CareerScopedStorage("rosterSortHintSeen") private var sortHintSeen: Bool = false
@@ -57,7 +94,6 @@ struct RosterView: View {
     @CareerScopedStorage("rosterNotes") private var rosterNotesJSON: String = "{}"
     @CareerScopedStorage("rosterPriorities") private var rosterPrioritiesJSON: String = "{}"
     @State private var assessmentGroup: String? = nil
-    @State private var showAssessmentSheet = false
     @State private var editingAssessment: String = "none"
     @State private var editingPriority: String = "none"
     @State private var editingNote: String = ""
@@ -366,22 +402,22 @@ struct RosterView: View {
             }
         }
         .navigationTitle("Roster (\(players.count))")
-        .sheet(item: $positionPickerPlayer) { player in
-            positionPickerSheet(for: player)
-        }
-        .sheet(item: $starterPickerPosition) { position in
-            starterPickerSheet(for: position)
-        }
         .toolbarColorScheme(.dark, for: .navigationBar)
-        .sheet(isPresented: $showAssessmentSheet) {
-            groupAssessmentSheet
-        }
-        .sheet(isPresented: $showInjuryReport) {
-            InjuryReportView(players: players, career: career)
-        }
-        .sheet(isPresented: $showPracticeSquad) {
-            if let career {
-                PracticeSquadView(career: career)
+        // The one modal slot — see `RosterSheet`.
+        .sheet(item: $activeSheet) { sheet in
+            switch sheet {
+            case .positionPicker(let player):
+                positionPickerSheet(for: player)
+            case .starterPicker(let position):
+                starterPickerSheet(for: position)
+            case .groupAssessment:
+                groupAssessmentSheet
+            case .injuryReport:
+                InjuryReportView(players: players, career: career)
+            case .practiceSquad:
+                if let career {
+                    PracticeSquadView(career: career)
+                }
             }
         }
         .toolbar {
@@ -413,7 +449,7 @@ struct RosterView: View {
     private var practiceSquadButton: some View {
         if career != nil {
             Button {
-                showPracticeSquad = true
+                activeSheet = .practiceSquad
             } label: {
                 Label("Practice Squad", systemImage: "person.3.sequence.fill")
             }
@@ -447,7 +483,7 @@ struct RosterView: View {
 
     private var injuryReportButton: some View {
         Button {
-            showInjuryReport = true
+            activeSheet = .injuryReport
         } label: {
             ZStack(alignment: .topTrailing) {
                 Image(systemName: "cross.case.fill")
@@ -547,6 +583,18 @@ struct RosterView: View {
 
     // MARK: - List Content
 
+    /// The scheme this man's unit runs, keyed the way
+    /// `Player.schemeFamiliarity` stores it — the `FIT` slot's only input.
+    /// Special-teams players belong to neither install, so their slot stays
+    /// empty rather than borrowing the defense's.
+    private func installedScheme(for player: Player) -> String? {
+        switch player.position.side {
+        case .offense:      return offensiveScheme?.rawValue
+        case .defense:      return defensiveScheme.rawValue
+        case .specialTeams: return nil
+        }
+    }
+
     /// Returns scheme-aware starter count for a position.
     private func schemeStarterCount(for position: Position) -> Int {
         let counts = PositionGradeCalculator.starterCounts(for: defensiveScheme)
@@ -602,13 +650,14 @@ struct RosterView: View {
                                         }
                                     },
                                     onPositionBadgeTap: {
-                                        positionPickerPlayer = player
+                                        activeSheet = .positionPicker(player)
                                     },
                                     onStarterBadgeTap: {
-                                        starterPickerPosition = player.position
+                                        activeSheet = .starterPicker(player.position)
                                     },
                                     starterCountForPosition: posStarterCount,
-                                    teamSalaryCap: teamSalaryCap
+                                    teamSalaryCap: teamSalaryCap,
+                                    installedScheme: installedScheme(for: player)
                                 )
                             }
                             .listRowBackground(starterRowBackground(player: player, groupPlayers: groupPlayers, starterCount: posStarterCount))
@@ -622,7 +671,7 @@ struct RosterView: View {
                             editingPriority = rosterPriorities[gid] ?? "none"
                             editingNote = rosterNotes[gid] ?? ""
                             assessmentGroup = gid
-                            showAssessmentSheet = true
+                            activeSheet = .groupAssessment
                         } label: {
                             PositionGroupHeader(
                                 group: group,
@@ -744,7 +793,7 @@ struct RosterView: View {
             .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { showAssessmentSheet = false }
+                    Button("Cancel") { activeSheet = nil }
                         .foregroundStyle(Color.textSecondary)
                 }
                 ToolbarItem(placement: .confirmationAction) {
@@ -752,7 +801,7 @@ struct RosterView: View {
                         if let gid = assessmentGroup {
                             saveGroupAssessment(groupID: gid, assessment: editingAssessment, priority: editingPriority, note: editingNote)
                         }
-                        showAssessmentSheet = false
+                        activeSheet = nil
                     }
                     .fontWeight(.semibold)
                     .foregroundStyle(Color.accentGold)
@@ -770,9 +819,9 @@ struct RosterView: View {
             if !sortHintSeen {
                 HStack(spacing: 4) {
                     Image(systemName: "hand.tap")
-                        .font(.system(size: 9))
+                        .font(.system(size: 11))
                     Text("Tap column headers to sort")
-                        .font(.system(size: 9, weight: .medium))
+                        .font(DSType.text(11, .medium, prose: true))
                 }
                 .foregroundStyle(Color.textTertiary)
                 .onAppear {
@@ -781,19 +830,41 @@ struct RosterView: View {
                     }
                 }
             }
-            // spacing 6 mirrors PlayerRowView's HStack: at spacing 0 the header
-            // block was 42pt narrower than the data block it labels, so every
-            // column header sat right of its own values.
-            HStack(spacing: 6) {
-                sortButton("POS", sort: .position, width: isWideLayout ? 56 : 44)
+            // Wave 1: the header is built from the SAME slots as the row it
+            // labels (`UI_REDESIGN_VISION` §2.2), because a header whose
+            // gutters are missing puts every label one column left of the
+            // numbers it describes — which is exactly what this one did.
+            //
+            // `POS` claimed 44 or 56 while the row's badge is 36, and nothing
+            // at all was reserved for the depth chip and the face, so the whole
+            // leading block was ~62pt out. The trailing block happened to line
+            // up only because both sides were right-anchored and both used a
+            // 6pt gap; that gap is now `PlayerRowView.Column.gap`, read from
+            // one place, and the leading gutters are the row's own constants.
+            HStack(spacing: 0) {
+                sortButton("POS", sort: .position, width: DSListColumn.position)
+
+                // The depth chip and the portrait: reserved, not labelled.
+                Color.clear
+                    .frame(width: PlayerRowView.Column.portraitSlot, height: 1)
+
                 sortButton("NAME", sort: .name, width: nil)
-                Spacer()
-                analysisHeaderColumns
-                // Matches the disclosure chevron on the player rows below.
-                Color.clear.frame(width: Self.disclosureGutter, height: 1)
+                    .frame(minWidth: DSListColumn.identityMin, alignment: .leading)
+                    .padding(.leading, DSListColumn.identityGap)
+
+                Spacer(minLength: 2)
+
+                HStack(spacing: PlayerRowView.Column.gap) {
+                    analysisHeaderColumns
+                    // Matches the disclosure chevron on the player rows below.
+                    Color.clear.frame(width: Self.disclosureGutter, height: 1)
+                }
             }
-            .font(.caption2)
-            .fontWeight(.semibold)
+            // 11pt display, tracked — the same voice and the same floor the
+            // cells below now use. `.caption2` was 11pt already, but in the
+            // text voice, so the header's digits and the row's did not share a
+            // width class.
+            .font(DSType.display(11, .heavy))
             .foregroundStyle(Color.textTertiary)
         }
         .padding(.horizontal, 4)
@@ -817,6 +888,8 @@ struct RosterView: View {
             }
         case .contracts:
             Group {
+                headerLabel("Dead", width: PlayerRowView.Column.deadCap)
+                headerLabel("Save", width: PlayerRowView.Column.capSavings)
                 sortButton("Salary", sort: .salary, width: 52)
                 headerLabel("Cap", width: 52)
                 headerLabel("Yrs", width: 34)
@@ -887,7 +960,7 @@ struct RosterView: View {
     /// colour at a different optical weight than every neighbouring header.
     private func headerIcon(_ systemName: String, width: CGFloat) -> some View {
         Image(systemName: systemName)
-            .font(.system(size: 10, weight: .semibold))
+            .font(.system(size: 11, weight: .semibold))
             .frame(width: width, alignment: .center)
             .foregroundStyle(Color.textTertiary)
     }
@@ -919,7 +992,7 @@ struct RosterView: View {
                     .minimumScaleFactor(0.8)
                 if sortOrder == sort {
                     Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
-                        .font(.system(size: DSType.Size.micro, weight: .bold))
+                        .font(.system(size: 11, weight: .bold))
                 }
             }
             .frame(width: width, alignment: .center)
@@ -1107,7 +1180,7 @@ struct RosterView: View {
                         ForEach(candidates, id: \.player.id) { entry in
                             Button {
                                 performSwap(player: player, with: entry.player)
-                                positionPickerPlayer = nil
+                                activeSheet = nil
                             } label: {
                                 HStack(spacing: 12) {
                                     // Position badge
@@ -1170,7 +1243,7 @@ struct RosterView: View {
             .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { positionPickerPlayer = nil }
+                    Button("Cancel") { activeSheet = nil }
                 }
             }
         }
@@ -1274,7 +1347,7 @@ struct RosterView: View {
                             Button {
                                 let groupPlayers = players.filter { $0.position.side == position.side }
                                 handleDepthChange(player: player, newIndex: 0, groupPlayers: groupPlayers)
-                                starterPickerPosition = nil
+                                activeSheet = nil
                             } label: {
                                 starterPickerRow(
                                     player: player,
@@ -1299,7 +1372,7 @@ struct RosterView: View {
                                 // For versatile players, promote to starter depth
                                 let groupPlayers = players.filter { $0.position.side == position.side }
                                 handleDepthChange(player: player, newIndex: 0, groupPlayers: groupPlayers)
-                                starterPickerPosition = nil
+                                activeSheet = nil
                             } label: {
                                 starterPickerRow(
                                     player: player,
@@ -1328,7 +1401,7 @@ struct RosterView: View {
             .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { starterPickerPosition = nil }
+                    Button("Cancel") { activeSheet = nil }
                         .foregroundStyle(Color.textSecondary)
                 }
             }

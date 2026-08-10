@@ -822,14 +822,19 @@ struct DepthChartView: View {
             }
             .frame(width: 20, height: 3)
         }
+        // P7 rule 3: a lower-is-better metric has to say so somewhere, and a
+        // 20×3 meter has no room for words. It says so here.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Fatigue \(value) percent, lower is better")
     }
 
+    /// Fatigue is a 0–100 player quantity, so it belongs on the shared ladder —
+    /// but INVERTED, because it is the app's clearest lower-is-better metric
+    /// (P7 rule 3). 100 fatigue is a spent player and reads red; 0 reads green.
+    /// The private three-band ladder it replaces disagreed with every other
+    /// 0–100 bar on the same row.
     private func fatigueColor(_ value: Int) -> Color {
-        switch value {
-        case 70...:  return .danger
-        case 40..<70: return .warning
-        default:     return .success
-        }
+        Color.forRating(100 - value, scale: .percent)
     }
 
     // MARK: - Slot Badge

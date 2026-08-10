@@ -19,6 +19,28 @@ import SwiftData
 // (plan G7). Nothing here prices a deal, and nothing here executes one either —
 // an agreed package is handed back to the Trade Center through `onDealAgreed`,
 // which keeps `TradeView.executeUserTrade` the single execution path.
+//
+// ---------------------------------------------------------------------------
+// #105 WAVE 3c — the port became a share.
+//
+// "The contract-negotiation experience, ported to trades" is what the header
+// above has said since Wave 3 of the trade plan, and porting is exactly what
+// went wrong: the two screens grew the same five parts twice and then drifted
+// apart (bubbles clamped at 520 here and 500 there, a bare `720` measure here
+// and none there, a tone chip there and none here). `NegotiationChat.swift` is
+// now the single implementation of all of it, and this file supplies values to
+// it. In the same pass:
+//
+//   * the GM's patience stopped being a bespoke dot-rail and became the round
+//     band's `DSResourceMeter` — one meaning for a filled pip, app-wide;
+//   * the three equal-weight buttons became one `DSActionBar` with one gold
+//     primary and Walk Away separated as the destructive;
+//   * `closedFooter`'s prose became a `DSResultSheet` at the moment the thread
+//     closes, plus a read-only strip on re-entry;
+//   * the toolbar "Close" became the one 44 pt X every negotiation now uses.
+//
+// **No trade logic moved.** Every `TradeValueEngine` call below keeps its
+// arguments, its order and its `pricingWeek` / `pressureWeek` split.
 struct TradeNegotiationView: View {
 
     let career: Career
@@ -65,6 +87,18 @@ struct TradeNegotiationView: View {
     @State private var scrollTarget: UUID?
     @State private var didLoad = false
 
+    // MARK: Result presentation (#105 Wave 3c)
+
+    /// **The one sheet on this screen**, `.sheet(item:)`-driven. Two
+    /// `.sheet(isPresented:)` modifiers in one hierarchy silently swallow one of
+    /// the presentations, which this codebase has now shipped four times.
+    @State private var outcome: NegotiationOutcome?
+
+    /// The status the screen has already reacted to, so the result fires on a
+    /// transition and never on arrival — re-opening a thread that broke off in
+    /// week 3 must not throw a modal about it.
+    @State private var lastSeenStatus: TradeThreadStatus?
+
     /// The calendar slot this conversation is PRICED at (task #150c).
     ///
     /// `TradeValueEngine.askNoise` re-draws a GM's hidden asking mood every week,
@@ -87,11 +121,13 @@ struct TradeNegotiationView: View {
             if let partner, myTeam != nil, thread != nil {
                 VStack(spacing: 0) {
                     gmHeader(partner: partner)
-                    transcript
+                    roundBand(partner: partner)
+                    NegotiationTranscript(lines: chatLines, scrollTarget: scrollTarget)
                     if isActive {
                         negotiationPanel(partner: partner)
+                        commitBar
                     } else {
-                        closedFooter
+                        closeStrip
                     }
                 }
             } else {
@@ -102,11 +138,25 @@ struct TradeNegotiationView: View {
         .navigationTitle("Trade Talks")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarColorScheme(.dark, for: .navigationBar)
-        .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                Button("Close") { dismiss() }
-                    .foregroundStyle(Color.textSecondary)
-            }
+        // P5's corollary: one dismissal, one glyph, one place.
+        .negotiationDismissButton(label: "Close these trade talks. The thread stays saved.") {
+            dismiss()
+        }
+        // §2.6: the outcome is a result sheet, not prose swapped in under the
+        // transcript where the user has to notice it.
+        .sheet(item: $outcome) { result in
+            DSResultSheet(
+                tone: result.tone,
+                eyebrow: "Trade talks",
+                headline: result.headline,
+                message: result.message,
+                chips: result.chips,
+                cost: result.cost,
+                onContinue: {
+                    outcome = nil
+                    dismiss()
+                }
+            )
         }
         .task {
             guard !didLoad else { return }
@@ -135,199 +185,107 @@ struct TradeNegotiationView: View {
         let id = TradeValueEngine.gmIdentity(team: partner, season: career.currentSeason)
         let accent = personaColor(id.archetype)
 
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(partner.fullName)
-                        .font(.title3.weight(.bold))
-                        .foregroundStyle(Color.textPrimary)
-
-                    HStack(spacing: 6) {
-                        Image(systemName: id.symbolName)
-                            .font(.system(size: 10))
-                            .foregroundStyle(accent)
-                        Text("GM: \(id.name)")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(Color.textSecondary)
-                        Text(id.archetypeLabel)
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(accent)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(accent.opacity(0.12), in: Capsule())
-                    }
-
-                    Text(id.blurb)
-                        .font(.caption2)
-                        .foregroundStyle(Color.textTertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Spacer(minLength: 8)
-
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text("Round \(thread?.round ?? 0)")
-                        .font(.system(size: 13, weight: .bold).monospacedDigit())
-                        .foregroundStyle(Color.textPrimary)
-                    patienceMeter(id)
-                    Text("opens ~\(id.askingPremiumPercent)% over")
-                        .font(.system(size: 9))
-                        .foregroundStyle(Color.textTertiary)
-                }
-            }
-
-            expiryChip
-        }
-        .padding(16)
-        .background(Color.backgroundSecondary)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(Color.surfaceBorder)
-                .frame(height: 1)
-        }
-    }
-
-    /// Patience left before the freeze-out: one pip per lowball this GM will
-    /// absorb, spent pips first. The clock the user is actually racing.
-    private func patienceMeter(_ id: TradeValueEngine.GMIdentity) -> some View {
-        HStack(spacing: 3) {
-            ForEach(0..<max(1, id.patience), id: \.self) { index in
-                Circle()
-                    .fill(index < id.strikes ? Color.danger : Color.success.opacity(0.75))
-                    .frame(width: 7, height: 7)
-            }
-            Text("patience")
-                .font(.system(size: 9))
-                .foregroundStyle(Color.textTertiary)
-        }
+        return NegotiationChatHeader(
+            title: partner.fullName,
+            identityChips: [
+                .init(id: "gm", text: id.name, icon: id.symbolName, color: accent, style: .tinted),
+                .init(id: "arch", text: id.archetypeLabel, color: accent, style: .tinted),
+                // Public posture, not the hidden accept bar — decision §7.1.
+                .init(id: "premium", text: "Opens ~\(id.askingPremiumPercent)% over", color: .textTertiaryReadable, style: .tinted)
+            ],
+            note: id.blurb,
+            trailing: { EmptyView() },
+            footer: { expiryChip }
+        )
     }
 
     private var expiryChip: some View {
         let note = TradeWindowRules.expiryNote(
             phase: career.currentPhase, week: career.currentWeek
         )
-        return HStack(spacing: 6) {
+        return HStack(spacing: DSSpacing.xxs) {
             Image(systemName: "clock.fill")
-                .font(.system(size: 9))
-            Text(note)
                 .font(.system(size: 10, weight: .semibold))
+            Text(note)
+                .font(DSType.display(11, .semibold))
             Spacer(minLength: 0)
         }
         .foregroundStyle(Color.warning)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
+        .padding(.horizontal, DSSpacing.xs)
+        .padding(.vertical, DSSpacing.xxs)
         .background(
-            RoundedRectangle(cornerRadius: 7)
+            RoundedRectangle(cornerRadius: DSCornerRadius.inline)
                 .fill(Color.warning.opacity(0.10))
         )
     }
 
+    // MARK: - Round Band
+
+    /// **The GM's patience, as the app's one process spine** (§2.1).
+    ///
+    /// It used to be a bespoke dot-rail beside a bare "Round 3" — two of the
+    /// seven progress metaphors the band replaces, in one corner of one header.
+    /// The numbers are unchanged: `GMIdentity.patience` is `GMPersona.maxRounds`
+    /// and `strikes` is what `TradeTalkRegistry` has logged, so a filled pip is
+    /// still one lowball this front office has already spent.
+    @ViewBuilder
+    private func roundBand(partner: Team) -> some View {
+        let id = TradeValueEngine.gmIdentity(team: partner, season: career.currentSeason)
+        let rounds = thread?.round ?? 0
+        NegotiationRoundBand(
+            used: rounds,
+            // The ribbon grows with the conversation. A trade talk has no round
+            // cap — only a LOWBALL cap — so drawing exactly `patience` slats
+            // would show a fifth fair counter as "past the end".
+            limit: max(id.patience, rounds),
+            // …and the meter is the thing that actually runs out. A filled pip is
+            // a strike this front office has already spent with this GM, across
+            // every conversation of the league year, which is `TradeTalkRegistry`
+            // and not this thread's round count.
+            meter: DSResourceMeter(
+                spent: min(id.strikes, id.patience),
+                total: max(1, id.patience),
+                unit: "patience"
+            ),
+            outcomes: roundOutcomes,
+            isClosed: !isActive
+        )
+    }
+
+    /// What each round put on the table, read off the transcript so the band can
+    /// never quote a package the conversation does not contain.
+    private var roundOutcomes: [Int: String] {
+        var byRound: [Int: String] = [:]
+        for message in thread?.messages ?? [] where message.sender == .you {
+            guard let proposal = message.proposal else { continue }
+            let out = proposal.sendingPlayers.count + proposal.sendingPicks.count
+            let inc = proposal.receivingPlayers.count + proposal.receivingPicks.count
+            byRound[message.round] = "\(out) out · \(inc) in"
+        }
+        return byRound
+    }
+
     // MARK: - Transcript
 
-    private var transcript: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 12) {
-                    ForEach(thread?.messages ?? []) { message in
-                        bubble(message)
-                            .id(message.id)
-                    }
-                }
-                .padding(16)
-                .frame(maxWidth: 720)
-                .frame(maxWidth: .infinity)
-            }
-            .onChange(of: scrollTarget) { _, target in
-                if let target {
-                    withAnimation(.easeOut(duration: 0.3)) {
-                        proxy.scrollTo(target, anchor: .bottom)
-                    }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func bubble(_ message: TradeThreadMessage) -> some View {
-        switch message.sender {
-        case .gm:     gmBubble(message)
-        case .you:    youBubble(message)
-        case .system: systemBubble(message)
-        }
-    }
-
-    private func gmBubble(_ message: TradeThreadMessage) -> some View {
-        HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(identity?.name ?? partner?.abbreviation ?? "GM")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(Color.textTertiary)
-
-                Text(message.text)
-                    .font(.subheadline)
-                    .foregroundStyle(Color.textPrimary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                if let proposal = message.proposal {
-                    snapshot(proposal)
-                }
-            }
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color.backgroundSecondary)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .strokeBorder(Color.surfaceBorder, lineWidth: 1)
-                    )
+    /// The persisted messages, mapped onto the shared line model.
+    private var chatLines: [NegotiationChatLine] {
+        (thread?.messages ?? []).map { message in
+            NegotiationChatLine(
+                id: message.id,
+                side: side(for: message.sender),
+                speaker: identity?.name ?? partner?.abbreviation ?? "GM",
+                text: message.text,
+                attachment: message.proposal.map { AnyView(snapshot($0)) }
             )
-            .frame(maxWidth: 520, alignment: .leading)
-
-            Spacer(minLength: 40)
         }
     }
 
-    private func youBubble(_ message: TradeThreadMessage) -> some View {
-        HStack(alignment: .top) {
-            Spacer(minLength: 40)
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("You")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(Color.accentGold.opacity(0.7))
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-
-                Text(message.text)
-                    .font(.subheadline)
-                    .foregroundStyle(Color.textPrimary)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-                    .multilineTextAlignment(.trailing)
-
-                if let proposal = message.proposal {
-                    snapshot(proposal)
-                }
-            }
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color.accentGold.opacity(0.12))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .strokeBorder(Color.accentGold.opacity(0.25), lineWidth: 1)
-                    )
-            )
-            .frame(maxWidth: 520, alignment: .trailing)
+    private func side(for sender: TradeThreadSender) -> NegotiationChatSide {
+        switch sender {
+        case .gm:     return .them
+        case .you:    return .you
+        case .system: return .system
         }
-    }
-
-    private func systemBubble(_ message: TradeThreadMessage) -> some View {
-        Text(message.text)
-            .font(.caption.weight(.medium))
-            .foregroundStyle(Color.textTertiary)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity)
-            .multilineTextAlignment(.center)
     }
 
     /// The frozen package attached to one line — the same two-column widget the
@@ -355,7 +313,7 @@ struct TradeNegotiationView: View {
     // MARK: - Negotiation Panel
 
     private func negotiationPanel(partner: Team) -> some View {
-        VStack(spacing: 10) {
+        VStack(spacing: DSSpacing.xs) {
             Rectangle()
                 .fill(Color.surfaceBorder)
                 .frame(height: 1)
@@ -363,11 +321,12 @@ struct TradeNegotiationView: View {
             verdictRow(partner: partner)
             blockerRow(partner: partner)
             packageEditor(partner: partner)
-            actionButtons
+            // The commit is the `DSActionBar` under this panel — §2.5's rule that
+            // a screen commits in exactly one place.
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .frame(maxWidth: 720)
+        .padding(.horizontal, DSSpacing.md)
+        .padding(.vertical, DSSpacing.sm)
+        .frame(maxWidth: DSLayout.contentMeasure)
         .frame(maxWidth: .infinity)
         .background(Color.backgroundSecondary)
     }
@@ -412,28 +371,17 @@ struct TradeNegotiationView: View {
         }
     }
 
+    /// What the league office would refuse. One `NegotiationNotice` — the same
+    /// banner shape the contract chat draws a refusal and a pay-cut answer with.
     @ViewBuilder
     private func blockerRow(partner: Team) -> some View {
         let blockers = currentBlockers()
         if !blockers.isEmpty {
-            VStack(alignment: .leading, spacing: 4) {
-                ForEach(blockers, id: \.self) { blocker in
-                    HStack(alignment: .top, spacing: 6) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 10))
-                            .foregroundStyle(Color.danger)
-                        Text(blocker)
-                            .font(.system(size: 11))
-                            .foregroundStyle(Color.danger)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(10)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(Color.danger.opacity(0.10))
+            NegotiationNotice(
+                icon: "exclamationmark.triangle.fill",
+                color: .dangerText,
+                title: "The league office won't process this",
+                message: blockers.joined(separator: " ")
             )
         }
     }
@@ -549,80 +497,67 @@ struct TradeNegotiationView: View {
 
     // MARK: - Actions
 
-    private var actionButtons: some View {
-        HStack(spacing: 10) {
-            Button {
-                if let thread, let proposal = builtProposal() {
-                    sendOffer(proposal, on: thread)
+    /// **The one place this screen commits** (§2.5). One gold primary, the live
+    /// verdict as its explainer, Walk Away separated as the destructive.
+    private var commitBar: some View {
+        DSActionBar(
+            explainer: .init(
+                title: hasAssets ? "Table this package" : "Nothing on the table",
+                message: commitExplainerMessage,
+                isWarning: !hasAssets || !currentBlockers().isEmpty
+            ),
+            destructive: .init(
+                title: "Walk Away",
+                accessibilityLabel: "End these talks. No strike against the relationship.",
+                handler: { walkAway() }
+            ),
+            secondary: acceptAction,
+            primary: .init(
+                title: thread?.round == 0 ? "Send Offer" : "Counter",
+                isEnabled: hasAssets,
+                accessibilityLabel: hasAssets
+                    ? "Sends this package to the other front office."
+                    : "Disabled: put at least one player or pick on the table first.",
+                handler: {
+                    if let thread, let proposal = builtProposal() {
+                        sendOffer(proposal, on: thread)
+                    }
                 }
-            } label: {
-                Text(thread?.round == 0 ? "Send Offer" : "Counter")
-                    .font(.subheadline.weight(.bold))
-                    .foregroundStyle(hasAssets ? Color.backgroundPrimary : Color.textTertiary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10)
-                            .fill(hasAssets ? Color.accentGold : Color.backgroundTertiary)
-                    )
-            }
-            .buttonStyle(.plain)
-            .disabled(!hasAssets)
-
-            if thread?.pendingCounter != nil {
-                Button {
-                    acceptCounter()
-                } label: {
-                    Text("Accept Theirs")
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(Color.backgroundPrimary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(Color.success)
-                        )
-                }
-                .buttonStyle(.plain)
-            }
-
-            Button {
-                walkAway()
-            } label: {
-                Text("Walk Away")
-                    .font(.subheadline.weight(.bold))
-                    .foregroundStyle(Color.danger)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10)
-                            .strokeBorder(Color.danger.opacity(0.5), lineWidth: 1)
-                    )
-            }
-            .buttonStyle(.plain)
-        }
+            )
+        )
     }
 
-    private var closedFooter: some View {
-        VStack(spacing: 6) {
-            Rectangle()
-                .fill(Color.surfaceBorder)
-                .frame(height: 1)
-            Text(closedFooterText)
-                .font(.caption)
-                .foregroundStyle(Color.textTertiary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 24)
-                .padding(.vertical, 14)
-        }
-        .background(Color.backgroundSecondary)
+    /// "Accept Theirs", but only while the other side has a package standing.
+    private var acceptAction: DSActionBar.Action? {
+        guard thread?.pendingCounter != nil else { return nil }
+        return DSActionBar.Action(
+            title: "Accept Theirs",
+            accessibilityLabel: "Accept the package the other side has on the table.",
+            handler: { acceptCounter() }
+        )
     }
 
-    private var closedFooterText: String {
+    /// What tabling this package does. The blockers win when there are any — the
+    /// league office refusing is more urgent than what the GM thinks of it.
+    private var commitExplainerMessage: String {
+        guard hasAssets else {
+            return "Tick at least one player or pick on either side before you call."
+        }
+        let blockers = currentBlockers()
+        if !blockers.isEmpty { return blockers.joined(separator: " ") }
+        return "Spends **one of \(identity?.patience ?? 0) rounds** of this GM's patience. A lowball costs a round whether or not he counters."
+    }
+
+    /// A finished conversation, on re-entry. No button: `DSResultSheet` gave the
+    /// outcome when it happened, and the way out is the single X.
+    private var closeStrip: some View {
+        NegotiationCloseStrip(status: closeStatusLine)
+    }
+
+    private var closeStatusLine: String {
         guard let thread else { return "" }
         switch thread.status {
-        case .agreed:     return "Terms are agreed. Close this screen and the league office files the trade."
+        case .agreed:     return "Terms are agreed. The league office files the trade when you close this screen."
         case .withdrawn:  return "You ended these talks. Start a fresh conversation from the Trade Center whenever you want."
         case .brokenOff:  return "\(identity?.name ?? "This GM") isn't taking your calls again until the new league year."
         case .expired:    return "This conversation expired with the trade window."
@@ -858,9 +793,87 @@ struct TradeNegotiationView: View {
     }
 
     private func persist(_ updated: TradeNegotiationThread) {
+        let previous = lastSeenStatus
         thread = updated
         career.upsertTradeThread(updated)
         try? modelContext.save()
+        announce(status: updated.status, from: previous)
+    }
+
+    // MARK: - Result (#105 Wave 3c)
+
+    /// Raises the result sheet on a TRANSITION only. `previous == nil` is the
+    /// load pass, and a thread that broke off six weeks ago must not open with a
+    /// modal about it.
+    private func announce(status: TradeThreadStatus, from previous: TradeThreadStatus?) {
+        lastSeenStatus = status
+        guard let previous, previous != status, status != .open else { return }
+        outcome = makeOutcome(for: status)
+    }
+
+    private func makeOutcome(for status: TradeThreadStatus) -> NegotiationOutcome {
+        switch status {
+        case .agreed:
+            let proposal = thread?.proposal
+            let values = proposal.map {
+                TradeValueEngine.proposalValues(
+                    proposal: $0,
+                    allPlayers: allPlayers,
+                    allPicks: allPicks,
+                    currentSeason: career.currentSeason
+                )
+            }
+            return NegotiationOutcome(
+                tone: .good,
+                headline: "Deal agreed with \(partner?.abbreviation ?? "them")",
+                message: "\(identity?.name ?? "Their GM") signed off after \(thread?.round ?? 1) round\((thread?.round ?? 1) == 1 ? "" : "s").",
+                // Counted off the AGREED package, not off the editor's ticks —
+                // an accepted counter is the other side's package, and the
+                // editor may still be showing what the user last built.
+                chips: [
+                    .init(
+                        id: "out",
+                        label: "You send",
+                        value: "\((proposal?.sendingPlayers.count ?? 0) + (proposal?.sendingPicks.count ?? 0))",
+                        context: values.map { "\($0.sendingValue) pts" }
+                    ),
+                    .init(
+                        id: "in",
+                        label: "You get",
+                        value: "\((proposal?.receivingPlayers.count ?? 0) + (proposal?.receivingPicks.count ?? 0))",
+                        context: values.map { "\($0.receivingValue) pts" }
+                    )
+                ],
+                cost: "The league office files it when you continue. **`TradeView` executes** — nothing has moved yet."
+            )
+
+        case .brokenOff:
+            return NegotiationOutcome(
+                tone: .bad,
+                headline: "\(identity?.name ?? "The GM") stopped answering",
+                message: "\(partner?.abbreviation ?? "They") won't take another call from this front office until the new league year.",
+                cost: "Every other club still answers. The strikes are logged against **this** relationship only."
+            )
+
+        case .withdrawn:
+            return NegotiationOutcome(
+                tone: .neutral,
+                headline: "You ended the talks",
+                message: "No strike against the relationship — you can call \(partner?.abbreviation ?? "them") back.",
+                cost: "Nothing was traded, and the thread stays saved in the Trade Center."
+            )
+
+        case .expired:
+            return NegotiationOutcome(
+                tone: .bad,
+                headline: "The window closed on this one",
+                message: "The trade deadline passed with the package unsigned.",
+                cost: "The conversation is history now. A new league year opens a fresh one."
+            )
+
+        case .open:
+            return NegotiationOutcome(tone: .neutral, headline: "Talks continue")
+        }
     }
 
     // MARK: - Data
@@ -888,6 +901,9 @@ struct TradeNegotiationView: View {
 
         if let threadID, let existing = career.tradeThreads.first(where: { $0.id == threadID }) {
             thread = existing
+            // Arrival, not a transition (#105 Wave 3c) — no result sheet for an
+            // ending the user already read.
+            lastSeenStatus = existing.status
             applySelections(from: existing.pendingCounter ?? existing.proposal)
             scrollTarget = existing.messages.last?.id
             return

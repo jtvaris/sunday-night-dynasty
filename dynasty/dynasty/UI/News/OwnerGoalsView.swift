@@ -180,13 +180,14 @@ struct OwnerGoalsView: View {
         )
     }
 
+    /// Goal progress is completion against its own target — one of the three
+    /// things `RatingScale.percent` names — so it takes the shared ladder
+    /// instead of a private 100/60/35 one. The `achieved` case above still
+    /// paints gold; gold means "done", not "nearly done".
     private func progressColor(progress: Int, target: Int) -> Color {
         guard target > 0 else { return .textTertiary }
-        let ratio = Double(progress) / Double(target)
-        if ratio >= 1.0  { return .accentGold }
-        if ratio >= 0.6  { return .success }
-        if ratio >= 0.35 { return .warning }
-        return .danger
+        let percent = Int((Double(progress) / Double(target) * 100).rounded())
+        return Color.forRating(percent, scale: .percent)
     }
 
     // MARK: - Priority Badge

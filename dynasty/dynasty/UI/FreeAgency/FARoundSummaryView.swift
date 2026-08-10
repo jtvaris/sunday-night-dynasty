@@ -1,5 +1,18 @@
 import SwiftUI
 
+// MARK: - FA Round Summary — the market day, read back
+//
+// UI_REDESIGN_VISION §2.6's shape — outcome headline → what changed → a single
+// Continue — with the sections in between, because a market day owes the user a
+// transcript and `DSResultSheet` (rightly) has no slot for one. The parts it
+// does own are used verbatim: the stat-chip grammar for "what changed" and
+// `DSActionBar` for the commit.
+//
+// The `NavigationStack` wrapper is gone with the hand-rolled gold button. It
+// existed only to hang a title on, and a modal that carries both a navigation
+// title and a full-width Continue is two dismissal affordances for one job —
+// the pattern §0 counted seven variants of.
+
 struct FARoundSummaryView: View {
 
     let results: RoundResults
@@ -8,19 +21,13 @@ struct FARoundSummaryView: View {
     let onContinue: () -> Void
 
     var body: some View {
-        NavigationStack {
             ZStack {
                 Color.backgroundPrimary.ignoresSafeArea()
 
+                VStack(spacing: 0) {
                 ScrollView {
                     VStack(spacing: 24) {
-                        // Header
-                        VStack(spacing: 8) {
-                            Text("\(roundLabel) RESULTS")
-                                .font(.title2.weight(.black))
-                                .foregroundStyle(Color.accentGold)
-                        }
-                        .padding(.vertical, 20)
+                        resultHeader
 
                         // Your signings
                         if !results.yourSignings.isEmpty {
@@ -278,48 +285,137 @@ struct FARoundSummaryView: View {
                             }
                         }
 
-                        // Market update
-                        HStack(spacing: 16) {
-                            VStack(spacing: 2) {
-                                Text("\(results.playersRemaining)")
-                                    .font(.title2.weight(.bold).monospacedDigit())
-                                    .foregroundStyle(Color.textPrimary)
-                                Text("Players Left")
-                                    .font(.caption2)
-                                    .foregroundStyle(Color.textTertiary)
-                            }
-                            VStack(spacing: 2) {
-                                Text(formatMillions(results.capRemaining))
-                                    .font(.title2.weight(.bold).monospacedDigit())
-                                    .foregroundStyle(results.capRemaining > 0 ? Color.success : Color.danger)
-                                Text("Your Cap Space")
-                                    .font(.caption2)
-                                    .foregroundStyle(Color.textTertiary)
-                            }
-                        }
-                        .padding(.vertical, 12)
-
-                        // Continue button
-                        Button {
-                            onContinue()
-                        } label: {
-                            Text("Continue to \(nextRoundLabel)")
-                                .font(.headline)
-                                .foregroundStyle(Color.backgroundPrimary)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 14)
-                                .background(Color.accentGold, in: RoundedRectangle(cornerRadius: 12))
-                        }
-                        .buttonStyle(.plain)
                     }
                     .padding(24)
                     .frame(maxWidth: .infinity)
                 }
+
+                // §2.5 — one commit, one place. The "Market update" pair that
+                // used to sit above the button is in the header's chip row now,
+                // where every other number this sheet reports lives.
+                DSActionBar(
+                    explainer: .init(
+                        title: "\(roundLabel) is closed",
+                        message: continueMessage
+                    ),
+                    primary: .init(
+                        title: "Continue \u{2192} \(nextRoundLabel)",
+                        handler: onContinue
+                    )
+                )
+                }
             }
-            .navigationTitle("Round Summary")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarColorScheme(.dark, for: .navigationBar)
+    }
+
+    // MARK: - Outcome headline + what changed (§2.3 / §2.6)
+
+    private var resultHeader: some View {
+        VStack(alignment: .leading, spacing: DSSpacing.sm) {
+            Text("\(roundLabel) results".uppercased())
+                .font(DSType.display(11, .heavy))
+                .tracking(0.7)
+                .foregroundStyle(Color.accentGold)
+
+            Text(headline)
+                .font(DSType.display(DSType.Size.title2, .heavy))
+                .foregroundStyle(Color.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            // Three named bands as a grid, not three stacks: §2.3's layout rule.
+            Grid(alignment: .leading, horizontalSpacing: DSSpacing.lg, verticalSpacing: DSSpacing.xxs) {
+                GridRow {
+                    ForEach(chips, id: \.label) { chip in
+                        Text(chip.label.uppercased())
+                            .font(DSType.display(11, .heavy))
+                            .tracking(0.6)
+                            .foregroundStyle(Color.textTertiaryReadable)
+                            .lineLimit(1)
+                    }
+                }
+                GridRow {
+                    ForEach(chips, id: \.label) { chip in
+                        Text(chip.value)
+                            .font(DSType.display(DSType.Size.title2, .heavy))
+                            .foregroundStyle(chip.color)
+                            .lineLimit(1)
+                    }
+                }
+                GridRow {
+                    ForEach(chips, id: \.label) { chip in
+                        // The context row is always reserved, so a chip that
+                        // carries one and a chip that does not sit at the same
+                        // height (§2.2's slot rule).
+                        Text(chip.context ?? " ")
+                            .font(DSType.display(11, .semibold))
+                            .foregroundStyle(Color.textTertiaryReadable)
+                            .lineLimit(1)
+                    }
+                }
+            }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private struct SummaryChip {
+        let label: String
+        let value: String
+        var context: String?
+        var color: Color = .textPrimary
+    }
+
+    private var chips: [SummaryChip] {
+        [
+            SummaryChip(
+                label: "Signed",
+                value: "\(results.yourSignings.count)",
+                context: results.yourSignings.isEmpty ? nil : "this round",
+                color: results.yourSignings.isEmpty ? .textPrimary : .success
+            ),
+            SummaryChip(
+                label: "Lost",
+                value: "\(results.yourRejections.count)",
+                context: results.yourRejections.isEmpty ? nil : "signed elsewhere",
+                color: results.yourRejections.isEmpty ? .textPrimary : .dangerText
+            ),
+            SummaryChip(
+                label: "Still out",
+                value: "\(results.shoppingAround.count)",
+                context: results.shoppingAround.isEmpty ? nil : "offers carried over"
+            ),
+            SummaryChip(
+                label: "Board",
+                value: "\(results.playersRemaining)",
+                context: "still available"
+            ),
+            SummaryChip(
+                label: "Cap room",
+                value: formatMillions(results.capRemaining),
+                context: "after the round",
+                color: results.capRemaining > 0 ? .textPrimary : .dangerText
+            )
+        ]
+    }
+
+    /// The outcome, in the club's words rather than as a bare round number.
+    private var headline: String {
+        let signed = results.yourSignings.count
+        let lost = results.yourRejections.count
+        if signed == 0 && lost == 0 { return "Nothing moved for you" }
+        if signed > 0 && lost == 0 {
+            return "\(signed) signed \(signed == 1 ? "his" : "their") deal with you"
+        }
+        if signed == 0 {
+            return "\(lost) chose somebody else"
+        }
+        return "\(signed) signed, \(lost) got away"
+    }
+
+    private var continueMessage: String {
+        let carried = results.shoppingAround.count
+        if carried > 0 {
+            return "**\(carried)** of your offers \(carried == 1 ? "is" : "are") still on the table and \(carried == 1 ? "keeps" : "keep") reserving cap."
+        }
+        return "Nothing of yours is outstanding. The next day opens with your full room."
     }
 
     // MARK: - Section

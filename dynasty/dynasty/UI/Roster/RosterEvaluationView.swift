@@ -105,9 +105,10 @@ struct RosterEvaluationView: View {
     // #251: Expandable key decision rows
     @State private var expandedDecisions: Set<UUID> = []
 
-    // #252: Cap Scenario selection (persists across sessions)
+    // #252: Cap Scenario selection (persists across sessions). #173: the
+    // companion `capScenarioConfirmation` receipt is gone — it claimed moves
+    // were queued when nothing was.
     @CareerScopedStorage("rosterCapScenario") private var selectedCapScenario: String = ""
-    @State private var capScenarioConfirmation: String?
 
     // Own assessment options (#266)
     // "Strength" = team strength (bright green) marker the coach can flag.
@@ -2365,6 +2366,25 @@ struct RosterEvaluationView: View {
         let topThreeNames = top3Expiring.map(\.lastName).joined(separator: ", ")
         let releaseRest = max(expiringCount - 3, 0)
 
+        // #173: these three cards are a projection, not a transaction. The old
+        // tap handler stamped a green "Scenario A queued: … Confirm in Free
+        // Agency" receipt over a `TODO(#252)` that mutated nothing — and no
+        // screen in the app ever read the stored selection, so there was no
+        // "confirm" step waiting anywhere. Selecting a scenario now means one
+        // thing, honestly: which projection the detail line explains.
+        let scenarioNote: String? = {
+            switch selectedCapScenario {
+            case "A":
+                return "Releasing all \(expiringCount) expiring player\(expiringCount == 1 ? "" : "s") would leave \(formatMillions(scenASpace)) of room."
+            case "B":
+                return "Re-signing the top 3\(topThreeNames.isEmpty ? "" : " (\(topThreeNames))") at market value and letting \(releaseRest) walk would leave \(formatMillions(scenBSpace)) of room."
+            case "C":
+                return "Re-signing all \(expiringCount) expiring player\(expiringCount == 1 ? "" : "s") at market value would leave \(formatMillions(scenCSpace)) of room."
+            default:
+                return nil
+            }
+        }()
+
         return VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 6) {
                 Image(systemName: "arrow.triangle.branch")
@@ -2379,7 +2399,6 @@ struct RosterEvaluationView: View {
                 if !selectedCapScenario.isEmpty {
                     Button {
                         selectedCapScenario = ""
-                        capScenarioConfirmation = nil
                     } label: {
                         Text("Clear")
                             .font(.caption.weight(.medium))
@@ -2389,11 +2408,13 @@ struct RosterEvaluationView: View {
                 }
             }
 
+            Text("Analysis only — nothing is queued. Make the moves yourself in Roster and Free Agency.")
+                .font(.caption2)
+                .foregroundStyle(Color.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+
             Button {
-                selectScenario(
-                    "A",
-                    confirmation: "Scenario A queued: \(expiringCount) player\(expiringCount == 1 ? "" : "s") will be released after FA. Confirm in Free Agency."
-                )
+                selectedCapScenario = "A"
             } label: {
                 capScenarioCard(
                     label: "A",
@@ -2407,10 +2428,7 @@ struct RosterEvaluationView: View {
             .buttonStyle(.plain)
 
             Button {
-                selectScenario(
-                    "B",
-                    confirmation: "Scenario B queued: re-sign top 3\(topThreeNames.isEmpty ? "" : " (\(topThreeNames))"), release \(releaseRest). Confirm in Free Agency."
-                )
+                selectedCapScenario = "B"
             } label: {
                 capScenarioCard(
                     label: "B",
@@ -2424,10 +2442,7 @@ struct RosterEvaluationView: View {
             .buttonStyle(.plain)
 
             Button {
-                selectScenario(
-                    "C",
-                    confirmation: "Scenario C queued: re-sign all \(expiringCount) expiring player\(expiringCount == 1 ? "" : "s"). Confirm in Free Agency."
-                )
+                selectedCapScenario = "C"
             } label: {
                 capScenarioCard(
                     label: "C",
@@ -2440,35 +2455,27 @@ struct RosterEvaluationView: View {
             }
             .buttonStyle(.plain)
 
-            if let message = capScenarioConfirmation {
+            if let scenarioNote {
                 HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: "checkmark.seal.fill")
+                    Image(systemName: "chart.line.uptrend.xyaxis")
                         .font(.caption)
-                        .foregroundStyle(Color.success)
-                    Text(message)
+                        .foregroundStyle(Color.accentGold)
+                    Text(scenarioNote)
                         .font(.caption)
                         .foregroundStyle(Color.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.success.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+                .background(Color.backgroundTertiary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(Color.success.opacity(0.4), lineWidth: 1)
+                        .strokeBorder(Color.surfaceBorder.opacity(0.6), lineWidth: 1)
                 )
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
         .animation(.easeInOut(duration: 0.2), value: selectedCapScenario)
-        .animation(.easeInOut(duration: 0.2), value: capScenarioConfirmation)
-    }
-
-    private func selectScenario(_ label: String, confirmation: String) {
-        // TODO(#252): Actually mutate contracts (queue releases / extension offers).
-        // For now we just record selection state so FA flow can read it later.
-        selectedCapScenario = label
-        capScenarioConfirmation = confirmation
     }
 
     private func capScenarioCard(
@@ -2495,7 +2502,9 @@ struct RosterEvaluationView: View {
                     .foregroundStyle(Color.textPrimary)
 
                 if isSelected {
-                    Image(systemName: "checkmark.circle.fill")
+                    // #173: a radio dot, not a checkmark — this scenario is the
+                    // one being explained below, not one that has been applied.
+                    Image(systemName: "circle.inset.filled")
                         .font(.subheadline)
                         .foregroundStyle(Color.accentGold)
                         .accessibilityLabel("Selected")

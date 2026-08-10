@@ -489,14 +489,22 @@ struct DraftOrderView: View {
         }
     }
 
+    /// A pick NUMBER is not a rating. P7 rule 2 names exactly this case — a
+    /// seed, an age, a slot — and says it gets no ladder colour, so the five
+    /// rating hues this used to hand out are gone. Two of them were actively
+    /// wrong: `accentGold` on picks 1–10 collided with the gold outline this
+    /// same screen draws around the USER's picks, so another club's top-10 slot
+    /// wore the user's colour, and `success` green read as a verdict on a pick
+    /// nobody had made yet.
+    ///
+    /// The tier is already stated twice in the row — `pickValueLabel`'s word and
+    /// `pickValueDotCount`'s 4/3/2/1 dots — so what is left is one monochrome
+    /// ramp on the draft's own day boundaries. The 100 edge is kept from the
+    /// bands this replaces.
     private func pickValueColor(pickNumber: Int) -> Color {
-        switch pickNumber {
-        case 1...10:   return .accentGold
-        case 11...32:  return .success
-        case 33...64:  return .accentBlue
-        case 65...100: return .textSecondary
-        default:       return .textTertiary
-        }
+        if pickNumber <= 32  { return .forStatus(.info) }    // day one
+        if pickNumber <= 100 { return .forStatus(.neutral) } // day two
+        return .textTertiary                                 // day three
     }
 
     // MARK: - Round Name

@@ -81,42 +81,24 @@ struct DraftDayView: View {
                 }
             }
 
-            // Drama overlays at the top of the Z stack — banners, curtains,
-            // gem flashes, Mr. Irrelevant.
-            DramaOverlayView(coordinator: coord)
-
-            // Reaction toasts pinned to the bottom edge — owner / media /
-            // locker room / fans react to user picks.
-            VStack {
-                Spacer()
-                ReactionToast(coordinator: coord)
-                    .padding(.bottom, DSSpacing.xl)
-            }
-
-            // League trades cut in over the board (AI-vs-AI swaps and the
-            // user's own deals) — Wave 4 renders what was previously a
-            // write-only `DraftEvent`.
-            TradeBeatBanner(coordinator: coord)
-
-            // Trade offer banner pinned to the top edge when an AI partner
-            // proposes a deal (Wave 4 — picks, future picks and veterans).
-            if let offer = coord.pendingTradeOffer, coord.mode != .userPick {
-                VStack {
-                    TradeOfferBanner(
-                        motive: offer.motive,
-                        outgoing: offer.givesLabel(currentSeason: coord.draftYear),
-                        incoming: offer.getsLabel(currentSeason: coord.draftYear),
-                        gmLine: "\(offer.gmName) · \(offer.gmStyle)",
-                        valueSummary: "Chart value: you send \(offer.userGivesValue) pts · receive \(offer.userGetsValue) pts",
-                        onAccept: { coord.acceptTradeOffer() },
-                        onDecline: { coord.declineTradeOffer() }
-                    )
-                    .padding(.top, DSSpacing.md)
-                    .padding(.horizontal, DSSpacing.md)
-                    Spacer()
-                }
-                .transition(.move(edge: .top).combined(with: .opacity))
-            }
+            // THE ROOM'S ONE AMBIENT OVERLAY (#105 Wave 3b). Four views used to
+            // hang here — a full-screen drama queue, a bottom reaction toast, a
+            // top trade cut-in and a top trade-offer card — each with its own
+            // lifecycle, so three of them could be on screen at once. §3 family
+            // 8 called that out as the war room's defect: "five simultaneous
+            // overlay mechanisms reduced to the standard set".
+            //
+            // The standard set is three, and each answers a different question:
+            //
+            //   the sheet ....... the room needs an answer AND owns the screen
+            //                     (his turn, a round recap, the move-up board)
+            //   the action bar .. he is being asked to COMMIT — the trade offer
+            //                     moved onto `DraftControlBar` (P5)
+            //   this rail ....... the broadcast is telling him something and
+            //                     will get out of the way
+            //
+            // Nothing else may raise a view over the board.
+            DraftBroadcastRail(coordinator: coord)
         }
         .background {
             ZStack {

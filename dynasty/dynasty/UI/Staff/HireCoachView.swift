@@ -14,7 +14,20 @@ struct HireCoachView: View {
     var teamBudget: Int = 25_000
     var teamWins: Int = 8
     var teamReputation: Int = 50
-    var onHired: ((String, String) -> Void)?
+    /// `(name, role, salary in thousands)`.
+    ///
+    /// Wave 5b: the salary joined the callback because the ending is a
+    /// `DSResultSheet` now, and §2.6's third beat is "what it cost". The toast
+    /// this replaced could not answer it, so the user had to close the sheet and
+    /// go and read the budget header himself.
+    var onHired: ((String, String, Int) -> Void)?
+    /// The hire waiting for the negotiation cover to finish dismissing.
+    ///
+    /// Replaces a 0.6 s + 0.4 s timer pair. `fullScreenCover(onDismiss:)` fires
+    /// when the cover is actually gone, which is the thing the deadlines were
+    /// guessing at — and the host can then swap the sheet's content to the
+    /// result without racing a dismissal.
+    @State private var pendingHire: (name: String, role: String, salary: Int)?
 
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
@@ -364,8 +377,16 @@ struct HireCoachView: View {
         .onChange(of: schemeFilter) { _, _ in refreshCaches() }
         .onChange(of: personalityFilter) { _, _ in refreshCaches() }
         .onChange(of: allCoaches.count) { _, _ in refreshCaches() }
-        // #157: Full screen cover on iPad for max space
-        .fullScreenCover(item: $selectedCandidate) { candidate in
+        // #157: Full screen cover on iPad for max space.
+        // Wave 5b: the hire is reported from `onDismiss`, so the cover is
+        // provably gone before the host swaps this sheet's content to the
+        // result — ordered by SwiftUI instead of by a deadline.
+        .fullScreenCover(item: $selectedCandidate, onDismiss: {
+            if let hire = pendingHire {
+                pendingHire = nil
+                onHired?(hire.name, hire.role, hire.salary)
+            }
+        }) { candidate in
             CandidateDetailSheet(
                 candidate: candidate,
                 remainingBudget: remainingBudget,
@@ -1135,18 +1156,15 @@ struct HireCoachView: View {
         // Fix #88: Save context before dismissing so CoachingStaffView's @Query refreshes
         try? modelContext.save()
 
-        // Fix #49: Notify parent about the hire for toast display
-        let hiredName = candidate.fullName
-        let hiredRole = role.displayName
-
-        // Fix #87: Dismiss sheet first, then pop HireCoachView after sheet animation completes
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-            selectedCandidate = nil  // Close the sheet
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                onHired?(hiredName, hiredRole)
-                dismiss()
-            }
-        }
+        // Fix #49 / wave 5b: hand the hire up so the host can end the process in
+        // a `DSResultSheet`. Parked rather than fired: the negotiation cover is
+        // still up, and reporting from underneath it is what the old 0.6 s + 0.4 s
+        // deadline pair was working around. `onDismiss` fires when the cover is
+        // genuinely gone. No `dismiss()` either — the result sheet owns the
+        // ending now, and closing this view would have pulled the surface out
+        // from under it (P5's one-dismissal corollary).
+        pendingHire = (name: candidate.fullName, role: role.displayName, salary: candidate.salary)
+        selectedCandidate = nil
     }
 }
 

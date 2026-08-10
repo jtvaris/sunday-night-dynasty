@@ -1,6 +1,28 @@
 import SwiftUI
 import SwiftData
 
+/// The coach card, on the shared study-density layout (UI_REDESIGN_VISION §4
+/// wave 4).
+///
+/// This screen was the app's worst stock form: nine `Section("String")` heads,
+/// eighteen `LabeledContent` rows and four full-width centred `Button`s stacked
+/// in a "Management" section at the bottom of an `.insetGrouped` `List` — i.e.
+/// the default iOS Settings look, on the screen where a GM decides whether to
+/// fire a man. It shared no component with `PlayerDetailView` and no component
+/// with `ProspectDetailView`, and the three of them are the same screen.
+///
+/// It now mounts the same `DSDetailPage` / `DSDetailHero` / `DSDetailCard` /
+/// `DSActionBar` set as the other two. What changed beyond the chrome:
+///
+///   * **The four management buttons moved onto the action bar** (P5). Fire is
+///     the destructive slot behind its rule, and the bar's explainer names the
+///     salary and the severance the commit will cost before it is pressed.
+///   * **Development and Projected Impact gained explainers** — which coach
+///     this is, what he is working on, and what the number under it actually
+///     does to the roster (§4 wave 4).
+///   * The promote flow's `DispatchQueue.main.asyncAfter(0.3)` hand-off from
+///     sheet to alert is gone; the confirmation is raised from the sheet's own
+///     `onDismiss`, which is what the delay was approximating.
 struct CoachDetailView: View {
 
     let coach: Coach
@@ -17,10 +39,23 @@ struct CoachDetailView: View {
 
     @State private var showFireConfirmation = false
     @State private var showExtendAlert = false
-    @State private var showPromoteSheet = false
     @State private var showDemoteAlert = false
     @State private var selectedPromotionRole: CoachRole?
     @State private var showPromoteConfirmation = false
+
+    /// **The one sheet slot on this screen** — an enum, not a `Bool`.
+    ///
+    /// Repeat bug class: several screens in this app shipped two or more
+    /// `.sheet(isPresented:)` modifiers on the same node, SwiftUI honoured only
+    /// the last one written, and the others dismissed silently. There is one
+    /// sheet here today; it is `item:`-driven anyway so a second can never be
+    /// added as a second modifier.
+    private enum CoachSheet: String, Identifiable {
+        case promoteRolePicker
+        var id: String { rawValue }
+    }
+
+    @State private var activeSheet: CoachSheet?
 
     /// Available promotion targets, filtered by career role constraints.
     private var availablePromotionTargets: [CoachRole] {
@@ -59,11 +94,19 @@ struct CoachDetailView: View {
         allCareers.first { $0.id == coach.careerID }
     }
 
+    /// Seasons he has been on this staff, minimum 1. Both the fuzzy potential
+    /// read and the tenure row are denominated in it, so it is computed once.
+    private var seasonsOnStaff: Int {
+        guard let currentSeason = career?.currentSeason, coach.hireSeasonYear > 0 else { return 1 }
+        return max(1, currentSeason - coach.hireSeasonYear + 1)
+    }
+
     var body: some View {
         ZStack {
+            // Subtle locker-room plate behind the page. Kept from the previous
+            // version; it is the only screen in the staff family with one and
+            // it is what stops a wall of cards reading as a spreadsheet.
             Color.backgroundPrimary.ignoresSafeArea()
-
-            // Subtle locker room background
             GeometryReader { geo in
                 Image("BgLockerRoom")
                     .resizable()
@@ -74,23 +117,32 @@ struct CoachDetailView: View {
             }
             .ignoresSafeArea()
 
-            List {
-                avatarSection
-                overviewSection
-                developmentSection
-                projectedImpactSection
-                attributesSection
-                personalitySection
-                schemeSection
-                schemeFitSection
-                destructiveSection
+            // `surface: .clear` — the page must not paint over the plate above.
+            DSDetailPage(surface: .clear) {
+                coachHero
+            } cards: {
+                DSDetailColumns {
+                    // LEAD — the job, the money, the deal.
+                    overviewCard
+                    projectedImpactCard
+                } middle: {
+                    // MIDDLE — what he is becoming.
+                    developmentCard
+                    personalityCard
+                    schemeCard
+                } trail: {
+                    // TRAIL — what he is made of, and how he sits beside the HC.
+                    attributesCard
+                    schemeFitCard
+                }
             }
-            .scrollContentBackground(.hidden)
-            .listStyle(.insetGrouped)
         }
+        .safeAreaInset(edge: .bottom) { coachActionBar }
         .navigationTitle(coach.fullName)
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .toolbarBackground(Color.backgroundPrimary, for: .navigationBar)
         .alert("Fire \(coach.fullName)?", isPresented: $showFireConfirmation) {
             Button("Fire Coach", role: .destructive) {
                 fireCoach()
@@ -108,9 +160,19 @@ struct CoachDetailView: View {
         } message: {
             Text("This will offer \(coach.firstName) a 2-year contract extension at their current salary of \(coachSalaryText(coach.salary)). Contract will go from \(coach.contractYearsRemaining) to \(coach.contractYearsRemaining + 2) years.")
         }
-        // Promote: role picker sheet
-        .sheet(isPresented: $showPromoteSheet) {
-            promoteRolePickerSheet
+        // ONE sheet modifier, `item:`-driven. The role picker hands off to the
+        // confirmation alert from `onDismiss` — the previous version slept
+        // 300 ms on the main queue and hoped the sheet had finished animating,
+        // which is exactly the timing hack §4 wave 3 retires elsewhere.
+        .sheet(item: $activeSheet, onDismiss: {
+            if selectedPromotionRole != nil {
+                showPromoteConfirmation = true
+            }
+        }) { sheet in
+            switch sheet {
+            case .promoteRolePicker:
+                promoteRolePickerSheet
+            }
         }
         // Promote: confirmation alert after role selection
         .alert("Promote \(coach.fullName)?", isPresented: $showPromoteConfirmation) {
@@ -139,138 +201,161 @@ struct CoachDetailView: View {
         }
     }
 
-    // MARK: - Avatar Section
+    // MARK: - Hero
 
-    private var avatarSection: some View {
-        Section {
-            HStack {
-                Spacer()
-                VStack(spacing: 8) {
-                    PersonFaceView(coach: coach, size: .large, ringColor: .accentGold)
-                    Text(coach.role.displayName)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.accentGold)
+    /// Portrait, role, and the screen's one hero numeral — his overall.
+    ///
+    /// The old avatar section was a centred portrait and a gold role caption on
+    /// a `Color.clear` list row: no rating anywhere above the fold, on a card
+    /// whose entire purpose is judging a man. His overall was computed
+    /// (`coachOverallRating`) and used only to derive a trajectory string.
+    private var coachHero: some View {
+        DSDetailHero {
+            HStack(spacing: DSSpacing.md) {
+                PersonFaceView(coach: coach, size: .large, ringColor: .accentGold)
+
+                VStack(spacing: DSSpacing.xxs) {
+                    ZStack {
+                        Circle()
+                            .strokeBorder(Color.forRating(coachOverallRating), lineWidth: 3)
+                            .frame(width: 76, height: 76)
+                        VStack(spacing: 0) {
+                            Text("\(coachOverallRating)")
+                                .font(.system(size: DSType.Size.title1, weight: .heavy).monospacedDigit())
+                                .foregroundStyle(Color.forRating(coachOverallRating))
+                            Text("OVR")
+                                .font(.system(size: DSType.Size.micro, weight: .semibold))
+                                .tracking(0.6)
+                                .foregroundStyle(Color.textTertiaryReadable)
+                        }
+                    }
+                    Text("CEILING \(coach.attributeCeiling)")
+                        .font(.system(size: DSType.Size.micro, weight: .semibold).monospacedDigit())
+                        .tracking(0.5)
+                        .foregroundStyle(Color.textTertiaryReadable)
                 }
-                Spacer()
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Overall \(coachOverallRating), ceiling \(coach.attributeCeiling)")
+
+                VStack(alignment: .leading, spacing: DSSpacing.xxs) {
+                    Text(coach.role.displayName.uppercased())
+                        .font(.system(size: DSType.Size.caption, weight: .heavy))
+                        .tracking(0.8)
+                        .foregroundStyle(Color.accentGold)
+
+                    Text(coach.fullName)
+                        .font(.system(size: DSType.Size.title2, weight: .bold))
+                        .foregroundStyle(Color.textPrimary)
+
+                    HStack(spacing: DSSpacing.sm) {
+                        Label("Age \(coach.age)", systemImage: "calendar")
+                        Label(experienceLabel, systemImage: "clock.arrow.circlepath")
+                        Label(
+                            seasonsOnStaff == 1 ? "1st season here" : "\(seasonsOnStaff) seasons here",
+                            systemImage: "building.2"
+                        )
+                    }
+                    .font(.system(size: DSType.Size.footnote))
+                    .foregroundStyle(Color.textSecondary)
+
+                    if coach.isInAdjustmentPeriod {
+                        Label("Adjusting to the role — bonuses reduced ~25% this season", systemImage: "hourglass")
+                            .font(.system(size: DSType.Size.caption, weight: .semibold))
+                            .foregroundStyle(Color.warning)
+                    }
+                }
+
+                Spacer(minLength: 0)
             }
-            .padding(.vertical, 8)
         }
-        .listRowBackground(Color.clear)
     }
 
-    // MARK: - Overview Section
+    // MARK: - Overview
 
-    private var overviewSection: some View {
-        Section("Overview") {
-            LabeledContent("Role") {
-                Text(coach.role.displayName)
-                    .foregroundStyle(Color.textPrimary)
-            }
-            LabeledContent("Age") {
-                Text("\(coach.age)")
-                    .monospacedDigit()
-                    .foregroundStyle(Color.textPrimary)
-            }
-            LabeledContent("Experience") {
-                Text(experienceLabel)
-                    .foregroundStyle(Color.textSecondary)
-            }
-            LabeledContent("Salary") {
-                Text(coachSalaryText(coach.salary))
-                    .monospacedDigit()
-                    .foregroundStyle(Color.accentGold)
-            }
-            LabeledContent("Contract") {
-                let years = coach.contractYearsRemaining
-                Text(years <= 1
-                     ? "\(max(1, years)) yr remaining"
-                     : "\(years) yrs remaining")
-                    .monospacedDigit()
-                    .foregroundStyle(years <= 1 ? Color.warning : Color.textPrimary)
-            }
-            if let currentSeason = career?.currentSeason, coach.hireSeasonYear > 0 {
-                let tenure = max(1, currentSeason - coach.hireSeasonYear + 1)
-                LabeledContent("Tenure") {
-                    Text(tenure == 1 ? "1st season" : "\(tenure) seasons")
-                        .foregroundStyle(Color.textSecondary)
-                }
+    private var overviewCard: some View {
+        DSDetailCard(
+            "Overview",
+            icon: "person.text.rectangle",
+            explainer: "The job he holds, what it costs, and how long you have him for."
+        ) {
+            DSDetailRow("Role", coach.role.displayName)
+            DSDetailRow("Age", "\(coach.age)")
+            DSDetailRow("Experience", experienceLabel, tint: .textSecondary, weight: .regular)
+            DSDetailRow("Salary", coachSalaryText(coach.salary), tint: .accentGold)
+            DSDetailRow(
+                "Contract",
+                coach.contractYearsRemaining <= 1
+                    ? "\(max(1, coach.contractYearsRemaining)) yr remaining"
+                    : "\(coach.contractYearsRemaining) yrs remaining",
+                tint: coach.contractYearsRemaining <= 1 ? .warning : .textPrimary
+            )
+            if career?.currentSeason != nil, coach.hireSeasonYear > 0 {
+                DSDetailRow(
+                    "Tenure",
+                    seasonsOnStaff == 1 ? "1st season" : "\(seasonsOnStaff) seasons",
+                    tint: .textSecondary,
+                    weight: .regular
+                )
             }
             if !coach.background.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Background")
-                        .font(.caption)
-                        .foregroundStyle(Color.textTertiary)
-                    Text(coach.background)
-                        .font(.subheadline)
-                        .foregroundStyle(Color.textSecondary)
-                }
+                Divider().overlay(Color.surfaceBorder)
+                Text(coach.background)
+                    .font(.system(size: DSType.Size.footnote))
+                    .foregroundStyle(Color.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .listRowBackground(Color.backgroundSecondary)
     }
 
-    // MARK: - Development Section
+    // MARK: - Development
 
-    private var developmentSection: some View {
-        Section("Development") {
-            // TODO §5.7 — developer reputation. `Coach.reputation` only ever
-            // moved on the team's record, so a staff that turned three rookies
-            // into starters during a 5-12 season read as a failure. This is the
-            // other half: what the young players on his watch actually gained,
-            // measured off `PlayerSeasonHistory` deltas, blended with his
-            // development attributes until there is a record to blend with.
-            developerReputationChip
+    /// What this man is becoming, and — the part wave 4 asks for — **what the
+    /// two headline reads on it actually are**.
+    ///
+    /// The old section printed "Developer Reputation · Elite · 82",
+    /// "Potential · High Ceiling" and "Trajectory · Improving" as three bare
+    /// `LabeledContent` rows with no statement anywhere of what the numbers
+    /// were measuring or how they were arrived at.
+    private var developmentCard: some View {
+        DSDetailCard(
+            "Development",
+            icon: "chart.line.uptrend.xyaxis",
+            explainer: "Two different reads. **Developer reputation** is what the young players on his watch actually gained. **Potential** is your own staff's guess at his ceiling, and it sharpens the longer he is in the building — this is season \(seasonsOnStaff)."
+        ) {
+            developerReputationBlock
 
             // Fuzzy potential label — accuracy improves with tenure
-            let seasonsOnTeam: Int = {
-                guard let currentSeason = career?.currentSeason,
-                      coach.hireSeasonYear > 0 else { return 1 }
-                return max(1, currentSeason - coach.hireSeasonYear + 1)
-            }()
-            let label = coach.potentialLabel(seasonsOnTeam: seasonsOnTeam)
-            LabeledContent("Potential") {
+            let label = coach.potentialLabel(seasonsOnTeam: seasonsOnStaff)
+            DSDetailRow(label: "Potential") {
                 Text(label)
-                    .font(.subheadline.weight(.semibold))
+                    .font(.system(size: DSType.Size.body, weight: .semibold))
                     .foregroundStyle(potentialLabelColor(label))
             }
 
-            // Trajectory
-            LabeledContent("Trajectory") {
+            DSDetailRow(label: "Trajectory") {
                 let trajectory = coachTrajectory
                 Text(trajectory.label)
-                    .font(.subheadline.weight(.semibold))
+                    .font(.system(size: DSType.Size.body, weight: .semibold))
                     .foregroundStyle(trajectory.color)
             }
+            DSDetailNote(text: coachTrajectory.reason, icon: "arrow.up.right")
 
-            // Attribute ceiling
-            LabeledContent("Attribute Ceiling") {
+            DSDetailRow(label: "Attribute Ceiling") {
                 Text("\(coach.attributeCeiling)")
-                    .monospacedDigit()
+                    .font(.system(size: DSType.Size.body, weight: .semibold).monospacedDigit())
                     .foregroundStyle(Color.forRating(coach.attributeCeiling))
             }
-
-            // Adjustment period
-            if coach.isInAdjustmentPeriod {
-                LabeledContent("Status") {
-                    Text("Adjusting to Role")
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(.orange)
-                }
-            }
+            DSDetailNote(
+                text: "His attributes can still grow to \(coach.attributeCeiling); he averages \(coachOverallRating) today.",
+                icon: "arrow.up.to.line"
+            )
 
             // Mentorship origin
             if coach.mentorCoachID != nil, let origin = coach.mentorshipOrigin {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Mentorship")
-                        .font(.caption)
-                        .foregroundStyle(Color.textTertiary)
-                    Text(origin)
-                        .font(.subheadline)
-                        .foregroundStyle(Color.textSecondary)
-                }
+                Divider().overlay(Color.surfaceBorder)
+                DSDetailNote(text: origin, icon: "person.2.badge.gearshape")
             }
         }
-        .listRowBackground(Color.backgroundSecondary)
     }
 
     /// TODO §5.7 — the chip that puts a coach's development record on his card.
@@ -279,31 +364,28 @@ struct CoachDetailView: View {
     /// the number is in: "Projected" while the score is still an attribute
     /// read, the measured tally once completed seasons exist. A player looking
     /// at a hire needs to know whether he is reading a promise or a result.
-    private var developerReputationChip: some View {
+    private var developerReputationBlock: some View {
         let record = CoachDevelopmentEngine.developerRecord(
             coach: coach,
             currentSeason: career?.currentSeason
         )
-        return VStack(alignment: .leading, spacing: 4) {
-            LabeledContent("Developer Reputation") {
-                HStack(spacing: 6) {
+        return VStack(alignment: .leading, spacing: DSSpacing.xxs) {
+            DSDetailRow(label: "Developer Reputation") {
+                HStack(spacing: DSSpacing.xxs) {
                     Text(record.tier)
-                        .font(.subheadline.weight(.semibold))
+                        .font(.system(size: DSType.Size.body, weight: .semibold))
                         .foregroundStyle(developerScoreColor(record.score))
                     Text("\(record.score)")
-                        .font(.caption.weight(.bold).monospacedDigit())
+                        .font(.system(size: DSType.Size.footnote, weight: .heavy).monospacedDigit())
                         .foregroundStyle(developerScoreColor(record.score))
-                        .padding(.horizontal, 6)
+                        .padding(.horizontal, DSSpacing.xs)
                         .padding(.vertical, 2)
                         .background(
                             Capsule().fill(developerScoreColor(record.score).opacity(0.15))
                         )
                 }
             }
-            Text(record.detail)
-                .font(.caption)
-                .foregroundStyle(Color.textTertiary)
-                .fixedSize(horizontal: false, vertical: true)
+            DSDetailNote(text: record.detail, icon: "text.magnifyingglass")
         }
     }
 
@@ -315,26 +397,41 @@ struct CoachDetailView: View {
         Color.forRating(score)
     }
 
-    /// Color for the fuzzy potential label.
+    /// Color for the fuzzy potential label. Off the app palette, not the stock
+    /// SwiftUI hues the previous version used (`.green` / `.orange` / `.red`).
     private func potentialLabelColor(_ label: String) -> Color {
         switch label {
         case "Elite Ceiling":   return Color.accentGold
-        case "High Ceiling":    return .green
+        case "High Ceiling":    return Color.success
         case "Solid Ceiling":   return Color.accentBlue
-        case "Limited Upside":  return .orange
-        case "Low Ceiling":     return .red
+        case "Limited Upside":  return Color.warning
+        case "Low Ceiling":     return Color.danger
         default:                return Color.textSecondary
         }
     }
 
-    /// Trajectory based on age and rating vs ceiling.
-    private var coachTrajectory: (label: String, color: Color) {
+    /// Trajectory based on age and rating vs ceiling — and, new in wave 4, the
+    /// one sentence saying why, because "Plateaued" on its own is a verdict
+    /// with no evidence attached.
+    private var coachTrajectory: (label: String, color: Color, reason: String) {
         if coach.age >= 55 {
-            return ("Declining", .red)
+            return (
+                "Declining",
+                Color.danger,
+                "Past 55 — the attributes drift down from here regardless of the ceiling."
+            )
         } else if coach.age < 50 && coachOverallRating < coach.attributeCeiling - 5 {
-            return ("Improving", .green)
+            return (
+                "Improving",
+                Color.success,
+                "Under 50 and \(coach.attributeCeiling - coachOverallRating) points short of his ceiling — he still has room to grow into."
+            )
         } else {
-            return ("Plateaued", .orange)
+            return (
+                "Plateaued",
+                Color.warning,
+                "He is at or near his ceiling. What you see is what this staff gets."
+            )
         }
     }
 
@@ -345,64 +442,78 @@ struct CoachDetailView: View {
             ZStack {
                 Color.backgroundPrimary.ignoresSafeArea()
 
-                List {
-                    Section("Select New Role") {
+                ScrollView {
+                    VStack(spacing: DSSpacing.xs) {
                         ForEach(availablePromotionTargets, id: \.self) { targetRole in
                             Button {
                                 selectedPromotionRole = targetRole
-                                showPromoteSheet = false
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                                    showPromoteConfirmation = true
-                                }
+                                // The confirmation is raised in `onDismiss`.
+                                activeSheet = nil
                             } label: {
-                                HStack(spacing: 12) {
-                                    Text(targetRole.abbreviation)
-                                        .font(.system(size: 12, weight: .black))
-                                        .foregroundStyle(Color.backgroundPrimary)
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 4)
-                                        .background(Color.accentGold, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
-
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(targetRole.displayName)
-                                            .font(.subheadline.weight(.bold))
-                                            .foregroundStyle(Color.textPrimary)
-                                        let newSalary = Int(Double(coach.salary) * 1.2)
-                                        Text("Salary: \(coachSalaryText(coach.salary)) → \(coachSalaryText(newSalary))")
-                                            .font(.caption)
-                                            .foregroundStyle(Color.textSecondary)
-                                    }
-
-                                    Spacer()
-
-                                    Image(systemName: "arrow.up.circle.fill")
-                                        .font(.title3)
-                                        .foregroundStyle(Color.accentBlue)
-                                }
+                                promotionTargetRow(targetRole)
                             }
+                            .buttonStyle(.plain)
                         }
                     }
-                    .listRowBackground(Color.backgroundSecondary)
+                    .padding(DSSpacing.md)
                 }
-                .scrollContentBackground(.hidden)
-                .listStyle(.insetGrouped)
             }
             .navigationTitle("Promote \(coach.firstName)")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { showPromoteSheet = false }
+                    Button("Cancel") { activeSheet = nil }
                 }
             }
         }
     }
 
-    // MARK: - Attributes Section (2-column grid on iPad)
+    private func promotionTargetRow(_ targetRole: CoachRole) -> some View {
+        HStack(spacing: DSSpacing.sm) {
+            Text(targetRole.abbreviation)
+                .font(.system(size: DSType.Size.footnote, weight: .black))
+                .foregroundStyle(Color.backgroundPlate)
+                .padding(.horizontal, DSSpacing.xs)
+                .padding(.vertical, DSSpacing.xxs)
+                .background(Color.accentGold, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
 
-    private var attributesSection: some View {
-        Section("Coaching Attributes") {
-            LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(targetRole.displayName)
+                    .font(.system(size: DSType.Size.body, weight: .bold))
+                    .foregroundStyle(Color.textPrimary)
+                let newSalary = Int(Double(coach.salary) * 1.2)
+                Text("Salary: \(coachSalaryText(coach.salary)) → \(coachSalaryText(newSalary))")
+                    .font(.system(size: DSType.Size.footnote))
+                    .foregroundStyle(Color.textSecondary)
+            }
+
+            Spacer(minLength: 0)
+
+            Image(systemName: "arrow.up.circle.fill")
+                .font(.system(size: DSType.Size.title3))
+                .foregroundStyle(Color.accentBlue)
+        }
+        .padding(DSSpacing.sm)
+        .frame(minHeight: 44)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: DSCornerRadius.card)
+                .fill(Color.backgroundSecondary)
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Promote to \(targetRole.displayName)")
+    }
+
+    // MARK: - Attributes
+
+    private var attributesCard: some View {
+        DSDetailCard(
+            "Coaching Attributes",
+            icon: "slider.horizontal.3",
+            explainer: "All twelve on the same 0–99 ladder every rating in the game uses."
+        ) {
+            LazyVGrid(columns: columns, alignment: .leading, spacing: DSSpacing.xs) {
                 attributeCell(name: "Play Calling",        value: coach.playCalling)
                 attributeCell(name: "Player Development",  value: coach.playerDevelopment)
                 attributeCell(name: "Reputation",          value: coach.reputation)
@@ -416,204 +527,202 @@ struct CoachDetailView: View {
                 attributeCell(name: "Contract Negotiation", value: coach.contractNegotiation)
                 attributeCell(name: "Morale Influence",    value: coach.moraleInfluence)
             }
-            .padding(.vertical, 4)
         }
-        .listRowBackground(Color.backgroundSecondary)
     }
 
-    /// A single attribute cell for the 2-column grid with color-coded value and tier label.
+    /// A single attribute cell: the same colour-bar + value + tier grammar the
+    /// player card's attribute grid uses, so the two screens read as one.
     private func attributeCell(name: String, value: Int) -> some View {
-        HStack(spacing: 4) {
+        HStack(spacing: DSSpacing.xxs) {
+            RoundedRectangle(cornerRadius: DSCornerRadius.tight)
+                .fill(attributeColor(value))
+                .frame(width: 3, height: 16)
             Text(name)
-                .font(.subheadline)
+                .font(.system(size: DSType.Size.footnote))
                 .foregroundStyle(Color.textSecondary)
                 .lineLimit(1)
+                .minimumScaleFactor(0.85)
                 .layoutPriority(1)
             Spacer(minLength: 2)
             Text("\(value)")
-                .font(.subheadline.weight(.semibold))
-                .monospacedDigit()
+                .font(.system(size: DSType.Size.body, weight: .semibold).monospacedDigit())
                 .foregroundStyle(attributeColor(value))
             Text(attributeTierLabel(value))
-                .font(.caption2.weight(.medium))
+                .font(.system(size: DSType.Size.micro, weight: .semibold))
                 .foregroundStyle(attributeColor(value))
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(name), \(value), \(attributeTierLabel(value))")
     }
 
-    // MARK: - Personality Section
+    // MARK: - Personality
 
-    private var personalitySection: some View {
-        Section("Personality") {
-            LabeledContent("Archetype") {
-                Text(coach.personality.displayName)
-                    .foregroundStyle(Color.textSecondary)
-            }
+    private var personalityCard: some View {
+        DSDetailCard(
+            "Personality",
+            icon: "person.crop.circle",
+            explainer: "How he handles a locker room, a press conference and a losing streak."
+        ) {
+            DSDetailRow("Archetype", coach.personality.displayName)
         }
-        .listRowBackground(Color.backgroundSecondary)
     }
 
-    // MARK: - Scheme Section
+    // MARK: - Scheme
 
     @ViewBuilder
-    private var schemeSection: some View {
+    private var schemeCard: some View {
         let hasScheme = coach.offensiveScheme != nil || coach.defensiveScheme != nil
         if hasScheme {
-            Section("Scheme") {
+            DSDetailCard(
+                "Scheme",
+                icon: "square.grid.3x3",
+                explainer: "What he installs. Players on his side of the ball gain familiarity with it faster than with anything else."
+            ) {
                 if let offScheme = coach.offensiveScheme {
-                    LabeledContent("Offensive Scheme") {
-                        Text(offScheme.displayName)
-                            .foregroundStyle(Color.accentBlue)
-                    }
+                    DSDetailRow("Offensive Scheme", offScheme.displayName, tint: .accentBlue)
                 }
                 if let defScheme = coach.defensiveScheme {
-                    LabeledContent("Defensive Scheme") {
-                        Text(defScheme.displayName)
-                            .foregroundStyle(Color.danger)
-                    }
+                    DSDetailRow("Defensive Scheme", defScheme.displayName, tint: .danger)
                 }
             }
-            .listRowBackground(Color.backgroundSecondary)
         }
     }
 
-    // MARK: - Scheme Fit / HC Compatibility Section
+    // MARK: - Scheme Fit / HC Compatibility
 
     @ViewBuilder
-    private var schemeFitSection: some View {
-        // Only show for non-HC coaches who share a team with an HC
+    private var schemeFitCard: some View {
+        // Only meaningful for non-HC coaches, who answer to somebody.
         if coach.role != .headCoach {
-            Section("Scheme Fit") {
+            DSDetailCard(
+                "Fit With The Head Coach",
+                icon: "person.2",
+                explainer: "Attribute-by-attribute against your HC: where he covers a gap, where he duplicates a strength you already have, and where the two of them are weak together."
+            ) {
                 if let hc = headCoach {
                     let analysis = analyzeCompatibility(with: hc)
 
-                    // Overall fit
-                    LabeledContent("HC Compatibility") {
+                    DSDetailRow(label: "HC Compatibility") {
                         Text(analysis.overallLabel)
-                            .font(.subheadline.weight(.semibold))
+                            .font(.system(size: DSType.Size.body, weight: .semibold))
                             .foregroundStyle(analysis.overallColor)
                     }
 
-                    // Coaching style context
                     if let style = career?.coachingStyle {
-                        LabeledContent("HC Style") {
-                            Text(style.displayName)
-                                .foregroundStyle(Color.textSecondary)
-                        }
+                        DSDetailRow("HC Style", style.displayName, tint: .textSecondary, weight: .regular)
                     }
 
-                    // Complementary strengths
                     if !analysis.complements.isEmpty {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Complements HC")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.green)
-                            Text(analysis.complements.joined(separator: ", "))
-                                .font(.caption)
-                                .foregroundStyle(Color.textSecondary)
-                        }
+                        compatibilityBlock(
+                            title: "Covers a gap",
+                            tint: .success,
+                            items: analysis.complements,
+                            note: "He is strong here and the head coach is not."
+                        )
                     }
 
-                    // Redundant overlaps
                     if !analysis.redundancies.isEmpty {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Redundant with HC")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(Color.accentGold)
-                            Text(analysis.redundancies.joined(separator: ", "))
-                                .font(.caption)
-                                .foregroundStyle(Color.textSecondary)
-                        }
+                        compatibilityBlock(
+                            title: "Duplicates the HC",
+                            tint: .accentGold,
+                            items: analysis.redundancies,
+                            note: "Both are strong here — you are paying twice for the same edge."
+                        )
                     }
 
-                    // Weak areas
                     if !analysis.weaknesses.isEmpty {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Shared Weaknesses")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.orange)
-                            Text(analysis.weaknesses.joined(separator: ", "))
-                                .font(.caption)
-                                .foregroundStyle(Color.textSecondary)
-                        }
+                        compatibilityBlock(
+                            title: "Weak together",
+                            tint: .warning,
+                            items: analysis.weaknesses,
+                            note: "Neither of them covers this. Nobody on the sideline does."
+                        )
                     }
                 } else {
-                    Text("No Head Coach on staff to compare against.")
-                        .font(.subheadline)
-                        .foregroundStyle(Color.textTertiary)
+                    Text("No head coach on staff to compare against.")
+                        .font(.system(size: DSType.Size.footnote))
+                        .foregroundStyle(Color.textTertiaryReadable)
                 }
             }
-            .listRowBackground(Color.backgroundSecondary)
         }
     }
 
-    // MARK: - Management Actions Section (Fix #53)
-
-    private var destructiveSection: some View {
-        Section("Management") {
-            // Extend Contract
-            Button {
-                showExtendAlert = true
-            } label: {
-                HStack {
-                    Spacer()
-                    Label("Extend Contract", systemImage: "doc.text.fill")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Color.accentGold)
-                    Spacer()
-                }
-            }
-
-            // Promote (if applicable)
-            if !availablePromotionTargets.isEmpty {
-                Button {
-                    if availablePromotionTargets.count == 1 {
-                        // Single target: skip sheet, go straight to confirmation
-                        selectedPromotionRole = availablePromotionTargets.first
-                        showPromoteConfirmation = true
-                    } else {
-                        showPromoteSheet = true
-                    }
-                } label: {
-                    HStack {
-                        Spacer()
-                        Label("Promote", systemImage: "arrow.up.circle.fill")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(Color.accentBlue)
-                        Spacer()
-                    }
-                }
-            }
-
-            // Demote (if applicable)
-            if !coach.role.demotionTargets.isEmpty {
-                Button {
-                    showDemoteAlert = true
-                } label: {
-                    HStack {
-                        Spacer()
-                        Label("Demote", systemImage: "arrow.down.circle.fill")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.orange)
-                        Spacer()
-                    }
-                }
-            }
-
-            // Fire Coach
-            Button(role: .destructive) {
-                showFireConfirmation = true
-            } label: {
-                HStack {
-                    Spacer()
-                    Label("Fire Coach", systemImage: "person.fill.xmark")
-                        .font(.subheadline.weight(.semibold))
-                    Spacer()
-                }
-            }
+    private func compatibilityBlock(title: String, tint: Color, items: [String], note: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title.uppercased())
+                .font(.system(size: DSType.Size.micro, weight: .heavy))
+                .tracking(0.6)
+                .foregroundStyle(tint)
+            Text(items.joined(separator: " \u{00B7} "))
+                .font(.system(size: DSType.Size.footnote))
+                .foregroundStyle(Color.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(note)
+                .font(.system(size: DSType.Size.caption))
+                .foregroundStyle(Color.textTertiaryReadable)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .listRowBackground(Color.backgroundSecondary)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+
+    // MARK: - The commit surface (§2.5, P5)
+
+    /// The four management actions, off the bottom of a scrolling form and onto
+    /// the bar, in `DSActionBar`'s fixed order.
+    ///
+    /// Fire sits in the destructive slot behind its own rule — never adjacent
+    /// to the primary — and the explainer prices the decision before it is
+    /// taken rather than only inside the confirmation alert.
+    private var coachActionBar: some View {
+        DSActionBar(
+            explainer: .init(
+                title: "On staff",
+                message: managementExplainer
+            ),
+            destructive: .init(
+                title: "Fire Coach",
+                caption: estimatedSeveranceK > 0 ? severanceDisplay : "no severance owed",
+                handler: { showFireConfirmation = true }
+            ),
+            ghost: coach.role.demotionTargets.isEmpty
+                ? nil
+                : .init(title: "Demote", handler: { showDemoteAlert = true }),
+            secondary: availablePromotionTargets.isEmpty ? nil : promoteAction,
+            primary: .init(
+                title: "Extend Contract",
+                caption: "+2 years at \(coachSalaryText(coach.salary))",
+                handler: { showExtendAlert = true }
+            )
+        )
+    }
+
+    /// The bar's one-liner. Quotes the same salary and the same remaining years
+    /// the Overview card two columns away prints, so the two cannot disagree
+    /// (§2.13, arithmetic gate).
+    private var managementExplainer: String {
+        let years = coach.contractYearsRemaining
+        let yearsText = years <= 1 ? "**final year**" : "**\(years) years** left"
+        return "\(coach.role.displayName) \u{00B7} \(yearsText) at **\(coachSalaryText(coach.salary))**."
+    }
+
+    private var promoteAction: DSActionBar.Action {
+        .init(
+            title: "Promote",
+            caption: availablePromotionTargets.count == 1
+                ? "to \(availablePromotionTargets[0].displayName)"
+                : "\(availablePromotionTargets.count) roles open",
+            handler: {
+                if availablePromotionTargets.count == 1 {
+                    // Single target: skip the picker, go straight to the
+                    // confirmation the alert already writes in full.
+                    selectedPromotionRole = availablePromotionTargets.first
+                    showPromoteConfirmation = true
+                } else {
+                    activeSheet = .promoteRolePicker
+                }
+            }
+        )
     }
 
     // MARK: - Projected Impact (concrete bonuses for the role)
@@ -718,28 +827,36 @@ struct CoachDetailView: View {
         return max(1, Int(Double(baseline) * mult))
     }
 
+    /// **The screen's subject** (§2.11) — the one bordered, lifted insert.
+    ///
+    /// This card is why the coach exists on the payroll: what employing him
+    /// does to the roster this season. Everything else on the page is evidence
+    /// for or against it.
     @ViewBuilder
-    private var projectedImpactSection: some View {
+    private var projectedImpactCard: some View {
         let rows = projectedImpacts
         if !rows.isEmpty {
-            Section("Projected Impact") {
-                VStack(alignment: .leading, spacing: 10) {
-                    ForEach(rows) { row in
-                        HStack(alignment: .top, spacing: 10) {
-                            Image(systemName: row.icon)
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(row.color)
-                                .frame(width: 18)
-                            Text(row.text)
-                                .font(.subheadline)
-                                .foregroundStyle(Color.textPrimary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
+            DSDetailCard(
+                "What He Is Doing For You",
+                icon: "bolt.fill",
+                explainer: "Derived from his role and his attributes — this is what the engine actually applies, not a description of the job.",
+                isSubject: true
+            ) {
+                ForEach(rows) { row in
+                    HStack(alignment: .top, spacing: DSSpacing.xs) {
+                        Image(systemName: row.icon)
+                            .font(.system(size: DSType.Size.footnote, weight: .semibold))
+                            .foregroundStyle(row.color)
+                            .frame(width: 18)
+                        Text(row.text)
+                            .font(.system(size: DSType.Size.footnote))
+                            .foregroundStyle(Color.textPrimary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityElement(children: .combine)
                 }
-                .padding(.vertical, 4)
             }
-            .listRowBackground(Color.backgroundSecondary)
         }
     }
 
@@ -857,21 +974,23 @@ struct CoachDetailView: View {
             }
         }
 
-        // Determine overall label
+        // Determine overall label. Off the app palette — the previous version
+        // used the stock SwiftUI `.green` / `.orange`, which is the same hue
+        // problem `developerScoreColor` was fixed for.
         let overallLabel: String
         let overallColor: Color
         if complements.count >= 3 && weaknesses.isEmpty {
             overallLabel = "Excellent Fit"
-            overallColor = .green
+            overallColor = Color.success
         } else if complements.count > redundancies.count && weaknesses.count <= 1 {
             overallLabel = "Good Fit"
-            overallColor = .green
+            overallColor = Color.success
         } else if redundancies.count > complements.count {
             overallLabel = "Redundant"
             overallColor = Color.accentGold
         } else if weaknesses.count >= 2 {
             overallLabel = "Poor Fit"
-            overallColor = .orange
+            overallColor = Color.warning
         } else {
             overallLabel = "Neutral"
             overallColor = Color.textSecondary

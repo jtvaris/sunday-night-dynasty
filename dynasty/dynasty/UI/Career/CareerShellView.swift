@@ -10,7 +10,86 @@ struct CareerShellView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
-    @State private var showCalendar = false
+    // MARK: - The two modal slots (#105 wave 5c, §2.8 + the recurring bug class)
+    //
+    // The shell used to mount **four separate `.sheet` modifiers and four
+    // separate `.fullScreenCover` modifiers** on one view. That is the failure
+    // this codebase has now been bitten by four times: sibling presentation
+    // modifiers in a single hierarchy are not independent, and the loser of a
+    // race is dismissed *silently* — no crash, no log, just a modal that never
+    // appears or vanishes the instant it does. Every one of the workarounds
+    // above (the `revealPresented` hold-back, the `!showWeeklyPressConference`
+    // guard, the 0.4 s `asyncAfter`) was written to keep two of those eight
+    // modifiers off each other.
+    //
+    // There is now **one sheet slot and one cover slot**, both `item`-driven.
+    // Two things follow for free: a second presentation cannot appear while a
+    // first is up (the enum holds one value), and handing the slot from one
+    // modal to the next is an assignment in `onDismiss` rather than a timer.
+    //
+    // The payloads stay in their own `@State` — the enum is a tag, not a box —
+    // because several of them are read by code that has nothing to do with
+    // presentation (`pendingRoundResults` is assembled an advance early,
+    // `pendingHoldout` gates re-detection).
+
+    /// The one sheet slot: a short, cancellable side-task (§2.8's table).
+    private enum ShellSheet: String, Identifiable {
+        case calendar
+        case voluntaryWorkout
+        case ownerReview
+        case holdout
+        /// §2.6: the standard ending. A process that terminates in the shell
+        /// puts its outcome here instead of inventing a fifth way to say "done".
+        case result
+
+        var id: String { rawValue }
+    }
+
+    /// The one cover slot: a *process* — it has steps, owns the screen, and
+    /// ends in a result (§2.8's table).
+    private enum ShellCover: String, Identifiable {
+        case press
+        case roundResults
+        case rookieReveal
+        case fired
+
+        var id: String { rawValue }
+    }
+
+    @State private var shellSheet: ShellSheet?
+    @State private var shellCover: ShellCover?
+
+    /// What was in the slot last, so the single `onDismiss` can tell which
+    /// modal just left. `item`-driven presentation nils the binding *before*
+    /// `onDismiss` runs, so the case has to be remembered on the way in.
+    @State private var lastShellSheet: ShellSheet?
+    @State private var lastShellCover: ShellCover?
+
+    /// The week's voluntary-workout prompt, *queued* rather than written
+    /// straight into the slot.
+    ///
+    /// An OTAs advance can raise a holdout dialog (or an owner review) in the
+    /// same synchronous pass, and one slot holds one thing: assigning it twice
+    /// meant the prompt was overwritten before SwiftUI ever presented it and
+    /// the week's workout selection was silently never made. The request now
+    /// outlives whatever else took the slot and is staged by
+    /// `stageWorkoutPromptIfFree()` from the dismissal handlers.
+    @State private var workoutPromptArmed = false
+
+    /// The payload of the `.result` sheet — §2.6's one termination pattern.
+    @State private var pendingResult: ShellResult?
+
+    /// A shell-terminated process's outcome, in `DSResultSheet`'s own terms.
+    struct ShellResult: Identifiable {
+        let id = UUID()
+        var tone: DSResultSheet.Tone = .neutral
+        var eyebrow: String
+        var headline: String
+        var message: String?
+        var chips: [DSResultSheet.Chip] = []
+        var cost: String?
+    }
+
     @State private var showQuitConfirmation = false
     @State private var team: Team?
     @State private var upcomingGames: [Game] = []
@@ -26,6 +105,12 @@ struct CareerShellView: View {
     /// "Set game plan for Seattle Seahawks".
     @State private var currentWeekGame: Game?
     @State private var allTeamsByID: [UUID: Team] = [:]
+
+    /// The user's schedule for this season, keyed by week — the data behind the
+    /// season week ladder (`SeasonWeekBandView`, P1's iteration-2 amendment).
+    /// A week with no entry is a bye. Refilled by `loadShellData`, which is also
+    /// the post-advance reload, so the ladder moves with the calendar.
+    @State private var seasonFixtures: [Int: SeasonWeekBand.Fixture] = [:]
 
     /// Navigation path for bookmark quick-nav.
     @State private var navigationPath = NavigationPath()
@@ -62,18 +147,41 @@ struct CareerShellView: View {
     @State private var pendingPressQuestions: [PressQuestion]?
     /// #161: the engine context those questions were generated in.
     @State private var pendingPressContext: PressConferenceEngine.PressContext?
-    @State private var showWeeklyPressConference = false
 
     /// #38 — Post-game round recap (this week's scores + power ranking + MVP
     /// race + storylines), assembled after each regular-season advance from
     /// existing state. Presented once per week, after any press conference,
     /// and always dismisses straight back to the dashboard.
     @State private var pendingRoundResults: RoundResultsView.Data?
-    @State private var showRoundResults = false
 
-    /// Camp Phase 1 wire-up: surface the VoluntaryWorkoutPrompt sheet when the
-    /// player advances into an OTAs / Training Camp week.
-    @State private var pendingVoluntaryWorkout: Bool = false
+    /// **The route a closing modal asked the shell to travel** (§2.8).
+    ///
+    /// Two of the shell's presentations end by sending the user somewhere: the
+    /// round recap ("See standings" / "See news") and the calendar sheet (every
+    /// task row). Both used to push straight from the button handler and then
+    /// wrap the push in a 0.35 s `asyncAfter`, because a destination pushed
+    /// while the modal is still on screen lands *behind* it and the timer was
+    /// there to out-wait the dismissal animation — a guess that is too long on
+    /// a fast device and too short on a loaded one.
+    ///
+    /// The route is recorded here instead and travelled from the presentation's
+    /// `onDismiss`, which fires when the modal has actually gone. One slot is
+    /// enough: the recap and the calendar can never be on screen together.
+    @State private var pendingRoute: ShellDestination?
+
+    /// **The calendar asked for a week advance as it closed** (§2.8, same rule
+    /// as `pendingRoute`).
+    ///
+    /// The sheet's Advance button used to run `shellSheet = nil` and
+    /// `performShellAdvance()` back to back in one runloop, and the advance
+    /// re-stages the very slot that is mid-dismissal (`.ownerReview`,
+    /// `.holdout`). `onChange` then recorded the INCOMING case in
+    /// `lastShellSheet` before the calendar's `onDismiss` had run, so the
+    /// handler tore down the modal that was arriving: the owner review was
+    /// stamped acknowledged and shown blank, and a persisted holdout lost its
+    /// only dialog. The request is recorded here and served from `onDismiss`,
+    /// when the slot is genuinely free.
+    @State private var pendingAdvanceAfterCalendar = false
 
     // FA Drama Phase 5 — Holdout dialog state.
     @State private var pendingHoldout: Holdout?
@@ -82,7 +190,6 @@ struct CareerShellView: View {
 
     // R31 — Owner review sheet + firing screen state.
     @State private var pendingOwnerReview: OwnerPersonaEngine.OwnerSeasonReview?
-    @State private var showFiredScreen = false
 
     // Phase 4 faces — the full store-wide portrait reconciliation is a
     // once-per-opened-save job, not a per-advance one (see `loadFaceLibrary`).
@@ -125,6 +232,26 @@ struct CareerShellView: View {
     /// they were simply never told to the user.
     @State private var pendingWaiverClaims: [WaiverClaimsBanner.Claim] = []
 
+    /// Whether the season week ladder is drawn.
+    ///
+    /// Two conditions, both P1:
+    ///
+    /// * **The calendar is in a season.** Weeks are the unit only once there are
+    ///   weeks; in February the ordered thing is the offseason task list, which
+    ///   the rail already draws. `.tradeDeadline` is a regular-season week
+    ///   wearing a phase's name (#154), so it counts.
+    /// * **The user is at the hub.** "A screen with no order gets no band" — the
+    ///   roster is a set and the cap sheet is a ledger, and pinning the season
+    ///   over them turns the band into decoration, which is the exact failure
+    ///   the amendment names.
+    private var showsSeasonBand: Bool {
+        guard !career.isGameOver, navigationPath.isEmpty else { return false }
+        switch career.currentPhase {
+        case .regularSeason, .tradeDeadline, .playoffs: return true
+        default: return false
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // Persistent top navigation bar
@@ -139,7 +266,7 @@ struct CareerShellView: View {
                 // with work the user did ten seconds ago.
                 onCalendarTapped: {
                     refreshTaskCompletionStatus()
-                    showCalendar = true
+                    shellSheet = .calendar
                 },
                 onQuitTapped: { showQuitConfirmation = true },
                 unreadInboxCount: inboxMessages.filter { !$0.isRead }.count,
@@ -152,6 +279,28 @@ struct CareerShellView: View {
                 }
             )
 
+            // The season, as a WEEK ladder (P1's iteration-2 amendment, §2.1's
+            // first scale). Shell chrome, under the top bar — see the header of
+            // `SeasonWeekBand.swift` for why it is here and why it is drawn at
+            // the hub only.
+            //
+            // The `Group` + scoped `animation` is there because the band leaves
+            // on a push: an un-animated 70 pt layout jump underneath a sliding
+            // navigation transition reads as a glitch. The animation is bound to
+            // `showsSeasonBand` alone so it cannot leak into the content area.
+            Group {
+                if showsSeasonBand {
+                    SeasonWeekBandView(
+                        currentWeek: career.currentWeek,
+                        inPlayoffs: career.currentPhase == .playoffs,
+                        fixtures: seasonFixtures,
+                        seasonYear: career.currentSeason
+                    )
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
+            .animation(.easeInOut(duration: 0.18), value: showsSeasonBand)
+
             // Main content area (timeline is inside CareerDashboardView)
             NavigationStack(path: $navigationPath) {
                 CareerDashboardView(
@@ -163,6 +312,12 @@ struct CareerShellView: View {
                     },
                     onAdvance: {
                         performShellAdvance()
+                    },
+                    // A coached game is the one way a week's result lands
+                    // without an advance. The shell owns the week ladder, so it
+                    // has to be told — see `reloadSeasonFixtures`.
+                    onWeekResultRecorded: {
+                        reloadSeasonFixtures()
                     },
                     launchCoachedGame: $requestCoachedLaunch
                 )
@@ -306,7 +461,7 @@ struct CareerShellView: View {
             loadShellData()
             // R31: a fired career only shows the final summary screen.
             if career.isGameOver {
-                showFiredScreen = true
+                shellCover = .fired
             }
             // TRACK B: a reveal armed by an advance the user quit out of before
             // dismissing is still owed to him — present it on the next open.
@@ -336,7 +491,29 @@ struct CareerShellView: View {
             refreshTaskCompletionStatus()
             collectInboxMessages()
         }
-        .sheet(isPresented: $showCalendar) {
+        // ONE sheet slot and ONE cover slot (§2.8, and the sibling-modifier bug
+        // class). `lastShellSheet` / `lastShellCover` are recorded on the way in
+        // so the single `onDismiss` knows which modal it is closing.
+        .onChange(of: shellSheet) { _, new in
+            if let new { lastShellSheet = new }
+        }
+        .onChange(of: shellCover) { _, new in
+            if let new { lastShellCover = new }
+        }
+        .sheet(item: $shellSheet, onDismiss: handleSheetDismiss) { slot in
+            shellSheetContent(slot)
+        }
+        .fullScreenCover(item: $shellCover, onDismiss: handleCoverDismiss) { slot in
+            shellCoverContent(slot)
+        }
+    }
+
+    // MARK: - Modal slot content
+
+    @ViewBuilder
+    private func shellSheetContent(_ slot: ShellSheet) -> some View {
+        switch slot {
+        case .calendar:
             CalendarSidebarView(
                 career: career,
                 team: team,
@@ -348,15 +525,72 @@ struct CareerShellView: View {
                     handleTaskNavigation(destination)
                 },
                 onAdvancePhase: {
-                    showCalendar = false
-                    performShellAdvance()
+                    // §2.8: the advance stages the NEXT modal, so it may not run
+                    // in the same runloop as this dismissal — see
+                    // `pendingAdvanceAfterCalendar`.
+                    pendingAdvanceAfterCalendar = true
+                    shellSheet = nil
                 },
-                onDismiss: { showCalendar = false }
+                onDismiss: { shellSheet = nil }
             )
             .presentationDetents([.large, .medium])
             .presentationDragIndicator(.visible)
+
+        case .voluntaryWorkout:
+            VoluntaryWorkoutPrompt(career: career)
+
+        case .ownerReview:
+            // R31: end-of-season owner review (bonus / warning verdicts).
+            if let review = pendingOwnerReview {
+                OwnerSeasonReviewSheet(
+                    review: review,
+                    ownerName: team?.owner?.name ?? "The Owner",
+                    teamName: team?.fullName ?? "your team",
+                    owner: team?.owner,
+                    context: OwnerSeasonReviewSheet.Context.build(
+                        review: review,
+                        career: career,
+                        team: team
+                    )
+                )
+            }
+
+        case .holdout:
+            if let holdout = pendingHoldout, let player = pendingHoldoutPlayer {
+                HoldoutDialog(
+                    holdout: holdout,
+                    playerName: player.fullName,
+                    position: player.position.rawValue,
+                    currentSalary: player.annualSalary,
+                    marketValue: pendingHoldoutMarketValue,
+                    onResolve: { resolution in
+                        resolveHoldout(holdout, player: player, resolution: resolution)
+                    }
+                )
+            }
+
+        case .result:
+            // §2.6: the one termination pattern. It carries the ONLY commit on
+            // the surface it covers — no second dismissal verb.
+            if let result = pendingResult {
+                DSResultSheet(
+                    tone: result.tone,
+                    eyebrow: result.eyebrow,
+                    headline: result.headline,
+                    message: result.message,
+                    chips: result.chips,
+                    cost: result.cost,
+                    onContinue: { shellSheet = nil }
+                )
+                .interactiveDismissDisabled(true)
+            }
         }
-        .fullScreenCover(isPresented: $showWeeklyPressConference) {
+    }
+
+    @ViewBuilder
+    private func shellCoverContent(_ slot: ShellCover) -> some View {
+        switch slot {
+        case .press:
             if let questions = pendingPressQuestions {
                 WeeklyPressConferenceView(
                     questions: questions,
@@ -364,80 +598,46 @@ struct CareerShellView: View {
                     context: pendingPressContext ?? .neutral,
                     onComplete: { result in
                         applyPressConferenceEffects(result)
-                        showWeeklyPressConference = false
-                        // #38: chain the round recap once the presser is done.
-                        presentRoundResultsIfReady()
+                        shellCover = nil
                     }
                 )
             }
-        }
-        // #38: post-game round recap — dismisses straight to the dashboard.
-        .fullScreenCover(isPresented: $showRoundResults) {
+
+        case .roundResults:
+            // #38: post-game round recap — dismisses straight to the dashboard,
+            // or to the one reference destination the user picked out of it.
+            //
+            // §2.8: the recap is a *result* the user leaves, and standings/news
+            // are *reference destinations* he pushes to. Those are two
+            // presentations, and running them from one event made the push land
+            // while the cover was still on screen — so both call sites had grown
+            // a 0.35 s `asyncAfter` to out-wait the dismissal animation, a number
+            // that is a guess on every device. The route is recorded instead and
+            // travelled in `onDismiss`, which fires when the cover has gone.
             if let data = pendingRoundResults {
                 RoundResultsView(
                     data: data,
-                    onSeeStandings: {
-                        showRoundResults = false
-                        pendingRoundResults = nil
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                            navigationPath = NavigationPath()
-                            navigationPath.append(ShellDestination.standings)
-                        }
-                    },
-                    onSeeNews: {
-                        showRoundResults = false
-                        pendingRoundResults = nil
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                            navigationPath = NavigationPath()
-                            navigationPath.append(ShellDestination.news)
-                        }
-                    },
-                    onDismiss: {
-                        showRoundResults = false
-                        pendingRoundResults = nil
-                    }
+                    onSeeStandings: { closeRoundResults(routingTo: .standings) },
+                    onSeeNews: { closeRoundResults(routingTo: .news) },
+                    onDismiss: { closeRoundResults(routingTo: nil) }
                 )
             }
-        }
-        .sheet(isPresented: $pendingVoluntaryWorkout) {
-            VoluntaryWorkoutPrompt(career: career)
-        }
-        // TRACK B: "Rookies Report to Camp" — once per season, at the camp
-        // boundary. Dismissal consumes the flag and hands the modal slot on to
-        // the voluntary-workout prompt, which `performShellAdvance` deliberately
-        // skipped so the two never race for the same presentation.
-        .fullScreenCover(item: $pendingRookieReveal) { summary in
-            RookieClassRevealView(summary: summary) {
-                RookieClassReveal.clear(careerID: career.id)
-                pendingRookieReveal = nil
-                if career.currentPhase == .otas || career.currentPhase == .trainingCamp {
-                    pendingVoluntaryWorkout = true
+
+        case .rookieReveal:
+            // TRACK B: "Rookies Report to Camp" — once per season, at the camp
+            // boundary. The hand-off to the workout prompt happens in the cover's
+            // `onDismiss`, not here: assigning the sheet slot from inside the
+            // cover's own completion handler is exactly the race the single-slot
+            // rewrite exists to remove.
+            if let summary = pendingRookieReveal {
+                RookieClassRevealView(summary: summary) {
+                    RookieClassReveal.clear(careerID: career.id)
+                    shellCover = nil
                 }
             }
-        }
-        // R31: end-of-season owner review (bonus / warning verdicts).
-        .sheet(item: $pendingOwnerReview, onDismiss: {
-            // Mark the review acknowledged so it only pops once.
-            if var review = career.ownerSeasonReview, !review.acknowledged {
-                review.acknowledged = true
-                career.ownerSeasonReview = review
-                try? modelContext.save()
-            }
-        }) { review in
-            OwnerSeasonReviewSheet(
-                review: review,
-                ownerName: team?.owner?.name ?? "The Owner",
-                teamName: team?.fullName ?? "your team",
-                owner: team?.owner,
-                context: OwnerSeasonReviewSheet.Context.build(
-                    review: review,
-                    career: career,
-                    team: team
-                )
-            )
-        }
-        // R31: the owner pulled the trigger — career-over summary screen.
-        .fullScreenCover(isPresented: $showFiredScreen) {
+
+        case .fired:
+            // R31: the owner pulled the trigger — career-over summary screen.
             FiredSummaryView(
                 career: career,
                 teamName: team?.fullName ?? "your team",
@@ -447,48 +647,327 @@ struct CareerShellView: View {
                     : nil
             )
         }
-        .sheet(item: $pendingHoldout) { holdout in
-            if let player = pendingHoldoutPlayer {
-                HoldoutDialog(
-                    holdout: holdout,
-                    playerName: player.fullName,
-                    position: player.position.rawValue,
-                    currentSalary: player.annualSalary,
-                    marketValue: pendingHoldoutMarketValue,
-                    onResolve: { resolution in
-                        let resolved = HoldoutEngine.resolveHoldout(
-                            holdout: holdout,
-                            resolution: resolution,
-                            player: player,
-                            modelContext: modelContext
-                        )
-                        // R22: an extension really pays the player — otherwise
-                        // the same star would be flagged as underpaid again
-                        // next offseason.
-                        if resolved {
-                            applyHoldoutResolutionEffects(resolution, player: player)
-                        }
-                        // After resolution, persist a storyline event for the inbox.
-                        if let teamID = career.teamID {
-                            let evt = FAStorylineEvent(
-                                seasonYear: career.currentSeason,
-                                type: .holdout,
-                                playerID: player.id,
-                                teamID: teamID,
-                                headline: "\(player.fullName) holdout resolved",
-                                body: "Front office took the \(resolutionLabel(resolution)) path."
-                            )
-                            evt.careerID = career.id
-                            modelContext.insert(evt)
-                            try? modelContext.save()
-                        }
-                    }
-                )
+    }
+
+    // MARK: - Modal slot dismissal
+    //
+    // One handler per slot, dispatching on what was last presented. Everything
+    // that used to be a per-modifier `onDismiss` closure lives here, which is
+    // also the only place a *second* modal is allowed to be staged — by then the
+    // first has actually left the screen.
+
+    private func handleSheetDismiss() {
+        // Read and clear FIRST: the handler is allowed to stage the next modal,
+        // and doing so re-arms `lastShellSheet` through `onChange`.
+        let closed = lastShellSheet
+        lastShellSheet = nil
+
+        switch closed {
+        case .calendar:
+            travelPendingRoute()
+            // The Advance button's request, served now that the sheet has
+            // actually left the screen — the advance is allowed to stage the
+            // next modal, and this is the one place where doing so is safe.
+            if pendingAdvanceAfterCalendar {
+                pendingAdvanceAfterCalendar = false
+                performShellAdvance()
             }
+
+        case .ownerReview:
+            // Mark the review acknowledged so it only pops once.
+            if var review = career.ownerSeasonReview, !review.acknowledged {
+                review.acknowledged = true
+                career.ownerSeasonReview = review
+                try? modelContext.save()
+            }
+            pendingOwnerReview = nil
+
+        case .holdout:
+            pendingHoldout = nil
+            pendingHoldoutPlayer = nil
+            // §2.6: the holdout used to end by silently closing its own dialog —
+            // a season's worth of contract change applied and nothing said about
+            // it. It now ends the way every other process does.
+            if pendingResult != nil { shellSheet = .result }
+
+        case .result:
+            pendingResult = nil
+
+        case .voluntaryWorkout:
+            // Asked and answered — drop any leftover request.
+            workoutPromptArmed = false
+
+        case .none:
+            break
         }
+
+        // The slot just came free: if the week's workout prompt was queued
+        // behind whatever was in it, ask it now.
+        stageWorkoutPromptIfFree()
+    }
+
+    private func handleCoverDismiss() {
+        let closed = lastShellCover
+        lastShellCover = nil
+
+        switch closed {
+        case .roundResults:
+            travelPendingRoute()
+
+        case .rookieReveal:
+            pendingRookieReveal = nil
+            // The reveal holds the screen across the camp boundary, so the
+            // week's workout prompt is queued as it leaves — queued, not
+            // assigned: the same advance may have put a holdout in the sheet
+            // slot, and overwriting that is the bug this shape exists to stop.
+            if career.currentPhase == .otas || career.currentPhase == .trainingCamp {
+                workoutPromptArmed = true
+            }
+
+        case .press, .fired, .none:
+            break
+        }
+
+        // #38: the recap chains off the DISMISSAL of whatever held the slot
+        // ahead of it — normally the presser. Written once, at the bottom, so a
+        // cover added later cannot swallow the week's recap the way the
+        // completion-handler version did. `pendingRoundResults` is only ever
+        // non-nil on a regular-season advance, so this is a no-op everywhere
+        // else, and it never re-presents itself: `closeRoundResults` clears it.
+        if closed != .roundResults,
+           pendingRoundResults != nil,
+           shellCover == nil,
+           shellSheet == nil {
+            shellCover = .roundResults
+        }
+
+        // Last, so the recap keeps first claim on the screen: a queued workout
+        // prompt takes the sheet slot only if nothing else wanted it.
+        stageWorkoutPromptIfFree()
+    }
+
+    /// Moves a queued voluntary-workout prompt into the sheet slot, but only
+    /// when the slot is actually free — otherwise it stays queued and the next
+    /// dismissal tries again. The request is dropped once the camp window has
+    /// closed, so a prompt that never found a gap cannot resurface a phase
+    /// later.
+    private func stageWorkoutPromptIfFree() {
+        guard workoutPromptArmed else { return }
+        guard career.currentPhase == .otas || career.currentPhase == .trainingCamp else {
+            workoutPromptArmed = false
+            return
+        }
+        guard shellSheet == nil, shellCover == nil else { return }
+        workoutPromptArmed = false
+        shellSheet = .voluntaryWorkout
     }
 
     // MARK: - Holdout Helpers
+
+    /// Resolves the holdout AND states the outcome (§2.6).
+    ///
+    /// Before this, the dialog applied a season's worth of contract and morale
+    /// change and then simply closed — the user was returned to the dashboard
+    /// with no statement of what the front office had just agreed to. The
+    /// numbers are sampled either side of the mutation so the result sheet can
+    /// show the delta rather than only the new value.
+    private func resolveHoldout(
+        _ holdout: Holdout,
+        player: Player,
+        resolution: HoldoutEngine.Resolution
+    ) {
+        let salaryBefore = player.annualSalary
+        let yearsBefore = player.contractYearsRemaining
+        let moraleBefore = player.morale
+
+        // `.forceTrade` REALLY ships the man out (`HoldoutEngine.forceTrade`
+        // executes a fair-value package through `TradeEngine.executeTrade`), and
+        // `onForcedTrade` is the only channel that names the partner and the
+        // return. Dropping it is how the sheet came to tell the user his star
+        // reported back and was "still being shopped" on the one path that had
+        // already traded him away.
+        var forcedTrade: HoldoutEngine.ForcedTradeOutcome?
+        let resolved = HoldoutEngine.resolveHoldout(
+            holdout: holdout,
+            resolution: resolution,
+            player: player,
+            modelContext: modelContext,
+            onForcedTrade: { forcedTrade = $0 }
+        )
+        // R22: an extension really pays the player — otherwise the same star
+        // would be flagged as underpaid again next offseason.
+        if resolved {
+            applyHoldoutResolutionEffects(resolution, player: player)
+        }
+        // After resolution, persist a storyline event for the inbox.
+        if let teamID = career.teamID {
+            let evt = FAStorylineEvent(
+                seasonYear: career.currentSeason,
+                type: .holdout,
+                playerID: player.id,
+                teamID: teamID,
+                headline: "\(player.fullName) holdout resolved",
+                body: "Front office took the \(resolutionLabel(resolution)) path."
+            )
+            evt.careerID = career.id
+            modelContext.insert(evt)
+            try? modelContext.save()
+        }
+
+        let salaryDelta = player.annualSalary - salaryBefore
+        let moraleDelta = player.morale - moraleBefore
+
+        // Non-nil only when the man was actually shipped out.
+        var tradedPartner: String?
+        if let forcedTrade, case let .traded(partnerAbbr, _) = forcedTrade {
+            tradedPartner = partnerAbbr
+        }
+
+        var chips: [DSResultSheet.Chip] = []
+        if let tradedPartner {
+            // He is gone. What he earns and how many years he has left are
+            // another club's business now — the figures that mean anything to
+            // this front office are where he went and what came off the payroll.
+            chips = [
+                .init(
+                    id: "partner",
+                    label: "Traded to",
+                    value: tradedPartner,
+                    context: "\(player.position.rawValue) \u{00B7} \(player.overall) OVR"
+                ),
+                .init(
+                    id: "payroll",
+                    label: "Off the payroll",
+                    value: CommittedCapLedger.money(salaryBefore),
+                    context: "before dead money"
+                )
+            ]
+        } else {
+            chips = [
+                .init(
+                    id: "salary",
+                    label: "Salary",
+                    value: CommittedCapLedger.money(player.annualSalary),
+                    // `money` prints its own minus sign, so a hard "+" prefix
+                    // turned a pay CUT into "+-$4.2M".
+                    context: salaryDelta == 0
+                        ? "Unchanged"
+                        : (salaryDelta > 0
+                            ? "+\(CommittedCapLedger.money(salaryDelta))"
+                            : CommittedCapLedger.money(salaryDelta)),
+                    contextColor: salaryDelta == 0
+                        ? .textTertiaryReadable
+                        : (salaryDelta > 0 ? .alertOrange : .success)
+                ),
+                .init(
+                    id: "years",
+                    label: "Years left",
+                    value: "\(player.contractYearsRemaining)",
+                    context: player.contractYearsRemaining == yearsBefore
+                        ? "Unchanged"
+                        : "was \(yearsBefore)"
+                )
+            ]
+            if moraleDelta != 0 {
+                chips.append(
+                    .init(
+                        id: "morale",
+                        label: "Morale",
+                        value: "\(player.morale)",
+                        context: "+\(moraleDelta)",
+                        valueColor: Color.forRating(player.morale),
+                        contextColor: .success
+                    )
+                )
+            }
+        }
+
+        let headline: String
+        let tone: DSResultSheet.Tone
+        if !resolved {
+            headline = "\(player.fullName) stays away"
+            tone = .bad
+        } else if let tradedPartner {
+            // Not `.good`: the standoff ended, but the club lost the player.
+            headline = "\(player.fullName) traded to \(tradedPartner)"
+            tone = .neutral
+        } else {
+            headline = "\(player.fullName) reports back"
+            tone = .good
+        }
+
+        pendingResult = ShellResult(
+            tone: tone,
+            eyebrow: "Holdout",
+            headline: headline,
+            message: resolved
+                ? holdoutOutcomeMessage(resolution, player: player, forcedTrade: forcedTrade)
+                : "The **\(resolutionLabel(resolution))** route did not settle it. He is still not in the building.",
+            chips: resolved ? chips : [],
+            cost: resolved
+                ? holdoutCostLine(resolution, salaryDelta: salaryDelta, forcedTrade: forcedTrade)
+                : nil
+        )
+    }
+
+    /// The one-line prose the result sheet leads with, in the front office's
+    /// own words rather than the engine's enum name.
+    private func holdoutOutcomeMessage(
+        _ resolution: HoldoutEngine.Resolution,
+        player: Player,
+        forcedTrade: HoldoutEngine.ForcedTradeOutcome?
+    ) -> String {
+        switch resolution {
+        case .extend:
+            return "You met the market on a new deal. **\(player.lastName)** is back at practice tomorrow."
+        case .signingBonus:
+            return "A one-off cheque bought peace for this year. The **base contract is unchanged**, so the grievance is deferred, not settled."
+        case .mediation:
+            return "The league mediator got him back in the building without money changing hands. **Goodwill only** — it will not hold twice."
+        case .forceTrade:
+            // The engine either found a buyer and executed the deal, or found
+            // no market and left him on the roster. Those are opposite outcomes
+            // and the sheet has to say which one happened. `nil` means the
+            // engine never reported at all — read as "he is still here", the
+            // conservative of the two.
+            if let forcedTrade, case let .traded(partnerAbbr, returnDescription) = forcedTrade {
+                return "The standoff is over and so is his time here: **\(partnerAbbr)** take him and his contract, and the return is \(returnDescription)."
+            }
+            return "No club would pay a fair price, so **he reports back** while the front office keeps shopping him. Any later deal goes through the **Trade Center**."
+        }
+    }
+
+    /// §2.5's explainer line: what committing cost, beside the commit.
+    private func holdoutCostLine(
+        _ resolution: HoldoutEngine.Resolution,
+        salaryDelta: Int,
+        forcedTrade: HoldoutEngine.ForcedTradeOutcome?
+    ) -> String {
+        switch resolution {
+        case .extend:
+            // An "extension" can land at or below what he was already earning
+            // (an expiring star qualifies with no market test at all), and a
+            // raise and a saving are not the same sentence.
+            if salaryDelta < 0 {
+                return "Frees **\(CommittedCapLedger.money(-salaryDelta))** a year on the cap sheet and locks the years in."
+            }
+            if salaryDelta == 0 {
+                return "No change to the annual number — the **years** are what you bought."
+            }
+            return "Adds **\(CommittedCapLedger.money(salaryDelta))** a year to the books and locks the years in."
+        case .signingBonus:
+            return "Cash out of the owner's pocket this year. **Nothing changes on the cap sheet.**"
+        case .mediation:
+            return "Costs nothing. **The pay gap is still there**, and so is next offseason."
+        case .forceTrade:
+            if let forcedTrade, case .traded = forcedTrade {
+                return career.capMode == .sandbox
+                    ? "The deal is done, and the standoff with it."
+                    : "Whatever signing-bonus money is left on his deal accelerates onto your cap sheet as **dead money**."
+            }
+            return "Costs nothing today. You are now negotiating from a position everyone in the league can see."
+        }
+    }
 
     private func resolutionLabel(_ resolution: HoldoutEngine.Resolution) -> String {
         switch resolution {
@@ -512,10 +991,18 @@ struct CareerShellView: View {
         switch resolution {
         case .extend:
             // Market-rate extension: pay the player and add years.
+            //
+            // `max`, not a straight assignment: a star qualifies for a holdout
+            // on an EXPIRING deal with no market test at all, so an ageing man
+            // on a big contract can be worth less than he is paid — and the
+            // "extension" he demanded then quietly CUT his pay, which no agent
+            // would sign and which printed as a negative raise on the result
+            // sheet. An extension never pays a player less than he already got.
+            let newSalary = max(player.annualSalary, market)
             if career.capMode != .sandbox, let team {
-                team.currentCapUsage += market - player.annualSalary
+                team.currentCapUsage += newSalary - player.annualSalary
             }
-            player.annualSalary = market
+            player.annualSalary = newSalary
             player.contractYearsRemaining = max(player.contractYearsRemaining, 3)
             player.morale = min(100, player.morale + 10)
         case .signingBonus:
@@ -524,8 +1011,11 @@ struct CareerShellView: View {
         case .mediation:
             player.morale = min(100, player.morale + 5)
         case .forceTrade:
-            // The trade itself goes through the Trade Center; here the player
-            // just reports back while the front office shops him.
+            // Nothing to apply here. `HoldoutEngine.forceTrade` has already
+            // done the work inside `resolveHoldout`: it either executed a real
+            // trade through `TradeEngine` (player moved, contract re-pointed,
+            // dead money charged, `TradeRecord` written, league news posted) or
+            // found no market and left him exactly where he was.
             break
         }
         try? modelContext.save()
@@ -580,6 +1070,7 @@ struct CareerShellView: View {
             pendingHoldoutPlayer = first
             pendingHoldoutMarketValue = market
             pendingHoldout = holdout
+            shellSheet = .holdout
 
             // Inbox drama: the agent fires the opening shot. APPENDED, not
             // inserted at 0 — the mailbox is stored oldest-first and `InboxView`
@@ -689,7 +1180,7 @@ struct CareerShellView: View {
             career.isGameOver = true
             career.yearsFired += 1
             try? modelContext.save()
-            showFiredScreen = true
+            shellCover = .fired
             return
         }
 
@@ -699,6 +1190,7 @@ struct CareerShellView: View {
            !review.acknowledged,
            review.verdict != .fired {
             pendingOwnerReview = review
+            shellSheet = .ownerReview
         }
 
         // Waiver results: who claimed the men we let go.
@@ -720,14 +1212,14 @@ struct CareerShellView: View {
         if let questions = WeekAdvancer.pendingPressConference {
             pendingPressQuestions = questions
             pendingPressContext = WeekAdvancer.pendingPressContext
-            showWeeklyPressConference = true
+            shellCover = .press
             WeekAdvancer.pendingPressConference = nil
             WeekAdvancer.pendingPressContext = nil
         }
 
         // #38: no press conference intercepting the flow → show the recap now
         // (otherwise it is chained from the press conference's onComplete).
-        if !showWeeklyPressConference {
+        if shellCover != .press {
             presentRoundResultsIfReady()
         }
 
@@ -741,9 +1233,14 @@ struct CareerShellView: View {
         // whenever the player has just stepped into an OTAs or Training Camp
         // week. The prompt itself persists the chosen workout flavor; engine
         // application is handled by VoluntaryWorkoutEngine on next tick.
+        //
+        // Queued, not assigned: the holdout scan below can want the same slot
+        // in this same pass, and the last write would win with nothing to
+        // re-arm the loser. `stageWorkoutPromptIfFree()` hands it the slot at
+        // the end of the pass, or on the dismissal of whatever beat it there.
         if !revealPresented,
            career.currentPhase == .otas || career.currentPhase == .trainingCamp {
-            pendingVoluntaryWorkout = true
+            workoutPromptArmed = true
         }
 
         // FA Drama Phase 5 / R22: when OTAs open, scan for star holdout
@@ -753,6 +1250,9 @@ struct CareerShellView: View {
         if career.currentPhase == .otas && pendingHoldout == nil {
             detectAndShowHoldout()
         }
+
+        // Nothing else claimed the slot this pass → ask the prompt now.
+        stageWorkoutPromptIfFree()
     }
 
     // MARK: - Rookie Class Reveal (TRACK B)
@@ -764,7 +1264,12 @@ struct CareerShellView: View {
     ///   any other presentation for this runloop.
     @discardableResult
     private func presentRookieRevealIfArmed() -> Bool {
-        guard pendingRookieReveal == nil,
+        // The cover slot holds one thing. If the presser already has it, leave
+        // the armed flag alone rather than overwriting the modal in it — the
+        // reveal is a once-per-season event and it will be picked up on the next
+        // advance or on the next open of the save (see the `.task` above).
+        guard shellCover == nil,
+              pendingRookieReveal == nil,
               RookieClassReveal.pendingSeason(careerID: career.id) == career.currentSeason else {
             return false
         }
@@ -775,6 +1280,7 @@ struct CareerShellView: View {
             return false
         }
         pendingRookieReveal = summary
+        shellCover = .rookieReveal
         return true
     }
 
@@ -851,13 +1357,37 @@ struct CareerShellView: View {
 
     // MARK: - Round Recap (#38)
 
+    /// Closes the round recap, remembering where it was asked to go.
+    ///
+    /// The route is *recorded*, not travelled — see ``pendingRoute``.
+    private func closeRoundResults(routingTo route: ShellDestination?) {
+        pendingRoute = route
+        shellCover = nil
+        pendingRoundResults = nil
+    }
+
+    /// Runs the route a closing modal recorded, once that modal is off screen.
+    /// A no-op when nothing asked to travel, which is the common case.
+    private func travelPendingRoute() {
+        guard let route = pendingRoute else { return }
+        pendingRoute = nil
+        navigationPath = NavigationPath()
+        navigationPath.append(route)
+    }
+
     /// Presents the assembled round recap shortly after the current advance's
     /// transitions settle. Safe to call when nothing is pending — it no-ops.
+    ///
+    /// The delay here is NOT the presentation-conflict guard §2.8 retired: this
+    /// call site sits inside `performShellAdvance`, mid-way through a runloop
+    /// that has just rewritten a season's worth of state, and it is waiting for
+    /// that churn rather than for another modal to leave. The presser path no
+    /// longer comes through here at all — it chains off the cover's `onDismiss`.
     private func presentRoundResultsIfReady() {
-        guard pendingRoundResults != nil, !showRoundResults else { return }
+        guard pendingRoundResults != nil, shellCover == nil else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-            if pendingRoundResults != nil {
-                showRoundResults = true
+            if pendingRoundResults != nil, shellCover == nil {
+                shellCover = .roundResults
             }
         }
     }
@@ -970,12 +1500,28 @@ struct CareerShellView: View {
 
     // MARK: - Navigation Destinations
 
+    /// **One case per screen (#105 wave 2, P6).**
+    ///
+    /// The enum used to carry four aliases — `.cap`/`.capOverview` and
+    /// `.prospectList`/`.bigBoard`/`.scouting` — three of which rendered the
+    /// SAME view with a different `markTaskVisited` call inside. That is not a
+    /// destination, it is a side effect wearing a destination's clothes: two
+    /// routes to one screen make the navigation path's own value ambiguous, and
+    /// the visited-marking they differed by belongs on the task, not the route.
+    /// The tab a scouting route wants is carried by `scoutingPendingTab`
+    /// (see `handleTaskNavigation`), which the hub resolves for every one of its
+    /// eleven tabs — so a merged `.scouting` still lands on the right surface.
+    ///
+    /// `.hireHC` / `.hireOC` / `.hireDC` never existed here — they are
+    /// `TaskDestination` cases, and contrary to the redesign brief they are NOT
+    /// unreachable: `TaskGenerator.coachingChangesTasks` still emits all three
+    /// (one per vacant seat). They map to `.coachingStaff` below and stay.
     enum ShellDestination: Hashable {
-        case roster, schedule, standings, draft, scouting, cap
+        case roster, schedule, standings, draft, scouting
         /// Wave 2 UX: the 32-roster league browser (`LeagueRostersView`).
         case leagueRosters
         case depthChart, gamePlan, coachingStaff, hireCoach
-        case prospectList, bigBoard, capOverview, freeAgency
+        case capOverview, freeAgency
         case contractTimeline, mentoring, trades, news
         case ownerMeeting, lockerRoom, inbox, rosterEvaluation
         case franchiseTag
@@ -1038,10 +1584,18 @@ struct CareerShellView: View {
         case .scouting:
             ScoutingHubView(career: career)
             .onAppear {
+                // The merged route (#105 wave 2): `.prospectList` and
+                // `.bigBoard` used to be separate ShellDestinations whose only
+                // difference from this one was which task they ticked. The
+                // route is one screen, so it ticks all three task destinations
+                // — otherwise merging the alias would silently stop completing
+                // "Review the prospect list".
                 markTaskVisited(for: .scouting)
+                markTaskVisited(for: .prospectList)
+                markTaskVisited(for: .bigBoard)
                 refreshTaskCompletionStatus()
             }
-        case .cap, .capOverview:
+        case .capOverview:
             CapOverviewView(career: career)
                 .onAppear {
                     markTaskVisited(for: .capOverview)
@@ -1077,18 +1631,6 @@ struct CareerShellView: View {
                 refreshTaskCompletionStatus()
             }
             .onDisappear {
-                refreshTaskCompletionStatus()
-            }
-        case .prospectList:
-            ScoutingHubView(career: career)
-            .onAppear {
-                markTaskVisited(for: .prospectList)
-                refreshTaskCompletionStatus()
-            }
-        case .bigBoard:
-            ScoutingHubView(career: career)
-            .onAppear {
-                markTaskVisited(for: .bigBoard)
                 refreshTaskCompletionStatus()
             }
         case .freeAgency:
@@ -1447,8 +1989,13 @@ struct CareerShellView: View {
         case .hireOC:             shellDest = .coachingStaff
         case .hireDC:             shellDest = .coachingStaff
         case .scouting:           shellDest = .scouting
-        case .prospectList:       shellDest = .prospectList
-        case .bigBoard:           shellDest = .bigBoard
+        // The board is a TAB of the hub, not a screen of its own (#164/#165).
+        // Both of these used to push their own ShellDestination, which rendered
+        // the hub and then let it pick its own opening tab — so a task named
+        // "Big Board" could land on the combine. The hint names the surface.
+        case .prospectList, .bigBoard:
+            CareerScopedDefaults.set("board", "scoutingPendingTab")
+            shellDest = .scouting
         case .capOverview:        shellDest = .capOverview
         case .freeAgency:         shellDest = .freeAgency
         case .contractTimeline:   shellDest = .contractTimeline
@@ -1466,7 +2013,14 @@ struct CareerShellView: View {
             // saved interview report is visible immediately.
             CareerScopedDefaults.set("interviews", "scoutingPendingTab")
             shellDest = .scouting
-        case .personalWorkouts:   shellDest = .scouting
+        // #105 wave 2: this was the one scouting deep link that pushed the hub
+        // with NO hint at all, so "Schedule personal workouts" landed on
+        // whatever tab the hub's own opening rule chose — the board, or a
+        // combine screen reading "0 of 0 invited". It is the same room the
+        // draft-prep `.workouts` stage names.
+        case .personalWorkouts:
+            CareerScopedDefaults.set("workouts", "scoutingPendingTab")
+            shellDest = .scouting
         // Draft-prep stages (#103). Each lands in the scouting hub with a
         // pending-tab hint; the hub ignores a hint whose tab does not exist yet,
         // so a stage whose screen arrives in a later wave opens the hub rather
@@ -1502,9 +2056,16 @@ struct CareerShellView: View {
         case .gameWeekPrep:        shellDest = .gameWeekPrep
         }
 
-        // Dismiss calendar, then navigate
-        showCalendar = false
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+        // §2.8: the calendar is a sheet and a task destination is a push, so the
+        // two are handed off rather than fired together. With the calendar up
+        // the route waits for its `onDismiss`; called from the dashboard's own
+        // task rail there is no modal on screen and nothing to wait for, so the
+        // push happens immediately instead of after a third of a second nobody
+        // asked for.
+        if shellSheet == .calendar {
+            pendingRoute = shellDest
+            shellSheet = nil
+        } else {
             navigationPath = NavigationPath()
             navigationPath.append(shellDest)
         }
@@ -1894,14 +2455,19 @@ struct CareerShellView: View {
     private func handleBookmarkNavigation(_ bookmark: TopNavigationBar.BookmarkDestination) {
         let dest: ShellDestination
         switch bookmark {
+        // The hub IS the root of this stack (#105 wave 2, P6): it is a
+        // bookmark like the other six, and "go to the hub" is "pop to root".
+        // Returning early rather than pushing a `.hub` destination keeps one
+        // dashboard instance alive instead of stacking a second copy of the
+        // screen the user is already looking at.
+        case .hub:
+            navigationPath = NavigationPath()
+            return
         case .roster:        dest = .roster
-        case .schedule:      dest = .schedule
-        case .standings:     dest = .standings
         case .draft:         dest = .draft
         case .scouting:      dest = .scouting
-        case .cap:           dest = .cap
+        case .cap:           dest = .capOverview
         case .coachingStaff: dest = .coachingStaff
-        case .news:          dest = .news
         case .trades:        dest = .trades
         }
         // Reset to root then push the destination
@@ -2133,6 +2699,67 @@ struct CareerShellView: View {
 
     // MARK: - Data Loading
 
+    /// Re-reads this season's schedule: `currentWeekGame`, `upcomingGames` and
+    /// the week ladder's `seasonFixtures`.
+    ///
+    /// Split out of `loadShellData` because **a coached game never goes through
+    /// an advance**. `CareerDashboardView.finishCoachedGame` persists the score
+    /// and reloads its own state, and nothing told the shell — so the pinned
+    /// ladder went on drawing Sunday's slat as an unplayed fixture ("@ PHI", no
+    /// result line, no W/L tint) while the hero card above it already showed
+    /// the win, and only the next Advance put them back in agreement. That
+    /// disagreement between two week-scoped labels is exactly the bug class the
+    /// band exists to make impossible (#154). One fetch of this season's games,
+    /// so it is cheap enough to run every time a result is recorded.
+    private func reloadSeasonFixtures() {
+        guard let teamID = career.teamID else { return }
+        let cid = career.id
+        let seasonYear = career.currentSeason
+        let gameDescriptor = FetchDescriptor<Game>(predicate: #Predicate {
+            $0.careerID == cid && $0.seasonYear == seasonYear
+        })
+        let allGames = (try? modelContext.fetch(gameDescriptor)) ?? []
+
+        let myGames = allGames.filter { $0.homeTeamID == teamID || $0.awayTeamID == teamID }
+        upcomingGames = myGames
+            .filter { !$0.isPlayed && $0.week >= career.currentWeek }
+            .sorted { $0.week < $1.week }
+        // This week's fixture whether or not it has been played; only once the
+        // week itself is empty (a bye, or the schedule has run out) does the
+        // next one on the card stand in. See `currentWeekGame`.
+        currentWeekGame = myGames.first { $0.week == career.currentWeek } ?? upcomingGames.first
+
+        // The season ladder (P1's week-ladder amendment). Built from the fetch
+        // that is already in hand rather than from a second one, so the band
+        // and the hero card can never name two different opponents — the class
+        // of bug #154 was.
+        // `uniquingKeysWith` rather than `uniqueKeysWithValues`: the latter traps
+        // on a duplicate key, and one malformed schedule row would then take the
+        // whole shell down on open. Two rows in one week is a data fault, not a
+        // crash — keep the first and carry on.
+        //
+        // A `nil` abbreviation would read as a BYE, which a missing team row is
+        // not, so an unresolvable opponent says "TBD" instead. The bye is the
+        // week that has no row at all.
+        seasonFixtures = Dictionary(
+            myGames.map { game in
+                let isHome = game.homeTeamID == teamID
+                let opponentID = isHome ? game.awayTeamID : game.homeTeamID
+                return (
+                    game.week,
+                    SeasonWeekBand.Fixture(
+                        week: game.week,
+                        opponentAbbreviation: allTeamsByID[opponentID]?.abbreviation ?? "TBD",
+                        isHome: isHome,
+                        ourScore: isHome ? game.homeScore : game.awayScore,
+                        theirScore: isHome ? game.awayScore : game.homeScore
+                    )
+                )
+            },
+            uniquingKeysWith: { first, _ in first }
+        )
+    }
+
     private func loadShellData() {
         // MULTI-SAVE ISOLATION — must run FIRST.
         //
@@ -2181,20 +2808,10 @@ struct CareerShellView: View {
 
         team = allTeamsByID[teamID]
 
-        let seasonYear = career.currentSeason
-        let gameDescriptor = FetchDescriptor<Game>(predicate: #Predicate {
-            $0.careerID == cid && $0.seasonYear == seasonYear
-        })
-        let allGames = (try? modelContext.fetch(gameDescriptor)) ?? []
-
-        let myGames = allGames.filter { $0.homeTeamID == teamID || $0.awayTeamID == teamID }
-        upcomingGames = myGames
-            .filter { !$0.isPlayed && $0.week >= career.currentWeek }
-            .sorted { $0.week < $1.week }
-        // This week's fixture whether or not it has been played; only once the
-        // week itself is empty (a bye, or the schedule has run out) does the
-        // next one on the card stand in. See `currentWeekGame`.
-        currentWeekGame = myGames.first { $0.week == career.currentWeek } ?? upcomingGames.first
+        // The schedule: this week's fixture, the games still to come, and the
+        // week ladder's slats. Its own function because a coached game has to
+        // refresh it without reloading the whole shell (see below).
+        reloadSeasonFixtures()
 
         // Generate tasks on initial load, then re-derive completion from
         // persisted game state so a relaunch doesn't reset finished tasks.

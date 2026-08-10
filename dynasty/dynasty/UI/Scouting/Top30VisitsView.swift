@@ -1228,22 +1228,19 @@ struct Top30BatchReportView: View {
         return PositionGradeCalculator.gradeColorForLetter(band.midGrade.rawValue)
     }
 
+    /// Team fit is printed on this very row as a percentage, so it takes the
+    /// shared percentage ladder. It used to run on private 75/55/40 bands with
+    /// `accentGold` in the middle — the row therefore showed "62%" in the hue
+    /// P7 reserves for "primary/current", two inches from a grade band that
+    /// meant something else by the same colour.
     private func fitColor(_ fit: Double) -> Color {
-        switch fit {
-        case 0.75...: return Color.success
-        case 0.55..<0.75: return Color.accentGold
-        case 0.40..<0.55: return Color.warning
-        default: return Color.danger
-        }
+        Color.forRating(Int((fit * 100).rounded()), scale: .percent)
     }
 
+    /// Football IQ is a 0–99 player attribute — the plainest case there is for
+    /// the shared ladder.
     private func iqColor(_ iq: Int) -> Color {
-        switch iq {
-        case 85...: return Color.success
-        case 75..<85: return Color.accentGold
-        case 60..<75: return Color.warning
-        default: return Color.danger
-        }
+        Color.forRating(iq)
     }
 
     private func personalityColor(_ archetype: PersonalityArchetype) -> Color {

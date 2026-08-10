@@ -156,61 +156,35 @@ struct NewsView: View {
         .task { loadNews() }
     }
 
-    // MARK: - Filter Bar
+    // MARK: - Filter strip (§2.2, wave 5b)
+    //
+    // The fifth hand-rolled tab bar, retired. It was already the closest of the
+    // five to the house style — blue selected capsule, an icon, a count — which
+    // is exactly why it had to go through `DSLensTabs` rather than be left
+    // alone: "nearly the same" is what makes a language unreadable. Two real
+    // defects went with it, both §2.12: a 36 pt target on a nine-item strip, and
+    // an 11 pt count bubble that painted `backgroundPrimary` at 25 % opacity on
+    // an `accentBlue` fill when selected.
+
+    private func filterLabel(_ filter: NewsFilter) -> String {
+        let count = itemsMatching(filter).count
+        return count > 0 ? "\(filter.label) \(count)" : filter.label
+    }
 
     private var filterBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(NewsFilter.allCases) { filter in
-                    filterChip(filter)
-                }
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
-        }
+        DSLensTabs(
+            selection: $activeFilter,
+            lenses: NewsFilter.allCases,
+            label: filterLabel,
+            icon: { $0.iconName },
+            title: "Feed"
+        )
+        .padding(.horizontal, DSSpacing.md)
+        .padding(.vertical, DSSpacing.xs)
         .background(Color.backgroundSecondary)
         .overlay(alignment: .bottom) {
             Divider().overlay(Color.surfaceBorder)
         }
-    }
-
-    private func filterChip(_ filter: NewsFilter) -> some View {
-        let isSelected = activeFilter == filter
-        let count = itemsMatching(filter).count
-        return Button {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                activeFilter = filter
-            }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: filter.iconName)
-                    .font(.system(size: 11, weight: .semibold))
-                Text(filter.label)
-                    .font(.system(size: 14, weight: isSelected ? .semibold : .regular))
-                if count > 0 {
-                    Text("\(count)")
-                        .font(.system(size: 11, weight: .semibold))
-                        .monospacedDigit()
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(
-                            Capsule().fill(
-                                isSelected
-                                    ? Color.backgroundPrimary.opacity(0.25)
-                                    : Color.backgroundPrimary.opacity(0.5)
-                            )
-                        )
-                }
-            }
-            .foregroundStyle(isSelected ? Color.backgroundPrimary : Color.textSecondary)
-            .padding(.horizontal, 14)
-            .frame(minHeight: 36)
-            .background(
-                Capsule()
-                    .fill(isSelected ? Color.accentBlue : Color.backgroundTertiary)
-            )
-        }
-        .buttonStyle(.plain)
     }
 
     // MARK: - News List
@@ -367,22 +341,26 @@ struct NewsView: View {
 
     // MARK: Empty State
 
+    /// §2.7: icon → title → what would fill this → the action that fills it.
+    /// The fourth beat is what the hand-rolled state was missing: an empty
+    /// *filter* has an obvious button behind it, and the user had to work out
+    /// for himself that the strip above was the thing to touch.
     private var emptyState: some View {
-        VStack(spacing: 16) {
-            Spacer()
-            Image(systemName: activeFilter == .all ? "newspaper" : activeFilter.iconName)
-                .font(.system(size: 48))
-                .foregroundStyle(Color.textTertiary)
-            Text(emptyStateTitle)
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(Color.textSecondary)
-            Text(emptyStateMessage)
-                .font(.subheadline)
-                .foregroundStyle(Color.textTertiary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 40)
-            Spacer()
+        VStack {
+            Spacer(minLength: 0)
+            DSEmptyState(
+                icon: activeFilter == .all ? "newspaper" : activeFilter.iconName,
+                title: emptyStateTitle,
+                message: emptyStateMessage,
+                actions: activeFilter == .all
+                    ? []
+                    : [.init(title: "Show the whole feed", systemImage: "newspaper", isPrimary: true) {
+                        withAnimation(.easeInOut(duration: 0.2)) { activeFilter = .all }
+                    }]
+            )
+            Spacer(minLength: 0)
         }
+        .frame(maxWidth: .infinity)
     }
 
     private var emptyStateTitle: String {
@@ -505,52 +483,45 @@ private struct NewsItemCard: View {
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 0) {
-                // Left accent strip — gold for "my team", flame-gold for pinned.
+                // Left accent strip. Wave 5b: BLUE, not gold. "This story is
+                // about your club" is the definition of informational/selected
+                // (P7), and gold has exactly three jobs — commit fill,
+                // current-step marker, live indicator — none of which a news
+                // card performs. Between this strip, the TRENDING flag, the MY
+                // TEAM chip and the card border, one screen was painting four
+                // separate golds that meant four separate things.
                 if isPinned || isMyTeam {
                     Rectangle()
-                        .fill(Color.accentGold)
+                        .fill(Color.accentBlue)
                         .frame(width: 4)
                         .clipShape(
                             UnevenRoundedRectangle(
-                                topLeadingRadius: 16,
-                                bottomLeadingRadius: 16,
+                                topLeadingRadius: DSCornerRadius.card,
+                                bottomLeadingRadius: DSCornerRadius.card,
                                 bottomTrailingRadius: 0,
                                 topTrailingRadius: 0
                             )
                         )
                 }
 
-                VStack(alignment: .leading, spacing: 8) {
-                    // Header row: pinned flag + category badge + sentiment + week
-                    HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: DSSpacing.xs) {
+                    // Header row: trending + category + my-team + sentiment + week.
+                    // The two hand-drawn markers were 9 and 10 pt, both under
+                    // the display floor (P7's corollary); they are `DSStatusPill`
+                    // now, which clamps at 11.
+                    HStack(spacing: DSSpacing.xs) {
                         if isPinned {
-                            HStack(spacing: 3) {
-                                Image(systemName: "flame.fill")
-                                    .font(.system(size: 10, weight: .bold))
-                                Text("TRENDING")
-                                    .font(.system(size: 10, weight: .heavy))
-                                    .tracking(0.6)
-                            }
-                            .foregroundStyle(Color.accentGold)
+                            DSStatusPill(label: "Trending", tone: .info, showsDot: false)
                         }
                         categoryBadge(item.category)
                         if isMyTeam {
-                            Text("MY TEAM")
-                                .font(.system(size: 9, weight: .heavy))
-                                .tracking(0.5)
-                                .foregroundStyle(Color.accentGold)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(
-                                    Capsule().stroke(Color.accentGold.opacity(0.5), lineWidth: 1)
-                                )
+                            DSStatusPill(label: "My team", tone: .neutral, showsDot: false)
                         }
                         Spacer()
                         sentimentDot(item.sentiment)
                         Text("Wk \(item.week)")
-                            .font(.caption)
-                            .foregroundStyle(Color.textTertiary)
-                            .monospacedDigit()
+                            .font(DSType.display(DSType.Size.caption, .semibold))
+                            .foregroundStyle(Color.textTertiaryReadable)
                     }
 
                     // Headline (with the subject's portrait when the story is
@@ -605,8 +576,8 @@ private struct NewsItemCard: View {
     }
 
     private var borderColor: Color {
-        if isPinned { return Color.accentGold.opacity(0.55) }
-        if isMyTeam { return Color.accentGold.opacity(0.4) }
+        if isPinned { return Color.accentBlue.opacity(0.55) }
+        if isMyTeam { return Color.accentBlue.opacity(0.4) }
         return Color.surfaceBorder
     }
 
@@ -614,15 +585,19 @@ private struct NewsItemCard: View {
         isPinned ? 1.25 : 1
     }
 
+    /// The one badge on the card that keeps a hue of its own: category is a
+    /// taxonomy, not a verdict, so it is not on the status palette. `.white` is
+    /// gone — P7's "a screen never picks a colour because it looked nice" names
+    /// raw white on a tinted chip as the tell.
     private func categoryBadge(_ category: NewsCategory) -> some View {
-        Text(category.displayName)
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(.white)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(
-                Capsule().fill(category.badgeColor)
-            )
+        Text(category.displayName.uppercased())
+            .font(DSType.display(DSType.Size.caption, .heavy))
+            .tracking(0.4)
+            .foregroundStyle(Color.textPrimary)
+            .lineLimit(1)
+            .padding(.horizontal, DSSpacing.xs)
+            .padding(.vertical, 2)  // ds-lint:allow(spacing) badge must not grow the header row
+            .background(Capsule().fill(category.badgeColor))
     }
 
     private func sentimentDot(_ sentiment: NewsSentiment) -> some View {

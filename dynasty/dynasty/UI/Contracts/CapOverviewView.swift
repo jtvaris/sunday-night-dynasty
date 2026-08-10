@@ -1058,13 +1058,18 @@ struct CapOverviewView: View {
         }
     }
 
+    /// Contract runway is a countdown in years, not a rating, so P7 rule 2
+    /// applies: the status palette at a stated threshold, never the 0–99 rating
+    /// ladder. Gold left this ladder because P7 reserves it for
+    /// "primary/current" — a two-year deal is neither.
+    ///
+    /// Thresholds are the league rule and stay here; the twin in
+    /// `PlayerContractView.yearsColor` states the same three.
     private func yearsColor(_ years: Int) -> Color {
-        switch years {
-        case 3...: return .success
-        case 2:    return .accentGold
-        case 1:    return .warning
-        default:   return .danger
-        }
+        if years >= 3 { return .forStatus(.ok) }      // comfortably under contract
+        if years == 2 { return .forStatus(.neutral) } // no decision due yet
+        if years == 1 { return .forStatus(.warn) }    // expiring — decide this year
+        return .forStatus(.bad)                       // already off the books
     }
 
     private func formatMillions(_ thousands: Int) -> String {

@@ -1,16 +1,300 @@
 import SwiftUI
 import SwiftData
 
+// MARK: - The study-density detail layout (UI_REDESIGN_VISION §4 Wave 4)
+//
+// **One layout, not three forks.** `PlayerDetailView`, `ProspectDetailView` and
+// `CoachDetailView` are the same screen wearing three costumes: a subject, a
+// pile of grouped facts about him, and a short list of things you can do to
+// him. Before this wave they were an `.insetGrouped` `List` (coach), an
+// `.insetGrouped` `List` with a bespoke bottom bar (prospect), and an
+// `.insetGrouped` `List` behind a *three-way* responsive `if` that shipped four
+// different section orders (player). Section headers came out of
+// `Section("String")`, `Section(header:)` and hand-rolled `HStack`s in the same
+// file.
+//
+//   hero        the subject, on `backgroundPlate`, full-bleed
+//   columns     grouped cards, 3 / 2 / 1 by available width
+//   DSActionBar the one commit surface (§2.5, P5)
+//
+// These types are deliberately declared here rather than in `UI/Common/`: wave
+// 4 owns exactly these three files, and the promotion to a shared
+// `UI/Common/DSDetailLayout.swift` is a file-move with no behaviour in it. They
+// are `internal`, so `ProspectDetailView` and `CoachDetailView` use them today.
+
+/// Available content width → number of card columns.
+///
+/// Width, not size class. The three screens used `verticalSizeClass == .compact`
+/// to mean "landscape", which is true on iPhone and **false on every iPad in
+/// every orientation** — so the player card's three-column landscape branch was
+/// dead code on the only device this game ships for, and its iPad-portrait
+/// branch was rendering in landscape too.
+enum DSDetailGrid {
+    /// 1000 — three columns. iPad Pro 11" landscape (1194) and up.
+    static let threeColumnWidth: CGFloat = 1000
+    /// 680 — two columns. iPad portrait (834) and split-screen 2/3.
+    static let twoColumnWidth: CGFloat = 680
+
+    static func columns(for width: CGFloat) -> Int {
+        if width >= threeColumnWidth { return 3 }
+        if width >= twoColumnWidth { return 2 }
+        return 1
+    }
+}
+
+private struct DSDetailWidthKey: EnvironmentKey {
+    static let defaultValue: CGFloat = 0
+}
+
+extension EnvironmentValues {
+    /// The detail page's measured content width, published by ``DSDetailPage``
+    /// and read by ``DSDetailColumns``.
+    var dsDetailWidth: CGFloat {
+        get { self[DSDetailWidthKey.self] }
+        set { self[DSDetailWidthKey.self] = newValue }
+    }
+}
+
+/// The page frame: plate-backed hero, then the card columns, on the page
+/// surface. Mount `DSActionBar` with `.safeAreaInset(edge: .bottom)` at the
+/// call site so it pins rather than scrolls (P5 — the audit found the advance
+/// on draft prep parked inside a header a 350-row list scrolled away).
+struct DSDetailPage<Hero: View, Cards: View>: View {
+    /// The page surface. `.clear` lets a call site paint its own backdrop
+    /// behind the page — the coach card's locker-room plate is the one screen
+    /// that does, and an unconditional opaque fill here painted straight over
+    /// it (the image was in the tree and invisible).
+    var surface: Color = .backgroundPrimary
+    @ViewBuilder var hero: () -> Hero
+    @ViewBuilder var cards: () -> Cards
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .top) {
+                surface.ignoresSafeArea()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: DSSpacing.md) {
+                        hero()
+                        cards()
+                            .padding(.horizontal, DSSpacing.md)
+                    }
+                    .padding(.bottom, DSSpacing.lg)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .environment(\.dsDetailWidth, geo.size.width)
+        }
+    }
+}
+
+/// The subject strip. Full-bleed on `backgroundPlate` — §2.11's value floor, so
+/// the working area below reads as lit from within rather than as one flat
+/// grey-blue.
+struct DSDetailHero<Content: View>: View {
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        content()
+            .padding(.horizontal, DSSpacing.md)
+            .padding(.vertical, DSSpacing.sm)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.backgroundPlate)
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(Color.surfaceBorder).frame(height: 1)
+            }
+    }
+}
+
+/// Three column slots that collapse by width.
+///
+///   3 columns   lead | middle | trail
+///   2 columns   lead | middle + trail
+///   1 column    lead, middle, trail stacked
+///
+/// The *order within a column* is therefore the same at every width, which is
+/// what stops the "same screen, four section orders" problem the player card
+/// had. `lead` is where the screen's subject card goes.
+struct DSDetailColumns<Lead: View, Middle: View, Trail: View>: View {
+    @Environment(\.dsDetailWidth) private var width
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    @ViewBuilder var lead: () -> Lead
+    @ViewBuilder var middle: () -> Middle
+    @ViewBuilder var trail: () -> Trail
+
+    /// Falls back to the size class for the first layout pass, before the
+    /// geometry reader has published a width — so an iPad opens on two columns
+    /// and settles to three rather than snapping up from one.
+    private var columnCount: Int {
+        width > 0 ? DSDetailGrid.columns(for: width) : (horizontalSizeClass == .regular ? 2 : 1)
+    }
+
+    var body: some View {
+        switch columnCount {
+        case 3:
+            HStack(alignment: .top, spacing: DSSpacing.md) {
+                column { lead() }
+                column { middle() }
+                column { trail() }
+            }
+        case 2:
+            HStack(alignment: .top, spacing: DSSpacing.md) {
+                column { lead() }
+                column { middle(); trail() }
+            }
+        default:
+            VStack(alignment: .leading, spacing: DSSpacing.md) {
+                lead(); middle(); trail()
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func column<C: View>(@ViewBuilder _ content: () -> C) -> some View {
+        VStack(alignment: .leading, spacing: DSSpacing.md) {
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// One grouped card. `SectionHeaderText` head, optional one-line explainer
+/// (§2.4 — what this card is and what it does), panel surface, **no border**.
+///
+/// `isSubject` marks the single bordered, `DSElevation.card`-lifted insert the
+/// screen is about (§2.11): the contract on the player card, the scouting
+/// report on the prospect card, the projected impact on the coach card. Exactly
+/// one per screen.
+struct DSDetailCard<Content: View>: View {
+    let title: String
+    var icon: String?
+    var explainer: String?
+    var isSubject: Bool = false
+    @ViewBuilder var content: () -> Content
+
+    init(
+        _ title: String,
+        icon: String? = nil,
+        explainer: String? = nil,
+        isSubject: Bool = false,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.title = title
+        self.icon = icon
+        self.explainer = explainer
+        self.isSubject = isSubject
+        self.content = content
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DSSpacing.xs) {
+            HStack(spacing: DSSpacing.xxs) {
+                if let icon {
+                    Image(systemName: icon)
+                        .font(.system(size: DSType.Size.caption, weight: .semibold))
+                        .foregroundStyle(Color.accentGold)
+                }
+                SectionHeaderText(title: title)
+                Spacer(minLength: 0)
+            }
+            if let explainer {
+                // `LocalizedStringKey`, so `**…**` emphasises the load-bearing
+                // noun the way §2.4 asks and the way `DSActionBar.Explainer`
+                // already does. Rendered as a plain `String` the asterisks
+                // printed literally — two of the shipped explainers were
+                // already written with them.
+                Text(LocalizedStringKey(explainer))
+                    .font(.system(size: DSType.Size.footnote))
+                    .foregroundStyle(Color.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel(DSActionBar.Explainer.spoken(explainer))
+            }
+            content()
+        }
+        .padding(DSSpacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: DSCornerRadius.card)
+                .fill(Color.backgroundSecondary)
+        )
+        .overlay {
+            if isSubject {
+                RoundedRectangle(cornerRadius: DSCornerRadius.card)
+                    .strokeBorder(Color.accentGold.opacity(0.45), lineWidth: 1)
+            }
+        }
+        .dsElevation(isSubject ? .card : .none)
+    }
+}
+
+/// `label —————— value`, the one label/value line inside a card.
+///
+/// Replaces `LabeledContent`, whose `.insetGrouped` chrome is exactly the
+/// "stock form" look wave 4 takes off the coach card.
+struct DSDetailRow<Value: View>: View {
+    let label: String
+    @ViewBuilder var value: () -> Value
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: DSSpacing.xs) {
+            Text(label)
+                .font(.system(size: DSType.Size.body))
+                .foregroundStyle(Color.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: DSSpacing.xs)
+            value()
+                .multilineTextAlignment(.trailing)
+        }
+        .frame(minHeight: 26)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+extension DSDetailRow where Value == Text {
+    /// The plain form: a string value in one tint.
+    init(_ label: String, _ text: String, tint: Color = .textPrimary, weight: Font.Weight = .semibold) {
+        self.label = label
+        self.value = {
+            Text(text)
+                .font(.system(size: DSType.Size.body, weight: weight).monospacedDigit())
+                .foregroundStyle(tint)
+        }
+    }
+}
+
+/// The small "what this means" line under a figure. Icon + prose in
+/// `textTertiaryReadable` — the quietest tier that still clears AA (§2.11).
+struct DSDetailNote: View {
+    let text: String
+    var icon: String = "info.circle"
+    var tint: Color = .textTertiaryReadable
+
+    var body: some View {
+        HStack(alignment: .top, spacing: DSSpacing.xxs) {
+            Image(systemName: icon)
+                .font(.system(size: DSType.Size.micro))
+                .foregroundStyle(tint)
+            Text(text)
+                .font(.system(size: DSType.Size.caption))
+                .foregroundStyle(Color.textTertiaryReadable)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+}
+
 // MARK: - Attribute Color Helper
 
-/// Color codes attribute values: green (80+), gold (60-79), orange (40-59), red (<40).
+/// Color codes attribute values on the **shared rating ladder**.
+///
+/// Was a bespoke four-band `switch` (80 green / 60 gold / 40 yellow / red) —
+/// one of the 21 rating→Color functions §4 wave 4 retires. It disagreed with
+/// `Color.forRating` about every value between 60 and 80, which is where most
+/// of a roster lives, so the same 72 was gold in the attribute grid and blue in
+/// the OVR circle five inches above it.
 private func colorForAttribute(_ value: Int) -> Color {
-    switch value {
-    case 80...:   return .success
-    case 60..<80: return .accentGold
-    case 40..<60: return .warning
-    default:      return .danger
-    }
+    Color.forRating(value)
 }
 
 // MARK: - Position Compatibility Matrix (#176)
@@ -162,15 +446,30 @@ struct PlayerDetailView: View {
         return RookieFog.isFogged(player, season: career.currentSeason, phase: career.currentPhase)
     }
 
+    // Width, not size class, decides the layout (see ``DSDetailGrid``). The
+    // horizontal class survives for the two *content* calls below;
+    // `verticalSizeClass` is gone with the branches that misread it as
+    // "landscape".
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    @Environment(\.verticalSizeClass) private var verticalSizeClass
     /// Needed by the contract close: booking a negotiated deal writes the club's
     /// cap ledger and the player's detailed `Contract` row, not just two fields
     /// on the player.
     @Environment(\.modelContext) private var modelContext
 
     @State private var showCutConfirmation = false
-    @State private var showPositionChange = false
+
+    /// **The one sheet slot on this screen** — an enum, not a `Bool`.
+    ///
+    /// Repeat bug class: several screens shipped two `.sheet(isPresented:)`
+    /// modifiers on one node, SwiftUI honoured only the last written, and the
+    /// others dismissed silently. One `item:`-driven slot makes a second sheet
+    /// unrepresentable rather than silently resolved.
+    private enum CardSheet: String, Identifiable {
+        case positionChange
+        var id: String { rawValue }
+    }
+
+    @State private var activeSheet: CardSheet?
 
     /// **Which contract conversation is open** (#127).
     ///
@@ -224,122 +523,57 @@ struct PlayerDetailView: View {
         return TeamColors.color(for: team.abbreviation)
     }
 
-    /// True when in landscape on iPad.
-    private var isLandscape: Bool {
-        verticalSizeClass == .compact
-    }
-
-    /// True for iPad regular-width layouts.
+    /// True for iPad-class widths. Kept only for the handful of *content*
+    /// decisions that still want it (whether the hometown fits on the identity
+    /// line); the page's column count comes from ``DSDetailGrid``, measured
+    /// width, not from a size class.
     private var isWideLayout: Bool {
         horizontalSizeClass == .regular
     }
 
-    /// Number of columns for attribute grids: 3 in landscape, 2 on wide, 1 on compact.
+    /// Columns inside an attribute card. Two once there is room, one when the
+    /// card is in a single-column page.
     private var attributeColumns: Int {
-        if isLandscape { return 3 }
-        if isWideLayout { return 2 }
-        return 1
+        isWideLayout ? 2 : 1
     }
 
     var body: some View {
-        ZStack {
-            Color.backgroundPrimary.ignoresSafeArea()
-
-            if isLandscape {
-                // Landscape: two-column master layout
-                HStack(alignment: .top, spacing: 0) {
-                    // Left column: header + compact info + actions
-                    List {
-                        playerHeader
-                        schemeMismatchSection
-                        compactOverviewContractRow
-                        compactDevelopmentRow
-                        seasonStatsSummarySection
-                        careerStatsHistorySection
-                        actionButtonsSection
-                        versatilitySection
-                        injuryHistorySection
-                    }
-                    .scrollContentBackground(.hidden)
-                    .listStyle(.insetGrouped)
-                    .frame(maxWidth: .infinity)
-
-                    // Right column: attributes + personality + scheme
-                    List {
-                        // TRACK B: a rookie who has not reported to camp has no
-                        // exact numbers to show — the whole attribute stack is
-                        // replaced by the scouting report until he does.
-                        if isRookieFogged {
-                            preCampScoutingReportSection
-                        } else {
-                            physicalAttributesGrid
-                            mentalAttributesGrid
-                            positionAttributesGridSection
-                        }
-                        personalitySection
-                        schemeFitSection
-                    }
-                    .scrollContentBackground(.hidden)
-                    .listStyle(.insetGrouped)
-                    .frame(maxWidth: .infinity)
+        DSDetailPage {
+            playerHero
+        } cards: {
+            DSDetailColumns {
+                // LEAD — who he is under contract to and what he is worth.
+                // The contract card is this screen's subject (§2.11).
+                schemeMismatchCard
+                contractCard
+                overviewCard
+                if !isRookieFogged { tradeValueCard }
+            } middle: {
+                // MIDDLE — what he has done and where he is going.
+                developmentCard
+                seasonStatsCard
+                careerStatsCard
+                injuryHistoryCard
+            } trail: {
+                // TRAIL — what he is made of.
+                //
+                // TRACK B: a rookie who has not reported to camp has no exact
+                // numbers to show, so the whole attribute stack is replaced by
+                // the scouting report until he does. The fog gate lives here
+                // once, not once per responsive branch.
+                if isRookieFogged {
+                    preCampScoutingReportCard
+                } else {
+                    physicalAttributesCard
+                    mentalAttributesCard
+                    positionAttributesCards
                 }
-            } else if isWideLayout {
-                // iPad portrait: two-column grid for compact sections
-                List {
-                    playerHeader
-                    schemeMismatchSection
-                    compactOverviewContractRow
-                    compactDevelopmentRow
-                    seasonStatsSummarySection
-                    careerStatsHistorySection
-                    // Trade value is a direct read-through of the hidden OVR.
-                    if !isRookieFogged {
-                        tradeValueSection
-                    }
-                    actionButtonsSection
-                    versatilitySection
-                    injuryHistorySection
-                    if isRookieFogged {
-                        preCampScoutingReportSection
-                    } else {
-                        physicalAttributesGrid
-                        mentalAttributesGrid
-                        positionAttributesGridSection
-                    }
-                    personalitySection
-                    schemeFitSection
-                }
-                .scrollContentBackground(.hidden)
-                .listStyle(.insetGrouped)
-            } else {
-                List {
-                    playerHeader
-                    schemeMismatchSection
-                    compactOverviewContractRow
-                    compactDevelopmentRow
-                    seasonStatsSummarySection
-                    careerStatsHistorySection
-                    // Trade value is a direct read-through of the hidden OVR.
-                    if !isRookieFogged {
-                        tradeValueSection
-                    }
-                    actionButtonsSection
-                    versatilitySection
-                    injuryHistorySection
-                    if isRookieFogged {
-                        preCampScoutingReportSection
-                    } else {
-                        physicalSection
-                        mentalSection
-                        positionAttributesSection
-                    }
-                    personalitySection
-                    schemeFitSection
-                }
-                .scrollContentBackground(.hidden)
-                .listStyle(.insetGrouped)
+                personalityCard
+                schemeFitCard
+                versatilityCard
             }
         }
+        .safeAreaInset(edge: .bottom) { playerActionBar }
         .navigationTitle(player.fullName)
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
@@ -370,8 +604,10 @@ struct PlayerDetailView: View {
         } message: {
             Text("Are you sure you want to release \(player.fullName)? This will remove them from your roster and incur a dead cap hit.")
         }
-        .sheet(isPresented: $showPositionChange) {
-            positionChangeSheet
+        .sheet(item: $activeSheet) { sheet in
+            switch sheet {
+            case .positionChange: positionChangeSheet
+            }
         }
         .fullScreenCover(item: $contractTalk) { talk in
             // ContractNegotiationView supplies its own "Close" toolbar item, so
@@ -424,19 +660,19 @@ struct PlayerDetailView: View {
         }
     }
 
-    // MARK: - Player Header Card
+    // MARK: - Hero (§4 wave 4)
 
-    private var playerHeader: some View {
-        Section {
-            VStack(spacing: 12) {
-                HStack(spacing: 16) {
-                    // Portrait. Shared by all three responsive layouts
-                    // (landscape split, iPad portrait, compact) because they all
-                    // render this same `playerHeader` section.
+    /// The subject strip. One hero, one order, at every width — the four
+    /// responsive `List` branches this replaces each printed a different one.
+    private var playerHero: some View {
+        DSDetailHero {
+            VStack(alignment: .leading, spacing: DSSpacing.sm) {
+                HStack(spacing: DSSpacing.md) {
                     PersonFaceView(player: player, size: .large, ringColor: teamRingColor)
 
-                    // Large OVR circle with ranking
-                    VStack(spacing: 4) {
+                    // The screen's one hero numeral (§2.10: the most important
+                    // number on a screen is the biggest one on it).
+                    VStack(spacing: DSSpacing.xxs) {
                         ZStack(alignment: .topTrailing) {
                             Circle()
                                 .strokeBorder(
@@ -445,64 +681,64 @@ struct PlayerDetailView: View {
                                         : Color.forRating(player.overall),
                                     lineWidth: 3
                                 )
-                                .frame(width: 64, height: 64)
+                                .frame(width: 76, height: 76)
                             VStack(spacing: 0) {
                                 if isRookieFogged {
                                     // The band his scouts filed, not a number
                                     // nobody in the building has earned yet.
                                     Text(RookieFog.bandText(for: player))
-                                        .font(.headline.weight(.heavy))
+                                        .font(.system(size: DSType.Size.title2, weight: .heavy))
                                         .foregroundStyle(RookieFog.source(for: player).tint)
                                         .lineLimit(1)
                                         .minimumScaleFactor(0.6)
-                                        .padding(.horizontal, 4)
+                                        .padding(.horizontal, DSSpacing.xxs)
                                     Text("GRADE")
-                                        .font(.system(size: 9, weight: .medium))
-                                        .foregroundStyle(Color.textTertiary)
+                                        .font(.system(size: DSType.Size.micro, weight: .semibold))
+                                        .tracking(0.6)
+                                        .foregroundStyle(Color.textTertiaryReadable)
                                 } else {
                                     Text("\(player.overall)")
-                                        .font(.title2.monospacedDigit())
-                                        .fontWeight(.bold)
+                                        .font(.system(size: DSType.Size.title1, weight: .heavy).monospacedDigit())
                                         .foregroundStyle(Color.forRating(player.overall))
                                     Text("OVR")
-                                        .font(.system(size: 9, weight: .medium))
-                                        .foregroundStyle(Color.textTertiary)
+                                        .font(.system(size: DSType.Size.micro, weight: .semibold))
+                                        .tracking(0.6)
+                                        .foregroundStyle(Color.textTertiaryReadable)
                                 }
                             }
-                            .frame(width: 64, height: 64)
+                            .frame(width: 76, height: 76)
 
                             // Career trend arrow — shows whether the player is rising,
                             // in prime, or declining based on age vs position peak window.
                             Image(systemName: careerTrendArrow.icon)
-                                .font(.system(size: 11, weight: .heavy))
-                                .foregroundStyle(Color.backgroundPrimary)
-                                .padding(4)
+                                .font(.system(size: DSType.Size.caption, weight: .heavy))
+                                .foregroundStyle(Color.backgroundPlate)
+                                .padding(DSSpacing.xxs)
                                 .background(careerTrendArrow.color, in: Circle())
                                 .accessibilityLabel("Career trend: \(careerTrendArrow.label)")
                                 .offset(x: 4, y: -4)
                         }
-                        // League ranking (#33) — promoted to a clear gold pill for at-a-glance prestige.
-                        // Withheld while the rookie is fogged: "#3 QB" is the
-                        // hidden number read back out through the league sort.
+                        // League ranking (#33). Withheld while the rookie is
+                        // fogged: "#3 QB" is the hidden number read back out
+                        // through the league sort.
                         if let rankInfo = leagueRanking, !isRookieFogged {
                             Text(rankInfo)
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundStyle(Color.backgroundPrimary)
-                                .padding(.horizontal, 6)
+                                .font(.system(size: DSType.Size.caption, weight: .heavy))
+                                .foregroundStyle(Color.backgroundPlate)
+                                .padding(.horizontal, DSSpacing.xs)
                                 .padding(.vertical, 2)
                                 .background(Color.accentGold, in: Capsule())
                         }
                     }
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: DSSpacing.xxs) {
+                        HStack(spacing: DSSpacing.xs) {
                             positionLabel
                             developmentBadge
                         }
 
                         Text(player.fullName)
-                            .font(.title3)
-                            .fontWeight(.bold)
+                            .font(.system(size: DSType.Size.title2, weight: .bold))
                             .foregroundStyle(Color.textPrimary)
 
                         // WHOSE player this is. The league browser makes every
@@ -513,7 +749,7 @@ struct PlayerDetailView: View {
                         // silently implied Joe Burrow was on our roster.
                         teamAffiliationChip
 
-                        HStack(spacing: 12) {
+                        HStack(spacing: DSSpacing.sm) {
                             Label("Age \(player.age)", systemImage: "calendar")
                             Label(
                                 player.yearsPro == 0 ? "Rookie" : "\(player.yearsPro)yr pro",
@@ -522,22 +758,21 @@ struct PlayerDetailView: View {
                             // iPad has the width to keep "where he's from" on the
                             // same identity line; compact widths would truncate
                             // both it and "9yr pro", so there it drops below.
-                            if isWideLayout || isLandscape {
+                            if isWideLayout {
                                 hometownLabel
                             }
                         }
-                        .font(.caption)
+                        .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(Color.textSecondary)
 
-                        if !(isWideLayout || isLandscape) {
+                        if !isWideLayout {
                             hometownLabel
-                                .font(.caption)
+                                .font(.system(size: DSType.Size.footnote))
                                 .foregroundStyle(Color.textSecondary)
                         }
-                        // (Trade value moved to dedicated section below — was duplicated.)
                     }
 
-                    Spacer()
+                    Spacer(minLength: 0)
                 }
 
                 // Draft grade badges (Public / True / Hidden Gem) — only shown
@@ -554,9 +789,7 @@ struct PlayerDetailView: View {
                 // number no card repeats.
                 healthPill
             }
-            .padding(.vertical, 4)
         }
-        .listRowBackground(Color.backgroundSecondary)
     }
 
     /// The club this player is actually under contract to. `nil` for a free agent.
@@ -583,7 +816,7 @@ struct PlayerDetailView: View {
             let tint = TeamColors.color(for: team.abbreviation)
             HStack(spacing: 6) {
                 Text(team.abbreviation)
-                    .font(.system(size: 10, weight: .heavy))
+                    .font(.system(size: DSType.Size.micro, weight: .heavy))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
@@ -598,16 +831,16 @@ struct PlayerDetailView: View {
             }
             .padding(.horizontal, 6)
             .padding(.vertical, 4)
-            .background(tint.opacity(0.16), in: RoundedRectangle(cornerRadius: 6))
+            .background(tint.opacity(0.16), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
             .overlay(
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                     .strokeBorder(tint.opacity(0.55), lineWidth: 1)
             )
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Plays for \(team.fullName), record \(team.record)")
         } else if player.teamID == nil {
             Text("FREE AGENT")
-                .font(.system(size: 10, weight: .heavy))
+                .font(.system(size: DSType.Size.micro, weight: .heavy))
                 .foregroundStyle(Color.backgroundPrimary)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
@@ -615,11 +848,11 @@ struct PlayerDetailView: View {
         }
     }
 
-    /// The hero strip's one surviving figure (see `playerHeader`).
+    /// The hero strip's one surviving figure (see `playerHero`).
     private var healthPill: some View {
         HStack(spacing: 6) {
             Image(systemName: player.isInjured ? "cross.case.fill" : "heart.fill")
-                .font(.system(size: 10, weight: .bold))
+                .font(.system(size: DSType.Size.micro, weight: .bold))
             Text(
                 player.isInjured
                     ? "Injured — \(player.injuryWeeksRemaining) wk\(player.injuryWeeksRemaining == 1 ? "" : "s") out"
@@ -628,7 +861,7 @@ struct PlayerDetailView: View {
             .font(.caption.weight(.bold))
             Spacer(minLength: 0)
             Text("HEALTH")
-                .font(.system(size: 9, weight: .semibold))
+                .font(.system(size: DSType.Size.micro, weight: .semibold))
                 .tracking(0.6)
                 .foregroundStyle(Color.textTertiary)
         }
@@ -636,7 +869,7 @@ struct PlayerDetailView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 8))
+        .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: DSCornerRadius.inline))
         .accessibilityElement(children: .combine)
     }
 
@@ -722,38 +955,35 @@ struct PlayerDetailView: View {
             .frame(width: 1, height: 24)
     }
 
-    // MARK: - Compact Overview + Contract (#39, #31)
+    // MARK: - Overview + Contract (#39, #31)
 
-    /// Combined Overview and Contract as a compact horizontal card layout.
-    private var compactOverviewContractRow: some View {
-        Section {
-            if isWideLayout || isLandscape {
-                // Side-by-side on iPad (#31)
-                HStack(alignment: .top, spacing: 16) {
-                    compactOverviewCard
-                    compactContractCard
-                }
-                .padding(.vertical, 4)
-            } else {
-                VStack(spacing: 12) {
-                    compactOverviewCard
-                    compactContractCard
-                }
-                .padding(.vertical, 4)
-            }
+    /// Where he is on the roster right now.
+    private var overviewCard: some View {
+        DSDetailCard(
+            "Overview",
+            icon: "person.text.rectangle",
+            explainer: "How he feels about the building, and what that is doing to him."
+        ) {
+            overviewCardBody
         }
-        .listRowBackground(Color.backgroundSecondary)
     }
 
-    private var compactOverviewCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 4) {
-                Image(systemName: "person.text.rectangle")
-                    .font(.caption)
-                    .foregroundStyle(Color.accentGold)
-                SectionHeaderText(title: "Overview")
-            }
+    /// The screen's **subject** (§2.11): the deal. This is the one bordered,
+    /// lifted insert on the player card — every management action on the bar
+    /// below spends against it.
+    private var contractCard: some View {
+        DSDetailCard(
+            "Contract",
+            icon: "doc.text",
+            explainer: "What he costs the cap, what the market says he is worth, and what is still owed.",
+            isSubject: true
+        ) {
+            contractCardBody
+        }
+    }
 
+    private var overviewCardBody: some View {
+        VStack(alignment: .leading, spacing: DSSpacing.xs) {
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 6) {
                 if isRookieFogged {
                     compactInfoPill(
@@ -774,33 +1004,21 @@ struct PlayerDetailView: View {
             }
 
             // Morale impact tooltip — explains how the morale score affects gameplay (#40).
-            HStack(alignment: .top, spacing: 4) {
-                Image(systemName: "info.circle")
-                    .font(.system(size: 9))
-                    .foregroundStyle(Color.textTertiary)
-                Text(moraleImpactDescription)
-                    .font(.system(size: 10))
-                    .foregroundStyle(Color.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            DSDetailNote(text: moraleImpactDescription)
 
             // What his motivation state actually means for development.
-            HStack(alignment: .top, spacing: 4) {
-                Image(systemName: player.motivationState.icon)
-                    .font(.system(size: 9))
-                    .foregroundStyle(motivationColor)
-                Text(player.motivationState.summary)
-                    .font(.system(size: 10))
-                    .foregroundStyle(Color.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            DSDetailNote(
+                text: player.motivationState.summary,
+                icon: player.motivationState.icon,
+                tint: motivationColor
+            )
 
             if player.isInjured {
-                HStack(spacing: 4) {
+                HStack(spacing: DSSpacing.xxs) {
                     Image(systemName: "cross.circle.fill")
-                        .font(.caption2)
-                    Text("Injured -- \(player.injuryWeeksRemaining) wk\(player.injuryWeeksRemaining == 1 ? "" : "s")")
-                        .font(.caption2.weight(.semibold))
+                        .font(.system(size: DSType.Size.caption))
+                    Text("Injured — \(player.injuryWeeksRemaining) wk\(player.injuryWeeksRemaining == 1 ? "" : "s")")
+                        .font(.system(size: DSType.Size.footnote, weight: .semibold))
                 }
                 .foregroundStyle(Color.danger)
             }
@@ -808,15 +1026,8 @@ struct PlayerDetailView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var compactContractCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 4) {
-                Image(systemName: "doc.text")
-                    .font(.caption)
-                    .foregroundStyle(Color.accentGold)
-                SectionHeaderText(title: "Contract")
-            }
-
+    private var contractCardBody: some View {
+        VStack(alignment: .leading, spacing: DSSpacing.xs) {
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 6) {
                 compactInfoPill(
                     label: "Years",
@@ -834,10 +1045,10 @@ struct PlayerDetailView: View {
             if let comparables = marketComparablesText {
                 HStack(spacing: 4) {
                     Image(systemName: "chart.bar.xaxis")
-                        .font(.system(size: 9))
+                        .font(.system(size: DSType.Size.micro))
                         .foregroundStyle(Color.textTertiary)
                     Text(comparables)
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.micro))
                         .foregroundStyle(Color.textTertiary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.85)
@@ -852,16 +1063,16 @@ struct PlayerDetailView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 4) {
                         Image(systemName: "calendar.badge.clock")
-                            .font(.system(size: 9))
+                            .font(.system(size: DSType.Size.micro))
                             .foregroundStyle(Color.textTertiary)
                         Text("Year-by-Year")
-                            .font(.system(size: 9, weight: .semibold))
+                            .font(.system(size: DSType.Size.micro, weight: .semibold))
                             .foregroundStyle(Color.textTertiary)
                     }
                     ForEach(yearly, id: \.year) { row in
                         HStack(spacing: 4) {
                             Text("Yr \(row.year)")
-                                .font(.system(size: 9))
+                                .font(.system(size: DSType.Size.micro))
                                 .foregroundStyle(Color.textTertiary)
                                 .frame(width: 28, alignment: .leading)
                             // Mini bar visualizing relative cap hit.
@@ -878,7 +1089,7 @@ struct PlayerDetailView: View {
                             }
                             .frame(height: 4)
                             Text(formatCapHit(row.capHitK))
-                                .font(.system(size: 9, weight: .semibold).monospacedDigit())
+                                .font(.system(size: DSType.Size.micro, weight: .semibold).monospacedDigit())
                                 .foregroundStyle(Color.textSecondary)
                                 .frame(width: 48, alignment: .trailing)
                         }
@@ -932,16 +1143,16 @@ struct PlayerDetailView: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 4) {
                     Image(systemName: "target")
-                        .font(.system(size: 9))
+                        .font(.system(size: DSType.Size.micro))
                         .foregroundStyle(Color.accentGold)
                     Text("Incentives")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.system(size: DSType.Size.micro, weight: .semibold))
                         .foregroundStyle(Color.textTertiary)
                     Spacer()
                     let earnedK = clauses.filter(\.isEarned).reduce(0) { $0 + $1.incentive.bonusK }
                     if earnedK > 0 {
                         Text("\(formatCapHit(earnedK)) earned")
-                            .font(.system(size: 9, weight: .bold).monospacedDigit())
+                            .font(.system(size: DSType.Size.micro, weight: .bold).monospacedDigit())
                             .foregroundStyle(Color.success)
                     }
                 }
@@ -954,10 +1165,10 @@ struct PlayerDetailView: View {
                 if let note = MotivationState.incentiveChaseNote(for: player) {
                     HStack(alignment: .top, spacing: 4) {
                         Image(systemName: "flame")
-                            .font(.system(size: 9))
+                            .font(.system(size: DSType.Size.micro))
                             .foregroundStyle(Color.accentGold)
                         Text(note)
-                            .font(.system(size: 10))
+                            .font(.system(size: DSType.Size.micro))
                             .foregroundStyle(Color.textTertiary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -976,7 +1187,7 @@ struct PlayerDetailView: View {
 
         return HStack(spacing: 4) {
             Text(category.shortName)
-                .font(.system(size: 9))
+                .font(.system(size: DSType.Size.micro))
                 .foregroundStyle(Color.textTertiary)
                 .frame(width: 46, alignment: .leading)
 
@@ -992,12 +1203,12 @@ struct PlayerDetailView: View {
             .frame(height: 4)
 
             Text(detail)
-                .font(.system(size: 9, weight: .semibold).monospacedDigit())
+                .font(.system(size: DSType.Size.micro, weight: .semibold).monospacedDigit())
                 .foregroundStyle(progress.isEarned ? Color.success : Color.textSecondary)
                 .frame(width: 72, alignment: .trailing)
 
             Text(ContractIncentive.money(progress.incentive.bonusK))
-                .font(.system(size: 9, weight: .semibold).monospacedDigit())
+                .font(.system(size: DSType.Size.micro, weight: .semibold).monospacedDigit())
                 .foregroundStyle(Color.textTertiary)
                 .frame(width: 44, alignment: .trailing)
         }
@@ -1040,7 +1251,7 @@ struct PlayerDetailView: View {
     private func compactInfoPill(label: String, value: String, color: Color) -> some View {
         HStack(spacing: 4) {
             Text(label)
-                .font(.system(size: 9))
+                .font(.system(size: DSType.Size.micro))
                 .foregroundStyle(Color.textTertiary)
             Spacer()
             Text(value)
@@ -1052,65 +1263,103 @@ struct PlayerDetailView: View {
         .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
     }
 
-    // MARK: - Compact Development (#39)
+    // MARK: - Development (#39)
 
-    private var compactDevelopmentRow: some View {
-        Section {
-            VStack(spacing: 8) {
-                HStack(spacing: 4) {
-                    Image(systemName: developmentPhase.icon)
-                        .font(.caption)
-                        .foregroundStyle(developmentPhase.color)
-                    SectionHeaderText(title: "Development")
-                    Spacer()
-                    Text(developmentPhase.label)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(developmentPhase.color)
-                    Text("Peak \(player.position.peakAgeRange.lowerBound)-\(player.position.peakAgeRange.upperBound)")
-                        .font(.caption2)
-                        .foregroundStyle(Color.textTertiary)
-                }
-
-                // Compact career timeline
-                GeometryReader { geo in
-                    let width = geo.size.width
-                    let minAge = 21
-                    let maxAge = 40
-                    let range = CGFloat(maxAge - minAge)
-                    let peakStart = CGFloat(player.position.peakAgeRange.lowerBound - minAge) / range
-                    let peakEnd = CGFloat(player.position.peakAgeRange.upperBound - minAge) / range
-                    let currentPos = CGFloat(player.age - minAge) / range
-
-                    ZStack(alignment: .leading) {
-                        Capsule()
-                            .fill(Color.backgroundTertiary)
-                            .frame(height: 6)
-                        Capsule()
-                            .fill(Color.success.opacity(0.4))
-                            .frame(width: (peakEnd - peakStart) * width, height: 6)
-                            .offset(x: peakStart * width)
-                        Circle()
-                            .fill(developmentPhase.color)
-                            .frame(width: 10, height: 10)
-                            .offset(x: min(max(currentPos * width - 5, 0), width - 10))
-                    }
-                }
-                .frame(height: 10)
-
-                Text(trajectoryDescription)
-                    .font(.system(size: 10))
-                    .foregroundStyle(Color.textTertiary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                // Coach's Projection (plan §2.9.4 / §2.10): the STAFF's read on
-                // his ceiling, not the hidden number. Noise shrinks the longer
-                // he has been in the building, and a plateaued player reads a
-                // band lower than his true potential suggests.
-                coachProjectionRow
-            }
-            .padding(.vertical, 4)
+    /// Where he is on the age curve, and what the staff thinks he still has.
+    ///
+    /// §4 wave 4 asks development/status cards to state *which* staff read this
+    /// is and *what* it does, because "Coach's Projection: High Upside" over an
+    /// unexplained bar told the user neither.
+    private var developmentCard: some View {
+        DSDetailCard(
+            "Development",
+            icon: developmentPhase.icon,
+            explainer: developmentExplainer
+        ) {
+            developmentCardBody
         }
-        .listRowBackground(Color.backgroundSecondary)
+    }
+
+    /// §4 wave 4: a development card has to name **which coach** is doing the
+    /// work, not "your position coach". The man named here is the one the
+    /// offseason pass actually hands the evaluation to — same lookup, so the
+    /// card cannot credit a coach the engine did not consult.
+    private var developmentExplainer: String {
+        let curve = "Every \(player.position.rawValue) peaks between \(player.position.peakAgeRange.lowerBound) and \(player.position.peakAgeRange.upperBound). The marker is his age on that curve"
+        guard let coach = positionCoach else {
+            return "\(curve). With no \(player.position.rawValue) coach on staff, the projection below is the building's guess and stays a band wider than it needs to be."
+        }
+        return "\(curve); the projection under it is **\(coach.role.displayName) \(coach.lastName)**'s read, rewritten every camp. The better he develops players, the sooner that read narrows."
+    }
+
+    /// The coach who develops this player and writes his ceiling projection.
+    ///
+    /// `PlayerDevelopmentEngine.resolvePositionCoach` rather than a hand-rolled
+    /// role match: it is the same call `assessedPotentialLabel` is given at
+    /// camp, including its strength-coach tiebreak, so the name on the card is
+    /// the evaluator whose `playerDevelopment` shrank the noise on the label
+    /// printed two rows below it.
+    private var positionCoach: Coach? {
+        guard let teamID = player.teamID else { return nil }
+        return PlayerDevelopmentEngine.resolvePositionCoach(
+            coaches: allCoaches.filter { $0.teamID == teamID },
+            position: player.position
+        )
+    }
+
+    private var developmentCardBody: some View {
+        VStack(spacing: DSSpacing.xs) {
+            HStack(spacing: DSSpacing.xxs) {
+                Text(developmentPhase.label.uppercased())
+                    .font(.system(size: DSType.Size.caption, weight: .heavy))
+                    .tracking(0.6)
+                    .foregroundStyle(developmentPhase.color)
+                Spacer(minLength: DSSpacing.xxs)
+                Text("PEAK \(player.position.peakAgeRange.lowerBound)–\(player.position.peakAgeRange.upperBound)")
+                    .font(.system(size: DSType.Size.micro, weight: .semibold).monospacedDigit())
+                    .tracking(0.6)
+                    .foregroundStyle(Color.textTertiaryReadable)
+            }
+
+            // The age curve: track, peak window, and where he stands on it.
+            GeometryReader { geo in
+                let width = geo.size.width
+                let minAge = 21
+                let maxAge = 40
+                let range = CGFloat(maxAge - minAge)
+                let peakStart = CGFloat(player.position.peakAgeRange.lowerBound - minAge) / range
+                let peakEnd = CGFloat(player.position.peakAgeRange.upperBound - minAge) / range
+                let currentPos = CGFloat(player.age - minAge) / range
+
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.backgroundTertiary)
+                        .frame(height: 6)
+                    Capsule()
+                        .fill(Color.success.opacity(0.4))
+                        .frame(width: (peakEnd - peakStart) * width, height: 6)
+                        .offset(x: peakStart * width)
+                    Circle()
+                        .fill(developmentPhase.color)
+                        .frame(width: 10, height: 10)
+                        .offset(x: min(max(currentPos * width - 5, 0), width - 10))
+                }
+            }
+            .frame(height: 10)
+            .accessibilityLabel("Age \(player.age) on a curve that peaks at \(player.position.peakAgeRange.lowerBound) to \(player.position.peakAgeRange.upperBound). \(developmentPhase.label)")
+
+            Text(trajectoryDescription)
+                .font(.system(size: DSType.Size.caption))
+                .foregroundStyle(Color.textTertiaryReadable)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            // Coach's Projection (plan §2.9.4 / §2.10): the STAFF's read on
+            // his ceiling, not the hidden number. Noise shrinks the longer
+            // he has been in the building, and a plateaued player reads a
+            // band lower than his true potential suggests.
+            coachProjectionRow
+        }
     }
 
     /// The staff's ceiling projection, written every camp by the development
@@ -1121,12 +1370,14 @@ struct PlayerDetailView: View {
         if let label = assessedPotentialLabel {
             HStack(spacing: 6) {
                 Image(systemName: "binoculars.fill")
-                    .font(.system(size: 10))
+                    .font(.system(size: DSType.Size.micro))
                     .foregroundStyle(Color.accentGold)
-                Text("Coach's Projection")
-                    .font(.system(size: 10, weight: .semibold))
+                Text(coachProjectionTitle)
+                    .font(.system(size: DSType.Size.micro, weight: .semibold))
                     .foregroundStyle(Color.textSecondary)
-                Spacer()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                Spacer(minLength: DSSpacing.xxs)
                 Text(label.displayName)
                     .font(.caption2.weight(.bold))
                     .foregroundStyle(potentialLabelColor(label))
@@ -1137,7 +1388,26 @@ struct PlayerDetailView: View {
                     )
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+            DSDetailNote(text: coachProjectionNote, icon: "binoculars")
         }
+    }
+
+    /// Whose projection this is. "Coach's Projection" over an unattributed
+    /// band was the wave-4 complaint in one line: the reader could not tell
+    /// whether it was a scout, the head coach or the model talking.
+    private var coachProjectionTitle: String {
+        guard let coach = positionCoach else { return "Staff Projection" }
+        return "\(coach.role.abbreviation) \(coach.lastName)'s Projection"
+    }
+
+    /// What the band is and what moves it — a projection with no statement of
+    /// its own accuracy is a verdict with no evidence.
+    private var coachProjectionNote: String {
+        guard let coach = positionCoach else {
+            return "No position coach for this group, so the projection is the building's rough read. Hire one and it sharpens every camp."
+        }
+        return "His ceiling as \(coach.lastName) sees it, rewritten every camp. A stronger developer (\(coach.lastName): \(coach.playerDevelopment) player development) reads it right sooner; a player who has stopped moving reads a band low."
     }
 
     /// Persisted staff assessment, decoded from `Player.assessedPotential`.
@@ -1187,7 +1457,7 @@ struct PlayerDetailView: View {
     }
 
     @ViewBuilder
-    private var seasonStatsSummarySection: some View {
+    private var seasonStatsCard: some View {
         let line = seasonLine
         let gamesPlayed = seasonGamesPlayed
         // Genuinely empty = no appearances AND an all-zero line. A player who
@@ -1195,9 +1465,10 @@ struct PlayerDetailView: View {
         // the numbers rather than the "nothing recorded" note.
         let isEmpty = gamesPlayed == 0 && line.isEmpty
 
-        Section(header: SectionHeaderText(
-            title: currentSeason.map { "\(String($0)) Season Stats" } ?? "Season Stats"
-        )) {
+        DSDetailCard(
+            currentSeason.map { "\(String($0)) Season Stats" } ?? "Season Stats",
+            icon: "chart.bar.fill"
+        ) {
             if !isEmpty {
                 HStack(spacing: 0) {
                     seasonQuickStat(label: "GP", value: "\(gamesPlayed)")
@@ -1264,7 +1535,7 @@ struct PlayerDetailView: View {
                     }
                 }
                 .padding(.vertical, 6)
-                .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 8))
+                .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: DSCornerRadius.inline))
             } else {
                 // #179: only shown when the season really has nothing to show —
                 // and it says why, so an offseason zero doesn't read as a bug.
@@ -1273,7 +1544,6 @@ struct PlayerDetailView: View {
                 CompactEmptyStateView(icon: "chart.bar", message: seasonEmptyNote)
             }
         }
-        .listRowBackground(Color.backgroundSecondary)
     }
 
     /// Why the season summary is empty, in the user's terms.
@@ -1297,7 +1567,7 @@ struct PlayerDetailView: View {
                     Color.textPrimary
                 )
             Text(label)
-                .font(.system(size: 8))
+                .font(.system(size: DSType.Size.micro))
                 .foregroundStyle(Color.textTertiary)
         }
         .frame(maxWidth: .infinity)
@@ -1331,21 +1601,30 @@ struct PlayerDetailView: View {
     /// worth hiding behind a chevron, and the single OVR column carries the trend
     /// the old bar chart used to duplicate.
     @ViewBuilder
-    private var careerStatsHistorySection: some View {
+    private var careerStatsCard: some View {
         // Built once per render pass: `playerSeasonHistory` filters every history
         // row in the store, so this is not a property to touch three times.
         let rows = careerTableRows
         if !rows.isEmpty {
-            Section(header: SectionHeaderText(title: "Career Stats by Season")) {
-                CareerStatTable(position: player.position, rows: rows)
-                    .padding(.vertical, 4)
+            DSDetailCard("Career Stats by Season", icon: "tablecells") {
+                // `CareerStatTable` keeps its FIXED column widths — they are what
+                // makes the season rows line up with `PlayerStatsView`'s "By
+                // Season" tab. A card column is narrower than a full-width List
+                // row was, so the table gets its own horizontal scroller rather
+                // than having its columns squeezed into each other (§2.13,
+                // Columns gate).
+                ScrollView(.horizontal, showsIndicators: false) {
+                    CareerStatTable(position: player.position, rows: rows)
+                        .frame(minWidth: 380, alignment: .leading)
+                        .padding(.vertical, DSSpacing.xxs)
+                }
                 if let note = careerTableNote(rows: rows) {
                     Text(note)
-                        .font(.caption2)
+                        .font(.system(size: DSType.Size.micro))
                         .foregroundStyle(Color.textTertiaryReadable)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .listRowBackground(Color.backgroundSecondary)
         }
     }
 
@@ -1362,14 +1641,24 @@ struct PlayerDetailView: View {
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
-    // MARK: - Trade Value Section (#37)
+    // MARK: - Trade Value (#37)
 
-    private var tradeValueSection: some View {
-        Section(header: SectionHeaderText(title: "Trade Value")) {
-            HStack(spacing: 12) {
-                VStack(spacing: 4) {
+    private var tradeValueCard: some View {
+        DSDetailCard(
+            "Trade Value",
+            icon: "arrow.left.arrow.right",
+            explainer: "What the league's other 31 war rooms would give up for him — the same points `TradeValueEngine` prices a package in."
+        ) {
+            tradeValueCardBody
+        }
+    }
+
+    private var tradeValueCardBody: some View {
+        VStack(alignment: .leading, spacing: DSSpacing.xs) {
+            HStack(spacing: DSSpacing.sm) {
+                VStack(spacing: DSSpacing.xxs) {
                     Image(systemName: "arrow.left.arrow.right.circle.fill")
-                        .font(.title2)
+                        .font(.system(size: DSType.Size.title2))
                         .foregroundStyle(tradeValueColor)
                     Text(tradeValueLabel)
                         .font(.caption.weight(.bold))
@@ -1424,56 +1713,49 @@ struct PlayerDetailView: View {
                     }
                 }
             }
-            .padding(.vertical, 4)
 
             // "If this player leaves" replacement preview (#37) — shows the next-best player
             // on the same team at the same position so the user understands the depth-chart
             // impact of cutting / trading.
-            //
-            // NO explicit `Divider()` here: a Divider written as a direct child of a
-            // `Section` is not an inline rule, it is its own List row — and a List row
-            // is subject to the ~44pt minimum row height, so it rendered as a tall
-            // blank slot with a faint hairline floating in the middle of it. The List
-            // already draws a separator between consecutive rows, which is the rule
-            // this was reaching for.
             if let replacement = replacementPlayerInfo {
-                HStack(spacing: 8) {
+                Divider().overlay(Color.surfaceBorder)
+                HStack(spacing: DSSpacing.xs) {
                     Image(systemName: "person.fill.questionmark")
-                        .font(.caption)
-                        .foregroundStyle(Color.textTertiary)
+                        .font(.system(size: DSType.Size.footnote))
+                        .foregroundStyle(Color.textTertiaryReadable)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("If \(player.lastName) leaves")
-                            .font(.caption2.weight(.semibold))
+                            .font(.system(size: DSType.Size.caption, weight: .semibold))
                             .foregroundStyle(Color.textSecondary)
                         Text(replacement)
-                            .font(.caption2.monospacedDigit())
-                            .foregroundStyle(Color.textTertiary)
+                            .font(.system(size: DSType.Size.caption).monospacedDigit())
+                            .foregroundStyle(Color.textTertiaryReadable)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    Spacer()
+                    Spacer(minLength: 0)
                 }
             }
 
             // Comparable players in the league at the same position with similar OVR (±3).
             // Helps anchor the player's trade value against real peers and their salaries.
             if let comparables = comparablesText {
-                HStack(alignment: .top, spacing: 8) {
+                HStack(alignment: .top, spacing: DSSpacing.xs) {
                     Image(systemName: "person.3.fill")
-                        .font(.caption)
-                        .foregroundStyle(Color.textTertiary)
+                        .font(.system(size: DSType.Size.footnote))
+                        .foregroundStyle(Color.textTertiaryReadable)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Comparables")
-                            .font(.caption2.weight(.semibold))
+                            .font(.system(size: DSType.Size.caption, weight: .semibold))
                             .foregroundStyle(Color.textSecondary)
                         Text("Similar: \(comparables)")
-                            .font(.caption2.monospacedDigit())
-                            .foregroundStyle(Color.textTertiary)
+                            .font(.system(size: DSType.Size.caption).monospacedDigit())
+                            .foregroundStyle(Color.textTertiaryReadable)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer(minLength: 0)
                 }
             }
         }
-        .listRowBackground(Color.backgroundSecondary)
     }
 
     /// Next-best player on the same team at the same position, used for the
@@ -1540,7 +1822,7 @@ struct PlayerDetailView: View {
     ) -> some View {
         HStack(spacing: 4) {
             Image(systemName: tone.icon)
-                .font(.system(size: 10))
+                .font(.system(size: DSType.Size.micro))
                 .foregroundStyle(tone.color)
             Text(label)
                 .font(.caption2.weight(.semibold))
@@ -1587,102 +1869,118 @@ struct PlayerDetailView: View {
         return player.teamID == userTeamID
     }
 
-    private var actionButtonsSection: some View {
-        Section(header: SectionHeaderText(title: "Actions")) {
-            // Two-column grid for the primary actions, then a full-width "Change
-            // Position" beneath. Avoids the old asymmetric 5-button layout where
-            // the last button sat alone in its row. The common own-roster case
-            // is still an exact 2×2 — Set as Starter, Renegotiate, Negotiate
-            // Extension, Cut/Release — and the grid reflows on its own when the
-            // contract gates (#127) drop one of the two talks.
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-                if isUserRosterPlayer {
-                actionButton(
-                    label: "Set as Starter",
-                    icon: "star.fill",
-                    color: .accentGold,
-                    subtitle: nil
-                ) {}
-                // TWO conversations, not one (#127). "Contact Agent" was a single
-                // door that only ever opened the extension, so the club's other
-                // contract lever — asking a man to take less on the deal he
-                // already has — was reachable only from the Cap Compliance
-                // workspace, i.e. only after the club was already over the cap.
-                //
-                // The subtitle no longer carries a money estimate. It used to
-                // read "~$38.4M/yr · 3yr" off `estimateMarketValue`, which put
-                // the answer on the button: the whole point of the Contact Agent
-                // wave is that the agent's ask is something you find out by
-                // ringing him. What survives is `ContactAgentEntry.badge` — the
-                // state of a conversation already in progress — which reveals
-                // nothing the user has not already been told to his face.
-                if canRenegotiate {
-                    actionButton(
-                        label: "Renegotiate Contract",
-                        icon: "arrow.down.circle",
-                        color: .warning,
-                        subtitle: ContactAgentEntry.badge(
-                            for: player,
-                            season: careers.first?.currentSeason ?? 0
-                        )
-                    ) {
-                        contractTalk = .renegotiate
-                    }
-                }
-                if canExtend {
-                    actionButton(
-                        label: "Negotiate Extension",
-                        icon: ContactAgentEntry.icon,
-                        color: .accentBlue,
-                        subtitle: ContactAgentEntry.badge(
-                            for: player,
-                            season: careers.first?.currentSeason ?? 0
-                        )
-                    ) {
-                        contractTalk = .extension_
-                    }
-                }
-                }
-                // A player on another club is a trade TARGET: this opens the
-                // Trade Center with his team as the partner and him already
-                // ticked in their column. Hidden for our own players — there is
-                // no partner to name (shopping our own is the builder's job).
-                // Was a dead button with an empty closure (plan finding S8).
-                ProposeTradeButton(player: player, leaguePlayers: allLeaguePlayers) { hint, openTradeCenter in
-                    actionButton(
-                        label: "Trade For",
-                        icon: "arrow.left.arrow.right",
-                        color: .success,
-                        subtitle: hint,
-                        action: openTradeCenter
-                    )
-                }
-                if isUserRosterPlayer {
-                actionButton(
-                    label: "Cut / Release",
-                    icon: "scissors",
-                    color: .danger,
-                    subtitle: cutImpactPreviewText
-                ) {
-                    showCutConfirmation = true
-                }
-                }
-            }
-            .padding(.vertical, 4)
-
-            if isUserRosterPlayer {
-                actionButton(
-                    label: "Change Position",
-                    icon: "arrow.triangle.swap",
-                    color: .warning,
-                    subtitle: nil
-                ) {
-                    showPositionChange = true
-                }
-                .padding(.bottom, 4)
+    /// **The one commit surface** (§2.5, P5).
+    ///
+    /// Was an "Actions" section: a five-button `LazyVGrid` in the middle of a
+    /// scrolling `List`, so the most consequential controls on the screen —
+    /// releasing a man, repricing his deal — scrolled away behind a career
+    /// table. The set is unchanged apart from one deletion: **"Set as Starter"
+    /// is gone**, because its closure was literally `{}` — a gold-tinted button
+    /// that had never done anything. The depth chart is where a starter is set.
+    ///
+    /// Slot order is `DSActionBar`'s, not this screen's: destructive · ghost ·
+    /// secondary · primary, with the destructive separated by a rule.
+    @ViewBuilder
+    private var playerActionBar: some View {
+        if isUserRosterPlayer {
+            DSActionBar(
+                explainer: .init(
+                    title: "Under contract",
+                    message: ownRosterExplainer
+                ),
+                destructive: cutAction,
+                ghost: .init(title: "Change Position", handler: { activeSheet = .positionChange }),
+                secondary: secondaryContractAction,
+                primary: primaryContractAction
+            )
+        } else if player.teamID == nil {
+            // A free agent has no club to trade with, and `ProposeTradeButton`
+            // renders NOTHING for him — so this branch is the difference
+            // between "the bar says where he is signed" and the screen having
+            // no commit surface at all, which is one of the two no-primary
+            // screens §0 counts.
+            DSActionBar(
+                explainer: .init(
+                    title: "Free agent",
+                    message: "He is not under contract to anybody. Offers are made in the **Free Agency** workspace, where the cap room and the rival bids are on the same screen."
+                )
+            )
+        } else {
+            // A player on another club is a trade TARGET: this opens the Trade
+            // Center with his team as the partner and him already ticked in
+            // their column. `ProposeTradeButton` supplies the hint from our
+            // actual depth at the position and the shared need model.
+            ProposeTradeButton(player: player, leaguePlayers: allLeaguePlayers) { hint, openTradeCenter in
+                DSActionBar(
+                    explainer: .init(
+                        title: "Not your player",
+                        message: hint ?? "Opens the Trade Center with **\(playerTeam?.abbreviation ?? "his club")** as the partner and him already ticked in their column."
+                    ),
+                    primary: .init(title: "Trade For", handler: openTradeCenter)
+                )
             }
         }
-        .listRowBackground(Color.backgroundSecondary)
+    }
+
+    /// What the bar says about the deal it is about to spend against. Both
+    /// halves are quoted from the contract card directly above it, so the two
+    /// numbers on one screen cannot disagree (§2.13, arithmetic gate).
+    private var ownRosterExplainer: String {
+        let years = player.contractYearsRemaining
+        let yearsText = years == 1 ? "**1 year**" : "**\(years) years**"
+        return "\(yearsText) left at **\(formattedSalary)** — \(capPercentageText) of the cap."
+    }
+
+    private var cutAction: DSActionBar.Action {
+        .init(
+            title: "Cut / Release",
+            caption: cutImpactPreviewText,
+            handler: { showCutConfirmation = true }
+        )
+    }
+
+    /// **The one gold fill on this screen** (P5): whichever contract
+    /// conversation is actually live. With more than two years to run there is
+    /// no extension to negotiate, so the repricing is promoted rather than the
+    /// bar shipping a disabled gold button (§2.12).
+    private var primaryContractAction: DSActionBar.Action? {
+        if canExtend { return extensionAction }
+        if canRenegotiate { return renegotiateAction }
+        return nil
+    }
+
+    /// The repricing, but only when the extension already owns the primary —
+    /// never both slots pointing at the same conversation.
+    private var secondaryContractAction: DSActionBar.Action? {
+        (canExtend && canRenegotiate) ? renegotiateAction : nil
+    }
+
+    /// TWO conversations, not one (#127). "Contact Agent" was a single door that
+    /// only ever opened the extension, so the club's other contract lever —
+    /// asking a man to take less on the deal he already has — was reachable only
+    /// from the Cap Compliance workspace, i.e. only after the club was already
+    /// over the cap.
+    ///
+    /// Neither caption carries a money estimate. It used to read
+    /// "~$38.4M/yr · 3yr" off `estimateMarketValue`, which put the answer on the
+    /// button: the whole point of the Contact Agent wave is that the agent's ask
+    /// is something you find out by ringing him. What survives is
+    /// `ContactAgentEntry.badge` — the state of a conversation already in
+    /// progress — which reveals nothing the user has not been told to his face.
+    private var renegotiateAction: DSActionBar.Action {
+        .init(
+            title: "Renegotiate",
+            caption: ContactAgentEntry.badge(for: player, season: careers.first?.currentSeason ?? 0),
+            handler: { contractTalk = .renegotiate }
+        )
+    }
+
+    private var extensionAction: DSActionBar.Action {
+        .init(
+            title: "Negotiate Extension",
+            caption: ContactAgentEntry.badge(for: player, season: careers.first?.currentSeason ?? 0),
+            handler: { contractTalk = .extension_ }
+        )
     }
 
     /// One-line dead cap preview for the Cut button. E.g. "$2.4M dead cap".
@@ -1765,42 +2063,20 @@ struct PlayerDetailView: View {
     // the subtitle from our actual depth at the position and the shared need
     // model (`UI/Roster/LeagueRostersView.swift`).
 
-    /// Reusable action button. Optional subtitle adds preview info under the label.
-    private func actionButton(
-        label: String,
-        icon: String,
-        color: Color,
-        subtitle: String? = nil,
-        action: @escaping () -> Void = {}
-    ) -> some View {
-        Button(action: action) {
-            VStack(spacing: 2) {
-                HStack(spacing: 6) {
-                    Image(systemName: icon)
-                        .font(.caption)
-                    Text(label)
-                        .font(.caption.weight(.semibold))
-                }
-                .foregroundStyle(color)
-                if let subtitle {
-                    Text(subtitle)
-                        .font(.system(size: 9, weight: .medium).monospacedDigit())
-                        .foregroundStyle(color.opacity(0.7))
-                        .lineLimit(1)
-                }
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 10)
-            .background(color.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(color.opacity(0.3), lineWidth: 1))
-        }
-        .buttonStyle(.plain)
-    }
+    // The hand-rolled `actionButton` recipe that used to live here — tinted
+    // 10 %-opacity fill, 30 % border, 8 r, ~34 pt tall — is deleted. Every
+    // control on this screen is now a `DSActionBar` button in one of the four
+    // shipped `ButtonStyle`s, which are the only ones that meet the 44 pt floor
+    // and draw a real pressed/disabled state (§2.12).
 
-    // MARK: - Injury History Section (#38)
+    // MARK: - Injury History (#38)
 
-    private var injuryHistorySection: some View {
-        Section(header: SectionHeaderText(title: "Injury History")) {
+    private var injuryHistoryCard: some View {
+        DSDetailCard(
+            "Injury History",
+            icon: "cross.case",
+            explainer: "What he has missed, whether the same thing keeps happening, and the **durability** rating that drives how often it will."
+        ) {
             if player.isInjured, let injuryType = player.injuryType {
                 HStack(spacing: 8) {
                     Image(systemName: "cross.circle.fill")
@@ -1816,9 +2092,9 @@ struct PlayerDetailView: View {
                         if let rehab = player.rehabStatus {
                             HStack(spacing: 3) {
                                 Image(systemName: rehab.icon)
-                                    .font(.system(size: 8))
+                                    .font(.system(size: DSType.Size.micro))
                                 Text(rehab.displayName)
-                                    .font(.system(size: 9, weight: .semibold))
+                                    .font(.system(size: DSType.Size.micro, weight: .semibold))
                             }
                             .foregroundStyle(rehabColor(rehab))
                         }
@@ -1855,7 +2131,7 @@ struct PlayerDetailView: View {
                     let repeatCount = history.filter { $0.injuryTypeRaw == record.injuryTypeRaw }.count
                     HStack(spacing: 8) {
                         Image(systemName: "clock.arrow.circlepath")
-                            .font(.system(size: 12))
+                            .font(.system(size: DSType.Size.footnote))
                             .foregroundStyle(Color.textTertiary)
                         Text(record.summary)
                             .font(.caption2)
@@ -1863,9 +2139,9 @@ struct PlayerDetailView: View {
                         if repeatCount >= 2 {
                             HStack(spacing: 2) {
                                 Image(systemName: "arrow.triangle.2.circlepath")
-                                    .font(.system(size: 8, weight: .bold))
+                                    .font(.system(size: DSType.Size.micro, weight: .bold))
                                 Text("x\(repeatCount)")
-                                    .font(.system(size: 9, weight: .bold).monospacedDigit())
+                                    .font(.system(size: DSType.Size.micro, weight: .bold).monospacedDigit())
                             }
                             .foregroundStyle(Color.warning)
                             .accessibilityLabel("Recurring injury, \(repeatCount) times")
@@ -1893,13 +2169,12 @@ struct PlayerDetailView: View {
                             .font(.caption.weight(.bold).monospacedDigit())
                             .foregroundStyle(colorForAttribute(player.physical.durability))
                         Text("Durability")
-                            .font(.system(size: 8))
+                            .font(.system(size: DSType.Size.micro))
                             .foregroundStyle(Color.textTertiary)
                     }
                 }
             }
         }
-        .listRowBackground(Color.backgroundSecondary)
     }
 
     /// R28: theme color for a rehab trajectory.
@@ -1946,7 +2221,7 @@ struct PlayerDetailView: View {
                                 let statusLabel = familiarity > 0 ? "Developing" : "Can Learn"
                                 Button {
                                     player.trainingPosition = pos
-                                    showPositionChange = false
+                                    activeSheet = nil
                                 } label: {
                                     HStack(spacing: 10) {
                                         Text(pos.rawValue)
@@ -1962,7 +2237,7 @@ struct PlayerDetailView: View {
                                             .font(.caption2.weight(.bold).monospacedDigit())
                                             .foregroundStyle(rating.color)
                                         Text("(max \(ceiling)%)")
-                                            .font(.system(size: 9))
+                                            .font(.system(size: DSType.Size.micro))
                                             .foregroundStyle(Color.textTertiary)
                                         Image(systemName: "arrow.right.circle")
                                             .font(.caption)
@@ -1989,7 +2264,7 @@ struct PlayerDetailView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { showPositionChange = false }
+                    Button("Cancel") { activeSheet = nil }
                 }
             }
         }
@@ -2002,10 +2277,14 @@ struct PlayerDetailView: View {
     /// projection if a camp has already written one, and a plain statement of
     /// when the real evaluation arrives — so the empty space reads as a rule of
     /// the game rather than as missing data.
-    private var preCampScoutingReportSection: some View {
-        Section(header: SectionHeaderText(title: "Scouting Report")) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 12) {
+    private var preCampScoutingReportCard: some View {
+        DSDetailCard(
+            "Scouting Report",
+            icon: "doc.text.magnifyingglass",
+            explainer: "He has not reported to camp, so nobody in this building has measured him yet. This is what the file says until they do."
+        ) {
+            VStack(alignment: .leading, spacing: DSSpacing.sm) {
+                HStack(spacing: DSSpacing.sm) {
                     VStack(spacing: 2) {
                         Text(RookieFog.bandText(for: player))
                             .font(.title3.monospaced().weight(.heavy))
@@ -2013,7 +2292,7 @@ struct PlayerDetailView: View {
                             .lineLimit(1)
                             .minimumScaleFactor(0.6)
                         Text(RookieFog.source(for: player).label.uppercased())
-                            .font(.system(size: 9, weight: .heavy))
+                            .font(.system(size: DSType.Size.micro, weight: .heavy))
                             .tracking(0.5)
                             .foregroundStyle(Color.textTertiary)
                     }
@@ -2033,165 +2312,32 @@ struct PlayerDetailView: View {
                     Spacer(minLength: 0)
                 }
 
-                if let label = assessedPotentialLabel {
-                    HStack(spacing: 6) {
-                        Image(systemName: "binoculars.fill")
-                            .font(.system(size: 10))
-                            .foregroundStyle(Color.accentGold)
-                        Text("Coach's Projection")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(Color.textSecondary)
-                        Spacer()
-                        Text(label.displayName)
-                            .font(.caption2.weight(.bold))
-                            .foregroundStyle(potentialLabelColor(label))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Capsule().fill(potentialLabelColor(label).opacity(0.15)))
-                    }
-                }
+                // The SAME projection row the Development card prints — it was
+                // hand-copied here, which is the "one thing, two renderings"
+                // this wave exists to delete.
+                coachProjectionRow
             }
-            .padding(.vertical, 4)
-        }
-        .listRowBackground(Color.backgroundSecondary)
-    }
-
-    // MARK: - Physical Section
-
-    private var physicalSection: some View {
-        Section(header: SectionHeaderText(title: "Physical Attributes")) {
-            // #184: Trend arrows (no previous season data yet, show "---")
-            AttributeRowWithTrend(name: "Speed",        value: player.physical.speed,        previousValue: nil)
-            AttributeRowWithTrend(name: "Acceleration", value: player.physical.acceleration, previousValue: nil)
-            AttributeRowWithTrend(name: "Strength",     value: player.physical.strength,     previousValue: nil)
-            AttributeRowWithTrend(name: "Agility",      value: player.physical.agility,      previousValue: nil)
-            AttributeRowWithTrend(name: "Stamina",      value: player.physical.stamina,      previousValue: nil)
-            AttributeRowWithTrend(name: "Durability",   value: player.physical.durability,   previousValue: nil)
-        }
-        .listRowBackground(Color.backgroundSecondary)
-    }
-
-    // MARK: - Mental Section
-
-    private var mentalSection: some View {
-        Section(header: SectionHeaderText(title: "Mental Attributes")) {
-            // #184: Trend arrows (no previous season data yet, show "---")
-            AttributeRowWithTrend(name: "Awareness",       value: player.mental.awareness,      previousValue: nil)
-            AttributeRowWithTrend(name: "Decision Making",  value: player.mental.decisionMaking, previousValue: nil)
-            AttributeRowWithTrend(name: "Clutch",           value: player.mental.clutch,          previousValue: nil)
-            AttributeRowWithTrend(name: "Work Ethic",       value: player.mental.workEthic,      previousValue: nil)
-            AttributeRowWithTrend(name: "Coachability",     value: player.mental.coachability,    previousValue: nil)
-            AttributeRowWithTrend(name: "Leadership",       value: player.mental.leadership,      previousValue: nil)
-            // Learning drives how fast he installs a new scheme (awareness stays game-IQ).
-            AttributeRowWithTrend(name: "Learning",         value: player.learning,               previousValue: nil)
-            // Competitiveness is the fighter mentality: how he answers a bad
-            // season and how immune he is to a post-payday coast (plan §2.1).
-            AttributeRowWithTrend(name: "Competitiveness",   value: player.competitiveness,        previousValue: nil)
-        }
-        .listRowBackground(Color.backgroundSecondary)
-    }
-
-    // MARK: - Position-Specific Attributes Section
-
-    @ViewBuilder
-    private var positionAttributesSection: some View {
-        switch player.positionAttributes {
-        case .quarterback(let attrs):
-            // #182: QB skills with league average context
-            let avgAttrs = qbLeagueAverages
-            Section(header: SectionHeaderText(title: "Quarterback Skills")) {
-                AttributeRowWithContext(name: "Arm Strength",    value: attrs.armStrength,    avg: avgAttrs.armStrength)
-                AttributeRowWithContext(name: "Accuracy Short",  value: attrs.accuracyShort,  avg: avgAttrs.accuracyShort)
-                AttributeRowWithContext(name: "Accuracy Mid",    value: attrs.accuracyMid,    avg: avgAttrs.accuracyMid)
-                AttributeRowWithContext(name: "Accuracy Deep",   value: attrs.accuracyDeep,   avg: avgAttrs.accuracyDeep)
-                AttributeRowWithContext(name: "Pocket Presence", value: attrs.pocketPresence, avg: avgAttrs.pocketPresence)
-                AttributeRowWithContext(name: "Scrambling",      value: attrs.scrambling,     avg: avgAttrs.scrambling)
-            }
-            .listRowBackground(Color.backgroundSecondary)
-
-        case .wideReceiver(let attrs):
-            Section(header: SectionHeaderText(title: "Receiver Skills")) {
-                ColorCodedAttributeRow(name: "Route Running",     value: attrs.routeRunning)
-                ColorCodedAttributeRow(name: "Catching",          value: attrs.catching)
-                ColorCodedAttributeRow(name: "Release",           value: attrs.release)
-                ColorCodedAttributeRow(name: "Spectacular Catch", value: attrs.spectacularCatch)
-            }
-            .listRowBackground(Color.backgroundSecondary)
-
-        case .runningBack(let attrs):
-            Section(header: SectionHeaderText(title: "Running Back Skills")) {
-                ColorCodedAttributeRow(name: "Vision",       value: attrs.vision)
-                ColorCodedAttributeRow(name: "Elusiveness",  value: attrs.elusiveness)
-                ColorCodedAttributeRow(name: "Break Tackle", value: attrs.breakTackle)
-                ColorCodedAttributeRow(name: "Receiving",    value: attrs.receiving)
-            }
-            .listRowBackground(Color.backgroundSecondary)
-
-        case .tightEnd(let attrs):
-            Section(header: SectionHeaderText(title: "Tight End Skills")) {
-                ColorCodedAttributeRow(name: "Blocking",      value: attrs.blocking)
-                ColorCodedAttributeRow(name: "Catching",      value: attrs.catching)
-                ColorCodedAttributeRow(name: "Route Running", value: attrs.routeRunning)
-                ColorCodedAttributeRow(name: "Speed",         value: attrs.speed)
-            }
-            .listRowBackground(Color.backgroundSecondary)
-
-        case .offensiveLine(let attrs):
-            Section(header: SectionHeaderText(title: "Offensive Line Skills")) {
-                ColorCodedAttributeRow(name: "Run Block",  value: attrs.runBlock)
-                ColorCodedAttributeRow(name: "Pass Block", value: attrs.passBlock)
-                ColorCodedAttributeRow(name: "Pull",       value: attrs.pull)
-                ColorCodedAttributeRow(name: "Anchor",     value: attrs.anchor)
-            }
-            .listRowBackground(Color.backgroundSecondary)
-
-        case .defensiveLine(let attrs):
-            Section(header: SectionHeaderText(title: "Defensive Line Skills")) {
-                ColorCodedAttributeRow(name: "Pass Rush",      value: attrs.passRush)
-                ColorCodedAttributeRow(name: "Block Shedding", value: attrs.blockShedding)
-                ColorCodedAttributeRow(name: "Power Moves",    value: attrs.powerMoves)
-                ColorCodedAttributeRow(name: "Finesse Moves",  value: attrs.finesseMoves)
-            }
-            .listRowBackground(Color.backgroundSecondary)
-
-        case .linebacker(let attrs):
-            Section(header: SectionHeaderText(title: "Linebacker Skills")) {
-                ColorCodedAttributeRow(name: "Tackling",      value: attrs.tackling)
-                ColorCodedAttributeRow(name: "Zone Coverage", value: attrs.zoneCoverage)
-                ColorCodedAttributeRow(name: "Man Coverage",  value: attrs.manCoverage)
-                ColorCodedAttributeRow(name: "Blitzing",      value: attrs.blitzing)
-            }
-            .listRowBackground(Color.backgroundSecondary)
-
-        case .defensiveBack(let attrs):
-            Section(header: SectionHeaderText(title: "Defensive Back Skills")) {
-                ColorCodedAttributeRow(name: "Man Coverage",  value: attrs.manCoverage)
-                ColorCodedAttributeRow(name: "Zone Coverage", value: attrs.zoneCoverage)
-                ColorCodedAttributeRow(name: "Press",         value: attrs.press)
-                ColorCodedAttributeRow(name: "Ball Skills",   value: attrs.ballSkills)
-            }
-            .listRowBackground(Color.backgroundSecondary)
-
-        case .kicking(let attrs):
-            Section(header: SectionHeaderText(title: "Kicking Skills")) {
-                ColorCodedAttributeRow(name: "Kick Power",    value: attrs.kickPower)
-                ColorCodedAttributeRow(name: "Kick Accuracy", value: attrs.kickAccuracy)
-            }
-            .listRowBackground(Color.backgroundSecondary)
         }
     }
 
-    // MARK: - Personality Section
+    // The three `AttributeRowWith*` list forks that used to live here are gone.
+    // They were a *second* rendering of Physical / Mental / Position Skills,
+    // shown only in the compact branch, while the grid forms below were shown
+    // on iPad — the "same screen built twice" §0 names, inside one file. The
+    // grid forms survive as the single implementation and reflow by column
+    // count instead of by branch.
 
-    private var personalitySection: some View {
-        Section(header: SectionHeaderText(title: "Personality")) {
+    // MARK: - Personality
+
+    private var personalityCard: some View {
+        DSDetailCard(
+            "Personality",
+            icon: "person.crop.circle",
+            explainer: "His archetype and his motivation state — the two dials the development pass and the locker room read."
+        ) {
             // Archetype with explanation (#183)
-            VStack(alignment: .leading, spacing: 4) {
-                LabeledContent("Archetype", value: archetypeDisplayName)
-                Text(archetypeEffectDescription)
-                    .font(.system(size: 10))
-                    .foregroundStyle(Color.textTertiary)
-            }
+            DSDetailRow("Archetype", archetypeDisplayName)
+            DSDetailNote(text: archetypeEffectDescription)
 
             // Motivator with explanation (#183).
             // NOTE (#140): this row is the *trait* — what drives him (Money /
@@ -2200,31 +2346,30 @@ struct PlayerDetailView: View {
             // (Driven / Focused / …). Two different things, so they must not
             // share a label or the card reads as a contradiction
             // ("Motivation: Focused" vs "Motivation: Fame").
-            VStack(alignment: .leading, spacing: 4) {
-                LabeledContent("Motivator", value: player.personality.motivation.rawValue)
-                Text(motivationEffectDescription)
-                    .font(.system(size: 10))
-                    .foregroundStyle(Color.textTertiary)
-            }
+            DSDetailRow("Motivator", player.personality.motivation.rawValue)
+            DSDetailNote(text: motivationEffectDescription)
 
             if player.personality.isMentor {
                 Label("Mentor influence on team", systemImage: "person.2.fill")
-                    .font(.footnote)
+                    .font(.system(size: DSType.Size.footnote))
                     .foregroundStyle(Color.textSecondary)
             }
             if player.personality.isDramaticInMedia {
                 Label("Can generate media drama", systemImage: "exclamationmark.bubble.fill")
-                    .font(.footnote)
+                    .font(.system(size: DSType.Size.footnote))
                     .foregroundStyle(Color.warning)
             }
         }
-        .listRowBackground(Color.backgroundSecondary)
     }
 
-    // MARK: - Versatility & Scheme Familiarity Section
+    // MARK: - Versatility & Scheme Familiarity
 
-    private var versatilitySection: some View {
-        Section(header: SectionHeaderText(title: "Position Versatility")) {
+    private var versatilityCard: some View {
+        DSDetailCard(
+            "Position Versatility",
+            icon: "arrow.triangle.swap",
+            explainer: "Where else he could line up, and how much of each scheme he has actually installed."
+        ) {
             // Primary position at 100%
             VStack(spacing: 8) {
                 HStack(spacing: 8) {
@@ -2233,7 +2378,7 @@ struct PlayerDetailView: View {
                         .foregroundStyle(Color.textPrimary)
                         .frame(width: 30, alignment: .leading)
                     Text("Primary")
-                        .font(.system(size: 9, weight: .medium))
+                        .font(.system(size: DSType.Size.micro, weight: .medium))
                         .foregroundStyle(Color.accentGold)
                     Spacer()
                     Text("100%")
@@ -2261,12 +2406,12 @@ struct PlayerDetailView: View {
                         // §5.3: this is a conversion programme, not just
                         // cross-training — say so before it fires.
                         Text("At \(VersatilityDevelopmentEngine.conversionCommitFamiliarity)% familiarity he converts to \(trainingPos.rawValue) PERMANENTLY and his ratings are rebuilt around it. Stop the programme first if you only want cover there.")
-                            .font(.system(size: 10))
+                            .font(.system(size: DSType.Size.micro))
                             .foregroundStyle(Color.textTertiary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     .padding(6)
-                    .background(Color.accentGold.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+                    .background(Color.accentGold.opacity(0.08), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
                 }
 
                 Divider().overlay(Color.surfaceBorder)
@@ -2292,7 +2437,7 @@ struct PlayerDetailView: View {
                                     .frame(width: 30, alignment: .leading)
 
                                 Text(statusLabel)
-                                    .font(.system(size: 9, weight: .medium))
+                                    .font(.system(size: DSType.Size.micro, weight: .medium))
                                     .foregroundStyle(familiarity > 0 ? Color.accentGold : Color.accentBlue)
 
                                 Spacer()
@@ -2306,11 +2451,11 @@ struct PlayerDetailView: View {
                             GeometryReader { geo in
                                 let barWidth = geo.size.width
                                 ZStack(alignment: .leading) {
-                                    RoundedRectangle(cornerRadius: 2)
+                                    RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                                         .fill(Color.backgroundTertiary)
                                         .frame(height: 6)
                                     if familiarity > 0 {
-                                        RoundedRectangle(cornerRadius: 2)
+                                        RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                                             .fill(versatilityBarColor(familiarity))
                                             .frame(width: barWidth * CGFloat(familiarity) / 100.0, height: 6)
                                     }
@@ -2325,7 +2470,7 @@ struct PlayerDetailView: View {
 
                             // Explanation of why this alternate position exists (#32)
                             Text(versatilityExplanation(from: player.position, to: pos, rating: rating))
-                                .font(.system(size: 9))
+                                .font(.system(size: DSType.Size.micro))
                                 .foregroundStyle(Color.textTertiary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
@@ -2334,12 +2479,13 @@ struct PlayerDetailView: View {
             }
 
             // #181: Show ALL relevant schemes, not just learned ones.
-            // No standalone `Divider()` row here — see the note in `tradeValueSection`:
-            // at Section level it becomes an empty ~44pt List row, and the List's own
-            // separator already parts this heading from the block above it.
-            Text("Scheme Familiarity")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(Color.textSecondary)
+            //
+            // Now that the card is a plain `VStack` rather than a `Section`, a
+            // `Divider()` is an inline rule again — inside a List it was its own
+            // ~44 pt row with a hairline floating in the middle of it, which is
+            // why this heading had no rule above it before.
+            Divider().overlay(Color.surfaceBorder)
+            SectionHeaderText(title: "Scheme Familiarity")
 
             let allSchemes: [(String, Int)] = {
                 let schemeNames: [String]
@@ -2367,11 +2513,11 @@ struct PlayerDetailView: View {
 
                     GeometryReader { geo in
                         ZStack(alignment: .leading) {
-                            RoundedRectangle(cornerRadius: 2)
+                            RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                                 .fill(Color.backgroundTertiary)
                                 .frame(height: 6)
                             if familiarity > 0 {
-                                RoundedRectangle(cornerRadius: 2)
+                                RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                                     .fill(schemeFamColor(familiarity))
                                     .frame(width: geo.size.width * CGFloat(familiarity) / 100.0, height: 6)
                             }
@@ -2386,68 +2532,65 @@ struct PlayerDetailView: View {
                 }
             }
         }
-        .listRowBackground(Color.backgroundSecondary)
     }
 
+    /// Both meters are 0–99 reads like any other, so both go through the one
+    /// ladder (§4 wave 4). The two bespoke ladders they replace disagreed with
+    /// `Color.forRating` *and with each other* — same value, same card, gold in
+    /// the versatility bar and green in the familiarity bar beneath it.
     private func versatilityBarColor(_ value: Int) -> Color {
-        if value >= 80 { return .accentGold }
-        if value >= 60 { return .success }
-        if value >= 40 { return .accentBlue }
-        return .warning
+        Color.forRating(value)
     }
 
     private func schemeFamColor(_ value: Int) -> Color {
-        if value >= 80 { return .accentGold }
-        if value >= 60 { return .success }
-        if value >= 40 { return .accentBlue }
-        return .danger
+        Color.forRating(value)
     }
 
-    // MARK: - Scheme Fit Section
+    // MARK: - Scheme Fit
 
-    private var schemeFitSection: some View {
-        Section(header: SectionHeaderText(title: "Scheme Fit")) {
+    private var schemeFitCard: some View {
+        DSDetailCard(
+            "Scheme Fit",
+            icon: "square.grid.3x3",
+            explainer: "Which system he already knows, and the two profile averages a coordinator reads before he installs anything."
+        ) {
             // Best-fit scheme call-out (#42) — derived from the player's highest familiarity entry.
             if let best = bestSchemeFit {
-                LabeledContent("Best Scheme") {
-                    HStack(spacing: 6) {
+                DSDetailRow(label: "Best Scheme") {
+                    HStack(spacing: DSSpacing.xxs) {
                         Text(best.scheme)
-                            .font(.subheadline.weight(.semibold))
+                            .font(.system(size: DSType.Size.body, weight: .semibold))
                             .foregroundStyle(Color.accentGold)
                         Text("\(best.familiarity)%")
-                            .font(.system(size: 11, weight: .medium).monospacedDigit())
-                            .foregroundStyle(Color.textTertiary)
+                            .font(.system(size: DSType.Size.caption, weight: .semibold).monospacedDigit())
+                            .foregroundStyle(Color.textTertiaryReadable)
                     }
                 }
             }
-            LabeledContent("Position Group") {
-                Text(positionGroupName)
-                    .foregroundStyle(Color.textSecondary)
-            }
-            LabeledContent("Physical Profile") {
-                let avg = player.physical.average
-                HStack(spacing: 4) {
-                    Text(physicalProfileLabel(for: Int(avg.rounded())))
-                        .font(.subheadline)
-                    Text("(\(Int(avg.rounded())))")
-                        .monospacedDigit()
-                        .foregroundStyle(colorForAttribute(Int(avg.rounded())))
+            DSDetailRow("Position Group", positionGroupName, tint: .textSecondary, weight: .regular)
+            DSDetailRow(label: "Physical Profile") {
+                let avg = Int(player.physical.average.rounded())
+                HStack(spacing: DSSpacing.xxs) {
+                    Text(physicalProfileLabel(for: avg))
+                        .font(.system(size: DSType.Size.body))
+                        .foregroundStyle(Color.textSecondary)
+                    Text("(\(avg))")
+                        .font(.system(size: DSType.Size.body, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(colorForAttribute(avg))
                 }
-                .foregroundStyle(Color.textSecondary)
             }
-            LabeledContent("Mental Profile") {
-                let avg = player.mental.average
-                HStack(spacing: 4) {
-                    Text(mentalProfileLabel(for: Int(avg.rounded())))
-                        .font(.subheadline)
-                    Text("(\(Int(avg.rounded())))")
-                        .monospacedDigit()
-                        .foregroundStyle(colorForAttribute(Int(avg.rounded())))
+            DSDetailRow(label: "Mental Profile") {
+                let avg = Int(player.mental.average.rounded())
+                HStack(spacing: DSSpacing.xxs) {
+                    Text(mentalProfileLabel(for: avg))
+                        .font(.system(size: DSType.Size.body))
+                        .foregroundStyle(Color.textSecondary)
+                    Text("(\(avg))")
+                        .font(.system(size: DSType.Size.body, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(colorForAttribute(avg))
                 }
-                .foregroundStyle(Color.textSecondary)
             }
         }
-        .listRowBackground(Color.backgroundSecondary)
     }
 
     /// Highest-familiarity scheme for the player, used in Scheme Fit recommendation.
@@ -2458,10 +2601,14 @@ struct PlayerDetailView: View {
         return (scheme: top.key, familiarity: top.value)
     }
 
-    // MARK: - Grid Attribute Sections (iPad / landscape)
+    // MARK: - Attribute cards
+    //
+    // The one implementation. Column count comes from the page, so the same
+    // card is a two-up grid in a wide column and a single list in a narrow one
+    // — no second set of section builders for "compact".
 
-    private var physicalAttributesGrid: some View {
-        Section(header: SectionHeaderText(title: "Physical Attributes")) {
+    private var physicalAttributesCard: some View {
+        DSDetailCard("Physical Attributes", icon: "figure.run") {
             attributeGrid([
                 ("Speed",        player.physical.speed),
                 ("Acceleration", player.physical.acceleration),
@@ -2471,11 +2618,10 @@ struct PlayerDetailView: View {
                 ("Durability",   player.physical.durability),
             ])
         }
-        .listRowBackground(Color.backgroundSecondary)
     }
 
-    private var mentalAttributesGrid: some View {
-        Section(header: SectionHeaderText(title: "Mental Attributes")) {
+    private var mentalAttributesCard: some View {
+        DSDetailCard("Mental Attributes", icon: "brain.head.profile") {
             attributeGrid([
                 ("Awareness",       player.mental.awareness),
                 ("Decision Making",  player.mental.decisionMaking),
@@ -2489,16 +2635,15 @@ struct PlayerDetailView: View {
                 ("Competitiveness",  player.competitiveness),
             ])
         }
-        .listRowBackground(Color.backgroundSecondary)
     }
 
     @ViewBuilder
-    private var positionAttributesGridSection: some View {
+    private var positionAttributesCards: some View {
         switch player.positionAttributes {
         case .quarterback(let a):
             // #182: QB grid with league averages
             let avg = qbLeagueAverages
-            Section(header: SectionHeaderText(title: "Quarterback Skills")) {
+            DSDetailCard("Quarterback Skills", icon: "football") {
                 attributeGridWithAvg([
                     ("Arm Strength", a.armStrength, avg.armStrength),
                     ("Accuracy Short", a.accuracyShort, avg.accuracyShort),
@@ -2507,62 +2652,62 @@ struct PlayerDetailView: View {
                     ("Pocket Presence", a.pocketPresence, avg.pocketPresence),
                     ("Scrambling", a.scrambling, avg.scrambling),
                 ])
-            }.listRowBackground(Color.backgroundSecondary)
+            }
         case .wideReceiver(let a):
-            Section(header: SectionHeaderText(title: "Receiver Skills")) {
+            DSDetailCard("Receiver Skills", icon: "hand.raised") {
                 attributeGrid([
                     ("Route Running", a.routeRunning), ("Catching", a.catching),
                     ("Release", a.release), ("Spectacular Catch", a.spectacularCatch),
                 ])
-            }.listRowBackground(Color.backgroundSecondary)
+            }
         case .runningBack(let a):
-            Section(header: SectionHeaderText(title: "Running Back Skills")) {
+            DSDetailCard("Running Back Skills", icon: "figure.run") {
                 attributeGrid([
                     ("Vision", a.vision), ("Elusiveness", a.elusiveness),
                     ("Break Tackle", a.breakTackle), ("Receiving", a.receiving),
                 ])
-            }.listRowBackground(Color.backgroundSecondary)
+            }
         case .tightEnd(let a):
-            Section(header: SectionHeaderText(title: "Tight End Skills")) {
+            DSDetailCard("Tight End Skills", icon: "shield.lefthalf.filled") {
                 attributeGrid([
                     ("Blocking", a.blocking), ("Catching", a.catching),
                     ("Route Running", a.routeRunning), ("Speed", a.speed),
                 ])
-            }.listRowBackground(Color.backgroundSecondary)
+            }
         case .offensiveLine(let a):
-            Section(header: SectionHeaderText(title: "Offensive Line Skills")) {
+            DSDetailCard("Offensive Line Skills", icon: "shield") {
                 attributeGrid([
                     ("Run Block", a.runBlock), ("Pass Block", a.passBlock),
                     ("Pull", a.pull), ("Anchor", a.anchor),
                 ])
-            }.listRowBackground(Color.backgroundSecondary)
+            }
         case .defensiveLine(let a):
-            Section(header: SectionHeaderText(title: "Defensive Line Skills")) {
+            DSDetailCard("Defensive Line Skills", icon: "bolt.shield") {
                 attributeGrid([
                     ("Pass Rush", a.passRush), ("Block Shedding", a.blockShedding),
                     ("Power Moves", a.powerMoves), ("Finesse Moves", a.finesseMoves),
                 ])
-            }.listRowBackground(Color.backgroundSecondary)
+            }
         case .linebacker(let a):
-            Section(header: SectionHeaderText(title: "Linebacker Skills")) {
+            DSDetailCard("Linebacker Skills", icon: "shield.righthalf.filled") {
                 attributeGrid([
                     ("Tackling", a.tackling), ("Zone Coverage", a.zoneCoverage),
                     ("Man Coverage", a.manCoverage), ("Blitzing", a.blitzing),
                 ])
-            }.listRowBackground(Color.backgroundSecondary)
+            }
         case .defensiveBack(let a):
-            Section(header: SectionHeaderText(title: "Defensive Back Skills")) {
+            DSDetailCard("Defensive Back Skills", icon: "lock.shield") {
                 attributeGrid([
                     ("Man Coverage", a.manCoverage), ("Zone Coverage", a.zoneCoverage),
                     ("Press", a.press), ("Ball Skills", a.ballSkills),
                 ])
-            }.listRowBackground(Color.backgroundSecondary)
+            }
         case .kicking(let a):
-            Section(header: SectionHeaderText(title: "Kicking Skills")) {
+            DSDetailCard("Kicking Skills", icon: "figure.kickboxing") {
                 attributeGrid([
                     ("Kick Power", a.kickPower), ("Kick Accuracy", a.kickAccuracy),
                 ])
-            }.listRowBackground(Color.backgroundSecondary)
+            }
         }
     }
 
@@ -2572,7 +2717,7 @@ struct PlayerDetailView: View {
         return LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 8) {
             ForEach(attributes, id: \.0) { attr in
                 HStack(spacing: 6) {
-                    RoundedRectangle(cornerRadius: 2)
+                    RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                         .fill(colorForAttribute(attr.1))
                         .frame(width: 3, height: 16)
                     Text(attr.0)
@@ -2597,7 +2742,7 @@ struct PlayerDetailView: View {
         return LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 8) {
             ForEach(attributes, id: \.0) { attr in
                 HStack(spacing: 6) {
-                    RoundedRectangle(cornerRadius: 2)
+                    RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                         .fill(colorForAttribute(attr.1))
                         .frame(width: 3, height: 16)
                     Text(attr.0)
@@ -2606,16 +2751,36 @@ struct PlayerDetailView: View {
                         .lineLimit(1)
                     Spacer()
                     Text("\(attr.1)")
-                        .fontWeight(.semibold)
-                        .monospacedDigit()
+                        .font(.system(size: DSType.Size.body, weight: .semibold).monospacedDigit())
                         .foregroundStyle(colorForAttribute(attr.1))
-                    Text("(\(attr.2))")
-                        .font(.system(size: 10))
-                        .foregroundStyle(Color.textTertiary)
+                    // The gap to the league average at this position, signed —
+                    // clearer than the bare "(68)" parenthetical, which never
+                    // said what the number referenced (#182).
+                    Text(leagueDeltaText(value: attr.1, avg: attr.2))
+                        .font(.system(size: DSType.Size.micro, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(leagueDeltaColor(value: attr.1, avg: attr.2))
+                        .accessibilityLabel("\(leagueDeltaText(value: attr.1, avg: attr.2)) versus the league average for this position, \(attr.2)")
                 }
             }
         }
         .padding(.vertical, 4)
+    }
+
+    /// "+5" / "-12" / "±0" — the signed gap to the league average.
+    private func leagueDeltaText(value: Int, avg: Int) -> String {
+        let delta = value - avg
+        if delta > 0 { return "+\(delta)" }
+        if delta < 0 { return "\(delta)" }
+        return "\u{00B1}0"
+    }
+
+    /// Three states, not a rating ladder: clearly above, clearly below, or
+    /// inside the ±5 band where the difference is noise.
+    private func leagueDeltaColor(value: Int, avg: Int) -> Color {
+        let delta = value - avg
+        if delta >= 5 { return .success }
+        if delta <= -5 { return .danger }
+        return .textTertiaryReadable
     }
 
     // MARK: - Helpers
@@ -2637,9 +2802,9 @@ struct PlayerDetailView: View {
     private var developmentBadge: some View {
         HStack(spacing: 3) {
             Image(systemName: developmentPhase.icon)
-                .font(.system(size: 9))
+                .font(.system(size: DSType.Size.micro))
             Text(developmentPhase.shortLabel)
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: DSType.Size.micro, weight: .medium))
         }
         .foregroundStyle(developmentPhase.color)
         .padding(.horizontal, 6)
@@ -2672,14 +2837,9 @@ struct PlayerDetailView: View {
         "\(player.morale) · \(moraleShortLabel)"
     }
 
-    private var moraleLabel: String {
-        switch player.morale {
-        case 85...: return "Excellent (\(player.morale))"
-        case 70..<85: return "Good (\(player.morale))"
-        case 55..<70: return "Neutral (\(player.morale))"
-        default:    return "Low (\(player.morale))"
-        }
-    }
+    // `moraleLabel`, `moraleIcon` and `moraleSystemImage` were the compact
+    // list fork's morale row and died with it. The one morale encoding on this
+    // screen is `moraleDisplayLabel` in the Overview card.
 
     private var moraleColor: Color {
         Color.forRating(player.morale)
@@ -2703,11 +2863,11 @@ struct PlayerDetailView: View {
     private var motivationPill: some View {
         HStack(spacing: 4) {
             Text("Motivation")
-                .font(.system(size: 9))
+                .font(.system(size: DSType.Size.micro))
                 .foregroundStyle(Color.textTertiary)
             Spacer()
             Image(systemName: player.motivationState.icon)
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: DSType.Size.micro, weight: .bold))
                 .foregroundStyle(motivationColor)
             Text(player.motivationState.displayName)
                 .font(.caption2.weight(.bold))
@@ -2718,20 +2878,6 @@ struct PlayerDetailView: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
-    }
-
-    private var moraleIcon: some View {
-        Image(systemName: moraleSystemImage)
-            .foregroundStyle(moraleColor)
-    }
-
-    private var moraleSystemImage: String {
-        switch player.morale {
-        case 85...: return "face.smiling.fill"
-        case 70..<85: return "face.smiling"
-        case 55..<70: return "face.dashed"
-        default:    return "face.dashed.fill"
-        }
     }
 
     /// Plain-language morale impact (#40). Helps the user understand *why* morale matters.
@@ -3116,36 +3262,23 @@ struct PlayerDetailView: View {
     /// Yellow callout shown when the player's best scheme doesn't match the team's scheme.
     /// Surfaces the mismatch so the user can consider trading the player or changing scheme.
     @ViewBuilder
-    private var schemeMismatchSection: some View {
+    private var schemeMismatchCard: some View {
         if let info = schemeMismatchInfo {
-            Section {
-                HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.body)
-                        .foregroundStyle(Color.warning)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Scheme Mismatch")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(Color.warning)
-                        Text("\(player.lastName) (\(info.playerScheme)) vs \(info.hcName) (\(info.teamScheme)).")
-                            .font(.caption)
-                            .foregroundStyle(Color.textPrimary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Text("Consider a trade or changing the team scheme.")
-                            .font(.caption2)
-                            .foregroundStyle(Color.textSecondary)
-                    }
-                    Spacer(minLength: 0)
-                }
-                .padding(.vertical, 6)
-                .padding(.horizontal, 8)
-                .background(Color.warning.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(Color.warning.opacity(0.4), lineWidth: 1)
+            DSDetailCard("Scheme Mismatch", icon: "exclamationmark.triangle.fill") {
+                Text("\(player.lastName) knows **\(info.playerScheme)**. \(info.hcName) runs **\(info.teamScheme)**.")
+                    .font(.system(size: DSType.Size.footnote))
+                    .foregroundStyle(Color.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+                DSDetailNote(
+                    text: "He installs the club's system from scratch, which costs him snaps and costs the coordinator a package. A trade or a scheme change are the two ways out.",
+                    icon: "arrow.triangle.branch",
+                    tint: .warning
                 )
             }
-            .listRowBackground(Color.backgroundSecondary)
+            .overlay(
+                RoundedRectangle(cornerRadius: DSCornerRadius.card)
+                    .strokeBorder(Color.warning.opacity(0.45), lineWidth: 1)
+            )
         }
     }
 
@@ -3306,7 +3439,7 @@ struct ColorCodedAttributeRow: View {
         LabeledContent(name) {
             HStack(spacing: 6) {
                 // Color bar indicator
-                RoundedRectangle(cornerRadius: 2)
+                RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                     .fill(attributeColor)
                     .frame(width: 3, height: 16)
 
@@ -3336,112 +3469,20 @@ private struct CircularProgressView: View {
                 .stroke(color, style: StrokeStyle(lineWidth: 3, lineCap: .round))
                 .rotationEffect(.degrees(-90))
             Text("\(Int(progress * 100))%")
-                .font(.system(size: 7, weight: .bold))
+                .font(.system(size: DSType.Size.micro, weight: .bold))
                 .foregroundStyle(color)
         }
     }
 }
 
-// MARK: - Attribute Row with Trend Arrow (#184)
-
-/// Displays attribute with a trend arrow showing change from last season.
-/// If no previous data exists, shows "---" indicator.
-struct AttributeRowWithTrend: View {
-    let name: String
-    let value: Int
-    let previousValue: Int?
-
-    private var attributeColor: Color {
-        colorForAttribute(value)
-    }
-
-    private var trendIndicator: (symbol: String, color: Color) {
-        guard let prev = previousValue else {
-            return ("---", .textTertiary)
-        }
-        let diff = value - prev
-        if diff > 0 {
-            return ("+\(diff)", .success)
-        } else if diff < 0 {
-            return ("\(diff)", .danger)
-        } else {
-            return ("=", .textTertiary)
-        }
-    }
-
-    var body: some View {
-        LabeledContent(name) {
-            HStack(spacing: 6) {
-                // Color bar indicator
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(attributeColor)
-                    .frame(width: 3, height: 16)
-
-                Text("\(value)")
-                    .fontWeight(.semibold)
-                    .monospacedDigit()
-                    .foregroundStyle(attributeColor)
-
-                // Trend arrow
-                Text(trendIndicator.symbol)
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(trendIndicator.color)
-                    .frame(width: 28, alignment: .trailing)
-            }
-        }
-    }
-}
-
-// MARK: - Attribute Row with League Average Context (#182)
-
-/// Displays attribute value alongside league position average for context.
-struct AttributeRowWithContext: View {
-    let name: String
-    let value: Int
-    let avg: Int
-
-    private var attributeColor: Color {
-        colorForAttribute(value)
-    }
-
-    /// Sign of the gap vs league average at this position (e.g. "+5", "-12").
-    private var deltaText: String {
-        let delta = value - avg
-        if delta > 0 { return "+\(delta)" }
-        if delta < 0 { return "\(delta)" }
-        return "±0"
-    }
-
-    private var deltaColor: Color {
-        let delta = value - avg
-        if delta >= 5  { return .success }
-        if delta <= -5 { return .danger }
-        return Color.textTertiary
-    }
-
-    var body: some View {
-        LabeledContent(name) {
-            HStack(spacing: 6) {
-                // Color bar indicator
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(attributeColor)
-                    .frame(width: 3, height: 16)
-
-                Text("\(value)")
-                    .fontWeight(.semibold)
-                    .monospacedDigit()
-                    .foregroundStyle(attributeColor)
-
-                // Delta vs position-league average — clearer than the previous "(Avg: 68)" tag
-                // since the user couldn't tell what the bare parenthetical referenced.
-                Text(deltaText)
-                    .font(.system(size: 10, weight: .medium).monospacedDigit())
-                    .foregroundStyle(deltaColor)
-                    .accessibilityLabel("\(deltaText) vs league average for this position (\(avg))")
-            }
-        }
-    }
-}
+// The `AttributeRowWithTrend` (#184) and `AttributeRowWithContext` (#182) row
+// types were deleted with the list forks that were their only call sites.
+//
+// #184's trend arrow was never wired to anything: every one of its 14 call
+// sites passed `previousValue: nil`, so it printed a grey "---" on every row of
+// every player card in the game. #182's league-average delta was real
+// information and survives — `attributeGridWithAvg` prints it, in the same
+// signed form and on the same ±5 threshold.
 
 // MARK: - Legacy AttributeRow (kept for backward compatibility)
 

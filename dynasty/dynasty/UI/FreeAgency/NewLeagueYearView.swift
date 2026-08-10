@@ -14,24 +14,47 @@ struct NewLeagueYearView: View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
 
-            if let summary {
-                ScrollView {
-                    VStack(spacing: 24) {
-                        transitionHeader(summary: summary)
-                        capSummaryCard(summary: summary)
-                        notableFACard(summary: summary)
-                        continueButton
+            VStack(spacing: 0) {
+                // §2.1 — free agency's spine. Step 2 of 5, on every screen of
+                // the run, so a user routed straight here by the shell can see
+                // what is behind him and what is ahead.
+                FAFlowBandView(
+                    step: .newLeagueYear,
+                    currentSubcaption: summary.map { "\($0.totalFreeAgentCount) players hit the market" }
+                )
+
+                if let summary {
+                    ScrollView {
+                        VStack(spacing: DSSpacing.lg) {
+                            transitionHeader(summary: summary)
+                            capSummaryCard(summary: summary)
+                            notableFACard(summary: summary)
+                        }
+                        .padding(DSSpacing.lg)
+                        .frame(maxWidth: .infinity)
                     }
-                    .padding(24)
-                    .frame(maxWidth: .infinity)
-                }
-            } else {
-                VStack(spacing: 16) {
-                    ProgressView()
-                        .tint(Color.accentBlue)
-                    Text("Advancing contracts...")
-                        .font(.subheadline)
-                        .foregroundStyle(Color.textSecondary)
+                    // §2.5 — the commit lives on the bar, not as the last item
+                    // in a ScrollView the user has to reach the bottom of.
+                    DSActionBar(
+                        explainer: .init(
+                            title: "Cap review",
+                            message: "Contracts have rolled over. You must be **under the cap** before the market will take an offer."
+                        ),
+                        primary: .init(
+                            title: "Continue \u{2192} Cap Review",
+                            handler: { career.freeAgencyStep = FreeAgencyStep.capReview.rawValue }
+                        )
+                    )
+                } else {
+                    Spacer()
+                    VStack(spacing: DSSpacing.md) {
+                        ProgressView()
+                            .tint(Color.accentBlue)
+                        Text("Advancing contracts...")
+                            .font(DSType.text(DSType.Size.body, .regular, prose: true))
+                            .foregroundStyle(Color.textSecondary)
+                    }
+                    Spacer()
                 }
             }
         }
@@ -160,25 +183,12 @@ struct NewLeagueYearView: View {
         .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.surfaceBorder, lineWidth: 1))
     }
 
-    // MARK: - Continue Button
-
-    private var continueButton: some View {
-        Button {
-            career.freeAgencyStep = FreeAgencyStep.capReview.rawValue
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "dollarsign.circle.fill")
-                    .font(.title3)
-                Text("Continue to Cap Review")
-                    .font(.headline)
-            }
-            .foregroundStyle(Color.backgroundPrimary)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 16)
-            .background(Color.accentGold, in: RoundedRectangle(cornerRadius: 14))
-        }
-        .buttonStyle(.plain)
-    }
+    // MARK: - Continue Button (RETIRED, wave 3)
+    //
+    // The hand-rolled gold recipe at radius 14 that used to sit as the last item
+    // in the ScrollView is gone: the commit is the `DSActionBar` primary in
+    // `body`, which is `.dsPrimary` at `DSCornerRadius.inline` like every other
+    // commit in the app (§2.5 / §2.8).
 
     // MARK: - Helpers
 

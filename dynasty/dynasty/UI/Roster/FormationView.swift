@@ -13,12 +13,30 @@ struct FormationView: View {
     /// Parameters: (position, selectedPlayer) — the caller should promote selectedPlayer to starter.
     var onPlayerSwapped: ((Position, Player) -> Void)?
 
-    /// Currently selected slot for player swap picker (#43)
-    @State private var selectedSlot: FormationSlot?
-    /// Whether we're picking for a backup slot (#199)
-    @State private var selectedBackupDepth: Int = 0
-    /// Slot for comparison overlay (#192)
-    @State private var comparisonSlot: FormationSlot?
+    /// **The one modal slot on this view** (§2.8 + the house rule).
+    ///
+    /// The picker (#43/#199) and the starter-vs-backup comparison (#192) were
+    /// two `.sheet(item:)` modifiers on the same node, both bound to a
+    /// `FormationSlot?` — the shape SwiftUI resolves by honouring one and
+    /// silently dropping the other, which this codebase has now found five
+    /// times. Both are short, cancellable side-tasks off the formation, so they
+    /// stay sheets and become one enum-driven presentation point.
+    private enum FormationSheet: Identifiable {
+        /// Swap a player into a slot. `depth` 0 is the starter, 1–2 the
+        /// backup rows (#199).
+        case picker(slot: FormationSlot, depth: Int)
+        /// Starter vs backup comparison (#192).
+        case comparison(FormationSlot)
+
+        var id: String {
+            switch self {
+            case .picker(let slot, let depth): return "picker-\(slot.id)-\(depth)"
+            case .comparison(let slot):        return "compare-\(slot.id)"
+            }
+        }
+    }
+
+    @State private var activeSheet: FormationSheet?
 
     /// Local custom depth ordering built from formation swaps so the formation view
     /// reflects changes immediately (even before the parent updates).
@@ -90,8 +108,7 @@ struct FormationView: View {
 
                             if let player = player {
                                 Button {
-                                    selectedSlot = slot
-                                    selectedBackupDepth = 0
+                                    activeSheet = .picker(slot: slot, depth: 0)
                                 } label: {
                                     FormationPlayerCard(
                                         player: player,
@@ -104,20 +121,18 @@ struct FormationView: View {
                                 .contextMenu {
                                     // #192: comparison on long-press context menu
                                     Button {
-                                        comparisonSlot = slot
+                                        activeSheet = .comparison(slot)
                                     } label: {
                                         Label("Compare Starter vs Backup", systemImage: "arrow.left.arrow.right")
                                     }
                                     // #199: assign backup slots
                                     Button {
-                                        selectedSlot = slot
-                                        selectedBackupDepth = 1
+                                        activeSheet = .picker(slot: slot, depth: 1)
                                     } label: {
                                         Label("Assign Backup (B2)", systemImage: "person.badge.plus")
                                     }
                                     Button {
-                                        selectedSlot = slot
-                                        selectedBackupDepth = 2
+                                        activeSheet = .picker(slot: slot, depth: 2)
                                     } label: {
                                         Label("Assign B3", systemImage: "person.badge.plus")
                                     }
@@ -125,8 +140,7 @@ struct FormationView: View {
                             } else {
                                 // Empty placeholder slot (#42) — shown as "?" card (#188)
                                 Button {
-                                    selectedSlot = slot
-                                    selectedBackupDepth = 0
+                                    activeSheet = .picker(slot: slot, depth: 0)
                                 } label: {
                                     FormationEmptySlot(label: slot.label)
                                 }
@@ -157,27 +171,30 @@ struct FormationView: View {
         )
         .padding(.horizontal, 6)
         .padding(.vertical, 4)
-        .sheet(item: $selectedSlot) { slot in
-            PlayerSlotPicker(
-                slot: slot,
-                players: eligiblePlayers(for: slot),
-                allPlayers: players,
-                currentPlayer: playerForSlot(slot),
-                backupDepth: selectedBackupDepth,
-                onPlayerSelected: { player in
-                    promotePlayer(player, forSlot: slot)
-                }
-            )
-            .presentationDetents([.medium, .large]) // #193
-        }
-        .sheet(item: $comparisonSlot) { slot in
-            // #192: Comparison overlay
-            StarterBackupComparisonSheet(
-                slot: slot,
-                starter: playerForSlot(slot),
-                backups: backupsForSlot(slot)
-            )
-            .presentationDetents([.medium])
+        // The one modal slot — see `FormationSheet`.
+        .sheet(item: $activeSheet) { sheet in
+            switch sheet {
+            case .picker(let slot, let depth):
+                PlayerSlotPicker(
+                    slot: slot,
+                    players: eligiblePlayers(for: slot),
+                    allPlayers: players,
+                    currentPlayer: playerForSlot(slot),
+                    backupDepth: depth,
+                    onPlayerSelected: { player in
+                        promotePlayer(player, forSlot: slot)
+                    }
+                )
+                .presentationDetents([.medium, .large]) // #193
+            case .comparison(let slot):
+                // #192: Comparison overlay
+                StarterBackupComparisonSheet(
+                    slot: slot,
+                    starter: playerForSlot(slot),
+                    backups: backupsForSlot(slot)
+                )
+                .presentationDetents([.medium])
+            }
         }
     }
 

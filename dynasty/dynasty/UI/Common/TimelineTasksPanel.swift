@@ -327,8 +327,9 @@ struct TimelineTasksPanel: View {
                     ? actionable
                     : actionable.filter(\.isRequired) + actionable.filter { !$0.isRequired }
 
+                let nextID = nextActionableTask?.id
                 ForEach(ordered) { task in
-                    currentTaskRow(task, isRequired: task.isRequired)
+                    currentTaskRow(task, isRequired: task.isRequired, isNext: task.id == nextID)
                 }
             }
             .padding(.leading, 30) // Align with text after timeline dot
@@ -343,65 +344,206 @@ struct TimelineTasksPanel: View {
         )
     }
 
+    /// One task row.
+    ///
+    /// **#105 wave 2 (P4/P5).** Three things landed here at once, and they are
+    /// the same change seen from three sides:
+    ///
+    /// 1. **The one "what's next" marker.** The dashboard used to carry three
+    ///    of them — a gold-bordered Next Action hero card in the work column,
+    ///    a "Next: … / Tap to start" button below this list, and an advance
+    ///    readiness banner above it — all naming the same row, all recomputing
+    ///    "which row is next" separately. `isNext` marks the row itself, which
+    ///    is the only place the answer cannot drift from the list it describes.
+    /// 2. **A cost→unlock line.** What the step is and what it gates, stated on
+    ///    the row before the user commits to the trip. `task.description` is
+    ///    the copy the generator already writes; it was previously visible only
+    ///    inside the deleted hero card, i.e. for exactly one task at a time.
+    /// 3. **A scoped secondary action.** The reference screen this particular
+    ///    decision is made against (see `secondaryAction`) — the cap for money
+    ///    calls, the board for draft calls — so the row does not need the hub
+    ///    to grow another row of global chips to be useful.
     @ViewBuilder
-    private func currentTaskRow(_ task: GameTask, isRequired: Bool) -> some View {
+    private func currentTaskRow(_ task: GameTask, isRequired: Bool, isNext: Bool) -> some View {
         let locked = isTaskLocked(task)
+        let done = task.status == .done
+        let secondary = locked || done ? nil : Self.secondaryAction(for: task.destination)
 
-        Button {
-            if !locked {
-                onTaskSelected(task.destination)
+        VStack(alignment: .leading, spacing: 2) {
+            Button {
+                if !locked {
+                    onTaskSelected(task.destination)
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    // Status dot
+                    taskStatusIcon(task, isRequired: isRequired, isLocked: locked)
+
+                    // Task text. Baseline alignment keeps the status pill on the
+                    // title's *first* line — centered, it floated mid-block on a
+                    // title that wrapped, reading as if it belonged to neither line.
+                    HStack(alignment: .firstTextBaseline, spacing: 5) {
+                        Text(task.title)
+                            .font(.system(size: 13, weight: done ? .regular : (locked ? .regular : .medium)))
+                            .foregroundStyle(done ? Color.textTertiary : (locked ? Color.textTertiary : Color.textPrimary))
+                            .strikethrough(done, color: Color.textTertiary)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        if isNext {
+                            Text("NEXT")
+                                .font(.system(size: DSType.Size.micro, weight: .black))
+                                .foregroundStyle(Color.backgroundPrimary)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(Capsule().fill(Color.accentGold))
+                        }
+
+                        if locked {
+                            Text("Locked")
+                                .font(.system(size: DSType.Size.micro, weight: .heavy))
+                                .foregroundStyle(Color.textTertiary)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(Capsule().fill(Color.backgroundTertiary))
+                        } else if isRequired && !done {
+                            Text("Required")
+                                .font(.system(size: DSType.Size.micro, weight: .heavy))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(Capsule().fill(Color.danger))
+                        }
+                    }
+
+                    Spacer()
+
+                    if !done && !locked {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                }
+                .padding(.vertical, 5)
+                .contentShape(Rectangle())
             }
-        } label: {
-            HStack(spacing: 8) {
-                // Status dot
-                taskStatusIcon(task, isRequired: isRequired, isLocked: locked)
+            .buttonStyle(.plain)
+            .disabled(locked)
 
-                // Task text. Baseline alignment keeps the status pill on the
-                // title's *first* line — centered, it floated mid-block on a
-                // title that wrapped, reading as if it belonged to neither line.
-                HStack(alignment: .firstTextBaseline, spacing: 5) {
-                    Text(task.title)
-                        .font(.system(size: 13, weight: task.status == .done ? .regular : (locked ? .regular : .medium)))
-                        .foregroundStyle(task.status == .done ? Color.textTertiary : (locked ? Color.textTertiary : Color.textPrimary))
-                        .strikethrough(task.status == .done, color: Color.textTertiary)
+            // Cost → unlock, with the scoped secondary sharing its line.
+            //
+            // Not drawn on a finished row: a struck-through title with a
+            // paragraph under it is the shape of work still to do. One line
+            // rather than two stacked blocks — a 300 pt rail holding seven
+            // steps cannot afford a three-deck row, and the chip reads as
+            // "…and here is the thing to read it against" beside the sentence
+            // it belongs to.
+            if !done {
+                HStack(alignment: .top, spacing: 6) {
+                    Text(detailLine(for: task, isRequired: isRequired, locked: locked))
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(Color.textTertiaryReadable)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
 
-                    if locked {
-                        Text("Locked")
-                            .font(.system(size: DSType.Size.micro, weight: .heavy))
-                            .foregroundStyle(Color.textTertiary)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(Capsule().fill(Color.backgroundTertiary))
-                    } else if isRequired && task.status != .done {
-                        Text("Required")
-                            .font(.system(size: DSType.Size.micro, weight: .heavy))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(Capsule().fill(Color.danger))
+                    Spacer(minLength: 2)
+
+                    if let secondary {
+                        Button {
+                            onTaskSelected(secondary.destination)
+                        } label: {
+                            HStack(spacing: 3) {
+                                Image(systemName: secondary.icon)
+                                    .font(.system(size: 10, weight: .semibold))
+                                Text(secondary.label)
+                                    .font(.system(size: 10, weight: .semibold))
+                            }
+                            .foregroundStyle(Color.accentGold)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(
+                                Capsule().strokeBorder(Color.accentGold.opacity(0.35), lineWidth: 1)
+                            )
+                            .contentShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .fixedSize()
+                        .accessibilityLabel("\(secondary.label), reference for \(task.title)")
                     }
                 }
-
-                Spacer()
-
-                if task.status != .done && !locked {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(Color.textTertiary)
-                }
+                .padding(.leading, 18)
+                .padding(.trailing, 2)
+                .padding(.bottom, 4)
             }
-            .padding(.vertical, 5)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .disabled(locked)
-        .opacity(task.status == .done ? 0.55 : (locked ? 0.45 : 1.0))
+        .opacity(done ? 0.55 : (locked ? 0.45 : 1.0))
     }
 
-    /// First incomplete required task that is also unlocked (no prerequisite blocking).
-    /// Used to surface a "Next: <task> — Tap to start" hint when the user is stuck.
+    /// The row's cost→unlock sentence (P4).
+    ///
+    /// The prefix is the price, `task.description` is what the step is for. A
+    /// locked row names the step that opens it instead of leaving the user to
+    /// work out which of the rows above it is the prerequisite — before this,
+    /// "Locked" was the entire explanation.
+    private func detailLine(for task: GameTask, isRequired: Bool, locked: Bool) -> String {
+        if locked, let prereq = prerequisiteTitle(for: task) {
+            return "Locked \u{00B7} finish \u{201C}\(prereq)\u{201D} first"
+        }
+        if locked {
+            return "Locked \u{00B7} \(task.description)"
+        }
+        let prefix = isRequired ? "Required to advance" : "Optional"
+        return "\(prefix) \u{00B7} \(task.description)"
+    }
+
+    /// Title of the step holding this one shut, when the combine chain is what
+    /// is holding it. Mirrors `isTaskLocked`'s lookup, one link back.
+    private func prerequisiteTitle(for task: GameTask) -> String? {
+        let chain = TaskGenerator.combineChain
+        guard let index = chain.firstIndex(of: task.matchKey), index > 0 else { return nil }
+        return tasks.first { $0.matchKey == chain[index - 1] }?.title
+    }
+
+    /// The reference screen a given decision is made against.
+    ///
+    /// **Scoped, not global** (P5): the hub's quick-action bar answers "what
+    /// can I open right now", and it is the wrong place for "what do I need
+    /// open while I do THIS". A cut list is priced against the cap, a draft
+    /// stage is read against the board, a game plan is set against the depth
+    /// chart. One chip, never the row's own destination.
+    static func secondaryAction(
+        for destination: TaskDestination
+    ) -> (label: String, icon: String, destination: TaskDestination)? {
+        switch destination {
+        // Money decisions → the cap sheet.
+        case .rosterCuts, .rosterEvaluation, .franchiseTag, .freeAgency,
+             .contractTimeline, .trades:
+            return ("Cap", "dollarsign.circle", .capOverview)
+        // Draft decisions → the club's own board.
+        case .draft, .mockDraft, .classDepth, .filmStudy, .proDayTour,
+             .workouts, .top30Visits, .personalWorkouts, .interviewReport:
+            return ("Big Board", "list.bullet", .bigBoard)
+        // Sunday decisions → the two sheets that feed each other.
+        case .gamePlan:
+            return ("Depth Chart", "list.number", .depthChart)
+        case .gameWeekPrep:
+            return ("Game Plan", "scope", .gamePlan)
+        case .depthChart, .mentoring, .lockerRoom:
+            return ("Roster", "person.3", .roster)
+        // Camp decisions → the load the plan is spending.
+        case .trainingPlan:
+            return ("Workload", "heart.text.square", .workloadDashboard)
+        // Scheme fit is read against the men who have to run it.
+        case .coordinatorSchemes:
+            return ("Roster", "person.3", .roster)
+        default:
+            return nil
+        }
+    }
+
+    /// First incomplete required task that is also unlocked (no prerequisite
+    /// blocking). **The one definition of "next" on this screen** — it marks
+    /// its own row with the NEXT chip, and nothing else recomputes it.
     private var nextActionableTask: GameTask? {
         tasks.first { task in
             task.isRequired && task.status != .done && !isTaskLocked(task)
@@ -477,43 +619,11 @@ struct TimelineTasksPanel: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
-                    // Next-action hint: tappable row that jumps directly to the
-                    // first incomplete & unlocked required task. Helps users who
-                    // can't tell what to do next.
-                    if let next = nextActionableTask {
-                        Button {
-                            onTaskSelected(next.destination)
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: "arrow.right.circle.fill")
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(Color.accentGold)
-                                Text("Next: \(next.title)")
-                                    .font(.system(size: 11, weight: .semibold))
-                                    .foregroundStyle(Color.textPrimary)
-                                    .lineLimit(1)
-                                    .truncationMode(.tail)
-                                Spacer(minLength: 4)
-                                Text("Tap to start")
-                                    .font(.system(size: 9, weight: .heavy))
-                                    .foregroundStyle(Color.accentGold)
-                                    .padding(.horizontal, 5)
-                                    .padding(.vertical, 1)
-                                    .background(Capsule().fill(Color.accentGold.opacity(0.15)))
-                            }
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 6)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(Color.accentGold.opacity(0.08))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 6)
-                                            .strokeBorder(Color.accentGold.opacity(0.3), lineWidth: 1)
-                                    )
-                            )
-                        }
-                        .buttonStyle(.plain)
-                    }
+                    // The "Next: … / Tap to start" button that used to sit here
+                    // is gone (#105 wave 2). It duplicated a row printed a few
+                    // points above it, in the same panel, in the same scroll —
+                    // and it was the third widget on the screen claiming to
+                    // name the next move. The row wears the NEXT chip now.
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }

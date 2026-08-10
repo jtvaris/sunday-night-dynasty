@@ -7,6 +7,20 @@ import SwiftData
 // Technical for the upcoming camp / regular-season week. Below the sliders,
 // a per-player workload list surfaces injury / burnout risk so the GM can
 // see immediate consequences of a heavy-pads plan.
+//
+// Wave 5b brings it onto the standard (UI_REDESIGN_VISION §2.2 / §2.5 / §2.7):
+//
+//  * **The commit came out of the toolbar.** P5 is categorical — "toolbars stop
+//    carrying commits entirely" — and this one was worse than most, because the
+//    thing being committed is a 100-point split the user has just spent a
+//    minute tuning and the button that banks it was a `.subheadline` word in
+//    the navigation bar. It is a `DSActionBar` now, pinned, with the explainer
+//    saying which week the plan applies to and what it steers.
+//  * **The workload list is a `DSListRow`.** It was a hand-drawn row with its
+//    own position badge, its own 6 pt meter and a status told in EMOJI — 🔥 and
+//    💀 — which §2.12 rules out by name, and which VoiceOver reads as "fire".
+//    The status is a `DSStatusPill` now and the risk is a column.
+//  * The empty roster is a `DSEmptyState` with the action that fills it.
 
 struct TrainingPlanView: View {
 
@@ -49,31 +63,48 @@ struct TrainingPlanView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: DSSpacing.lg) {
-                header
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: DSSpacing.lg) {
+                    header
 
-                presetRow
+                    presetRow
 
-                slidersCard
+                    slidersCard
 
-                workloadList
+                    workloadList
+                }
+                .padding(DSSpacing.md)
             }
-            .padding(DSSpacing.md)
+            commitBar
         }
         .background(Color.backgroundPrimary.ignoresSafeArea())
         .navigationTitle("Training Plan")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .confirmationAction) {
-                Button(action: save) {
-                    Text(didSave ? "Saved" : "Save")
-                        .font(.subheadline.weight(.semibold))
-                }
-                .disabled(didSave)
-            }
-        }
         .onAppear(perform: loadExistingPlan)
+    }
+
+    /// §2.5: the commit lives at the foot of the surface, with the line that
+    /// says what it does. A split that does not add up to 100 is a blocked
+    /// commit, and §2.12 asks a blocked commit to state the reason rather than
+    /// present a dead grey button.
+    private var commitBar: some View {
+        DSActionBar(
+            explainer: DSActionBar.Explainer(
+                title: didSave ? "Plan saved" : "Save \u{2014} \(headerTitle)",
+                message: totalIs100
+                    ? (didSave
+                        ? "This split is what the engine will run this week. Move a slider to change it."
+                        : "Banks **\(tacticalPct)/\(physicalPct)/\(technicalPct)** tactical, physical and technical for this week's development pass.")
+                    : "The three focus areas have to add up to **100**. They currently make **\(tacticalPct + physicalPct + technicalPct)**.",
+                isWarning: !totalIs100
+            ),
+            primary: DSActionBar.Action(
+                title: didSave ? "Saved" : "Save plan",
+                isEnabled: !didSave && totalIs100,
+                handler: save
+            )
+        )
     }
 
     // MARK: - Subviews
@@ -205,14 +236,32 @@ struct TrainingPlanView: View {
     }
 
     private var workloadList: some View {
-        VStack(alignment: .leading, spacing: DSSpacing.sm) {
+        VStack(alignment: .leading, spacing: DSSpacing.xxs) {
             SectionHeaderText(title: "Per-Player Workload")
             if displayRoster.isEmpty {
-                CompactEmptyStateView(
+                DSEmptyState(
+                    density: .glance,
                     icon: "person.crop.circle.badge.questionmark",
-                    message: "No active roster — sign players in Free Agency."
+                    title: "No active roster",
+                    message: "There is nobody to train. Sign players in Free Agency and the load table fills itself."
                 )
             } else {
+                // Header and rows read the same column constants (§2.2), so a
+                // label can never sit one column left of the number it names.
+                DSListHeaderRow(
+                    reservesBadge: true,
+                    // Same zero-width portrait slot the rows reserve — a header
+                    // that keeps the default 36 pt gutter puts every label one
+                    // column left of the numbers it describes.
+                    portraitWidth: 0,
+                    identityLabel: "PLAYER"
+                ) {
+                    DSColumnHeader("LOAD", width: 96, alignment: .leading)
+                    DSColumnHeader("STATE", width: DSListColumn.state)
+                    DSColumnHeader("INJ", width: DSListColumn.tight)
+                }
+                .padding(.horizontal, DSSpacing.sm)
+
                 ForEach(displayRoster, id: \.id) { player in
                     workloadRow(for: player)
                 }
@@ -221,44 +270,67 @@ struct TrainingPlanView: View {
     }
 
     private func workloadRow(for player: Player) -> some View {
-        HStack(spacing: DSSpacing.sm) {
-            // Position badge
-            Text(player.position.rawValue)
-                .font(.caption2.weight(.bold))
-                .frame(width: 32, height: 22)
-                .background(
-                    RoundedRectangle(cornerRadius: DSCornerRadius.tight)
-                        .fill(Color.backgroundTertiary)
-                )
-                .foregroundStyle(Color.textSecondary)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(player.fullName)
-                    .font(.subheadline)
-                    .foregroundStyle(Color.textPrimary)
-                    .lineLimit(1)
-                Text("OVR \(player.overall)")
-                    .font(.caption2)
-                    .foregroundStyle(Color.textTertiary)
-            }
-
-            Spacer()
-
-            // Cumulative load meter
-            VStack(alignment: .trailing, spacing: 2) {
+        DSListRow(
+            badge: DSRowBadge(
+                text: player.position.rawValue,
+                tint: Color.backgroundTertiary,
+                accessibilityLabel: player.position.rawValue
+            ),
+            portraitWidth: 0,
+            portrait: { EmptyView() },
+            identity: {
+                VStack(alignment: .leading, spacing: 2) {  // ds-lint:allow(spacing) name-over-meta lockup inside one row
+                    Text(player.fullName)
+                        .font(DSType.text(DSType.Size.body, .semibold, prose: true))
+                        .foregroundStyle(Color.textPrimary)
+                        .lineLimit(1)
+                    Text("OVR \(player.overall)")
+                        .font(DSType.display(11, .semibold))
+                        .foregroundStyle(Color.forRating(player.overall))
+                }
+            },
+            columns: {
                 workloadMeter(load: player.cumulativeLoad, status: player.workloadStatus)
-                Text("\(player.workloadStatus.emoji)  \(injuryRiskLabel(for: player))")
-                    .font(.caption2.monospacedDigit())
+                    .dsColumn(96, alignment: .leading)
+                DSStatusPill(
+                    label: workloadLabel(for: player.workloadStatus),
+                    tone: workloadTone(for: player.workloadStatus),
+                    showsDot: false,
+                    spokenLabel: "Workload \(workloadLabel(for: player.workloadStatus))"
+                )
+                .dsColumn(DSListColumn.state)
+                Text(injuryRiskLabel(for: player))
+                    .font(DSType.display(11, .heavy))
                     .foregroundStyle(loadTint(for: player.workloadStatus))
+                    .dsColumn(DSListColumn.tight)
             }
-            .frame(width: 110, alignment: .trailing)
-        }
-        .padding(.vertical, 6)
+        )
         .padding(.horizontal, DSSpacing.sm)
         .background(
             RoundedRectangle(cornerRadius: DSCornerRadius.inline)
                 .fill(Color.backgroundSecondary)
         )
+    }
+
+    /// The status as a WORD. The model still exposes an `emoji` for the
+    /// heat-map dashboards; a row that a screen reader has to speak does not
+    /// get to say "fire" and "skull" (§2.12).
+    private func workloadLabel(for status: WorkloadStatus) -> String {
+        switch status {
+        case .underloaded: return "Light"
+        case .healthy:     return "Healthy"
+        case .overloaded:  return "Heavy"
+        case .burnedOut:   return "Burnt"
+        }
+    }
+
+    private func workloadTone(for status: WorkloadStatus) -> DSStatusPill.Tone {
+        switch status {
+        case .underloaded: return .neutral
+        case .healthy:     return .ok
+        case .overloaded:  return .warn
+        case .burnedOut:   return .bad
+        }
     }
 
     private func workloadMeter(load: Int, status: WorkloadStatus) -> some View {
@@ -286,13 +358,11 @@ struct TrainingPlanView: View {
         tacticalPct + physicalPct + technicalPct == 100
     }
 
+    /// The meter and the risk figure share the pill's palette, so a row can
+    /// never say "heavy" in orange next to a bar in yellow. `warning` moved to
+    /// `alertOrange` for exactly this reason — P7's semantic hue separation.
     private func loadTint(for status: WorkloadStatus) -> Color {
-        switch status {
-        case .underloaded: return Color.textTertiary
-        case .healthy:     return Color.success
-        case .overloaded:  return Color.warning
-        case .burnedOut:   return Color.danger
-        }
+        Color.forStatus(workloadTone(for: status))
     }
 
     private func injuryRiskLabel(for player: Player) -> String {

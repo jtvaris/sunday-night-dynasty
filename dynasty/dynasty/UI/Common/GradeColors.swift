@@ -58,3 +58,36 @@ extension Color {
         forGrade(band.midGrade.rawValue)
     }
 }
+
+// MARK: - Semantic Status Colors
+//
+// UI_REDESIGN_VISION §1 P7, rule 2. The rating ladder (`Color.forRating`) is
+// only allowed to touch 0–100 player/prospect quantities. Everything else that
+// still needs a verdict — a contract with one year left, a vacant coordinator
+// chair, a seed outside the playoff picture — is *status at a stated
+// threshold*, and it gets the status palette instead.
+//
+// The palette is `DSStatusPill.Tone`, deliberately, so a pill and a number that
+// mean the same thing on the same row cannot disagree. This function exists so
+// a call site reads `Color.forStatus(.warn)` next to `Color.forRating(ovr)`
+// rather than reaching into a view component for its nested enum.
+//
+// The THRESHOLD stays at the call site. That is not laziness: "3+ contract
+// years is comfortable" and "seeds 1–7 make the tournament" are league rules,
+// not palette decisions, and burying them here would make one shared function
+// that silently means five different things.
+
+extension Color {
+
+    /// The colour for a semantic status. Five verdicts, one palette, shared
+    /// with `DSStatusPill`.
+    ///
+    ///     .ok       success      (green)
+    ///     .warn     alertOrange  (orange)
+    ///     .bad      danger       (red)
+    ///     .info     accentBlue   (blue)
+    ///     .neutral  textSecondary
+    static func forStatus(_ tone: DSStatusPill.Tone) -> Color {
+        tone.tint
+    }
+}

@@ -95,14 +95,17 @@ struct FAWeeklyView: View {
     @State private var freeAgents: [FreeAgencyEngine.FreeAgent] = []
     @State private var myOffers: [UUID: ContractOffer] = [:]
     @State private var roundResults: RoundResults?
-    @State private var showRoundSummary = false
     @State private var showSkipConfirm = false
-    @State private var selectedFA: FreeAgencyEngine.FreeAgent?
+    /// **The one modal slot on this screen.**
+    ///
+    /// Wave 3 / house rule: four `.sheet` modifiers in one hierarchy is the bug
+    /// class that has bitten this codebase four times — the later ones win and
+    /// the earlier ones dismiss silently. This screen had three (`selectedFA`,
+    /// `showRoundSummary`, `visitOutcome`) plus an alert doing a result's job.
+    /// They are one enum-driven `.sheet(item:)` now.
+    @State private var activeSheet: ActiveSheet?
     @State private var positionFilter: PositionFilter = .all
     @State private var biddingUpdates: [FreeAgencyEngine.BiddingUpdate] = []
-    @State private var showBiddingUpdates = false
-    @State private var instantSigningMessage: String?
-    @State private var showInstantSigning = false
     /// #102 — the ledger refused an offer at submit time. Carries the ledger's
     /// own refusal sentence so the block is never silent.
     @State private var capBlockMessage: String?
@@ -118,18 +121,54 @@ struct FAWeeklyView: View {
 
     // R23 — Facility visits + signing interest meter
     @State private var visitedPlayerIDs: Set<UUID> = []
-    @State private var visitOutcome: FAVisitOutcome?
     @State private var teamOffensiveScheme: OffensiveScheme?
     @State private var teamDefensiveScheme: DefensiveScheme?
     private static let faVisitLimit = 3
 
-    // FA Drama Phase 2 — Live Ticker / Heat / Outbid / Day rhythm
+    // FA Drama Phase 2 — Live Ticker / Heat / Outbid
     @State private var allBids: [FABid] = []
     @State private var allVisits: [FAVisit] = []
     @State private var visibleOutbidEvent: OutbidEvent?
-    @State private var currentPhase: FABidPhase = .morning
     @State private var nowTick: Date = Date()
     private let outbidTimer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
+
+    // MARK: - The one modal slot
+
+    /// Every modal this screen can show, as one value.
+    ///
+    /// `.instantSigning` is new only as a *presentation*: the outcome it carries
+    /// used to be an `.alert("Instant Signing!")`, which §2.8 bans outright —
+    /// an alert confirms, it never reports a result.
+    private enum ActiveSheet: Identifiable {
+        /// The offer dial (or the milestone variant, when the man is chasing one).
+        case offer(FreeAgencyEngine.FreeAgent)
+        /// What the facility visit revealed.
+        case visit(FAVisitOutcome)
+        /// The market day resolved.
+        case roundSummary
+        /// He took the offer on the spot.
+        case instantSigning(InstantSigning)
+
+        var id: String {
+            switch self {
+            case .offer(let fa):          return "offer-\(fa.player.id.uuidString)"
+            case .visit(let outcome):     return "visit-\(outcome.id.uuidString)"
+            case .roundSummary:           return "roundSummary"
+            case .instantSigning(let it): return "signing-\(it.id.uuidString)"
+            }
+        }
+    }
+
+    /// An accepted-on-the-spot deal, as `DSResultSheet` needs it.
+    struct InstantSigning: Identifiable {
+        let id: UUID
+        let playerName: String
+        let position: String
+        let salary: Int
+        let years: Int
+        /// Cap room left after the pen went down — the "what it cost" number.
+        let capAfter: Int
+    }
 
     // Position filter
     enum PositionFilter: String, CaseIterable {
@@ -169,14 +208,23 @@ struct FAWeeklyView: View {
 
             if team != nil {
                 VStack(spacing: 0) {
+                    // §2.1 — the spine, pinned. It is the one place the flow
+                    // prints its position, and its meter is the one place the
+                    // market days are counted.
+                    FAFlowBandView(
+                        step: .signing,
+                        currentSubcaption: signingSubcaption,
+                        outcomes: flowOutcomes,
+                        meter: marketDayMeter
+                    )
                     roundHeader
-                    dayPhaseHeader
                     liveTicker
                     biddingUpdatesBar
                     pendingOffersBar
                     positionFilterBar
                     freeAgentList
-                    bottomBar
+                    // §2.5 — the only place this screen commits.
+                    actionBar
                 }
             } else {
                 ProgressView()
@@ -233,129 +281,172 @@ struct FAWeeklyView: View {
                 + "on your roster right now is \(CommittedCapLedger.money(violation.bestLeverSavings))."
             )
         }
-        .sheet(item: $selectedFA) { fa in
-            if let team {
-                if let milestone = MilestoneTracker.activeMilestones(
-                    player: fa.player,
-                    history: MilestoneTracker.history(
-                        playerID: fa.player.id,
-                        careerID: fa.player.careerID,
-                        modelContext: modelContext
-                    )
-                ).first {
-                    MilestoneSigningSheet(
-                        playerName: fa.player.fullName,
-                        position: fa.player.position.rawValue,
-                        age: fa.player.age,
-                        milestone: milestone,
-                        onSign: { years, multiplier in
-                            let salary = max(Int(Double(fa.askingPrice) * multiplier), 750)
-                            let outcome = FreeAgencyEngine.signFreeAgent(
-                                player: fa.player,
-                                team: team,
-                                years: years,
-                                salary: salary,
-                                capMode: career.capMode,
-                                modelContext: modelContext
-                            )
-                            reportSigningOutcome(outcome)
-                            FASigningTracker.trackSigning(fa.player.id)
-                            markVisitConverted(fa.player.id)
-                            generateStorylinesForSigning(player: fa.player, team: team)
-                            loadData()
-                        }
-                    )
-                } else {
-                    FAOfferSheet(
-                        player: fa.player,
-                        career: career,
-                        team: team,
-                        marketValue: fa.askingPrice,
-                        allPlayers: allPlayers,
-                        offensiveScheme: teamOffensiveScheme,
-                        defensiveScheme: teamDefensiveScheme,
-                        hostedVisit: visitedPlayerIDs.contains(fa.player.id),
-                        // #102: every OTHER outstanding offer reserves cap. This
-                        // man's own standing offer is excluded — re-opening the
-                        // sheet to raise a bid must not price the bid it replaces.
-                        pendingReserved: pendingReservedCap(excluding: fa.player.id),
-                        onSubmit: { salary, years in
-                        // #102 — the ledger has the last word. The sheet's own
-                        // hard block already refuses an unaffordable offer, but
-                        // the ledger is the authority and it is what the week
-                        // gate reads, so the offer is booked THERE first and
-                        // simply does not happen if it is refused.
-                        guard reserveOffer(player: fa.player, salary: salary, years: years) else { return }
-
-                        // Check for instant signing (big overpay on Day 1)
-                        let instantResult = FreeAgencyEngine.checkInstantSigning(
-                            offeredSalary: salary,
-                            askingPrice: fa.askingPrice,
-                            round: currentRound
-                        )
-
-                        switch instantResult {
-                        case .signedImmediately, .coinFlipSigned:
-                            // Player signs immediately -- too good to refuse.
-                            // `signFreeAgent` releases the reservation it just
-                            // took: the promise has become a contract.
-                            let outcome = FreeAgencyEngine.signFreeAgent(
-                                player: fa.player,
-                                team: team,
-                                years: years,
-                                salary: salary,
-                                capMode: career.capMode,
-                                modelContext: modelContext
-                            )
-                            reportSigningOutcome(outcome)
-                            FASigningTracker.trackSigning(fa.player.id)
-                            markVisitConverted(fa.player.id)
-                            generateStorylinesForSigning(player: fa.player, team: team)
-                            let salaryStr = formatMillions(salary)
-                            instantSigningMessage = "\(fa.player.fullName) signed immediately for \(salaryStr)/yr x \(years)yr! The offer was too good to refuse."
-                            showInstantSigning = true
-                            loadData()
-
-                        case .goesToMarket:
-                            // Normal offer, goes to bidding process
-                            myOffers[fa.player.id] = ContractOffer(
-                                playerID: fa.player.id,
-                                salary: salary,
-                                years: years
-                            )
-                        }
-                    }
-                )
-                }
-            }
-        }
-        .sheet(isPresented: $showRoundSummary) {
-            if let results = roundResults {
-                FARoundSummaryView(
-                    results: results,
-                    roundLabel: FreeAgencyStep.roundLabel(currentRound - 1),
-                    nextRoundLabel: currentRound <= 6 ? FreeAgencyStep.roundLabel(currentRound) : "Complete",
-                    onContinue: { showRoundSummary = false }
-                )
-            }
-        }
+        // Confirmation, not result (§2.8) — skipping forfeits the rest of the
+        // market, and that is irreversible.
         .alert("Skip Remaining Free Agency?", isPresented: $showSkipConfirm) {
             Button("Skip", role: .destructive) { skipRemainingFA() }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("AI teams will sign remaining free agents based on their needs. You won't be able to make any more signings.")
         }
-        .alert("Instant Signing!", isPresented: $showInstantSigning) {
-            Button("OK") { instantSigningMessage = nil }
-        } message: {
-            Text(instantSigningMessage ?? "")
+        // ONE presentation point (house rule / wave 3). Everything modal this
+        // screen can show is a case of `ActiveSheet`.
+        .sheet(item: $activeSheet) { sheet in
+            switch sheet {
+            case .offer(let fa):          offerSheet(fa)
+            case .visit(let outcome):     FAVisitResultSheet(outcome: outcome, visitsRemaining: visitsRemaining)
+            case .roundSummary:           roundSummarySheet
+            case .instantSigning(let it): instantSigningSheet(it)
+            }
         }
-        .sheet(item: $visitOutcome) { outcome in
-            FAVisitResultSheet(
-                outcome: outcome,
-                visitsRemaining: visitsRemaining
+    }
+
+    // MARK: - Sheet content
+
+    @ViewBuilder
+    private func offerSheet(_ fa: FreeAgencyEngine.FreeAgent) -> some View {
+        if let team {
+            if let milestone = MilestoneTracker.activeMilestones(
+                player: fa.player,
+                history: MilestoneTracker.history(
+                    playerID: fa.player.id,
+                    careerID: fa.player.careerID,
+                    modelContext: modelContext
+                )
+            ).first {
+                MilestoneSigningSheet(
+                    playerName: fa.player.fullName,
+                    position: fa.player.position.rawValue,
+                    age: fa.player.age,
+                    milestone: milestone,
+                    onSign: { years, multiplier in
+                        let salary = max(Int(Double(fa.askingPrice) * multiplier), 750)
+                        let outcome = FreeAgencyEngine.signFreeAgent(
+                            player: fa.player,
+                            team: team,
+                            years: years,
+                            salary: salary,
+                            capMode: career.capMode,
+                            modelContext: modelContext
+                        )
+                        reportSigningOutcome(outcome)
+                        FASigningTracker.trackSigning(fa.player.id)
+                        markVisitConverted(fa.player.id)
+                        generateStorylinesForSigning(player: fa.player, team: team)
+                        loadData()
+                    }
+                )
+            } else {
+                FAOfferSheet(
+                    player: fa.player,
+                    career: career,
+                    team: team,
+                    marketValue: fa.askingPrice,
+                    allPlayers: allPlayers,
+                    offensiveScheme: teamOffensiveScheme,
+                    defensiveScheme: teamDefensiveScheme,
+                    hostedVisit: visitedPlayerIDs.contains(fa.player.id),
+                    // #102: every OTHER outstanding offer reserves cap. This
+                    // man's own standing offer is excluded — re-opening the
+                    // sheet to raise a bid must not price the bid it replaces.
+                    pendingReserved: pendingReservedCap(excluding: fa.player.id),
+                    onSubmit: { salary, years in
+                    // #102 — the ledger has the last word. The sheet's own
+                    // hard block already refuses an unaffordable offer, but
+                    // the ledger is the authority and it is what the week
+                    // gate reads, so the offer is booked THERE first and
+                    // simply does not happen if it is refused.
+                    guard reserveOffer(player: fa.player, salary: salary, years: years) else { return }
+
+                    // Check for instant signing (big overpay on Day 1)
+                    let instantResult = FreeAgencyEngine.checkInstantSigning(
+                        offeredSalary: salary,
+                        askingPrice: fa.askingPrice,
+                        round: currentRound
+                    )
+
+                    switch instantResult {
+                    case .signedImmediately, .coinFlipSigned:
+                        // Player signs immediately -- too good to refuse.
+                        // `signFreeAgent` releases the reservation it just
+                        // took: the promise has become a contract.
+                        let outcome = FreeAgencyEngine.signFreeAgent(
+                            player: fa.player,
+                            team: team,
+                            years: years,
+                            salary: salary,
+                            capMode: career.capMode,
+                            modelContext: modelContext
+                        )
+                        reportSigningOutcome(outcome)
+                        FASigningTracker.trackSigning(fa.player.id)
+                        markVisitConverted(fa.player.id)
+                        generateStorylinesForSigning(player: fa.player, team: team)
+                        loadData()
+                        // §2.6: the result gets a result sheet. It used to
+                        // be an alert, which §2.8 bans for exactly this job.
+                        // Sequenced onto the next runloop turn because the
+                        // offer sheet is dismissing itself in this same one,
+                        // and a swap inside the dismissal is dropped.
+                        let signed = InstantSigning(
+                            id: fa.player.id,
+                            playerName: fa.player.fullName,
+                            position: fa.player.position.rawValue,
+                            salary: salary,
+                            years: years,
+                            capAfter: team.availableCap
+                        )
+                        DispatchQueue.main.async { activeSheet = .instantSigning(signed) }
+
+                    case .goesToMarket:
+                        // Normal offer, goes to bidding process
+                        myOffers[fa.player.id] = ContractOffer(
+                            playerID: fa.player.id,
+                            salary: salary,
+                            years: years
+                        )
+                    }
+                }
+            )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var roundSummarySheet: some View {
+        if let results = roundResults {
+            FARoundSummaryView(
+                results: results,
+                roundLabel: FreeAgencyStep.roundLabel(currentRound - 1),
+                nextRoundLabel: currentRound <= 6 ? FreeAgencyStep.roundLabel(currentRound) : "Complete",
+                onContinue: { activeSheet = nil }
             )
         }
+    }
+
+    /// §2.6 — outcome headline, what changed, what it cost, one Continue.
+    private func instantSigningSheet(_ signing: InstantSigning) -> some View {
+        DSResultSheet(
+            tone: .good,
+            eyebrow: "Free agency \u{00B7} \(roundLabel)",
+            headline: "\(signing.playerName) signed on the spot",
+            message: "The offer was too good to refuse — he took it before the market could answer.",
+            chips: [
+                .init(id: "pos", label: "Position", value: signing.position),
+                .init(id: "aav", label: "Per year", value: formatMillions(signing.salary)),
+                .init(id: "years", label: "Years", value: "\(signing.years)"),
+                .init(
+                    id: "cap",
+                    label: "Cap room",
+                    value: formatMillions(signing.capAfter),
+                    context: "after the deal",
+                    valueColor: signing.capAfter > 0 ? Color.textPrimary : Color.dangerText
+                )
+            ],
+            cost: "Charges **\(formatMillions(signing.salary)) a year** for **\(signing.years) year\(signing.years == 1 ? "" : "s")** and takes him off the board for everyone else.",
+            continueTitle: "Back to the market",
+            onContinue: { activeSheet = nil }
+        )
     }
 
     // MARK: - R23: Visits
@@ -396,7 +487,7 @@ struct FAWeeklyView: View {
             defensiveScheme: teamDefensiveScheme,
             hostedVisit: true
         )
-        visitOutcome = FAVisitOutcome(
+        activeSheet = .visit(FAVisitOutcome(
             id: fa.player.id,
             playerName: fa.player.fullName,
             position: fa.player.position.rawValue,
@@ -414,7 +505,7 @@ struct FAWeeklyView: View {
                 allPlayers: allPlayers
             ),
             breakdown: breakdown
-        )
+        ))
     }
 
     /// Marks the player's active visit with us as converted (he signed here).
@@ -447,119 +538,95 @@ struct FAWeeklyView: View {
         }
     }
 
-    private var roundHeader: some View {
+    // MARK: The band's bindings (§2.1)
+
+    /// The current slat's sub-caption: the market day and what that day is for.
+    ///
+    /// **This is the only place the day is named on this screen.** It used to be
+    /// printed four times — a title, a six-dot rail, a "Day N" phase header and
+    /// the submit button — which is precisely the "stage count rendered three
+    /// times" that §2.1's one-count rule exists to stop. The commit button still
+    /// names the day it is advancing TO, because naming a destination is what a
+    /// commit label is for.
+    private var signingSubcaption: String {
         let phase = phaseInfo(for: currentRound)
+        let frenzy = phase.isFrenzy ? "Frenzy \u{00B7} " : ""
+        return "\(phase.label) \u{00B7} \(frenzy)\(phase.description)"
+    }
 
-        return VStack(spacing: 8) {
-            HStack(spacing: 12) {
-                Text("FREE AGENCY")
-                    .font(.caption.weight(.black))
-                    .foregroundStyle(Color.accentGold)
-                Text(roundLabel)
-                    .font(.title3.weight(.bold))
-                    .foregroundStyle(Color.textPrimary)
-                if phase.isFrenzy {
-                    Text("FRENZY")
-                        .font(.system(size: 9, weight: .black))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(Color.danger, in: Capsule())
-                }
-                Spacer()
-                if let team {
-                    // #102 — the reservation ledger in the market header. Three
-                    // numbers because the middle one is the point: an outstanding
-                    // offer is money the club has already promised, and a header
-                    // that only shows Cap Room invites the user to promise it
-                    // again to somebody else.
-                    HStack(spacing: 12) {
-                        headerCapStat(
-                            label: "Cap Room",
-                            value: formatMillions(team.availableCap),
-                            color: team.availableCap > 0 ? Color.textPrimary : Color.danger
-                        )
-                        if reservesCap && pendingReservedCap() > 0 {
-                            headerCapStat(
-                                label: "Pending",
-                                value: "−\(formatMillions(pendingReservedCap()))",
-                                color: Color.warning
-                            )
-                        }
-                        headerCapStat(
-                            label: "Available",
-                            value: formatMillions(availableCapAfterOffers),
-                            color: availableCapAfterOffers > 0 ? Color.success : Color.danger
-                        )
-                    }
-                }
+    /// A filled pip is a spent market day — the meter's one meaning, everywhere.
+    private var marketDayMeter: DSResourceMeter {
+        DSResourceMeter(spent: min(currentRound, 6), total: 6, unit: "market days")
+    }
+
+    /// What the steps behind this one produced (§2.1's `done` row is "check
+    /// glyph + the outcome").
+    ///
+    /// Only what the screen can state honestly: the club is under the cap,
+    /// because `CapComplianceView` would not have let it through otherwise.
+    /// Final Push's re-signings are NOT reported here — `FASigningTracker`
+    /// pools its own re-signings with market signings, so any count taken from
+    /// it would be wrong from the first market day onward.
+    private var flowOutcomes: [FreeAgencyStep: String] {
+        career.capMode == .sandbox ? [:] : [.capReview: "Under the cap"]
+    }
+
+    /// The market's meta line: the money, the visit budget and the board size.
+    ///
+    /// The day, the phase description and the six-step rail have all moved into
+    /// the band above it — this bar now carries only the things the band has no
+    /// slot for.
+    private var roundHeader: some View {
+        HStack(alignment: .center, spacing: DSSpacing.md) {
+            // R23: facility visit budget for this FA period.
+            HStack(spacing: DSSpacing.xxs) {
+                Image(systemName: "building.2")
+                    .font(DSType.display(11, .bold))
+                Text("Visits left \(visitsRemaining)/\(Self.faVisitLimit)")
+                    .font(DSType.display(11, .heavy))
             }
+            .foregroundStyle(visitsRemaining > 0 ? Color.accentBlue : Color.textTertiaryReadable)
 
-            // Phase description
-            HStack(spacing: 6) {
-                Image(systemName: phase.isFrenzy ? "flame.fill" : "calendar")
-                    .font(.system(size: 9))
-                    .foregroundStyle(phase.isFrenzy ? Color.danger : Color.textTertiary)
-                Text(phase.description)
-                    .font(.system(size: 10).italic())
-                    .foregroundStyle(Color.textSecondary)
-                Spacer()
-            }
+            Text("\(freeAgents.count) on the board")
+                .font(DSType.display(11, .semibold))
+                .foregroundStyle(Color.textTertiaryReadable)
 
-            // Phase progression bar with labels
-            VStack(spacing: 4) {
-                HStack(spacing: 0) {
-                    ForEach(1...6, id: \.self) { round in
-                        let isPast = round < currentRound
-                        let isCurrent = round == currentRound
-                        VStack(spacing: 3) {
-                            Circle()
-                                .fill(isPast ? Color.success :
-                                      isCurrent ? Color.accentGold :
-                                      Color.backgroundTertiary)
-                                .frame(width: isCurrent ? 10 : 8, height: isCurrent ? 10 : 8)
-                                .overlay(
-                                    Circle()
-                                        .strokeBorder(isCurrent ? Color.accentGold.opacity(0.4) : Color.clear, lineWidth: 2)
-                                        .frame(width: 16, height: 16)
-                                )
-                            Text(phaseInfo(for: round).label)
-                                .font(.system(size: DSType.Size.micro).weight(isCurrent ? .bold : .regular))
-                                .foregroundStyle(isCurrent ? Color.accentGold :
-                                                 isPast ? Color.textSecondary :
-                                                 Color.textTertiary)
-                                .lineLimit(1)
-                        }
-                        .frame(maxWidth: .infinity)
+            Spacer(minLength: DSSpacing.xs)
 
-                        if round < 6 {
-                            Rectangle()
-                                .fill(round < currentRound ? Color.success.opacity(0.5) : Color.surfaceBorder)
-                                .frame(height: 1)
-                                .frame(maxWidth: .infinity)
-                                .offset(y: -8)
-                        }
+            if let team {
+                // #102 — the reservation ledger in the market header. Three
+                // numbers because the middle one is the point: an outstanding
+                // offer is money the club has already promised, and a header
+                // that only shows Cap Room invites the user to promise it
+                // again to somebody else.
+                HStack(spacing: DSSpacing.sm) {
+                    headerCapStat(
+                        label: "Cap Room",
+                        value: formatMillions(team.availableCap),
+                        color: team.availableCap > 0 ? Color.textPrimary : Color.dangerText
+                    )
+                    if reservesCap && pendingReservedCap() > 0 {
+                        headerCapStat(
+                            label: "Pending",
+                            value: "\u{2212}\(formatMillions(pendingReservedCap()))",
+                            color: Color.warning
+                        )
                     }
-                }
-                HStack {
-                    // R23: facility visit budget for this FA period
-                    HStack(spacing: 3) {
-                        Image(systemName: "building.2")
-                            .font(.system(size: DSType.Size.micro))
-                        Text("Visits left: \(visitsRemaining)/\(Self.faVisitLimit)")
-                            .font(.caption2.monospacedDigit())
-                    }
-                    .foregroundStyle(visitsRemaining > 0 ? Color.accentBlue : Color.textTertiary)
-                    Spacer()
-                    Text("\(freeAgents.count) available")
-                        .font(.caption2)
-                        .foregroundStyle(Color.textTertiary)
+                    headerCapStat(
+                        label: "Available",
+                        value: formatMillions(availableCapAfterOffers),
+                        color: availableCapAfterOffers > 0 ? Color.success : Color.dangerText
+                    )
                 }
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.horizontal, DSSpacing.md)
+        .padding(.vertical, DSSpacing.xs)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.backgroundSecondary)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Color.surfaceBorder).frame(height: 1)
+        }
     }
 
     // MARK: - Bidding Updates Bar
@@ -663,7 +730,7 @@ struct FAWeeklyView: View {
                 Button {
                     // Raise offer: reopen offer sheet
                     if let fa = freeAgents.first(where: { $0.player.id == update.playerID }) {
-                        selectedFA = fa
+                        activeSheet = .offer(fa)
                     }
                 } label: {
                     Text("Raise Offer")
@@ -907,15 +974,23 @@ struct FAWeeklyView: View {
         myOffers.removeAll()
     }
 
+    /// §2.3's chip grammar at its smallest: LABEL over value, both on the
+    /// display voice's 11 pt floor. The label used to be 9 pt, under the
+    /// legibility floor P7 sets for anything a player is expected to read.
     private func headerCapStat(label: String, value: String, color: Color) -> some View {
-        VStack(alignment: .trailing, spacing: 2) {
-            Text(label)
-                .font(.system(size: 9))
-                .foregroundStyle(Color.textTertiary)
+        VStack(alignment: .trailing, spacing: 1) {  // ds-lint:allow(spacing) label-to-value lockup inside one chip
+            Text(label.uppercased())
+                .font(DSType.display(11, .heavy))
+                .tracking(0.6)
+                .foregroundStyle(Color.textTertiaryReadable)
+                .lineLimit(1)
             Text(value)
-                .font(.caption.weight(.bold).monospacedDigit())
+                .font(DSType.display(DSType.Size.body, .black))
                 .foregroundStyle(color)
+                .lineLimit(1)
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(label): \(value)")
     }
 
     // MARK: - Pending Offers Bar
@@ -999,28 +1074,43 @@ struct FAWeeklyView: View {
 
     // MARK: - Position Filter
 
+    /// Lens tabs: one control style, one selected fill (§2.2).
+    ///
+    /// The selected fill is **not gold** any more. P5 gives a screen one gold,
+    /// and it now belongs to the action bar's commit; a filter chip wearing the
+    /// same paint as the one irreversible button on the screen is the "four
+    /// incompatible chip styles" problem in its loudest form. Selection is the
+    /// same 2 pt `accentBlue` ring the slat band uses.
     private var positionFilterBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
+            HStack(spacing: DSSpacing.xxs) {
                 ForEach(PositionFilter.allCases, id: \.self) { filter in
+                    let isSelected = positionFilter == filter
                     Button {
                         positionFilter = filter
                     } label: {
                         Text(filter.rawValue)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(positionFilter == filter ? Color.backgroundPrimary : Color.textSecondary)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
+                            .font(DSType.text(DSType.Size.footnote, .semibold))
+                            .foregroundStyle(isSelected ? Color.textPrimary : Color.textSecondary)
+                            .padding(.horizontal, DSSpacing.sm)
+                            .padding(.vertical, DSSpacing.xs)
                             .background(
-                                positionFilter == filter ? Color.accentGold : Color.backgroundTertiary,
+                                isSelected ? Color.backgroundTertiary : Color.backgroundSecondary,
                                 in: Capsule()
+                            )
+                            .overlay(
+                                Capsule().strokeBorder(
+                                    isSelected ? Color.accentBlue : Color.surfaceBorder,
+                                    lineWidth: isSelected ? 2 : 1
+                                )
                             )
                     }
                     .buttonStyle(.plain)
+                    .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
+            .padding(.horizontal, DSSpacing.md)
+            .padding(.vertical, DSSpacing.xs)
         }
     }
 
@@ -1058,7 +1148,7 @@ struct FAWeeklyView: View {
         let hasOffer = myOffers[fa.player.id] != nil
 
         return Button {
-            selectedFA = fa
+            activeSheet = .offer(fa)
         } label: {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 10) {
@@ -1323,31 +1413,48 @@ struct FAWeeklyView: View {
 
     // MARK: - Bottom Bar
 
-    private var bottomBar: some View {
-        HStack(spacing: 12) {
-            Button {
-                showSkipConfirm = true
-            } label: {
-                Text("Skip Remaining FA")
-                    .font(.caption.weight(.semibold))
-            }
-            .buttonStyle(.bordered)
+    /// §2.5 — the commit surface. Left: what advancing does and what it spends.
+    /// Right: the fixed order, with the destructive skip behind its own rule and
+    /// never adjacent to the primary.
+    private var actionBar: some View {
+        let nextLabel = currentRound < 6 ? FreeAgencyStep.roundLabel(currentRound + 1) : "Complete"
+        return DSActionBar(
+            explainer: submitExplainer,
+            destructive: .init(
+                title: "Skip the rest",
+                caption: "AI clubs sign everyone left.",
+                accessibilityLabel: "Skip the rest of free agency. AI clubs will sign everyone left.",
+                handler: { showSkipConfirm = true }
+            ),
+            primary: .init(
+                title: currentRound < 6 ? "Submit offers \u{2192} \(nextLabel)" : "Close the market",
+                handler: { processRound() }
+            )
+        )
+    }
 
-            Spacer()
-
-            let nextLabel = currentRound < 6 ? FreeAgencyStep.roundLabel(currentRound + 1) : "Complete"
-            Button {
-                processRound()
-            } label: {
-                Text("Submit Offers \u{2192} \(nextLabel)")
-                    .font(.caption.weight(.bold))
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(Color.accentGold)
+    /// What the commit costs, said before it is made (P4).
+    ///
+    /// A day with nothing on the table is a warning rather than a price: the
+    /// club is about to let the league bid unopposed, which is a real decision
+    /// and used to be an unremarked side effect of a gold button.
+    private var submitExplainer: DSActionBar.Explainer {
+        let offerCount = myOffers.count
+        guard offerCount > 0 else {
+            return .init(
+                title: "No offers on the table",
+                message: "Advancing lets the league sign **unopposed** for a day you cannot get back.",
+                isWarning: true
+            )
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(Color.backgroundSecondary)
+        let reserved = pendingReservedCap()
+        let money = reservesCap && reserved > 0
+            ? " They are holding **\(formatMillions(reserved))** of your room until they answer."
+            : ""
+        return .init(
+            title: "Submit \(offerCount) offer\(offerCount == 1 ? "" : "s")",
+            message: "Every club answers, then the rest of the league signs.\(money)"
+        )
     }
 
     // MARK: - Process Round
@@ -1545,7 +1652,7 @@ struct FAWeeklyView: View {
 
         // Refresh free agents
         loadData()
-        showRoundSummary = true
+        activeSheet = .roundSummary
     }
 
     private func simulateAIRound(excludePlayerIDs: Set<UUID>, aiBids: [UUID: [FreeAgencyEngine.AIBid]]) -> [(playerName: String, position: String, team: String, salary: Int)] {
@@ -2009,74 +2116,22 @@ struct FAWeeklyView: View {
         visibleOutbidEvent = events.first
     }
 
-    // MARK: - FA Drama Phase 2 — Day Phase Header
-
-    @ViewBuilder
-    private var dayPhaseHeader: some View {
-        HStack(spacing: DSSpacing.xs) {
-            Text("Day \(career.freeAgencyRound)")
-                .font(.title3.weight(.heavy))
-                .foregroundStyle(Color.accentGold)
-            if career.freeAgencyRound == 1 || career.freeAgencyRound == 2 {
-                Text("FRENZY")
-                    .font(.system(size: 9, weight: .black))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
-                    .background(Color.danger, in: Capsule())
-            }
-            Spacer()
-            ForEach([
-                ("Morning", FABidPhase.morning),
-                ("Afternoon", FABidPhase.afternoon),
-                ("Evening", FABidPhase.evening)
-            ], id: \.0) { entry in
-                let isActive = currentPhase == entry.1
-                Text(entry.0.uppercased())
-                    .font(.caption2.weight(.bold))
-                    .tracking(0.6)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(isActive ? Color.accentGold : Color.backgroundTertiary)
-                    .foregroundStyle(isActive ? Color.backgroundPrimary : Color.textTertiary)
-                    .clipShape(RoundedRectangle(cornerRadius: 3))
-            }
-            Button {
-                advancePhase()
-            } label: {
-                HStack(spacing: 3) {
-                    Text("Next")
-                        .font(.caption2.weight(.bold))
-                    Image(systemName: "arrow.right")
-                        .font(.system(size: 9, weight: .bold))
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .foregroundStyle(Color.backgroundPrimary)
-                .background(Color.accentGold, in: Capsule())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Advance to next phase")
-        }
-        .padding(.horizontal, DSSpacing.md)
-        .padding(.vertical, DSSpacing.xs)
-        .background(Color.backgroundSecondary)
-        .overlay(
-            Rectangle()
-                .fill(Color.surfaceBorder.opacity(0.3))
-                .frame(height: 1),
-            alignment: .bottom
-        )
-    }
-
-    private func advancePhase() {
-        // UI-level cycle: morning -> afternoon -> evening -> next day morning
-        switch currentPhase {
-        case .morning:   currentPhase = .afternoon
-        case .afternoon: currentPhase = .evening
-        case .evening:   currentPhase = .morning
-        }
-    }
+    // MARK: - FA Drama Phase 2 — Day Phase Header (REMOVED, wave 3)
+    //
+    // The morning / afternoon / evening strip and its gold "Next" button are
+    // gone. Two reasons, both hard:
+    //
+    //   * It was a **second progress metaphor** on a screen that now has a
+    //     `DSSlatBand` (P1: only ordered things get a band, and they get ONE).
+    //   * Its "Next" was the **second gold control** on the screen (P5 allows
+    //     one) and it did nothing: `advancePhase` cycled a local `@State
+    //     FABidPhase` that no engine, no bid, no heat computation and no query
+    //     ever read. A prominent button that changes only its own highlight is
+    //     worse than no button.
+    //
+    // The market day it half-implied is now the band's meter and the current
+    // slat's sub-caption, which are read from `career.freeAgencyRound` and
+    // therefore cannot drift from the simulation.
 }
 
 // MARK: - FreeAgent Identifiable conformance

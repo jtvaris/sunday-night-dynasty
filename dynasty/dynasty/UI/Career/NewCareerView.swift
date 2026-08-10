@@ -695,6 +695,27 @@ struct NewCareerView: View {
 
     // MARK: - Buttons
 
+    /// The label every step commit on the entry flow wears (§2.8).
+    ///
+    /// New Career shipped four copies of one gold recipe — `cornerRadius: 12`,
+    /// a 52 pt row, a gold stroke at 60 %, and a disabled state built out of
+    /// `Color.surfaceBorder` plus `.opacity(0.7)`. The chrome is `.dsPrimary`'s
+    /// job now; what stays here is the flow's own full-width format, because a
+    /// wizard step's commit spans the column and a toolbar's does not.
+    private func entryCommitLabel(
+        _ title: LocalizedStringKey,
+        systemImage: String,
+        trailingIcon: Bool = false
+    ) -> some View {
+        HStack(spacing: DSSpacing.xs) {
+            if !trailingIcon { Image(systemName: systemImage) }
+            Text(title)
+            if trailingIcon { Image(systemName: systemImage) }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(minHeight: 36)
+    }
+
     private var nextButton: some View {
         Button {
             guard isNameValid else { return }
@@ -703,28 +724,13 @@ struct NewCareerView: View {
                 showNameError = false
             }
         } label: {
-            HStack(spacing: 10) {
-                Text("Next")
-                    .font(.headline)
-                Image(systemName: "arrow.right")
-                    .font(.body.weight(.semibold))
-            }
-            .foregroundStyle(Color.backgroundPrimary)
-            .frame(maxWidth: .infinity)
-            .frame(height: 52)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(isNameValid ? Color.accentGold : Color.surfaceBorder)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .strokeBorder(
-                        (isNameValid ? Color.accentGold : Color.surfaceBorder).opacity(0.6),
-                        lineWidth: 1
-                    )
-            )
-            .opacity(isNameValid ? 1.0 : 0.7)
+            // §2.8: one gold recipe. The old one dimmed the gold to 70 % for its
+            // disabled state, which is precisely what the vision forbids — a
+            // dimmed primary still reads as pressable. `.dsPrimary` paints a
+            // genuinely disabled grey instead.
+            entryCommitLabel("Next", systemImage: "arrow.right", trailingIcon: true)
         }
+        .buttonStyle(.dsPrimary)
         .disabled(!isNameValid)
         .accessibilityHint(isNameValid
                            ? "Continues to Step 2"
@@ -739,24 +745,9 @@ struct NewCareerView: View {
                 currentStep = 3
             }
         } label: {
-            HStack(spacing: 10) {
-                Text("Next")
-                    .font(.headline)
-                Image(systemName: "arrow.right")
-                    .font(.body.weight(.semibold))
-            }
-            .foregroundStyle(Color.backgroundPrimary)
-            .frame(maxWidth: .infinity)
-            .frame(height: 52)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.accentGold)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .strokeBorder(Color.accentGold.opacity(0.6), lineWidth: 1)
-            )
+            entryCommitLabel("Next", systemImage: "arrow.right", trailingIcon: true)
         }
+        .buttonStyle(.dsPrimary)
         .accessibilityHint("Continues to Step 3, Your Identity")
         .padding(.top, 4)
     }
@@ -775,30 +766,9 @@ struct NewCareerView: View {
             injuryFrequency: injuryFrequency,
             leagueSource: leagueSource
         )) {
-            HStack(spacing: 10) {
-                Image(systemName: "sportscourt.fill")
-                    .font(.body.weight(.semibold))
-                Text("Choose Your Team")
-                    .font(.headline)
-                Image(systemName: "arrow.right")
-                    .font(.body.weight(.semibold))
-            }
-            .foregroundStyle(Color.backgroundPrimary)
-            .frame(maxWidth: .infinity)
-            .frame(height: 52)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(isNameValid ? Color.accentGold : Color.surfaceBorder)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .strokeBorder(
-                        (isNameValid ? Color.accentGold : Color.surfaceBorder).opacity(0.6),
-                        lineWidth: 1
-                    )
-            )
-            .opacity(isNameValid ? 1.0 : 0.7)
+            entryCommitLabel("Choose Your Team", systemImage: "sportscourt.fill")
         }
+        .buttonStyle(.dsPrimary)
         .disabled(!isNameValid)
         .padding(.top, 4)
     }
@@ -815,26 +785,9 @@ struct NewCareerView: View {
             injuryFrequency: injuryFrequency,
             leagueSource: leagueSource
         )) {
-            HStack(spacing: 10) {
-                Image(systemName: "sportscourt.fill")
-                    .font(.body.weight(.semibold))
-                Text("Choose Your Team")
-                    .font(.headline)
-                Image(systemName: "arrow.right")
-                    .font(.body.weight(.semibold))
-            }
-            .foregroundStyle(Color.backgroundPrimary)
-            .frame(maxWidth: .infinity)
-            .frame(height: 52)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.accentGold)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .strokeBorder(Color.accentGold.opacity(0.6), lineWidth: 1)
-            )
+            entryCommitLabel("Choose Your Team", systemImage: "sportscourt.fill")
         }
+        .buttonStyle(.dsPrimary)
         .padding(.top, 4)
     }
 

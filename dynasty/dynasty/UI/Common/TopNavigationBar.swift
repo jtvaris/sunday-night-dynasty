@@ -25,26 +25,41 @@ struct TopNavigationBar: View {
     }
 
     enum BookmarkDestination {
-        case roster, schedule, standings, draft, scouting, cap, coachingStaff
-        /// League news feed (`NewsView`) — previously reachable only from the
-        /// round-recap sheet, which meant trade/signing headlines were
-        /// effectively invisible between games.
-        case news
+        /// The week hub — the root of the career's navigation stack. Tapping it
+        /// pops back rather than pushing (see `handleBookmarkNavigation`).
+        case hub
+        case roster, draft, scouting, cap, coachingStaff
         /// Trade Center (`TradeView`) — browse the other 31 rosters and
         /// propose deals. Had no primary nav entry at all before.
         case trades
     }
 
+    /// **Seven, with the hub as one of them** (#105 wave 2, P6).
+    ///
+    /// The strip is for *reference destinations you return to*, and it had
+    /// drifted to nine — at which point it was a second, worse main menu, and
+    /// the one place the user always wants (the hub he came from) was the only
+    /// thing not on it. Getting back meant hunting for a Back chevron whose
+    /// depth depended on how he had arrived.
+    ///
+    /// The three that came off are all reachable from the hub itself, which is
+    /// the rule P6 states — everything not a reference destination is reached
+    /// from the hub, a task, or a process step:
+    ///
+    /// * **Schedule** — the hub's UPCOMING header is a link to it.
+    /// * **Standings** — the hub's DIVISION header is a link to it.
+    /// * **News** — the hub's MESSAGES header is a link to it.
+    ///
+    /// Nothing was made unreachable to shorten this list; each removal paid for
+    /// itself with a route on the hub first.
     static let defaultBookmarks: [Bookmark] = [
+        Bookmark(icon: "square.grid.2x2.fill", label: "Hub", destination: .hub),
         Bookmark(icon: "person.3.fill", label: "Roster", destination: .roster),
         Bookmark(icon: "person.2.fill", label: "Staff", destination: .coachingStaff),
-        Bookmark(icon: "calendar", label: "Schedule", destination: .schedule),
-        Bookmark(icon: "list.number", label: "Standings", destination: .standings),
-        Bookmark(icon: "list.clipboard.fill", label: "Draft", destination: .draft),
-        Bookmark(icon: "magnifyingglass", label: "Scouting", destination: .scouting),
         Bookmark(icon: "dollarsign.circle.fill", label: "Cap", destination: .cap),
+        Bookmark(icon: "magnifyingglass", label: "Scouting", destination: .scouting),
+        Bookmark(icon: "list.clipboard.fill", label: "Draft", destination: .draft),
         Bookmark(icon: "arrow.left.arrow.right", label: "Trades", destination: .trades),
-        Bookmark(icon: "newspaper.fill", label: "News", destination: .news),
     ]
 
     /// Callback when a bookmark is tapped — the shell view handles navigation.
@@ -117,9 +132,10 @@ struct TopNavigationBar: View {
     // MARK: - Bookmark Strip
 
     private var bookmarkStrip: some View {
-        // 9 entries at 44 pt each — spacing trimmed from 12 to 8 so News and
-        // Trades fit alongside the original seven in iPad portrait without the
-        // strip crowding the team badge.
+        // Seven entries at 44 pt each. Spacing stays at 8 rather than going
+        // back to 12: the two widest labels came off the strip, and the width
+        // that frees is spent on the team badge and the clearance around the
+        // right-hand cluster instead of on gaps nobody reads.
         HStack(spacing: 8) {
             ForEach(Self.defaultBookmarks) { bookmark in
                 Button {
@@ -134,10 +150,9 @@ struct TopNavigationBar: View {
                             // points below its neighbours' baseline.
                             .frame(height: 18)
                         // 9 pt left a 6.5 pt cap height — legible only if you
-                        // already knew what it said. 11 pt costs the strip
-                        // ~15 pt of total width (only "Standings" and
-                        // "Schedule" grow past the 44 pt touch target), which
-                        // the trimmed 12 pt bar padding below pays for.
+                        // already knew what it said. At 11 pt no remaining
+                        // label grows past the 44 pt touch target, so the
+                        // strip's width is now exactly 7 × 44 plus its gaps.
                         Text(bookmark.label)
                             .font(.system(size: 11, weight: .medium))
                             .lineLimit(1)

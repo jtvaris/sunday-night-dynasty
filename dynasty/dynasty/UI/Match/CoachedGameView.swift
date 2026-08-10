@@ -305,16 +305,58 @@ struct CoachedGameView: View {
     // Dialogs
     @State private var showSimToEndConfirm = false
     @State private var showExitConfirm = false
-    @State private var showFinal = false
-    @State private var showStatsSheet = false
-    /// Coach's Board — full-screen in-game player management (formation view,
-    /// day grades, category battles, substitutions).
-    @State private var showManageSheet = false
-    /// Halftime report overlay (raised by the engine's `halftimePending`).
-    @State private var showHalftime = false
-    /// End-of-quarter report overlay (raised by the engine's
-    /// `quarterBreakPending` at Q1→Q2 and Q3→Q4).
-    @State private var showQuarterReport = false
+
+    /// **The one break slot** (#105 wave 5c, §2.6).
+    ///
+    /// Play stops for exactly three reasons and each one used to carry its own
+    /// `Bool` and its own `if` block in the same `ZStack`: `showQuarterReport`,
+    /// `showHalftime`, `showFinal`. Three booleans describing one mutually
+    /// exclusive state is four illegal combinations waiting to be set, and the
+    /// only thing keeping them apart was the order of the `if`s — the final
+    /// overlay drew *on top of* a halftime card rather than instead of it.
+    ///
+    /// One optional enum makes the exclusion structural, gives the pause
+    /// predicate below a single term to read, and gives the transition one
+    /// identity to animate rather than three that cross-fade over each other.
+    private enum GameBreak: String, Identifiable {
+        /// End of Q1 / Q3 — player situation and decision flags.
+        case quarter
+        /// The horn. Second-half adjustment picked here.
+        case halftime
+        /// The final gun: the result, and the way out of the screen.
+        case final
+
+        var id: String { rawValue }
+    }
+
+    @State private var gameBreak: GameBreak?
+
+    /// **The one side-task presentation on the HUD** (§2.8).
+    ///
+    /// Manage and Stats are peer buttons in the same action row, and they used
+    /// to be presented at two different weights — the box score as a `.sheet`,
+    /// the Coach's Board as a `.fullScreenCover`. §2.8 names this exact split as
+    /// the thing the presentation rule exists to stop: "never two presentation
+    /// kinds for two equivalent actions in one screen".
+    ///
+    /// Both are sheets, because neither is a process: the *game* is the process
+    /// and it owns the screen. Looking at the box score or swapping a corner is
+    /// a short, cancellable side-task you come back from, and taking the field
+    /// away to do it lost the play situation the decision depends on.
+    ///
+    /// One enum-driven `.sheet(item:)` rather than two bindings, per the house
+    /// rule — stacked `isPresented` sheets on one node silently swallow each
+    /// other.
+    private enum GameSideTask: String, Identifiable {
+        /// Live box score.
+        case stats
+        /// Coach's Board — in-game player management (formation view, day
+        /// grades, category battles, substitutions).
+        case board
+        var id: String { rawValue }
+    }
+
+    @State private var activeSideTask: GameSideTask?
     /// Settings toggle: switch the Q1/Q3 quarter reports off entirely
     /// (halftime keeps its own card either way).
     @AppStorage("quarterReportsEnabled") private var quarterReportsEnabled = true
@@ -430,7 +472,10 @@ struct CoachedGameView: View {
                 .animation(.easeInOut(duration: 0.4), value: fieldExpanded)
             }
 
-            if showHalftime {
+            // The one break slot: at most one of these is ever on screen, and
+            // the compiler is what guarantees it now.
+            switch gameBreak {
+            case .halftime:
                 HalftimeView(
                     engine: engine,
                     homeTeam: homeTeam,
@@ -438,14 +483,13 @@ struct CoachedGameView: View {
                     playerTeamIsHome: playerTeamIsHome
                 ) { choice in
                     engine.resolveHalftime(choosing: choice)
-                    withAnimation(.easeInOut(duration: 0.3)) { showHalftime = false }
+                    withAnimation(.easeInOut(duration: 0.3)) { gameBreak = nil }
                     if let choice { showBanner("2nd-half adjustment: \(choice.rawValue).") }
                     proceed(after: 0.5)
                 }
                 .transition(.opacity)
-            }
 
-            if showQuarterReport {
+            case .quarter:
                 QuarterReportView(
                     engine: engine,
                     homeTeam: homeTeam,
@@ -453,14 +497,16 @@ struct CoachedGameView: View {
                     playerTeamIsHome: playerTeamIsHome
                 ) {
                     engine.resolveQuarterBreak()
-                    withAnimation(.easeInOut(duration: 0.3)) { showQuarterReport = false }
+                    withAnimation(.easeInOut(duration: 0.3)) { gameBreak = nil }
                     proceed(after: 0.4)
                 }
                 .transition(.opacity)
-            }
 
-            if showFinal {
+            case .final:
                 finalOverlay
+
+            case .none:
+                EmptyView()
             }
 
             // R37: one-time first-snap walkthrough — floats over the field,
@@ -561,21 +607,28 @@ struct CoachedGameView: View {
         } message: {
             Text("You can sim the remaining plays or abandon (nothing is saved).")
         }
-        .sheet(isPresented: $showStatsSheet) {
-            LiveBoxScoreSheet(engine: engine, homeTeam: homeTeam, awayTeam: awayTeam)
-        }
-        .fullScreenCover(isPresented: $showManageSheet) {
-            CoachesBoardView(
-                engine: engine,
-                teamAbbr: playerAbbr,
-                // S3: holdouts come off the engine's kickoff roster query, not
-                // the stale `Team.players` relationship — and resolving them
-                // once at kickoff keeps this presentation closure fetch-free.
-                holdouts: engine.playerTeamHoldouts
-                    .map { CoachesBoardView.HoldoutLine(id: $0.id, name: $0.fullName, position: $0.position) },
-                initialUnitIsOffense: engine.playerIsOnOffense,
-                subsDisabled: isAnimating || engine.isGameOver
-            )
+        // §2.8: Manage and Stats are peers, so they are the same kind of
+        // presentation at the same size. `.large` on both — the Coach's Board
+        // needs the room, and a detent the two share is what keeps them peers.
+        .sheet(item: $activeSideTask) { task in
+            switch task {
+            case .stats:
+                LiveBoxScoreSheet(engine: engine, homeTeam: homeTeam, awayTeam: awayTeam)
+                    .presentationDetents([.large])
+            case .board:
+                CoachesBoardView(
+                    engine: engine,
+                    teamAbbr: playerAbbr,
+                    // S3: holdouts come off the engine's kickoff roster query,
+                    // not the stale `Team.players` relationship — and resolving
+                    // them once at kickoff keeps this closure fetch-free.
+                    holdouts: engine.playerTeamHoldouts
+                        .map { CoachesBoardView.HoldoutLine(id: $0.id, name: $0.fullName, position: $0.position) },
+                    initialUnitIsOffense: engine.playerIsOnOffense,
+                    subsDisabled: isAnimating || engine.isGameOver
+                )
+                .presentationDetents([.large])
+            }
         }
     }
 
@@ -797,14 +850,14 @@ struct CoachedGameView: View {
                     .accessibilityLabel(Text("Call timeout, \(engine.playerTimeoutsRemaining) remaining"))
                 }
                 Button {
-                    showManageSheet = true
+                    activeSideTask = .board
                 } label: {
                     actionButtonLabel("Manage", icon: "person.2.fill", tint: .textPrimary)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(Text("Manage players — open the Coach's Board"))
                 Button {
-                    showStatsSheet = true
+                    activeSideTask = .stats
                 } label: {
                     actionButtonLabel("Stats", icon: "chart.bar.fill", tint: .textPrimary)
                 }
@@ -1079,7 +1132,8 @@ struct CoachedGameView: View {
     /// automatically, and the offer expires at the next snap.
     @ViewBuilder
     private var replayOfferControl: some View {
-        if let offer = replayOffer, !isReplaying, !isAnimating, !showFinal, !showHalftime {
+        if let offer = replayOffer, !isReplaying, !isAnimating,
+           gameBreak != .final, gameBreak != .halftime {
             Button {
                 startReplay(offer, angle: offer.isTouchdown ? .endZone : .sideline)
             } label: {
@@ -1358,7 +1412,7 @@ struct CoachedGameView: View {
                 ProgressView()
                     .tint(Color.accentGold)
                 Text(engine.playerIsOnOffense ? "Play is live…" : "\(opponentAbbr) offense on the field…")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(DSType.text(DSType.Size.body, .semibold, prose: true))
                     .foregroundStyle(Color.textSecondary)
             }
             Spacer()
@@ -1368,6 +1422,29 @@ struct CoachedGameView: View {
 
     private var opponentAbbr: String {
         playerTeamIsHome ? awayTeam.abbreviation : homeTeam.abbreviation
+    }
+
+    // MARK: The one commit (#105 wave 5c, §2.5 / §2.8 / P5)
+
+    /// The label every snap-bar commit wears.
+    ///
+    /// The call sheet shipped **five hand-copied gold capsules** — offense SNAP,
+    /// 4th-down SNAP, kickoff KICK, the conversion's KICK XP / CALL THE PLAY, and
+    /// the defense's READY — agreeing on nothing but the hue: two different
+    /// horizontal paddings, two different disabled treatments, and one shared
+    /// defect. Disabled painted `backgroundPrimary` ink (near-black) on a
+    /// `backgroundTertiary` fill (dark navy), so the label of a disabled SNAP was
+    /// effectively invisible: the coach could not read what the button he could
+    /// not press was for.
+    ///
+    /// `.dsPrimary` is the one recipe (§2.8) and carries the genuinely-disabled
+    /// grey five separate audit findings ask for. The chrome owns the type, the
+    /// padding and the 44 pt target, so this helper only fixes the width — a
+    /// commit whose box changes size between "SNAP" and "PLAY IS LIVE…" makes the
+    /// snap bar jump on every whistle.
+    private func commitLabel(_ title: LocalizedStringKey, systemImage: String) -> some View {
+        Label(title, systemImage: systemImage)
+            .frame(minWidth: 136)
     }
 
     // MARK: Call-sheet card metrics (#1)
@@ -1387,9 +1464,14 @@ struct CoachedGameView: View {
         static let columns = 5
         static let spacing: CGFloat = 10
         static let hInset: CGFloat = 14
-        /// Name row (16) + blurb line (12) + the two 4 pt stack gaps + 8 pt
+        /// Name row (16) + blurb line (13) + the two 4 pt stack gaps + 8 pt
         /// padding top and bottom.
-        static let textBlock: CGFloat = 16 + 12 + 8 + 16
+        ///
+        /// The blurb was drawn at 9 pt — under §2.10's legibility floor, and one
+        /// of the 486 sub-10 pt literals the audit counted. At 10 pt the line box
+        /// is ~12.9 pt, so the allotment goes to 13 rather than the text
+        /// overflowing a frame that was measured for the smaller type.
+        static let textBlock: CGFloat = 16 + 13 + 8 + 16
         /// Below this the chalkboard art stops reading as football.
         static let diagramMin: CGFloat = 44
         /// Above this a single card starts to dominate the panel.
@@ -1438,7 +1520,7 @@ struct CoachedGameView: View {
                             Image(systemName: "chevron.left")
                                 .font(.system(size: 10, weight: .black))
                             Text("4th Down")
-                                .font(.system(size: 11, weight: .bold))
+                                .font(DSType.text(DSType.Size.caption, .semibold))
                         }
                         .foregroundStyle(Color.accentGold)
                         .padding(.horizontal, 10)
@@ -1459,7 +1541,7 @@ struct CoachedGameView: View {
                             Image(systemName: "chevron.left")
                                 .font(.system(size: 10, weight: .black))
                             Text("Try Options")
-                                .font(.system(size: 11, weight: .bold))
+                                .font(DSType.text(DSType.Size.caption, .semibold))
                         }
                         .foregroundStyle(Color.accentGold)
                         .padding(.horizontal, 10)
@@ -1472,8 +1554,8 @@ struct CoachedGameView: View {
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(Color.accentGold)
                 Text(playbookTitle)
-                    .font(.system(size: 10, weight: .black))
-                    .foregroundStyle(Color.textTertiary)
+                    .font(DSType.display(DSType.Size.caption, .black))
+                    .foregroundStyle(Color.textTertiaryReadable)
                     .tracking(1.4)
                 Spacer()
                 // R36: the QB's pre-snap read of the shell — his awareness
@@ -1484,7 +1566,7 @@ struct CoachedGameView: View {
                         Image(systemName: "eye.fill")
                             .font(.system(size: 10, weight: .bold))
                         Text(read.text)
-                            .font(.system(size: 12, weight: .bold))
+                            .font(DSType.text(DSType.Size.footnote, .semibold))
                     }
                     .foregroundStyle(read.uncertain ? Color.warning : Color.accentBlue)
                     .padding(.horizontal, 10)
@@ -1590,7 +1672,7 @@ struct CoachedGameView: View {
                             Image(systemName: "megaphone.fill")
                                 .font(.system(size: 11, weight: .bold))
                             Text("AUDIBLE · \(offAudiblesLeft)")
-                                .font(.system(size: 12, weight: .black))
+                                .font(DSType.display(DSType.Size.footnote, .black))
                         }
                         .foregroundStyle(showAudibleStrip ? Color.backgroundPrimary : Color.accentGold)
                         .padding(.horizontal, 12)
@@ -1611,7 +1693,7 @@ struct CoachedGameView: View {
                             Image(systemName: "arrow.left.arrow.right")
                                 .font(.system(size: 11, weight: .bold))
                             Text("REVERSE")
-                                .font(.system(size: 12, weight: .black))
+                                .font(DSType.display(DSType.Size.footnote, .black))
                         }
                         .foregroundStyle(mirrored ? Color.backgroundPrimary : Color.accentGold)
                         .padding(.horizontal, 12)
@@ -1631,7 +1713,7 @@ struct CoachedGameView: View {
                         selectedCategory = suggestion.category
                     } label: {
                         Label(suggestion.rawValue, systemImage: "brain")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(DSType.text(DSType.Size.footnote, .semibold))
                             .foregroundStyle(Color.accentBlue)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 6)
@@ -1642,7 +1724,7 @@ struct CoachedGameView: View {
                 if clockManagementAvailable && engine.pendingConversion == nil {
                     Button { snap(call: .spike) } label: {
                         Text("Spike")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(DSType.text(DSType.Size.footnote, .semibold))
                             .foregroundStyle(Color.textSecondary)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 6)
@@ -1651,7 +1733,7 @@ struct CoachedGameView: View {
                     .buttonStyle(.plain)
                     Button { snap(call: .kneel) } label: {
                         Text("Kneel")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(DSType.text(DSType.Size.footnote, .semibold))
                             .foregroundStyle(Color.textSecondary)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 6)
@@ -1664,14 +1746,9 @@ struct CoachedGameView: View {
                     Button {
                         if let call = selectedCall { snap(call: call) }
                     } label: {
-                        Label("SNAP", systemImage: "arrow.up.circle.fill")
-                            .font(.system(size: 16, weight: .black))
-                            .foregroundStyle(Color.backgroundPrimary)
-                            .padding(.horizontal, 30)
-                            .padding(.vertical, 12)
-                            .background(selectedCall != nil ? Color.accentGold : Color.backgroundTertiary, in: Capsule())
+                        commitLabel("SNAP", systemImage: "arrow.up.circle.fill")
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.dsPrimary)
                     .disabled(selectedCall == nil)
                     .accessibilityLabel(
                         selectedCall.map { Text("Snap the ball — run \($0.rawValue)") }
@@ -1758,7 +1835,7 @@ struct CoachedGameView: View {
             withAnimation(.easeInOut(duration: 0.15)) { selectedCategory = category }
         } label: {
             Text(shortCategoryName(category))
-                .font(.system(size: 12, weight: .bold))
+                .font(DSType.display(DSType.Size.footnote, .bold))
                 .foregroundStyle(isSelected ? Color.backgroundPrimary : Color.textSecondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)   // eight capsules share the row
@@ -1798,7 +1875,7 @@ struct CoachedGameView: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 4) {
                     Text(play.rawValue)
-                        .font(.system(size: 12, weight: .heavy))
+                        .font(DSType.text(DSType.Size.footnote, .heavy))
                         .foregroundStyle(isSelected ? Color.accentGold
                                          : (installed ? Color.textPrimary : Color.textTertiary))
                         .lineLimit(1)
@@ -1833,11 +1910,11 @@ struct CoachedGameView: View {
                     .frame(maxWidth: .infinity)
                     .opacity(installed ? 1 : 0.45)
                 Text(play.blurb)
-                    .font(.system(size: 9))
-                    .foregroundStyle(Color.textTertiary)
+                    .font(DSType.text(DSType.Size.micro, .regular, prose: true))
+                    .foregroundStyle(Color.textTertiaryReadable)
                     .lineLimit(1)
                     .multilineTextAlignment(.leading)
-                    .frame(height: 12, alignment: .top)
+                    .frame(height: 13, alignment: .top)
             }
             .padding(8)
             .frame(height: diagramHeight + CallCard.textBlock)
@@ -1899,8 +1976,8 @@ struct CoachedGameView: View {
         return ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 Text("CHECK INTO:")
-                    .font(.system(size: 10, weight: .black))
-                    .foregroundStyle(Color.textTertiary)
+                    .font(DSType.display(DSType.Size.caption, .black))
+                    .foregroundStyle(Color.textTertiaryReadable)
                     .tracking(1.2)
                 ForEach(options, id: \.self) { option in
                     let beatsShell = believedShell.map { option.goodAgainst($0) } ?? false
@@ -1922,7 +1999,7 @@ struct CoachedGameView: View {
                                     .foregroundStyle(Color.accentGold)
                             }
                             Text(option.rawValue)
-                                .font(.system(size: 12, weight: .bold))
+                                .font(DSType.text(DSType.Size.footnote, .semibold))
                                 .foregroundStyle(Color.textPrimary)
                         }
                         .padding(.horizontal, 12)
@@ -1987,25 +2064,25 @@ struct CoachedGameView: View {
                     VStack(alignment: .leading, spacing: 3) {
                         HStack(spacing: 6) {
                             Text(name)
-                                .font(.system(size: 12, weight: .heavy))
+                                .font(DSType.text(DSType.Size.footnote, .heavy))
                                 .foregroundStyle(Color.textPrimary)
                                 .lineLimit(1)
                             Text(role)
-                                .font(.system(size: 9, weight: .black))
+                                .font(DSType.display(DSType.Size.caption, .black))
                                 .foregroundStyle(accent)
                                 .tracking(0.8)
                             Spacer(minLength: 4)
                             confidencePips(confidence, accent: accent)
                         }
                         Text(verbatim: reason)   // en-only coach-speak (documented)
-                            .font(.system(size: 12.5, weight: .medium))
+                            .font(DSType.text(DSType.Size.footnote, .medium, prose: true))
                             .foregroundStyle(Color.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                         HStack(spacing: 4) {
                             Image(systemName: "hand.point.right.fill")
                                 .font(.system(size: DSType.Size.micro))
                             Text("\(String(localized: "Coach's pick")): \(callName)")
-                                .font(.system(size: 10, weight: .bold))
+                                .font(DSType.text(DSType.Size.micro, .bold))
                         }
                         .foregroundStyle(accent)
                     }
@@ -2028,7 +2105,7 @@ struct CoachedGameView: View {
                         Image(systemName: icon)
                             .font(.system(size: 11, weight: .bold))
                         Text("\(String(localized: "Coach's pick")): \(callName)")
-                            .font(.system(size: 11, weight: .bold))
+                            .font(DSType.text(DSType.Size.caption, .semibold))
                         Image(systemName: "arrow.uturn.left")
                             .font(.system(size: 9, weight: .bold))
                     }
@@ -2055,7 +2132,7 @@ struct CoachedGameView: View {
             Image(systemName: icon)
                 .font(.system(size: DSType.Size.micro, weight: .black))
             Text(verbatim: role)
-                .font(.system(size: DSType.Size.micro, weight: .black))
+                .font(DSType.display(DSType.Size.micro, .black))
                 .tracking(0.3)
         }
         .foregroundStyle(accent)
@@ -2088,15 +2165,15 @@ struct CoachedGameView: View {
                 .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(tint)
             Text(verbatim: line)   // en-only broadcast copy (documented)
-                .font(.system(size: 11, weight: .semibold))
+                .font(DSType.text(DSType.Size.caption, .semibold, prose: true))
                 .foregroundStyle(!hasRead || stale ? Color.textTertiary : Color.textSecondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
             if stale {
                 Text("EARLIER")
-                    .font(.system(size: DSType.Size.micro, weight: .black))
+                    .font(DSType.display(DSType.Size.micro, .black))
                     .tracking(0.6)
-                    .foregroundStyle(Color.textTertiary)
+                    .foregroundStyle(Color.textTertiaryReadable)
             }
             Spacer(minLength: 6)
             if boxLoaded {
@@ -2104,7 +2181,7 @@ struct CoachedGameView: View {
                     Image(systemName: "square.stack.3d.up.fill")
                         .font(.system(size: 9, weight: .bold))
                     Text("STACKED BOX")
-                        .font(.system(size: 9, weight: .black))
+                        .font(DSType.display(DSType.Size.caption, .black))
                         .tracking(0.5)
                 }
                 .foregroundStyle(Color.warning)
@@ -2135,8 +2212,8 @@ struct CoachedGameView: View {
     ) -> some View {
         HStack(spacing: 3) {
             Text(confidenceLabel(c))
-                .font(.system(size: DSType.Size.micro, weight: .black))
-                .foregroundStyle(Color.textTertiary)
+                .font(DSType.display(DSType.Size.micro, .black))
+                .foregroundStyle(Color.textTertiaryReadable)
                 .tracking(0.6)
             ForEach(0..<3, id: \.self) { i in
                 Circle()
@@ -2165,7 +2242,7 @@ struct CoachedGameView: View {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(Color.accentGold)
                 Text("4th & \(engine.distance) — your call, coach")
-                    .font(.system(size: 15, weight: .heavy))
+                    .font(DSType.text(DSType.Size.callout, .heavy))
                     .foregroundStyle(Color.textPrimary)
             }
             .padding(.top, 14)
@@ -2220,10 +2297,11 @@ struct CoachedGameView: View {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Selected")
-                        .font(.system(size: 10))
-                        .foregroundStyle(Color.textTertiary)
+                        .font(DSType.display(DSType.Size.caption, .heavy))
+                        .tracking(0.7)
+                        .foregroundStyle(Color.textTertiaryReadable)
                     Text(fourthDownChoiceLabel)
-                        .font(.system(size: 14, weight: .bold))
+                        .font(DSType.text(DSType.Size.body, .semibold))
                         .foregroundStyle(Color.textPrimary)
                 }
                 Spacer()
@@ -2231,15 +2309,9 @@ struct CoachedGameView: View {
                     Button {
                         if let choice = fourthDownChoice { snap(forcedType: choice) }
                     } label: {
-                        Label("SNAP", systemImage: "arrow.up.circle.fill")
-                            .font(.system(size: 16, weight: .black))
-                            .foregroundStyle(Color.backgroundPrimary)
-                            .padding(.horizontal, 30)
-                            .padding(.vertical, 12)
-                            .background(fourthDownChoice != nil ? Color.accentGold : Color.backgroundTertiary,
-                                        in: Capsule())
+                        commitLabel("SNAP", systemImage: "arrow.up.circle.fill")
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.dsPrimary)
                     .disabled(fourthDownChoice == nil)
                 }
             }
@@ -2268,9 +2340,9 @@ struct CoachedGameView: View {
                 Image(systemName: icon)
                     .font(.system(size: 18, weight: .bold))
                 Text(title)
-                    .font(.system(size: 14, weight: .heavy))
+                    .font(DSType.text(DSType.Size.body, .heavy))
                 Text(subtitle)
-                    .font(.system(size: 10))
+                    .font(DSType.text(DSType.Size.micro, .regular, prose: true))
                     .opacity(0.75)
             }
             .foregroundStyle(selected ? Color.accentGold : Color.textPrimary)
@@ -2301,7 +2373,7 @@ struct CoachedGameView: View {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(Color.accentGold)
                 Text("Kickoff — deep or onside?")
-                    .font(.system(size: 15, weight: .heavy))
+                    .font(DSType.text(DSType.Size.callout, .heavy))
                     .foregroundStyle(Color.textPrimary)
             }
             .padding(.top, 14)
@@ -2331,10 +2403,11 @@ struct CoachedGameView: View {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Selected")
-                        .font(.system(size: 10))
-                        .foregroundStyle(Color.textTertiary)
+                        .font(DSType.display(DSType.Size.caption, .heavy))
+                        .tracking(0.7)
+                        .foregroundStyle(Color.textTertiaryReadable)
                     Text(onsideSelected ? "Onside Kick" : "Kick Deep")
-                        .font(.system(size: 14, weight: .bold))
+                        .font(DSType.text(DSType.Size.body, .semibold))
                         .foregroundStyle(Color.textPrimary)
                 }
                 Spacer()
@@ -2344,14 +2417,9 @@ struct CoachedGameView: View {
                         awaitingKickoffDecision = false
                         if onsideSelected { attemptOnside() } else { kickDeep() }
                     } label: {
-                        Label("KICK", systemImage: "arrow.up.circle.fill")
-                            .font(.system(size: 16, weight: .black))
-                            .foregroundStyle(Color.backgroundPrimary)
-                            .padding(.horizontal, 30)
-                            .padding(.vertical, 12)
-                            .background(Color.accentGold, in: Capsule())
+                        commitLabel("KICK", systemImage: "arrow.up.circle.fill")
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.dsPrimary)
                 }
             }
             .padding(.horizontal, 14)
@@ -2371,7 +2439,7 @@ struct CoachedGameView: View {
                 Image(systemName: "flag.2.crossed.fill")
                     .foregroundStyle(Color.accentGold)
                 Text("Touchdown! Kick the point or go for two?")
-                    .font(.system(size: 15, weight: .heavy))
+                    .font(DSType.text(DSType.Size.callout, .heavy))
                     .foregroundStyle(Color.textPrimary)
             }
             .padding(.top, 14)
@@ -2413,10 +2481,11 @@ struct CoachedGameView: View {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Selected")
-                        .font(.system(size: 10))
-                        .foregroundStyle(Color.textTertiary)
+                        .font(DSType.display(DSType.Size.caption, .heavy))
+                        .tracking(0.7)
+                        .foregroundStyle(Color.textTertiaryReadable)
                     Text(conversionGoForTwo ? "Go for 2" : "Kick XP")
-                        .font(.system(size: 14, weight: .bold))
+                        .font(DSType.text(DSType.Size.body, .semibold))
                         .foregroundStyle(Color.textPrimary)
                 }
                 Spacer()
@@ -2434,15 +2503,10 @@ struct CoachedGameView: View {
                             runPlay(offCall: nil, forcedType: nil)
                         }
                     } label: {
-                        Label(conversionGoForTwo ? "CALL THE PLAY" : "KICK XP",
-                              systemImage: conversionGoForTwo ? "book.fill" : "arrow.up.circle.fill")
-                            .font(.system(size: 16, weight: .black))
-                            .foregroundStyle(Color.backgroundPrimary)
-                            .padding(.horizontal, 30)
-                            .padding(.vertical, 12)
-                            .background(Color.accentGold, in: Capsule())
+                        commitLabel(conversionGoForTwo ? "CALL THE PLAY" : "KICK XP",
+                                    systemImage: conversionGoForTwo ? "book.fill" : "arrow.up.circle.fill")
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.dsPrimary)
                 }
             }
             .padding(.horizontal, 14)
@@ -2463,15 +2527,15 @@ struct CoachedGameView: View {
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(Color.accentBlue)
                 Text(defensePanelTitle)
-                    .font(.system(size: 10, weight: .black))
-                    .foregroundStyle(Color.textTertiary)
-                    .tracking(1.5)
+                    .font(DSType.display(DSType.Size.caption, .black))
+                    .foregroundStyle(Color.textTertiaryReadable)
+                    .tracking(1.2)
                 Spacer()
                 Button {
                     skipDrive()
                 } label: {
                     Label("Skip Drive", systemImage: "forward.fill")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(DSType.text(DSType.Size.footnote, .semibold))
                         .foregroundStyle(Color.textSecondary)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
@@ -2554,12 +2618,12 @@ struct CoachedGameView: View {
                     Text(engine.pendingConversion != nil
                          ? "\(opponentAbbr) going for TWO — call your stop"
                          : "\(opponentAbbr) ball — they wait for you")
-                        .font(.system(size: 10))
+                        .font(DSType.text(DSType.Size.micro, .semibold, prose: true))
                         .foregroundStyle(engine.pendingConversion != nil
-                                         ? Color.warning : Color.textTertiary)
+                                         ? Color.warning : Color.textTertiaryReadable)
                     Text(defShellOverride.map { "\(defCall.rawValue) · shell: \($0.shellShortLabel)" }
                          ?? defCall.rawValue)
-                        .font(.system(size: 14, weight: .bold))
+                        .font(DSType.text(DSType.Size.body, .semibold))
                         .foregroundStyle(defShellOverride == nil ? Color.textPrimary : Color.accentGold)
                         .lineLimit(1)
                 }
@@ -2571,7 +2635,7 @@ struct CoachedGameView: View {
                             Image(systemName: "megaphone.fill")
                                 .font(.system(size: 11, weight: .bold))
                             Text("SHELL · \(defAudiblesLeft)")
-                                .font(.system(size: 12, weight: .black))
+                                .font(DSType.display(DSType.Size.footnote, .black))
                         }
                         .foregroundStyle(showShellStrip ? Color.backgroundPrimary : Color.accentBlue)
                         .padding(.horizontal, 12)
@@ -2586,16 +2650,10 @@ struct CoachedGameView: View {
                     Button {
                         runPlay(offCall: nil, forcedType: nil)
                     } label: {
-                        Label(isAnimating ? "PLAY IS LIVE…" : "READY — SNAP",
-                              systemImage: isAnimating ? "hourglass" : "shield.checkered")
-                            .font(.system(size: 16, weight: .black))
-                            .foregroundStyle(Color.backgroundPrimary)
-                            .padding(.horizontal, 26)
-                            .padding(.vertical, 12)
-                            .background(isAnimating ? Color.backgroundTertiary : Color.accentGold,
-                                        in: Capsule())
+                        commitLabel(isAnimating ? "PLAY IS LIVE…" : "READY — SNAP",
+                                    systemImage: isAnimating ? "hourglass" : "shield.checkered")
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.dsPrimary)
                     .disabled(isAnimating)
                 }
             }
@@ -2610,7 +2668,7 @@ struct CoachedGameView: View {
             withAnimation(.easeInOut(duration: 0.15)) { defCategory = category }
         } label: {
             Text(category)
-                .font(.system(size: 12, weight: .bold))
+                .font(DSType.display(DSType.Size.footnote, .bold))
                 .foregroundStyle(isSelected ? Color.backgroundPrimary : Color.textSecondary)
                 .padding(.vertical, 7)
                 .frame(maxWidth: .infinity)
@@ -2648,7 +2706,7 @@ struct CoachedGameView: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 4) {
                     Text(call.rawValue)
-                        .font(.system(size: 12, weight: .heavy))
+                        .font(DSType.text(DSType.Size.footnote, .heavy))
                         .foregroundStyle(isSelected ? Color.accentGold
                                          : (installed ? Color.textPrimary : Color.textTertiary))
                         .lineLimit(1)
@@ -2686,11 +2744,11 @@ struct CoachedGameView: View {
                     .frame(maxWidth: .infinity)
                     .opacity(installed ? 1 : 0.45)
                 Text(call.blurb)
-                    .font(.system(size: 9))
-                    .foregroundStyle(Color.textTertiary)
+                    .font(DSType.text(DSType.Size.micro, .regular, prose: true))
+                    .foregroundStyle(Color.textTertiaryReadable)
                     .lineLimit(1)
                     .multilineTextAlignment(.leading)
-                    .frame(height: 12, alignment: .top)
+                    .frame(height: 13, alignment: .top)
             }
             .padding(8)
             .frame(height: diagramHeight + CallCard.textBlock)
@@ -2731,15 +2789,15 @@ struct CoachedGameView: View {
         return ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 Text("ROTATE SHELL:")
-                    .font(.system(size: 10, weight: .black))
-                    .foregroundStyle(Color.textTertiary)
+                    .font(DSType.display(DSType.Size.caption, .black))
+                    .foregroundStyle(Color.textTertiaryReadable)
                     .tracking(1.2)
                 ForEach(options, id: \.self) { shell in
                     Button {
                         commitShellAudible(to: shell)
                     } label: {
                         Text(shell.shellShortLabel)
-                            .font(.system(size: 12, weight: .bold))
+                            .font(DSType.text(DSType.Size.footnote, .semibold))
                             .foregroundStyle(Color.textPrimary)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 7)
@@ -2782,7 +2840,7 @@ struct CoachedGameView: View {
                         Image(systemName: "cross.fill")
                             .font(.system(size: 12, weight: .black))
                         Text(injury)
-                            .font(.system(size: 14, weight: .bold))
+                            .font(DSType.body)
                             .multilineTextAlignment(.center)
                     }
                     .foregroundStyle(.white)
@@ -2797,7 +2855,7 @@ struct CoachedGameView: View {
                         Image(systemName: "star.fill")
                             .font(.system(size: 12, weight: .black))
                         Text(milestone)
-                            .font(.system(size: 14, weight: .black))
+                            .font(DSType.body)
                             .multilineTextAlignment(.center)
                     }
                     .foregroundStyle(Color.backgroundPrimary)
@@ -3049,9 +3107,8 @@ struct CoachedGameView: View {
     /// left off when they close. The halftime report and a live play always
     /// pause the clock, so it can never expire under either.
     private var playClockPaused: Bool {
-        isAnimating || isReplaying || showHalftime || showQuarterReport
-            || showFinal || showStatsSheet
-            || showManageSheet || showSimToEndConfirm || showExitConfirm
+        isAnimating || isReplaying || gameBreak != nil || activeSideTask != nil
+            || showSimToEndConfirm || showExitConfirm
             || firstSnapTipStep != nil // R37: reading the walkthrough costs nothing
     }
 
@@ -3459,14 +3516,14 @@ struct CoachedGameView: View {
         guard !engine.isGameOver else {
             // Final gun: the crowd settles under the overlay.
             AudioDirector.shared.setCrowdIntensity(0.2)
-            withAnimation(.easeInOut(duration: 0.3)) { showFinal = true }
+            withAnimation(.easeInOut(duration: 0.3)) { gameBreak = .final }
             return
         }
         // Halftime: pause the flow on the report card before the second-half
         // kickoff. Dismissing it re-enters proceed() and runs the kick.
         if engine.halftimePending {
             AudioDirector.shared.play(.whistle)   // the horn's pea whistle: period over
-            withAnimation(.easeInOut(duration: 0.3)) { showHalftime = true }
+            withAnimation(.easeInOut(duration: 0.3)) { gameBreak = .halftime }
             return
         }
         // End of Q1 / Q3: pause on the quarter report (player situation +
@@ -3475,7 +3532,7 @@ struct CoachedGameView: View {
         if engine.quarterBreakPending {
             AudioDirector.shared.play(.whistle)   // end of the period
             if quarterReportsEnabled {
-                withAnimation(.easeInOut(duration: 0.3)) { showQuarterReport = true }
+                withAnimation(.easeInOut(duration: 0.3)) { gameBreak = .quarter }
                 return
             }
             engine.resolveQuarterBreak()
@@ -4094,7 +4151,7 @@ struct CoachedGameView: View {
         isAnimating = false
         engine.simToEnd()
         syncFieldToSituation()
-        withAnimation(.easeInOut(duration: 0.3)) { showFinal = true }
+        withAnimation(.easeInOut(duration: 0.3)) { gameBreak = .final }
     }
 
     /// Teleports the formation/camera to the engine's current situation,
@@ -4485,7 +4542,7 @@ struct CoachedGameView: View {
             } else {
                 reelActive = false
                 fieldScene.updateMarkers(losZ: nil, firstDownZ: nil)
-                withAnimation(.easeInOut(duration: 0.3)) { showFinal = true }
+                withAnimation(.easeInOut(duration: 0.3)) { gameBreak = .final }
             }
             return
         }
@@ -4525,7 +4582,7 @@ struct CoachedGameView: View {
         guard let first = top.first else { return }
         replayQueue = Array(top.dropFirst())
         reelActive = true
-        withAnimation(.easeInOut(duration: 0.3)) { showFinal = false }
+        withAnimation(.easeInOut(duration: 0.3)) { gameBreak = nil }
         startReplay(first, angle: first.isTouchdown ? .endZone : .sideline)
     }
 }

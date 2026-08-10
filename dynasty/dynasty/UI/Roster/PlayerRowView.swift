@@ -10,22 +10,37 @@ struct PlayerRowView: View {
     /// to "OV / R" the moment the sort chevron joined it, and how "Discouraged"
     /// ended up hyphen-less-wrapped into "Disco / urage / d" in a 56pt box.
     /// One definition, read from both sides.
+    ///
+    /// Wave 1 re-bases these onto `DSListColumn` (`UI/Common/DSListRow.swift`),
+    /// which is the same discipline one level up: the roster and the Big Board
+    /// now read one ladder rather than two that happen to agree. Every value
+    /// below is byte-for-byte the width that shipped — the point of the move is
+    /// that the board's `OVR` and the roster's are provably the same 40, not
+    /// that either of them changes.
     enum Column {
         /// Fits "Age" plus the sort chevron on one line.
-        static let age: CGFloat = 36
+        static let age = DSListColumn.age                 // 36
         /// Fits "OVR" plus the sort chevron on one line.
-        static let ovr: CGFloat = 40
-        /// Fits the icon plus "Discouraged", the longest motivation label.
-        static let motivation: CGFloat = 76
+        static let ovr = DSListColumn.ovr                 // 40
+        /// Fits "Discouraged", the longest motivation label.
+        static let motivation = DSListColumn.state        // 76
         /// Contracts mode: dead cap if cut, e.g. "$12.3M" over a "dead" caption.
-        static let deadCap: CGFloat = 48
+        static let deadCap = DSListColumn.label           // 48
         /// Contracts mode: net cap saved by cutting, same shape as `deadCap`.
-        static let capSavings: CGFloat = 48
+        static let capSavings = DSListColumn.label        // 48
+        /// The depth chip that rides in front of the face.
+        static let depthChip: CGFloat = 14
+        /// The whole leading slot the depth chip and the face share, including
+        /// the 6pt gutters that used to come from the row `HStack`'s spacing:
+        /// 6 + 14 + 6 + 30. `DSListRow` lays out at spacing 0, so the gutters
+        /// have to live inside the slot that owns them.
+        static let portraitSlot: CGFloat = 56
+        /// Inter-column gap inside the trailing block. It is 6 and not 0
+        /// because `RosterView.sortableHeader` is right-anchored against the
+        /// same edge: at spacing 0 the data block was 42pt narrower than the
+        /// header labelling it and every label sat right of its own numbers.
+        static let gap: CGFloat = 6
     }
-
-    /// The status / personality badge line under a player's name. One constant
-    /// so the five badges that share the line can never drift apart again.
-    private static let badgeFontSize: CGFloat = 10
 
     let player: Player
     /// Depth chart index: 0 = starter, 1 = backup, 2+ = 3rd string. nil = unknown.
@@ -46,6 +61,11 @@ struct PlayerRowView: View {
     var starterCountForPosition: Int = 1
     /// Team salary cap in thousands — used to calculate cap% per player.
     var teamSalaryCap: Int = ContractEngine.openingSalaryCap
+    /// The scheme this player's unit actually runs, as the key
+    /// `Player.schemeFamiliarity` stores it. Feeds the `FIT` slot; `nil` leaves
+    /// the slot honestly empty rather than filling it with the deepest scheme
+    /// he learned at a previous club.
+    var installedScheme: String? = nil
 
     /// TRACK B — season + phase, injected once by `CareerShellView`. A rookie
     /// who has not yet reported to training camp shows his scouting BAND where
@@ -63,94 +83,207 @@ struct PlayerRowView: View {
     private func ovrCell(font: Font) -> some View {
         if isFogged {
             RookieBandChip(player: player, font: .caption2.monospaced().weight(.heavy))
-                .frame(width: Column.ovr, alignment: .center)
+                .dsColumn(Column.ovr)
         } else {
             Text("\(player.overall)")
                 .font(font)
                 .fontWeight(.bold)
                 .foregroundStyle(Color.forRating(player.overall))
-                .frame(width: Column.ovr, alignment: .center)
+                .dsColumn(Column.ovr)
         }
     }
 
+    /// The roster row is the second mount of the list standard
+    /// (`UI_REDESIGN_VISION` §2.2), and Wave 1 converts it right after the Big
+    /// Board precisely because it already mirrored it — same shared column
+    /// enum, same lens-swapped trailing block, same anatomy. If the abstraction
+    /// were wrong, it would be wrong here cheaply.
+    ///
+    /// What the conversion changed, and nothing else:
+    ///
+    ///  1. The hand-rolled `HStack` became `DSListRow`, so the row measures
+    ///     44pt (§2.12: rows are controls and had no exception) and the leading
+    ///     slots come from one place rather than from four inline frames.
+    ///  2. The five conditional badges under the name became three FIXED slots
+    ///     — `FIT` / `EXT` / `HLTH` (`DSStateSlotRow`). This is §2.2's
+    ///     load-bearing idea: the badges only ever appeared when the fact was
+    ///     TRUE, so a row with nothing wrong with it and a row nobody has
+    ///     looked at were the same empty line. Now the slot is always in its
+    ///     position and an unfilled one is a dimmed, dashed word.
+    ///  3. Every cell width goes through `dsColumn`, which shrinks then clips.
+    ///     The header already documented one paint-over bug in this file
+    ///     ("Discouraged" wrapping to "Disco / urage / d"); a fixed frame with
+    ///     no clipping is how that class of bug happens.
+    ///
+    /// The trailing block keeps its 6pt inter-column gap (`Column.gap`) because
+    /// `RosterView.sortableHeader` is right-anchored against the same edge and
+    /// documents the 42pt drift that appears at spacing 0.
     var body: some View {
-        HStack(spacing: 6) {
-            // Always show: Position badge + Depth + Avatar + Name
-            positionBadge
-
-            depthIndicator
-                .frame(width: 14, alignment: .center)
-
-            PersonFaceView(player: player, size: .small)
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(player.fullName)
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(Color.textPrimary)
-                    .lineLimit(1)
-
-                // Status badges — full text for clarity (#171, #172).
-                //
-                // 10pt, not 7. At 7pt bold this line measured a 5pt cap height —
-                // the smallest text in the app, and the personality archetype it
-                // ends with is a real scouting fact, not a decoration. The face
-                // beside it is 30pt while the name + badge stack is ~31pt, so
-                // the extra three points cost the row no height at all.
-                HStack(spacing: 4) {
-                    if isExpiringContract {
-                        Text("Trade Watch")
-                            .font(.system(size: Self.badgeFontSize, weight: .bold))
-                            .foregroundStyle(Color.warning)
-                    }
-                    if isHighCapInvestment {
-                        Text("Invested")
-                            .font(.system(size: Self.badgeFontSize, weight: .bold))
-                            .foregroundStyle(Color.accentGold)
-                    }
-                    if player.isFranchiseTagged {
-                        Text("Franchise")
-                            .font(.system(size: Self.badgeFontSize, weight: .bold))
-                            .foregroundStyle(Color.danger)
-                    }
-                    if player.isHoldingOut {
-                        Text("Holdout")
-                            .font(.system(size: Self.badgeFontSize, weight: .bold))
-                            .foregroundStyle(Color.danger)
-                    }
-                    // R25: personality trait badge (tier-colored)
-                    Text(player.personality.archetype.shortLabel)
-                        .font(.system(size: Self.badgeFontSize, weight: .bold))
-                        .foregroundStyle(personalityTierColor)
-                }
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
+        DSListRow(
+            density: .scan,
+            // No rank slot: a roster is grouped by position, not ordered
+            // 1…53, and reserving a rank column on an unranked list would be
+            // 24pt of gutter carrying nothing.
+            badge: DSRowBadge(
+                text: player.position.rawValue,
+                tint: positionColor,
+                accessibilityLabel: "\(player.position.rawValue), \(player.position.side.rawValue)",
+                action: onPositionBadgeTap
+            ),
+            portraitWidth: Column.portraitSlot
+        ) {
+            // The depth chip travels with the face — it is a fact about where
+            // this man stands, not a column of its own — which is the case
+            // `portraitWidth` exists for.
+            HStack(spacing: Column.gap) {
+                depthIndicator
+                    .frame(width: Column.depthChip, alignment: .center)
+                PersonFaceView(player: player, size: .small)
             }
-            .frame(minWidth: 80, alignment: .leading)
-
+            .padding(.leading, Column.gap)
+        } identity: {
+            identityBlock
+        } columns: {
             Spacer(minLength: 2)
 
-            // Mode-specific columns
-            switch analysisMode {
-            case .overview:
-                overviewColumns
-            case .contracts:
-                contractColumns
-            case .development:
-                developmentColumns
-            case .physical:
-                physicalColumns
-            case .attributes:
-                attributeColumns
-            case .mental:
-                mentalColumns
-            case .depth:
-                depthColumns
+            // Mode-specific columns — the lens. Only the trailing block swaps.
+            HStack(spacing: Column.gap) {
+                switch analysisMode {
+                case .overview:
+                    overviewColumns
+                case .contracts:
+                    contractColumns
+                case .development:
+                    developmentColumns
+                case .physical:
+                    physicalColumns
+                case .attributes:
+                    attributeColumns
+                case .mental:
+                    mentalColumns
+                case .depth:
+                    depthColumns
+                }
             }
         }
-        .padding(.vertical, 4)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityText)
+    }
+
+    // MARK: - Identity block
+
+    /// Name line, then the three reserved state slots.
+    ///
+    /// `DSListRow` owns the identity SLOT — its minimum width, its alignment
+    /// and its clipping — and the screen owns what goes in it.
+    private var identityBlock: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            // 14, from the density, not 15 from `.subheadline`. The board's
+            // name line was already 14 and the two lists disagreeing by a
+            // point is exactly the drift one standard exists to stop.
+            Text(player.fullName)
+                .font(DSType.text(DSListDensity.scan.nameSize, .semibold, prose: true))
+                .foregroundStyle(Color.textPrimary)
+                .lineLimit(1)
+
+            HStack(spacing: 4) {
+                DSStateSlotRow(slots: rosterSlots)
+
+                // The two states that are neither a slot nor a routine fact.
+                // They are rare, they are trailing, and they sit at the end of
+                // the ONE flexible column, so they cannot shift a fixed cell.
+                if player.isFranchiseTagged {
+                    DSStatusPill(label: "Tag", tone: .warn, showsDot: false,
+                                 spokenLabel: "Franchise tagged")
+                }
+                if player.isHoldingOut {
+                    DSStatusPill(label: "Out", tone: .bad, showsDot: false,
+                                 spokenLabel: "Holding out")
+                }
+
+                // R25: personality archetype — a scouting fact, not a state,
+                // so it stays a word rather than becoming a fourth pill.
+                Text(player.personality.archetype.shortLabel)
+                    .font(DSType.display(11, .semibold))
+                    .foregroundStyle(personalityTierColor)
+            }
+            .lineLimit(1)
+        }
+    }
+
+    /// The roster's three fixed slots — `FIT` · `EXT` · `HLTH` (§2.2).
+    ///
+    /// Each is always drawn, in this order, whether or not the fact behind it
+    /// exists. What the user scans for is the gap.
+    ///
+    /// `FIT` is honest about not knowing: the row is handed the scheme its unit
+    /// runs (`installedScheme`) and reads `Player.schemeFamiliarity` for it. No
+    /// scheme wired to this list means the slot is `empty` — the word
+    /// "unknown", printed — rather than a number invented from the deepest
+    /// scheme he happens to have learned somewhere else.
+    private var rosterSlots: [DSStateSlot] {
+        [fitSlot, extensionSlot, healthSlot]
+    }
+
+    private var fitSlot: DSStateSlot {
+        guard let installedScheme,
+              let familiarity = player.schemeFamiliarity[installedScheme] else {
+            return DSStateSlot(
+                label: "FIT",
+                tone: .empty,
+                spokenLabel: "Scheme fit unknown — he has not taken a rep in this scheme"
+            )
+        }
+        // Thresholds mirror the development engine's own scheme-fit bands
+        // (`PlayerDevelopmentEngine.updatePotentialRealization`: 0.8 / 0.6 /
+        // 0.4 on a 0–1 scale), so the chip and the engine cannot disagree about
+        // who is comfortable.
+        let tone: DSStatusPill.Tone
+        switch familiarity {
+        case 80...:   tone = .ok
+        case 60..<80: tone = .neutral
+        default:      tone = .warn
+        }
+        return DSStateSlot(
+            label: "FIT",
+            tone: tone,
+            value: "\(familiarity)",
+            spokenLabel: "Scheme familiarity \(familiarity) of 100"
+        )
+    }
+
+    private var extensionSlot: DSStateSlot {
+        let years = player.contractYearsRemaining
+        guard years > 0 else {
+            return DSStateSlot(
+                label: "EXT",
+                tone: .bad,
+                value: "0",
+                spokenLabel: "Contract expires this offseason"
+            )
+        }
+        return DSStateSlot(
+            label: "EXT",
+            tone: years <= 1 ? .warn : .ok,
+            value: "\(years)y",
+            spokenLabel: years == 1
+                ? "One year left on his deal"
+                : "\(years) years left on his deal"
+        )
+    }
+
+    private var healthSlot: DSStateSlot {
+        guard player.isInjured else {
+            return DSStateSlot(label: "HLTH", tone: .ok,
+                               spokenLabel: "Available")
+        }
+        let weeks = player.injuryWeeksRemaining
+        return DSStateSlot(
+            label: "HLTH",
+            tone: weeks >= 4 ? .bad : .warn,
+            value: "\(weeks)w",
+            spokenLabel: "Injured, \(weeks) week\(weeks == 1 ? "" : "s") remaining"
+        )
     }
 
     // MARK: - Mental Columns (LRN/CMP analysis — TODO §6)
@@ -164,29 +297,28 @@ struct PlayerRowView: View {
                 .font(.caption)
                 .monospacedDigit()
                 .foregroundStyle(Color.textSecondary)
-                .frame(width: Column.age, alignment: .center)
+                .dsColumn(Column.age)
 
             ovrCell(font: .caption.monospacedDigit())
 
             colorCodedMiniAttribute(value: player.learning, label: "LRN")
-                .frame(width: 34, alignment: .center)
+                .dsColumn(DSListColumn.attribute)
 
             colorCodedMiniAttribute(value: player.competitiveness, label: "CMP")
-                .frame(width: 34, alignment: .center)
+                .dsColumn(DSListColumn.attribute)
 
             colorCodedMiniAttribute(value: player.mental.workEthic, label: "WE")
-                .frame(width: 34, alignment: .center)
+                .dsColumn(DSListColumn.attribute)
 
             // `lineLimit` + `minimumScaleFactor` rather than a wider box alone:
             // the state names differ by five characters, so the widest one has
             // to shrink a hair instead of breaking mid-word.
-            Label(player.motivationState.displayName, systemImage: player.motivationState.icon)
-                .font(.system(size: 9, weight: .semibold))
-                .labelStyle(.titleAndIcon)
+            Text(player.motivationState.displayName)
+                .font(DSType.display(11, .semibold))
                 .foregroundStyle(Color.textSecondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
-                .frame(width: Column.motivation, alignment: .center)
+                .dsColumn(Column.motivation)
                 .accessibilityLabel("Motivation \(player.motivationState.displayName)")
         }
     }
@@ -200,7 +332,7 @@ struct PlayerRowView: View {
                 .font(.caption)
                 .monospacedDigit()
                 .foregroundStyle(Color.textSecondary)
-                .frame(width: Column.age, alignment: .center)
+                .dsColumn(Column.age)
 
             // Form indicator (#97)
             formColumn
@@ -212,7 +344,7 @@ struct PlayerRowView: View {
             Text(shortPotentialLabel)
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(shortPotentialColor)
-                .frame(width: 20, alignment: .center)
+                .dsColumn(20)
 
             // Cap Hit + cap%
             VStack(alignment: .trailing, spacing: 0) {
@@ -222,23 +354,22 @@ struct PlayerRowView: View {
                     .monospacedDigit()
                     .foregroundStyle(Color.textSecondary)
                 Text(capPercentLabel)
-                    .font(.system(size: DSType.Size.micro, weight: .medium))
-                    .monospacedDigit()
+                    .font(DSType.display(11, .medium))
                     .foregroundStyle(capPercentColor)
             }
-            .frame(width: 52, alignment: .trailing)
+            .dsColumn(DSListColumn.money, alignment: .trailing)
 
             // Contract years remaining
             contractYearsLabel
-                .frame(width: 30, alignment: .center)
+                .dsColumn(DSListColumn.tight)
 
             // Morale icon
             moraleIndicator
-                .frame(width: 24, alignment: .center)
+                .dsColumn(DSListColumn.glyph)
 
             // Health status
             healthIndicator
-                .frame(width: 28, alignment: .center)
+                .dsColumn(DSListColumn.health)
         }
     }
 
@@ -278,7 +409,7 @@ struct PlayerRowView: View {
                 .fontWeight(.medium)
                 .monospacedDigit()
                 .foregroundStyle(Color.textSecondary)
-                .frame(width: 52, alignment: .trailing)
+                .dsColumn(DSListColumn.money, alignment: .trailing)
 
             // Cap Hit
             VStack(alignment: .trailing, spacing: 0) {
@@ -288,22 +419,21 @@ struct PlayerRowView: View {
                     .monospacedDigit()
                     .foregroundStyle(Color.accentGold)
                 Text("cap")
-                    .font(.system(size: DSType.Size.micro))
+                    .font(DSType.display(11, .medium))
                     .foregroundStyle(Color.textTertiary)
             }
-            .frame(width: 52, alignment: .trailing)
+            .dsColumn(DSListColumn.money, alignment: .trailing)
 
             // Years remaining
             contractYearsLabel
-                .frame(width: 34, alignment: .center)
+                .dsColumn(DSListColumn.attribute)
 
             // Free agent year estimate. "FA 31" read as a season — it is the
             // player's AGE when the deal runs out, so it is written like one.
             Text("FA @\(player.age + player.contractYearsRemaining)")
-                .font(.system(size: 9, weight: .medium))
-                .monospacedDigit()
+                .font(DSType.display(11, .medium))
                 .foregroundStyle(player.contractYearsRemaining <= 1 ? Color.warning : Color.textTertiary)
-                .frame(width: 40, alignment: .center)
+                .dsColumn(DSListColumn.projection - 12)
 
             // OVR for context
             ovrCell(font: .caption.monospacedDigit())
@@ -322,10 +452,10 @@ struct PlayerRowView: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
             Text(caption)
-                .font(.system(size: DSType.Size.micro))
+                .font(DSType.display(11, .medium))
                 .foregroundStyle(Color.textTertiary)
         }
-        .frame(width: width, alignment: .trailing)
+        .dsColumn(width, alignment: .trailing)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(caption == "dead" ? "Dead cap if cut" : "Cap saved by cutting") \(formatSalary(value))")
     }
@@ -339,33 +469,33 @@ struct PlayerRowView: View {
                 .font(.caption)
                 .monospacedDigit()
                 .foregroundStyle(Color.textSecondary)
-                .frame(width: Column.age, alignment: .center)
+                .dsColumn(Column.age)
 
             // OVR
             ovrCell(font: .caption.monospacedDigit())
 
             // Potential (hidden value shown as fuzzy label)
             Text(potentialLabel)
-                .font(.system(size: 9, weight: .semibold))
+                .font(DSType.display(11, .semibold))
                 .foregroundStyle(Color.accentGold)
-                .frame(width: 40, alignment: .center)
+                .dsColumn(DSListColumn.projection - 12)
 
             // Development arrow
             developmentArrow
-                .frame(width: 20, alignment: .center)
+                .dsColumn(20)
 
             // Phase label
             Text(developmentPhaseLabel)
-                .font(.system(size: 9, weight: .medium))
+                .font(DSType.display(11, .medium))
                 .foregroundStyle(developmentTrend.color)
-                .frame(width: 48, alignment: .center)
+                .dsColumn(DSListColumn.label)
 
             // Form
             formColumn
 
             // Work ethic indicator
             colorCodedMiniAttribute(value: player.mental.workEthic, label: "WE")
-                .frame(width: 32, alignment: .center)
+                .dsColumn(32)
         }
     }
 
@@ -374,17 +504,17 @@ struct PlayerRowView: View {
     private var physicalColumns: some View {
         Group {
             colorCodedMiniAttribute(value: player.physical.speed, label: "SPD")
-                .frame(width: 34, alignment: .center)
+                .dsColumn(DSListColumn.attribute)
             colorCodedMiniAttribute(value: player.physical.strength, label: "STR")
-                .frame(width: 34, alignment: .center)
+                .dsColumn(DSListColumn.attribute)
             colorCodedMiniAttribute(value: player.physical.stamina, label: "STA")
-                .frame(width: 34, alignment: .center)
+                .dsColumn(DSListColumn.attribute)
             colorCodedMiniAttribute(value: player.physical.durability, label: "DUR")
-                .frame(width: 34, alignment: .center)
+                .dsColumn(DSListColumn.attribute)
 
             // Health
             healthIndicator
-                .frame(width: 28, alignment: .center)
+                .dsColumn(DSListColumn.health)
 
             // OVR
             ovrCell(font: .caption.monospacedDigit())
@@ -427,7 +557,7 @@ struct PlayerRowView: View {
             let skills = positionSkillAttributes
             ForEach(Array(skills.enumerated()), id: \.offset) { _, skill in
                 colorCodedMiniAttribute(value: skill.value, label: skill.label)
-                    .frame(width: 32, alignment: .center)
+                    .dsColumn(32)
             }
             // Pad to 4 columns if fewer attributes
             if skills.count < 4 {
@@ -461,9 +591,9 @@ struct PlayerRowView: View {
 
             // Depth label
             Text(depthLabel)
-                .font(.system(size: 9, weight: .medium))
+                .font(DSType.display(11, .medium))
                 .foregroundStyle(depthColor)
-                .frame(width: 52, alignment: .leading)
+                .dsColumn(DSListColumn.money, alignment: .leading)
 
             // OVR
             ovrCell(font: .caption.monospacedDigit())
@@ -473,11 +603,11 @@ struct PlayerRowView: View {
                 .font(.caption)
                 .monospacedDigit()
                 .foregroundStyle(Color.textSecondary)
-                .frame(width: Column.age, alignment: .center)
+                .dsColumn(Column.age)
 
             // Health
             healthIndicator
-                .frame(width: 28, alignment: .center)
+                .dsColumn(DSListColumn.health)
 
             // Form
             formColumn
@@ -488,8 +618,8 @@ struct PlayerRowView: View {
 
     private var starterBadgeContent: some View {
         Text(depthBadgeText)
-            .font(.system(size: 9, weight: .heavy))
-            .padding(.horizontal, 5)
+            .font(DSType.display(11, .heavy))
+            .padding(.horizontal, 4)
             .padding(.vertical, 2)
             .depthChipStyle(isStarter: isStarterRole, tint: depthColor)
     }
@@ -510,7 +640,7 @@ struct PlayerRowView: View {
                 .font(.system(size: 16, weight: .bold))
                 .foregroundStyle(form.color)
         }
-        .frame(width: 24, alignment: .center)
+        .dsColumn(DSListColumn.glyph)
         .accessibilityLabel("Form \(formAccessibilityLabel)")
     }
 
@@ -528,10 +658,10 @@ struct PlayerRowView: View {
     private func colorCodedMiniAttribute(value: Int, label: String) -> some View {
         VStack(spacing: 0) {
             Text("\(value)")
-                .font(.system(size: 10, weight: .bold).monospacedDigit())
+                .font(DSType.display(11, .bold))
                 .foregroundStyle(analysisAttributeColor(for: value))
             Text(label)
-                .font(.system(size: DSType.Size.micro, weight: .medium))
+                .font(DSType.display(11, .medium))
                 .foregroundStyle(Color.textTertiary)
         }
     }
@@ -547,36 +677,10 @@ struct PlayerRowView: View {
 
     // MARK: - Subviews
 
-    private var positionBadge: some View {
-        Group {
-            if let onPositionBadgeTap {
-                Button {
-                    onPositionBadgeTap()
-                } label: {
-                    positionBadgeContent
-                }
-                .buttonStyle(.plain)
-            } else {
-                positionBadgeContent
-            }
-        }
-    }
-
-    private var positionBadgeContent: some View {
-        Text(player.position.rawValue)
-            .font(.caption2)
-            .fontWeight(.bold)
-            .foregroundStyle(Color.textPrimary)
-            .frame(width: 36, height: 24)
-            .background(positionColor, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
-            .overlay(
-                onPositionBadgeTap != nil
-                    ? RoundedRectangle(cornerRadius: DSCornerRadius.tight)
-                        .strokeBorder(Color.textTertiary.opacity(0.5), lineWidth: 1)
-                    : nil
-            )
-            .accessibilityLabel("\(player.position.rawValue), \(player.position.side.rawValue)\(onPositionBadgeTap != nil ? ", tap to change" : "")")
-    }
+    // The position badge is `DSPositionBadge` now (`UI/Common/DSListRow.swift`)
+    // — same 36 × 24 box, same `DSCornerRadius.tight`, same hairline when it is
+    // tappable, and the "tap to change" hint moved into the component's
+    // `accessibilityHint` where the board's copy of it also lives.
 
     /// Whether this player is a starter based on depth index and scheme-aware starter count.
     /// (No `@ViewBuilder` — it is a `Bool`; the attribute only silenced itself into a warning.)
@@ -622,7 +726,7 @@ struct PlayerRowView: View {
     /// radius, fill weight and border — and the reserve tint is legible.
     private var depthChip: some View {
         Text(depthBadgeShortText)
-            .font(.system(size: DSType.Size.micro, weight: .heavy))
+            .font(DSType.display(11, .heavy))
             .frame(width: 14, height: 14)
             .depthChipStyle(isStarter: isStarterRole, tint: depthColor)
     }
@@ -655,15 +759,14 @@ struct PlayerRowView: View {
         }
     }
 
-    /// True when the player has a high cap commitment ($15M+ annual salary).
-    private var isHighCapInvestment: Bool {
-        player.annualSalary >= 15000
-    }
+    // The "Invested" badge ($15M+ annual) left the name line with the rest of
+    // the conditional badges. It was a word standing in for a number the
+    // overview lens already prints two columns to the right — cap hit over cap
+    // percent — which is §2.2's "one encoding per quantity, never both".
 
     private var contractYearsLabel: some View {
         Text("\(player.contractYearsRemaining)yr")
-            .font(.system(size: 9, weight: .bold))
-            .monospacedDigit()
+            .font(DSType.display(11, .bold))
             .foregroundStyle(isExpiringContract ? Color.backgroundPrimary : Color.textTertiary)
             .padding(.horizontal, 3)
             .padding(.vertical, 2)
@@ -696,8 +799,7 @@ struct PlayerRowView: View {
                         .font(.system(size: 14))
                         .foregroundStyle(Color.danger)
                     Text("\(player.injuryWeeksRemaining)")
-                        .font(.system(size: 10, weight: .bold))
-                        .monospacedDigit()
+                        .font(DSType.display(11, .bold))
                         .foregroundStyle(Color.danger)
                 }
             } else {
