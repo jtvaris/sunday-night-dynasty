@@ -13,6 +13,11 @@ struct DynastyApp: App {
         // UIKit appearance proxies only affect views created after they're set,
         // so this has to run before the first screen is built.
         DSAppearance.apply()
+
+        // #172: subscribe to MetricKit before anything else can crash or hang,
+        // so payloads gathered for the previous session are captured on the
+        // first delivery after launch.
+        CrashReportStore.shared.start()
     }
 
     var body: some Scene {
