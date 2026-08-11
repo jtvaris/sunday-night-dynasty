@@ -631,30 +631,42 @@ struct FAWeeklyView: View {
 
     // MARK: - Bidding Updates Bar
 
+    /// What happened to the offers still on the table, as a list.
+    ///
+    /// #177: the second hand-built list on this screen. Its head was gold on
+    /// gold (§2.9 says section heads are tracked `textSecondary` — gold has
+    /// three jobs and "heading" is not one), its "Dismiss" was a 9 pt word with
+    /// no target, and each row invented a 26 pt position chip, four type sizes
+    /// between 9 and 12 pt, and two capsule buttons under 20 pt tall.
     @ViewBuilder
     private var biddingUpdatesBar: some View {
         if !biddingUpdates.isEmpty {
             VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 6) {
+                HStack(spacing: DSSpacing.xxs + 2) {
                     Image(systemName: "megaphone.fill")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Color.accentGold)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color.textSecondary)
                     Text("BIDDING UPDATES")
-                        .font(.system(size: 10, weight: .black))
-                        .foregroundStyle(Color.accentGold)
-                    Spacer()
+                        .font(DSType.display(11, .heavy))
+                        .tracking(0.7)
+                        .foregroundStyle(Color.textSecondary)
+                    Spacer(minLength: DSSpacing.xs)
                     Button {
                         biddingUpdates.removeAll()
                     } label: {
                         Text("Dismiss")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(Color.textTertiary)
+                            .font(DSType.text(DSType.Size.footnote, .semibold))
+                            .foregroundStyle(Color.textSecondary)
+                            .padding(.horizontal, DSSpacing.xs)
+                            // 44 pt, measured (§2.12).
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .accessibilityHint("Clears these updates. Your offers stay on the table.")
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 10)
-                .padding(.bottom, 6)
+                .padding(.leading, DSSpacing.md)
+                .padding(.trailing, DSSpacing.xs)
 
                 ForEach(biddingUpdates, id: \.playerID) { update in
                     biddingUpdateRow(update)
@@ -663,119 +675,162 @@ struct FAWeeklyView: View {
             .background(Color.backgroundSecondary)
             .overlay(
                 Rectangle()
-                    .fill(Color.accentGold.opacity(0.3))
+                    .fill(Color.surfaceBorder)
                     .frame(height: 1),
                 alignment: .bottom
             )
         }
     }
 
+    /// One outstanding offer, on the same anatomy as the market row below it —
+    /// which is the point: the man in the updates bar and the man on the board
+    /// are the same man, and they used to be drawn as two different objects.
     private func biddingUpdateRow(_ update: FreeAgencyEngine.BiddingUpdate) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Text(update.position)
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(Color.textPrimary)
-                    .frame(width: 26)
-                    .padding(.vertical, 2)
-                    .background(Color.accentBlue, in: RoundedRectangle(cornerRadius: 3))
-                Text(update.playerName)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Color.textPrimary)
-                    .lineLimit(1)
-                if update.isBiddingWar {
-                    Text("BIDDING WAR")
-                        .font(.system(size: DSType.Size.micro, weight: .black))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 1)
-                        .background(Color.danger, in: Capsule())
+        let leaningTone: DSStatusPill.Tone = {
+            switch update.playerLeaning {
+            case .strongInterest, .prefersYou: return .ok
+            case .undecided:                   return .warn
+            case .leaningAway:                 return .bad
+            }
+        }()
+
+        return VStack(alignment: .leading, spacing: DSSpacing.xxs) {
+            DSListRow(
+                density: .scan,
+                badge: DSRowBadge(text: update.position, tint: Color.accentBlue),
+                // No face: the updates bar is fed by `BiddingUpdate` values, not
+                // by `Player`s, and reserving a portrait gutter it can never
+                // fill would only push the columns in.
+                portraitWidth: 0
+            ) {
+                EmptyView()
+            } identity: {
+                VStack(alignment: .leading, spacing: 1) {  // ds-lint:allow(spacing) name-over-slots lockup inside one row
+                    Text(update.playerName)
+                        .font(DSType.text(DSListDensity.scan.nameSize, .semibold, prose: true))
+                        .foregroundStyle(Color.textPrimary)
+                        .lineLimit(1)
+                    DSStateSlotRow(slots: [
+                        DSStateSlot(
+                            label: "Lean",
+                            tone: leaningTone,
+                            // A short ident, not the engine's sentence: §2.2's
+                            // documented defect is an 87 pt `nowrap` label in a
+                            // 66 pt column painting over its neighbour, and
+                            // "Strong Interest" is that label.
+                            value: leaningShort(update.playerLeaning),
+                            spokenLabel: "He is \(update.playerLeaning.rawValue.lowercased())"
+                        ),
+                        .slot(
+                            "WAR",
+                            isSet: update.isBiddingWar,
+                            tone: .bad,
+                            spoken: update.isBiddingWar ? "Bidding war" : "No bidding war"
+                        ),
+                        DSStateSlot(
+                            label: "Bids",
+                            tone: update.totalBidders >= 4 ? .bad : .neutral,
+                            value: "\(update.totalBidders)",
+                            spokenLabel: "\(update.totalBidders) club\(update.totalBidders == 1 ? "" : "s") bidding"
+                        )
+                    ])
                 }
-                Spacer()
-                Text("\(update.totalBidders) bidder\(update.totalBidders == 1 ? "" : "s")")
-                    .font(.system(size: 9))
-                    .foregroundStyle(update.totalBidders >= 4 ? Color.danger : Color.textTertiary)
+            } columns: {
+                Spacer(minLength: DSSpacing.xxs)
+
+                bidCell(
+                    caption: "Yours",
+                    value: formatMillions(update.yourOffer),
+                    color: Color.textPrimary
+                )
+                bidCell(
+                    caption: update.highestCompetingTeam.map { "Top \u{00B7} \($0)" } ?? "Top",
+                    value: update.highestCompetingOffer.map { "~\(formatMillions($0))" } ?? "\u{2014}",
+                    color: update.highestCompetingOffer == nil ? Color.textTertiaryReadable : Color.alertOrange
+                )
             }
 
-            HStack(spacing: 12) {
-                Text("Your offer: \(formatMillions(update.yourOffer))/yr")
-                    .font(.system(size: 9).monospacedDigit())
-                    .foregroundStyle(Color.accentGold)
+            // The two scoped actions, at the target floor and in the fixed
+            // order §2.5 gives an action row: destructive on the left, behind
+            // its own gap; the constructive one last.
+            HStack(spacing: DSSpacing.xs) {
+                Spacer(minLength: 0)
 
-                if let highest = update.highestCompetingOffer, let teamAbbr = update.highestCompetingTeam {
-                    Text("Highest: ~\(formatMillions(highest))/yr from \(teamAbbr)")
-                        .font(.system(size: 9).monospacedDigit())
-                        .foregroundStyle(Color.warning)
-                }
-            }
-
-            HStack(spacing: 8) {
-                let leaningColor: Color = {
-                    switch update.playerLeaning {
-                    case .strongInterest, .prefersYou: return .success
-                    case .undecided: return .warning
-                    case .leaningAway: return .danger
-                    }
-                }()
-                Image(systemName: leaningIcon(update.playerLeaning))
-                    .font(.system(size: DSType.Size.micro))
-                    .foregroundStyle(leaningColor)
-                Text(update.playerLeaning.rawValue)
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(leaningColor)
-
-                Spacer()
-
-                // Action buttons
                 Button {
-                    // Raise offer: reopen offer sheet
+                    dropOffer(update.playerID)
+                    biddingUpdates.removeAll { $0.playerID == update.playerID }
+                } label: {
+                    Text("Withdraw")
+                        .font(DSType.text(DSType.Size.footnote, .semibold))
+                        .foregroundStyle(Color.dangerText)
+                        .padding(.horizontal, DSSpacing.sm)
+                        .frame(minHeight: 44)
+                        .background(Color.danger.opacity(0.12), in: Capsule())
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Withdraw your offer to \(update.playerName)")
+                .accessibilityHint("Releases the cap it is holding.")
+
+                Button {
                     if let fa = freeAgents.first(where: { $0.player.id == update.playerID }) {
                         activeSheet = .offer(fa)
                     }
                 } label: {
                     Text("Raise Offer")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(Color.accentGold)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(Color.accentGold.opacity(0.15), in: Capsule())
+                        .font(DSType.text(DSType.Size.footnote, .bold))
+                        .foregroundStyle(Color.accentBlue)
+                        .padding(.horizontal, DSSpacing.sm)
+                        .frame(minHeight: 44)
+                        .background(Color.accentBlue.opacity(0.12), in: Capsule())
+                        .overlay(Capsule().strokeBorder(Color.accentBlue.opacity(0.4), lineWidth: 1))
+                        .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
-
-                Button {
-                    // Withdraw offer
-                    dropOffer(update.playerID)
-                    biddingUpdates.removeAll { $0.playerID == update.playerID }
-                } label: {
-                    Text("Withdraw")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(Color.danger)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(Color.danger.opacity(0.1), in: Capsule())
-                }
-                .buttonStyle(.plain)
+                .accessibilityLabel("Raise your offer to \(update.playerName)")
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .background(Color.accentGold.opacity(0.03))
+        .padding(.horizontal, DSSpacing.md)
+        .padding(.vertical, DSSpacing.xxs)
         .overlay(
             Rectangle()
-                .fill(Color.surfaceBorder.opacity(0.3))
+                .fill(Color.surfaceBorder.opacity(0.5))
                 .frame(height: 1),
             alignment: .top
         )
     }
 
-    private func leaningIcon(_ leaning: FreeAgencyEngine.PlayerLeaning) -> String {
+    /// The lean, in one short word the pill can hold.
+    private func leaningShort(_ leaning: FreeAgencyEngine.PlayerLeaning) -> String {
         switch leaning {
-        case .strongInterest: return "hand.thumbsup.fill"
-        case .prefersYou:     return "arrow.right"
-        case .undecided:      return "questionmark.circle"
-        case .leaningAway:    return "arrow.left"
+        case .strongInterest: return "Keen"
+        case .prefersYou:     return "Ours"
+        case .undecided:      return "Open"
+        case .leaningAway:    return "Away"
         }
     }
+
+    /// A money reading over its caption, in one column. Same width constant the
+    /// market list uses for money, so the two lists' figures sit on one grid.
+    private func bidCell(caption: String, value: String, color: Color) -> some View {
+        VStack(spacing: 0) {
+            Text(value)
+                .font(DSType.display(DSType.Size.footnote, .heavy))
+                .foregroundStyle(color)
+            Text(caption.uppercased())
+                .font(DSType.display(11, .semibold))
+                .tracking(0.5)
+                .foregroundStyle(Color.textTertiaryReadable)
+        }
+        .dsColumn(DSListColumn.money)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(caption): \(value)")
+    }
+
+    // `leaningIcon` is gone with #177: the leaning is a `Lean` state slot on
+    // the row now, and a status pill carries a dot rather than a glyph — a
+    // thumbs-up, a right arrow and a left arrow meant "he likes us", "he
+    // prefers us" and "he is leaving", which is three icons for one axis.
 
     // MARK: - Cap Reservation Ledger (#102)
 
@@ -999,6 +1054,12 @@ struct FAWeeklyView: View {
     /// that room go. **Withdrawing releases the reservation** — the promise is
     /// the only thing making the money unavailable, so taking the promise back
     /// has to hand it straight back.
+    ///
+    /// #177: blue, not gold. "You have money on this man" is the same fact the
+    /// row's `BID` slot and the row's own tint now state, and it is
+    /// informational (P7) — the screen's one gold belongs to the action bar's
+    /// commit (P5). Three different paints for one fact was the reason a user
+    /// could not tell the pending bar from the primary button.
     @ViewBuilder
     private var pendingOffersBar: some View {
         if !myOffers.isEmpty {
@@ -1006,10 +1067,10 @@ struct FAWeeklyView: View {
                 HStack(spacing: 8) {
                     Image(systemName: "doc.text.fill")
                         .font(.caption)
-                        .foregroundStyle(Color.accentGold)
+                        .foregroundStyle(Color.accentBlue)
                     Text("\(myOffers.count) pending offer\(myOffers.count == 1 ? "" : "s")")
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.accentGold)
+                        .foregroundStyle(Color.accentBlue)
                     Spacer()
                     let totalCost = myOffers.values.reduce(0) { $0 + $1.salary }
                     Text(reservesCap
@@ -1029,7 +1090,7 @@ struct FAWeeklyView: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
-            .background(Color.accentGold.opacity(0.08))
+            .background(Color.accentBlue.opacity(0.08))
         }
     }
 
@@ -1116,162 +1177,308 @@ struct FAWeeklyView: View {
 
     // MARK: - Free Agent List
 
+    /// The market, on the W1 list standard.
+    ///
+    /// #177: the conversion stopped at the screen's chrome and left the rows
+    /// themselves hand-built — a bespoke position chip at 30 pt, a name line
+    /// with four differently-shaped inline badges, an asking price in a
+    /// free-floating `VStack` and no header at all, so nothing in the list had a
+    /// column and nothing lined up down the page. It is `DSListRow` now, over a
+    /// `DSListHeaderRow` that reads the same `DSListColumn` constants, which is
+    /// the whole point of the standard: the header cannot drift from the cells.
     private var freeAgentList: some View {
-        ScrollView {
-            LazyVStack(spacing: 0) {
-                ForEach(Array(filteredAgents.enumerated()), id: \.element.player.id) { index, fa in
-                    freeAgentRow(fa: fa)
-
-                    if index < filteredAgents.count - 1 {
-                        Divider()
-                            .overlay(Color.surfaceBorder.opacity(0.5))
-                            .padding(.horizontal, 8)
+        VStack(spacing: 0) {
+            if !filteredAgents.isEmpty {
+                marketHeader
+                    .padding(.horizontal, DSSpacing.md)
+                    .padding(.vertical, DSSpacing.xxs)
+                    .background(Color.backgroundSecondary)
+                    .overlay(alignment: .bottom) {
+                        Rectangle().fill(Color.surfaceBorder).frame(height: 1)
                     }
-                }
+            }
 
-                if filteredAgents.isEmpty {
-                    VStack(spacing: 8) {
-                        Image(systemName: "person.slash")
-                            .font(.title2)
-                            .foregroundStyle(Color.textTertiary)
-                        Text("No free agents available")
-                            .font(.subheadline)
-                            .foregroundStyle(Color.textTertiary)
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(Array(filteredAgents.enumerated()), id: \.element.player.id) { index, fa in
+                        freeAgentRow(fa: fa)
+
+                        if index < filteredAgents.count - 1 {
+                            Divider()
+                                .overlay(Color.surfaceBorder.opacity(0.5))
+                                .padding(.horizontal, DSSpacing.xs)
+                        }
                     }
-                    .padding(.vertical, 40)
+
+                    if filteredAgents.isEmpty {
+                        // §2.7's four beats. "No free agents available" answered
+                        // none of them: it did not say WHY the list was empty
+                        // (a filter with nobody behind it is a different problem
+                        // from a market that has been cleared out) and it
+                        // offered nothing to press.
+                        DSEmptyState(
+                            density: .scan,
+                            icon: "person.slash",
+                            title: positionFilter == .all
+                                ? "The Board Is Empty"
+                                : "No \(positionFilter.rawValue) On The Board",
+                            message: emptyMarketMessage,
+                            actions: positionFilter == .all
+                                ? []
+                                : [
+                                    .init(
+                                        title: "Show All Positions",
+                                        systemImage: "line.3.horizontal.decrease.circle",
+                                        isPrimary: false
+                                    ) {
+                                        positionFilter = .all
+                                    }
+                                ]
+                        )
+                    }
                 }
             }
         }
     }
 
+    /// Beat three: the condition that is missing, in the user's vocabulary.
+    private var emptyMarketMessage: String {
+        if positionFilter == .all {
+            return currentRound >= 6
+                ? "Every unsigned veteran has come off the board. The next names arrive when contracts expire at the end of the season."
+                : "Nobody is left unsigned. Submit the day to let the rest of the league finish its business."
+        }
+        return "Nobody still on the market plays \(positionFilter.rawValue). Widen the filter to see who is left."
+    }
+
+    /// The header that labels the row's columns. Same constants, same order,
+    /// same reserved gutters — including the trailing chevron, which the header
+    /// reserves without drawing (§2.2's twice-documented off-by-one-column bug).
+    private var marketHeader: some View {
+        DSListHeaderRow(
+            density: .scan,
+            reservesBadge: true,
+            badgeLabel: "POS",
+            identityLabel: "Free agent",
+            affordance: .disclosure
+        ) {
+            Spacer(minLength: DSSpacing.xxs)
+            DSColumnHeader("OVR", width: DSListColumn.ovr)
+            DSColumnHeader("Age", width: DSListColumn.age)
+            DSColumnHeader("Asks", width: DSListColumn.money)
+            DSColumnHeader("Yrs", width: DSListColumn.tight)
+        }
+    }
+
+    /// One free agent.
+    ///
+    /// The tap target is still the whole row and it still opens the offer dial;
+    /// what changed is that the top line is now `DSListRow` — one anatomy, one
+    /// badge shape, one set of column widths — and the two supporting lines sit
+    /// under it, indented to the row's own identity gutter rather than to a
+    /// hand-typed `40`.
+    ///
+    /// The row reserves **three state slots** (§2.2), chosen once for the whole
+    /// list and drawn on every line whether or not the fact behind them exists:
+    ///
+    ///   * `BID`  — is our money on the table, and how much
+    ///   * `VST`  — have we had him in the building
+    ///   * `HEAT` — how hard the rest of the league is chasing him
+    ///
+    /// All three used to be conditional inline badges of three different
+    /// shapes, so the answer the user actually scans a market for — *who has
+    /// nobody on him yet* — was a column of gaps that were invisible because
+    /// nothing was drawn in them.
     private func freeAgentRow(fa: FreeAgencyEngine.FreeAgent) -> some View {
         let hasOffer = myOffers[fa.player.id] != nil
 
         return Button {
             activeSheet = .offer(fa)
         } label: {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 10) {
-                    // Position badge
-                    Text(fa.player.position.rawValue)
-                        .font(.caption.weight(.bold))
+            VStack(alignment: .leading, spacing: DSSpacing.xxs) {
+                DSListRow(
+                    density: .scan,
+                    // No rank: the board is filtered and re-sorted, so a "#4"
+                    // would mean something different after every tap.
+                    badge: DSRowBadge(
+                        text: fa.player.position.rawValue,
+                        tint: positionSideColor(fa.player.position),
+                        accessibilityLabel: "\(fa.player.position.rawValue), \(fa.player.position.side.rawValue)"
+                    ),
+                    // The row IS the button, so it draws the affordance the
+                    // header reserves for it.
+                    affordance: .disclosure
+                ) {
+                    PersonFaceView(player: fa.player, size: .small)
+                } identity: {
+                    freeAgentIdentity(fa: fa, hasOffer: hasOffer)
+                } columns: {
+                    Spacer(minLength: DSSpacing.xxs)
+
+                    Text("\(fa.player.overall)")
+                        .font(DSType.display(DSType.Size.body, .heavy))
+                        .foregroundStyle(Color.forRating(fa.player.overall))
+                        .dsColumn(DSListColumn.ovr)
+
+                    Text("\(fa.player.age)")
+                        .font(DSType.display(DSType.Size.body, .semibold))
+                        .foregroundStyle(Color.textSecondary)
+                        .dsColumn(DSListColumn.age)
+
+                    Text(formatMillions(fa.askingPrice))
+                        .font(DSType.display(DSType.Size.body, .heavy))
                         .foregroundStyle(Color.textPrimary)
-                        .frame(width: 30)
-                        .padding(.vertical, 3)
-                        .background(positionSideColor(fa.player.position), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
+                        .dsColumn(DSListColumn.money)
 
-                    // Player info
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 6) {
-                            Text(fa.player.fullName)
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(Color.textPrimary)
-                                .lineLimit(1)
-                            if hasOffer {
-                                Text("OFFER PENDING")
-                                    .font(.system(size: DSType.Size.micro, weight: .bold))
-                                    .foregroundStyle(Color.accentGold)
-                                    .padding(.horizontal, 4)
-                                    .padding(.vertical, 1)
-                                    .background(Color.accentGold.opacity(0.15), in: Capsule())
-                            }
-                        }
-                        HStack(spacing: 8) {
-                            Text("\(fa.player.overall) OVR")
-                                .font(.caption.weight(.semibold).monospacedDigit())
-                                .foregroundStyle(Color.forRating(fa.player.overall))
-                            heatBadge(for: fa.player.id)
-                            Text("Age \(fa.player.age)")
-                                .font(.caption)
-                                .foregroundStyle(Color.textSecondary)
-                            motivationBadge(fa.player.personality.motivation)
-                            // AI interest with progressive visibility
-                            aiInterestLabel(fa: fa)
-                        }
-                    }
-
-                    Spacer()
-
-                    // Asking price
-                    VStack(alignment: .trailing, spacing: 2) {
-                        Text(formatMillions(fa.askingPrice))
-                            .font(.caption.weight(.bold).monospacedDigit())
-                            .foregroundStyle(Color.textPrimary)
-                        Text("\(fa.desiredYears)yr")
-                            .font(.caption2)
-                            .foregroundStyle(Color.textTertiary)
-                    }
-
-                    Image(systemName: "chevron.right")
-                        .font(.caption2)
-                        .foregroundStyle(Color.textTertiary)
+                    Text("\(fa.desiredYears)")
+                        .font(DSType.display(DSType.Size.body, .semibold))
+                        .foregroundStyle(Color.textTertiaryReadable)
+                        .dsColumn(DSListColumn.tight)
                 }
 
-                // Cap impact preview + rumor row (decision support)
-                HStack(spacing: 6) {
+                // What signing him would do to the books, and what the room is
+                // saying about him.
+                HStack(spacing: DSSpacing.xxs + 2) {
                     capImpactBadge(asking: fa.askingPrice)
                     if let rumor = rumorText(for: fa) {
                         HStack(spacing: 3) {
                             Image(systemName: rumor.icon)
-                                .font(.system(size: DSType.Size.micro))
+                                .font(.system(size: 11))
                             Text(rumor.text)
-                                .font(.system(size: 9).italic())
+                                .font(DSType.text(11, .regular))
+                                .lineLimit(1)
                         }
                         .foregroundStyle(rumor.color)
                     }
-                    Spacer()
+                    aiInterestLabel(fa: fa)
+                    Spacer(minLength: 0)
                 }
-                .padding(.leading, 40) // align with player info
+                .padding(.leading, Self.supportingInset)
 
-                // R23: facility visit + live signing-interest row
-                HStack(spacing: 8) {
+                // The row's one scoped control, plus the reading it unlocks.
+                HStack(spacing: DSSpacing.xs) {
                     visitControl(fa: fa)
                     interestChip(fa: fa)
-                    Spacer()
+                    Spacer(minLength: 0)
                 }
-                .padding(.leading, 40)
+                .padding(.leading, Self.supportingInset)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background(hasOffer ? Color.accentGold.opacity(0.05) : Color.clear)
+            .padding(.horizontal, DSSpacing.md)
+            .padding(.vertical, DSSpacing.xs)
+            .background(hasOffer ? Color.accentBlue.opacity(0.06) : Color.clear)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityHint(hasOffer ? "Tap to update your offer" : "Tap to make an offer")
     }
 
+    /// Where the supporting lines start: the badge column plus the portrait
+    /// slot plus the identity gap, i.e. exactly under the player's name. It was
+    /// a literal `40` that matched neither the old chip nor the new badge.
+    private static let supportingInset: CGFloat =
+        DSListColumn.position + DSListColumn.scanPortrait + DSListColumn.identityGap
+
+    /// Name line, then the three reserved slots (§2.2).
+    private func freeAgentIdentity(fa: FreeAgencyEngine.FreeAgent, hasOffer: Bool) -> some View {
+        let heat = BiddingHeatEngine.computeHeat(
+            playerID: fa.player.id,
+            currentDay: career.freeAgencyRound,
+            bids: allBids,
+            visits: allVisits
+        )
+        let offer = myOffers[fa.player.id]
+        let visited = visitedPlayerIDs.contains(fa.player.id)
+
+        return VStack(alignment: .leading, spacing: 1) {  // ds-lint:allow(spacing) name-over-slots lockup inside one row
+            HStack(spacing: DSSpacing.xxs) {
+                Text(fa.player.fullName)
+                    .font(DSType.text(DSListDensity.scan.nameSize, .semibold, prose: true))
+                    .foregroundStyle(Color.textPrimary)
+                    .lineLimit(1)
+
+                // What he is chasing. A category, not a status, so it carries
+                // no colour: the badge it replaces was a gold capsule on every
+                // row of the market (P5 allows one gold per screen, and it
+                // belongs to the action bar's commit).
+                //
+                // No `Spacer` on this line — the identity block is the row's
+                // one FLEXIBLE column, and a greedy child inside it competes
+                // with the `Spacer` that opens `columns()` for the same slack.
+                Text(motivationLabel(fa.player.personality.motivation))
+                    .font(DSType.display(11, .semibold))
+                    .foregroundStyle(Color.textTertiaryReadable)
+                    .lineLimit(1)
+            }
+
+            DSStateSlotRow(slots: [
+                .slot(
+                    "BID",
+                    isSet: hasOffer,
+                    tone: .info,
+                    value: offer.map { formatMillions($0.salary) },
+                    spoken: hasOffer
+                        ? "Your offer, \(formatMillions(offer?.salary ?? 0)) a year"
+                        : "No offer from you"
+                ),
+                .slot(
+                    "VST",
+                    isSet: visited,
+                    tone: .ok,
+                    spoken: visited ? "Visited your facility" : "No facility visit"
+                ),
+                // HEAT is always set — the engine returns a tier for everyone,
+                // and "cool" is a real reading rather than a hole.
+                DSStateSlot(
+                    label: "HEAT",
+                    tone: heatTone(heat),
+                    value: heatLabel(heat),
+                    spokenLabel: "Market heat \(heatLabel(heat).lowercased())"
+                )
+            ])
+        }
+    }
+
+    /// The heat tier on the status ladder. `cool` is `neutral`, not `info`:
+    /// nothing about a quiet market is a selection or a recommendation.
+    private func heatTone(_ tier: FrenzyHeatTier) -> DSStatusPill.Tone {
+        switch tier {
+        case .cool:    return .neutral
+        case .yellow:  return .warn
+        case .red:     return .bad
+        case .burning: return .bad
+        }
+    }
+
     // MARK: - R23: Visit Control + Interest Chip
 
+    /// The visit control, which is now **only a control**.
+    ///
+    /// It used to render a "VISITED" chip in the done case. That is a state,
+    /// not an action, and §2.12's complaint is exactly this: a static chip and
+    /// a tappable one drawn at the same size on the same line, so the user
+    /// cannot tell which half of the row he may press. The state moved to the
+    /// row's `VST` slot; what is left here is the button, and nothing when
+    /// there is nothing left to press.
     @ViewBuilder
     private func visitControl(fa: FreeAgencyEngine.FreeAgent) -> some View {
-        if visitedPlayerIDs.contains(fa.player.id) {
-            HStack(spacing: 3) {
-                Image(systemName: "checkmark.seal.fill")
-                    .font(.system(size: DSType.Size.micro))
-                Text("VISITED")
-                    .font(.system(size: DSType.Size.micro, weight: .black))
-            }
-            .foregroundStyle(Color.success)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Color.success.opacity(0.12), in: Capsule())
-        } else {
+        if !visitedPlayerIDs.contains(fa.player.id) {
             Button {
                 hostVisit(fa: fa)
             } label: {
-                HStack(spacing: 3) {
+                HStack(spacing: DSSpacing.xxs) {
                     Image(systemName: "building.2")
-                        .font(.system(size: DSType.Size.micro))
+                        .font(.system(size: 11))
                     Text("Host Visit")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(DSType.text(11, .semibold))
                 }
                 .foregroundStyle(visitsRemaining > 0 ? Color.accentBlue : Color.textTertiary)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
+                .padding(.horizontal, DSSpacing.xs)
+                .frame(minHeight: 32)
                 .background(
                     (visitsRemaining > 0 ? Color.accentBlue : Color.textTertiary).opacity(0.12),
                     in: Capsule()
                 )
+                .contentShape(Capsule())
             }
             .buttonStyle(.borderless)
             .disabled(visitsRemaining <= 0)
@@ -1295,14 +1502,17 @@ struct FAWeeklyView: View {
                 defensiveScheme: teamDefensiveScheme,
                 hostedVisit: visitedPlayerIDs.contains(fa.player.id)
             )
+            // 11 pt, the display voice's floor (P7 corollary). This shipped at
+            // 9 pt on the one reading that tells the user whether his money is
+            // working.
             HStack(spacing: 3) {
                 Image(systemName: breakdown.tier.icon)
-                    .font(.system(size: DSType.Size.micro))
+                    .font(.system(size: 11))
                 Text("Interest: \(breakdown.tier.rawValue)")
-                    .font(.system(size: 9, weight: .bold))
+                    .font(DSType.display(11, .heavy))
             }
             .foregroundStyle(interestTierColor(breakdown.tier))
-            .padding(.horizontal, 6)
+            .padding(.horizontal, DSSpacing.xxs + 2)
             .padding(.vertical, 2)
             .background(interestTierColor(breakdown.tier).opacity(0.12), in: Capsule())
         }
@@ -1332,9 +1542,9 @@ struct FAWeeklyView: View {
         }()
         let labelText = pctRounded <= 0 ? "<1% of cap" : "Will use \(pctRounded)% of cap"
         return Text(labelText)
-            .font(.system(size: 9, weight: .semibold).monospacedDigit())
+            .font(DSType.display(11, .semibold))
             .foregroundStyle(color)
-            .padding(.horizontal, 6)
+            .padding(.horizontal, DSSpacing.xxs + 2)
             .padding(.vertical, 2)
             .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
     }
@@ -1362,7 +1572,9 @@ struct FAWeeklyView: View {
         }
         // 3. Money motivation -> wants top dollar
         if fa.player.personality.motivation == .money && fa.askingPrice > 8_000 {
-            return Rumor(text: "Wants top-of-market money", icon: "dollarsign.circle.fill", color: .accentGold)
+            // Not gold: a rumour is a stated fact with no verdict, and this one
+            // sat on the same paint as the screen's commit (#177).
+            return Rumor(text: "Wants top-of-market money", icon: "dollarsign.circle.fill", color: .textSecondary)
         }
         // 4. Winning motivation -> contender discount
         if fa.player.personality.motivation == .winning {
@@ -1403,11 +1615,12 @@ struct FAWeeklyView: View {
         return AnyView(
             HStack(spacing: 3) {
                 Image(systemName: "flame.fill")
-                    .font(.system(size: DSType.Size.micro))
+                    .font(.system(size: 11))
                 Text(text)
-                    .font(.system(size: 9))
+                    .font(DSType.text(11, .regular))
+                    .lineLimit(1)
             }
-            .foregroundStyle(interest >= 7 ? Color.danger : (interest >= 4 ? Color.warning : Color.textTertiary))
+            .foregroundStyle(interest >= 7 ? Color.danger : (interest >= 4 ? Color.warning : Color.textTertiaryReadable))
         )
     }
 
@@ -1755,34 +1968,30 @@ struct FAWeeklyView: View {
         }
     }
 
-    private func motivationBadge(_ motivation: Motivation) -> some View {
-        let (icon, label): (String, String) = {
-            switch motivation {
-            case .money:   return ("dollarsign.circle", "Money")
-            case .winning: return ("trophy", "Winning")
-            case .stats:   return ("chart.bar", "Stats")
-            case .loyalty: return ("heart", "Loyalty")
-            case .fame:    return ("star", "Fame")
-            }
-        }()
-
-        return HStack(spacing: 2) {
-            Image(systemName: icon)
-                .font(.system(size: DSType.Size.micro))
-            Text(label)
-                .font(.system(size: DSType.Size.micro, weight: .bold))
+    /// One word for what he is chasing. The gold-capsule-with-a-glyph version
+    /// this replaces is gone with #177 — same decision, same word list and same
+    /// reasoning the market list on the contracts side reached before it was
+    /// merged into this screen.
+    private func motivationLabel(_ motivation: Motivation) -> String {
+        switch motivation {
+        case .money:   return "Money"
+        case .winning: return "Winning"
+        case .stats:   return "Stats"
+        case .loyalty: return "Loyalty"
+        case .fame:    return "Fame"
         }
-        .foregroundStyle(Color.accentGold.opacity(0.8))
-        .padding(.horizontal, 4)
-        .padding(.vertical, 1)
-        .background(Color.accentGold.opacity(0.1), in: Capsule())
     }
 
+    /// The position badge's fill — which SIDE of the ball he plays on.
+    ///
+    /// Special teams was gold, which put the screen's primary-action paint on
+    /// every kicker in the market (#177). It is the neutral surface now: the
+    /// third side of the ball is a category, not an emphasis.
     private func positionSideColor(_ position: Position) -> Color {
         switch position.side {
         case .offense:      return .accentBlue
         case .defense:      return .danger
-        case .specialTeams: return .accentGold
+        case .specialTeams: return .backgroundTertiary
         }
     }
 
@@ -1813,8 +2022,8 @@ struct FAWeeklyView: View {
         ))) ?? []
         // Task #87 / F9: this whole screen's asking prices used to be generated
         // against `generateFreeAgentMarket`'s season-one default while `team` sat
-        // in scope eleven lines above, so from season two onward FA Weekly and
-        // `FreeAgencyView` quoted different prices for the same free agent.
+        // in scope eleven lines above, so from season two onward this screen
+        // quoted season-one prices for every free agent.
         freeAgents = FreeAgencyEngine.generateFreeAgentMarket(
             allPlayers: allPlayers,
             salaryCap: team?.salaryCap ?? ContractEngine.openingSalaryCap
@@ -1994,29 +2203,14 @@ struct FAWeeklyView: View {
         return Array(items.prefix(8))
     }
 
-    // MARK: - FA Drama Phase 2 — Heat Badge
-
-    private func heatBadge(for playerID: UUID) -> some View {
-        let tier = BiddingHeatEngine.computeHeat(
-            playerID: playerID,
-            currentDay: career.freeAgencyRound,
-            bids: allBids,
-            visits: allVisits
-        )
-        return HStack(spacing: 3) {
-            Text(tier.emoji)
-                .font(.caption2)
-            Text(heatLabel(tier))
-                .font(.caption2.weight(.bold).monospacedDigit())
-                .foregroundStyle(heatColor(tier))
-        }
-        .padding(.horizontal, 4)
-        .padding(.vertical, 2)
-        .background(
-            RoundedRectangle(cornerRadius: 3)
-                .fill(heatColor(tier).opacity(0.15))
-        )
-    }
+    // MARK: - FA Drama Phase 2 — Heat
+    //
+    // `heatBadge` and `heatColor` are gone with #177: the emoji-plus-word chip
+    // they drew (a dingbat, which §2.12 bans outright, at `caption2`) is now
+    // the row's `HEAT` slot, and the slot takes its colour from the status
+    // ladder through `heatTone` instead of from a fourth bespoke palette that
+    // reached into `draftStealGold` for a free-agency reading. Only the word
+    // survives, because the ticker prints it too.
 
     private func heatLabel(_ tier: FrenzyHeatTier) -> String {
         switch tier {
@@ -2024,15 +2218,6 @@ struct FAWeeklyView: View {
         case .yellow:  return "WARM"
         case .red:     return "HOT"
         case .burning: return "FIRE"
-        }
-    }
-
-    private func heatColor(_ tier: FrenzyHeatTier) -> Color {
-        switch tier {
-        case .cool:    return .accentBlue
-        case .yellow:  return .warning
-        case .red:     return .danger
-        case .burning: return .draftStealGold
         }
     }
 

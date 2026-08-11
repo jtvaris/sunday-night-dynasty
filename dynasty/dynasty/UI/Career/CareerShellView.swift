@@ -102,7 +102,7 @@ struct CareerShellView: View {
     /// games, so the moment Sunday's result lands it jumps to next week's
     /// opponent. That is how one dashboard came to name three different clubs at
     /// once — hero "Week 16 · @ SF", Opponent Scout tile "Vs IND", task list
-    /// "Set game plan for Seattle Seahawks".
+    /// "Set game plan for Seattle Evergreens".
     @State private var currentWeekGame: Game?
     @State private var allTeamsByID: [UUID: Team] = [:]
 
@@ -131,7 +131,7 @@ struct CareerShellView: View {
     ///
     /// A phase alone is not enough identity for the regular season: it stays
     /// `.regularSeason` for eighteen weeks, so a list built once at kickoff went
-    /// on naming Week 1's opponent — "Set game plan for Seattle Seahawks" over a
+    /// on naming Week 1's opponent — "Set game plan for Seattle Evergreens" over a
     /// Week 16 trip to San Francisco — until a phase flip happened to rebuild it.
     @State private var lastGeneratedWeek: Int?
 
@@ -437,7 +437,7 @@ struct CareerShellView: View {
             RookieFogContext(season: career.currentSeason, phase: career.currentPhase)
         )
         // The shell owns the BASE music context for as long as a career is
-        // open: the draft room, the playoffs and the Super Bowl each get their
+        // open: the draft room, the playoffs and the Championship each get their
         // own score, everything else gets the front-office bed. Screens that
         // want something different while they are on top push an override
         // instead (see `MusicDirector`), so nothing here has to know about
@@ -596,6 +596,11 @@ struct CareerShellView: View {
                     questions: questions,
                     career: career,
                     context: pendingPressContext ?? .neutral,
+                    // #177: the presser's standing strip and its summary both
+                    // read the owner's satisfaction, and both were blank on the
+                    // weekly path because this argument was never passed. Same
+                    // `team?.owner` the owner review two cases up uses.
+                    owner: team?.owner,
                     onComplete: { result in
                         applyPressConferenceEffects(result)
                         shellCover = nil
@@ -2040,7 +2045,7 @@ struct CareerShellView: View {
         case .mockDraft:
             CareerScopedDefaults.set("mockDraft", "scoutingPendingTab")
             shellDest = .scouting
-        // #128. The January "Senior Bowl & declarations" task. Without the hint
+        // #128. The January "Showcase & declarations" task. Without the hint
         // the hub opens on `currentStageTab`, which in `.reviewRoster` is the
         // combine — a screen with nothing in it until the league issues an
         // invite list, which it does not do until the combine window opens.

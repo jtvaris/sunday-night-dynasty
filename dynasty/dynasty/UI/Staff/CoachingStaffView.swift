@@ -1441,10 +1441,18 @@ struct CoachingStaffView: View {
             chips: outcome.chips,
             cost: outcome.cost,
             continueTitle: outcome.continueTitle,
-            onContinue: {
-                sheetOutcome = nil
-                activeHireSheet = nil
-            }
+            // **Dismiss only.** Clearing `sheetOutcome` here as well was the
+            // flash: the `Group` above chooses its face on `sheetOutcome`, so
+            // nilling it in the same runloop turn as the dismissal swapped the
+            // result out for `hireFlow` — the hire list again, or the
+            // `.result` marker's `Color.clear` — for the length of the
+            // dismissal animation. The user saw his hire's result blink into
+            // an empty sheet on the way down. The sheet's own
+            // `onDismiss: { sheetOutcome = nil }` clears it once the
+            // presentation is actually gone, which is also the path a
+            // swipe-down already took, so there is exactly one place the
+            // outcome dies.
+            onContinue: { activeHireSheet = nil }
         )
     }
 
@@ -3520,7 +3528,7 @@ struct CoachingStaffView: View {
     ///
     /// Only meaningful once this front office has actually worked a season.
     /// At career bootstrap `WeekAdvancer.startNewSeason` stamps
-    /// `previousCoachingBudget` with the authored `NFLTeamData` figure and then
+    /// `previousCoachingBudget` with the authored `LeagueTeamData` figure and then
     /// replaces `coachingBudget` with the `BudgetEngine` formula output, so week 0
     /// of season 1 would otherwise show a phantom year-over-year delta
     /// (BAL: $46.0M authored → $38.4M formula = a bogus "-$7.6M").
@@ -3532,7 +3540,7 @@ struct CoachingStaffView: View {
     }
 
     /// League-average coaching budget in thousands. Used for context indicator.
-    /// Hardcoded to $35M for now — see `LeagueGenerator.swift` (default 35) and `NFLTeamData.swift`.
+    /// Hardcoded to $35M for now — see `LeagueGenerator.swift` (default 35) and `LeagueTeamData.swift`.
     private static let leagueAverageCoachingBudget: Int = 35_000
 
     /// Context for the team's coaching budget vs the league average.

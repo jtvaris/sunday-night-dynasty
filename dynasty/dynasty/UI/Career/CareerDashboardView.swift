@@ -417,7 +417,7 @@ struct CareerDashboardView: View {
     /// `WeekAdvancer.advanceWeek` entirely, so the whole `.coachingChanges`
     /// engine block never ran for anybody who advanced from the dashboard —
     /// no retirement wave, no coach carousel, no underclassman declarations, no
-    /// **Senior Bowl**, no draft-cycle heartbeat — and none of the `.reviewRoster`
+    /// **Showcase**, no draft-cycle heartbeat — and none of the `.reviewRoster`
     /// entry work either (the `rosterEvaluationConfirmed` / `franchiseTagVisited`
     /// reset and the owner's roster demands). The calendar sidebar's Advance
     /// button, which goes straight to the shell, DID run all of it, so the same
@@ -1078,11 +1078,11 @@ struct CareerDashboardView: View {
 
     // MARK: - Phase-Group Stub Tiles
 
-    /// Pro Bowl and All-Pro honours are announced as inbox mail by
-    /// `WeekAdvancer` (the `.proBowl` week's "Pro Bowl selections: …"
+    /// All-Star and All-Pro honours are announced as inbox mail by
+    /// `WeekAdvancer` (the `.proBowl` week's "All-Star selections: …"
     /// message) and nothing persists a per-club count, so the tile stopped
-    /// printing `0 Pro Bowlers · 0 All-Pro` — a literal that read as a fact and
-    /// was wrong for every club with a Pro Bowler. It says where the honours
+    /// printing `0 All-Stars · 0 All-Pro` — a literal that read as a fact and
+    /// was wrong for every club with a All-Star. It says where the honours
     /// actually are and goes there.
     private var awardsHubTile: some View {
         Button {
@@ -1090,7 +1090,7 @@ struct CareerDashboardView: View {
         } label: {
             DashboardTile(icon: "trophy.fill", title: "Honors") {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Pro Bowl & All-Pro")
+                    Text("All-Star & All-Pro")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(Color.accentGold)
                     Text("Selections arrive in your inbox")
@@ -1873,10 +1873,31 @@ struct CareerDashboardView: View {
 
     // MARK: - Team Tile
 
+    /// **The card's promise is the card's destination** (#175).
+    ///
+    /// This tile used to push `OwnerMeetingView`: the shield icon, the word
+    /// "Team", the club's record and its division rank all opened Owner
+    /// Relations — which is a *different tile on this same grid*
+    /// (`ownerExpectationsTile`, headed "Owner"). Sim-QA tapped three separate
+    /// places on the card and landed in the same wrong room every time, which
+    /// is what a whole-card `NavigationLink` to the wrong screen looks like
+    /// from the outside. A card that prints a record and a division rank has
+    /// one honest destination: the standings.
+    ///
+    /// It is also the hub's only above-the-fold route to Standings. The other
+    /// one — the "Standings" pill in the DIVISION section — sits below ten
+    /// tiles and the message panel: reachable, but not findable (#175 (2)).
+    ///
+    /// The owner-satisfaction bar came off the card with the destination. It
+    /// was the single element that argued for the Owner room, and the Owner
+    /// tile a few rows down carries that relationship in more detail (persona,
+    /// job security, pending whim).
+    ///
+    /// Routed by value rather than by inline view so the push goes through the
+    /// shell's `navigationDestination` and ticks the `.standings` task the way
+    /// every other route to that screen does.
     private var teamTile: some View {
-        NavigationLink {
-            OwnerMeetingView(career: career)
-        } label: {
+        NavigationLink(value: CareerShellView.ShellDestination.standings) {
             DashboardTile(icon: "shield.fill", title: "Team") {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(team?.fullName ?? "No Team")
@@ -1901,14 +1922,13 @@ struct CareerDashboardView: View {
                             .font(.system(size: 12, weight: .bold).monospacedDigit())
                             .foregroundStyle(streak.isWin ? Color.success : Color.danger)
                     }
-
-                    if let owner = team?.owner {
-                        ownerSatisfactionBar(owner.satisfaction)
-                    }
                 }
             }
         }
         .buttonStyle(.plain)
+        // Label left to the card's own content (club, record, rank); only the
+        // destination needs saying, and saying it is the whole point of #175.
+        .accessibilityHint("Opens the league standings")
     }
 
     // MARK: - Roster Tile
@@ -3107,32 +3127,10 @@ struct CareerDashboardView: View {
         return .forStatus(.bad)                         // Controversial / Villain
     }
 
-    // MARK: - Owner Satisfaction Bar
-
-    private func ownerSatisfactionBar(_ satisfaction: Int) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "building.2.fill")
-                .font(.caption2)
-                .foregroundStyle(satisfactionColor(satisfaction))
-
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(Color.backgroundTertiary)
-                        .frame(height: 6)
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(satisfactionColor(satisfaction))
-                        .frame(width: geo.size.width * (Double(satisfaction) / 100.0), height: 6)
-                }
-            }
-            .frame(height: 6)
-
-            Text("\(satisfaction)%")
-                .font(.caption2.weight(.bold).monospacedDigit())
-                .foregroundStyle(satisfactionColor(satisfaction))
-                .frame(width: 32, alignment: .trailing)
-        }
-    }
+    // NOTE: `ownerSatisfactionBar` removed with #175. Its one caller was the
+    // Team tile, whose owner line came off when the tile stopped opening Owner
+    // Relations; the owner's standing with the club is the Owner tile's job and
+    // `satisfactionScoresRow`'s, both of which still use `satisfactionColor`.
 
     private func moraleLabel(_ morale: Int) -> String {
         if morale >= 80 { return "Excellent" }
@@ -4024,7 +4022,7 @@ struct CareerDashboardView: View {
 
     /// Bracket stage key for a playoff week. The numbering is the one
     /// `WeekAdvancer.ensurePlayoffGames` stages games with: 19 Wild Card,
-    /// 20 Divisional, 21 Conference Championship, 22 Super Bowl.
+    /// 20 Divisional, 21 Conference Championship, 22 The Championship.
     private func playoffRoundKey(forWeek week: Int) -> String {
         switch week {
         case 20:            return "DIV"
@@ -4038,7 +4036,7 @@ struct CareerDashboardView: View {
         switch playoffRoundKey(forWeek: week) {
         case "DIV":  return "Divisional Round"
         case "CONF": return "Conference Championship"
-        case "SB":   return "Super Bowl"
+        case "SB":   return "The Championship"
         default:     return "Wild Card"
         }
     }
@@ -4149,6 +4147,16 @@ struct CareerDashboardView: View {
                     heroStatRow("Next game", value: "Bracket pending")
                     heroActionLink(title: "View Bracket", destination: .standings)
                 }
+            } else if allTeamsByID.isEmpty {
+                // #175 (LOW): the pre-load frame. `playoffSeedRanks()` returns
+                // an empty map until `loadAllData` has filled `allTeamsByID`
+                // (it guards on exactly that), so on the body pass before the
+                // first load `mySeed` is nil for EVERY club — including the one
+                // that just won the 1-seed. The old else-branch read that as
+                // fact and flashed "Missed the playoffs" at a team in the
+                // bracket. No seeding is not the same claim as no berth.
+                heroStatRow("Your season", value: "Loading seeding…", accent: .textSecondary)
+                heroActionLink(title: "View Bracket", destination: .standings)
             } else {
                 heroStatRow("Your season",
                             value: "Missed the playoffs",
@@ -4167,7 +4175,7 @@ struct CareerDashboardView: View {
     /// from `career.currentPhase`. The phase and the class's scouted share drop
     /// to the subtitle.
     ///
-    /// What it replaces: `combineHeroCard` titled itself "NFL Combine · 42%
+    /// What it replaces: `combineHeroCard` titled itself "The Combine · 42%
     /// scouted" — a literal — invented a top prospect and a riser count, and
     /// derived its CTA from two `tasks` title lookups. A task is *done* the
     /// moment one interview is conducted and never notices the other 59 slots,
@@ -4189,7 +4197,7 @@ struct CareerDashboardView: View {
         // #fleet review F5: a counted stage needs a ration before `done < total`
         // means anything. A club with no scouts hired has 0 pro-day focus slots,
         // so `.proDayFocus` read 0 < 0 == false — "ration spent" — and the card
-        // offered "Advance to NFL Draft" over the one stage whose work the user
+        // offered "Advance to The Draft" over the one stage whose work the user
         // had not started and could still fix by hiring somebody. With no ration
         // at all the honest question is the uncounted one: has it been satisfied.
         let hasWorkLeft = stage.unlocked
@@ -4579,14 +4587,14 @@ struct CareerDashboardView: View {
         }
     }
 
-    /// "4 Pro Bowlers · 1 MVP candidate · Awards results Pending" — three
+    /// "4 All-Stars · 1 MVP candidate · Awards results Pending" — three
     /// literals, and the first two were counts of things the save does not
     /// record per club. The honest content of this week is the season the club
     /// just played and the ledger it is judged on.
     private var seasonClimaxHeroCard: some View {
         let isProBowl = career.currentPhase == .proBowl
         return phaseCardBase(icon: isProBowl ? "star.fill" : "trophy.circle.fill", accent: .draftStealGold) {
-            heroHeader(isProBowl ? "Pro Bowl" : "Super Bowl")
+            heroHeader(isProBowl ? "All-Star Game" : "The Championship")
             heroStatRow("Your season", value: seasonRecordSummary)
             heroStatRow("Legacy", value: signedLegacy(career.legacy.totalPoints))
             heroStatRow("Honors", value: "Announced in your inbox")

@@ -844,7 +844,13 @@ struct TradeNegotiationView: View {
                         context: values.map { "\($0.receivingValue) pts" }
                     )
                 ],
-                cost: "The league office files it when you continue. **`TradeView` executes** — nothing has moved yet."
+                // P4: what the commit costs, in the user's vocabulary. The
+                // shipped line named a source file at the player — "**`TradeView`
+                // executes**" — and contradicted itself in the same breath
+                // ("files it when you continue … nothing has moved yet").
+                // Both halves are true in the right order: the handshake is
+                // not the transaction, and Continue is what sends it.
+                cost: "Nothing has changed hands yet. Continue and the Trade Center files the deal with the league office \u{2014} the players and picks move then, and it cannot be taken back."
             )
 
         case .brokenOff:

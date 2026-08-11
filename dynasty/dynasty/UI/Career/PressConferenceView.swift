@@ -284,34 +284,38 @@ struct PressConferenceView: View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
 
-            // Dimmed background image — bright enough that the podium and the
-            // microphones still read through the scrim.
-            GeometryReader { geo in
-                Image("BgPressConference")
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: geo.size.width, height: geo.size.height)
-                    .clipped()
-                    .opacity(0.32)
-            }
-            .ignoresSafeArea()
-
-            // Directional vignette: darker top/bottom for text protection, a
-            // lighter mid band where the podium sits.
+            // Token-only backdrop (#167). The press-room photograph carried a
+            // shield-form crest on the backdrop wall, so the asset is deleted.
+            // The vignette that used to sit *over* the photo now carries the
+            // whole job: darker top and bottom for text protection, a lifted
+            // mid band where the podium sits, so the eye still lands there.
             LinearGradient(
                 stops: [
-                    .init(color: Color.backgroundPrimary.opacity(0.80), location: 0.0),
-                    .init(color: Color.backgroundPrimary.opacity(0.32), location: 0.38),
-                    .init(color: Color.backgroundPrimary.opacity(0.36), location: 0.62),
-                    .init(color: Color.backgroundPrimary.opacity(0.85), location: 1.0),
+                    .init(color: Color.backgroundPlate,     location: 0.0),
+                    .init(color: Color.backgroundSecondary, location: 0.38),
+                    .init(color: Color.backgroundSecondary, location: 0.62),
+                    .init(color: Color.backgroundPlate,     location: 1.0),
                 ],
                 startPoint: .top,
                 endPoint: .bottom
             )
             .ignoresSafeArea()
 
-            // Top safe-area scrim — keeps status-bar text protected even if the
-            // background asset ever brightens.
+            // Podium key light — a soft pool centred on the mid band, the one
+            // piece of shaping the photograph used to provide for free.
+            RadialGradient(
+                colors: [
+                    Color.backgroundTertiary.opacity(0.50),
+                    Color.clear
+                ],
+                center: .init(x: 0.5, y: 0.48),
+                startRadius: 0,
+                endRadius: 520
+            )
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
+
+            // Top safe-area scrim — keeps status-bar text protected.
             VStack(spacing: 0) {
                 LinearGradient(
                     colors: [Color.black.opacity(0.5), Color.black.opacity(0.0)],
@@ -1611,7 +1615,7 @@ struct PressConferenceView: View {
             capMode: .simple
         ),
         team: Team(
-            name: "Chiefs",
+            name: "Stockyards",
             city: "Kansas City",
             abbreviation: "KC",
             conference: .AFC,

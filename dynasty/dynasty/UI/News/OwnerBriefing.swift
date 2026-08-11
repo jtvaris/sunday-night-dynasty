@@ -282,6 +282,12 @@ private struct OwnerCard<Content: View>: View {
     /// A card that is itself a warning takes the warning hue for its head, its
     /// glyph and its border. Everything else keeps the neutral head §2.9 asks
     /// for — gold has three jobs and "every heading" is not one of them.
+    ///
+    /// #177: the head *glyph* used to fall back to gold even though the head
+    /// *word* right beside it already fell back to `textSecondary`, which is
+    /// the audit's own complaint verbatim — "all section header icons are the
+    /// same yellow tint and same size — they compete for attention instead of
+    /// guiding it". Glyph and word now share one fallback.
     let accent: Color?
     let content: Content
 
@@ -307,7 +313,7 @@ private struct OwnerCard<Content: View>: View {
             HStack(spacing: DSSpacing.xs) {
                 Image(systemName: icon)
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(accent ?? Color.accentGold)
+                    .foregroundStyle(accent ?? Color.textSecondary)
                 Text(title.uppercased())
                     .font(DSType.display(11, .heavy))
                     .tracking(0.7)
@@ -335,6 +341,14 @@ private struct OwnerCard<Content: View>: View {
 
 /// The card-foot navigation row. One shape, so "View Full Goal Tracker" and
 /// "Reallocate Budget" cannot be two different affordances.
+///
+/// **Blue, not gold** (#177). P5 gives gold three jobs — commit fill,
+/// current-step marker, live indicator — and a link to another screen is none
+/// of them. The audit recorded this exact one: *"'View All' gold pill — same
+/// gold as every other CTA; tone down for nav links."* Blue is
+/// "informational / selected" (P7), which is what going somewhere to read more
+/// is; the gold on this surface belongs to whatever the hosting screen commits
+/// with, and there is exactly one of those.
 private struct OwnerCardLinkRow: View {
     let link: OwnerBriefingLink
 
@@ -349,7 +363,7 @@ private struct OwnerCardLinkRow: View {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 11, weight: .bold))
             }
-            .foregroundStyle(Color.accentGold)
+            .foregroundStyle(Color.accentBlue)
             .frame(minHeight: 44)
             .contentShape(Rectangle())
         }
@@ -358,6 +372,11 @@ private struct OwnerCardLinkRow: View {
 }
 
 /// A label / value line inside a card.
+///
+/// The leading glyph is a **bullet, not a highlight** (#177): it identifies the
+/// subject and the VALUE carries whatever verdict there is. Painting all four
+/// of them gold put a column of primaries down a card whose actual reading is
+/// in the right-hand column.
 private struct OwnerFactRow: View {
     let icon: String
     let label: String
@@ -368,7 +387,7 @@ private struct OwnerFactRow: View {
         HStack(spacing: DSSpacing.sm) {
             Image(systemName: icon)
                 .font(.system(size: 12))
-                .foregroundStyle(Color.accentGold)
+                .foregroundStyle(Color.textTertiaryReadable)
                 .frame(width: 22)
             Text(label)
                 .font(DSType.text(14, .regular))
@@ -391,7 +410,7 @@ private struct OwnerImplicationRow: View {
             HStack(alignment: .top, spacing: DSSpacing.xs) {
                 Image(systemName: "arrow.turn.down.right")
                     .font(.system(size: 11))
-                    .foregroundStyle(Color.accentGold.opacity(0.6))
+                    .foregroundStyle(Color.textTertiary)
                 Text(text)
                     .font(DSType.text(DSType.Size.footnote, .regular, prose: true))
                     .foregroundStyle(Color.textTertiaryReadable)
@@ -424,10 +443,13 @@ struct OwnerBriefingHeader: View {
                     UserPortraitView(career: career, size: .medium)
                         .offset(y: 16)
                 }
+                // The eyebrow names the scene; it is not the current step of a
+                // band and not a live indicator, so it is a tracked
+                // `textSecondary` ident like every other section head (§2.9).
                 Text("OWNER MEETING")
                     .font(DSType.display(DSType.Size.footnote, .black))
                     .tracking(4)
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.textSecondary)
                 Text(owner.name)
                     .font(DSType.display(DSType.Size.title2, .heavy))
                     .foregroundStyle(Color.textPrimary)
@@ -466,6 +488,8 @@ struct OwnerBriefingHeader: View {
         }
     }
 
+    /// Which kind of owner this is — a category with no verdict attached, so it
+    /// takes the informational hue (P7) rather than the primary one (#177).
     private var archetypeBadge: some View {
         let archetype = OwnerPersonaEngine.OwnerArchetype.from(owner)
         return HStack(spacing: DSSpacing.xxs) {
@@ -475,11 +499,11 @@ struct OwnerBriefingHeader: View {
                 .font(DSType.display(11, .heavy))
                 .tracking(0.5)
         }
-        .foregroundStyle(Color.accentGold)
+        .foregroundStyle(Color.accentBlue)
         .padding(.horizontal, DSSpacing.xs)
         .padding(.vertical, 3)
-        .background(Color.accentGold.opacity(0.15), in: Capsule())
-        .overlay(Capsule().strokeBorder(Color.accentGold.opacity(0.4), lineWidth: 1))
+        .background(Color.accentBlue.opacity(0.15), in: Capsule())
+        .overlay(Capsule().strokeBorder(Color.accentBlue.opacity(0.4), lineWidth: 1))
     }
 
     private var satisfactionBadge: some View {
@@ -525,7 +549,10 @@ struct OwnerPrioritiesCard: View {
                 icon: owner.prefersWinNow ? "trophy.fill" : "building.2.fill",
                 label: "Philosophy",
                 value: owner.prefersWinNow ? "Win Now" : "Willing to Rebuild",
-                valueColor: owner.prefersWinNow ? Color.accentGold : Color.accentBlue,
+                // Two categories, neither of them better than the other and
+                // neither a threshold — so no ladder colour and no accent
+                // (P7 rule 2). "Win Now" was gold, which read as the good one.
+                valueColor: Color.textPrimary,
                 implication: OwnerBriefingCopy.visionImplication(owner)
             ),
             Priority(
@@ -658,14 +685,18 @@ struct OwnerBudgetCard: View {
             trailing: AnyView(
                 Text(OwnerBriefingCopy.money(total))
                     .font(DSType.display(DSType.Size.callout, .heavy))
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.textPrimary)
             )
         ) {
             VStack(alignment: .leading, spacing: DSSpacing.sm) {
+                // Three sums of money, none of them a verdict and none of them
+                // on a 0–100 ladder — so no colour at all (P7 rule 2). They
+                // shipped gold / blue / green, which said "coaching is the
+                // primary one" and "medical is the good one" (#177).
                 HStack(spacing: 0) {
-                    potColumn(label: "Coaching", value: owner.coachingBudget, color: .accentGold)
-                    potColumn(label: "Scouting", value: owner.scoutingBudget, color: .accentBlue)
-                    potColumn(label: "Medical", value: owner.medicalBudget, color: .success)
+                    potColumn(label: "Coaching", value: owner.coachingBudget)
+                    potColumn(label: "Scouting", value: owner.scoutingBudget)
+                    potColumn(label: "Medical", value: owner.medicalBudget)
                 }
 
                 Divider().overlay(Color.surfaceBorder)
@@ -676,7 +707,7 @@ struct OwnerBudgetCard: View {
                 HStack(alignment: .top, spacing: DSSpacing.xs) {
                     Image(systemName: "quote.opening")
                         .font(.system(size: 11))
-                        .foregroundStyle(Color.accentGold)
+                        .foregroundStyle(Color.textTertiary)
                     Text(FacilityEngine.ownerMeetingLine(owner: owner))
                         .font(DSType.text(DSType.Size.footnote, .regular, prose: true))
                         .italic()
@@ -691,11 +722,11 @@ struct OwnerBudgetCard: View {
         }
     }
 
-    private func potColumn(label: String, value: Int, color: Color) -> some View {
+    private func potColumn(label: String, value: Int) -> some View {
         VStack(spacing: DSSpacing.xxs) {
             Text(OwnerBriefingCopy.money(value))
                 .font(DSType.display(DSType.Size.callout, .heavy))
-                .foregroundStyle(color)
+                .foregroundStyle(Color.textPrimary)
             Text(label.uppercased())
                 .font(DSType.display(11, .semibold))
                 .tracking(0.5)
@@ -725,11 +756,16 @@ struct OwnerGoalsCard: View {
             )
         ) {
             VStack(alignment: .leading, spacing: DSSpacing.sm) {
+                // A met goal is a **state**, so it is `success` green, and a
+                // PRIMARY goal is a rank, so it is a weight difference and not
+                // a hue (#177). Both were gold, which put two more golds on a
+                // screen that is allowed one and made "met" and "primary"
+                // indistinguishable at a glance.
                 ForEach(goals) { goal in
                     HStack(spacing: DSSpacing.xs) {
-                        Image(systemName: goal.isAchieved ? "star.fill" : "circle")
+                        Image(systemName: goal.isAchieved ? "checkmark.circle.fill" : "circle")
                             .font(.system(size: 12))
-                            .foregroundStyle(goal.isAchieved ? Color.accentGold : Color.textTertiary)
+                            .foregroundStyle(goal.isAchieved ? Color.success : Color.textTertiary)
                         Text(goal.title)
                             .font(DSType.text(14, .regular, prose: true))
                             .foregroundStyle(Color.textPrimary)
@@ -738,12 +774,12 @@ struct OwnerGoalsCard: View {
                         if let progress = goal.progress {
                             Text("\(progress.done)/\(progress.target)")
                                 .font(DSType.display(DSType.Size.footnote, .heavy))
-                                .foregroundStyle(goal.isAchieved ? Color.accentGold : Color.textSecondary)
+                                .foregroundStyle(goal.isAchieved ? Color.success : Color.textSecondary)
                         }
                         Text(goal.priorityLabel.uppercased())
                             .font(DSType.display(11, .heavy))
                             .tracking(0.5)
-                            .foregroundStyle(goal.isPrimary ? Color.accentGold : Color.textTertiaryReadable)
+                            .foregroundStyle(goal.isPrimary ? Color.textSecondary : Color.textTertiaryReadable)
                     }
                     .frame(minHeight: 32)
                 }
@@ -769,7 +805,7 @@ struct OwnerQuoteCard: View {
             HStack(alignment: .top, spacing: DSSpacing.sm) {
                 Image(systemName: "quote.opening")
                     .font(.system(size: 16))
-                    .foregroundStyle(Color.accentGold.opacity(0.7))
+                    .foregroundStyle(Color.textTertiary)
                 Text(OwnerBriefingCopy.personalQuote(owner))
                     .font(DSType.text(14, .regular, prose: true))
                     .italic()
@@ -789,12 +825,17 @@ struct OwnerQuoteCard: View {
         }
         .padding(DSSpacing.md)
         .frame(maxWidth: .infinity, alignment: .leading)
+        // The same surface every other card on the briefing sits on. The gold
+        // wash and gold hairline were the card saying "I am the important one"
+        // in the primary-action hue (#177); the italic quote and the warning
+        // line say it in words, which is the only claim this card can make
+        // honestly.
         .background(
             RoundedRectangle(cornerRadius: DSCornerRadius.card)
-                .fill(Color.accentGold.opacity(0.06))
+                .fill(Color.backgroundSecondary)
                 .overlay(
                     RoundedRectangle(cornerRadius: DSCornerRadius.card)
-                        .strokeBorder(Color.accentGold.opacity(0.2), lineWidth: 1)
+                        .strokeBorder(Color.surfaceBorder, lineWidth: 1)
                 )
         )
     }
@@ -927,9 +968,12 @@ struct OwnerLastReviewCard: View {
         }
     }
 
+    /// Status colour means state (P7). A bonus and a praise are both "the owner
+    /// is happy", so both are `success` and the badge's own word carries the
+    /// degree — gold on `.bonus` was the money, not the state (#177).
     private var verdictColor: Color {
         switch review.verdict {
-        case .bonus:   return .accentGold
+        case .bonus:   return .success
         case .praise:  return .success
         case .neutral: return .textSecondary
         case .warning: return .warning
