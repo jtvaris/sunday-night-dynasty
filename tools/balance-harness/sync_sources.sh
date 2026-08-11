@@ -507,7 +507,7 @@ static func normalize\(
 EOF
 keeplist_slice "$COACHING_SOURCE" "$DEVANCHORS" "$DEVSLICE"
 verbatim_guard "$COACHING_SOURCE" "$DEVSLICE"
-COACHING_CONSTS="$(grep -E '^[[:space:]]*static let (coordinatorContinuitySeasons|coordinatorContinuityBonus|schemeFitNeutral|schemeFitTraitGain|schemeFitFamiliarityGain|schemeFitFamiliarityPivot|schemeFitFloor|schemeFitCeiling) =' "$COACHING_SOURCE")"
+COACHING_CONSTS="$(grep -E '^[[:space:]]*static let (coordinatorContinuitySeasons|coordinatorContinuityBonus|developmentBonusPivot|schemeFitNeutral|schemeFitTraitGain|schemeFitFamiliarityGain|schemeFitFamiliarityPivot|schemeFitFloor|schemeFitCeiling) =' "$COACHING_SOURCE")"
 [ -n "$COACHING_CONSTS" ] || die "CoachingEngine continuity constants not found in the repo file."
 grep -q 'hierarchicalDevelopmentBonus' "$DEVSLICE" || die "CoachingEngine slice lost hierarchicalDevelopmentBonus."
 grep -q 'positionRoleMatch' "$DEVSLICE"            || die "CoachingEngine slice lost positionRoleMatch."
@@ -515,7 +515,7 @@ grep -q 'rosterSchemeFit' "$DEVSLICE"              || die "CoachingEngine slice 
 grep -q 'schemeTraitEdge' "$DEVSLICE"              || die "CoachingEngine slice lost schemeTraitEdge."
 grep -q 'activeSchemeFamiliarity' "$DEVSLICE"      || die "CoachingEngine slice lost activeSchemeFamiliarity."
 grep -q 'rawScore + adaptabilityBonus' "$DEVSLICE" || die "CoachingEngine slice lost the trait scheme-fit core."
-for k in schemeFitNeutral schemeFitTraitGain schemeFitFamiliarityGain schemeFitFamiliarityPivot; do
+for k in schemeFitNeutral schemeFitTraitGain schemeFitFamiliarityGain schemeFitFamiliarityPivot developmentBonusPivot; do
   printf '%s\n' "$COACHING_CONSTS" | grep -q "$k" || die "CoachingEngine slice lost $k."
 done
 {

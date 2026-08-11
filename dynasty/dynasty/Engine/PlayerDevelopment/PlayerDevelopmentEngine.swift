@@ -184,15 +184,35 @@ enum PlayerDevelopmentEngine {
         // one is > 1 by definition). `processOffseason` then started folding
         // the FACILITY factor into the same argument — a deliberately two-sided
         // 0.92 / 1.00 / 1.08 lever that it clamps into exactly that range at
-        // the boundary — and the floor silently ate the whole penalty half. The
-        // factor is applied twice per cycle (here and on the catch-up
-        // realization below), so a top building was worth 1.08² = +17 % while a
-        // neglected one paid nothing instead of 0.92² = −15 %. `FacilityEngine`
-        // has AI clubs upgrade a tier a year and only cut when the upkeep bites,
-        // so the league ratcheted toward the premium and could never give it
-        // back: a one-way, league-wide development accelerator the balance
-        // harness does not model at all (it passes no facility, i.e. 1.0, and is
-        // therefore bit-identical either way).
+        // the boundary — and the floor silently ate the whole penalty half.
+        //
+        // CORRECTION (task #97 coach-model pass). The paragraph that used to
+        // stand here claimed the factor is "applied twice per cycle", worth
+        // 1.08² = +17 %, because `cycleBoost` appears both on `totalPoints` and
+        // inside the catch-up `realization` below. That is wrong, and it has
+        // since been quoted as a live balance defect, so it is corrected in
+        // place rather than deleted.
+        //
+        // Those two sites are DISJOINT ADDITIVE CHANNELS, not a compounding
+        // pair. `totalPoints` feeds `distributePhysicalPoints` /
+        // `distributeMentalPoints`; the catch-up fraction feeds
+        // `applyCatchUpGrowth`, which touches position skills and a different
+        // slice of the mental block. A camp's total gain is therefore
+        // `A·f + B·f = f·(A + B)` — linear, exponent ONE.
+        //
+        // Measured, not argued: with the clamp temporarily widened in a scratch
+        // copy of the balance harness, f = 1.5 moved the first-camp OVR gain
+        // from +4.67 to +7.15, a ratio of 1.53. Exponent 1 predicts 1.50;
+        // exponent 2 predicts 2.25. (The 0.03 excess is `primeWindowDamper`,
+        // the one genuine non-linearity, plus integer rounding.)
+        //
+        // Consequence: "fixing" the second site would not restore the
+        // documented 0.92-1.08 range, it would CUT the lever to one of the two
+        // channels and leave facilities worth less than they say they are. Do
+        // not do it. Within the shipped clamp the whole lever is small anyway —
+        // sweeping f across 0.92 / 1.00 / 1.08 through the career harness moved
+        // the 80+ share 17.27 / 16.99 / 17.24 %, i.e. inside run-to-run noise,
+        // because career gains are ceiling-limited long before the building is.
         let cycleBoost = realizationBoost
         totalPoints *= motivation.developmentMultiplier * clampedHealth * cycleBoost
 
@@ -495,7 +515,7 @@ enum PlayerDevelopmentEngine {
         /// The head coach's `motivation` rating, for the "coach lift" trigger.
         var headCoachMotivation: Int? = nil
 
-        /// His team lost in the conference round or the Super Bowl. Team-wide
+        /// His team lost in the conference round or the Championship. Team-wide
         /// edge (§2.3), amplified for the leaders in the room.
         var playoffHeartbreak: Bool = false
 

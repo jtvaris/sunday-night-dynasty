@@ -612,7 +612,7 @@ enum CoachingEngine {
     ///   - teamWins: The team's win total for the just-completed season (0–17).
     ///   - headCoach: The team's head coach (for mentorship bonus).
     ///   - assistantHC: The team's assistant head coach (for mentorship bonus).
-    ///   - wonSuperBowl: Whether the team won the Super Bowl this season.
+    ///   - wonSuperBowl: Whether the team won the Championship this season.
     static func developCoach(_ coach: Coach, teamWins: Int, headCoach: Coach? = nil, assistantHC: Coach? = nil, wonSuperBowl: Bool = false) {
         // Task #133: this is the once-per-offseason pass over EVERY coach in the
         // league (attached and unattached alike), and it runs after the poaching
@@ -1095,13 +1095,13 @@ enum CoachingEngine {
         case 13...20:
             expOpeners = genderedPhrases(
                 male: [
-                    "A seasoned veteran with \(coach.yearsExperience) years of NFL experience.",
+                    "A seasoned veteran with \(coach.yearsExperience) years of League experience.",
                     "Well-respected throughout the league after nearly two decades of coaching.",
                     "One of the more experienced coaches available, with \(coach.yearsExperience) years under his belt.",
                     "A veteran presence who has seen it all in his \(coach.yearsExperience)-year career."
                 ],
                 female: [
-                    "A seasoned veteran with \(coach.yearsExperience) years of NFL experience.",
+                    "A seasoned veteran with \(coach.yearsExperience) years of League experience.",
                     "Well-respected throughout the league after nearly two decades of coaching.",
                     "One of the more experienced coaches available, with \(coach.yearsExperience) years under her belt.",
                     "A veteran presence who has seen it all in her \(coach.yearsExperience)-year career."
@@ -1162,12 +1162,12 @@ enum CoachingEngine {
                 attrPhrases = genderedPhrases(
                     male: [
                         "Known for developing raw talent into starters.",
-                        "Has a track record of turning late-round picks into Pro Bowlers.",
+                        "Has a track record of turning late-round picks into All-Stars.",
                         "Players who work under him consistently improve year over year."
                     ],
                     female: [
                         "Known for developing raw talent into starters.",
-                        "Has a track record of turning late-round picks into Pro Bowlers.",
+                        "Has a track record of turning late-round picks into All-Stars.",
                         "Players who work under her consistently improve year over year."
                     ],
                     for: coach
@@ -1759,6 +1759,49 @@ enum CoachingEngine {
     /// penalty it mirrors: stability compounds, churn taxes.
     static let coordinatorContinuityBonus = 0.05
 
+    /// The attribute value each layer below treats as "an average coach", i.e.
+    /// the point at which that layer contributes nothing.
+    ///
+    /// Task #97 (root cause). Every layer used to pivot on 50 — the midpoint of
+    /// the 1-99 attribute scale, and a perfectly good pivot for a league whose
+    /// coaches were drawn uniformly across it. The shipped league is not that
+    /// league. `LeagueGenerator.makeCoach` forces every attribute named in
+    /// `CoachRole.focusAttributes` into the role's "good" band for position
+    /// coaches, and all seven position-coach roles plus the strength coach name
+    /// `playerDevelopment` — so the shipped position coach, who carries the
+    /// heaviest layer here (±0.15), draws playerDevelopment from U(70,85):
+    /// mean 77.5, sd 4.6. Measured over 200k staffs, the expected multiplier
+    /// this function returns was 1.1646, i.e. the league ran a permanent +16 %
+    /// development bonus that no camp ever gave back and no gate ever saw (the
+    /// balance harness drew every coach from N(58,15) and measured 1.0594).
+    ///
+    /// 60 is a PARTIAL re-centring, not a neutral one, and the comment used to
+    /// claim otherwise — read the number before you trust the prose. The four
+    /// layers' shipped input means are HC motivation 73.4, AHC
+    /// playerDevelopment 66.4, coordinator 65.6, position coach 77.5; the pivot
+    /// that would make "average staff, no effect" true is their slope-weighted
+    /// mean ≈ 72, i.e. 70 to the near ten, which puts E[bonus] at ≈ 1.016.
+    /// At 60 the same means give
+    ///   1 + (13.4·0.08 + 6.4·0.04 + 5.6·0.10 + 17.5·0.15)/50 ≈ 1.090,
+    /// so average shipped staff still carries a permanent +9 % development
+    /// bonus — down from +16 %, about half the gap closed. Measured effect in
+    /// the app: −6.4 % development volume.
+    ///
+    /// That residual is deliberate, and it is gate-fitted rather than derived:
+    /// 60 is the largest re-centring that keeps the §6/§8 asserts green with
+    /// the corrected `shippedCoachAttrs` rig, and the rest of the development
+    /// calibration is currently fitted around the +9 %. Going to 70 is the
+    /// principled end state but is a calibration wave, not a constant edit — it
+    /// needs the harness re-run and the blue-chip count re-checked against §8's
+    /// 25-35 ceiling.
+    ///
+    /// This constant and the harness's coach draw are ONE change. Re-centring
+    /// alone, against a rig that still drew N(58,15), took E[bonus] to 0.954
+    /// and reddened six asserts; fixing the rig alone left the pivot at 50 and
+    /// took the league to 34 blue chips against §8's 25-35 ceiling. Both were
+    /// measured before this was written.
+    static let developmentBonusPivot = 60.0
+
     /// Calculate layered coaching bonus from HC → AHC → Coordinator → Position Coach
     ///
     /// - Parameter coordinatorContinuity: the unit's coordinator has been in the
@@ -1777,20 +1820,20 @@ enum CoachingEngine {
 
         // Layer 1: HC team-wide bonus
         if let hc = headCoach {
-            let hcBonus = (Double(hc.motivation) - 50.0) / 50.0 * 0.08
+            let hcBonus = (Double(hc.motivation) - developmentBonusPivot) / 50.0 * 0.08
             multiplier += hcBonus
             if hc.isInAdjustmentPeriod { multiplier -= 0.05 }
         }
 
         // Layer 2: AHC secondary bonus
         if let ahc = assistantHC {
-            let ahcBonus = (Double(ahc.playerDevelopment) - 50.0) / 50.0 * 0.04
+            let ahcBonus = (Double(ahc.playerDevelopment) - developmentBonusPivot) / 50.0 * 0.04
             multiplier += ahcBonus
         }
 
         // Layer 3: Coordinator unit bonus
         if let coord = coordinator {
-            let coordBonus = (Double(coord.playerDevelopment) - 50.0) / 50.0 * 0.10
+            let coordBonus = (Double(coord.playerDevelopment) - developmentBonusPivot) / 50.0 * 0.10
             multiplier += coordBonus
             if coord.isInAdjustmentPeriod { multiplier -= 0.03 }
             // Continuity reward (plan §2.9.3). Mutually exclusive with the
@@ -1802,7 +1845,7 @@ enum CoachingEngine {
 
         // Layer 4: Position coach direct bonus
         if let pos = positionCoach {
-            let posBonus = (Double(pos.playerDevelopment) - 50.0) / 50.0 * 0.15
+            let posBonus = (Double(pos.playerDevelopment) - developmentBonusPivot) / 50.0 * 0.15
             multiplier += posBonus
         }
 

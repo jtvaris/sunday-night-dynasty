@@ -505,13 +505,216 @@ final class CRLeague {
         }
     }
 
-    /// Coach-quality draw. Centred a little above the 50 the shipped multipliers
-    /// treat as neutral, with a wide spread so "good building / bad building" is
-    /// a real difference — the reference's §5 point that coaching quality AND
-    /// continuity are first-order development inputs.
-    private func coachRating() -> Int {
-        Int(PositionPhysicalProfile.truncatedGaussian(mean: 58, sd: 15, limit: 2.4).rounded())
-            .cr_clamped(25, 95)
+    /// A coordinator's expertise in the scheme he actually runs, drawn the way
+    /// the SHIPPED league draws it.
+    ///
+    /// There IS a shipped distribution here, and an earlier pass of this rig
+    /// wrongly claimed there was not: every generated coach's PRIMARY scheme is
+    /// seeded `Int.random(in: 75...95)` by `LeagueGenerator.initializeSchemeExpertise`
+    /// (`dynasty/dynasty/Data/Import/LeagueGenerator.swift`, called at league
+    /// generation and from `LeagueTemplateImporter`) and by its duplicate
+    /// `CoachingEngine.initializeSchemeExpertise`, which runs on EVERY hiring-market
+    /// candidate. Mean ~85, not the ~58 this rig used to draw.
+    ///
+    /// Why it matters: `VersatilityDevelopmentEngine.learnScheme` multiplies the
+    /// learning rate by `expertise / 60.0`, so the old N(58,15) draw taught
+    /// ~47 % slower than the shipped 75...95, and the §6.10 familiarity
+    /// equilibrium was calibrated against that slow rig.
+    ///
+    /// NOT mirrored: the family (40...65) and adaptability-baseline entries the
+    /// shipped seeder also writes. The rig only ever runs `learnScheme` on the
+    /// coordinator's own active scheme, so no other key is ever read.
+    private func shippedPrimarySchemeExpertise() -> Int {
+        Int.random(in: 75...95)
+    }
+
+    /// The two development-relevant attributes of one coach, drawn the way the
+    /// SHIPPED league draws them.
+    private struct CRCoachAttrs {
+        let playerDevelopment: Int
+        let motivation: Int
+    }
+
+    /// Mirror of `LeagueGenerator.generateCoach`'s attribute draw
+    /// (`dynasty/dynasty/Data/Import/LeagueGenerator.swift`, the `goodFloor` /
+    /// `goodIndices` / `genAttr` block).
+    ///
+    /// SCOPE: league GENERATION only (t = 0 staffs, and the template importer).
+    /// Nothing in the running sim calls `generateCoach` — every vacancy the
+    /// carousel opens is filled from `CoachingEngine.generateCoachCandidates`,
+    /// whose bands are different. See `carouselHireAttrs` for the re-hire mirror.
+    ///
+    /// The mechanic the rig was missing: `genAttr` splits the twelve attributes
+    /// into a "good" band and a "weak" band, and for POSITION coaches (the
+    /// `default:` arm, which also covers the strength coach) every attribute
+    /// named in `CoachRole.focusAttributes` is forced into the good band before
+    /// the random slots are filled. All seven position-coach roles and the
+    /// strength coach list `playerDevelopment` as a focus attribute, so in the
+    /// shipped game EVERY position coach and the strength coach draws
+    /// playerDevelopment from U(70,85) — mean 77.5, sd 4.6 — against this rig's
+    /// old N(58,15). Since the position coach carries the largest layer of
+    /// `hierarchicalDevelopmentBonus` (±0.15), that one difference was worth
+    /// +9.9 % development volume league-wide.
+    ///
+    /// Faithfulness: the whole twelve-slot selection is reproduced rather than
+    /// just the two fields read, because `goodCount` is a budget shared across
+    /// all twelve — sampling only indices 1 and 7 in isolation would give the
+    /// wrong marginal for the non-position roles, whose focus attributes are
+    /// NOT pre-forced and who therefore hit `playerDevelopment` only when the
+    /// shuffle lands on it. The rig reads index 1 (`playerDevelopment`) and
+    /// index 7 (`motivation`); the other ten are drawn and discarded so the
+    /// joint distribution is the shipped one.
+    ///
+    /// NOT mirrored: name/age/salary/personality (no development effect) and
+    /// `schemeExpertise`, which `generateCoach` does not write itself — the
+    /// separate `initializeSchemeExpertise` pass does, see
+    /// `shippedPrimarySchemeExpertise`.
+    private func shippedCoachAttrs(role: CoachRole) -> CRCoachAttrs {
+        let goodFloor: Int
+        let goodCeiling: Int
+        let weakFloor: Int
+        let weakCeiling: Int
+        let goodCount: Int
+        let isPositionCoach: Bool
+
+        switch role {
+        case .headCoach:
+            goodFloor = 70; goodCeiling = 95; weakFloor = 55; weakCeiling = 70
+            goodCount = Int.random(in: 5...8)
+            isPositionCoach = false
+        case .assistantHeadCoach:
+            goodFloor = 68; goodCeiling = 90; weakFloor = 50; weakCeiling = 65
+            goodCount = Int.random(in: 4...6)
+            isPositionCoach = false
+        case .offensiveCoordinator, .defensiveCoordinator:
+            goodFloor = 65; goodCeiling = 90; weakFloor = 50; weakCeiling = 65
+            goodCount = Int.random(in: 4...6)
+            isPositionCoach = false
+        case .specialTeamsCoordinator:
+            goodFloor = 62; goodCeiling = 85; weakFloor = 45; weakCeiling = 58
+            goodCount = Int.random(in: 3...5)
+            isPositionCoach = false
+        default: // Position coaches + strength coach: specialists
+            goodFloor = 70; goodCeiling = 85; weakFloor = 40; weakCeiling = 60
+            goodCount = Int.random(in: 1...5)
+            isPositionCoach = true
+        }
+
+        return Self.drawCoachAttrs(
+            role: role, goodFloor: goodFloor, goodCeiling: goodCeiling,
+            weakFloor: weakFloor, weakCeiling: weakCeiling,
+            goodCount: goodCount, isPositionCoach: isPositionCoach
+        )
+    }
+
+    /// Mirror of `CoachingEngine.generateCoachCandidates`' PREMIUM band
+    /// (`dynasty/dynasty/Engine/Simulation/CoachingEngine.swift`), which is what
+    /// a carousel re-hire actually draws.
+    ///
+    /// Why the premium arm and nothing else: every vacancy in the sim calls
+    /// `generateCoachCandidates(role:count: 1)` (`CoachCarouselEngine` :303 and
+    /// :393, `WeekAdvancer` :3530 and :6800) and takes `.first`. The function
+    /// floors the list at 20 candidates and marks indices `0..<premiumCount`
+    /// premium, so index 0 — the one `.first` returns — is ALWAYS the premium
+    /// candidate (the only escape is the 40 % refusal roll on a team with
+    /// reputation < 40 AND wins < 5, which the default `teamReputation: 50` /
+    /// `teamWins: 8` arguments these call sites use never triggers). The budget
+    /// tier is drawn from the non-premium indices, so it can never be index 0.
+    ///
+    /// The premium bands sit ABOVE `generateCoach`'s generation bands — position
+    /// coach good U(72,88) vs U(70,85), HC good U(78,95) with 6...8 good slots vs
+    /// U(70,95) with 5...8 — so a rig that re-rolled replacements through
+    /// `shippedCoachAttrs` under-rated every re-hire, and the error compounded
+    /// with each carousel cycle.
+    ///
+    /// NOT mirrored: the shipped carousel PREFERS a recycled coach (an unattached
+    /// veteran, or an internal promotion) and only invents one when that pool is
+    /// empty — those arms carry an existing coach's attributes and age forward.
+    /// This rig models every replacement as the invent-a-coach fallback.
+    private func carouselHireAttrs(role: CoachRole) -> CRCoachAttrs {
+        let goodFloor: Int
+        let goodCeiling: Int
+        let weakFloor: Int
+        let weakCeiling: Int
+        let goodCount: Int
+        let isPositionCoach: Bool
+
+        switch role {
+        case .headCoach:
+            goodFloor = 78; goodCeiling = 95; weakFloor = 58; weakCeiling = 72
+            goodCount = Int.random(in: 6...8)
+            isPositionCoach = false
+        case .assistantHeadCoach:
+            goodFloor = 72; goodCeiling = 92; weakFloor = 55; weakCeiling = 68
+            goodCount = Int.random(in: 5...7)
+            isPositionCoach = false
+        case .offensiveCoordinator, .defensiveCoordinator:
+            goodFloor = 72; goodCeiling = 92; weakFloor = 52; weakCeiling = 67
+            goodCount = Int.random(in: 5...6)
+            isPositionCoach = false
+        case .specialTeamsCoordinator:
+            goodFloor = 68; goodCeiling = 88; weakFloor = 48; weakCeiling = 62
+            goodCount = Int.random(in: 4...5)
+            isPositionCoach = false
+        default: // Position coaches + strength coach
+            goodFloor = 72; goodCeiling = 88; weakFloor = 44; weakCeiling = 62
+            goodCount = Int.random(in: 2...5)
+            isPositionCoach = true
+        }
+
+        return Self.drawCoachAttrs(
+            role: role, goodFloor: goodFloor, goodCeiling: goodCeiling,
+            weakFloor: weakFloor, weakCeiling: weakCeiling,
+            goodCount: goodCount, isPositionCoach: isPositionCoach
+        )
+    }
+
+    /// The twelve-slot good/weak selection both shipped generators share.
+    /// Index order is their `allAttrNames`; only 1 and 7 are read.
+    private static func drawCoachAttrs(
+        role: CoachRole, goodFloor: Int, goodCeiling: Int,
+        weakFloor: Int, weakCeiling: Int, goodCount: Int, isPositionCoach: Bool
+    ) -> CRCoachAttrs {
+        let allAttrNames = ["playCalling", "playerDevelopment", "reputation", "adaptability",
+                            "gamePlanning", "scoutingAbility", "recruiting", "motivation",
+                            "discipline", "mediaHandling", "contractNegotiation", "moraleInfluence"]
+        let focusAttrs = Self.shippedFocusAttributes(role)
+        var goodIndices = Set<Int>()
+        if isPositionCoach {
+            for (i, name) in allAttrNames.enumerated() where focusAttrs.contains(name) {
+                goodIndices.insert(i)
+            }
+        }
+        var remaining = Array(0..<12).filter { !goodIndices.contains($0) }
+        remaining.shuffle()
+        let slotsNeeded = max(0, goodCount - goodIndices.count)
+        for i in 0..<min(slotsNeeded, remaining.count) {
+            goodIndices.insert(remaining[i])
+        }
+        func genAttr(_ index: Int) -> Int {
+            goodIndices.contains(index)
+                ? Int.random(in: goodFloor...goodCeiling)
+                : Int.random(in: weakFloor...weakCeiling)
+        }
+        return CRCoachAttrs(playerDevelopment: genAttr(1), motivation: genAttr(7))
+    }
+
+    /// `CoachRole.focusAttributes` (dynasty/dynasty/Domain/Enums/CoachRole.swift),
+    /// transcribed. The harness's `CoachRole` is a local stub without it.
+    private static func shippedFocusAttributes(_ role: CoachRole) -> [String] {
+        switch role {
+        case .headCoach:               return ["motivation", "discipline", "adaptability"]
+        case .assistantHeadCoach:      return ["playerDevelopment", "motivation", "gamePlanning"]
+        case .offensiveCoordinator:    return ["playCalling", "gamePlanning", "adaptability"]
+        case .defensiveCoordinator:    return ["playCalling", "gamePlanning", "adaptability"]
+        case .specialTeamsCoordinator: return ["playCalling", "discipline"]
+        case .qbCoach:                 return ["playCalling", "playerDevelopment", "gamePlanning"]
+        case .rbCoach, .wrCoach:       return ["playerDevelopment", "motivation"]
+        case .olCoach, .dlCoach:       return ["playerDevelopment", "discipline"]
+        case .lbCoach, .dbCoach:       return ["playerDevelopment", "gamePlanning"]
+        case .strengthCoach:           return ["playerDevelopment", "discipline", "motivation"]
+        case .other:                   return ["playerDevelopment"]
+        }
     }
 
     private func makeStaff(club: CRClub, freshHires: Bool) -> [Coach] {
@@ -522,29 +725,43 @@ final class CRLeague {
         // hierarchy (position coach > coordinator > strength > HC).
         let posRoles: [CoachRole] = [.qbCoach, .rbCoach, .wrCoach, .olCoach, .dlCoach, .lbCoach, .dbCoach]
         var staff: [Coach] = posRoles.map {
-            let c = Coach(role: $0, playerDevelopment: coachRating())
+            let c = Coach(role: $0, playerDevelopment: shippedCoachAttrs(role: $0).playerDevelopment)
             c.isInAdjustmentPeriod = freshHires
             return c
         }
-        let hc = Coach(role: .headCoach, motivation: coachRating(), playerDevelopment: coachRating())
+        let hcAttrs = shippedCoachAttrs(role: .headCoach)
+        let hc = Coach(
+            role: .headCoach,
+            motivation: hcAttrs.motivation,
+            playerDevelopment: hcAttrs.playerDevelopment
+        )
         hc.isInAdjustmentPeriod = freshHires
-        let ahc = Coach(role: .assistantHeadCoach, playerDevelopment: coachRating())
+        let ahc = Coach(
+            role: .assistantHeadCoach,
+            playerDevelopment: shippedCoachAttrs(role: .assistantHeadCoach).playerDevelopment
+        )
         let oc = Coach(
             role: .offensiveCoordinator,
             offensiveScheme: club.offensiveScheme,
-            schemeExpertise: [club.offensiveScheme.rawValue: coachRating()],
-            playerDevelopment: coachRating()
+            schemeExpertise: [club.offensiveScheme.rawValue: shippedPrimarySchemeExpertise()],
+            playerDevelopment: shippedCoachAttrs(role: .offensiveCoordinator).playerDevelopment
         )
         oc.isInAdjustmentPeriod = freshHires
         let dc = Coach(
             role: .defensiveCoordinator,
             defensiveScheme: club.defensiveScheme,
-            schemeExpertise: [club.defensiveScheme.rawValue: coachRating()],
-            playerDevelopment: coachRating()
+            schemeExpertise: [club.defensiveScheme.rawValue: shippedPrimarySchemeExpertise()],
+            playerDevelopment: shippedCoachAttrs(role: .defensiveCoordinator).playerDevelopment
         )
         dc.isInAdjustmentPeriod = freshHires
-        let stc = Coach(role: .specialTeamsCoordinator, playerDevelopment: coachRating())
-        let sc = Coach(role: .strengthCoach, playerDevelopment: coachRating())
+        let stc = Coach(
+            role: .specialTeamsCoordinator,
+            playerDevelopment: shippedCoachAttrs(role: .specialTeamsCoordinator).playerDevelopment
+        )
+        let sc = Coach(
+            role: .strengthCoach,
+            playerDevelopment: shippedCoachAttrs(role: .strengthCoach).playerDevelopment
+        )
         staff.append(contentsOf: [hc, ahc, oc, dc, stc, sc])
         return staff
     }
@@ -741,8 +958,26 @@ final class CRLeague {
     /// policy — it moves nobody's rating, only his opportunity.
     private func keepScore(_ p: Player) -> Double {
         var score = Double(p.overall)
-        // Cheap youth beats expensive age at the back of a roster.
-        score -= Double(max(0, p.age - 25)) * 3.2
+        // Cheap youth beats expensive age at the back of a roster — up to the
+        // point where the discount stops being a discount.
+        //
+        // The `min(agePenaltyCap, …)` is task #98's cap, and the rig was missing
+        // it: `RosterValue.keepScore` (Engine/Simulation/RosterValue.swift) caps
+        // the age discount at 20 points, binding from age 31.25, because past
+        // that the retirement wall is already the statement about those men and
+        // charging 3.2/year twice collapsed the 33+ share. Uncapped here, the
+        // rig cut old players harder than the game does — so 6.9g (33+ share)
+        // and the career-length asserts were being read off a league with a
+        // steeper cutdown curve than the shipped one. Mirroring it is
+        // assert-neutral (measured: 36/36 either way); it is fixed so the rig
+        // stops disagreeing with the engine on a rule the engine states.
+        // 20.0 is `RosterValue.agePenaltyCap`, transcribed like the 25 / 3.2 /
+        // 0.45 / capital-table numbers around it — `RosterValue.swift` is not
+        // one of the synced sources.
+        score -= min(
+            20.0,
+            Double(max(0, p.age - 25)) * 3.2
+        )
         if p.yearsPro <= 3 {
             score += Double(max(0, p.truePotential - p.overall)) * 0.45
             let round = draftRoundByPlayer[p.id] ?? 8
@@ -893,8 +1128,16 @@ final class CRLeague {
                 replaceCoordinator(club: club, offense: false)
             }
             if Double.random(in: 0..<1) < pressure * 0.8, let hc = club.headCoach {
-                hc.motivation = coachRating()
-                hc.playerDevelopment = coachRating()
+                // NOT the generation draw: a shipped vacancy is filled from
+                // `CoachingEngine.generateCoachCandidates(role:count: 1).first`,
+                // which is deterministically the index-0 PREMIUM candidate — a
+                // better coach than `generateCoach` makes at t = 0. See
+                // `carouselHireAttrs`. A rig that re-rolled from the generation
+                // band here would drift the league below its real equilibrium,
+                // one notch per carousel cycle.
+                let attrs = carouselHireAttrs(role: .headCoach)
+                hc.motivation = attrs.motivation
+                hc.playerDevelopment = attrs.playerDevelopment
                 hc.isInAdjustmentPeriod = true
                 hc.seasonsOnTeam = 0
             }
@@ -904,7 +1147,7 @@ final class CRLeague {
                 switch coach.role {
                 case .qbCoach, .rbCoach, .wrCoach, .olCoach, .dlCoach, .lbCoach, .dbCoach:
                     guard Double.random(in: 0..<1) < 0.16 else { continue }
-                    let rating = coachRating()
+                    let rating = carouselHireAttrs(role: coach.role).playerDevelopment
                     let improved = rating >= 70 && rating > coach.playerDevelopment
                     coach.playerDevelopment = rating
                     coach.seasonsOnTeam = 0
@@ -918,7 +1161,7 @@ final class CRLeague {
 
     private func replaceCoordinator(club: CRClub, offense: Bool) {
         guard let coord = club.coach(offense ? .offensiveCoordinator : .defensiveCoordinator) else { return }
-        coord.playerDevelopment = coachRating()
+        coord.playerDevelopment = carouselHireAttrs(role: coord.role).playerDevelopment
         coord.seasonsOnTeam = 0
         coord.isInAdjustmentPeriod = true
         // A new coordinator usually brings his own system.
@@ -930,7 +1173,7 @@ final class CRLeague {
                     club.offenseInstallYear = true
                 }
                 coord.offensiveScheme = club.offensiveScheme
-                coord.schemeExpertise = [club.offensiveScheme.rawValue: coachRating()]
+                coord.schemeExpertise = [club.offensiveScheme.rawValue: shippedPrimarySchemeExpertise()]
             } else {
                 let scheme = DefensiveScheme.allCases.randomElement() ?? club.defensiveScheme
                 if scheme != club.defensiveScheme {
@@ -938,7 +1181,7 @@ final class CRLeague {
                     club.defenseInstallYear = true
                 }
                 coord.defensiveScheme = club.defensiveScheme
-                coord.schemeExpertise = [club.defensiveScheme.rawValue: coachRating()]
+                coord.schemeExpertise = [club.defensiveScheme.rawValue: shippedPrimarySchemeExpertise()]
             }
         }
     }
@@ -1804,14 +2047,51 @@ func crReport(leagues: [CRLeague], elapsed: TimeInterval) {
     // the input to `PlaySimulator`'s blown-assignment pivot (55) as well as to
     // the fit above, and before this wave the league settled at 53.9 — under the
     // pivot, so every club in the game lived in the busting regime forever and
-    // the mechanic was a flat tax rather than a difference between rooms. The
-    // band is 58-62: the lower edge is the pivot plus enough margin that ordinary
-    // league-to-league noise (measured between-league sd ~0.3) cannot cross it,
-    // the upper edge keeps a real install year (`installBaselineCap` 50) and a
-    // rookie class visibly BELOW par, which is what the mechanic is for.
-    A.check("6.10e", famMean >= 58 && famMean <= 62,
-            String(format: "active-scheme familiarity equilibrium in [58,62], i.e. clear of PlaySimulator's 55 bust pivot (%.1f, margin %+.1f)",
-                   famMean, famMean - 55.0))
+    // the mechanic was a flat tax rather than a difference between rooms.
+    //
+    // LOWER EDGE 58 — unchanged. The pivot (55) plus enough margin that ordinary
+    // league-to-league noise (measured between-league sd ~0.3) cannot cross it.
+    //
+    // UPPER EDGE 62 -> 65 -> 70. The 62 was circular (this rig's own equilibrium
+    // plus headroom), so the coach-model pass replaced it with a derivation from
+    // shipped constants. That derivation stands; only its INPUTS were wrong, and
+    // they have now been corrected twice over:
+    //
+    //   `VersatilityDevelopmentEngine.schemeInstallIntensityBonus`'s own doc
+    //   states the design contract — "offenses under a new OC underperform in
+    //   year 1 and recover in year 2". A room handed a new playbook starts at
+    //   `installBaselineCap` = 50 and learns at the ×1.25 install intensity.
+    //   Against the closure ladder this scenario measures (c at the first two
+    //   rungs, printed above as "season closure c"):
+    //       season 1: 50   + c0·1.25·(100 − 50)
+    //       season 2: F1   + c1·(100 − F1)
+    //   Par above that two-season landing point turns the install tax from a
+    //   year-1 dip into a permanent handicap, which is the failure this edge
+    //   exists to catch.
+    //
+    //   Re-derived (scheme-expertise pass): the rig used to draw a coordinator's
+    //   expertise in his OWN scheme from N(58,15) while the shipped seeder draws
+    //   `Int.random(in: 75...95)` (see `shippedPrimarySchemeExpertise`), and
+    //   `learnScheme` multiplies the learning rate by `expertise / 60`. The whole
+    //   ladder was therefore ~47 % too slow, INCLUDING the c0/c1 the 65 was
+    //   derived from. Corrected ladder c0 = 0.225, c1 = 0.188:
+    //       season 1: 50    + 0.225·1.25·(100 − 50)  = 64.1
+    //       season 2: 64.1  + 0.188·(100 − 64.1)     = 70.8
+    //   Rounded to 70. (The old 65 came from c0 = 0.154 / c1 = 0.131 on the
+    //   slow rig — same formula, mis-measured coefficients.)
+    //
+    // The second clause is the "rookie class visibly below par" prose turned
+    // into the thing it actually means: the bust pivot has to keep BITING. If
+    // the equilibrium ever lifts the whole population clear of 55 the mechanic
+    // is inert no matter what the mean reads. The floor stays at 25 % and is NOT
+    // relaxed with the mean: measured 27.6 % here (35.7 % on the slow-coordinator
+    // rig, 39.8 % before the coach-attribute fix). The margin is now thin by
+    // design — faster installs push the population up, and 25 % is the point at
+    // which the pivot stops being the busy end of the distribution.
+    let famUnderPivotShare = crShare(famAll.filter { $0 < 55 }.count, famAll.count)
+    A.check("6.10e", famMean >= 58 && famMean <= 70 && famUnderPivotShare >= 25,
+            String(format: "active-scheme familiarity equilibrium in [58,70] with the 55 bust pivot still live (%.1f, margin %+.1f, %.1f%% under the pivot >= 25%%)",
+                   famMean, famMean - 55.0, famUnderPivotShare))
 
     print(dist("competitiveness", snapshot.map { Double($0.competitiveness) }, [40, 45, 60, 65, 70]))
     print(dist("work ethic     ", snapshot.map { Double($0.mental.workEthic) }, [60]))
