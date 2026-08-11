@@ -105,9 +105,9 @@ nonisolated struct LeagueTemplate: Codable {
     }
 
     struct Identity: Codable {
-        /// Key used inside the template (`"LA"` for the Rams).
+        /// Key used inside the template (`"LA"` for the Los Angeles NFC club).
         var key: String
-        /// Abbreviation the app's own `NFLTeamData` uses (`"LAR"`).
+        /// Abbreviation the app's own `LeagueTeamData` uses (`"LAR"`).
         var appAbbr: String
         var city: String
         var nickname: String

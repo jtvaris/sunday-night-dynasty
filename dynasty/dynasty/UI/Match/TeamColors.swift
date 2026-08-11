@@ -19,7 +19,7 @@ enum MatchTeamColors {
 
     /// Returns a pair of visually distinct uniform colors for a matchup.
     /// Each side falls back to its secondary when the primary would vanish
-    /// into the field grass (e.g. Packers dark green), and the away side
+    /// into the field grass (e.g. a dark forest green), and the away side
     /// swaps when the two picks are too similar to tell apart.
     static func matchup(home: String, away: String) -> (home: UIColor, away: UIColor) {
         var h = fieldSafePrimary(for: home)

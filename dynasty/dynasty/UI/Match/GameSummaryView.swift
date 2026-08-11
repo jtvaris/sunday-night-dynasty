@@ -984,7 +984,7 @@ private struct PlayDescriptionRow: View {
 
 #Preview {
     let homeTeam = Team(
-        name: "Chiefs",
+        name: "Stockyards",
         city: "Kansas City",
         abbreviation: "KC",
         conference: .AFC,
@@ -992,7 +992,7 @@ private struct PlayDescriptionRow: View {
         mediaMarket: .large
     )
     let awayTeam = Team(
-        name: "Eagles",
+        name: "Bellringers",
         city: "Philadelphia",
         abbreviation: "PHI",
         conference: .NFC,

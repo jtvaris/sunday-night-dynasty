@@ -175,7 +175,7 @@ enum CoachMarketEngine {
     ///
     /// * `CoachingTreeData` / `Career.coachCarouselLog` — name snapshots with no
     ///   portrait and no id back into `Coach`, so they are safe either way.
-    /// * `LeagueEvent.coachID` → `EventAlertView.loadRelatedNames` — a live fetch
+    /// * `LeagueEvent.coachID` — a live fetch
     ///   by id that reads `coach.faceID`. Deleting the row would blank an
     ///   archived event's subject; keeping it renders him exactly as before.
     ///

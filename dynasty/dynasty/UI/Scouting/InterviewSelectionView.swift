@@ -289,7 +289,7 @@ struct InterviewSelectionView: View {
 
                 Spacer()
 
-                Text("NFL teams typically interview 15\u{2013}20 prospects")
+                Text("League teams typically interview 15\u{2013}20 prospects")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(Color.textTertiary)
             }

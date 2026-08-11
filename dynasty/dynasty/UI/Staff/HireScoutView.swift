@@ -84,27 +84,21 @@ struct HireScoutView: View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
 
-            // Background image with gradient overlay
-            GeometryReader { geo in
-                Image("BgCombine")
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: geo.size.width, height: geo.size.height)
-                    .clipped()
-                    .opacity(0.12)
-            }
-            .ignoresSafeArea()
-
+            // Token-only backdrop (#167). The combine photograph carried
+            // apparel-brand logos, so the asset is deleted; the gradient that
+            // used to sit over it now stands alone, keeping the same top-dark /
+            // mid-lifted / bottom-dark shape out of palette steps.
             LinearGradient(
                 colors: [
-                    Color.backgroundPrimary.opacity(0.85),
-                    Color.backgroundPrimary.opacity(0.5),
-                    Color.backgroundPrimary.opacity(0.85)
+                    Color.backgroundPlate,
+                    Color.backgroundSecondary,
+                    Color.backgroundPlate
                 ],
                 startPoint: .top,
                 endPoint: .bottom
             )
             .ignoresSafeArea()
+            .allowsHitTesting(false)
 
             VStack(spacing: 0) {
                 // Budget header (matching HireCoachView style)

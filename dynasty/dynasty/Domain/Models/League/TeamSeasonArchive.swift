@@ -31,8 +31,8 @@ enum PlayoffResult: String, Codable, CaseIterable, Comparable {
         case .wildCard:   return "Lost Wild Card"
         case .divisional: return "Lost Divisional"
         case .conference: return "Lost Conf. Title"
-        case .runnerUp:   return "Lost Super Bowl"
-        case .champion:   return "SUPER BOWL CHAMPS"
+        case .runnerUp:   return "Lost the Championship"
+        case .champion:   return "Won the Championship"
         }
     }
 
@@ -43,7 +43,7 @@ enum PlayoffResult: String, Codable, CaseIterable, Comparable {
         case .wildCard:   return "WC"
         case .divisional: return "DIV"
         case .conference: return "CONF"
-        case .runnerUp:   return "SB L"
+        case .runnerUp:   return "TITLE L"
         case .champion:   return "CHAMPS"
         }
     }
@@ -576,9 +576,9 @@ enum TeamSeasonArchiveBuilder {
         var events: [String] = []
 
         if finish == .champion {
-            events.append("Won the Super Bowl.")
+            events.append("Won the Championship.")
         } else if finish == .runnerUp {
-            events.append("Reached the Super Bowl and lost.")
+            events.append("Reached the Championship and lost.")
         } else if divisionRank == 1 {
             events.append("Won the \(team.conference.rawValue) \(team.division.rawValue).")
         }

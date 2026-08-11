@@ -114,7 +114,7 @@ enum LeagueTemplateImporter {
         for teamTemplate in template.teams {
             let identity = teamTemplate.identity
             let appAbbr = identity.appAbbr
-            let definition = NFLTeamData.allTeams.first { $0.abbreviation == appAbbr }
+            let definition = LeagueTeamData.allTeams.first { $0.abbreviation == appAbbr }
             var teamRNG = SeededLeagueRandom(seed: seed &+ fnv1a(identity.key))
 
             // `ownerGender` is present in both profiles and SUPPRESSES the gender

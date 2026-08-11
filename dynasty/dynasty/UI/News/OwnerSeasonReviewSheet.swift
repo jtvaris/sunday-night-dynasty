@@ -2,7 +2,7 @@ import SwiftUI
 
 // MARK: - OwnerSeasonReviewSheet (R31 / #39)
 
-/// End-of-season owner meeting, surfaced right after the Super Bowl and BEFORE
+/// End-of-season owner meeting, surfaced right after the Championship and BEFORE
 /// the coaching-changes (Black Monday) phase. Covers the full arc the owner
 /// walks the coach through:
 ///   1. Season recap from the owner's chair (record + playoff result).
@@ -503,7 +503,7 @@ extension OwnerSeasonReviewSheet {
             let playoffResult: String?
             if let summary {
                 if summary.userWonChampionship {
-                    playoffResult = "Super Bowl Champions"
+                    playoffResult = "League Champions"
                 } else if summary.userMadePlayoffs {
                     playoffResult = "Reached the Playoffs"
                 } else {
@@ -554,9 +554,9 @@ extension OwnerSeasonReviewSheet {
             case .divisionTitle:
                 return goal.isAchieved ? "Won the division" : "No division crown"
             case .conference:
-                return goal.isAchieved ? "Reached the Super Bowl" : "Fell short"
+                return goal.isAchieved ? "Reached the Championship" : "Fell short"
             case .superBowl:
-                return goal.isAchieved ? "Lombardi secured" : "No title"
+                return goal.isAchieved ? "Championship secured" : "No title"
             case .developRookies:
                 if let target = goal.target { return "\(goal.progress) / \(target) rookies developed" }
                 return "\(goal.progress) rookies developed"
@@ -616,7 +616,7 @@ extension OwnerSeasonReviewSheet {
             acknowledged: false
         ),
         ownerName: "Marlene Vance",
-        teamName: "Chicago Bears",
+        teamName: "Chicago Ironworks",
         context: OwnerSeasonReviewSheet.Context(
             goals: [
                 .init(id: UUID(), title: "Make the Playoffs", priority: .primary, achieved: false, detail: "Fell short"),

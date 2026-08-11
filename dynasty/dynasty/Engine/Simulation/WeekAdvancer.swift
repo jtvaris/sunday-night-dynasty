@@ -2689,9 +2689,9 @@ enum WeekAdvancer {
     /// - 19 → Wild Card
     /// - 20 → Divisional Round
     /// - 21 → Conference Championships
-    /// - 22 → Pro Bowl week (handled as offseason phase)
-    /// - 23 → Super Bowl (handled as offseason phase)
-    /// - After Conference Championships → Pro Bowl → Super Bowl → offseason
+    /// - 22 → All-Star week (handled as offseason phase)
+    /// - 23 → The Championship (handled as offseason phase)
+    /// - After Conference Championships → All-Star Game → The Championship → offseason
     private static func advancePlayoffWeek(career: Career, modelContext: ModelContext) {
         let week = career.currentWeek
 
@@ -2734,7 +2734,7 @@ enum WeekAdvancer {
         )
 
         // R32: user's playoff exit is worth a note (win news comes via the
-        // round staging below and the Super Bowl phase).
+        // round staging below and the Championship phase).
         if let userTeamID = career.teamID,
            let userGame = unplayedGames.first(where: {
                $0.homeTeamID == userTeamID || $0.awayTeamID == userTeamID
@@ -2753,11 +2753,11 @@ enum WeekAdvancer {
         }
 
         if week >= 21 {
-            // R32: conference title games are decided — stage the Super Bowl
+            // R32: conference title games are decided — stage the Championship
             // game so the `.superBowl` phase simulates a real matchup.
             ensurePlayoffGames(forWeek: 22, career: career, modelContext: modelContext)
 
-            // Conference Championships complete → Pro Bowl week next.
+            // Conference Championships complete → All-Star week next.
             let oldPhase = career.currentPhase
             career.currentPhase = .proBowl
             emitGroupTransitionMessageIfNeeded(
@@ -2783,7 +2783,7 @@ enum WeekAdvancer {
     /// - Week 20 (Divisional): seed 1 + wild-card winners; best surviving
     ///   seed hosts the worst.
     /// - Week 21 (Conference Championship): divisional winners, better seed hosts.
-    /// - Week 22 (Super Bowl): the two conference champions; the better
+    /// - Week 22 (The Championship): the two conference champions; the better
     ///   regular-season record is the designated "home" side (neutral site).
     ///
     /// If a previous round is missing (legacy saves mid-playoffs), the round
@@ -2888,7 +2888,7 @@ enum WeekAdvancer {
             }
         }
 
-        // Super Bowl: cross-conference — better regular-season record "hosts".
+        // The Championship: cross-conference — better regular-season record "hosts".
         if week == 22, conferenceChampions.count == 2 {
             let recordByID = Dictionary(uniqueKeysWithValues: records.map { ($0.teamID, $0) })
             let sorted = conferenceChampions.sorted {
@@ -2935,7 +2935,7 @@ enum WeekAdvancer {
         switch currentPhase {
 
         case .superBowl:
-            // Simulate the Super Bowl game (moved here from playoffs to support Pro Bowl week)
+            // Simulate the Championship game (moved here from playoffs to support All-Star week)
             let sbGames = fetchUnplayedGames(
                 week: 22,
                 seasonYear: career.currentSeason,
@@ -3030,13 +3030,13 @@ enum WeekAdvancer {
             TeamSeasonArchiveBuilder.record(career: career, teams: teams, modelContext: modelContext)
 
         case .proBowl:
-            // Simulate Pro Bowl game (AFC vs NFC, simple random result)
+            // Simulate All-Star Game (AFC vs NFC, simple random result)
             let proBowlScore = simulateGameScore()
             let afcScore = proBowlScore.home
             let nfcScore = proBowlScore.away
             let afcWon = afcScore > nfcScore
 
-            // Generate Pro Bowl selections — top-rated players from each conference
+            // Generate All-Star selections — top-rated players from each conference
             var proBowlSelections: [String] = []
             if let playerTeamID = career.teamID,
                let playerTeam = teamsByID[playerTeamID] {
@@ -3048,25 +3048,25 @@ enum WeekAdvancer {
                     proBowlSelections.append("\(p.firstName) \(p.lastName)")
                 }
 
-                // Generate inbox message about Pro Bowl selections
+                // Generate inbox message about All-Star selections
                 let selectionsText = proBowlSelections.isEmpty
                     ? "None of your players were selected."
-                    : "Pro Bowl selections: \(proBowlSelections.joined(separator: ", "))."
+                    : "All-Star selections: \(proBowlSelections.joined(separator: ", "))."
                 let resultText = afcWon
                     ? "AFC won \(afcScore)-\(nfcScore)."
                     : "NFC won \(nfcScore)-\(afcScore)."
 
                 let proBowlMessage = InboxMessage(
                     sender: .leagueOffice,
-                    subject: "Pro Bowl Results",
+                    subject: "All-Star Game Results",
                     body: "\(resultText) \(selectionsText)",
-                    date: "Offseason - Pro Bowl, Season \(career.currentSeason)",
+                    date: "Offseason - All-Star Game, Season \(career.currentSeason)",
                     category: .leagueNotice
                 )
                 lastInboxMessages.append(proBowlMessage)
             }
 
-            // Awards and Pro Bowl news
+            // Awards and All-Star news
             lastNewsItems = NewsGenerator.generateOffseasonNews(
                 phase: .proBowl,
                 career: career,
@@ -3091,10 +3091,10 @@ enum WeekAdvancer {
                 pick — a true Hidden Gem.
                 """
                 let gemMessage = InboxMessage(
-                    sender: .media(outlet: "NFL Network"),
+                    sender: .media(outlet: "League Network"),
                     subject: "Hidden Gem: \(flashback.playerName)",
                     body: body,
-                    date: "Offseason - Pro Bowl, Season \(career.currentSeason)",
+                    date: "Offseason - All-Star Game, Season \(career.currentSeason)",
                     category: .scoutingReport
                 )
                 lastInboxMessages.append(gemMessage)
@@ -3374,7 +3374,7 @@ enum WeekAdvancer {
                     let sentiment: NewsSentiment = item.isDeclaration ? .neutral : .positive
                     let body: String
                     if item.isDeclaration {
-                        body = "\(item.name) has officially declared for the upcoming NFL Draft, forgoing remaining college eligibility."
+                        body = "\(item.name) has officially declared for the upcoming Draft, forgoing remaining college eligibility."
                     } else if item.isShock {
                         // R41: the annual shock. One name off the top of the
                         // PUBLIC board comes out every January and the round
@@ -3396,7 +3396,7 @@ enum WeekAdvancer {
                     ))
                 }
 
-                // R41 — Senior Bowl. Late January, after declarations (the
+                // R41 — Showcase. Late January, after declarations (the
                 // invite list is the declared senior board) and a month before
                 // the combine. `ScoutingPhase.seniorBowl` has carried its 0.55
                 // confidence level and its slot in the phase sort order since
@@ -5198,7 +5198,7 @@ enum WeekAdvancer {
         switch group {
         case .postseason:
             title = "Postseason Begins"
-            body = "Pro Bowl rosters announced. The hardware is being handed out."
+            body = "All-Star rosters announced. The hardware is being handed out."
         case .offseason:
             title = "Offseason Begins"
             body = "Time to evaluate. Coach contracts come due, the roster gets a fresh look."
@@ -5825,7 +5825,7 @@ enum WeekAdvancer {
 
                     Nothing stops us starting a fresh conversation with them — this one is closed.
 
-                    NFL League Office
+                    League Office
                     """,
                     date: dateString,
                     category: .tradeOffer,
@@ -5944,7 +5944,7 @@ enum WeekAdvancer {
 
                 There is a fresh package waiting in the Trade Center — open the conversation to read what changed and answer him.
 
-                NFL League Office
+                League Office
                 """,
                 date: dateString,
                 category: .tradeOffer,
@@ -6000,7 +6000,7 @@ enum WeekAdvancer {
         let playoffGames = seasonGames.filter { $0.isPlayoff }
         let superBowlGame = playoffGames.first { $0.week == 22 && $0.isPlayed }
 
-        // Champion = Super Bowl winner; fallback (legacy edge) = best record.
+        // Champion = Championship winner; fallback (legacy edge) = best record.
         let championID: UUID? = superBowlGame?.winnerID
             ?? teams.max {
                 ($0.wins, $1.losses) < ($1.wins, $0.losses)
@@ -6046,7 +6046,7 @@ enum WeekAdvancer {
         if wonChampionship {
             career.championships += 1
             career.legacy.recordAchievement(LegacyTracker.LegacyAchievement(
-                title: "Super Bowl Champion",
+                title: "League Champion",
                 description: "Won the Season \(season) championship.",
                 points: 100,
                 season: season
@@ -6054,8 +6054,8 @@ enum WeekAdvancer {
             lastInboxMessages.append(InboxMessage(
                 sender: .leagueOffice,
                 subject: "WORLD CHAMPIONS",
-                body: "Your team has won the Super Bowl. The city is planning the parade — enjoy this one, coach. It goes on your legacy forever.",
-                date: "Super Bowl, Season \(season)",
+                body: "Your team has won the Championship. The city is planning the parade — enjoy this one, coach. It goes on your legacy forever.",
+                date: "The Championship, Season \(season)",
                 category: .leagueNotice
             ))
         }
@@ -6111,7 +6111,7 @@ enum WeekAdvancer {
             }
             let mvpLine = mvp.map { " Season MVP honors went to \($0.playerName) (\($0.teamAbbr))." } ?? ""
             lastNewsItems.append(NewsItem(
-                headline: "\(champion.fullName) win the Super Bowl",
+                headline: "\(champion.fullName) win the Championship",
                 body: "The \(champion.fullName) are the Season \(season) champions. \(scoreLine)\(mvpLine)",
                 category: .award,
                 week: 22,
@@ -6297,7 +6297,7 @@ enum WeekAdvancer {
                     lastInboxMessages.append(InboxMessage(
                         sender: .leagueOffice,
                         subject: "\(player.fullName) Announces Retirement",
-                        body: "\(player.fullName) (\(player.position.rawValue), age \(player.age)) is hanging up his cleats after \(max(1, player.yearsPro)) pro seasons. He asked that the organization — and you personally — be thanked for the way his final chapter was handled. The locker room will feel his absence.\(production)\(retirement.isHallOfFamer ? "\n\nExpect the call from Canton: he retires as a Hall of Famer." : "")",
+                        body: "\(player.fullName) (\(player.position.rawValue), age \(player.age)) is hanging up his cleats after \(max(1, player.yearsPro)) pro seasons. He asked that the organization — and you personally — be thanked for the way his final chapter was handled. The locker room will feel his absence.\(production)\(retirement.isHallOfFamer ? "\n\nExpect the call: he retires as a Hall of Famer." : "")",
                         date: "Offseason - Coaching Changes, Season \(season)",
                         category: .leagueNotice
                     ))
@@ -7255,7 +7255,7 @@ enum WeekAdvancer {
 
     /// Closes the postseason ledger for the season that just finished.
     ///
-    /// Runs once the Super Bowl is on the board, which is the first moment every
+    /// Runs once the Championship is on the board, which is the first moment every
     /// club's playoff game count is final. Two jobs:
     /// 1. **Model the 13 clubs the sim never box-scored.** Their line is drawn
     ///    from the same `SeasonStatSynthesizer` the regular season uses, at the
@@ -7435,7 +7435,7 @@ enum WeekAdvancer {
                 .map(\.playerID)
         )
 
-        // --- Playoff heartbreak: a conference-round or Super Bowl loss ---
+        // --- Playoff heartbreak: a conference-round or Championship loss ---
         let heartbreakTeamIDs = playoffHeartbreakTeamIDs(season: season, modelContext: modelContext)
 
         var coachesByTeam: [UUID: [Coach]] = [:]
@@ -7899,7 +7899,7 @@ enum WeekAdvancer {
         return team.hasLastSeasonRecord ? team.lastSeasonWins : nil
     }
 
-    /// Teams that lost in the conference round (week 21) or the Super Bowl
+    /// Teams that lost in the conference round (week 21) or the Championship
     /// (week 22) — the §2.3 "playoff heartbreak" trigger, which reference §4
     /// describes as a team-wide offseason edge.
     ///

@@ -462,7 +462,7 @@ enum ProspectFog {
     ///
     /// * **A filed report** — `ScoutingEngine.applyGradeBasedFields`, reached
     ///   through `applyReport`. Every instrument that files one goes through it:
-    ///   the regional tape assignment, Senior Bowl week, the combine trip and the
+    ///   the regional tape assignment, Showcase week, the combine trip and the
     ///   pro-day tour. It writes all eight mental keys AND the position block.
     /// * **An interview** — `ScoutingEngine.revealMentalGradesFromInterview`,
     ///   which writes the five keys in `interviewRevealedMentalKeys` and nothing

@@ -57,7 +57,7 @@ struct GamePlanView: View {
     /// optional so the view renders cleanly from any entry point.
     struct Context {
         var weekLabel: String?        // "Week 5" / "Wild Card"
-        var opponentName: String?     // "Chicago Bears"
+        var opponentName: String?     // "Chicago Ironworks"
         var opponentRecord: String?   // "3-1"
         var passDefense: DefenseStrength?
         var runDefense: DefenseStrength?
@@ -1225,7 +1225,7 @@ struct GamePlanView: View {
             gamePlan: $gamePlan,
             context: GamePlanView.Context(
                 weekLabel: "Week 5",
-                opponentName: "Chicago Bears",
+                opponentName: "Chicago Ironworks",
                 opponentRecord: "3-1",
                 passDefense: .weak,
                 runDefense: .strong,

@@ -22,7 +22,7 @@ enum FAMilestone: String, Codable, CaseIterable {
     case approaching1000Yards       // 1 game from career 1000+ yards — RB nearing benchmark
     case lastChance                 // veteran 33+, 1 yr proving deal
     case comeback                   // retired in past, returning
-    case proBowlPush                // approaching 4th Pro Bowl (HOF lock)
+    case proBowlPush                // approaching 4th All-Star selection (HOF lock)
 }
 
 enum MilestoneTracker {
@@ -367,7 +367,7 @@ enum MilestoneTracker {
             }
         }
 
-        // Pro Bowl / Hall of Fame push: a real career case where the numbers
+        // All-Star / Hall of Fame push: a real career case where the numbers
         // exist, the old rating-and-age proxy where they do not. The age window
         // stays either way — this milestone is about a player still adding to the
         // résumé, and a 36-year-old is chasing a different story (`lastChance`).
@@ -422,7 +422,7 @@ enum MilestoneTracker {
     // MARK: - Contract effects
 
     /// Required salary multiplier for milestone players.
-    /// E.g. a Pro Bowl-push veteran demands 1.10x; a last-chance vet accepts 0.85x.
+    /// E.g. a All-Star-push veteran demands 1.10x; a last-chance vet accepts 0.85x.
     static func milestoneSalaryMultiplier(milestone: FAMilestone) -> Double {
         switch milestone {
         case .lastChance:           return 0.85
@@ -492,11 +492,11 @@ enum MilestoneTracker {
                 body = "Veteran back \(player.lastName) signs with a fresh playbook and one more 1,000-yard season in mind."
             }
         case .proBowlPush:
-            headline = "\(player.fullName) eyes Pro Bowl + HOF lock"
+            headline = "\(player.fullName) eyes All-Star + HOF lock"
             if facts.isEmpty {
-                body = "Another Pro Bowl nod likely cements \(player.lastName)'s Hall of Fame case. Stakes are high."
+                body = "Another All-Star nod likely cements \(player.lastName)'s Hall of Fame case. Stakes are high."
             } else {
-                body = "\(facts.seasons) seasons, a peak of \(facts.peakOverall) overall, and \(hallOfFameSummary(position: player.position, facts: facts)) — another Pro Bowl nod likely cements \(player.lastName)'s Hall of Fame case. Stakes are high."
+                body = "\(facts.seasons) seasons, a peak of \(facts.peakOverall) overall, and \(hallOfFameSummary(position: player.position, facts: facts)) — another All-Star nod likely cements \(player.lastName)'s Hall of Fame case. Stakes are high."
             }
         }
         let seasonYear = season ?? Calendar.current.component(.year, from: Date())

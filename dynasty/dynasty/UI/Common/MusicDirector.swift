@@ -25,7 +25,7 @@ enum MusicContext: String, CaseIterable {
     case gameday
     /// January. Same instruments as `menu`, colder key.
     case playoffs
-    /// The Super Bowl phase and the trophy.
+    /// The Championship phase and the trophy.
     case championship
     /// Coaching changes, roster review, free agency — the quiet months.
     case offseason

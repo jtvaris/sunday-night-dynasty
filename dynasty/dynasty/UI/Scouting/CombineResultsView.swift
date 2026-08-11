@@ -472,7 +472,7 @@ struct CombineResultsView<Header: View>: View {
             if insightsExpanded {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("NFL COMBINE RESULTS")
+                        Text("COMBINE RESULTS")
                             .font(.title3.weight(.heavy))
                             .foregroundStyle(Color.textPrimary)
 

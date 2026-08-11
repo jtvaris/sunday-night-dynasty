@@ -1,6 +1,6 @@
 import Foundation
 
-struct NFLTeamDefinition {
+struct LeagueTeamDefinition {
     let name: String
     let city: String
     let abbreviation: String
@@ -56,9 +56,9 @@ struct TeamPreview {
     }
 }
 
-extension NFLTeamDefinition {
+extension LeagueTeamDefinition {
     var preview: TeamPreview {
-        NFLTeamData.previews[abbreviation] ?? TeamPreview(
+        LeagueTeamData.previews[abbreviation] ?? TeamPreview(
             difficulty: 3, situation: "Rising", ownerPatience: "Moderate",
             patienceSeasons: 3, marketDescription: "Moderate expectations",
             estimatedOVR: 75, estimatedCapSpace: 25, estimatedDraftPicks: 7,
@@ -68,7 +68,7 @@ extension NFLTeamDefinition {
     }
 }
 
-enum NFLTeamData {
+enum LeagueTeamData {
 
     // MARK: - Team Preview Data
 
@@ -98,7 +98,7 @@ enum NFLTeamData {
         "LAC": TeamPreview(difficulty: 3, situation: "Rising", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Large market but competing for attention in LA", estimatedOVR: 77, estimatedCapSpace: 28, estimatedDraftPicks: 7, coachingBudget: 45, spendingWillingness: 50, lastSeasonWins: 11, lastSeasonLosses: 6, startingQBName: "P. Jimison", startingQBOverall: 87),
 
         // NFC East
-        "DAL": TeamPreview(difficulty: 5, situation: "Win Now", ownerPatience: "Win Now", patienceSeasons: 1, marketDescription: "America's Team — maximum media pressure at all times", estimatedOVR: 80, estimatedCapSpace: 12, estimatedDraftPicks: 6, coachingBudget: 57, spendingWillingness: 85, lastSeasonWins: 7, lastSeasonLosses: 10, startingQBName: "R. Frobisher", startingQBOverall: 84),
+        "DAL": TeamPreview(difficulty: 5, situation: "Win Now", ownerPatience: "Win Now", patienceSeasons: 1, marketDescription: "The most-watched franchise in the League — maximum media pressure at all times", estimatedOVR: 80, estimatedCapSpace: 12, estimatedDraftPicks: 6, coachingBudget: 57, spendingWillingness: 85, lastSeasonWins: 7, lastSeasonLosses: 10, startingQBName: "R. Frobisher", startingQBOverall: 84),
         "NYG": TeamPreview(difficulty: 4, situation: "Rebuilding", ownerPatience: "Demanding", patienceSeasons: 2, marketDescription: "NYC market demands winners, legacy franchise with high bar", estimatedOVR: 67, estimatedCapSpace: 22, estimatedDraftPicks: 8, coachingBudget: 46, spendingWillingness: 70, lastSeasonWins: 3, lastSeasonLosses: 14, startingQBName: "W. Rigsbee", startingQBOverall: 64),
         "PHI": TeamPreview(difficulty: 4, situation: "Contender", ownerPatience: "Demanding", patienceSeasons: 2, marketDescription: "Intense scrutiny, passionate fan base expects championships", estimatedOVR: 84, estimatedCapSpace: 14, estimatedDraftPicks: 6, coachingBudget: 60, spendingWillingness: 75, lastSeasonWins: 14, lastSeasonLosses: 3, startingQBName: "V. Sweetland", startingQBOverall: 90),
         "WAS": TeamPreview(difficulty: 3, situation: "Rising", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Rebuilding brand in a major market, moderate pressure", estimatedOVR: 73, estimatedCapSpace: 32, estimatedDraftPicks: 8, coachingBudget: 48, spendingWillingness: 50, lastSeasonWins: 12, lastSeasonLosses: 5, startingQBName: "S. Stapleton", startingQBOverall: 82),
@@ -106,7 +106,7 @@ enum NFLTeamData {
         // NFC North
         "CHI": TeamPreview(difficulty: 4, situation: "Rising", ownerPatience: "Demanding", patienceSeasons: 2, marketDescription: "Massive market, title-starved fan base growing impatient", estimatedOVR: 74, estimatedCapSpace: 35, estimatedDraftPicks: 8, coachingBudget: 48, spendingWillingness: 70, lastSeasonWins: 5, lastSeasonLosses: 12, startingQBName: "J. Oldenburg", startingQBOverall: 74),
         "DET": TeamPreview(difficulty: 3, situation: "Contender", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Hungry fan base riding momentum, rising expectations", estimatedOVR: 83, estimatedCapSpace: 16, estimatedDraftPicks: 7, coachingBudget: 46, spendingWillingness: 55, lastSeasonWins: 15, lastSeasonLosses: 2, startingQBName: "S. Carrington", startingQBOverall: 88),
-        "GB":  TeamPreview(difficulty: 2, situation: "Rising", ownerPatience: "Very Patient", patienceSeasons: 5, marketDescription: "Small market, community-owned — unique patience and loyalty", estimatedOVR: 78, estimatedCapSpace: 25, estimatedDraftPicks: 7, coachingBudget: 27, spendingWillingness: 25, lastSeasonWins: 11, lastSeasonLosses: 6, startingQBName: "B. Bidwell", startingQBOverall: 83),
+        "GB":  TeamPreview(difficulty: 2, situation: "Rising", ownerPatience: "Very Patient", patienceSeasons: 5, marketDescription: "Small market, community-first ownership — unique patience and loyalty", estimatedOVR: 78, estimatedCapSpace: 25, estimatedDraftPicks: 7, coachingBudget: 27, spendingWillingness: 25, lastSeasonWins: 11, lastSeasonLosses: 6, startingQBName: "B. Bidwell", startingQBOverall: 83),
         "MIN": TeamPreview(difficulty: 3, situation: "Contender", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Dedicated fans with moderate media presence", estimatedOVR: 80, estimatedCapSpace: 20, estimatedDraftPicks: 7, coachingBudget: 46, spendingWillingness: 55, lastSeasonWins: 14, lastSeasonLosses: 3, startingQBName: "B. Tanberg", startingQBOverall: 80),
 
         // NFC South
@@ -119,56 +119,56 @@ enum NFLTeamData {
         "ARI": TeamPreview(difficulty: 2, situation: "Rebuilding", ownerPatience: "Patient", patienceSeasons: 4, marketDescription: "Moderate market with a patient ownership group", estimatedOVR: 69, estimatedCapSpace: 40, estimatedDraftPicks: 9, coachingBudget: 32, spendingWillingness: 35, lastSeasonWins: 8, lastSeasonLosses: 9, startingQBName: "A. Jorgensen", startingQBOverall: 80),
         "LAR": TeamPreview(difficulty: 4, situation: "Win Now", ownerPatience: "Demanding", patienceSeasons: 2, marketDescription: "Win now in LA — star-driven franchise under constant spotlight", estimatedOVR: 79, estimatedCapSpace: 10, estimatedDraftPicks: 5, coachingBudget: 57, spendingWillingness: 75, lastSeasonWins: 10, lastSeasonLosses: 7, startingQBName: "N. Willoughby", startingQBOverall: 83),
         "SF":  TeamPreview(difficulty: 4, situation: "Contender", ownerPatience: "Demanding", patienceSeasons: 2, marketDescription: "Elite expectations, championship-or-bust mentality", estimatedOVR: 85, estimatedCapSpace: 12, estimatedDraftPicks: 6, coachingBudget: 50, spendingWillingness: 75, lastSeasonWins: 6, lastSeasonLosses: 11, startingQBName: "N. Hardesty", startingQBOverall: 85),
-        "SEA": TeamPreview(difficulty: 3, situation: "Rising", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Passionate 12th Man fan base, moderate media market", estimatedOVR: 77, estimatedCapSpace: 24, estimatedDraftPicks: 7, coachingBudget: 41, spendingWillingness: 50, lastSeasonWins: 10, lastSeasonLosses: 7, startingQBName: "J. Vestergaard", startingQBOverall: 79),
+        "SEA": TeamPreview(difficulty: 3, situation: "Rising", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Deafening home crowd, moderate media market", estimatedOVR: 77, estimatedCapSpace: 24, estimatedDraftPicks: 7, coachingBudget: 41, spendingWillingness: 50, lastSeasonWins: 10, lastSeasonLosses: 7, startingQBName: "J. Vestergaard", startingQBOverall: 79),
     ]
 
-    static let allTeams: [NFLTeamDefinition] = [
+    static let allTeams: [LeagueTeamDefinition] = [
         // MARK: - AFC East
-        NFLTeamDefinition(name: "Bills", city: "Buffalo", abbreviation: "BUF", conference: .AFC, division: .east, mediaMarket: .medium),
-        NFLTeamDefinition(name: "Dolphins", city: "Miami", abbreviation: "MIA", conference: .AFC, division: .east, mediaMarket: .large),
-        NFLTeamDefinition(name: "Patriots", city: "New England", abbreviation: "NE", conference: .AFC, division: .east, mediaMarket: .large),
-        NFLTeamDefinition(name: "Jets", city: "New York", abbreviation: "NYJ", conference: .AFC, division: .east, mediaMarket: .large),
+        LeagueTeamDefinition(name: "Blizzard", city: "Buffalo", abbreviation: "BUF", conference: .AFC, division: .east, mediaMarket: .medium),
+        LeagueTeamDefinition(name: "Reefsharks", city: "Miami", abbreviation: "MIA", conference: .AFC, division: .east, mediaMarket: .large),
+        LeagueTeamDefinition(name: "Colonials", city: "New England", abbreviation: "NE", conference: .AFC, division: .east, mediaMarket: .large),
+        LeagueTeamDefinition(name: "Aviators", city: "New York", abbreviation: "NYJ", conference: .AFC, division: .east, mediaMarket: .large),
 
         // MARK: - AFC North
-        NFLTeamDefinition(name: "Ravens", city: "Baltimore", abbreviation: "BAL", conference: .AFC, division: .north, mediaMarket: .medium),
-        NFLTeamDefinition(name: "Bengals", city: "Cincinnati", abbreviation: "CIN", conference: .AFC, division: .north, mediaMarket: .medium),
-        NFLTeamDefinition(name: "Browns", city: "Cleveland", abbreviation: "CLE", conference: .AFC, division: .north, mediaMarket: .medium),
-        NFLTeamDefinition(name: "Steelers", city: "Pittsburgh", abbreviation: "PIT", conference: .AFC, division: .north, mediaMarket: .medium),
+        LeagueTeamDefinition(name: "Harbormen", city: "Baltimore", abbreviation: "BAL", conference: .AFC, division: .north, mediaMarket: .medium),
+        LeagueTeamDefinition(name: "Riverkings", city: "Cincinnati", abbreviation: "CIN", conference: .AFC, division: .north, mediaMarket: .medium),
+        LeagueTeamDefinition(name: "Forgemen", city: "Cleveland", abbreviation: "CLE", conference: .AFC, division: .north, mediaMarket: .medium),
+        LeagueTeamDefinition(name: "Steelworks", city: "Pittsburgh", abbreviation: "PIT", conference: .AFC, division: .north, mediaMarket: .medium),
 
         // MARK: - AFC South
-        NFLTeamDefinition(name: "Texans", city: "Houston", abbreviation: "HOU", conference: .AFC, division: .south, mediaMarket: .large),
-        NFLTeamDefinition(name: "Colts", city: "Indianapolis", abbreviation: "IND", conference: .AFC, division: .south, mediaMarket: .medium),
-        NFLTeamDefinition(name: "Jaguars", city: "Jacksonville", abbreviation: "JAX", conference: .AFC, division: .south, mediaMarket: .small),
-        NFLTeamDefinition(name: "Titans", city: "Tennessee", abbreviation: "TEN", conference: .AFC, division: .south, mediaMarket: .medium),
+        LeagueTeamDefinition(name: "Astronauts", city: "Houston", abbreviation: "HOU", conference: .AFC, division: .south, mediaMarket: .large),
+        LeagueTeamDefinition(name: "Speedway", city: "Indianapolis", abbreviation: "IND", conference: .AFC, division: .south, mediaMarket: .medium),
+        LeagueTeamDefinition(name: "Tidewater", city: "Jacksonville", abbreviation: "JAX", conference: .AFC, division: .south, mediaMarket: .small),
+        LeagueTeamDefinition(name: "Cumberlands", city: "Tennessee", abbreviation: "TEN", conference: .AFC, division: .south, mediaMarket: .medium),
 
         // MARK: - AFC West
-        NFLTeamDefinition(name: "Broncos", city: "Denver", abbreviation: "DEN", conference: .AFC, division: .west, mediaMarket: .medium),
-        NFLTeamDefinition(name: "Chiefs", city: "Kansas City", abbreviation: "KC", conference: .AFC, division: .west, mediaMarket: .medium),
-        NFLTeamDefinition(name: "Raiders", city: "Las Vegas", abbreviation: "LV", conference: .AFC, division: .west, mediaMarket: .large),
-        NFLTeamDefinition(name: "Chargers", city: "Los Angeles", abbreviation: "LAC", conference: .AFC, division: .west, mediaMarket: .large),
+        LeagueTeamDefinition(name: "Summit", city: "Denver", abbreviation: "DEN", conference: .AFC, division: .west, mediaMarket: .medium),
+        LeagueTeamDefinition(name: "Stockyards", city: "Kansas City", abbreviation: "KC", conference: .AFC, division: .west, mediaMarket: .medium),
+        LeagueTeamDefinition(name: "Highrollers", city: "Las Vegas", abbreviation: "LV", conference: .AFC, division: .west, mediaMarket: .large),
+        LeagueTeamDefinition(name: "Currents", city: "Los Angeles", abbreviation: "LAC", conference: .AFC, division: .west, mediaMarket: .large),
 
         // MARK: - NFC East
-        NFLTeamDefinition(name: "Cowboys", city: "Dallas", abbreviation: "DAL", conference: .NFC, division: .east, mediaMarket: .large),
-        NFLTeamDefinition(name: "Giants", city: "New York", abbreviation: "NYG", conference: .NFC, division: .east, mediaMarket: .large),
-        NFLTeamDefinition(name: "Eagles", city: "Philadelphia", abbreviation: "PHI", conference: .NFC, division: .east, mediaMarket: .large),
-        NFLTeamDefinition(name: "Commanders", city: "Washington", abbreviation: "WAS", conference: .NFC, division: .east, mediaMarket: .large),
+        LeagueTeamDefinition(name: "Longriders", city: "Dallas", abbreviation: "DAL", conference: .NFC, division: .east, mediaMarket: .large),
+        LeagueTeamDefinition(name: "Skyline", city: "New York", abbreviation: "NYG", conference: .NFC, division: .east, mediaMarket: .large),
+        LeagueTeamDefinition(name: "Bellringers", city: "Philadelphia", abbreviation: "PHI", conference: .NFC, division: .east, mediaMarket: .large),
+        LeagueTeamDefinition(name: "Monuments", city: "Washington", abbreviation: "WAS", conference: .NFC, division: .east, mediaMarket: .large),
 
         // MARK: - NFC North
-        NFLTeamDefinition(name: "Bears", city: "Chicago", abbreviation: "CHI", conference: .NFC, division: .north, mediaMarket: .large),
-        NFLTeamDefinition(name: "Lions", city: "Detroit", abbreviation: "DET", conference: .NFC, division: .north, mediaMarket: .medium),
-        NFLTeamDefinition(name: "Packers", city: "Green Bay", abbreviation: "GB", conference: .NFC, division: .north, mediaMarket: .small),
-        NFLTeamDefinition(name: "Vikings", city: "Minnesota", abbreviation: "MIN", conference: .NFC, division: .north, mediaMarket: .medium),
+        LeagueTeamDefinition(name: "Ironworks", city: "Chicago", abbreviation: "CHI", conference: .NFC, division: .north, mediaMarket: .large),
+        LeagueTeamDefinition(name: "Motorworks", city: "Detroit", abbreviation: "DET", conference: .NFC, division: .north, mediaMarket: .medium),
+        LeagueTeamDefinition(name: "Timberjacks", city: "Green Bay", abbreviation: "GB", conference: .NFC, division: .north, mediaMarket: .small),
+        LeagueTeamDefinition(name: "Nordics", city: "Minnesota", abbreviation: "MIN", conference: .NFC, division: .north, mediaMarket: .medium),
 
         // MARK: - NFC South
-        NFLTeamDefinition(name: "Falcons", city: "Atlanta", abbreviation: "ATL", conference: .NFC, division: .south, mediaMarket: .large),
-        NFLTeamDefinition(name: "Panthers", city: "Carolina", abbreviation: "CAR", conference: .NFC, division: .south, mediaMarket: .medium),
-        NFLTeamDefinition(name: "Saints", city: "New Orleans", abbreviation: "NO", conference: .NFC, division: .south, mediaMarket: .medium),
-        NFLTeamDefinition(name: "Buccaneers", city: "Tampa Bay", abbreviation: "TB", conference: .NFC, division: .south, mediaMarket: .medium),
+        LeagueTeamDefinition(name: "Ironclads", city: "Atlanta", abbreviation: "ATL", conference: .NFC, division: .south, mediaMarket: .large),
+        LeagueTeamDefinition(name: "Foxhounds", city: "Carolina", abbreviation: "CAR", conference: .NFC, division: .south, mediaMarket: .medium),
+        LeagueTeamDefinition(name: "Krewe", city: "New Orleans", abbreviation: "NO", conference: .NFC, division: .south, mediaMarket: .medium),
+        LeagueTeamDefinition(name: "Freebooters", city: "Tampa Bay", abbreviation: "TB", conference: .NFC, division: .south, mediaMarket: .medium),
 
         // MARK: - NFC West
-        NFLTeamDefinition(name: "Cardinals", city: "Arizona", abbreviation: "ARI", conference: .NFC, division: .west, mediaMarket: .medium),
-        NFLTeamDefinition(name: "Rams", city: "Los Angeles", abbreviation: "LAR", conference: .NFC, division: .west, mediaMarket: .large),
-        NFLTeamDefinition(name: "49ers", city: "San Francisco", abbreviation: "SF", conference: .NFC, division: .west, mediaMarket: .large),
-        NFLTeamDefinition(name: "Seahawks", city: "Seattle", abbreviation: "SEA", conference: .NFC, division: .west, mediaMarket: .medium),
+        LeagueTeamDefinition(name: "Sunspires", city: "Arizona", abbreviation: "ARI", conference: .NFC, division: .west, mediaMarket: .medium),
+        LeagueTeamDefinition(name: "Pacifics", city: "Los Angeles", abbreviation: "LAR", conference: .NFC, division: .west, mediaMarket: .large),
+        LeagueTeamDefinition(name: "Goldrush", city: "San Francisco", abbreviation: "SF", conference: .NFC, division: .west, mediaMarket: .large),
+        LeagueTeamDefinition(name: "Evergreens", city: "Seattle", abbreviation: "SEA", conference: .NFC, division: .west, mediaMarket: .medium),
     ]
 }

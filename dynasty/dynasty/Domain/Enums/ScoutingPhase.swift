@@ -10,7 +10,7 @@ enum ScoutingPhase: String, Codable, CaseIterable {
     var displayName: String {
         switch self {
         case .collegeSeason:   return "College Season"
-        case .seniorBowl:      return "Senior Bowl"
+        case .seniorBowl:      return "The Showcase"
         case .combine:         return "Combine"
         case .proDay:          return "Pro Day"
         case .personalWorkout: return "Personal Workout"

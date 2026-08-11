@@ -5,7 +5,7 @@ import SwiftData
 /// gem/bust flashbacks across seasons.
 ///
 /// Updated by `CareerArcEngine` (added in Vaihe 5) at offseason boundaries
-/// based on accumulated stats, milestones (Pro Bowl, All-Pro, extension), and
+/// based on accumulated stats, milestones (All-Star Game, All-Pro, extension), and
 /// negative events (cut before contract end).
 @Model
 final class CareerArcState {

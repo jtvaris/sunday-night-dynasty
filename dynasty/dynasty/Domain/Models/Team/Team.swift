@@ -110,7 +110,7 @@ final class Team {
 
     // MARK: - Computed Properties
 
-    /// Full franchise name combining city and team name (e.g. "Kansas City Chiefs").
+    /// Full franchise name combining city and team name (e.g. "Kansas City Stockyards").
     var fullName: String {
         "\(city) \(name)"
     }

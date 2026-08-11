@@ -474,7 +474,7 @@ struct NewCareerView: View {
                     case .simple:
                         Text("Great for new players. Straightforward salaries, no hidden penalties.")
                     case .realistic:
-                        Text("Full NFL cap rules. Every dollar and bonus structure matters.")
+                        Text("Full League cap rules. Every dollar and bonus structure matters.")
                     case .sandbox:
                         Text("No salary cap restrictions. Sign whoever you want, however you want.")
                     }

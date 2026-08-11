@@ -103,7 +103,7 @@ enum SeasonWeekBand {
         case ..<20: return "Wild Card"
         case 20:    return "Divisional"
         case 21:    return "Conference"
-        default:    return "Super Bowl"
+        default:    return "The Championship"
         }
     }
 

@@ -214,15 +214,17 @@ enum PressConferenceEngine {
 
     // MARK: - Reporters
 
+    /// Fictional national press corps. Names and outlets are invented — no real
+    /// journalist or broadcaster may appear here.
     private static let reporters: [(name: String, outlet: String)] = [
-        ("Adam Schefter", "ESPN"),
-        ("Ian Rapoport", "NFL Network"),
-        ("Jay Glazer", "FOX Sports"),
-        ("Josina Anderson", "CBS Sports"),
-        ("Tom Pelissero", "NFL Network"),
-        ("Diana Russini", "The Athletic"),
-        ("Mike Garafolo", "NFL Network"),
-        ("Albert Breer", "Sports Illustrated"),
+        ("Marcus Deane", "National Sports Network"),
+        ("Renee Calloway", "National Sports Network"),
+        ("Ty Brennan", "Continental Sports"),
+        ("Vivian Osei", "Continental Sports"),
+        ("Hal Marchetti", "The Gridiron Weekly"),
+        ("Priya Raman", "The Gridiron Weekly"),
+        ("Desmond Iyer", "Sunday Sports Wire"),
+        ("Nora Whitlock", "Pressbox Daily"),
     ]
 
     private static let localReporters: [(name: String, outlet: String)] = [
@@ -232,11 +234,11 @@ enum PressConferenceEngine {
     ]
 
     private static func randomReporter() -> (name: String, outlet: String) {
-        reporters.randomElement() ?? reporters[0]
+        reporters.randomElement() ?? ("Marcus Deane", "National Sports Network")
     }
 
     private static func randomLocalReporter() -> (name: String, outlet: String) {
-        localReporters.randomElement() ?? localReporters[0]
+        localReporters.randomElement() ?? ("Beat Reporter", "Local Press")
     }
 
     // MARK: - Intro Press Conference
@@ -1305,9 +1307,9 @@ enum PressConferenceEngine {
                     )
                 ),
                 PressResponse(
-                    text: "Playoffs? I'm already thinking about the Super Bowl.",
+                    text: "Playoffs? I'm already thinking about the Championship.",
                     tone: .aggressive,
-                    mediaReaction: "\(r.outlet): \"SUPER BOWL?! \(team.name) GM looking past the competition?\"",
+                    mediaReaction: "\(r.outlet): \"CHAMPIONSHIP?! \(team.name) GM looking past the competition?\"",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: 5,

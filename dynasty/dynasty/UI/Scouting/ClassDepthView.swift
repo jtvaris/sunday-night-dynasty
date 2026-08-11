@@ -5,7 +5,7 @@ import SwiftData
 //
 // WHAT THE JANUARY TASK LANDS ON.
 //
-// "Read the Senior Bowl & declaration reports" used to deep-link into the
+// "Read the Showcase & declaration reports" used to deep-link into the
 // Combine tab, and in `.reviewRoster` the combine has not been held: no prospect
 // carries `combineInvite` (the flag is stamped by `ScoutingEngine
 // .generateCombineResults`, which only runs once the combine window opens), so
@@ -300,7 +300,7 @@ enum ClassDepthTopEnd {
 //
 // Everything the list draws is built ONCE, in `.task`, and held as `@State`.
 // The build walks a ~350-man class four times (board sort, group bucketing,
-// need ranking, Senior Bowl scan) and this screen sits under the hub's process
+// need ranking, Showcase scan) and this screen sits under the hub's process
 // chrome, which re-evaluates on every `@State` touch in the whole hub.
 
 /// One position group's row.
@@ -357,7 +357,7 @@ struct ClassDepthView: View {
     @Binding var positionFilter: ProspectPositionFilter
     /// Whether the hub's Insights block is open (#130).
     ///
-    /// The declaration header — declared / early entries / returned / Senior Bowl
+    /// The declaration header — declared / early entries / returned / Showcase
     /// reports, plus the sentence that reads them — is this surface's insight: a
     /// once-a-January orientation over a screen whose actual content is the nine
     /// depth bars. It folds with the hub's chevron so the bars start at the top
@@ -412,7 +412,7 @@ struct ClassDepthView: View {
                             }
                         } header: {
                             sectionHeader(
-                                "Senior Bowl risers",
+                                "Showcase risers",
                                 systemImage: "arrow.up.forward.circle.fill",
                                 tint: .success
                             )
@@ -451,7 +451,7 @@ struct ClassDepthView: View {
         .onChange(of: prospects.count) { _, _ in rebuild() }
     }
 
-    // MARK: - Declarations & Senior Bowl
+    // MARK: - Declarations & Showcase
 
     private var declarationCard: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -482,7 +482,7 @@ struct ClassDepthView: View {
                 )
                 summaryTile(
                     value: summary.seniorBowlHeld ? "\(summary.seniorBowlReports)" : "\u{2014}",
-                    label: "Senior Bowl reports",
+                    label: "Showcase reports",
                     tint: summary.seniorBowlHeld ? .success : .textTertiaryReadable
                 )
             }
@@ -527,7 +527,7 @@ struct ClassDepthView: View {
         .accessibilityLabel("\(value) \(label)")
     }
 
-    /// One Senior Bowl riser: who he is, and what the week did to his round.
+    /// One Showcase riser: who he is, and what the week did to his round.
     private func standoutRow(_ prospect: CollegeProspect) -> some View {
         HStack(spacing: 8) {
             ProspectRowIdentity(prospect: prospect, showsUserGrade: false) {
@@ -931,7 +931,7 @@ struct ClassDepthView: View {
     ///
     /// Two public signals, in order. The sharp one is `marketMove` \u{2014} the media
     /// has moved him up a round since the class opened, which after the January
-    /// hook is the Senior Bowl's own `applyProjectionDrift` and nothing else. The
+    /// hook is the Showcase's own `applyProjectionDrift` and nothing else. The
     /// blunt one is the week's own verdict, which `ScoutingEngine.runSeniorBowl`
     /// writes into the report's `productionNotes` for the eighteen practice
     /// winners. Neither reads a grade, so the list cannot leak the board.

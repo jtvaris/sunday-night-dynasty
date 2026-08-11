@@ -232,7 +232,7 @@ struct TopNavigationBar: View {
     VStack(spacing: 0) {
         TopNavigationBar(
             teamAbbreviation: "KC",
-            teamName: "Kansas City Chiefs",
+            teamName: "Kansas City Stockyards",
             pendingTaskCount: 3,
             onCalendarTapped: {}
         )

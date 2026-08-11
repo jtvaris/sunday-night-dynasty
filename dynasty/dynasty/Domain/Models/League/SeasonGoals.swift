@@ -27,7 +27,7 @@ struct SeasonGoals: Codable, Equatable {
         case 80...:
             // Elite team
             return SeasonGoals(
-                primaryGoal: "Win the Super Bowl",
+                primaryGoal: "Win the Championship",
                 secondaryGoal: ownerPreference
                     ? "Maintain the championship window"
                     : "Develop young talent for sustained success",
@@ -38,7 +38,7 @@ struct SeasonGoals: Codable, Equatable {
             // Good team
             if ownerPreference {
                 return SeasonGoals(
-                    primaryGoal: "Win the Super Bowl",
+                    primaryGoal: "Win the Championship",
                     secondaryGoal: "Upgrade key roster positions",
                     ownerExpectation: .conference,
                     isAchieved: false

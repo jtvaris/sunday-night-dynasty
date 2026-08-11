@@ -986,27 +986,27 @@ struct FACompleteView: View {
 
         if let signing = topSigning, grade.score >= 70 {
             let templates = [
-                "ESPN: '\(teamAbbr) had an impressive free agency, headlined by the \(signing.name) signing at \(signing.position.rawValue). Grade: \(grade.grade)'",
-                "NFL Network: 'The \(teamName) addressed their needs this offseason. The \(signing.name) addition gives them a real boost. Grade: \(grade.grade)'",
-                "The Athletic: '\(teamAbbr) were one of the winners of free agency. \(signing.name) is a significant upgrade. Grade: \(grade.grade)'"
+                "National Sports Network: '\(teamAbbr) had an impressive free agency, headlined by the \(signing.name) signing at \(signing.position.rawValue). Grade: \(grade.grade)'",
+                "League Network: 'The \(teamName) addressed their needs this offseason. The \(signing.name) addition gives them a real boost. Grade: \(grade.grade)'",
+                "The Gridiron Weekly: '\(teamAbbr) were one of the winners of free agency. \(signing.name) is a significant upgrade. Grade: \(grade.grade)'"
             ]
             return templates[abs(teamAbbr.hashValue) % templates.count]
         } else if let loss = topLoss, grade.score < 55 {
             let templates = [
-                "ESPN: '\(teamAbbr) failed to replace \(loss.name) adequately. A lot of work to do in the draft. Grade: \(grade.grade)'",
-                "NFL Network: 'Losing \(loss.name) hurts, and \(teamAbbr) didn\u{2019}t do enough to fill the void. Grade: \(grade.grade)'",
-                "The Athletic: 'A quiet free agency for \(teamAbbr). The draft becomes critical now. Grade: \(grade.grade)'"
+                "National Sports Network: '\(teamAbbr) failed to replace \(loss.name) adequately. A lot of work to do in the draft. Grade: \(grade.grade)'",
+                "League Network: 'Losing \(loss.name) hurts, and \(teamAbbr) didn\u{2019}t do enough to fill the void. Grade: \(grade.grade)'",
+                "The Gridiron Weekly: 'A quiet free agency for \(teamAbbr). The draft becomes critical now. Grade: \(grade.grade)'"
             ]
             return templates[abs(teamAbbr.hashValue) % templates.count]
         } else if let signing = topSigning {
             let templates = [
-                "ESPN: '\(teamAbbr) made some moves, highlighted by \(signing.name). A solid but unspectacular FA. Grade: \(grade.grade)'",
-                "NFL Network: 'The \(teamName) were selective in free agency. \(signing.name) is the key pickup. Grade: \(grade.grade)'",
-                "The Athletic: '\(teamAbbr) took a measured approach to FA. The real work starts in the draft. Grade: \(grade.grade)'"
+                "National Sports Network: '\(teamAbbr) made some moves, highlighted by \(signing.name). A solid but unspectacular FA. Grade: \(grade.grade)'",
+                "League Network: 'The \(teamName) were selective in free agency. \(signing.name) is the key pickup. Grade: \(grade.grade)'",
+                "The Gridiron Weekly: '\(teamAbbr) took a measured approach to FA. The real work starts in the draft. Grade: \(grade.grade)'"
             ]
             return templates[abs(teamAbbr.hashValue) % templates.count]
         } else {
-            return "ESPN: '\(teamAbbr) were quiet in free agency. All eyes on the draft now. Grade: \(grade.grade)'"
+            return "National Sports Network: '\(teamAbbr) were quiet in free agency. All eyes on the draft now. Grade: \(grade.grade)'"
         }
     }
 

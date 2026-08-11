@@ -695,7 +695,7 @@ struct TimelineTasksPanel: View {
             switch career.currentWeek {
             case 19: return "Advance to Divisional Round"
             case 20: return "Advance to Conference Championships"
-            case 21: return "Advance to Super Bowl"
+            case 21: return "Advance to the Championship"
             default: return "Advance to Next Round"
             }
         case .tradeDeadline:
@@ -893,14 +893,14 @@ struct TimelineTasksPanel: View {
 
     static func phaseName(_ phase: SeasonPhase) -> String {
         switch phase {
-        case .superBowl:       return "Super Bowl"
-        case .proBowl:         return "Pro Bowl"
+        case .superBowl:       return "The Championship"
+        case .proBowl:         return "All-Star Game"
         case .coachingChanges: return "Coaching Changes"
-        case .combine:         return "NFL Combine"
+        case .combine:         return "The Combine"
         case .freeAgency:      return "Free Agency"
         case .proDays:         return "Pro Days & Workouts"
         case .reviewRoster:    return "Review Roster"
-        case .draft:           return "NFL Draft"
+        case .draft:           return "The Draft"
         case .otas:            return "OTAs"
         case .trainingCamp:    return "Training Camp"
         case .preseason:       return "Preseason"

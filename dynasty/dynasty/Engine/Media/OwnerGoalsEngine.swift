@@ -65,7 +65,7 @@ enum OwnerGoalsEngine {
             goals.append(
                 SeasonGoal(
                     title: "Win 12+ Games",
-                    description: "Prove your team belongs among the NFL elite with a dominant regular season.",
+                    description: "Prove your team belongs among the League's elite with a dominant regular season.",
                     type: .wins,
                     target: 12,
                     priority: .secondary
@@ -212,12 +212,12 @@ enum OwnerGoalsEngine {
     /// Four of these goals used to be guesses, and two of them were wrong in a
     /// way the player could see:
     ///
-    /// - **Playoffs / Conference / Super Bowl** read `career.playoffAppearances`
+    /// - **Playoffs / Conference / The Championship** read `career.playoffAppearances`
     ///   and `career.championships`, which are CAREER-LONG counters. One playoff
     ///   berth in season 1 marked the playoff goal achieved in every season
     ///   afterwards, forever, no matter how the team was actually doing. Now
     ///   they read this season's bracket: seeded top 7, won the conference
-    ///   title game (week 21), won the Super Bowl (week 22).
+    ///   title game (week 21), won the Championship (week 22).
     /// - **Division title** was `wins >= 11 && playoffAppearances > 0` — a team
     ///   could win its division at 9-8 and be told it hadn't, or go 11-6 second
     ///   in the division and be told it had. Now it is the division rank from
@@ -343,7 +343,7 @@ enum OwnerGoalsEngine {
         var madePlayoffs: Bool = false
         /// Won the conference championship game (playoff week 21).
         var wonConference: Bool = false
-        /// Won the Super Bowl (playoff week 22).
+        /// Won the Championship (playoff week 22).
         var wonSuperBowl: Bool = false
         /// Longest run of consecutive regular-season wins this season.
         var longestWinStreak: Int = 0
@@ -470,7 +470,7 @@ enum OwnerGoalsEngine {
     private static func contenderPrimaryGoal(owner: Owner) -> SeasonGoal {
         if owner.prefersWinNow {
             return SeasonGoal(
-                title: "Win the Super Bowl",
+                title: "Win the Championship",
                 description: "\(owner.name) has invested in this roster to win a championship. Nothing less will do.",
                 type: .superBowl,
                 priority: .primary
@@ -478,7 +478,7 @@ enum OwnerGoalsEngine {
         } else {
             return SeasonGoal(
                 title: "Win the Conference",
-                description: "Reach the Super Bowl and prove this team is one of the NFL's elite franchises.",
+                description: "Reach the Championship and prove this team is one of the League's elite franchises.",
                 type: .conference,
                 priority: .primary
             )

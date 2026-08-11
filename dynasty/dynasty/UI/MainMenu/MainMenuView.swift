@@ -183,7 +183,7 @@ struct MainMenuView: View {
                 .foregroundStyle(.white)
                 .shadow(color: .black.opacity(0.6), radius: 8, y: 4)
 
-            Text("NFL FOOTBALL MANAGER")
+            Text("PRO FOOTBALL MANAGER")
                 .font(.system(size: 14, weight: .medium))
                 .tracking(7.5)
                 .foregroundStyle(Color.white.opacity(0.85))
@@ -195,7 +195,7 @@ struct MainMenuView: View {
     }
 
     /// Hint that appears above the buttons when a saved career exists.
-    /// Format: "Continue: Green Bay Packers — Week 6, 2026 season"
+    /// Format: "Continue: Green Bay Timberjacks — Week 6, 2026 season"
     /// When multiple careers exist the picker provides full context, so the
     /// hint is replaced with a simpler count line.
     @ViewBuilder
@@ -250,8 +250,8 @@ struct MainMenuView: View {
         // Football terms (Draft, Combine, Free Agency, …) stay in English by
         // design; only UI-frame phases carry a translation in the catalog.
         switch phase {
-        case .proBowl: return String(localized: "Pro Bowl")
-        case .superBowl: return String(localized: "Super Bowl")
+        case .proBowl: return String(localized: "All-Star Game")
+        case .superBowl: return String(localized: "The Championship")
         case .coachingChanges: return String(localized: "Coaching Changes")
         case .reviewRoster: return String(localized: "Review Roster")
         case .combine: return String(localized: "Combine")
@@ -362,13 +362,23 @@ struct MainMenuView: View {
     /// "which build am I actually testing?" class of confusion — an Xcode Run
     /// and a simctl-installed QA build are otherwise indistinguishable (both
     /// say v1.0 (1)).
+    ///
+    /// DEBUG-only on purpose (#167): reading a file's modification date is a
+    /// required-reason API (`NSPrivacyAccessedAPICategoryFileTimestamp`, reason
+    /// `C617.1`). Keeping it out of Release means `PrivacyInfo.xcprivacy` only
+    /// has to declare UserDefaults, and no shipped code path touches the
+    /// timestamp API at all.
     private static var buildStamp: String {
+        #if DEBUG
         guard let url = Bundle.main.executableURL,
               let date = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
         else { return "" }
         let formatter = DateFormatter()
         formatter.dateFormat = "d.M. HH:mm"
         return "  ·  build \(formatter.string(from: date))"
+        #else
+        return ""
+        #endif
     }
 
     private static var currentYear: String {
@@ -521,8 +531,8 @@ private struct TutorialPage: Identifiable {
             icon: "trophy.fill",
             iconTint: .accentGold,
             title: "Welcome to Sunday Night Dynasty",
-            subtitle: "Your NFL franchise. Your decisions.",
-            body: "Take the reins of an NFL franchise as either a General Manager or a dual-role GM and Head Coach. Build a roster through scouting, free agency, and the draft, then guide your team to a Super Bowl title across multiple seasons.",
+            subtitle: "Your pro franchise. Your decisions.",
+            body: "Take the reins of a pro football franchise as either a General Manager or a dual-role GM and Head Coach. Build a roster through scouting, free agency, and the draft, then guide your team to a Championship title across multiple seasons.",
             points: [
                 ("calendar", "Advance the season one week at a time"),
                 ("person.3.fill", "Manage roster, coaches, and scouts"),
@@ -653,7 +663,7 @@ private struct TutorialPage: Identifiable {
             iconTint: .accentGold,
             title: "The Offseason Loop",
             subtitle: "Championships are built in spring",
-            body: "After the Super Bowl the calendar resets: coaching changes, roster review, the Combine, free agency, the draft, OTAs, training camp, and roster cuts — then a new season kicks off. Each phase has its own tasks, and every year compounds the last one's decisions.",
+            body: "After the Championship the calendar resets: coaching changes, roster review, the Combine, free agency, the draft, OTAs, training camp, and roster cuts — then a new season kicks off. Each phase has its own tasks, and every year compounds the last one's decisions.",
             points: [
                 ("person.crop.square.filled.and.at.rectangle.fill", "Feb — hire and re-sign your staff"),
                 ("stopwatch.fill", "Mar — Combine and free agency"),
@@ -978,8 +988,8 @@ private struct SaveSlotCard: View {
 
     private func phaseLabel(_ phase: SeasonPhase) -> String {
         switch phase {
-        case .proBowl: return String(localized: "Pro Bowl")
-        case .superBowl: return String(localized: "Super Bowl")
+        case .proBowl: return String(localized: "All-Star Game")
+        case .superBowl: return String(localized: "The Championship")
         case .coachingChanges: return String(localized: "Coaching")
         case .reviewRoster: return String(localized: "Review")
         case .combine: return String(localized: "Combine")

@@ -3491,7 +3491,7 @@ enum ScoutingEngine {
     /// **One gate, one quote (#104).** The trip had two entry points with one
     /// affordability rule between them: `CombineResultsView` was handed
     /// `canAffordTrip` and greyed its button correctly, while the Scout Team
-    /// tab's gold "Send Scouts to the NFL Combine" row was handed neither the
+    /// tab's gold "Send Scouts to the Combine" row was handed neither the
     /// verdict nor a `disabled` modifier — so it stayed live, ran
     /// `sendScoutsToCombine()`, hit that function's own `guard canAfford else
     /// { return }` and did nothing at all. A tap with no state change, no alert
@@ -3854,7 +3854,7 @@ enum ScoutingEngine {
     ///
     /// Mixes the career UUID's raw bytes (FNV-1a — never `hashValue`, whose seed
     /// changes every launch), the season and a per-event salt, so the combine,
-    /// the Senior Bowl and the pro-day attrition each draw their own independent
+    /// the Showcase and the pro-day attrition each draw their own independent
     /// stream while staying reproducible across relaunches.
     static func cycleSeed(careerID: UUID?, season: Int, salt: UInt64) -> UInt64 {
         var mixed: UInt64 = 0xCBF2_9CE4_8422_2325
@@ -4150,7 +4150,7 @@ enum ScoutingEngine {
     /// - Parameters:
     ///   - pressure: signed per-prospect stock pressure; **positive = rising**
     ///     (toward round 1). Built by `combinePressure` / `mockConsensusPressure`
-    ///     / the Senior Bowl.
+    ///     / the Showcase.
     ///   - maxShift: hard cap on how many rounds one prospect may move.
     ///   - maxPairs: cap on how many riser/faller swaps this moment may make.
     ///   - seed: deterministic per (careerID, season, event).
@@ -4320,9 +4320,9 @@ enum ScoutingEngine {
         return pressure
     }
 
-    // MARK: - Senior Bowl (January)
+    // MARK: - Showcase (January)
 
-    /// What the Senior Bowl week produced.
+    /// What the Showcase week produced.
     struct SeniorBowlResult {
         struct Note {
             let prospectID: UUID
@@ -4344,7 +4344,7 @@ enum ScoutingEngine {
     /// evaluation on all of them, filed `.seniorBowl` reports on the subset the
     /// week actually exposed, and 2-4 named stories.
     ///
-    /// The Senior Bowl is a televised league event like the combine, so it runs
+    /// The Showcase is a televised league event like the combine, so it runs
     /// whether or not this club sends anybody — attendance only decides *whose
     /// name* is on the report. `ScoutingPhase.seniorBowl` already carried the
     /// 0.55 confidence level and its slot in the phase sort order; this is the
@@ -4427,7 +4427,7 @@ enum ScoutingEngine {
         // evaluator accuracy for everybody: no per-scout accuracy, no chief
         // bonus, no scaling with staff size. Your scouts' name goes on the
         // report for flavour; the club with the best staff gets exactly the same
-        // read from Senior Bowl week as the club with none, and buys its edge
+        // read from Showcase week as the club with none, and buys its edge
         // with the weekly assignments it is charged for.
         let eventAccuracy = 58
         var filed = 0
@@ -4437,7 +4437,7 @@ enum ScoutingEngine {
             let accuracy = eventAccuracy
             if scouts.isEmpty {
                 scoutID = broadcastEvaluator
-                scoutName = "Senior Bowl Practices"
+                scoutName = "Showcase Practices"
             } else {
                 let scout = scouts[n % scouts.count]
                 scoutID = scout.id
@@ -4454,7 +4454,7 @@ enum ScoutingEngine {
                 prospectID: p.id,
                 scoutID: scoutID,
                 scoutName: scoutName,
-                date: "Senior Bowl",
+                date: "The Showcase",
                 phase: .seniorBowl,
                 overallGrade: ovr,
                 potentialGrade: pot,
@@ -4462,7 +4462,7 @@ enum ScoutingEngine {
                 weaknessNotes: generateWeaknessNotes(for: p, accuracy: accuracy),
                 personalityNotes: nil,
                 confidenceLevel: ScoutingPhase.seniorBowl.confidenceLevel,
-                productionNotes: "Senior Bowl week: \(n < 18 ? "graded out as a practice winner" : "struggled in one-on-ones")",
+                productionNotes: "Showcase week: \(n < 18 ? "graded out as a practice winner" : "struggled in one-on-ones")",
                 overallLetterGrade: LetterGrade.from(numericValue: ovr)
             )
             applyReport(report: report, to: prospects[i])
@@ -4479,7 +4479,7 @@ enum ScoutingEngine {
                 name: p.fullName,
                 position: p.position.rawValue,
                 college: p.college,
-                headline: "\(p.college) \(p.position.rawValue) \(p.fullName) owns Senior Bowl week",
+                headline: "\(p.college) \(p.position.rawValue) \(p.fullName) owns Showcase week",
                 body: "\(p.fullName) was the most consistent winner of the week in Mobile, stacking reps against the best senior competition in the class. Scouts who came for somebody else left writing his name down.",
                 isRiser: true
             ))

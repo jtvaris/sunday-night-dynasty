@@ -374,7 +374,7 @@ struct InboxView: View {
         ),
         InboxMessage(
             sender: .leagueOffice,
-            subject: "Welcome to the Dallas Cowboys",
+            subject: "Welcome to the Dallas Longriders",
             body: "On behalf of the league office, welcome...",
             date: "Offseason - Coaching Changes, 2026",
             category: .leagueNotice,

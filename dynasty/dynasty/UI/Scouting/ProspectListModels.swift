@@ -155,7 +155,7 @@ enum ProspectRoundFormat {
 /// diff — but that one is YOUR scouts changing their mind. This is the other
 /// half of the same picture and it is the half a GM actually trades on: the
 /// consensus is a separate opinion now (`CollegeProspect.consensusErrorStored`),
-/// it moves all spring on the Senior Bowl, the combine, four mocks and the
+/// it moves all spring on the Showcase, the combine, four mocks and the
 /// pro-day circuit, and a man whose public round has slid two rounds while your
 /// own grade held is exactly the man you want at the price the room is asking.
 ///

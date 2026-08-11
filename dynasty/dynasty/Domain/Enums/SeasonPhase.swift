@@ -66,14 +66,14 @@ extension SeasonPhase {
     /// Human-readable name for player-facing copy.
     var displayName: String {
         switch self {
-        case .proBowl:         return "Pro Bowl"
-        case .superBowl:       return "Super Bowl"
+        case .proBowl:         return "All-Star Game"
+        case .superBowl:       return "The Championship"
         case .coachingChanges: return "Coaching Changes"
         case .reviewRoster:    return "Review Roster"
-        case .combine:         return "NFL Combine"
+        case .combine:         return "The Combine"
         case .freeAgency:      return "Free Agency"
         case .proDays:         return "Pro Days"
-        case .draft:           return "NFL Draft"
+        case .draft:           return "The Draft"
         case .otas:            return "OTAs"
         case .trainingCamp:    return "Training Camp"
         case .preseason:       return "Preseason"

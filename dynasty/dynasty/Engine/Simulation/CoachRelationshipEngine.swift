@@ -174,7 +174,7 @@ enum CoachRelationshipEngine {
         let yearHired: Int
         /// Season in which this coach departed (nil if still active).
         var yearLeft: Int?
-        /// Where the coach went (e.g. "HC at Dallas Cowboys", "Retired", "OC at Seattle").
+        /// Where the coach went (e.g. "HC at Dallas", "Retired", "OC at Seattle").
         var destination: String?
         /// Whether the coach achieved measurable success at their next stop.
         var wasSuccessful: Bool
@@ -257,7 +257,7 @@ enum CoachRelationshipEngine {
     ///   - coach: The departing coach.
     ///   - event: `"departed_hc"`, `"departed_coord"`, `"departed_other"` or `"retired"`.
     ///   - season: The current season year.
-    ///   - destination: Where the coach went (e.g. "HC at Dallas Cowboys").
+    ///   - destination: Where the coach went (e.g. "HC at Dallas").
     static func recordDeparture(
         tree: inout [CoachingTreeEntry],
         coach: Coach,

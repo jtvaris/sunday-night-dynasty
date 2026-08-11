@@ -240,7 +240,7 @@ enum AgentDialogue {
         var playerFull: String
         /// "WR"
         var position: String
-        /// The club, as a NOUN PHRASE — "the Ravens", or "this club" when the
+        /// The club, as a NOUN PHRASE — "the Harbormen", or "this club" when the
         /// conversation has no team to name (a true free agent).
         ///
         /// A noun phrase rather than a bare nickname on purpose: the fallback

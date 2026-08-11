@@ -222,7 +222,7 @@ enum TaskDestination: String, Codable, CaseIterable {
     case top30Visits
     /// The mock-draft screen, as a league information event.
     case mockDraft
-    /// #128: the draft class by position — declarations, the Senior Bowl, and
+    /// #128: the draft class by position — declarations, the Showcase, and
     /// how deep the DECLARED pool is at each group against the club's own holes.
     /// The January "read the reports" task used to point at `.scouting`, which
     /// opened the hub on the combine tab — a screen that in `.reviewRoster` reads
@@ -266,13 +266,13 @@ enum TaskGenerator {
         switch phase {
         case .proBowl:
             return PhaseInfo(
-                name: "Pro Bowl",
+                name: "All-Star Game",
                 description: "All-star festivities and end-of-season recognition.",
                 order: 1
             )
         case .superBowl:
             return PhaseInfo(
-                name: "Super Bowl",
+                name: "The Championship",
                 description: "The championship game caps off the season. Review results and league awards.",
                 order: 2
             )
@@ -290,7 +290,7 @@ enum TaskGenerator {
             )
         case .combine:
             return PhaseInfo(
-                name: "NFL Combine",
+                name: "The Combine",
                 description: "Prospects showcase their athletic ability. Scout, interview, and build your Big Board.",
                 order: 5
             )
@@ -308,7 +308,7 @@ enum TaskGenerator {
             )
         case .draft:
             return PhaseInfo(
-                name: "NFL Draft",
+                name: "The Draft",
                 description: "Select the next generation of talent for your franchise.",
                 order: 8
             )
@@ -544,7 +544,7 @@ enum TaskGenerator {
         [
             GameTask(
                 phase: .superBowl,
-                title: "Watch the Super Bowl results",
+                title: "Watch the Championship results",
                 description: "See which team won the championship and review the game recap.",
                 icon: "trophy.fill",
                 destination: .news,
@@ -567,8 +567,8 @@ enum TaskGenerator {
         [
             GameTask(
                 phase: .proBowl,
-                title: "Review Pro Bowl selections",
-                description: "See which of your players earned Pro Bowl honors.",
+                title: "Review All-Star selections",
+                description: "See which of your players earned All-Star honors.",
                 icon: "star.circle.fill",
                 destination: .roster,
                 isRequired: false,
@@ -844,7 +844,7 @@ enum TaskGenerator {
             // The two events that fired on the way INTO this phase, and which the
             // task list never mentioned: underclassmen declared for the draft
             // (the class the user has been scouting just changed shape) and the
-            // Senior Bowl was played (a fresh report on every prospect who
+            // Showcase was played (a fresh report on every prospect who
             // attended). Both landed as news + inbox only, so a user working the
             // task list top-down never learned the board had moved.
             //
@@ -858,8 +858,8 @@ enum TaskGenerator {
             // had scouted 83 % of. The depth screen is what this copy describes.
             GameTask(
                 phase: .reviewRoster,
-                title: "Read the Senior Bowl & declaration reports",
-                description: "Underclassmen have declared and the Senior Bowl has been played. See how deep the class is now at every position \u{2014} it is not the one you scouted in the autumn.",
+                title: "Read the Showcase & declaration reports",
+                description: "Underclassmen have declared and the Showcase has been played. See how deep the class is now at every position \u{2014} it is not the one you scouted in the autumn.",
                 icon: "chart.bar.doc.horizontal",
                 destination: .classDepth,
                 isRequired: false,

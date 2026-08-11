@@ -285,7 +285,7 @@ enum EventTemplates {
         case .rookieImpresses:
             return [
                 Template(
-                    headline: "{playerName} turning heads in first NFL practices",
+                    headline: "{playerName} turning heads in first pro practices",
                     description: "Rookie {playerName} has been the talk of {teamName} camp. Coaches and teammates alike have praised the young player's work ethic and natural ability.",
                     options: [
                         EventOption(label: "Increase his reps", description: "Give the rookie more first-team opportunities.", moraleEffect: 10, lockerRoomEffect: 2, ownerEffect: 3, mediaEffect: 3),

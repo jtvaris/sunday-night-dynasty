@@ -2,7 +2,7 @@ import Foundation
 
 /// The 32 franchises the new-career team picker browses, for ONE league source.
 ///
-/// The picker used to read `NFLTeamData.allTeams` + `NFLTeamData.previews`
+/// The picker used to read `LeagueTeamData.allTeams` + `LeagueTeamData.previews`
 /// directly, which is correct only for the random league. A fixed template
 /// carries its own identities (the publish profile renames every nickname —
 /// "Arizona Sunspires"), its own 2025 records, its own rosters and its own pick
@@ -19,7 +19,7 @@ import Foundation
 /// | record, roster OVR, starting QB, draft picks | the template |
 /// | cap space | `LeagueTemplateImporter.capTarget` — the same number the import will produce |
 /// | difficulty, situation | derived from the template's roster + record (see below) |
-/// | owner patience, market copy, coaching budget, lock | `NFLTeamData` — franchise/market facts a roster snapshot does not change |
+/// | owner patience, market copy, coaching budget, lock | `LeagueTeamData` — franchise/market facts a roster snapshot does not change |
 struct TeamBrowseCatalog {
 
     /// Which league source this catalog describes. Career creation reads it
@@ -28,12 +28,12 @@ struct TeamBrowseCatalog {
     let source: LeagueSource
 
     /// Team definitions to list, in catalog order.
-    let teams: [NFLTeamDefinition]
+    let teams: [LeagueTeamDefinition]
 
     /// Abbreviation → preview.
     private let previews: [String: TeamPreview]
 
-    private init(source: LeagueSource, teams: [NFLTeamDefinition], previews: [String: TeamPreview]) {
+    private init(source: LeagueSource, teams: [LeagueTeamDefinition], previews: [String: TeamPreview]) {
         self.source = source
         self.teams = teams
         self.previews = previews
@@ -42,12 +42,12 @@ struct TeamBrowseCatalog {
     // MARK: - Lookup
 
     /// Scouting preview for a listed team; falls back to the static table.
-    func preview(for team: NFLTeamDefinition) -> TeamPreview {
+    func preview(for team: LeagueTeamDefinition) -> TeamPreview {
         previews[team.abbreviation] ?? team.preview
     }
 
     /// The other three teams in `team`'s division, from this same catalog.
-    func divisionRivals(of team: NFLTeamDefinition) -> [NFLTeamDefinition] {
+    func divisionRivals(of team: LeagueTeamDefinition) -> [LeagueTeamDefinition] {
         teams.filter {
             $0.conference == team.conference
             && $0.division == team.division
@@ -73,7 +73,7 @@ struct TeamBrowseCatalog {
     /// are awarded later, in the career, and are not knowable here.
     static let generated: TeamBrowseCatalog = {
         var corrected: [String: TeamPreview] = [:]
-        for (abbreviation, preview) in NFLTeamData.previews {
+        for (abbreviation, preview) in LeagueTeamData.previews {
             corrected[abbreviation] = TeamPreview(
                 difficulty: preview.difficulty,
                 situation: preview.situation,
@@ -94,7 +94,7 @@ struct TeamBrowseCatalog {
         }
         return TeamBrowseCatalog(
             source: .generated,
-            teams: NFLTeamData.allTeams,
+            teams: LeagueTeamData.allTeams,
             previews: corrected
         )
     }()
@@ -113,7 +113,7 @@ struct TeamBrowseCatalog {
             ? 0
             : strengths.values.reduce(0, +) / Double(strengths.count)
 
-        var definitions: [NFLTeamDefinition] = []
+        var definitions: [LeagueTeamDefinition] = []
         var previews: [String: TeamPreview] = [:]
 
         for teamTemplate in template.teams {
@@ -121,9 +121,9 @@ struct TeamBrowseCatalog {
             let abbreviation = identity.appAbbr
             // The app's own row for this franchise — market facts and the
             // conference/division fallback, exactly as the importer resolves it.
-            let known = NFLTeamData.allTeams.first { $0.abbreviation == abbreviation }
+            let known = LeagueTeamData.allTeams.first { $0.abbreviation == abbreviation }
 
-            definitions.append(NFLTeamDefinition(
+            definitions.append(LeagueTeamDefinition(
                 name: identity.nickname,
                 city: identity.city,
                 abbreviation: abbreviation,
@@ -164,7 +164,7 @@ struct TeamBrowseCatalog {
     ) -> TeamPreview {
         // Owner, market and budget are properties of the franchise, not of the
         // roster snapshot, so they stay on the static table for both sources.
-        let base = NFLTeamData.previews[team.identity.appAbbr]
+        let base = LeagueTeamData.previews[team.identity.appAbbr]
         let patience = base?.ownerPatience ?? "Moderate"
         let patienceSeasons = base?.patienceSeasons ?? 3
         let record = team.record2025

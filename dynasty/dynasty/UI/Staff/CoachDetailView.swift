@@ -103,19 +103,22 @@ struct CoachDetailView: View {
 
     var body: some View {
         ZStack {
-            // Subtle locker-room plate behind the page. Kept from the previous
-            // version; it is the only screen in the staff family with one and
-            // it is what stops a wall of cards reading as a spreadsheet.
+            // Subtle plate behind the page — it is what stops a wall of cards
+            // reading as a spreadsheet. The locker-room photograph that used to
+            // do this carried Nike/adidas/Puma logos (#167), so the plate is now
+            // token-only: the same 8%-strength lift, made of palette steps.
             Color.backgroundPrimary.ignoresSafeArea()
-            GeometryReader { geo in
-                Image("BgLockerRoom")
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: geo.size.width, height: geo.size.height)
-                    .clipped()
-                    .opacity(0.08)
-            }
+            LinearGradient(
+                colors: [
+                    Color.backgroundSecondary,
+                    Color.backgroundPrimary,
+                    Color.backgroundPlate
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
             .ignoresSafeArea()
+            .allowsHitTesting(false)
 
             // `surface: .clear` — the page must not paint over the plate above.
             DSDetailPage(surface: .clear) {

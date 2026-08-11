@@ -238,7 +238,7 @@ enum NewsGenerator {
         case .proDays:
             items.append(NewsItem(
                 headline: "Pro day circuit kicks off across the country",
-                body: "College programs are hosting pro days this month, giving prospects one last chance to impress NFL scouts in a controlled environment before the draft.",
+                body: "College programs are hosting pro days this month, giving prospects one last chance to impress pro scouts in a controlled environment before the draft.",
                 category: .draft,
                 week: 0,
                 season: season,
@@ -281,7 +281,7 @@ enum NewsGenerator {
     //
     // The pre-draft calendar is a running story about named men, not a set of
     // generic phase banners. Everything here takes real engine output — the
-    // combine media sheet, the Senior Bowl week, the mock-draft re-reads, the
+    // combine media sheet, the Showcase week, the mock-draft re-reads, the
     // spring medical attrition — and turns it into headlines the user can go
     // and look up on the board.
 
@@ -362,7 +362,7 @@ enum NewsGenerator {
     ) -> [NewsItem] {
         var items: [NewsItem] = [
             NewsItem(
-                headline: "Senior Bowl week opens with \(result.invitees) invitees",
+                headline: "Showcase week opens with \(result.invitees) invitees",
                 body: "The senior half of this draft class is in Mobile for a week of practices in front of every front office in the league. For a lot of these players it is the first time they have lined up against somebody as good as they are, and the practice tape will matter more than the game.",
                 category: .draft,
                 week: 0,

@@ -152,7 +152,7 @@ struct DraftRecapView: View {
 
     private var headerSubtitle: String {
         guard recapSeason != nil else {
-            return "The war room opens during the NFL Draft phase. Until then this screen tracks the picks you hold."
+            return "The war room opens during the Draft phase. Until then this screen tracks the picks you hold."
         }
         let picks = userPickCount == 1 ? "1 pick" : "\(userPickCount) picks"
         return "You made \(picks). The war room reopens on draft day — this is the record until then."
@@ -442,7 +442,7 @@ struct DraftRecapView: View {
             Text("No Draft On Record")
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(Color.textPrimary)
-            Text("Your first draft happens in the NFL Draft phase. Results and remaining picks will appear here afterwards.")
+            Text("Your first draft happens in the Draft phase. Results and remaining picks will appear here afterwards.")
                 .font(.subheadline)
                 .foregroundStyle(Color.textSecondary)
                 .multilineTextAlignment(.center)

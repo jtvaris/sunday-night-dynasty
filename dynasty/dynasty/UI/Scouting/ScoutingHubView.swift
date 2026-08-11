@@ -218,7 +218,7 @@ struct ScoutingHubView: View {
                     // `bigBoard` / `prospects` are the two legacy hints: the tab
                     // they named is one surface now, so both land on the board.
                     case "bigBoard", "prospects", "board": return .board
-                    // #128. The January "Senior Bowl & declarations" task used to
+                    // #128. The January "Showcase & declarations" task used to
                     // land on `.combine`, which in `.reviewRoster` is a screen
                     // reading "0 of 0 prospects invited" — the league has not
                     // issued an invite list yet, and cannot have. It lands here.
@@ -514,14 +514,14 @@ struct ScoutingHubView: View {
 
     private var phaseLabel: String {
         switch career.currentPhase {
-        case .proBowl:          return "Pro Bowl"
-        case .superBowl:        return "Super Bowl"
+        case .proBowl:          return "All-Star Game"
+        case .superBowl:        return "The Championship"
         case .coachingChanges:  return "Coaching Changes"
         case .reviewRoster:     return "Review Roster"
-        case .combine:          return "NFL Combine"
+        case .combine:          return "The Combine"
         case .freeAgency:       return "Free Agency"
         case .proDays:          return "Pro Days & Workouts"
-        case .draft:            return "NFL Draft"
+        case .draft:            return "The Draft"
         case .otas:             return "OTAs"
         case .trainingCamp:     return "Training Camp"
         case .preseason:        return "Preseason"
@@ -672,7 +672,7 @@ struct ScoutingHubView: View {
     /// `.classDepth` sits directly behind the board because it is the same class
     /// read one level up: the board is 350 rows of men, the depth screen is the
     /// nine sentences those rows add up to. It is the January landing surface for
-    /// the declaration / Senior Bowl task (#128), and it is open all year.
+    /// the declaration / Showcase task (#128), and it is open all year.
     /// `.scoutNotes` sits third because the row reads outward from the board:
     /// the 350 men you rank, the shape of the class behind them, what the
     /// department makes of both — then the order you pick in, the mock the
@@ -1690,7 +1690,7 @@ private struct CombineReportSheet: View {
                             Image(systemName: "newspaper.fill")
                                 .font(.system(size: 36))
                                 .foregroundStyle(Color.accentGold)
-                            Text("NFL COMBINE REPORT")
+                            Text("COMBINE REPORT")
                                 .font(.title2.weight(.black))
                                 .foregroundStyle(Color.textPrimary)
                             Text("\(mentions.count) notable performances")

@@ -10,7 +10,7 @@ import SwiftData
 ///
 /// Vaihe 5 surface area uses heuristics over `Player.overall` /
 /// `Player.yearsPro` / persisted `PlayerSeasonHistory` because the broader
-/// simulation does not yet record per-season awards (Pro Bowl, All-Pro).
+/// simulation does not yet record per-season awards (All-Star, All-Pro).
 /// Once awards are wired in (future work), the heuristics can be replaced
 /// with the underlying milestone counts.
 @MainActor
@@ -136,7 +136,7 @@ enum CareerArcEngine {
         // Use peak OVR across history as a proxy for awards/Pro-Bowl-track.
         let peakOVR = max(player.overall, history.map(\.overallAtEndOfSeason).max() ?? 0)
         if peakOVR >= 90 {
-            // Synthetic Pro Bowl approximation
+            // Synthetic All-Star approximation
             state.probowlCount = max(state.probowlCount, 1 + (peakOVR - 90))
         }
 

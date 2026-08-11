@@ -1092,7 +1092,7 @@ struct HireCoachView: View {
 
         // Task #96: the incumbent is RELEASED, not deleted. A `Coach` row is
         // permanent in this game — `LeagueEvent.coachID` is a live fetch by id
-        // (`EventAlertView.loadRelatedNames` reads `coach.faceID` off it), so
+        // whose reader reads `coach.faceID` off the row, so
         // deleting the row blanks the subject of every archived news item about
         // him and orphans his face reservation until the next `FaceLibrary`
         // backfill. It also threw away the man himself: replaced coaches now join

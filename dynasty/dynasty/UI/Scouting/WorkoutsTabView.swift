@@ -532,7 +532,7 @@ struct WorkoutsTabView: View {
                 }
                 .frame(height: 6)
 
-                Text("NFL clubs bring in 15\u{2013}25 men for private work. A session costs a slot and no money.")
+                Text("League clubs bring in 15\u{2013}25 men for private work. A session costs a slot and no money.")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(Color.textTertiary)
             }

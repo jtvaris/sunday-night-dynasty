@@ -30,7 +30,7 @@ struct DraftDayView: View {
         // #152: the draft is named for the season its rookies debut in, which is
         // `currentSeason + 1` — the increment that produces the season these men
         // actually play does not fire until roster cuts. See `DraftYearLabel`.
-        .navigationTitle("NFL Draft \(String(DraftYearLabel.classYear(duringSeason: career.currentSeason)))")
+        .navigationTitle("The Draft \(String(DraftYearLabel.classYear(duringSeason: career.currentSeason)))")
         .navigationBarTitleDisplayMode(.inline)
         .task {
             if coordinator.coord == nil {
@@ -40,7 +40,7 @@ struct DraftDayView: View {
                 // Second line of defence behind `CareerShellView.isDraftRoomLive`:
                 // the pick clock must never tick outside the draft phase. A save
                 // opened in Week 1 of the regular season used to resume a running
-                // 60 s clock here ("ON THE CLOCK: New York Giants") off stale
+                // 60 s clock here ("ON THE CLOCK: New York Skyline") off stale
                 // state. The board still renders — it just never starts.
                 if career.currentPhase == .draft {
                     c.start()
@@ -101,17 +101,29 @@ struct DraftDayView: View {
             DraftBroadcastRail(coordinator: coord)
         }
         .background {
+            // Token-only backdrop (#167). The draft hall photograph that used to
+            // sit here carried the NFL shield and the "NFL DRAFT" wordmark, so it
+            // is gone from the catalog entirely. The depth it bought is now made
+            // out of the palette: a plate-to-primary wash with a warmer stage
+            // glow behind the board, so the room still reads as a lit venue
+            // rather than a flat sheet.
             ZStack {
-                Image("BgDraft")
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .opacity(0.30)
                 LinearGradient(
                     colors: [
-                        Color.backgroundPrimary.opacity(0.55),
-                        Color.backgroundPrimary.opacity(0.85)
+                        Color.backgroundPlate,
+                        Color.backgroundPrimary,
+                        Color.backgroundSecondary
                     ],
                     startPoint: .top, endPoint: .bottom
+                )
+                RadialGradient(
+                    colors: [
+                        Color.backgroundTertiary.opacity(0.45),
+                        Color.clear
+                    ],
+                    center: .init(x: 0.5, y: 0.18),
+                    startRadius: 0,
+                    endRadius: 620
                 )
             }
             .ignoresSafeArea()

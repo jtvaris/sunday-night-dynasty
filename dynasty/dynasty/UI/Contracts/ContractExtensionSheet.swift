@@ -682,7 +682,7 @@ private struct CapImpactBar: View {
                 annualSalary: 45000
             ),
             team: Team(
-                name: "Chiefs",
+                name: "Stockyards",
                 city: "Kansas City",
                 abbreviation: "KC",
                 conference: .AFC,

@@ -49,7 +49,7 @@ final class DraftPick {
 
     /// Media draft grade for this pick (e.g. "A+", "B-", "D").
     var mediaGrade: String?
-    /// Media headline for this pick (e.g. "Lions steal Smith in Round 2!").
+    /// Media headline for this pick (e.g. "Motorworks steal Smith in Round 2!").
     var mediaHeadline: String?
     /// Media commentary sentence for this pick.
     var mediaComment: String?

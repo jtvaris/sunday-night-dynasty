@@ -830,9 +830,9 @@ private struct YourRoadmapStep: View {
     private static let offseasonCalendarEntries: [CalendarEntry] = [
         CalendarEntry(name: "Coaching Changes", description: "Hire and fire coaches, set coordinator schemes, build your staff", duration: "Feb", isMandatory: true),
         CalendarEntry(name: "Roster Evaluation", description: "Review every player, identify positional needs, plan your offseason strategy", duration: "Feb", isMandatory: true),
-        CalendarEntry(name: "NFL Combine", description: "Scout draft prospects, evaluate measurables, update your draft board", duration: "Late Feb", isMandatory: false),
+        CalendarEntry(name: "The Combine", description: "Scout draft prospects, evaluate measurables, update your draft board", duration: "Late Feb", isMandatory: false),
         CalendarEntry(name: "Free Agency", description: "Sign free agents, re-sign your own players, fill roster gaps", duration: "Mar", isMandatory: true),
-        CalendarEntry(name: "NFL Draft & UDFAs", description: "Select new talent across 7 rounds, then sign undrafted free agents", duration: "Late Apr", isMandatory: true),
+        CalendarEntry(name: "The Draft & UDFAs", description: "Select new talent across 7 rounds, then sign undrafted free agents", duration: "Late Apr", isMandatory: true),
         CalendarEntry(name: "OTAs", description: "Set depth chart, assign mentoring pairs, install playbook basics", duration: "May-Jun", isMandatory: false),
         CalendarEntry(name: "Training Camp", description: "Player development, position battles, final roster decisions", duration: "Jul-Aug", isMandatory: true),
         CalendarEntry(name: "Preseason", description: "Evaluate young players and bubble roster candidates in live games", duration: "Aug", isMandatory: false),
@@ -844,7 +844,7 @@ private struct YourRoadmapStep: View {
         VStack(alignment: .leading, spacing: 10) {
             SectionLabel(text: "OFFSEASON CALENDAR")
 
-            Text("Your journey through the NFL year:")
+            Text("Your journey through the League year:")
                 .font(.caption)
                 .foregroundStyle(Color.textSecondary)
 

@@ -207,9 +207,9 @@ enum InboxEngine {
             On behalf of the league office, welcome to the \(teamName). Here are the key offseason dates you should be aware of:
 
             - COACHING CHANGES: Fill any remaining staff vacancies
-            - NFL COMBINE: Evaluate draft prospects and athletic testing
+            - THE COMBINE: Evaluate draft prospects and athletic testing
             - FREE AGENCY: Sign free agents and manage your salary cap
-            - NFL DRAFT: Select the next generation of talent
+            - THE DRAFT: Select the next generation of talent
             - OTAs: Set your depth chart and install schemes
             - TRAINING CAMP: Evaluate roster battles and player development
             - PRESEASON: Exhibition games for final evaluations
@@ -217,7 +217,7 @@ enum InboxEngine {
 
             Best of luck this season.
 
-            NFL League Office
+            League Office
             """,
             date: dateString,
             category: .leagueNotice
@@ -269,7 +269,7 @@ enum InboxEngine {
         let mockPositions = ["quarterback", "pass rusher", "offensive tackle", "wide receiver", "cornerback"]
         let projectedPosition = mockPositions.randomElement() ?? "quarterback"
         messages.append(InboxMessage(
-            sender: .media(outlet: "NFL Network"),
+            sender: .media(outlet: "League Network"),
             subject: "Mock Draft: \(teamName) Projected to Select...",
             body: """
             In our latest mock draft, national analysts are projecting the \(teamName) to select a \(projectedPosition) in the first round.
@@ -278,7 +278,7 @@ enum InboxEngine {
 
             Of course, mock drafts are just projections. The combine can shake things up, and teams often go in unexpected directions on draft day.
 
-            NFL Network Draft Coverage
+            League Network Draft Coverage
             """,
             date: dateString,
             category: .mediaRequest
@@ -373,7 +373,7 @@ enum InboxEngine {
 
             Teams that exceed the salary cap will be subject to penalties.
 
-            NFL League Office
+            League Office
             """,
             date: dateString,
             category: .leagueNotice
@@ -589,7 +589,7 @@ enum InboxEngine {
 
             Use this time wisely to install your playbook and evaluate your roster.
 
-            NFL League Office
+            League Office
             """,
             date: dateString,
             category: .leagueNotice
@@ -621,7 +621,7 @@ enum InboxEngine {
                 category: .ownerDirective
             ),
             InboxMessage(
-                sender: .media(outlet: "ESPN"),
+                sender: .media(outlet: "National Sports Network"),
                 subject: "Training Camp Preview: \(teamName)",
                 body: """
                 Our training camp preview series continues with a look at the \(teamName). Key storylines to watch:
@@ -632,7 +632,7 @@ enum InboxEngine {
 
                 We'll be tracking developments throughout camp and providing daily updates.
 
-                ESPN NFL Coverage
+                National Sports Network Coverage
                 """,
                 date: dateString,
                 category: .mediaRequest
@@ -670,14 +670,14 @@ enum InboxEngine {
     ) -> [InboxMessage] {
         [
             InboxMessage(
-                sender: .media(outlet: "Fox Sports"),
+                sender: .media(outlet: "Continental Sports"),
                 subject: "Preseason Predictions: Where Does \(teamName) Rank?",
                 body: """
                 As preseason games get underway, our analysts have released their initial predictions for the upcoming season.
 
                 The \(teamName) are generating buzz, but preseason games are about evaluation, not results. Smart coaches use this time to make final roster decisions and fine-tune their schemes.
 
-                Fox Sports NFL Coverage
+                Continental Sports Coverage
                 """,
                 date: dateString,
                 category: .mediaRequest
@@ -690,7 +690,7 @@ enum InboxEngine {
 
                 Teams should use preseason to evaluate young players, test depth, and finalize game-day rosters.
 
-                NFL League Office
+                League Office
                 """,
                 date: dateString,
                 category: .leagueNotice
@@ -731,7 +731,7 @@ enum InboxEngine {
                 body: """
                 All teams must reduce their rosters to 53 players before advancing to the regular season. Players released during this period will be subject to waiver claims.
 
-                NFL League Office
+                League Office
                 """,
                 date: dateString,
                 category: .leagueNotice
@@ -819,7 +819,7 @@ enum InboxEngine {
         return messages
     }
 
-    // MARK: - Super Bowl
+    // MARK: - The Championship
 
     private static func superBowlMessages(
         ownerName: String, dateString: String
@@ -827,13 +827,13 @@ enum InboxEngine {
         [
             InboxMessage(
                 sender: .leagueOffice,
-                subject: "Super Bowl Results",
+                subject: "Championship Results",
                 body: """
-                The Super Bowl has been played. Review the results and league awards as we transition into the offseason.
+                The Championship has been played. Review the results and league awards as we transition into the offseason.
 
                 Congratulations to all teams on a competitive season.
 
-                NFL League Office
+                League Office
                 """,
                 date: dateString,
                 category: .leagueNotice
@@ -854,19 +854,19 @@ enum InboxEngine {
         ]
     }
 
-    // MARK: - Pro Bowl
+    // MARK: - All-Star Game
 
     private static func proBowlMessages(dateString: String) -> [InboxMessage] {
         [
             InboxMessage(
                 sender: .leagueOffice,
-                subject: "Pro Bowl Selections Announced",
+                subject: "All-Star Selections Announced",
                 body: """
-                The Pro Bowl rosters have been announced. Check your roster to see if any of your players earned this recognition.
+                The All-Star rosters have been announced. Check your roster to see if any of your players earned this recognition.
 
-                Pro Bowl selections are a testament to individual excellence and reflect well on the coaching staff.
+                All-Star selections are a testament to individual excellence and reflect well on the coaching staff.
 
-                NFL League Office
+                League Office
                 """,
                 date: dateString,
                 category: .leagueNotice
@@ -926,14 +926,14 @@ enum InboxEngine {
         }
 
         messages.append(InboxMessage(
-            sender: .media(outlet: "ESPN"),
+            sender: .media(outlet: "National Sports Network"),
             subject: "Playoff Spotlight on \(teamName)",
             body: """
             The \(teamName) are in the playoffs, and all eyes are on the coaching staff. How will they handle the pressure of win-or-go-home football?
 
             Our analysts will be covering every angle of this matchup.
 
-            ESPN NFL Playoffs
+            National Sports Network Playoffs
             """,
             date: dateString,
             category: .mediaRequest
@@ -1012,7 +1012,7 @@ enum InboxEngine {
 
             Any deal you still want to make waits for the offseason.
 
-            NFL League Office
+            League Office
             """,
             date: "Week \(week), Season \(season)",
             category: .leagueNotice
@@ -1049,7 +1049,7 @@ enum InboxEngine {
 
             Roster and cap adjustments have been processed. The transaction is final.
 
-            NFL League Office
+            League Office
             """,
             date: dateString,
             category: .tradeOffer,
@@ -1110,7 +1110,7 @@ enum InboxEngine {
 
             His front office logged one lowball too many from our side. Nothing we send them will be priced until the new league year resets the relationship.
 
-            NFL League Office
+            League Office
             """,
             date: dateString,
             category: .tradeOffer,
@@ -1136,7 +1136,7 @@ enum InboxEngine {
 
             Anything we still want to chase has to start as a fresh conversation.
 
-            NFL League Office
+            League Office
             """,
             date: dateString,
             category: .tradeOffer,
@@ -1195,7 +1195,7 @@ enum InboxEngine {
 
             His squad spot is open. Development flagged him as one we had time invested in.
 
-            NFL League Office
+            League Office
             """,
             date: dateString,
             category: .rosterAnalysis,
@@ -1300,7 +1300,7 @@ enum InboxEngine {
         )
     }
 
-    /// The Senior Bowl week report.
+    /// The Showcase week report.
     static func seniorBowlDigestMessage(
         result: ScoutingEngine.SeniorBowlResult,
         dateString: String
@@ -1310,7 +1310,7 @@ enum InboxEngine {
         var lines: [String] = [
             "Coach,",
             "",
-            "Senior Bowl week is done. \(result.invitees) seniors were invited and we have written evaluations on \(result.reportsFiled) of them — the practice winners and the men who got exposed. The middle of that field did not tell us anything new.",
+            "Showcase week is done. \(result.invitees) seniors were invited and we have written evaluations on \(result.reportsFiled) of them — the practice winners and the men who got exposed. The middle of that field did not tell us anything new.",
             ""
         ]
         let risers = result.notes.filter { $0.isRiser }
@@ -1331,7 +1331,7 @@ enum InboxEngine {
 
         return InboxMessage(
             sender: .scout(name: "Director of Scouting"),
-            subject: "Senior Bowl: \(result.reportsFiled) evaluations filed",
+            subject: "The Showcase: \(result.reportsFiled) evaluations filed",
             body: lines.joined(separator: "\n"),
             date: dateString,
             category: .scoutingReport,
@@ -1711,7 +1711,7 @@ enum InboxEngine {
 
             The league office does not often say this about a transaction: it is the right way to leave, and it is very rare.
 
-            NFL League Office
+            League Office
             """,
             date: dateString,
             category: .leagueNotice,
@@ -1779,14 +1779,14 @@ enum InboxEngine {
         default:
             let phaseName: String
             switch phase {
-            case .superBowl:        phaseName = "Super Bowl"
-            case .proBowl:          phaseName = "Pro Bowl"
+            case .superBowl:        phaseName = "The Championship"
+            case .proBowl:          phaseName = "All-Star Game"
             case .coachingChanges:  phaseName = "Coaching Changes"
-            case .combine:          phaseName = "NFL Combine"
+            case .combine:          phaseName = "The Combine"
             case .freeAgency:       phaseName = "Free Agency"
             case .proDays:          phaseName = "Pro Days & Workouts"
             case .reviewRoster:     phaseName = "Review Roster"
-            case .draft:            phaseName = "NFL Draft"
+            case .draft:            phaseName = "The Draft"
             case .otas:             phaseName = "OTAs"
             case .trainingCamp:     phaseName = "Training Camp"
             case .preseason:        phaseName = "Preseason"

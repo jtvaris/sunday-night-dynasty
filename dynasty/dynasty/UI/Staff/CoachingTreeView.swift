@@ -321,11 +321,11 @@ struct CoachingTreeView: View {
 #Preview {
     NavigationStack {
         CoachingTreeView(career: {
-            let c = Career(playerName: "Bill Walsh", role: .gmAndHeadCoach, capMode: .simple)
+            let c = Career(playerName: "Warren Ellsworth", role: .gmAndHeadCoach, capMode: .simple)
 
             // Seed some tree entries for the preview
             var entry1 = CoachRelationshipEngine.CoachingTreeEntry(
-                coachName: "Mike Holmgren",
+                coachName: "Gordon Reinhardt",
                 role: .offensiveCoordinator,
                 yearHired: 2020,
                 yearLeft: 2023,
@@ -337,23 +337,23 @@ struct CoachingTreeView: View {
             var tree = CoachingTreeData()
             tree.entries = [
                 CoachRelationshipEngine.CoachingTreeEntry(
-                    coachName: "Mike Holmgren",
+                    coachName: "Gordon Reinhardt",
                     role: .offensiveCoordinator,
                     yearHired: 2020,
                     yearLeft: 2023,
-                    destination: "HC at Green Bay Packers",
+                    destination: "HC at Green Bay",
                     wasSuccessful: true
                 ),
                 CoachRelationshipEngine.CoachingTreeEntry(
-                    coachName: "Ray Rhodes",
+                    coachName: "Curtis Delacroix",
                     role: .defensiveCoordinator,
                     yearHired: 2021,
                     yearLeft: 2024,
-                    destination: "DC at Philadelphia Eagles",
+                    destination: "DC at Philadelphia",
                     wasSuccessful: false
                 ),
                 CoachRelationshipEngine.CoachingTreeEntry(
-                    coachName: "Dennis Green",
+                    coachName: "Alonzo Pike",
                     role: .offensiveCoordinator,
                     yearHired: 2024,
                     yearLeft: nil,

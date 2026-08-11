@@ -651,7 +651,7 @@ struct PlayerStatsView: View {
             parts.append("playoff lines are listed separately and are not in the career total")
         }
         return parts.isEmpty
-            ? "Regular-season production. A dash marks a year not spent on an NFL roster."
+            ? "Regular-season production. A dash marks a year not spent on a League roster."
             : parts.joined(separator: " · ")
     }
 

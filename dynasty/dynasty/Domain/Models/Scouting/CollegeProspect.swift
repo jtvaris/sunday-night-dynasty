@@ -263,7 +263,7 @@ final class CollegeProspect {
     var consensusErrorStored: Int = 0
 
     /// The projected round the class was BORN with, before four months of
-    /// Senior Bowl / combine / mock / pro-day drift moved it.
+    /// Showcase / combine / mock / pro-day drift moved it.
     ///
     /// `draftProjection − projectionAtGeneration` is the market arrow the board
     /// rows render: it is the MEDIA's own movement, distinct from

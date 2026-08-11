@@ -30,7 +30,7 @@ struct TeamSelectionView: View {
     /// pending draft rides in the enum rather than in a second `@State` that has
     /// to be timed against the first.
     private enum ActiveCover: Identifiable {
-        case teamDetail(NFLTeamDefinition)
+        case teamDetail(LeagueTeamDefinition)
         case fantasyDraft(PendingFantasyDraft)
 
         var id: String {
@@ -85,19 +85,19 @@ struct TeamSelectionView: View {
     private var isLandscape: Bool { viewWidth > 900 }
 
     /// The 32 franchises of the league being browsed.
-    private var allTeams: [NFLTeamDefinition] { catalog.teams }
+    private var allTeams: [LeagueTeamDefinition] { catalog.teams }
 
     /// Available situation filters.
     private let situationOptions = ["All", "Rebuilding", "Rising", "Contender", "Win Now", "Dynasty"]
 
     /// Teams for the currently selected conference, filtered and grouped/sorted.
-    private var divisionsForConference: [(division: Division, teams: [NFLTeamDefinition])] {
+    private var divisionsForConference: [(division: Division, teams: [LeagueTeamDefinition])] {
         let conferenceTeams = allTeams.filter { $0.conference == selectedConference }
         let filtered = situationFilter == "All"
             ? conferenceTeams
             : conferenceTeams.filter { catalog.preview(for: $0).situation == situationFilter }
         return Division.allCases.compactMap { division in
-            let teams: [NFLTeamDefinition]
+            let teams: [LeagueTeamDefinition]
             let divTeams = filtered.filter { $0.division == division }
             switch sortMode {
             case .division:
@@ -315,7 +315,7 @@ struct TeamSelectionView: View {
     // MARK: - Row builder (handles compare-mode tap behavior)
 
     @ViewBuilder
-    private func teamRowButton(for team: NFLTeamDefinition) -> some View {
+    private func teamRowButton(for team: LeagueTeamDefinition) -> some View {
         Button {
             if compareModeOn {
                 toggleCompare(team)
@@ -387,7 +387,7 @@ struct TeamSelectionView: View {
         }
     }
 
-    private func toggleCompare(_ team: NFLTeamDefinition) {
+    private func toggleCompare(_ team: LeagueTeamDefinition) {
         let abbr = team.abbreviation
         if selectedForCompare.contains(abbr) {
             selectedForCompare.remove(abbr)
@@ -648,7 +648,7 @@ struct TeamSelectionView: View {
 
     // MARK: - Start Career
 
-    private func startCareer(with teamDef: NFLTeamDefinition) {
+    private func startCareer(with teamDef: LeagueTeamDefinition) {
         isLoading = true
 
         let career = Career(
@@ -866,14 +866,14 @@ struct TeamSelectionView: View {
 
 // MARK: - Identifiable conformance for sheet
 
-extension NFLTeamDefinition: Identifiable {
+extension LeagueTeamDefinition: Identifiable {
     var id: String { abbreviation }
 }
 
 // MARK: - Compact Team Row
 
 private struct CompactTeamRow: View {
-    let team: NFLTeamDefinition
+    let team: LeagueTeamDefinition
     /// Scouting numbers for the league being browsed — static table for a
     /// generated league, template-derived for a fixed one.
     let preview: TeamPreview
@@ -1024,7 +1024,7 @@ private struct CompactTeamRow: View {
 // MARK: - Mini Team Card (fits 16 teams on screen)
 
 private struct MiniTeamCard: View {
-    let team: NFLTeamDefinition
+    let team: LeagueTeamDefinition
     var height: CGFloat = 140
     private var preview: TeamPreview { team.preview }
 
@@ -1087,7 +1087,7 @@ private struct MiniTeamCard: View {
 // MARK: - Team Grid Card (compact card for 2x2 / 4-column grid)
 
 private struct TeamGridCard: View {
-    let team: NFLTeamDefinition
+    let team: LeagueTeamDefinition
     private var preview: TeamPreview { team.preview }
 
     private var situationColor: Color {
@@ -1234,7 +1234,7 @@ enum TeamColors {
 // MARK: - Team Detail Sheet
 
 private struct TeamDetailSheet: View {
-    let team: NFLTeamDefinition
+    let team: LeagueTeamDefinition
     /// The league being browsed — supplies this team's preview and its rivals.
     let catalog: TeamBrowseCatalog
     /// R40 — one-line mode + league-settings recap above the confirm button.
@@ -1527,7 +1527,7 @@ private struct TeamDetailSheet: View {
 
     // MARK: - Division Rivals Card
 
-    private var divisionRivals: [NFLTeamDefinition] {
+    private var divisionRivals: [LeagueTeamDefinition] {
         catalog.divisionRivals(of: team)
     }
 
@@ -1706,7 +1706,7 @@ private enum TeamSortMode: String, CaseIterable {
 // MARK: - Compare Teams Sheet (#117 polish)
 
 private struct CompareTeamsSheet: View {
-    let teams: [NFLTeamDefinition]
+    let teams: [LeagueTeamDefinition]
     /// The league being compared — supplies each column's preview numbers.
     let catalog: TeamBrowseCatalog
 
@@ -1844,7 +1844,7 @@ private struct CompareTeamsSheet: View {
             .frame(width: 130, alignment: .leading)
     }
 
-    private func comparisonRow<Content: View>(label: String, @ViewBuilder cell: @escaping (NFLTeamDefinition) -> Content) -> some View {
+    private func comparisonRow<Content: View>(label: String, @ViewBuilder cell: @escaping (LeagueTeamDefinition) -> Content) -> some View {
         VStack(spacing: 0) {
             HStack(alignment: .center, spacing: 0) {
                 rowLabel(label)

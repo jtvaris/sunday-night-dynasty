@@ -1150,7 +1150,7 @@ enum FreeAgencyEngine {
     /// between the 50th and the 54th man, where a 31-year-old journeyman offers
     /// nothing a camp body does not — hence 3.2 points a year from 25. The
     /// market is pricing a STARTER, where quality still buys years: clubs do
-    /// sign 30-year-old Pro Bowlers, they just do not sign them ahead of a
+    /// sign 30-year-old All-Stars, they just do not sign them ahead of a
     /// 25-year-old of similar standard. 2.0 points a year from 26 is the
     /// discount that reproduces that ordering — a 79-OVR 30-year-old (67)
     /// now falls behind a 70-OVR 25-year-old with an 80 ceiling (73.5), which

@@ -659,8 +659,7 @@ enum PracticeSquadEngine {
         guard let teamID = career.teamID else { return [] }
         let cid = career.id
         // Three `&&` clauses is the most `#Predicate` type-checks comfortably
-        // here (see `FreeAgencyView.loadData`); the season window is applied on
-        // the already-tiny result.
+        // here; the season window is applied on the already-tiny result.
         let descriptor = FetchDescriptor<RosterCut>(
             predicate: #Predicate<RosterCut> {
                 $0.careerID == cid && $0.teamID == teamID && $0.practiceSquadEligible

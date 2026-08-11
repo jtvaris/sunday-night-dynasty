@@ -10,7 +10,7 @@ enum DraftEngine {
     /// Generates the full 7-round, 224-pick draft order based on reverse standings.
     ///
     /// - Playoff teams pick later in each round.
-    /// - The Super Bowl loser picks 31st; the Super Bowl winner picks 32nd.
+    /// - The Championship runner-up picks 31st; the Championship winner picks 32nd.
     ///
     /// - Parameters:
     ///   - teams: All 32 teams in the league.
@@ -40,7 +40,7 @@ enum DraftEngine {
     }
 
     /// The 32 team IDs in slot order for a draft that follows `games`: worst
-    /// record first, then playoff teams by record, then the Super Bowl loser,
+    /// record first, then playoff teams by record, then the Championship runner-up,
     /// then the champion. Index 0 owns pick #1 of every round.
     ///
     /// Split out of `generateDraftOrder` because the future-pick rows minted years
@@ -59,7 +59,7 @@ enum DraftEngine {
         )
         let playoffTeamIDs = Set((afcPlayoff + nfcPlayoff).map(\.teamID))
 
-        // Identify the Super Bowl participants from playoff games.
+        // Identify the Championship participants from playoff games.
         // The championship game is the last played playoff game of the season.
         let playoffGames = games
             .filter { $0.isPlayoff && $0.isPlayed }
@@ -79,11 +79,11 @@ enum DraftEngine {
         // Sort non-playoff teams worst-to-best (worst record picks first).
         nonPlayoffRecords.sort { worstFirst($0, $1) }
 
-        // Sort playoff teams worst-to-best among those eliminated before the Super Bowl.
+        // Sort playoff teams worst-to-best among those eliminated before the Championship.
         playoffRecords.sort { worstFirst($0, $1) }
 
         // Build the pick order: non-playoff (worst first), then playoff losers,
-        // then Super Bowl loser, then Super Bowl winner.
+        // then Championship runner-up, then Championship winner.
         var orderedTeamIDs: [UUID] = nonPlayoffRecords.map(\.teamID)
             + playoffRecords.map(\.teamID)
 
@@ -94,7 +94,7 @@ enum DraftEngine {
             orderedTeamIDs.append(winnerID)
         }
 
-        // Ensure we have exactly 32 teams. If Super Bowl IDs could not be determined
+        // Ensure we have exactly 32 teams. If Championship IDs could not be determined
         // (e.g., no playoff games yet), fall back to pure reverse standings.
         if orderedTeamIDs.count != 32 {
             var fallback = records

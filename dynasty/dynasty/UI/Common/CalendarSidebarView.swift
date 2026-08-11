@@ -444,14 +444,14 @@ struct CalendarSidebarView: View {
 
     private func phaseLabel(_ phase: SeasonPhase) -> String {
         switch phase {
-        case .proBowl:          return "Pro Bowl"
-        case .superBowl:        return "Super Bowl"
+        case .proBowl:          return "All-Star Game"
+        case .superBowl:        return "The Championship"
         case .coachingChanges:  return "Coaching Changes"
         case .reviewRoster:     return "Roster Review"
-        case .combine:          return "NFL Combine"
+        case .combine:          return "The Combine"
         case .freeAgency:       return "Free Agency"
         case .proDays:          return "Pro Days"
-        case .draft:            return "NFL Draft"
+        case .draft:            return "The Draft"
         case .otas:             return "OTAs"
         case .trainingCamp:     return "Training Camp"
         case .preseason:        return "Preseason Games"

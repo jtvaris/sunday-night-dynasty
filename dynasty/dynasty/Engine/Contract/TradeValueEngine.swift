@@ -57,7 +57,7 @@ enum TradeValueEngine {
 
     /// Trading is open in every offseason phase and during the regular season
     /// up to and including the Week 8 deadline. Closed for playoffs and the
-    /// Pro Bowl / Super Bowl ceremony weeks.
+    /// All-Star / Championship ceremony weeks.
     static func isTradeWindowOpen(phase: SeasonPhase, week: Int) -> Bool {
         switch phase {
         case .regularSeason:
@@ -3928,7 +3928,7 @@ enum TradeValueEngine {
 
             All trades are final. The trade window reopens in the offseason.
 
-            NFL League Office
+            League Office
             """,
             date: "Week \(week), Season \(season)",
             category: .leagueNotice,

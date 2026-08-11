@@ -154,7 +154,7 @@ extension FAMilestone {
         case .approaching1000Yards: return "1000-Yard Push"
         case .lastChance: return "Last Chance"
         case .comeback: return "Comeback Bid"
-        case .proBowlPush: return "Pro Bowl / HOF Push"
+        case .proBowlPush: return "All-Star / HOF Push"
         }
     }
     var displayBody: String {
@@ -163,7 +163,7 @@ extension FAMilestone {
         case .approaching1000Yards: return "Looking for the carries to hit a career rushing milestone. Demands #1 RB role."
         case .lastChance: return "33+ year old proving they can still play. Will accept a 1-year prove-it deal."
         case .comeback: return "Returning from retirement. Wants championship contender + meaningful role."
-        case .proBowlPush: return "One Pro Bowl from likely HOF lock. Needs starter role + competitive team."
+        case .proBowlPush: return "One All-Star selection from likely HOF lock. Needs starter role + competitive team."
         }
     }
 }

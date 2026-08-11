@@ -231,7 +231,7 @@ struct ScoutTeamView: View {
                             .font(.title3)
                             .foregroundStyle(live ? Color.accentGold : Color.textTertiary)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Send Scouts to the NFL Combine")
+                            Text("Send Scouts to the Combine")
                                 .font(.subheadline.weight(.bold))
                                 .foregroundStyle(live ? Color.textPrimary : Color.textTertiary)
                             Text(blockedReason

@@ -465,41 +465,41 @@ struct MockDraftView: View {
               let actualProspect = prospects.first(where: { $0.id == userPick.prospectID })
         else { return [] }
 
-        // ESPN: matches the engine's prediction (most accurate, ~88% confidence).
-        let espn = ConsensusEntry(
-            brand: "ESPN",
+        // National Sports Network: matches the engine's prediction (most accurate, ~88% confidence).
+        let nsn = ConsensusEntry(
+            brand: "National Sports Network",
             symbol: "tv",
             prospectName: actualProspect.fullName,
             confidence: 88
         )
 
-        // NFL Network: nudge ~2 picks (medium accuracy).
-        let nflProspect = nudgedPredictionProspect(
+        // League Network: nudge ~2 picks (medium accuracy).
+        let leagueNetProspect = nudgedPredictionProspect(
             forPickNumber: userPick.pickNumber,
             seedSalt: 11,
             maxNudge: 4
         ) ?? actualProspect
-        let nfln = ConsensusEntry(
-            brand: "NFL Network",
+        let leagueNet = ConsensusEntry(
+            brand: "League Network",
             symbol: "antenna.radiowaves.left.and.right",
-            prospectName: nflProspect.fullName,
+            prospectName: leagueNetProspect.fullName,
             confidence: 72
         )
 
-        // The Athletic: bias-heavy, larger variance.
-        let athleticProspect = nudgedPredictionProspect(
+        // The Gridiron Weekly: bias-heavy, larger variance.
+        let weeklyProspect = nudgedPredictionProspect(
             forPickNumber: userPick.pickNumber,
             seedSalt: 29,
             maxNudge: 12
         ) ?? actualProspect
-        let athletic = ConsensusEntry(
-            brand: "The Athletic",
+        let weekly = ConsensusEntry(
+            brand: "The Gridiron Weekly",
             symbol: "newspaper",
-            prospectName: athleticProspect.fullName,
+            prospectName: weeklyProspect.fullName,
             confidence: 60
         )
 
-        return [espn, nfln, athletic]
+        return [nsn, leagueNet, weekly]
     }
 
     /// Returns the prospect projected at `pickNumber + offset` in the current

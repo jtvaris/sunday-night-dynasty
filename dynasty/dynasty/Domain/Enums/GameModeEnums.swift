@@ -92,7 +92,7 @@ enum InjuryFrequency: String, Codable, CaseIterable {
         switch self {
         case .off:    return "No injuries from weekly simulation."
         case .low:    return "Injuries occur at half the normal rate."
-        case .normal: return "Realistic NFL injury rates."
+        case .normal: return "Realistic pro injury rates."
         }
     }
 }

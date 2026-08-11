@@ -153,7 +153,7 @@ enum LeagueGenerator {
         /// owners in the same league share a face (`ExtrasCatalog.ownerFaceID`).
         var takenOwnerFaceIDs: Set<String> = []
 
-        for teamDef in NFLTeamData.allTeams {
+        for teamDef in LeagueTeamData.allTeams {
             // Create owner (budget matches team preview data)
             let owner = generateOwner(
                 mediaMarket: teamDef.mediaMarket,
@@ -369,7 +369,7 @@ enum LeagueGenerator {
     /// contradicted the team picker, which advertises each club's record: a 4-13
     /// team could find itself picking 16th, or not at all.
     ///
-    /// Records come from the same `NFLTeamData` previews the picker shows, so
+    /// Records come from the same `LeagueTeamData` previews the picker shows, so
     /// the order the user sees on draft day is the order the standings he chose
     /// from imply. Fully deterministic (no RNG); ties break on abbreviation.
     ///
@@ -389,7 +389,7 @@ enum LeagueGenerator {
     ///    order.
     ///  * **This is NOT `draftSlotOrder`'s rule, and cannot be.** The real
     ///    league orders picks 19-32 by round of playoff elimination and puts the
-    ///    Super Bowl loser and champion last; `draftSlotOrder` does exactly that
+    ///    Championship runner-up and champion last; `draftSlotOrder` does exactly that
     ///    for every later draft. The previews carry no playoff results, only a
     ///    W-L, so season 1 necessarily orders its twelve best clubs by record
     ///    alone. Do not "fix" the two to agree — the input, not the rule, is
@@ -400,8 +400,8 @@ enum LeagueGenerator {
 
     static func initialDraftOrder(teams: [Team]) -> [Team] {
         teams.sorted { lhs, rhs in
-            let l = NFLTeamData.previews[lhs.abbreviation]
-            let r = NFLTeamData.previews[rhs.abbreviation]
+            let l = LeagueTeamData.previews[lhs.abbreviation]
+            let r = LeagueTeamData.previews[rhs.abbreviation]
             let lWins = l?.lastSeasonWins ?? 8
             let rWins = r?.lastSeasonWins ?? 8
             let lGames = lWins + (l?.lastSeasonLosses ?? 9)
@@ -574,7 +574,7 @@ enum LeagueGenerator {
 
         // Use team-specific spending willingness from preview data (with ±5 jitter)
         // so the generated budget matches what the player saw on the Team Selection screen.
-        let preview = NFLTeamData.previews[teamAbbreviation]
+        let preview = LeagueTeamData.previews[teamAbbreviation]
         let baseSpending = preview?.spendingWillingness ?? 50
         let spending = max(1, min(99, baseSpending + Int.random(in: -5...5, using: &rng)))
 
@@ -608,7 +608,7 @@ enum LeagueGenerator {
         var depthChart: [Position: Int] = [:]
 
         // Look up the team's preview to get the named starting QB
-        let preview = NFLTeamData.previews[teamAbbreviation]
+        let preview = LeagueTeamData.previews[teamAbbreviation]
 
         for (position, count) in rosterBlueprint {
             for _ in 0..<count {

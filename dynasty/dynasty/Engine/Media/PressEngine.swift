@@ -96,13 +96,27 @@ extension PressConferenceEngine {
         }
     }
 
-    /// Local beat writers lean friendly, the two national TV desks lean tough,
+    /// Local beat writers lean friendly, the national TV desk leans tough,
     /// everyone else is neutral. Stable per outlet so the chip never lies.
+    ///
+    /// The lists MUST stay in sync with `PressConferenceEngine.reporters` and
+    /// `.localReporters` — an outlet rename that misses this function silently
+    /// collapses a whole stance tier to `.neutral` and kills the matching
+    /// branch of `stanceAdjustment`. (That is exactly what happened once: the
+    /// tough list still named two real broadcasters after the press corps was
+    /// made fictional, so no reporter was ever hostile.)
+    ///
+    /// SHARE MATTERS, not just reachability: the shipped mix was 2 tough
+    /// reporters out of the 8 national ones. `Continental Sports` fields
+    /// exactly two of the current eight, so it alone is the tough desk —
+    /// adding a second outlet here would silently double how often evasion
+    /// gets punished in a crisis presser.
     static func stance(forOutlet outlet: String) -> ReporterStance {
         let lower = outlet.lowercased()
         let local = ["local press", "city tribune", "local news 9"]
         if local.contains(where: { lower.contains($0) }) { return .friendly }
-        let tough = ["fox sports", "cbs sports"]
+        // The national TV desk (Ty Brennan, Vivian Osei).
+        let tough = ["continental sports"]
         if tough.contains(where: { lower.contains($0) }) { return .hostile }
         return .neutral
     }
@@ -855,7 +869,7 @@ extension PressConferenceEngine {
         /// v1 scope is deliberately three kinds, each with a threshold the
         /// season either clears or does not. No partial credit, no fuzz.
         enum Kind: String, Codable, Equatable {
-            /// "Start planning the parade route." → win the Super Bowl.
+            /// "Start planning the parade route." → win the Championship.
             case championship
             /// "We're here to compete." → reach the postseason.
             case playoffs
@@ -874,7 +888,7 @@ extension PressConferenceEngine {
             /// What the season has to produce, in the coach's own words.
             var thresholdCopy: String {
                 switch self {
-                case .championship: return "Win the Super Bowl this season."
+                case .championship: return "Win the Championship this season."
                 case .playoffs:     return "Reach the postseason this season."
                 case .overhaul:     return "Improve on last season's win total."
                 }
@@ -1031,7 +1045,7 @@ extension PressConferenceEngine {
 
             if !met {
                 settlement.inbox.append(InboxMessage(
-                    sender: .media(outlet: "The Athletic"),
+                    sender: .media(outlet: "The Gridiron Weekly"),
                     subject: "About that quote",
                     body: "You said it in a press conference this season: \u{201C}\(promise.statement)\u{201D} "
                         + "\(promise.kind.thresholdCopy) It did not happen. "

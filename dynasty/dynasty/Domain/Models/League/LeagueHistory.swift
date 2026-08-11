@@ -10,7 +10,7 @@ struct SeasonSummary: Codable, Identifiable, Equatable {
     var id: UUID = UUID()
     /// Calendar season year (e.g. 2026).
     var season: Int
-    /// League champion (Super Bowl winner). Nil only for legacy edge cases.
+    /// League champion (Championship winner). Nil only for legacy edge cases.
     var championTeamID: UUID?
     var championTeamName: String
     /// The user's team regular-season record.

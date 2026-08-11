@@ -239,7 +239,7 @@ struct FiredSummaryView: View {
 #Preview {
     FiredSummaryView(
         career: Career(playerName: "Alex Reid", role: .gm, capMode: .simple),
-        teamName: "Chicago Bears",
+        teamName: "Chicago Ironworks",
         ownerName: "Marlene Vance",
         reviewSummary: "You hit 0 of 4 goals with a 3-14 finish. I've made a decision — this organization needs a new direction."
     )

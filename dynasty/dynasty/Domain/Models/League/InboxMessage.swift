@@ -90,7 +90,7 @@ enum MessageSender: Codable, Equatable {
         case .defensiveCoordinator:     return "Defensive Coordinator"
         case .scout:                    return "Scout"
         case .media:                    return "Media"
-        case .leagueOffice:             return "NFL"
+        case .leagueOffice:             return "League Office"
         case .playerAgent:              return "Agent"
         case .developmentStaff:         return "Coaching Staff"
         }

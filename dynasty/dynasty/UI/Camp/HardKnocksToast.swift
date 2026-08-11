@@ -103,7 +103,7 @@ struct HardKnocksToast: View {
                 .padding(DSSpacing.md)
             }
             .background(Color.backgroundPrimary.ignoresSafeArea())
-            .navigationTitle("Hard Knocks")
+            .navigationTitle("Camp Story")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
