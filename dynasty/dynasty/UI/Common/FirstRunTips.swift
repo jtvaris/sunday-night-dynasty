@@ -83,7 +83,7 @@ struct CoachMarkOverlay: View {
             }
 
             Text(current.text)
-                .font(.system(size: 13, weight: .medium))
+                .font(.system(size: DSType.Size.body, weight: .medium))
                 .foregroundStyle(Color.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -102,7 +102,7 @@ struct CoachMarkOverlay: View {
                         finish()
                     } label: {
                         Text("Skip")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.system(size: DSType.Size.body, weight: .semibold))
                             .foregroundStyle(Color.textSecondary)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
@@ -118,7 +118,7 @@ struct CoachMarkOverlay: View {
                 } label: {
                     HStack(spacing: 5) {
                         Text(isLast ? "Got it" : "Next")
-                            .font(.system(size: 13, weight: .heavy))
+                            .font(.system(size: DSType.Size.body, weight: .heavy))
                         if !isLast {
                             Image(systemName: "chevron.right")
                                 .font(.system(size: 10, weight: .black))

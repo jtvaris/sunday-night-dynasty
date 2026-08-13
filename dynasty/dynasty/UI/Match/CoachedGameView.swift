@@ -677,7 +677,7 @@ struct CoachedGameView: View {
     private var metaBadge: some View {
         if isPlayoff {
             Text("PLAYOFFS")
-                .font(DSType.overline)
+                .font(.system(size: DSType.Size.micro, weight: .black))
                 .tracking(1.2)
                 .foregroundStyle(Color.backgroundPrimary)
                 .padding(.horizontal, 8)
@@ -685,7 +685,7 @@ struct CoachedGameView: View {
                 .background(Color.accentGold, in: Capsule())
         } else if isDivisionGame {
             Text("DIVISION")
-                .font(DSType.overline)
+                .font(.system(size: DSType.Size.micro, weight: .black))
                 .tracking(1.2)
                 .foregroundStyle(Color.accentGold)
                 .padding(.horizontal, 8)
@@ -695,9 +695,9 @@ struct CoachedGameView: View {
         } else if weather != .clear {
             HStack(spacing: 3) {
                 Image(systemName: weather.symbolName)
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.system(size: DSType.Size.micro, weight: .bold))
                 Text(weather.label.uppercased())
-                    .font(DSType.overline)
+                    .font(.system(size: DSType.Size.micro, weight: .black))
                     .tracking(0.8)
             }
             .foregroundStyle(Color.accentBlue)
@@ -771,7 +771,7 @@ struct CoachedGameView: View {
 
     private var possessionDot: some View {
         Image(systemName: "football.fill")
-            .font(.system(size: 11))
+            .font(.system(size: DSType.Size.caption))
             .foregroundStyle(Color.accentGold)
     }
 
@@ -784,7 +784,7 @@ struct CoachedGameView: View {
             if engine.isGameOver { dismiss() } else { showExitConfirm = true }
         } label: {
             Image(systemName: "xmark")
-                .font(.system(size: 13, weight: .bold))
+                .font(.system(size: DSType.Size.body, weight: .bold))
                 .foregroundStyle(Color.textSecondary)
                 .frame(width: 30, height: 30)
                 .background(Color.backgroundTertiary, in: Circle())
@@ -893,7 +893,7 @@ struct CoachedGameView: View {
     ) -> some View {
         HStack(spacing: 7) {
             Image(systemName: icon)
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: DSType.Size.body, weight: .semibold))
             Text(title)
                 .font(DSType.action)
                 .lineLimit(1)
@@ -994,7 +994,7 @@ struct CoachedGameView: View {
             .overlay(alignment: .topLeading) {
                 if let text = possessionBanner {
                     Text(text)
-                        .font(.system(size: 12, weight: .bold))
+                        .font(.system(size: DSType.Size.footnote, weight: .bold))
                         .foregroundStyle(Color.backgroundPrimary)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
@@ -1007,9 +1007,9 @@ struct CoachedGameView: View {
                 if let text = playoffBanner {
                     HStack(spacing: 6) {
                         Image(systemName: "trophy.fill")
-                            .font(.system(size: 11, weight: .black))
+                            .font(.system(size: DSType.Size.caption, weight: .black))
                         Text(text)
-                            .font(.system(size: 13, weight: .black))
+                            .font(.system(size: DSType.Size.body, weight: .black))
                             .tracking(1.4)
                     }
                     .foregroundStyle(Color.backgroundPrimary)
@@ -1026,9 +1026,9 @@ struct CoachedGameView: View {
                     if let note = sidelineNote {
                         HStack(spacing: 6) {
                             Image(systemName: "arrow.triangle.2.circlepath")
-                                .font(.system(size: 10, weight: .bold))
+                                .font(.system(size: DSType.Size.micro, weight: .bold))
                             Text(note)
-                                .font(.system(size: 12, weight: .bold))
+                                .font(.system(size: DSType.Size.footnote, weight: .bold))
                         }
                         .foregroundStyle(Color.backgroundPrimary)
                         .padding(.horizontal, 12)
@@ -1040,9 +1040,9 @@ struct CoachedGameView: View {
                     if let intel = adaptationNote {
                         HStack(spacing: 6) {
                             Image(systemName: "eye.fill")
-                                .font(.system(size: 10, weight: .bold))
+                                .font(.system(size: DSType.Size.micro, weight: .bold))
                             Text(intel)
-                                .font(.system(size: 12, weight: .bold))
+                                .font(.system(size: DSType.Size.footnote, weight: .bold))
                         }
                         .foregroundStyle(Color.backgroundPrimary)
                         .padding(.horizontal, 12)
@@ -1054,9 +1054,9 @@ struct CoachedGameView: View {
                     if let note = mentalNote {
                         HStack(spacing: 6) {
                             Image(systemName: "hand.raised.fill")
-                                .font(.system(size: 10, weight: .bold))
+                                .font(.system(size: DSType.Size.micro, weight: .bold))
                             Text(note)
-                                .font(.system(size: 12, weight: .bold))
+                                .font(.system(size: DSType.Size.footnote, weight: .bold))
                         }
                         .foregroundStyle(Color.backgroundPrimary)
                         .padding(.horizontal, 12)
@@ -1098,7 +1098,7 @@ struct CoachedGameView: View {
                 if let plate = snapPlate {
                     HStack(spacing: 0) {
                         Text(plate.uppercased())
-                            .font(.system(size: 17, weight: .black, design: .monospaced))
+                            .font(.system(size: DSType.Size.title3, weight: .black, design: .monospaced))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 22)
                             .padding(.vertical, 8)
@@ -1139,9 +1139,9 @@ struct CoachedGameView: View {
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "arrow.counterclockwise.circle.fill")
-                        .font(.system(size: 12, weight: .black))
+                        .font(.system(size: DSType.Size.footnote, weight: .black))
                     Text("REPLAY")
-                        .font(.system(size: 12, weight: .black))
+                        .font(.system(size: DSType.Size.footnote, weight: .black))
                         .tracking(1.2)
                 }
                 .foregroundStyle(Color.backgroundPrimary)
@@ -1164,14 +1164,14 @@ struct CoachedGameView: View {
                     .fill(Color.danger)
                     .frame(width: 7, height: 7)
                 Text("REPLAY")
-                    .font(.system(size: 12, weight: .black))
+                    .font(.system(size: DSType.Size.footnote, weight: .black))
                     .tracking(1.6)
                 if let title = activeReplay?.title {
                     Text("·")
-                        .font(.system(size: 12, weight: .black))
+                        .font(.system(size: DSType.Size.footnote, weight: .black))
                         .foregroundStyle(Color.textTertiary)
                     Text(title)
-                        .font(.system(size: 13, weight: .bold))
+                        .font(.system(size: DSType.Size.body, weight: .bold))
                         .lineLimit(1)
                 }
             }
@@ -1192,9 +1192,9 @@ struct CoachedGameView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "forward.fill")
-                            .font(.system(size: 9, weight: .bold))
+                            .font(.system(size: DSType.Size.micro, weight: .bold))
                         Text("Skip")
-                            .font(.system(size: 12, weight: .bold))
+                            .font(.system(size: DSType.Size.footnote, weight: .bold))
                     }
                     .foregroundStyle(.white)
                     .padding(.horizontal, 12)
@@ -1209,7 +1209,7 @@ struct CoachedGameView: View {
                         replayFinished()
                     } label: {
                         Text("Skip all")
-                            .font(.system(size: 12, weight: .bold))
+                            .font(.system(size: DSType.Size.footnote, weight: .bold))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 6)
@@ -1232,7 +1232,7 @@ struct CoachedGameView: View {
             setReplayAngle(angle)
         } label: {
             Text(label)
-                .font(.system(size: 12, weight: .bold))
+                .font(.system(size: DSType.Size.footnote, weight: .bold))
                 .foregroundStyle(active ? Color.backgroundPrimary : .white)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
@@ -1251,7 +1251,7 @@ struct CoachedGameView: View {
             fieldScene.playbackSpeed = playbackSpeedRaw
         } label: {
             Text(playbackSpeedRaw >= 2 ? "2×" : "1×")
-                .font(.system(size: 13, weight: .heavy, design: .rounded))
+                .font(.system(size: DSType.Size.body, weight: .heavy, design: .rounded))
                 .foregroundStyle(.white)
                 .frame(width: 34, height: 34)
                 .background(Color.black.opacity(0.45), in: Circle())
@@ -1271,7 +1271,7 @@ struct CoachedGameView: View {
             fieldScene.setCameraStyle(next)
         } label: {
             Image(systemName: cameraStyle == .coach ? "video.fill" : "tv")
-                .font(.system(size: 13, weight: .bold))
+                .font(.system(size: DSType.Size.body, weight: .bold))
                 .foregroundStyle(.white)
                 .frame(width: 34, height: 34)
                 .background(Color.black.opacity(0.45), in: Circle())
@@ -1294,10 +1294,10 @@ struct CoachedGameView: View {
         }()
         return HStack(spacing: 7) {
             Image(systemName: icon)
-                .font(.system(size: 11, weight: .bold))
+                .font(.system(size: DSType.Size.caption, weight: .bold))
                 .foregroundStyle(tint)
             Text(event.text)
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: DSType.Size.footnote, weight: .semibold))
                 .foregroundStyle(Color.textPrimary)
                 .lineLimit(1)
         }
@@ -1342,7 +1342,7 @@ struct CoachedGameView: View {
             Text(play.description)
                 // Latest line reads as body on the type scale; older lines stay
                 // deliberately muted (regular 13) so the eye lands on "now".
-                .font(isLatest ? DSType.body : .system(size: 13, weight: .regular))
+                .font(isLatest ? DSType.body : .system(size: DSType.Size.body, weight: .regular))
                 .foregroundStyle(isLatest ? (accent ?? Color.textPrimary) : Color.textSecondary)
                 .lineLimit(1)
             Spacer(minLength: 0)
@@ -1518,7 +1518,7 @@ struct CoachedGameView: View {
                     } label: {
                         HStack(spacing: 4) {
                             Image(systemName: "chevron.left")
-                                .font(.system(size: 10, weight: .black))
+                                .font(.system(size: DSType.Size.micro, weight: .black))
                             Text("4th Down")
                                 .font(DSType.text(DSType.Size.caption, .semibold))
                         }
@@ -1539,7 +1539,7 @@ struct CoachedGameView: View {
                     } label: {
                         HStack(spacing: 4) {
                             Image(systemName: "chevron.left")
-                                .font(.system(size: 10, weight: .black))
+                                .font(.system(size: DSType.Size.micro, weight: .black))
                             Text("Try Options")
                                 .font(DSType.text(DSType.Size.caption, .semibold))
                         }
@@ -1551,7 +1551,7 @@ struct CoachedGameView: View {
                     .buttonStyle(.plain)
                 }
                 Image(systemName: "book.fill")
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: DSType.Size.micro, weight: .bold))
                     .foregroundStyle(Color.accentGold)
                 Text(playbookTitle)
                     .font(DSType.display(DSType.Size.caption, .black))
@@ -1564,7 +1564,7 @@ struct CoachedGameView: View {
                 if let read = coverageRead {
                     HStack(spacing: 5) {
                         Image(systemName: "eye.fill")
-                            .font(.system(size: 10, weight: .bold))
+                            .font(.system(size: DSType.Size.micro, weight: .bold))
                         Text(read.text)
                             .font(DSType.text(DSType.Size.footnote, .semibold))
                     }
@@ -1670,7 +1670,7 @@ struct CoachedGameView: View {
                     } label: {
                         HStack(spacing: 5) {
                             Image(systemName: "megaphone.fill")
-                                .font(.system(size: 11, weight: .bold))
+                                .font(.system(size: DSType.Size.caption, weight: .bold))
                             Text("AUDIBLE · \(offAudiblesLeft)")
                                 .font(DSType.display(DSType.Size.footnote, .black))
                         }
@@ -1691,7 +1691,7 @@ struct CoachedGameView: View {
                     } label: {
                         HStack(spacing: 5) {
                             Image(systemName: "arrow.left.arrow.right")
-                                .font(.system(size: 11, weight: .bold))
+                                .font(.system(size: DSType.Size.caption, weight: .bold))
                             Text("REVERSE")
                                 .font(DSType.display(DSType.Size.footnote, .black))
                         }
@@ -1838,7 +1838,7 @@ struct CoachedGameView: View {
                 .font(DSType.display(DSType.Size.footnote, .bold))
                 .foregroundStyle(isSelected ? Color.backgroundPrimary : Color.textSecondary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.8)   // eight capsules share the row
+                .minimumScaleFactor(0.85)  // eight capsules share the row
                 .padding(.vertical, 7)
                 .frame(maxWidth: .infinity)
                 .background(isSelected ? Color.accentGold : Color.backgroundTertiary, in: Capsule())
@@ -1879,11 +1879,11 @@ struct CoachedGameView: View {
                         .foregroundStyle(isSelected ? Color.accentGold
                                          : (installed ? Color.textPrimary : Color.textTertiary))
                         .lineLimit(1)
-                        .minimumScaleFactor(0.75)
+                        .minimumScaleFactor(0.85)
                     Spacer(minLength: 0)
                     if !installed {
                         Image(systemName: "book.closed")
-                            .font(.system(size: 9))
+                            .font(.system(size: DSType.Size.micro))
                             .foregroundStyle(Color.textTertiary)
                     }
                     // The scheme's identity calls wear their scheme's tag —
@@ -1900,7 +1900,7 @@ struct CoachedGameView: View {
                     }
                     if isSelected {
                         Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 12))
+                            .font(.system(size: DSType.Size.footnote))
                             .foregroundStyle(Color.accentGold)
                     }
                 }
@@ -1987,7 +1987,7 @@ struct CoachedGameView: View {
                         HStack(spacing: 5) {
                             if beatsShell {
                                 Image(systemName: "checkmark.circle.fill")
-                                    .font(.system(size: 11, weight: .bold))
+                                    .font(.system(size: DSType.Size.caption, weight: .bold))
                                     .foregroundStyle(Color.success)
                             }
                             // The identity checks are marked here too — the
@@ -2058,7 +2058,7 @@ struct CoachedGameView: View {
                     ZStack {
                         Circle().fill(accent.opacity(0.18)).frame(width: 34, height: 34)
                         Image(systemName: icon)
-                            .font(.system(size: 15, weight: .bold))
+                            .font(.system(size: DSType.Size.callout, weight: .bold))
                             .foregroundStyle(accent)
                     }
                     VStack(alignment: .leading, spacing: 3) {
@@ -2103,11 +2103,11 @@ struct CoachedGameView: View {
                 Button(action: onReselect) {
                     HStack(spacing: 6) {
                         Image(systemName: icon)
-                            .font(.system(size: 11, weight: .bold))
+                            .font(.system(size: DSType.Size.caption, weight: .bold))
                         Text("\(String(localized: "Coach's pick")): \(callName)")
                             .font(DSType.text(DSType.Size.caption, .semibold))
                         Image(systemName: "arrow.uturn.left")
-                            .font(.system(size: 9, weight: .bold))
+                            .font(.system(size: DSType.Size.micro, weight: .bold))
                     }
                     .foregroundStyle(accent)
                     .padding(.horizontal, 12)
@@ -2162,7 +2162,7 @@ struct CoachedGameView: View {
         let tint: Color = !hasRead || stale ? Color.textTertiary : Color.warning
         return HStack(spacing: 7) {
             Image(systemName: "binoculars.fill")
-                .font(.system(size: 10, weight: .bold))
+                .font(.system(size: DSType.Size.micro, weight: .bold))
                 .foregroundStyle(tint)
             Text(verbatim: line)   // en-only broadcast copy (documented)
                 .font(DSType.text(DSType.Size.caption, .semibold, prose: true))
@@ -2179,7 +2179,7 @@ struct CoachedGameView: View {
             if boxLoaded {
                 HStack(spacing: 4) {
                     Image(systemName: "square.stack.3d.up.fill")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.system(size: DSType.Size.micro, weight: .bold))
                     Text("STACKED BOX")
                         .font(DSType.display(DSType.Size.caption, .black))
                         .tracking(0.5)
@@ -2338,7 +2338,7 @@ struct CoachedGameView: View {
         Button(action: action) {
             VStack(spacing: 4) {
                 Image(systemName: icon)
-                    .font(.system(size: 18, weight: .bold))
+                    .font(.system(size: DSType.Size.title3, weight: .bold))
                 Text(title)
                     .font(DSType.text(DSType.Size.body, .heavy))
                 Text(subtitle)
@@ -2524,7 +2524,7 @@ struct CoachedGameView: View {
         VStack(alignment: .leading, spacing: 9) {
             HStack {
                 Image(systemName: "shield.fill")
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: DSType.Size.micro, weight: .bold))
                     .foregroundStyle(Color.accentBlue)
                 Text(defensePanelTitle)
                     .font(DSType.display(DSType.Size.caption, .black))
@@ -2633,7 +2633,7 @@ struct CoachedGameView: View {
                     } label: {
                         HStack(spacing: 5) {
                             Image(systemName: "megaphone.fill")
-                                .font(.system(size: 11, weight: .bold))
+                                .font(.system(size: DSType.Size.caption, weight: .bold))
                             Text("SHELL · \(defAudiblesLeft)")
                                 .font(DSType.display(DSType.Size.footnote, .black))
                         }
@@ -2710,11 +2710,11 @@ struct CoachedGameView: View {
                         .foregroundStyle(isSelected ? Color.accentGold
                                          : (installed ? Color.textPrimary : Color.textTertiary))
                         .lineLimit(1)
-                        .minimumScaleFactor(0.75)
+                        .minimumScaleFactor(0.85)
                     Spacer(minLength: 0)
                     if !installed {
                         Image(systemName: "book.closed")
-                            .font(.system(size: 9))
+                            .font(.system(size: DSType.Size.micro))
                             .foregroundStyle(Color.textTertiary)
                     }
                     // The scheme's identity calls, tagged with the scheme.
@@ -2729,7 +2729,7 @@ struct CoachedGameView: View {
                     }
                     if isSelected {
                         Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 12))
+                            .font(.system(size: DSType.Size.footnote))
                             .foregroundStyle(Color.accentGold)
                     }
                 }
@@ -2838,7 +2838,7 @@ struct CoachedGameView: View {
                 if let injury = injuryBanner {
                     HStack(spacing: 8) {
                         Image(systemName: "cross.fill")
-                            .font(.system(size: 12, weight: .black))
+                            .font(.system(size: DSType.Size.footnote, weight: .black))
                         Text(injury)
                             .font(DSType.body)
                             .multilineTextAlignment(.center)
@@ -2853,7 +2853,7 @@ struct CoachedGameView: View {
                 if let milestone = milestoneBanner {
                     HStack(spacing: 8) {
                         Image(systemName: "star.fill")
-                            .font(.system(size: 12, weight: .black))
+                            .font(.system(size: DSType.Size.footnote, weight: .black))
                         Text(milestone)
                             .font(DSType.body)
                             .multilineTextAlignment(.center)
@@ -2874,7 +2874,7 @@ struct CoachedGameView: View {
                     HStack(spacing: 8) {
                         if let icon = plate.icon {
                             Image(systemName: icon)
-                                .font(.system(size: 12, weight: .black))
+                                .font(.system(size: DSType.Size.footnote, weight: .black))
                         }
                         Text(banner)
                             .font(DSType.body)
@@ -2906,7 +2906,7 @@ struct CoachedGameView: View {
 
             VStack(spacing: 18) {
                 Text("FINAL")
-                    .font(.system(size: 13, weight: .black))
+                    .font(.system(size: DSType.Size.body, weight: .black))
                     .foregroundStyle(Color.backgroundPrimary)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 5)
@@ -2915,13 +2915,13 @@ struct CoachedGameView: View {
                 HStack(spacing: 28) {
                     finalTeamScore(team: awayTeam, score: engine.awayScore)
                     Text("—")
-                        .font(.system(size: 26, weight: .black))
+                        .font(.system(size: DSType.Size.title1, weight: .black))
                         .foregroundStyle(Color.textTertiary)
                     finalTeamScore(team: homeTeam, score: engine.homeScore)
                 }
 
                 Text(finalVerdictText)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: DSType.Size.callout, weight: .semibold))
                     .foregroundStyle(playerWon ? Color.success : Color.textSecondary)
 
                 topPerformersRow
@@ -2934,9 +2934,9 @@ struct CoachedGameView: View {
                     } label: {
                         HStack(spacing: 7) {
                             Image(systemName: "play.rectangle.fill")
-                                .font(.system(size: 13, weight: .bold))
+                                .font(.system(size: DSType.Size.body, weight: .bold))
                             Text("Watch Highlights")
-                                .font(.system(size: 14, weight: .bold))
+                                .font(.system(size: DSType.Size.body, weight: .bold))
                         }
                         .foregroundStyle(Color.textPrimary)
                         .padding(.horizontal, 22)
@@ -2952,7 +2952,7 @@ struct CoachedGameView: View {
                     onFinish(engine)
                 } label: {
                     Text("Continue")
-                        .font(.system(size: 16, weight: .black))
+                        .font(.system(size: DSType.Size.callout, weight: .black))
                         .foregroundStyle(Color.backgroundPrimary)
                         .padding(.horizontal, 44)
                         .padding(.vertical, 13)
@@ -3040,21 +3040,21 @@ struct CoachedGameView: View {
         if !performers.isEmpty {
             VStack(spacing: 8) {
                 Text("TOP PERFORMERS")
-                    .font(.system(size: 10, weight: .black))
+                    .font(.system(size: DSType.Size.micro, weight: .black))
                     .foregroundStyle(Color.textTertiary)
                     .tracking(1.6)
                 HStack(spacing: 14) {
                     ForEach(performers) { performer in
                         VStack(spacing: 2) {
                             Text(performer.name)
-                                .font(.system(size: 12, weight: .bold))
+                                .font(.system(size: DSType.Size.footnote, weight: .bold))
                                 .foregroundStyle(
                                     performer.isHomeTeam == playerTeamIsHome
                                         ? Color.accentGold : Color.textPrimary
                                 )
                                 .lineLimit(1)
                             Text("\(performer.wins)-\(performer.losses) battles · \(performer.isHomeTeam ? homeTeam.abbreviation : awayTeam.abbreviation)")
-                                .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                                .font(.system(size: DSType.Size.micro, weight: .semibold).monospacedDigit())
                                 .foregroundStyle(Color.textSecondary)
                         }
                         .padding(.horizontal, 12)
@@ -3070,10 +3070,10 @@ struct CoachedGameView: View {
     private func finalTeamScore(team: Team, score: Int) -> some View {
         VStack(spacing: 4) {
             Text(team.abbreviation)
-                .font(.system(size: 14, weight: .bold))
+                .font(.system(size: DSType.Size.body, weight: .bold))
                 .foregroundStyle(isPlayerTeam(team) ? Color.accentGold : Color.textSecondary)
             Text("\(score)")
-                .font(.system(size: 44, weight: .black).monospacedDigit())
+                .font(.system(size: DSType.Size.hero, weight: .black).monospacedDigit())
                 .foregroundStyle(Color.textPrimary)
         }
     }
@@ -3375,7 +3375,7 @@ struct CoachedGameView: View {
         HStack(spacing: 10) {
             if playClockVisible && playClockRemaining <= 5 {
                 Text("\(Int(playClockRemaining.rounded(.up)))")
-                    .font(.system(size: 17, weight: .black).monospacedDigit())
+                    .font(.system(size: DSType.Size.title3, weight: .black).monospacedDigit())
                     .foregroundStyle(playClockColor)
                     .contentTransition(.numericText(countsDown: true))
                     .animation(.snappy(duration: 0.2), value: Int(playClockRemaining.rounded(.up)))
@@ -4633,7 +4633,7 @@ private struct LiveBoxScoreSheet: View {
                 dismiss()
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.system(size: DSType.Size.body, weight: .bold))
                     .foregroundStyle(Color.textSecondary)
                     .frame(width: 30, height: 30)
                     .background(Color.backgroundTertiary, in: Circle())
@@ -4657,12 +4657,12 @@ private struct LiveBoxScoreSheet: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                     ForEach(quarterLabels, id: \.self) { label in
                         Text(label)
-                            .font(.system(size: 11, weight: .bold))
+                            .font(.system(size: DSType.Size.caption, weight: .bold))
                             .foregroundStyle(Color.textTertiary)
                             .frame(width: 36)
                     }
                     Text("T")
-                        .font(.system(size: 11, weight: .black))
+                        .font(.system(size: DSType.Size.caption, weight: .black))
                         .foregroundStyle(Color.textSecondary)
                         .frame(width: 40)
                 }
@@ -4694,19 +4694,19 @@ private struct LiveBoxScoreSheet: View {
     private func lineScoreRow(abbr: String, quarters: [Int], total: Int, isPlayer: Bool) -> some View {
         GridRow {
             Text(abbr)
-                .font(.system(size: 13, weight: .heavy))
+                .font(.system(size: DSType.Size.body, weight: .heavy))
                 .foregroundStyle(isPlayer ? Color.accentGold : Color.textPrimary)
                 .frame(maxWidth: .infinity, alignment: .leading)
             ForEach(quarterLabels.indices, id: \.self) { index in
                 // Quarters not yet reached show a dash instead of a zero.
                 let reached = index < engine.quarter
                 Text(reached ? "\(quarters.indices.contains(index) ? quarters[index] : 0)" : "–")
-                    .font(.system(size: 13, weight: .semibold).monospacedDigit())
+                    .font(.system(size: DSType.Size.body, weight: .semibold).monospacedDigit())
                     .foregroundStyle(reached ? Color.textPrimary : Color.textTertiary)
                     .frame(width: 36)
             }
             Text("\(total)")
-                .font(.system(size: 14, weight: .black).monospacedDigit())
+                .font(.system(size: DSType.Size.body, weight: .black).monospacedDigit())
                 .foregroundStyle(isPlayer ? Color.accentGold : Color.textPrimary)
                 .frame(width: 40)
         }
@@ -4757,7 +4757,7 @@ private struct LiveBoxScoreSheet: View {
     ) -> some View {
         VStack(spacing: 6) {
             Text(category.uppercased())
-                .font(.system(size: 10, weight: .black))
+                .font(.system(size: DSType.Size.micro, weight: .black))
                 .foregroundStyle(Color.textTertiary)
                 .tracking(1.4)
                 .frame(maxWidth: .infinity, alignment: .center)
@@ -4772,15 +4772,15 @@ private struct LiveBoxScoreSheet: View {
     private func leaderCell(_ leader: LiveGameEngine.StatLeader?, alignment: HorizontalAlignment) -> some View {
         VStack(alignment: alignment, spacing: 2) {
             Text(leader?.name ?? "—")
-                .font(.system(size: 13, weight: .bold))
+                .font(.system(size: DSType.Size.body, weight: .bold))
                 .foregroundStyle(leader == nil ? Color.textTertiary : Color.textPrimary)
                 .lineLimit(1)
             if let leader {
                 Text(leader.detail)
-                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                    .font(.system(size: DSType.Size.caption, weight: .semibold).monospacedDigit())
                     .foregroundStyle(Color.textSecondary)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .minimumScaleFactor(0.9)
             }
         }
         .frame(maxWidth: .infinity, alignment: alignment == .leading ? .leading : .trailing)
@@ -4791,10 +4791,10 @@ private struct LiveBoxScoreSheet: View {
     private func sectionTitle(_ text: String, icon: String) -> some View {
         HStack(spacing: 6) {
             Image(systemName: icon)
-                .font(.system(size: 10, weight: .bold))
+                .font(.system(size: DSType.Size.micro, weight: .bold))
                 .foregroundStyle(Color.accentGold)
             Text(text)
-                .font(.system(size: 10, weight: .black))
+                .font(.system(size: DSType.Size.micro, weight: .black))
                 .foregroundStyle(Color.textTertiary)
                 .tracking(1.5)
         }

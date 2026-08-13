@@ -20,15 +20,23 @@ import SwiftUI
 
 // MARK: - Contrast-Remedial Primitives
 //
-// Two new raw colors added because their legacy counterparts fail WCAG AA (4.5:1
-// for normal text) on the card surface `backgroundSecondary #141E30`. Ratios
-// below were measured against `#141E30` with the accesslint WCAG checker.
+// Two new raw colors added because a *dimmed* or too-saturated counterpart fails
+// WCAG AA (4.5:1 for normal text) on the card surface `backgroundSecondary
+// #141E30`. Ratios below were measured against `#141E30` with the accesslint
+// WCAG checker. Note these are floors for previously-failing roles, not the
+// brightest muted text available — see each token's note.
 
 extension Color {
-    /// Readable muted-label color — replaces `textTertiary #64748B` (**3.51:1**,
-    /// fails AA) for any *text* role. `#7C8BA1` → **4.82:1** on the card surface,
-    /// **5.40:1** on the darker `backgroundPrimary #0B1222` feed surface. Keep
-    /// `textTertiary` only for non-text roles (hairlines, disabled fills).
+    /// Readable muted-label color for *dimmed* text — the replacement for
+    /// `textTertiary.opacity(0.5…0.6)`, which drops well under AA. `#7C8BA1` →
+    /// **4.82:1** on the card surface `#141E30`, **5.39:1** on the darker
+    /// `backgroundPrimary #0B1222` feed surface.
+    ///
+    /// ⚠️ This token is **darker** than plain `Color.textTertiary` (`#8A96A8`,
+    /// 5.56:1 / 6.23:1 — lightened in 65ab875, it no longer is the old `#64748B`
+    /// that failed AA). Never swap a plain `textTertiary` label to this token:
+    /// that *lowers* contrast by ~14%. Reach for it only where the site was
+    /// carrying an opacity modifier that has to go away.
     static let textTertiaryReadable = Color(red: 0.48627, green: 0.54510, blue: 0.63137) // #7C8BA1
 
     /// Red for destructive/alarm *text* — `danger #EF4444` (~3.4:1) is too dim to

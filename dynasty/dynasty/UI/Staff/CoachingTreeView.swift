@@ -78,7 +78,7 @@ struct CoachingTreeView: View {
 
                 HStack(alignment: .bottom, spacing: 8) {
                     Text("\(tree.legacyScore)")
-                        .font(.system(size: 52, weight: .bold).monospacedDigit())
+                        .font(.system(size: DSType.Size.hero, weight: .bold).monospacedDigit())
                         .foregroundStyle(legacyScoreColor)
                     Text("/ 100")
                         .font(.title3)
@@ -182,7 +182,7 @@ struct CoachingTreeView: View {
         HStack(spacing: 12) {
             // Role badge
             Text(entry.role.abbreviation)
-                .font(.system(size: 11, weight: .bold))
+                .font(.system(size: DSType.Size.caption, weight: .bold))
                 .foregroundStyle(Color.backgroundPrimary)
                 .padding(.horizontal, 7)
                 .padding(.vertical, 4)
@@ -243,7 +243,7 @@ struct CoachingTreeView: View {
                     .foregroundStyle(entry.wasSuccessful ? Color.accentGold : Color.textTertiary)
                     .font(.subheadline)
                 Text("HC")
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.system(size: DSType.Size.caption, weight: .bold))
                     .foregroundStyle(entry.wasSuccessful ? Color.accentGold : Color.textTertiary)
             }
         } else if entry.wasSuccessful {
@@ -265,7 +265,7 @@ struct CoachingTreeView: View {
                 .font(.title3.weight(.bold).monospacedDigit())
                 .foregroundStyle(Color.textPrimary)
             Text(label)
-                .font(.system(size: 10))
+                .font(.system(size: DSType.Size.micro))
                 .foregroundStyle(Color.textSecondary)
                 .multilineTextAlignment(.center)
         }

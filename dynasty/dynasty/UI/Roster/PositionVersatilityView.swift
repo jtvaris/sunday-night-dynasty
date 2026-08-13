@@ -328,7 +328,7 @@ struct PositionVersatilityView: View {
                     // §5.3: the programme is not just cross-training any more —
                     // it converts him for good once he has banked enough.
                     Text("Converts permanently at \(VersatilityDevelopmentEngine.conversionCommitFamiliarity)% familiarity (\(player.familiarity(at: trainingPos))% now), unless he is the outright starter at \(player.position.rawValue).")
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(Color.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -406,7 +406,7 @@ struct PositionVersatilityView: View {
                             if let useCase = useCaseHint(from: player.position, to: pos) {
                                 HStack(alignment: .top, spacing: 5) {
                                     Image(systemName: "sportscourt.fill")
-                                        .font(.system(size: 9))
+                                        .font(.system(size: DSType.Size.micro))
                                         .foregroundStyle(Color.textTertiary)
                                         .padding(.top, 1)
                                     Text(useCase)
@@ -420,7 +420,7 @@ struct PositionVersatilityView: View {
                             // What this unlocks rationale based on current familiarity
                             HStack(alignment: .top, spacing: 5) {
                                 Image(systemName: "checkmark.seal.fill")
-                                    .font(.system(size: 9))
+                                    .font(.system(size: DSType.Size.micro))
                                     .foregroundStyle(unlockColor(familiarity: familiarity))
                                     .padding(.top, 1)
                                 Text(unlockRationale(familiarity: familiarity))
@@ -640,7 +640,7 @@ struct PositionVersatilityView: View {
             // Position column headers
             ForEach(matrixPositions) { pos in
                 Text(pos.rawValue)
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.system(size: DSType.Size.micro, weight: .bold))
                     .foregroundStyle(Color.textSecondary)
                     .frame(maxWidth: .infinity)
                     .multilineTextAlignment(.center)
@@ -701,7 +701,7 @@ struct PositionVersatilityView: View {
                 .fill(rating == .unqualified ? Color.clear : rating.color.opacity(0.18))
 
             Text(rating.shortLabel)
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: DSType.Size.micro, weight: .bold))
                 .foregroundStyle(rating == .unqualified ? Color.backgroundTertiary : rating.color)
         }
         .frame(maxWidth: .infinity)

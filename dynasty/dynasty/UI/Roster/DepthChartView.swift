@@ -296,10 +296,10 @@ struct DepthChartView: View {
     private func ovrPill(label: String, value: Int) -> some View {
         HStack(spacing: 6) {
             Text(label)
-                .font(.system(size: 10, weight: .bold))
+                .font(.system(size: DSType.Size.micro, weight: .bold))
                 .foregroundStyle(Color.textTertiary)
             Text("\(value)")
-                .font(.system(size: 16, weight: .heavy).monospacedDigit())
+                .font(.system(size: DSType.Size.callout, weight: .heavy).monospacedDigit())
                 .foregroundStyle(Color.forRating(value))
         }
     }
@@ -440,7 +440,7 @@ struct DepthChartView: View {
     private func autoSetToast(_ message: String) -> some View {
         HStack(spacing: 10) {
             Image(systemName: "wand.and.stars")
-                .font(.system(size: 15, weight: .semibold))
+                .font(.system(size: DSType.Size.callout, weight: .semibold))
                 .foregroundStyle(Color.success)
             Text(message)
                 .font(.subheadline.weight(.semibold))
@@ -466,10 +466,10 @@ struct DepthChartView: View {
     private var groupCollapseControls: some View {
         HStack(spacing: 6) {
             Image(systemName: "list.bullet.indent")
-                .font(.system(size: 10, weight: .semibold))
+                .font(.system(size: DSType.Size.caption, weight: .semibold))
                 .foregroundStyle(Color.textTertiary)
             Text("\(activeSlotGroups.count) groups · \(activeSlots.count) positions")
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: DSType.Size.caption, weight: .medium))
                 .foregroundStyle(Color.textTertiary)
             Spacer()
             Button {
@@ -486,9 +486,9 @@ struct DepthChartView: View {
                 let allCollapsed = collapsedGroups.intersection(activeSlotGroups.map(\.id)).count == activeSlotGroups.count
                 HStack(spacing: 3) {
                     Image(systemName: allCollapsed ? "chevron.down.square" : "chevron.up.square")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: DSType.Size.caption, weight: .semibold))
                     Text(allCollapsed ? "Expand all" : "Collapse all")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.system(size: DSType.Size.micro, weight: .semibold))
                 }
                 .foregroundStyle(Color.accentBlue)
             }
@@ -524,22 +524,22 @@ struct DepthChartView: View {
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
-                        .font(.system(size: 11, weight: .heavy))
+                        .font(.system(size: DSType.Size.caption, weight: .heavy))
                         .foregroundStyle(Color.accentGold)
                         .frame(width: 14)
                     Image(systemName: group.icon)
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: DSType.Size.footnote, weight: .semibold))
                         .foregroundStyle(Color.textSecondary)
                     Text(group.name)
-                        .font(.system(size: 14, weight: .bold))
+                        .font(.system(size: DSType.Size.body, weight: .bold))
                         .foregroundStyle(Color.textPrimary)
                     Spacer()
                     // Filled count
                     HStack(spacing: 3) {
                         Image(systemName: filledStarters == groupSlots.count ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-                            .font(.system(size: 10))
+                            .font(.system(size: DSType.Size.micro))
                         Text("\(filledStarters)/\(groupSlots.count)")
-                            .font(.system(size: 11, weight: .bold).monospacedDigit())
+                            .font(.system(size: DSType.Size.caption, weight: .bold).monospacedDigit())
                     }
                     .foregroundStyle(filledStarters == groupSlots.count ? Color.success : Color.warning)
                     .padding(.horizontal, 6)
@@ -551,7 +551,7 @@ struct DepthChartView: View {
                     // Average starter OVR
                     if starterAvg > 0 {
                         Text("AVG \(starterAvg)")
-                            .font(.system(size: 11, weight: .bold).monospacedDigit())
+                            .font(.system(size: DSType.Size.caption, weight: .bold).monospacedDigit())
                             .foregroundStyle(Color.forRating(starterAvg))
                             .padding(.horizontal, 7)
                             .padding(.vertical, 3)
@@ -647,7 +647,7 @@ struct DepthChartView: View {
                         persistDepthChart()
                     } label: {
                         Image(systemName: "chevron.up")
-                            .font(.system(size: 10, weight: .bold))
+                            .font(.system(size: DSType.Size.micro, weight: .bold))
                             .foregroundStyle(index > 0 ? Color.textSecondary : Color.backgroundTertiary)
                     }
                     .buttonStyle(.plain)
@@ -661,7 +661,7 @@ struct DepthChartView: View {
                         persistDepthChart()
                     } label: {
                         Image(systemName: "chevron.down")
-                            .font(.system(size: 10, weight: .bold))
+                            .font(.system(size: DSType.Size.micro, weight: .bold))
                             .foregroundStyle(index < totalInSlot - 1 ? Color.textSecondary : Color.backgroundTertiary)
                     }
                     .buttonStyle(.plain)
@@ -674,7 +674,7 @@ struct DepthChartView: View {
 
             // Slot label
             Text(depthLabel(index: index))
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: DSType.Size.micro, weight: .bold))
                 .foregroundStyle(isStarter ? Color.accentGold : Color.textTertiary)
                 .textCase(.uppercase)
                 .frame(width: 48, alignment: .leading)
@@ -714,22 +714,22 @@ struct DepthChartView: View {
             // Player name
             VStack(alignment: .leading, spacing: 1) {
                 Text(player.fullName)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: DSType.Size.body, weight: .semibold))
                     .foregroundStyle(Color.textPrimary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
 
                 HStack(spacing: 6) {
                     Text(player.position.rawValue)
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: DSType.Size.micro, weight: .medium))
                         .foregroundStyle(Color.textTertiary)
 
                     Text("Age \(player.age)")
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.micro))
                         .foregroundStyle(Color.textTertiary)
 
                     Text("$\(player.annualSalary / 1000)M")
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.micro))
                         .foregroundStyle(Color.textTertiary)
                 }
             }
@@ -741,7 +741,7 @@ struct DepthChartView: View {
                 // Wrong position indicator
                 if !slot.acceptsAnyPosition && player.position != slot.basePosition {
                     Image(systemName: "arrow.triangle.swap")
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.micro))
                         .foregroundStyle(Color.warning)
                         .help("Playing out of natural position")
                 }
@@ -750,11 +750,11 @@ struct DepthChartView: View {
                 if player.isInjured {
                     HStack(spacing: 2) {
                         Image(systemName: "cross.circle.fill")
-                            .font(.system(size: 11))
+                            .font(.system(size: DSType.Size.caption))
                             .foregroundStyle(Color.danger)
                         if player.injuryWeeksRemaining > 0 {
                             Text("\(player.injuryWeeksRemaining)w")
-                                .font(.system(size: 9, weight: .bold))
+                                .font(.system(size: DSType.Size.caption, weight: .bold))
                                 .foregroundStyle(Color.danger)
                         }
                     }
@@ -777,10 +777,10 @@ struct DepthChartView: View {
     private func emptySlotContent() -> some View {
         HStack {
             Image(systemName: "plus.circle.dashed")
-                .font(.system(size: 14))
+                .font(.system(size: DSType.Size.body))
                 .foregroundStyle(Color.textTertiary)
             Text("Tap to assign")
-                .font(.system(size: 12))
+                .font(.system(size: DSType.Size.footnote))
                 .foregroundStyle(Color.textTertiary)
             Spacer()
         }
@@ -791,7 +791,7 @@ struct DepthChartView: View {
 
     private func ratingBadge(value: Int) -> some View {
         Text("\(value)")
-            .font(.system(size: 13, weight: .bold).monospacedDigit())
+            .font(.system(size: DSType.Size.body, weight: .bold).monospacedDigit())
             .foregroundStyle(Color.forRating(value))
             .frame(width: 34, height: 24)
             .background(
@@ -841,7 +841,7 @@ struct DepthChartView: View {
 
     private func slotBadge(_ slot: DepthChartSlot) -> some View {
         Text(slot.shortLabel)
-            .font(.system(size: 10, weight: .bold))
+            .font(.system(size: DSType.Size.micro, weight: .bold))
             .foregroundStyle(Color.backgroundPrimary)
             .frame(minWidth: 28, minHeight: 20)
             .padding(.horizontal, 4)
@@ -1085,7 +1085,7 @@ private struct ComparisonSheet: View {
         return HStack(spacing: 10) {
             // Position badge
             Text(player.position.rawValue)
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: DSType.Size.micro, weight: .bold))
                 .foregroundStyle(Color.backgroundPrimary)
                 .frame(width: 28, height: 18)
                 .background(positionColor(player.position.side), in: RoundedRectangle(cornerRadius: 3))
@@ -1098,7 +1098,7 @@ private struct ComparisonSheet: View {
                         .foregroundStyle(Color.textPrimary)
                     if isCurrent {
                         Text("Current")
-                            .font(.system(size: 9, weight: .bold))
+                            .font(.system(size: DSType.Size.micro, weight: .bold))
                             .foregroundStyle(Color.accentGold)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 2)
@@ -1116,7 +1116,7 @@ private struct ComparisonSheet: View {
                     // Versatility rating
                     if !candidate.isNatural && !slot.acceptsAnyPosition {
                         Text(candidate.versatility.label)
-                            .font(.system(size: 9, weight: .medium))
+                            .font(.system(size: DSType.Size.micro, weight: .medium))
                             .foregroundStyle(candidate.versatility.color)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
@@ -1137,7 +1137,7 @@ private struct ComparisonSheet: View {
                         Image(systemName: candidate.ovrDelta > 0 ? "arrow.up" : "arrow.down")
                             .font(.system(size: DSType.Size.micro, weight: .bold))
                         Text("\(abs(candidate.ovrDelta))")
-                            .font(.system(size: 10, weight: .bold).monospacedDigit())
+                            .font(.system(size: DSType.Size.micro, weight: .bold).monospacedDigit())
                     }
                     .foregroundStyle(candidate.ovrDelta > 0 ? Color.success : Color.danger)
                 }
@@ -1147,10 +1147,10 @@ private struct ComparisonSheet: View {
                     HStack(spacing: 2) {
                         Image(systemName: "cross.circle.fill")
                             .foregroundStyle(Color.danger)
-                            .font(.system(size: 10))
+                            .font(.system(size: DSType.Size.caption))
                         if player.injuryWeeksRemaining > 0 {
                             Text("\(player.injuryWeeksRemaining)w")
-                                .font(.system(size: 9))
+                                .font(.system(size: DSType.Size.caption))
                                 .foregroundStyle(Color.danger)
                         }
                     }

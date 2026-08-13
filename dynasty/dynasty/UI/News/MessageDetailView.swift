@@ -90,7 +90,7 @@ struct MessageDetailView: View {
     private var senderHeader: some View {
         HStack(spacing: 14) {
             Image(systemName: message.sender.icon)
-                .font(.system(size: 24))
+                .font(.system(size: DSType.Size.title2))
                 .foregroundStyle(senderColor)
                 .frame(width: 48, height: 48)
                 .background(

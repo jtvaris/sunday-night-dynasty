@@ -69,7 +69,7 @@ struct NewLeagueYearView: View {
     private func transitionHeader(summary: FreeAgencyEngine.LeagueYearSummary) -> some View {
         VStack(spacing: 12) {
             Image(systemName: "calendar.badge.clock")
-                .font(.system(size: 44))
+                .font(.system(size: DSType.Size.hero))
                 .foregroundStyle(Color.accentGold)
 
             Text("NEW LEAGUE YEAR")
@@ -93,7 +93,7 @@ struct NewLeagueYearView: View {
             HStack(spacing: 10) {
                 Image(systemName: "dollarsign.circle.fill")
                     .foregroundStyle(Color.textSecondary)
-                    .font(.system(size: 15))
+                    .font(.system(size: DSType.Size.callout))
                 Text("Your Cap Situation")
                     .font(.headline)
                     .foregroundStyle(Color.textPrimary)
@@ -135,7 +135,7 @@ struct NewLeagueYearView: View {
             HStack(spacing: 10) {
                 Image(systemName: "star.fill")
                     .foregroundStyle(Color.textSecondary)
-                    .font(.system(size: 15))
+                    .font(.system(size: DSType.Size.callout))
                 Text("Notable New Free Agents")
                     .font(.headline)
                     .foregroundStyle(Color.textPrimary)

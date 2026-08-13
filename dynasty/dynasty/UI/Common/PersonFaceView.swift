@@ -56,6 +56,16 @@ struct PersonFaceView: View {
         case medium
         /// Detail-screen headers.
         case large
+        /// **A face that is the screen's subject, not its decoration.**
+        ///
+        /// One caller today: the draft room's `PickRevealCard`, where the moment
+        /// being staged is literally "a person just arrived", and the portrait
+        /// has to hold a ~520 pt-wide column on its own. 168 pt is chosen
+        /// against the source art rather than against a layout — the bundled
+        /// portraits are 384², so this still renders inside the source
+        /// resolution on a 2× display (336 px) and only softens on a 3× phone,
+        /// which is not a device that stage is laid out for.
+        case hero
 
         /// Diameters are chosen so a portrait can be dropped into an existing
         /// row WITHOUT changing its height: `.small` matches the ~30 pt content
@@ -66,6 +76,7 @@ struct PersonFaceView: View {
             case .small:  return 30
             case .medium: return 56
             case .large:  return 96
+            case .hero:   return 168
             }
         }
 
@@ -74,6 +85,7 @@ struct PersonFaceView: View {
             case .small:  return 1.5
             case .medium: return 2
             case .large:  return 3
+            case .hero:   return 4
             }
         }
     }

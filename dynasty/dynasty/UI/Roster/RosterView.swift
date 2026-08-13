@@ -39,8 +39,11 @@ struct RosterView: View {
     // MARK: - State
 
     @State private var selectedSide: RosterFilter = .offense
-    @State private var sortOrder: RosterSort = .overall
-    @State private var sortAscending: Bool = false
+    /// #187 — the column sort, as one value on the shared standard
+    /// (`DSSortState`, `DSListRow.swift`). It was two loose properties, and the
+    /// pair had to be kept in step by hand at every call site that set either.
+    /// Default unchanged: OVR, descending.
+    @State private var sort = DSSortState<RosterSort>(key: .overall)
     @State private var viewMode: RosterViewMode = .list
     @State private var analysisMode: RosterAnalysisMode = .overview
     /// Custom depth ordering per position. When a user promotes/demotes a player,
@@ -248,25 +251,41 @@ struct RosterView: View {
             filtered = players.filter { $0.position.side == .specialTeams }
         }
 
-        let asc = sortAscending
-        switch sortOrder {
+        // #187 / #134a: every branch below ends in an id tiebreak, because a
+        // comparator that calls two equal-OVR players "not less than each other"
+        // is not an ordering and `sorted(by:)` may hand back either arrangement.
+        // Over a `@Query` result, whose own fetch order is unspecified, that is
+        // rows swapping places on an unrelated redraw.
+        //
+        // A second thing changed with the standard: the direction is now the
+        // SAME for every column. `age` and `name` used to be wired backwards —
+        // "descending" gave you the youngest player and the A's — so the chevron
+        // the header draws would have pointed the wrong way on two of five
+        // columns. Descending is now "most of this first" everywhere.
+        let asc = sort.ascending
+        switch sort.key {
         case .overall:
-            return filtered.sorted { asc ? $0.overall < $1.overall : $0.overall > $1.overall }
+            return filtered.dsSorted(asc, by: \.overall, id: \.id)
         case .position:
-            return filtered.sorted {
-                let sideOrder = positionSideOrder($0.position.side, $1.position.side)
-                if sideOrder != 0 { return asc ? sideOrder > 0 : sideOrder < 0 }
-                let posOrder = Position.allCases.firstIndex(of: $0.position)! -
-                               Position.allCases.firstIndex(of: $1.position)!
-                if posOrder != 0 { return asc ? posOrder > 0 : posOrder < 0 }
-                return $0.overall > $1.overall
+            return filtered.dsSorted(asc, id: \.id) { lhs, rhs in
+                let side = positionSideOrder(lhs.position.side, rhs.position.side)
+                if side != 0 { return side < 0 ? .orderedAscending : .orderedDescending }
+                let order = dsCompare(
+                    Position.allCases.firstIndex(of: lhs.position) ?? 0,
+                    Position.allCases.firstIndex(of: rhs.position) ?? 0
+                )
+                if order != .orderedSame { return order }
+                // Inside one position the better player leads in both
+                // directions — reversing the position order should not also
+                // turn every group upside down.
+                return dsCompare(rhs.overall, lhs.overall)
             }
         case .age:
-            return filtered.sorted { asc ? $0.age > $1.age : $0.age < $1.age }
+            return filtered.dsSorted(asc, by: \.age, id: \.id)
         case .salary:
-            return filtered.sorted { asc ? $0.annualSalary < $1.annualSalary : $0.annualSalary > $1.annualSalary }
+            return filtered.dsSorted(asc, by: \.annualSalary, id: \.id)
         case .name:
-            return filtered.sorted { asc ? $0.lastName > $1.lastName : $0.lastName < $1.lastName }
+            return filtered.dsSorted(asc, by: \.lastName, id: \.id)
         }
     }
 
@@ -490,7 +509,7 @@ struct RosterView: View {
                     .foregroundStyle(injuryReportBadgeCount > 0 ? Color.danger : Color.textSecondary)
                 if injuryReportBadgeCount > 0 {
                     Text("\(injuryReportBadgeCount)")
-                        .font(.system(size: 9, weight: .bold).monospacedDigit())
+                        .font(.system(size: DSType.Size.micro, weight: .bold).monospacedDigit())
                         .foregroundStyle(.white)
                         .padding(.horizontal, 4)
                         .padding(.vertical, 1)
@@ -519,17 +538,17 @@ struct RosterView: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Image(systemName: "slider.horizontal.3")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: DSType.Size.caption, weight: .semibold))
                     .foregroundStyle(Color.textTertiary)
                 Text("ANALYSIS")
-                    .font(.system(size: 9, weight: .heavy))
+                    .font(.system(size: DSType.Size.caption, weight: .heavy))
                     .foregroundStyle(Color.textTertiary)
                     .tracking(0.5)
                 Text("·")
-                    .font(.system(size: 9, weight: .heavy))
+                    .font(.system(size: DSType.Size.caption, weight: .heavy))
                     .foregroundStyle(Color.textTertiary)
                 Text(analysisMode.label.uppercased())
-                    .font(.system(size: 9, weight: .heavy))
+                    .font(.system(size: DSType.Size.caption, weight: .heavy))
                     .foregroundStyle(Color.accentBlue)
                     .tracking(0.5)
                 Spacer()
@@ -546,7 +565,7 @@ struct RosterView: View {
                         } label: {
                             HStack(spacing: 4) {
                                 Image(systemName: mode.icon)
-                                    .font(.system(size: 11, weight: analysisMode == mode ? .bold : .regular))
+                                    .font(.system(size: DSType.Size.caption, weight: analysisMode == mode ? .bold : .regular))
                                 Text(mode.label)
                                     .font(.caption)
                                     .fontWeight(analysisMode == mode ? .bold : .medium)
@@ -819,7 +838,7 @@ struct RosterView: View {
             if !sortHintSeen {
                 HStack(spacing: 4) {
                     Image(systemName: "hand.tap")
-                        .font(.system(size: 11))
+                        .font(.system(size: DSType.Size.caption))
                     Text("Tap column headers to sort")
                         .font(DSType.text(11, .medium, prose: true))
                 }
@@ -944,15 +963,15 @@ struct RosterView: View {
         }
     }
 
+    /// #187 — the static half of the header, on the same component as the
+    /// sortable half. Both are now `DSListRow`'s: a header row where the
+    /// tappable labels are uppercase tracked display and the untappable ones are
+    /// mixed-case body text reads as two headers stacked, which is exactly what
+    /// adopting the standard on only the sort columns would have produced.
+    /// `DSColumnHeader` also brings the shrink-then-clip rule, so "Health" in a
+    /// 28 pt column shrinks instead of wrapping.
     private func headerLabel(_ title: String, width: CGFloat) -> some View {
-        Text(title)
-            // Same reason as `sortButton`: a fixed-width box wraps a label it
-            // cannot fit ("Health" in 28pt, "Skill 1" in 32) rather than
-            // shrinking it, which breaks the header's baseline.
-            .lineLimit(1)
-            .minimumScaleFactor(0.7)
-            .frame(width: width, alignment: .center)
-            .foregroundStyle(Color.textTertiary)
+        DSColumnHeader(title, width: width)
     }
 
     /// Icon column header — for columns whose cells are SF Symbols rather than
@@ -960,7 +979,7 @@ struct RosterView: View {
     /// colour at a different optical weight than every neighbouring header.
     private func headerIcon(_ systemName: String, width: CGFloat) -> some View {
         Image(systemName: systemName)
-            .font(.system(size: 11, weight: .semibold))
+            .font(.system(size: DSType.Size.caption, weight: .semibold))
             .frame(width: width, alignment: .center)
             .foregroundStyle(Color.textTertiary)
     }
@@ -970,37 +989,12 @@ struct RosterView: View {
     /// its columns sit ~21pt right of the values they label.
     private static let disclosureGutter: CGFloat = 21
 
-    private func sortButton(_ title: String, sort: RosterSort, width: CGFloat?) -> some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                if sortOrder == sort {
-                    sortAscending.toggle()
-                } else {
-                    sortOrder = sort
-                    sortAscending = false
-                }
-            }
-        } label: {
-            HStack(spacing: 2) {
-                Text(title)
-                    // A header in a fixed-width box wraps mid-word when the
-                    // chevron appears next to it — "OVR" became "OV / R" the
-                    // moment the column was sorted. The widths above are sized
-                    // for label + chevron; this makes wrapping impossible even
-                    // at larger dynamic type.
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-                if sortOrder == sort {
-                    Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 11, weight: .bold))
-                }
-            }
-            .frame(width: width, alignment: .center)
-            // Make the full frame tappable, not just the text glyph itself.
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(sortOrder == sort ? Color.accentBlue : Color.textTertiary)
+    /// #187 — the roster's hand-rolled sort header, now the shared one
+    /// (`DSSortableColumnHeader`). The tap rule, the chevron, the active tint and
+    /// the shrink-before-clip behaviour all live in `DSListRow.swift`; this is
+    /// the call site's binding and nothing else.
+    private func sortButton(_ title: String, sort key: RosterSort, width: CGFloat?) -> some View {
+        DSSortableColumnHeader(title, key: key, sort: $sort, width: width)
     }
 
     // MARK: - Formation Content
@@ -1080,34 +1074,30 @@ struct RosterView: View {
 
     private var sortMenu: some View {
         Menu {
-            ForEach(RosterSort.allCases) { sort in
+            ForEach(RosterSort.allCases) { option in
                 Button {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        if sortOrder == sort {
-                            sortAscending.toggle()
-                        } else {
-                            sortOrder = sort
-                            sortAscending = false
-                        }
-                    }
+                    // Same tap rule as the column headers — one implementation
+                    // (#187), so the menu and the header can never disagree
+                    // about what a second tap does.
+                    withAnimation(.easeInOut(duration: 0.2)) { sort.tap(option) }
                 } label: {
                     HStack {
-                        Label(sort.label, systemImage: sort.icon)
-                        if sortOrder == sort {
-                            Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
+                        Label(option.label, systemImage: option.icon)
+                        if sort.isActive(option) {
+                            Image(systemName: sort.directionSymbol)
                         }
                     }
                 }
             }
         } label: {
             HStack(spacing: 4) {
-                Image(systemName: sortAscending ? "arrow.up" : "arrow.down")
-                Text(sortOrder.label)
+                Image(systemName: sort.ascending ? "arrow.up" : "arrow.down")
+                Text(sort.key.label)
                     .font(.caption)
                     .fontWeight(.semibold)
             }
         }
-        .accessibilityLabel("Sort roster, currently by \(sortOrder.label) \(sortAscending ? "ascending" : "descending")")
+        .accessibilityLabel("Sort roster, currently by \(sort.key.label) \(sort.spokenDirection)")
     }
 
     // MARK: - Position Picker Sheet (#175)
@@ -1146,7 +1136,7 @@ struct RosterView: View {
                 Section {
                     HStack(spacing: 12) {
                         Text(player.position.rawValue)
-                            .font(.system(size: 11, weight: .heavy))
+                            .font(.system(size: DSType.Size.caption, weight: .heavy))
                             .foregroundStyle(Color.backgroundPrimary)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
@@ -1185,7 +1175,7 @@ struct RosterView: View {
                                 HStack(spacing: 12) {
                                     // Position badge
                                     Text(entry.player.position.rawValue)
-                                        .font(.system(size: 11, weight: .heavy))
+                                        .font(.system(size: DSType.Size.caption, weight: .heavy))
                                         .foregroundStyle(Color.backgroundPrimary)
                                         .padding(.horizontal, 8)
                                         .padding(.vertical, 4)
@@ -1198,7 +1188,7 @@ struct RosterView: View {
                                             .foregroundStyle(Color.textPrimary)
                                         if !entry.isNatural {
                                             Text("\(entry.player.position.rawValue) → \(player.position.rawValue)")
-                                                .font(.system(size: 9, weight: .medium))
+                                                .font(.system(size: DSType.Size.footnote, weight: .medium))
                                                 .foregroundStyle(Color.warning)
                                         }
                                     }
@@ -1208,7 +1198,7 @@ struct RosterView: View {
                                     // Familiarity % for out-of-position
                                     if !entry.isNatural {
                                         Text("\(entry.familiarity)%")
-                                            .font(.system(size: 11, weight: .bold).monospacedDigit())
+                                            .font(.system(size: DSType.Size.caption, weight: .bold).monospacedDigit())
                                             .foregroundStyle(Color.forRating(entry.familiarity))
                                             .padding(.horizontal, 5)
                                             .padding(.vertical, 2)
@@ -1303,24 +1293,24 @@ struct RosterView: View {
                                 .foregroundStyle(Color.success)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("Current: \(current.fullName)  \(current.position.rawValue)  OVR \(current.overall)")
-                                    .font(.system(size: 14, weight: .semibold))
+                                    .font(.system(size: DSType.Size.body, weight: .semibold))
                                     .foregroundStyle(Color.textPrimary)
                                 HStack(spacing: 8) {
                                     Text("OVR \(current.overall)")
-                                        .font(.system(size: 13, weight: .bold).monospacedDigit())
+                                        .font(.system(size: DSType.Size.body, weight: .bold).monospacedDigit())
                                         .foregroundStyle(Color.forPlayerCardRating(current.overall))
                                     Text("Age \(current.age)")
-                                        .font(.system(size: 11))
+                                        .font(.system(size: DSType.Size.caption))
                                         .foregroundStyle(Color.textTertiary)
                                     Text(starterPickerFormatSalary(current.annualSalary))
-                                        .font(.system(size: 11))
+                                        .font(.system(size: DSType.Size.caption))
                                         .foregroundStyle(Color.textTertiary)
                                     if current.isInjured {
                                         HStack(spacing: 2) {
                                             Image(systemName: "cross.circle.fill")
-                                                .font(.system(size: 10))
+                                                .font(.system(size: DSType.Size.micro))
                                             Text("\(current.injuryWeeksRemaining)w")
-                                                .font(.system(size: 10))
+                                                .font(.system(size: DSType.Size.micro))
                                         }
                                         .foregroundStyle(Color.danger)
                                     }
@@ -1388,7 +1378,7 @@ struct RosterView: View {
                             Text("Other Positions (Versatile)")
                                 .foregroundStyle(Color.textTertiary)
                             Image(systemName: "arrow.triangle.swap")
-                                .font(.system(size: 10))
+                                .font(.system(size: DSType.Size.micro))
                                 .foregroundStyle(Color.textTertiary)
                         }
                     }
@@ -1422,7 +1412,7 @@ struct RosterView: View {
             // OVR badge (large, color-coded)
             VStack(spacing: 1) {
                 Text("\(player.overall)")
-                    .font(.system(size: 16, weight: .heavy).monospacedDigit())
+                    .font(.system(size: DSType.Size.callout, weight: .heavy).monospacedDigit())
                     .foregroundStyle(Color.forPlayerCardRating(player.overall))
 
                 // Effective OVR for out-of-position
@@ -1430,7 +1420,7 @@ struct RosterView: View {
                     let familiarity = player.familiarity(at: position)
                     let effective = Int(Double(player.overall) * Double(familiarity) / 100.0)
                     Text("~\(effective)")
-                        .font(.system(size: 10, weight: .medium).monospacedDigit())
+                        .font(.system(size: DSType.Size.micro, weight: .medium).monospacedDigit())
                         .foregroundStyle(Color.textTertiary)
                 }
             }
@@ -1439,35 +1429,35 @@ struct RosterView: View {
             VStack(alignment: .leading, spacing: 2) {
                 // Name, position, age
                 Text(player.fullName)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: DSType.Size.body, weight: .semibold))
                     .foregroundStyle(Color.textPrimary)
 
                 HStack(spacing: 6) {
                     Text(player.position.rawValue)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: DSType.Size.caption, weight: .medium))
                         .foregroundStyle(Color.textSecondary)
                     Text("Age \(player.age)")
-                        .font(.system(size: 11))
+                        .font(.system(size: DSType.Size.caption))
                         .foregroundStyle(Color.textTertiary)
 
                     // Salary
                     Text(starterPickerFormatSalary(player.annualSalary))
-                        .font(.system(size: 11))
+                        .font(.system(size: DSType.Size.caption))
                         .foregroundStyle(Color.textTertiary)
 
                     // Form trend arrow
                     let trend = starterPickerTrend(for: player)
                     Image(systemName: trend.icon)
-                        .font(.system(size: 9))
+                        .font(.system(size: DSType.Size.micro))
                         .foregroundStyle(trend.color)
 
                     // Health/injury status
                     if player.isInjured {
                         HStack(spacing: 2) {
                             Image(systemName: "cross.circle.fill")
-                                .font(.system(size: 10))
+                                .font(.system(size: DSType.Size.micro))
                             Text("\(player.injuryWeeksRemaining)w")
-                                .font(.system(size: 10))
+                                .font(.system(size: DSType.Size.micro))
                         }
                         .foregroundStyle(Color.danger)
                     }
@@ -1478,7 +1468,7 @@ struct RosterView: View {
                     let familiarity = player.familiarity(at: position)
                     let effective = Int(Double(player.overall) * Double(familiarity) / 100.0)
                     Text("\(player.position.rawValue) at \(position.rawValue): \(player.overall) \u{00d7} \(familiarity)% = ~\(effective) effective")
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(Color.warning)
                 }
 
@@ -1490,7 +1480,7 @@ struct RosterView: View {
                     let diff = playerOVR - current.overall
                     let diffStr = diff >= 0 ? "+\(diff)" : "\(diff)"
                     Text("vs \(current.lastName): \(current.overall) \u{2192} \(playerOVR) (\(diffStr))")
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: DSType.Size.footnote, weight: .medium))
                         .foregroundStyle(diff >= 0 ? Color.success : Color.danger)
                 }
             }
@@ -1736,19 +1726,19 @@ struct PositionGroupHeader: View {
             // Starter grade / Depth grade — prominent sizing
             HStack(spacing: 3) {
                 Text("S:")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: DSType.Size.caption, weight: .semibold))
                     .foregroundStyle(Color.textTertiary)
                 Text(g.starterGrade)
-                    .font(.system(size: 18, weight: .black))
+                    .font(.system(size: DSType.Size.title3, weight: .black))
                     .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(g.starterGrade))
                 Text("/")
-                    .font(.system(size: 13))
+                    .font(.system(size: DSType.Size.body))
                     .foregroundStyle(Color.textTertiary)
                 Text("D:")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: DSType.Size.caption, weight: .semibold))
                     .foregroundStyle(Color.textTertiary)
                 Text(g.depthGrade)
-                    .font(.system(size: 18, weight: .black))
+                    .font(.system(size: DSType.Size.title3, weight: .black))
                     .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(g.depthGrade))
             }
 
@@ -1756,7 +1746,7 @@ struct PositionGroupHeader: View {
             // season-over-season group history is available (see developmentTrend).
             let trend = developmentTrend
             Text(trend.label)
-                .font(.system(size: 9, weight: .bold).monospacedDigit())
+                .font(.system(size: DSType.Size.micro, weight: .bold).monospacedDigit())
                 .foregroundStyle(trend.color)
                 .padding(.horizontal, 5)
                 .padding(.vertical, 2)
@@ -1776,7 +1766,7 @@ struct PositionGroupHeader: View {
 
             // Starter / total count
             Text("\(starterCount)/\(players.count)")
-                .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                .font(.system(size: DSType.Size.micro, weight: .semibold).monospacedDigit())
                 .foregroundStyle(Color.textTertiary)
                 .padding(.horizontal, 4)
                 .padding(.vertical, 2)
@@ -1806,7 +1796,7 @@ struct PositionGroupHeader: View {
 
             // Staff assessment badge
             Text(staffLabel)
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: DSType.Size.micro, weight: .bold))
                 .foregroundStyle(staffColor)
                 .padding(.horizontal, 5)
                 .padding(.vertical, 2)
@@ -1818,7 +1808,7 @@ struct PositionGroupHeader: View {
             // Review button — shows own assessment or prompts review
             if let own = ownAssessment, own != "none" {
                 Text(own)
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.system(size: DSType.Size.micro, weight: .bold))
                     .foregroundStyle(Self.ownAssessmentColor(own))
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
@@ -1829,9 +1819,9 @@ struct PositionGroupHeader: View {
             } else {
                 HStack(spacing: 3) {
                     Image(systemName: "square.and.pencil")
-                        .font(.system(size: 9))
+                        .font(.system(size: DSType.Size.micro))
                     Text("Review")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.system(size: DSType.Size.micro, weight: .semibold))
                 }
                 .foregroundStyle(Color.accentBlue)
                 .padding(.horizontal, 6)

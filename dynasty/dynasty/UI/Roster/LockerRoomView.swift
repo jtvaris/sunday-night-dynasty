@@ -189,7 +189,7 @@ struct LockerRoomView: View {
         NavigationLink(destination: SquadDynamicsView(career: career)) {
             HStack(spacing: 12) {
                 Image(systemName: "person.3.sequence.fill")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.system(size: DSType.Size.callout, weight: .semibold))
                     .foregroundStyle(Color.accentBlue)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Squad Dynamics")

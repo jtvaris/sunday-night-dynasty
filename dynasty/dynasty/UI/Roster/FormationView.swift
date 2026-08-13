@@ -72,7 +72,7 @@ struct FormationView: View {
                         .foregroundStyle(unfilled > 0 ? Color.warning : Color.textSecondary)
                     if unfilled > 0 {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 10))
+                            .font(.system(size: DSType.Size.micro))
                             .foregroundStyle(Color.warning)
                     }
                 }
@@ -206,18 +206,18 @@ struct FormationView: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 4) {
                 Image(systemName: "rectangle.3.group.fill")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: DSType.Size.caption, weight: .semibold))
                     .foregroundStyle(Color.textTertiary)
                 Text("FORMATION")
-                    .font(.system(size: 9, weight: .heavy))
+                    .font(.system(size: DSType.Size.caption, weight: .heavy))
                     .foregroundStyle(Color.textTertiary)
                     .tracking(0.5)
                 Spacer()
                 HStack(spacing: 3) {
                     Image(systemName: "hand.tap")
-                        .font(.system(size: 9))
+                        .font(.system(size: DSType.Size.caption))
                     Text("Tap any player to swap")
-                        .font(.system(size: 9, weight: .medium))
+                        .font(.system(size: DSType.Size.caption, weight: .medium))
                 }
                 .foregroundStyle(Color.textTertiary)
             }
@@ -230,7 +230,7 @@ struct FormationView: View {
                             }
                         } label: {
                             Text(formation.formationName)
-                                .font(.system(size: 11, weight: layout == formation ? .bold : .medium))
+                                .font(.system(size: DSType.Size.caption, weight: layout == formation ? .bold : .medium))
                                 .foregroundStyle(layout == formation ? Color.backgroundPrimary : Color.textSecondary)
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 6)
@@ -414,7 +414,7 @@ struct FormationView: View {
     private var positionGroupSidebar: some View {
         VStack(alignment: .leading, spacing: 5) {
             Text("Groups")
-                .font(.system(size: 10, weight: .bold))
+                .font(.system(size: DSType.Size.micro, weight: .bold))
                 .foregroundStyle(Color.textTertiary)
                 .padding(.bottom, 2)
 
@@ -422,7 +422,7 @@ struct FormationView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 2) {
                         Text(group.name)
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(.system(size: DSType.Size.micro, weight: .semibold))
                             .foregroundStyle(Color.textSecondary)
                             .frame(width: 22, alignment: .leading)
                         // Starter grade / Depth grade (#235)
@@ -430,7 +430,7 @@ struct FormationView: View {
                             .font(.system(size: DSType.Size.micro, weight: .medium))
                             .foregroundStyle(Color.textTertiary)
                         Text(group.starterGrade)
-                            .font(.system(size: 10, weight: .heavy))
+                            .font(.system(size: DSType.Size.micro, weight: .heavy))
                             .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(group.starterGrade))
                         Text("/")
                             .font(.system(size: DSType.Size.micro))
@@ -439,7 +439,7 @@ struct FormationView: View {
                             .font(.system(size: DSType.Size.micro, weight: .medium))
                             .foregroundStyle(Color.textTertiary)
                         Text(group.depthGrade)
-                            .font(.system(size: 10, weight: .heavy))
+                            .font(.system(size: DSType.Size.micro, weight: .heavy))
                             .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(group.depthGrade))
                         Spacer()
                     }
@@ -515,21 +515,21 @@ struct FormationView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Image(systemName: "person.2.fill")
-                    .font(.system(size: 10))
+                    .font(.system(size: DSType.Size.micro))
                     .foregroundStyle(Color.textTertiary)
                 Text("Reserves & Backups")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: DSType.Size.caption, weight: .bold))
                     .foregroundStyle(Color.textSecondary)
                 Spacer()
                 Text("\(reservePlayers.count) players")
-                    .font(.system(size: 10))
+                    .font(.system(size: DSType.Size.micro))
                     .foregroundStyle(Color.textTertiary)
             }
             .padding(.horizontal, 8)
 
             if reservePlayers.isEmpty {
                 Text("All players assigned to starter slots")
-                    .font(.system(size: 11))
+                    .font(.system(size: DSType.Size.caption))
                     .foregroundStyle(Color.textTertiary)
                     .padding(.horizontal, 8)
                     .padding(.bottom, 4)
@@ -542,7 +542,7 @@ struct FormationView: View {
                                 VStack(spacing: 3) {
                                     // Position badge — #189: larger and clearer
                                     Text(player.position.rawValue)
-                                        .font(.system(size: 9, weight: .bold))
+                                        .font(.system(size: DSType.Size.micro, weight: .bold))
                                         .foregroundStyle(Color.textPrimary)
                                         .padding(.horizontal, 6)
                                         .padding(.vertical, 2)
@@ -553,26 +553,26 @@ struct FormationView: View {
 
                                     // #187: "K. Moore" format
                                     Text(shortName(player))
-                                        .font(.system(size: 11, weight: .semibold))
+                                        .font(.system(size: DSType.Size.caption, weight: .semibold))
                                         .foregroundStyle(Color.textPrimary)
                                         .lineLimit(1)
 
                                     // OVR
                                     Text("\(player.overall)")
-                                        .font(.system(size: 13, weight: .heavy).monospacedDigit())
+                                        .font(.system(size: DSType.Size.body, weight: .heavy).monospacedDigit())
                                         .foregroundStyle(Color.forPlayerCardRating(player.overall))
 
                                     // #191: age + form dot
                                     HStack(spacing: 3) {
                                         Text("Age \(player.age)")
-                                            .font(.system(size: 9))
+                                            .font(.system(size: DSType.Size.caption))
                                             .foregroundStyle(Color.textTertiary)
                                         formDot(for: player)
                                     }
 
                                     // #185: salary info
                                     Text(formatSalary(player.annualSalary))
-                                        .font(.system(size: 9))
+                                        .font(.system(size: DSType.Size.caption))
                                         .foregroundStyle(Color.textTertiary)
                                 }
                                 .padding(.horizontal, 8)
@@ -703,16 +703,16 @@ struct FormationEmptySlot: View {
     var body: some View {
         VStack(spacing: 2) {
             Text(label)
-                .font(.system(size: 11, weight: .bold))
+                .font(.system(size: DSType.Size.caption, weight: .bold))
                 .foregroundStyle(Color.warning)
 
             Text("?")
-                .font(.system(size: 20, weight: .heavy))
+                .font(.system(size: DSType.Size.title3, weight: .heavy))
                 .foregroundStyle(Color.warning.opacity(0.8))
 
             Text("EMPTY")
                 .font(.system(size: DSType.Size.micro, weight: .bold))
-                .foregroundStyle(Color.warning.opacity(0.6))
+                .foregroundStyle(Color.warning)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
@@ -745,12 +745,12 @@ struct FormationPlayerCard: View {
         VStack(spacing: 2) {
             // Slot label (e.g., "LE", "CB1", "WR2")
             Text(label)
-                .font(.system(size: 11, weight: .bold))
+                .font(.system(size: DSType.Size.caption, weight: .bold))
                 .foregroundStyle(ratingBorderColor)
 
             // #187: "K. Moore" format — first initial + last name
             Text(shortName)
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: DSType.Size.footnote, weight: .semibold))
                 .foregroundStyle(Color.textPrimary)
                 .lineLimit(1)
 
@@ -758,7 +758,7 @@ struct FormationPlayerCard: View {
             HStack(spacing: 3) {
                 // Overall rating - larger and color-coded (#100 + #101)
                 Text("\(player.overall)")
-                    .font(.system(size: 15, weight: .heavy).monospacedDigit())
+                    .font(.system(size: DSType.Size.callout, weight: .heavy).monospacedDigit())
                     .foregroundStyle(ratingBorderColor)
 
                 formDot
@@ -766,7 +766,7 @@ struct FormationPlayerCard: View {
 
             // #191: Age label
             Text("\(player.age)yo")
-                .font(.system(size: 9))
+                .font(.system(size: DSType.Size.caption))
                 .foregroundStyle(Color.textTertiary)
         }
         .padding(.horizontal, 10) // #187: increased card size
@@ -786,7 +786,7 @@ struct FormationPlayerCard: View {
         .overlay(alignment: .topTrailing) {
             if player.isInjured {
                 Image(systemName: "cross.circle.fill")
-                    .font(.system(size: 9))
+                    .font(.system(size: DSType.Size.micro))
                     .foregroundStyle(Color.danger)
                     .offset(x: 4, y: -4)
             }
@@ -859,17 +859,17 @@ struct PlayerSlotPicker: View {
                                 .foregroundStyle(Color.success)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("Current: \(current.fullName)")
-                                    .font(.system(size: 14, weight: .semibold))
+                                    .font(.system(size: DSType.Size.body, weight: .semibold))
                                     .foregroundStyle(Color.textPrimary)
                                 HStack(spacing: 8) {
                                     Text("OVR \(current.overall)")
-                                        .font(.system(size: 13, weight: .bold).monospacedDigit())
+                                        .font(.system(size: DSType.Size.body, weight: .bold).monospacedDigit())
                                         .foregroundStyle(Color.forPlayerCardRating(current.overall))
                                     Text("Age \(current.age)")
-                                        .font(.system(size: 11))
+                                        .font(.system(size: DSType.Size.caption))
                                         .foregroundStyle(Color.textTertiary)
                                     Text(formatSalary(current.annualSalary))
-                                        .font(.system(size: 11))
+                                        .font(.system(size: DSType.Size.caption))
                                         .foregroundStyle(Color.textTertiary)
                                 }
                             }
@@ -922,7 +922,7 @@ struct PlayerSlotPicker: View {
                             Text("Other Positions (Versatile)")
                                 .foregroundStyle(Color.textTertiary)
                             Image(systemName: "arrow.triangle.swap")
-                                .font(.system(size: 10))
+                                .font(.system(size: DSType.Size.micro))
                                 .foregroundStyle(Color.textTertiary)
                         }
                     }
@@ -948,7 +948,7 @@ struct PlayerSlotPicker: View {
             // Rating badge
             VStack(spacing: 1) {
                 Text("\(player.overall)")
-                    .font(.system(size: 16, weight: .heavy).monospacedDigit())
+                    .font(.system(size: DSType.Size.callout, weight: .heavy).monospacedDigit())
                     .foregroundStyle(Color.forPlayerCardRating(player.overall))
 
                 // #197: Show effective OVR for out-of-position
@@ -956,7 +956,7 @@ struct PlayerSlotPicker: View {
                     let familiarity = player.familiarity(at: slot.position)
                     let effective = Int(Double(player.overall) * Double(familiarity) / 100.0)
                     Text("~\(effective)")
-                        .font(.system(size: 10, weight: .medium).monospacedDigit())
+                        .font(.system(size: DSType.Size.micro, weight: .medium).monospacedDigit())
                         .foregroundStyle(Color.textTertiary)
                 }
             }
@@ -964,31 +964,31 @@ struct PlayerSlotPicker: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(player.fullName)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: DSType.Size.body, weight: .semibold))
                     .foregroundStyle(Color.textPrimary)
                 HStack(spacing: 6) {
                     Text(player.position.rawValue)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: DSType.Size.caption, weight: .medium))
                         .foregroundStyle(Color.textSecondary)
                     Text("Age \(player.age)")
-                        .font(.system(size: 11))
+                        .font(.system(size: DSType.Size.caption))
                         .foregroundStyle(Color.textTertiary)
 
                     // #195: Salary
                     Text(formatSalary(player.annualSalary))
-                        .font(.system(size: 11))
+                        .font(.system(size: DSType.Size.caption))
                         .foregroundStyle(Color.textTertiary)
 
                     // #195: Trend arrow
                     let trend = developmentTrend(for: player)
                     Image(systemName: trend.icon)
-                        .font(.system(size: 9))
+                        .font(.system(size: DSType.Size.micro))
                         .foregroundStyle(trend.color)
 
                     // #195: Health icon
                     if player.isInjured {
                         Image(systemName: "cross.circle.fill")
-                            .font(.system(size: 10))
+                            .font(.system(size: DSType.Size.micro))
                             .foregroundStyle(Color.danger)
                     }
                 }
@@ -997,7 +997,7 @@ struct PlayerSlotPicker: View {
                 if isVersatile {
                     let familiarity = player.familiarity(at: slot.position)
                     Text("\(player.position.rawValue) at \(slot.position.rawValue): \(player.overall) x \(familiarity)% = ~\(Int(Double(player.overall) * Double(familiarity) / 100.0)) effective")
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(Color.warning)
                 }
 
@@ -1006,7 +1006,7 @@ struct PlayerSlotPicker: View {
                     let diff = player.overall - current.overall
                     let diffStr = diff >= 0 ? "+\(diff)" : "\(diff)"
                     Text("vs \(current.lastName): \(current.overall) -> \(player.overall) (\(diffStr))")
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: DSType.Size.footnote, weight: .medium))
                         .foregroundStyle(diff >= 0 ? Color.success : Color.danger)
                 }
             }
@@ -1067,13 +1067,13 @@ struct StarterBackupComparisonSheet: View {
                             if backups.isEmpty {
                                 VStack(spacing: 6) {
                                     Image(systemName: "person.fill.questionmark")
-                                        .font(.system(size: 22))
+                                        .font(.system(size: DSType.Size.title2))
                                         .foregroundStyle(Color.warning.opacity(0.7))
                                     Text("No backups at this position")
-                                        .font(.system(size: 13, weight: .medium))
+                                        .font(.system(size: DSType.Size.body, weight: .medium))
                                         .foregroundStyle(Color.textSecondary)
                                     Text("Consider drafting or signing depth")
-                                        .font(.system(size: 11))
+                                        .font(.system(size: DSType.Size.caption))
                                         .foregroundStyle(Color.textTertiary)
                                 }
                                 .frame(maxWidth: .infinity)
@@ -1086,9 +1086,9 @@ struct StarterBackupComparisonSheet: View {
                             } else {
                                 HStack(spacing: 6) {
                                     Image(systemName: "arrow.left.arrow.right")
-                                        .font(.system(size: 10, weight: .bold))
+                                        .font(.system(size: DSType.Size.micro, weight: .bold))
                                     Text("vs Backups")
-                                        .font(.system(size: 11, weight: .heavy))
+                                        .font(.system(size: DSType.Size.caption, weight: .heavy))
                                         .tracking(0.5)
                                 }
                                 .foregroundStyle(Color.textTertiary)
@@ -1103,7 +1103,7 @@ struct StarterBackupComparisonSheet: View {
                         } else {
                             VStack(spacing: 8) {
                                 Image(systemName: "person.fill.xmark")
-                                    .font(.system(size: 28))
+                                    .font(.system(size: DSType.Size.title1))
                                     .foregroundStyle(Color.warning)
                                 Text("No starter assigned")
                                     .font(.subheadline.weight(.semibold))
@@ -1132,24 +1132,24 @@ struct StarterBackupComparisonSheet: View {
     private func comparisonCard(player: Player, role: String, highlight: Bool) -> some View {
         HStack(spacing: 12) {
             Text("\(player.overall)")
-                .font(.system(size: 22, weight: .heavy).monospacedDigit())
+                .font(.system(size: DSType.Size.title2, weight: .heavy).monospacedDigit())
                 .foregroundStyle(Color.forPlayerCardRating(player.overall))
                 .frame(width: 44)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(player.fullName)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: DSType.Size.callout, weight: .semibold))
                     .foregroundStyle(Color.textPrimary)
                 HStack(spacing: 8) {
                     Text(role)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: DSType.Size.caption, weight: .medium))
                         .foregroundStyle(highlight ? Color.textPrimary : Color.textSecondary)
                     Text("Age \(player.age)")
-                        .font(.system(size: 11))
+                        .font(.system(size: DSType.Size.caption))
                         .foregroundStyle(Color.textTertiary)
                     if player.isInjured {
                         Image(systemName: "cross.circle.fill")
-                            .font(.system(size: 10))
+                            .font(.system(size: DSType.Size.micro))
                             .foregroundStyle(Color.danger)
                     }
                 }

@@ -32,7 +32,7 @@ struct HalftimeView: View {
             ScrollView {
                 VStack(spacing: 16) {
                     Text("HALFTIME")
-                        .font(.system(size: 13, weight: .black))
+                        .font(.system(size: DSType.Size.body, weight: .black))
                         .foregroundStyle(Color.backgroundPrimary)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 5)
@@ -56,7 +56,7 @@ struct HalftimeView: View {
                         onContinue(selection)
                     } label: {
                         Text("Continue to 2nd Half")
-                            .font(.system(size: 16, weight: .black))
+                            .font(.system(size: DSType.Size.callout, weight: .black))
                             .foregroundStyle(Color.backgroundPrimary)
                             .padding(.horizontal, 40)
                             .padding(.vertical, 13)
@@ -93,7 +93,7 @@ struct HalftimeView: View {
             withAnimation(.easeInOut(duration: 0.15), action)
         } label: {
             Text(title)
-                .font(.system(size: 11, weight: .black))
+                .font(.system(size: DSType.Size.caption, weight: .black))
                 .tracking(0.8)
                 .foregroundStyle(isOn ? Color.backgroundPrimary : Color.textSecondary)
                 .padding(.horizontal, 16)
@@ -112,12 +112,12 @@ struct HalftimeView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 ForEach(["Q1", "Q2"], id: \.self) { label in
                     Text(label)
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.system(size: DSType.Size.caption, weight: .bold))
                         .foregroundStyle(Color.textTertiary)
                         .frame(width: 44)
                 }
                 Text("T")
-                    .font(.system(size: 11, weight: .black))
+                    .font(.system(size: DSType.Size.caption, weight: .black))
                     .foregroundStyle(Color.textSecondary)
                     .frame(width: 48)
             }
@@ -141,17 +141,17 @@ struct HalftimeView: View {
     private func lineScoreRow(abbr: String, quarters: [Int], total: Int, isPlayer: Bool) -> some View {
         GridRow {
             Text(abbr)
-                .font(.system(size: 14, weight: .heavy))
+                .font(.system(size: DSType.Size.body, weight: .heavy))
                 .foregroundStyle(isPlayer ? Color.accentGold : Color.textPrimary)
                 .frame(maxWidth: .infinity, alignment: .leading)
             ForEach(0..<2, id: \.self) { index in
                 Text("\(quarters.indices.contains(index) ? quarters[index] : 0)")
-                    .font(.system(size: 14, weight: .semibold).monospacedDigit())
+                    .font(.system(size: DSType.Size.body, weight: .semibold).monospacedDigit())
                     .foregroundStyle(Color.textPrimary)
                     .frame(width: 44)
             }
             Text("\(total)")
-                .font(.system(size: 16, weight: .black).monospacedDigit())
+                .font(.system(size: DSType.Size.callout, weight: .black).monospacedDigit())
                 .foregroundStyle(isPlayer ? Color.accentGold : Color.textPrimary)
                 .frame(width: 48)
         }
@@ -198,11 +198,11 @@ struct HalftimeView: View {
         }()
         return HStack(spacing: 8) {
             Image(systemName: icon)
-                .font(.system(size: 11, weight: .bold))
+                .font(.system(size: DSType.Size.caption, weight: .bold))
                 .foregroundStyle(tint)
                 .frame(width: 16)
             Text(event.text)
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: DSType.Size.footnote, weight: .semibold))
                 .foregroundStyle(Color.textPrimary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.85)
@@ -219,7 +219,7 @@ struct HalftimeView: View {
         VStack(alignment: .leading, spacing: 8) {
             sectionTitle("COACH'S ADJUSTMENT — 2ND HALF", icon: "slider.horizontal.3")
             Text("Pick one small edge for your offense after the break (optional).")
-                .font(.system(size: 11))
+                .font(.system(size: DSType.Size.caption))
                 .foregroundStyle(Color.textTertiary)
             HStack(spacing: 10) {
                 ForEach(HalftimeAdjustment.allCases) { option in
@@ -239,22 +239,22 @@ struct HalftimeView: View {
         } label: {
             VStack(spacing: 6) {
                 Image(systemName: option.symbolName)
-                    .font(.system(size: 20, weight: .bold))
+                    .font(.system(size: DSType.Size.title2, weight: .bold))
                     .foregroundStyle(isSelected ? Color.accentGold : Color.textSecondary)
                 Text(option.rawValue)
-                    .font(.system(size: 12, weight: .heavy))
+                    .font(.system(size: DSType.Size.footnote, weight: .heavy))
                     .foregroundStyle(isSelected ? Color.accentGold : Color.textPrimary)
                     .multilineTextAlignment(.center)
                     .lineLimit(2, reservesSpace: true)
                     .minimumScaleFactor(0.85)
                 Text(option.blurb)
-                    .font(.system(size: 10))
+                    .font(.system(size: DSType.Size.caption))
                     .foregroundStyle(Color.textTertiary)
                     .multilineTextAlignment(.center)
                     .lineLimit(3, reservesSpace: true)
                 if isSelected {
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 13))
+                        .font(.system(size: DSType.Size.body))
                         .foregroundStyle(Color.accentGold)
                 }
             }
@@ -278,10 +278,10 @@ struct HalftimeView: View {
     private func sectionTitle(_ text: String, icon: String) -> some View {
         HStack(spacing: 6) {
             Image(systemName: icon)
-                .font(.system(size: 10, weight: .bold))
+                .font(.system(size: DSType.Size.micro, weight: .bold))
                 .foregroundStyle(Color.accentGold)
             Text(text)
-                .font(.system(size: 10, weight: .black))
+                .font(.system(size: DSType.Size.micro, weight: .black))
                 .foregroundStyle(Color.textTertiary)
                 .tracking(1.5)
         }

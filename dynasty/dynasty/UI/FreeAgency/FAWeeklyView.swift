@@ -105,6 +105,13 @@ struct FAWeeklyView: View {
     /// They are one enum-driven `.sheet(item:)` now.
     @State private var activeSheet: ActiveSheet?
     @State private var positionFilter: PositionFilter = .all
+
+    /// #187 — the market's sortable columns, on the shared list standard
+    /// (`DSSortState`, `DSListRow.swift`). Opens on OVR descending, which is the
+    /// order the board should have been in all along: `generateFreeAgentMarket`
+    /// returns the market in the order the SwiftData fetch happened to hand back
+    /// its players, i.e. in no order at all, and nothing sorted it afterwards.
+    @State private var marketSort = DSSortState<MarketSort>(key: .ovr)
     @State private var biddingUpdates: [FreeAgencyEngine.BiddingUpdate] = []
     /// #102 — the ledger refused an offer at submit time. Carries the ledger's
     /// own refusal sentence so the block is never silent.
@@ -197,9 +204,31 @@ struct FAWeeklyView: View {
     private var roundLabel: String { FreeAgencyStep.roundLabel(currentRound) }
     private var visibility: AIVisibilityLevel { FreeAgencyStep.aiVisibility(currentRound) }
 
+    /// The market's four sortable columns — the ones the row prints as numbers.
+    /// Not the name: a market is scanned by rating and by price, and the header
+    /// should only offer what the list is actually read for.
+    enum MarketSort: Hashable { case ovr, age, asks, years }
+
     private var filteredAgents: [FreeAgencyEngine.FreeAgent] {
-        guard let positions = positionFilter.positions else { return freeAgents }
-        return freeAgents.filter { positions.contains($0.player.position) }
+        let filtered: [FreeAgencyEngine.FreeAgent]
+        if let positions = positionFilter.positions {
+            filtered = freeAgents.filter { positions.contains($0.player.position) }
+        } else {
+            filtered = freeAgents
+        }
+
+        // #187 / #134a: the id tiebreak is what stops two 78-OVR guards from
+        // trading places between redraws. It matters more here than anywhere
+        // else on the screen, because the row the user reaches for is
+        // identified by its POSITION in the list and this list re-renders on a
+        // 60-second ticker.
+        let asc = marketSort.ascending
+        switch marketSort.key {
+        case .ovr:   return filtered.dsSorted(asc, by: { $0.player.overall }, id: { $0.player.id })
+        case .age:   return filtered.dsSorted(asc, by: { $0.player.age },     id: { $0.player.id })
+        case .asks:  return filtered.dsSorted(asc, by: { $0.askingPrice },    id: { $0.player.id })
+        case .years: return filtered.dsSorted(asc, by: { $0.desiredYears },   id: { $0.player.id })
+        }
     }
 
     var body: some View {
@@ -571,11 +600,12 @@ struct FAWeeklyView: View {
         career.capMode == .sandbox ? [:] : [.capReview: "Under the cap"]
     }
 
-    /// The market's meta line: the money, the visit budget and the board size.
+    /// The market's meta line: the visit budget and the board size.
     ///
     /// The day, the phase description and the six-step rail have all moved into
-    /// the band above it — this bar now carries only the things the band has no
-    /// slot for.
+    /// the band above it, and the cap ledger has moved down onto the board
+    /// itself (#187c) — this bar now carries only the things neither has a slot
+    /// for.
     private var roundHeader: some View {
         HStack(alignment: .center, spacing: DSSpacing.md) {
             // R23: facility visit budget for this FA period.
@@ -593,32 +623,12 @@ struct FAWeeklyView: View {
 
             Spacer(minLength: DSSpacing.xs)
 
-            if let team {
-                // #102 — the reservation ledger in the market header. Three
-                // numbers because the middle one is the point: an outstanding
-                // offer is money the club has already promised, and a header
-                // that only shows Cap Room invites the user to promise it
-                // again to somebody else.
-                HStack(spacing: DSSpacing.sm) {
-                    headerCapStat(
-                        label: "Cap Room",
-                        value: formatMillions(team.availableCap),
-                        color: team.availableCap > 0 ? Color.textPrimary : Color.dangerText
-                    )
-                    if reservesCap && pendingReservedCap() > 0 {
-                        headerCapStat(
-                            label: "Pending",
-                            value: "\u{2212}\(formatMillions(pendingReservedCap()))",
-                            color: Color.warning
-                        )
-                    }
-                    headerCapStat(
-                        label: "Available",
-                        value: formatMillions(availableCapAfterOffers),
-                        color: availableCapAfterOffers > 0 ? Color.success : Color.dangerText
-                    )
-                }
-            }
+            // #187c: the cap ledger used to sit here. It now pins to the top of
+            // the board itself (`capRoomStrip`), because between this bar and
+            // the first row there are four more bars — ticker, bidding updates,
+            // pending offers, position filter — and any of them can be tall
+            // enough to push the money off-screen at the exact moment the user
+            // is choosing a row to press.
         }
         .padding(.horizontal, DSSpacing.md)
         .padding(.vertical, DSSpacing.xs)
@@ -1029,24 +1039,10 @@ struct FAWeeklyView: View {
         myOffers.removeAll()
     }
 
-    /// §2.3's chip grammar at its smallest: LABEL over value, both on the
-    /// display voice's 11 pt floor. The label used to be 9 pt, under the
-    /// legibility floor P7 sets for anything a player is expected to read.
-    private func headerCapStat(label: String, value: String, color: Color) -> some View {
-        VStack(alignment: .trailing, spacing: 1) {  // ds-lint:allow(spacing) label-to-value lockup inside one chip
-            Text(label.uppercased())
-                .font(DSType.display(11, .heavy))
-                .tracking(0.6)
-                .foregroundStyle(Color.textTertiaryReadable)
-                .lineLimit(1)
-            Text(value)
-                .font(DSType.display(DSType.Size.body, .black))
-                .foregroundStyle(color)
-                .lineLimit(1)
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(label): \(value)")
-    }
+    // #187c: `headerCapStat` — the stacked LABEL-over-value lockup the round
+    // header used for Cap Room / Pending / Available — is gone with the block it
+    // served. The same three readings are now `capStripStat`, inline, pinned to
+    // the top of the board.
 
     // MARK: - Pending Offers Bar
 
@@ -1187,30 +1183,45 @@ struct FAWeeklyView: View {
     /// `DSListHeaderRow` that reads the same `DSListColumn` constants, which is
     /// the whole point of the standard: the header cannot drift from the cells.
     private var freeAgentList: some View {
-        VStack(spacing: 0) {
-            if !filteredAgents.isEmpty {
-                marketHeader
-                    .padding(.horizontal, DSSpacing.md)
-                    .padding(.vertical, DSSpacing.xxs)
-                    .background(Color.backgroundSecondary)
-                    .overlay(alignment: .bottom) {
-                        Rectangle().fill(Color.surfaceBorder).frame(height: 1)
-                    }
+        // Filtered AND sorted exactly once per body pass. `filteredAgents` was
+        // read three times here, one of them inside the `ForEach` closure — i.e.
+        // once per rendered row. That was already a wasted filter per row; with
+        // #187's sort behind the same property it would have been a wasted SORT
+        // per row, which on a 200-name board is the difference between a linear
+        // pass and a quadratic one on every redraw of a screen that redraws on a
+        // 60-second ticker.
+        let agents = filteredAgents
+
+        return VStack(spacing: 0) {
+            // The board's own pinned head: what we can spend, then what the
+            // columns mean. Both sit OUTSIDE the `ScrollView`, so neither can
+            // scroll away from the rows they govern.
+            VStack(spacing: DSSpacing.xxs) {
+                capRoomStrip
+                if !agents.isEmpty {
+                    marketHeader
+                }
+            }
+            .padding(.horizontal, DSSpacing.md)
+            .padding(.vertical, DSSpacing.xxs)
+            .background(Color.backgroundSecondary)
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(Color.surfaceBorder).frame(height: 1)
             }
 
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    ForEach(Array(filteredAgents.enumerated()), id: \.element.player.id) { index, fa in
+                    ForEach(Array(agents.enumerated()), id: \.element.player.id) { index, fa in
                         freeAgentRow(fa: fa)
 
-                        if index < filteredAgents.count - 1 {
+                        if index < agents.count - 1 {
                             Divider()
                                 .overlay(Color.surfaceBorder.opacity(0.5))
                                 .padding(.horizontal, DSSpacing.xs)
                         }
                     }
 
-                    if filteredAgents.isEmpty {
+                    if agents.isEmpty {
                         // §2.7's four beats. "No free agents available" answered
                         // none of them: it did not say WHY the list was empty
                         // (a filter with nobody behind it is a different problem
@@ -1241,6 +1252,98 @@ struct FAWeeklyView: View {
         }
     }
 
+    // MARK: - Sticky cap strip (#187c)
+
+    /// **What the club can actually spend, pinned to the top of the board.**
+    ///
+    /// Three readings, and the middle one is the whole reason the strip exists:
+    /// an outstanding offer is money already promised, so a board that quotes
+    /// only Cap Room invites the user to promise the same dollar twice. All
+    /// three are drawn on every render — `PENDING` shows a dash when nothing is
+    /// on the table rather than disappearing, because "no offers out" and "we
+    /// never showed you" must not look the same.
+    ///
+    /// `AVAILABLE` is captioned in words — *after 3 pending offers* — instead of
+    /// leaving the user to work out why it is smaller than Cap Room.
+    @ViewBuilder
+    private var capRoomStrip: some View {
+        if let team {
+            // In sandbox nothing reserves cap (`reservesCap`), so the ledger has
+            // no claim to report and Available IS Cap Room. Quoting a pending
+            // total there would be quoting a rule the mode does not run.
+            let pending = reservesCap ? pendingReservedCap() : 0
+            let available = reservesCap ? availableCapAfterOffers : team.availableCap
+            let offerCount = reservesCap ? myOffers.count : 0
+
+            HStack(spacing: DSSpacing.sm) {
+                capStripStat(
+                    label: "Cap Room",
+                    value: formatMillions(team.availableCap),
+                    color: team.availableCap >= 0 ? Color.textPrimary : Color.dangerText,
+                    spoken: "Cap room \(formatMillions(team.availableCap))"
+                )
+
+                capStripStat(
+                    label: "Pending",
+                    value: pending > 0 ? "\u{2212}\(formatMillions(pending))" : "\u{2014}",
+                    color: pending > 0 ? Color.warning : Color.textTertiaryReadable,
+                    spoken: pending > 0
+                        ? "\(formatMillions(pending)) held by \(offerCount) outstanding offer\(offerCount == 1 ? "" : "s")"
+                        : "No offers on the table"
+                )
+
+                Spacer(minLength: DSSpacing.xs)
+
+                capStripStat(
+                    label: "Available",
+                    value: formatMillions(available),
+                    color: available > 0 ? Color.success : Color.dangerText,
+                    spoken: pending > 0
+                        ? "\(formatMillions(available)) available after \(offerCount) pending offer\(offerCount == 1 ? "" : "s")"
+                        : "\(formatMillions(available)) available"
+                )
+
+                if pending > 0 {
+                    Text("after \(offerCount) pending offer\(offerCount == 1 ? "" : "s")")
+                        .font(DSType.display(11, .semibold))
+                        .foregroundStyle(Color.textTertiaryReadable)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        // Spoken as part of the Available stat above.
+                        .accessibilityHidden(true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// One reading in the strip: LABEL then value, on one line.
+    ///
+    /// Inline rather than the stacked `headerCapStat` lockup because this strip
+    /// is a list header, not a summary card — a two-line block above the column
+    /// labels would push the first row of the market a full 40 pt further down
+    /// the page on every visit.
+    private func capStripStat(
+        label: String,
+        value: String,
+        color: Color,
+        spoken: String
+    ) -> some View {
+        HStack(spacing: DSSpacing.xxs) {
+            Text(label.uppercased())
+                .font(DSType.display(11, .heavy))
+                .tracking(0.6)
+                .foregroundStyle(Color.textTertiaryReadable)
+            Text(value)
+                .font(DSType.display(DSType.Size.body, .black))
+                .foregroundStyle(color)
+        }
+        .lineLimit(1)
+        .minimumScaleFactor(0.7)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(spoken)
+    }
+
     /// Beat three: the condition that is missing, in the user's vocabulary.
     private var emptyMarketMessage: String {
         if positionFilter == .all {
@@ -1254,6 +1357,12 @@ struct FAWeeklyView: View {
     /// The header that labels the row's columns. Same constants, same order,
     /// same reserved gutters — including the trailing chevron, which the header
     /// reserves without drawing (§2.2's twice-documented off-by-one-column bug).
+    ///
+    /// #187: the four number columns sort now. Same component, same tap rule and
+    /// same chevron as the roster and the league browser — the market was the
+    /// one big list in the game whose columns were labels only, so "who is the
+    /// cheapest 80-plus body left" was a question the board could not answer
+    /// without the user reading all of it.
     private var marketHeader: some View {
         DSListHeaderRow(
             density: .scan,
@@ -1263,10 +1372,10 @@ struct FAWeeklyView: View {
             affordance: .disclosure
         ) {
             Spacer(minLength: DSSpacing.xxs)
-            DSColumnHeader("OVR", width: DSListColumn.ovr)
-            DSColumnHeader("Age", width: DSListColumn.age)
-            DSColumnHeader("Asks", width: DSListColumn.money)
-            DSColumnHeader("Yrs", width: DSListColumn.tight)
+            DSSortableColumnHeader("OVR",  key: .ovr,   sort: $marketSort, width: DSListColumn.ovr)
+            DSSortableColumnHeader("Age",  key: .age,   sort: $marketSort, width: DSListColumn.age)
+            DSSortableColumnHeader("Asks", key: .asks,  sort: $marketSort, width: DSListColumn.money)
+            DSSortableColumnHeader("Yrs",  key: .years, sort: $marketSort, width: DSListColumn.tight)
         }
     }
 

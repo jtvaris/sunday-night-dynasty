@@ -195,17 +195,17 @@ struct RosterSummaryBar: View {
             if isOverCap {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.system(size: DSType.Size.caption, weight: .bold))
                         .foregroundStyle(Color.danger)
                     Text("OVER CAP")
-                        .font(.system(size: 11, weight: .heavy))
+                        .font(.system(size: DSType.Size.caption, weight: .heavy))
                         .foregroundStyle(Color.danger)
                         .tracking(0.5)
                     Text("-\(formattedCapOverage)")
-                        .font(.system(size: 11, weight: .bold).monospacedDigit())
+                        .font(.system(size: DSType.Size.caption, weight: .bold).monospacedDigit())
                         .foregroundStyle(Color.danger)
                     Text("\u{2014} Resolve before adding players")
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.micro))
                         .foregroundStyle(Color.textSecondary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
@@ -235,17 +235,17 @@ struct RosterSummaryBar: View {
                 let tint: Color = limit.isBinding ? .danger : .warning
                 HStack(spacing: 6) {
                     Image(systemName: "person.2.badge.minus.fill")
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.system(size: DSType.Size.caption, weight: .bold))
                         .foregroundStyle(tint)
                     Text(limit.isBinding ? "OVER ROSTER LIMIT" : "CUTDOWN PENDING")
-                        .font(.system(size: 11, weight: .heavy))
+                        .font(.system(size: DSType.Size.caption, weight: .heavy))
                         .foregroundStyle(tint)
                         .tracking(0.5)
                     Text("+\(over)")
-                        .font(.system(size: 11, weight: .bold).monospacedDigit())
+                        .font(.system(size: DSType.Size.caption, weight: .bold).monospacedDigit())
                         .foregroundStyle(tint)
                     Text("\u{2014} \(over) player\(over == 1 ? "" : "s") over the \(PracticeSquadEngine.activeRosterCeiling)-man active roster")
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.caption))
                         .foregroundStyle(Color.textSecondary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
@@ -333,7 +333,7 @@ struct RosterSummaryBar: View {
                 .padding(.horizontal, 6)
 
                 Text("Salary Cap")
-                    .font(.system(size: 9))
+                    .font(.system(size: DSType.Size.caption))
                     .foregroundStyle(Color.textTertiary)
             }
             .frame(maxWidth: .infinity)
@@ -345,12 +345,12 @@ struct RosterSummaryBar: View {
                 HStack(spacing: 2) {
                     ForEach(0..<5, id: \.self) { index in
                         Image(systemName: index < rosterStrength ? "star.fill" : "star")
-                            .font(.system(size: 10))
+                            .font(.system(size: DSType.Size.micro))
                             .foregroundStyle(index < rosterStrength ? Color.accentGold : Color.textTertiary)
                     }
                 }
                 Text(strengthLabel)
-                    .font(.system(size: 9, weight: .medium))
+                    .font(.system(size: DSType.Size.caption, weight: .medium))
                     .foregroundStyle(Color.textTertiary)
             }
             .frame(maxWidth: .infinity)
@@ -377,7 +377,7 @@ struct RosterSummaryBar: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
             Text(label)
-                .font(.system(size: 9))
+                .font(.system(size: DSType.Size.caption))
                 .foregroundStyle(Color.textTertiary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.65)

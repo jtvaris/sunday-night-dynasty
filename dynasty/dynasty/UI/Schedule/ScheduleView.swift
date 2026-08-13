@@ -963,7 +963,7 @@ private struct GamePreviewSheet: View {
         let frameAlignment: Alignment = alignment == .leading ? .leading : .trailing
         return VStack(alignment: alignment, spacing: 4) {
             Text(team?.abbreviation ?? "???")
-                .font(.system(size: 26, weight: .heavy))
+                .font(.system(size: DSType.Size.title1, weight: .heavy))
                 .foregroundStyle(team?.id == playerTeamID ? Color.accentGold : Color.textPrimary)
             Text(team?.fullName ?? "")
                 .font(.system(size: 12))
@@ -1037,12 +1037,12 @@ private struct GamePreviewSheet: View {
                 .foregroundStyle(Color.textTertiary)
                 .frame(width: 32, alignment: .leading)
             Text(player.fullName)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: DSType.Size.body, weight: .semibold))
                 .foregroundStyle(Color.textPrimary)
                 .lineLimit(1)
             Spacer()
             Text("\(player.overall)")
-                .font(.system(size: 13, weight: .heavy).monospacedDigit())
+                .font(.system(size: DSType.Size.body, weight: .heavy).monospacedDigit())
                 .foregroundStyle(Color.accentBlue)
         }
     }

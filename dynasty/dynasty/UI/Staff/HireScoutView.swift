@@ -115,7 +115,7 @@ struct HireScoutView: View {
                                 .foregroundStyle(Color.textTertiary)
                             Text("$\(formatBudget(remainingBudget))M")
                                 .font(.headline.weight(.bold).monospacedDigit())
-                                .foregroundStyle(remainingBudget > 0 ? Color.success : Color.danger)
+                                .foregroundStyle(remainingBudget > 0 ? Color.success : Color.dangerText)
                         }
                         Spacer()
 
@@ -234,7 +234,7 @@ private struct ScoutCandidateRow: View {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 4) {
                         Text(candidate.fullName)
-                            .font(.system(size: 13, weight: .bold))
+                            .font(.system(size: DSType.Size.body, weight: .bold))
                             .foregroundStyle(isOverBudget ? Color.textTertiary : Color.textPrimary)
                             .lineLimit(1)
 
@@ -251,10 +251,10 @@ private struct ScoutCandidateRow: View {
 
                     HStack(spacing: 6) {
                         Text("\(candidate.experience) yr\(candidate.experience == 1 ? "" : "s")")
-                            .font(.system(size: 9).monospacedDigit())
+                            .font(.system(size: DSType.Size.caption).monospacedDigit())
                         if let spec = candidate.positionSpecialization {
                             Text(spec.rawValue)
-                                .font(.system(size: 9, weight: .medium))
+                                .font(.system(size: DSType.Size.caption, weight: .medium))
                                 .foregroundStyle(Color.accentBlue)
                         }
                     }
@@ -265,7 +265,7 @@ private struct ScoutCandidateRow: View {
                 // Accuracy
                 VStack(spacing: 2) {
                     Text("\(candidate.accuracy)")
-                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .font(.system(size: DSType.Size.caption, weight: .bold, design: .monospaced))
                         .foregroundStyle(Color.forRating(candidate.accuracy))
                     Text("Acc")
                         .font(.system(size: DSType.Size.micro))
@@ -276,7 +276,7 @@ private struct ScoutCandidateRow: View {
                 // Potential Read
                 VStack(spacing: 2) {
                     Text("\(candidate.potentialRead)")
-                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .font(.system(size: DSType.Size.caption, weight: .bold, design: .monospaced))
                         .foregroundStyle(Color.forRating(candidate.potentialRead))
                     Text("Pot")
                         .font(.system(size: DSType.Size.micro))
@@ -287,7 +287,7 @@ private struct ScoutCandidateRow: View {
                 // Personality Read
                 VStack(spacing: 2) {
                     Text("\(candidate.personalityRead)")
-                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .font(.system(size: DSType.Size.caption, weight: .bold, design: .monospaced))
                         .foregroundStyle(Color.forRating(candidate.personalityRead))
                     Text("Pers")
                         .font(.system(size: DSType.Size.micro))
@@ -297,8 +297,8 @@ private struct ScoutCandidateRow: View {
 
                 // Salary
                 Text("$\(candidate.salary)K")
-                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
-                    .foregroundStyle(isOverBudget ? Color.danger : Color.textSecondary)
+                    .font(.system(size: DSType.Size.caption, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(isOverBudget ? Color.dangerText : Color.textSecondary)
                     .frame(width: 52)
 
                 // Value badge
@@ -311,18 +311,18 @@ private struct ScoutCandidateRow: View {
                 Group {
                     if isHired {
                         Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 14))
+                            .font(.system(size: DSType.Size.body))
                             .foregroundStyle(Color.success)
                             .frame(width: 30)
                     } else if isOverBudget {
                         Image(systemName: "xmark.circle")
-                            .font(.system(size: 14))
-                            .foregroundStyle(Color.danger.opacity(0.5))
+                            .font(.system(size: DSType.Size.body))
+                            .foregroundStyle(Color.dangerText.opacity(0.85))
                             .frame(width: 30)
                     } else {
                         Button(action: onHire) {
                             Text("Hire")
-                                .font(.system(size: 11, weight: .bold))
+                                .font(.system(size: DSType.Size.caption, weight: .bold))
                                 .foregroundStyle(Color.backgroundPrimary)
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 5)

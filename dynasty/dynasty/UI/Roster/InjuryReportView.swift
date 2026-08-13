@@ -161,7 +161,7 @@ struct InjuryReportView: View {
                 // footnote — it has to say plainly that there is nothing wrong.
                 VStack(spacing: 6) {
                     Image(systemName: "checkmark.seal.fill")
-                        .font(.system(size: 30))
+                        .font(.system(size: DSType.Size.title1))
                         .foregroundStyle(Color.success)
                     Text("No injuries \u{2014} fully healthy")
                         .font(.subheadline.weight(.bold))
@@ -187,7 +187,7 @@ struct InjuryReportView: View {
         let repeatCount = player.injuryType.map { player.priorInjuryCount(of: $0) } ?? 0
         return HStack(spacing: 10) {
             Text(player.position.rawValue)
-                .font(.system(size: 11, weight: .bold))
+                .font(.system(size: DSType.Size.caption, weight: .bold))
                 .foregroundStyle(Color.textSecondary)
                 .frame(width: 32, alignment: .leading)
 
@@ -199,9 +199,9 @@ struct InjuryReportView: View {
                     if repeatCount >= 2 {
                         HStack(spacing: 2) {
                             Image(systemName: "arrow.triangle.2.circlepath")
-                                .font(.system(size: DSType.Size.micro, weight: .bold))
+                                .font(.system(size: DSType.Size.caption, weight: .bold))
                             Text("x\(repeatCount)")
-                                .font(.system(size: 9, weight: .bold).monospacedDigit())
+                                .font(.system(size: DSType.Size.caption, weight: .bold).monospacedDigit())
                         }
                         .foregroundStyle(Color.warning)
                         .accessibilityLabel("Recurring injury, \(repeatCount) times")
@@ -213,9 +213,9 @@ struct InjuryReportView: View {
                 if let rehab = player.rehabStatus {
                     HStack(spacing: 3) {
                         Image(systemName: rehab.icon)
-                            .font(.system(size: DSType.Size.micro))
+                            .font(.system(size: DSType.Size.caption))
                         Text(rehab.displayName)
-                            .font(.system(size: 9, weight: .semibold))
+                            .font(.system(size: DSType.Size.caption, weight: .semibold))
                     }
                     .foregroundStyle(rehabColor(rehab))
                 }
@@ -228,7 +228,7 @@ struct InjuryReportView: View {
                     .font(.caption.weight(.bold).monospacedDigit())
                     .foregroundStyle(Color.danger)
                 Text("of \(player.injuryWeeksOriginal)")
-                    .font(.system(size: 9))
+                    .font(.system(size: DSType.Size.caption))
                     .foregroundStyle(Color.textTertiary)
             }
         }

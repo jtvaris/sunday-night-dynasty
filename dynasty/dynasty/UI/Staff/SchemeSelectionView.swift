@@ -118,15 +118,15 @@ struct SchemeSelectionView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Image(systemName: "rectangle.stack.fill")
-                    .font(.system(size: 10))
+                    .font(.system(size: DSType.Size.micro))
                     .foregroundStyle(Color.accentGold)
                 Text(family.uppercased())
-                    .font(.system(size: 11, weight: .black))
+                    .font(.system(size: DSType.Size.caption, weight: .black))
                     .tracking(1.5)
                     .foregroundStyle(Color.accentGold)
             }
             Text(description)
-                .font(.system(size: 10))
+                .font(.system(size: DSType.Size.micro))
                 .foregroundStyle(Color.textTertiary)
 
             content
@@ -155,10 +155,10 @@ struct SchemeSelectionView: View {
 
             VStack(alignment: .trailing, spacing: 2) {
                 Text("Play Calling")
-                    .font(.system(size: 9))
+                    .font(.system(size: DSType.Size.caption))
                     .foregroundStyle(Color.textTertiary)
                 Text("\(coordinator.playCalling)")
-                    .font(.system(size: 16, weight: .bold).monospacedDigit())
+                    .font(.system(size: DSType.Size.callout, weight: .bold).monospacedDigit())
                     .foregroundStyle(Color.forRating(coordinator.playCalling))
             }
         }
@@ -201,7 +201,7 @@ struct SchemeSelectionView: View {
                         }
 
                         Text(offensiveSchemeDescription(scheme))
-                            .font(.system(size: 10))
+                            .font(.system(size: DSType.Size.micro))
                             .foregroundStyle(Color.textTertiary)
                             .lineLimit(2)
                     }
@@ -211,7 +211,7 @@ struct SchemeSelectionView: View {
                     // Coach expertise (coordinator)
                     VStack(alignment: .trailing, spacing: 2) {
                         Text("\(expertiseValue)%")
-                            .font(.system(size: 14, weight: .bold).monospacedDigit())
+                            .font(.system(size: DSType.Size.body, weight: .bold).monospacedDigit())
                             .foregroundStyle(expertiseColor)
                         Text("Expertise")
                             .font(.system(size: DSType.Size.micro, weight: .medium))
@@ -239,9 +239,9 @@ struct SchemeSelectionView: View {
                 if expertiseValue < 40 {
                     HStack(spacing: 4) {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 9))
+                            .font(.system(size: DSType.Size.micro))
                         Text("Coach has only \(expertiseValue)% expertise -- players will learn slower")
-                            .font(.system(size: 9))
+                            .font(.system(size: DSType.Size.caption))
                     }
                     .foregroundStyle(Color.warning)
                     .padding(.top, 6)
@@ -297,7 +297,7 @@ struct SchemeSelectionView: View {
                         }
 
                         Text(defensiveSchemeDescription(scheme))
-                            .font(.system(size: 10))
+                            .font(.system(size: DSType.Size.micro))
                             .foregroundStyle(Color.textTertiary)
                             .lineLimit(2)
                     }
@@ -307,7 +307,7 @@ struct SchemeSelectionView: View {
                     // Coach expertise (coordinator)
                     VStack(alignment: .trailing, spacing: 2) {
                         Text("\(expertiseValue)%")
-                            .font(.system(size: 14, weight: .bold).monospacedDigit())
+                            .font(.system(size: DSType.Size.body, weight: .bold).monospacedDigit())
                             .foregroundStyle(expertiseColor)
                         Text("Expertise")
                             .font(.system(size: DSType.Size.micro, weight: .medium))
@@ -335,9 +335,9 @@ struct SchemeSelectionView: View {
                 if expertiseValue < 40 {
                     HStack(spacing: 4) {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 9))
+                            .font(.system(size: DSType.Size.micro))
                         Text("Coach has only \(expertiseValue)% expertise -- players will learn slower")
-                            .font(.system(size: 9))
+                            .font(.system(size: DSType.Size.caption))
                     }
                     .foregroundStyle(Color.warning)
                     .padding(.top, 6)
@@ -364,7 +364,7 @@ struct SchemeSelectionView: View {
     private var aptitudeNote: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("COORDINATOR APTITUDE")
-                .font(.system(size: 11, weight: .black))
+                .font(.system(size: DSType.Size.caption, weight: .black))
                 .tracking(1.5)
                 .foregroundStyle(Color.accentGold)
 
@@ -375,7 +375,7 @@ struct SchemeSelectionView: View {
             }
 
             Text("A coordinator's play calling and adaptability determine how effectively they can run each scheme. Higher adaptability means smoother transitions when changing schemes.")
-                .font(.system(size: 10))
+                .font(.system(size: DSType.Size.micro))
                 .foregroundStyle(Color.textTertiary)
         }
         .padding(16)
@@ -385,10 +385,10 @@ struct SchemeSelectionView: View {
     private func aptitudeStatView(label: String, value: Int) -> some View {
         VStack(spacing: 2) {
             Text("\(value)")
-                .font(.system(size: 16, weight: .bold).monospacedDigit())
+                .font(.system(size: DSType.Size.callout, weight: .bold).monospacedDigit())
                 .foregroundStyle(Color.forRating(value))
             Text(label)
-                .font(.system(size: 9))
+                .font(.system(size: DSType.Size.caption))
                 .foregroundStyle(Color.textTertiary)
         }
         .frame(maxWidth: .infinity)
@@ -418,13 +418,13 @@ struct SchemeSelectionView: View {
                 .foregroundStyle(color)
                 .frame(width: 12)
             Text(label)
-                .font(.system(size: 9, weight: .medium))
+                .font(.system(size: DSType.Size.caption, weight: .medium))
                 .foregroundStyle(Color.textTertiary)
-                .frame(width: 58, alignment: .leading)
+                .frame(width: 68, alignment: .leading)
             Text("\(percent)%")
-                .font(.system(size: 9, weight: .bold).monospacedDigit())
+                .font(.system(size: DSType.Size.caption, weight: .bold).monospacedDigit())
                 .foregroundStyle(color)
-                .frame(width: 28, alignment: .trailing)
+                .frame(width: 34, alignment: .trailing)
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 2)
@@ -464,7 +464,7 @@ struct SchemeSelectionView: View {
             Image(systemName: "person.2.fill")
                 .font(.system(size: DSType.Size.micro))
             Text(count == 0 ? "0 coaches" : "\(count)")
-                .font(.system(size: 9, weight: .bold).monospacedDigit())
+                .font(.system(size: DSType.Size.caption, weight: .bold).monospacedDigit())
         }
         .foregroundStyle(color)
         .padding(.horizontal, 5)

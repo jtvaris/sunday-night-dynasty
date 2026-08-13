@@ -334,7 +334,7 @@ struct NewCareerView: View {
                 if showNameError && !isNameValid {
                     Text("Please enter at least 2 characters to continue.")
                         .font(.subheadline)
-                        .foregroundStyle(Color.danger)
+                        .foregroundStyle(Color.dangerText)
                 } else if !playerName.isEmpty && !isNameValid {
                     // Inline hint while the user is typing but hasn't yet hit
                     // the minimum length.
@@ -548,7 +548,7 @@ struct NewCareerView: View {
                 } label: {
                     HStack(spacing: 5) {
                         Image(systemName: "questionmark.circle")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(.system(size: DSType.Size.caption, weight: .semibold))
                         Text("What is this?")
                             .font(.caption.weight(.semibold))
                         Image(systemName: showSetupExplainer ? "chevron.up" : "chevron.down")
@@ -853,7 +853,7 @@ private struct CareerSetupCard: View {
                     .fill(isSelected ? accent.opacity(0.2) : Color.backgroundSecondary)
                     .frame(width: 34, height: 34)
                 Image(systemName: setup.icon)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: DSType.Size.body, weight: .semibold))
                     .foregroundStyle(isSelected ? accent : Color.textSecondary)
             }
 
@@ -875,14 +875,14 @@ private struct CareerSetupCard: View {
 
                     if let scenario = setup.scenario {
                         Text(scenario.tagline)
-                            .font(.system(size: 9, weight: .medium).italic())
+                            .font(.system(size: DSType.Size.caption, weight: .medium).italic())
                             .foregroundStyle(Color.textTertiary)
                             .lineLimit(1)
                     }
                 }
 
                 Text(setup.blurb)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: DSType.Size.footnote, weight: .medium))
                     .foregroundStyle(isSelected ? Color.textSecondary : Color.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -890,7 +890,7 @@ private struct CareerSetupCard: View {
             Spacer(minLength: 4)
 
             Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: 16, weight: .semibold))
+                .font(.system(size: DSType.Size.callout, weight: .semibold))
                 .foregroundStyle(isSelected ? accent : Color.textTertiary.opacity(0.5))
         }
         .padding(.horizontal, 10)
@@ -934,7 +934,7 @@ private struct LeagueSourceCard: View {
                     .fill(isSelected ? accent.opacity(0.2) : Color.backgroundSecondary)
                     .frame(width: 34, height: 34)
                 Image(systemName: source.icon)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: DSType.Size.body, weight: .semibold))
                     .foregroundStyle(isSelected ? accent : Color.textSecondary)
             }
 
@@ -956,7 +956,7 @@ private struct LeagueSourceCard: View {
                 }
 
                 Text(source.blurb)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: DSType.Size.footnote, weight: .medium))
                     .foregroundStyle(isSelected ? Color.textSecondary : Color.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -964,7 +964,7 @@ private struct LeagueSourceCard: View {
             Spacer(minLength: 4)
 
             Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: 16, weight: .semibold))
+                .font(.system(size: DSType.Size.callout, weight: .semibold))
                 .foregroundStyle(isSelected ? accent : Color.textTertiary.opacity(0.5))
         }
         .padding(.horizontal, 10)
@@ -1018,7 +1018,7 @@ private struct CoachingStyleCard: View {
                     .fill(isSelected ? Color.accentBlue.opacity(0.2) : Color.backgroundSecondary)
                     .frame(width: 32, height: 32)
                 Image(systemName: style.icon)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: DSType.Size.body, weight: .semibold))
                     .foregroundStyle(isSelected ? Color.accentBlue : Color.textSecondary)
             }
 
@@ -1042,14 +1042,14 @@ private struct CoachingStyleCard: View {
                 }
 
                 Text(gameplayEffect)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: DSType.Size.footnote, weight: .medium))
                     .foregroundStyle(isSelected ? Color.textSecondary : Color.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
 
                 if isRecommended {
                     // Footnote rationale — prevents the badge from feeling arbitrary.
                     Text("Recommended for first-time players: easier learning curve.")
-                        .font(.system(size: 9, weight: .regular).italic())
+                        .font(.system(size: DSType.Size.caption, weight: .regular).italic())
                         .foregroundStyle(Color.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)
                 }

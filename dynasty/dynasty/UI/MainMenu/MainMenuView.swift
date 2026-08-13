@@ -178,7 +178,7 @@ struct MainMenuView: View {
                 .foregroundStyle(Color.accentGold)
 
             Text("DYNASTY")
-                .font(.system(size: 64, weight: .black))
+                .font(.system(size: 64, weight: .black))  // ds-lint:allow(font) brand wordmark; the ladder tops out at 48 and the splash logotype is art, not UI copy
                 .tracking(12)
                 .foregroundStyle(.white)
                 .shadow(color: .black.opacity(0.6), radius: 8, y: 4)
@@ -339,10 +339,10 @@ struct MainMenuView: View {
             // not reliably legible at all.
             Text("Sunday Night Dynasty  v\(Self.appVersion) (\(Self.buildNumber))\(Self.buildStamp)")
                 .font(DSType.text(DSType.Size.caption, .medium, prose: true))
-                .foregroundStyle(Color.white.opacity(0.60))
+                .foregroundStyle(Color.white.opacity(0.85))
             Text("\u{00A9} \(Self.currentYear) Sunday Night Dynasty")
                 .font(DSType.text(DSType.Size.micro, .regular, prose: true))
-                .foregroundStyle(Color.white.opacity(0.50))
+                .foregroundStyle(Color.white.opacity(0.75))
         }
         .padding(.bottom, 16)
     }
@@ -505,7 +505,7 @@ private struct TutorialSheet: View {
                 ToolbarItem(placement: .principal) {
                     Text("Page \(currentPage + 1) of \(pages.count)")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.textSecondary)
                 }
             }
         }
@@ -704,7 +704,7 @@ private struct TutorialPageView: View {
                 HStack {
                     Spacer()
                     Image(systemName: page.icon)
-                        .font(.system(size: 64, weight: .semibold))
+                        .font(.system(size: DSType.Size.hero, weight: .semibold))
                         .foregroundStyle(page.iconTint)
                         .frame(width: 120, height: 120)
                         .background(
@@ -722,7 +722,7 @@ private struct TutorialPageView: View {
                         .font(.title2.bold())
                     Text(page.subtitle)
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.textSecondary)
                 }
 
                 // Body copy
@@ -878,7 +878,7 @@ private struct SaveSlotCard: View {
                         Text(career.playerName)
                             .lineLimit(1)
                         Text("•")
-                            .foregroundStyle(Color.textSecondary.opacity(0.5))
+                            .foregroundStyle(Color.textTertiaryReadable)
                         Text(roleLabel)
                             .lineLimit(1)
                     }

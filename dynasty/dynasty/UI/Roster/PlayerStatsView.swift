@@ -816,7 +816,7 @@ struct PlayerStatsView: View {
                     .foregroundStyle(color)
             }
             Text(label)
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: DSType.Size.micro, weight: .medium))
                 .foregroundStyle(Color.textTertiary)
         }
     }

@@ -236,6 +236,175 @@ private struct DSOptionalColumnWidth: ViewModifier {
     }
 }
 
+// MARK: - Sorting (#187)
+
+/// Which column a list is sorted by, and in which direction.
+///
+/// One rule, stated once so no screen can invent a second one: **a fresh tap on
+/// a column opens it descending, and a second tap on the same column flips it to
+/// ascending.** Descending-first is the right default for a list of
+/// entities-with-stats — the question a GM asks a column is "who is the most of
+/// this", not "who is the least" — and it is also what the roster already
+/// shipped, so adopting the standard changes no screen's behaviour.
+///
+/// The state is a value, not two loose `@State`s. The roster carried
+/// `sortOrder` + `sortAscending` as separate properties and every call site had
+/// to remember to reset the second one when it set the first; a screen that
+/// forgot left a column sorted ascending the first time it was tapped.
+struct DSSortState<Key: Hashable>: Equatable {
+    /// The column currently doing the sorting. Screens that want an untouched
+    /// "as the engine handed it to us" order give their key enum a default case
+    /// and start on it — the header simply marks no column active.
+    var key: Key
+    /// `false` is descending, which is what a fresh tap picks.
+    var ascending: Bool = false
+
+    init(key: Key, ascending: Bool = false) {
+        self.key = key
+        self.ascending = ascending
+    }
+
+    /// The tap rule.
+    mutating func tap(_ tapped: Key) {
+        if key == tapped {
+            ascending.toggle()
+        } else {
+            key = tapped
+            ascending = false
+        }
+    }
+
+    func isActive(_ candidate: Key) -> Bool { key == candidate }
+
+    /// `chevron.up` when ascending — the glyph points the way the values grow.
+    var directionSymbol: String { ascending ? "chevron.up" : "chevron.down" }
+
+    var spokenDirection: String { ascending ? "ascending" : "descending" }
+}
+
+/// A column header that sorts its column when tapped.
+///
+/// Same voice, same width, same clipping as `DSColumnHeader` — a sortable header
+/// and a static one must be indistinguishable until you touch them, because a
+/// header row where half the labels are 11 pt tracked display and the other half
+/// are a differently-sized button label reads as two headers stacked.
+struct DSSortableColumnHeader<Key: Hashable>: View {
+    let title: String
+    let key: Key
+    @Binding var sort: DSSortState<Key>
+    var width: CGFloat?
+    var alignment: Alignment = .center
+
+    init(
+        _ title: String,
+        key: Key,
+        sort: Binding<DSSortState<Key>>,
+        width: CGFloat? = nil,
+        alignment: Alignment = .center
+    ) {
+        self.title = title
+        self.key = key
+        self._sort = sort
+        self.width = width
+        self.alignment = alignment
+    }
+
+    private var isActive: Bool { sort.isActive(key) }
+
+    var body: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.2)) { sort.tap(key) }
+        } label: {
+            HStack(spacing: 2) {
+                Text(title.uppercased())
+                    .font(DSType.display(11, .heavy))
+                    .tracking(0.6)
+                if isActive {
+                    Image(systemName: sort.directionSymbol)
+                        .font(DSType.display(11, .bold))
+                }
+            }
+            .foregroundStyle(isActive ? Color.accentBlue : Color.textTertiary)
+            .modifier(DSOptionalColumnWidth(width: width, alignment: alignment))
+            // **A documented exception to §2.12's 44 pt floor.** The label is
+            // 11 pt and its column is as narrow as 30, so the text's own bounds
+            // are nowhere near a target and the cell must claim its own hit
+            // rect — but a 44 pt header would be TALLER THAN THE 44 pt ROWS IT
+            // LABELS, and on the screens adopting this (a free-agency board that
+            // already stacks six bars above its list) that is a row of the
+            // market traded for a row of chrome. 28 pt is the compromise: a
+            // deliberate target rather than an accidental one, and a header band
+            // that still reads as a header.
+            .frame(minHeight: 28)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityValue(isActive ? "Sorted \(sort.spokenDirection)" : "Not sorted")
+        .accessibilityHint(isActive ? "Tap to reverse the order" : "Tap to sort by \(title.lowercased())")
+        .accessibilityAddTraits(isActive ? [.isButton, .isSelected] : .isButton)
+    }
+}
+
+// MARK: - Stable sorting
+
+extension Sequence {
+
+    /// Sorts by one comparable key, **totally**.
+    ///
+    /// #134a's lesson, applied to lists: a comparator that returns `false` both
+    /// ways for two elements is not an ordering, and `sorted(by:)` is free to
+    /// return either arrangement. Over a `@Query` result — where the fetch order
+    /// is itself unspecified — that means two players on the same OVR can swap
+    /// places on a redraw with nothing having changed. Every list sort in this
+    /// app therefore ends in an id tiebreak, which makes the order total and the
+    /// screen reproducible.
+    ///
+    /// The tiebreak is **always ascending by id**, regardless of `ascending`.
+    /// Flipping the direction is then not a perfect mirror of the list, which is
+    /// deliberate: ties keep their relative order in both directions instead of
+    /// churning every time the user reverses a column.
+    func dsSorted<V: Comparable, ID: Comparable>(
+        _ ascending: Bool,
+        by value: (Element) -> V,
+        id: (Element) -> ID
+    ) -> [Element] {
+        dsSorted(ascending, id: id) { lhs, rhs in
+            let l = value(lhs), r = value(rhs)
+            if l < r { return .orderedAscending }
+            if r < l { return .orderedDescending }
+            return .orderedSame
+        }
+    }
+
+    /// The compound-key form: `compare` states the **ascending-sense** ordering
+    /// of two elements and `ascending` decides whether that is the order used or
+    /// its reverse. For sorts that are more than one field deep — the roster's
+    /// position sort is side, then position index — this is the primitive; the
+    /// key-path form above is a convenience over it.
+    func dsSorted<ID: Comparable>(
+        _ ascending: Bool,
+        id: (Element) -> ID,
+        by compare: (Element, Element) -> ComparisonResult
+    ) -> [Element] {
+        sorted { lhs, rhs in
+            switch compare(lhs, rhs) {
+            case .orderedAscending:  return ascending
+            case .orderedDescending: return !ascending
+            case .orderedSame:       return id(lhs) < id(rhs)
+            }
+        }
+    }
+}
+
+/// Two comparables, as a `ComparisonResult` — the building block of a compound
+/// `dsSorted` comparator.
+func dsCompare<V: Comparable>(_ lhs: V, _ rhs: V) -> ComparisonResult {
+    if lhs < rhs { return .orderedAscending }
+    if rhs < lhs { return .orderedDescending }
+    return .orderedSame
+}
+
 // MARK: - Rank slot
 
 /// A rank, and the hand-move it came from.
@@ -480,7 +649,7 @@ struct DSListRow<Portrait: View, Identity: View, Columns: View>: View {
 /// are missing puts every label one column left of the numbers it describes.
 /// That exact bug is documented twice in this codebase, once on the board and
 /// once on the roster.
-struct DSListHeaderRow<Columns: View>: View {
+struct DSListHeaderRow<Identity: View, Columns: View>: View {
 
     var density: DSListDensity = .scan
     /// A leading control column that lives outside the anatomy (the board's
@@ -491,9 +660,12 @@ struct DSListHeaderRow<Columns: View>: View {
     var reservesBadge: Bool = false
     var badgeLabel: String = "POS"
     var portraitWidth: CGFloat? = nil
-    var identityLabel: String = "NAME"
     var affordance: DSRowAffordance = .none
 
+    /// The identity column's own label. A plain `DSColumnHeader` in the ordinary
+    /// case; a `DSSortableColumnHeader` when the name column sorts (#187), which
+    /// is why it is a slot rather than a `String`.
+    @ViewBuilder var identity: () -> Identity
     @ViewBuilder var columns: () -> Columns
 
     init(
@@ -504,8 +676,8 @@ struct DSListHeaderRow<Columns: View>: View {
         reservesBadge: Bool = false,
         badgeLabel: String = "POS",
         portraitWidth: CGFloat? = nil,
-        identityLabel: String = "NAME",
         affordance: DSRowAffordance = .none,
+        @ViewBuilder identity: @escaping () -> Identity,
         @ViewBuilder columns: @escaping () -> Columns
     ) {
         self.density = density
@@ -515,8 +687,8 @@ struct DSListHeaderRow<Columns: View>: View {
         self.reservesBadge = reservesBadge
         self.badgeLabel = badgeLabel
         self.portraitWidth = portraitWidth
-        self.identityLabel = identityLabel
         self.affordance = affordance
+        self.identity = identity
         self.columns = columns
     }
 
@@ -534,7 +706,7 @@ struct DSListHeaderRow<Columns: View>: View {
             Color.clear
                 .frame(width: portraitWidth ?? density.portraitColumn, height: 1)
 
-            DSColumnHeader(identityLabel, alignment: .leading)
+            identity()
                 .frame(minWidth: DSListColumn.identityMin, alignment: .leading)
                 .padding(.leading, DSListColumn.identityGap)
 
@@ -544,6 +716,38 @@ struct DSListHeaderRow<Columns: View>: View {
                 Color.clear.frame(width: DSListColumn.affordance, height: 1)
             }
         }
+    }
+}
+
+extension DSListHeaderRow where Identity == DSColumnHeader {
+    /// The ordinary case: the identity column is a plain label. Kept as an
+    /// initializer rather than pushed onto every call site, because "NAME" over
+    /// the name column is what almost every list wants and a header that has to
+    /// spell it out in a closure is four lines where one did.
+    init(
+        density: DSListDensity = .scan,
+        leadingGutter: CGFloat = 0,
+        reservesRank: Bool = false,
+        rankLabel: String = "#",
+        reservesBadge: Bool = false,
+        badgeLabel: String = "POS",
+        portraitWidth: CGFloat? = nil,
+        identityLabel: String = "NAME",
+        affordance: DSRowAffordance = .none,
+        @ViewBuilder columns: @escaping () -> Columns
+    ) {
+        self.init(
+            density: density,
+            leadingGutter: leadingGutter,
+            reservesRank: reservesRank,
+            rankLabel: rankLabel,
+            reservesBadge: reservesBadge,
+            badgeLabel: badgeLabel,
+            portraitWidth: portraitWidth,
+            affordance: affordance,
+            identity: { DSColumnHeader(identityLabel, alignment: .leading) },
+            columns: columns
+        )
     }
 }
 

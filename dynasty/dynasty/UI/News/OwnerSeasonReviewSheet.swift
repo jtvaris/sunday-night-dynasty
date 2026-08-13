@@ -88,7 +88,7 @@ struct OwnerSeasonReviewSheet: View {
     private var header: some View {
         VStack(spacing: 6) {
             Image(systemName: "building.2.fill")
-                .font(.system(size: 34))
+                .font(.system(size: DSType.Size.display))
                 .foregroundStyle(Color.accentGold)
             Text("Season \(String(review.seasonYear)) Review")
                 .font(.title2.weight(.black))
@@ -286,7 +286,7 @@ struct OwnerSeasonReviewSheet: View {
             ForEach(consequenceLines, id: \.text) { line in
                 HStack(alignment: .top, spacing: 10) {
                     Image(systemName: line.icon)
-                        .font(.system(size: 13))
+                        .font(.system(size: DSType.Size.body))
                         .foregroundStyle(line.color)
                         .frame(width: 20)
                         .padding(.top, 1)
@@ -391,7 +391,7 @@ struct OwnerSeasonReviewSheet: View {
         case .bonus:     (text, color) = ("BONUS", .success)
         }
         return Text(text)
-            .font(.system(size: 9, weight: .black))
+            .font(.system(size: DSType.Size.caption, weight: .black))
             .tracking(0.8)
             .foregroundStyle(color)
             .padding(.horizontal, 7)

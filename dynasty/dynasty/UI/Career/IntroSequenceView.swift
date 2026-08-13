@@ -506,11 +506,11 @@ private struct TeamOverviewStep: View {
                 if showHeader {
                     VStack(spacing: 12) {
                         Image(systemName: "building.2.fill")
-                            .font(.system(size: 36))
+                            .font(.system(size: DSType.Size.display))
                             .foregroundStyle(Color.accentGold)
 
                         Text("TEAM OVERVIEW")
-                            .font(.system(size: 14, weight: .black))
+                            .font(.system(size: DSType.Size.body, weight: .black))
                             .tracking(4)
                             .foregroundStyle(Color.accentGold)
 
@@ -554,7 +554,7 @@ private struct TeamOverviewStep: View {
                         StatRow(
                             label: "Expiring Contracts",
                             value: "\(expiringContracts) player\(expiringContracts == 1 ? "" : "s")",
-                            valueColor: expiringContracts > 15 ? Color.danger : expiringContracts > 8 ? Color.warning : Color.textPrimary
+                            valueColor: expiringContracts > 15 ? Color.dangerText : expiringContracts > 8 ? Color.warning : Color.textPrimary
                         )
 
                         // #133: Top 3 key players
@@ -592,7 +592,7 @@ private struct TeamOverviewStep: View {
                                 if filledCoachingSlots == 0 {
                                     Text("0 / \(totalCoachingSlots) filled")
                                         .font(.title3.weight(.bold))
-                                        .foregroundStyle(Color.danger)
+                                        .foregroundStyle(Color.dangerText)
                                 } else {
                                     Text("\(filledCoachingSlots) / \(totalCoachingSlots) filled")
                                         .font(.title3.weight(.bold))
@@ -623,7 +623,7 @@ private struct TeamOverviewStep: View {
                                     // Dual grade: Starter/Depth (#235)
                                     HStack(spacing: 2) {
                                         Text("S:")
-                                            .font(.system(size: 9, weight: .medium))
+                                            .font(.system(size: DSType.Size.caption, weight: .medium))
                                             .foregroundStyle(Color.textTertiary)
                                         Text(group.starterGrade)
                                             .font(.title2.weight(.black))
@@ -632,7 +632,7 @@ private struct TeamOverviewStep: View {
                                             .font(.title3)
                                             .foregroundStyle(Color.textTertiary)
                                         Text("D:")
-                                            .font(.system(size: 9, weight: .medium))
+                                            .font(.system(size: DSType.Size.caption, weight: .medium))
                                             .foregroundStyle(Color.textTertiary)
                                         Text(group.depthGrade)
                                             .font(.title2.weight(.black))
@@ -646,7 +646,7 @@ private struct TeamOverviewStep: View {
                                         .foregroundStyle(Color.textTertiary)
                                     // #131/#134: Show count vs ideal with color
                                     let ideal = Self.idealGroupSize[group.name] ?? 4
-                                    let staffColor: Color = group.playerCount >= ideal ? .success : group.playerCount >= ideal - 1 ? .warning : .danger
+                                    let staffColor: Color = group.playerCount >= ideal ? .success : group.playerCount >= ideal - 1 ? .warning : .dangerText
                                     Text("\(group.playerCount)/\(ideal) players")
                                         .font(.caption.weight(.medium))
                                         .foregroundStyle(staffColor)
@@ -755,7 +755,7 @@ private struct TeamOverviewStep: View {
                                         }
                                     }()
                                     Text("Rd\(pick.round) #\(pick.pickNumber)")
-                                        .font(.system(size: 13, weight: .semibold).monospacedDigit())
+                                        .font(.system(size: DSType.Size.body, weight: .semibold).monospacedDigit())
                                         .foregroundStyle(Color.textPrimary)
                                         .padding(.horizontal, 10)
                                         .padding(.vertical, 6)
@@ -977,11 +977,11 @@ private struct YourRoadmapStep: View {
                 if showHeader {
                     VStack(spacing: 12) {
                         Image(systemName: "map.fill")
-                            .font(.system(size: 36))
+                            .font(.system(size: DSType.Size.display))
                             .foregroundStyle(Color.accentGold)
 
                         Text("YOUR ROADMAP")
-                            .font(.system(size: 14, weight: .black))
+                            .font(.system(size: DSType.Size.body, weight: .black))
                             .tracking(4)
                             .foregroundStyle(Color.accentGold)
 
@@ -1086,12 +1086,12 @@ private struct ReadyToBeginStep: View {
                     if showTitle {
                         VStack(spacing: 16) {
                             Image(systemName: "football.fill")
-                                .font(.system(size: 48))
+                                .font(.system(size: DSType.Size.hero))
                                 .foregroundStyle(Color.accentGold)
                                 .shadow(color: Color.accentGold.opacity(glowAmount), radius: 20, y: 0)
 
                             Text("Your Journey Begins")
-                                .font(.system(size: 36, weight: .bold))
+                                .font(.system(size: DSType.Size.display, weight: .bold))
                                 .foregroundStyle(Color.textPrimary)
 
                             if let team = team {
@@ -1170,7 +1170,7 @@ private struct SectionLabel: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 12, weight: .black))
+            .font(.system(size: DSType.Size.footnote, weight: .black))
             .tracking(2)
             .foregroundStyle(Color.accentGold)
     }

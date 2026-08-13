@@ -59,7 +59,7 @@ struct FiredSummaryView: View {
             UserPortraitView(career: career, size: .large, ringColor: .danger)
                 .overlay(alignment: .bottomTrailing) {
                     Image(systemName: "xmark.octagon.fill")
-                        .font(.system(size: 26))
+                        .font(.system(size: DSType.Size.title1))
                         .symbolRenderingMode(.palette)
                         .foregroundStyle(Color.white, Color.danger)
                         .offset(x: 4, y: 4)
@@ -86,9 +86,9 @@ struct FiredSummaryView: View {
         if let reviewSummary {
             VStack(alignment: .leading, spacing: 10) {
                 Text("THE OWNER'S STATEMENT")
-                    .font(.system(size: 11, weight: .black))
+                    .font(.system(size: DSType.Size.caption, weight: .black))
                     .tracking(1.5)
-                    .foregroundStyle(Color.danger)
+                    .foregroundStyle(Color.dangerText)
 
                 Text("\u{201C}\(reviewSummary)\u{201D}")
                     .font(.subheadline)
@@ -119,7 +119,7 @@ struct FiredSummaryView: View {
     private var careerStatsCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("CAREER SUMMARY \u{2014} \(career.playerName.uppercased())")
-                .font(.system(size: 11, weight: .black))
+                .font(.system(size: DSType.Size.caption, weight: .black))
                 .tracking(1.5)
                 .foregroundStyle(Color.accentGold)
 
@@ -129,7 +129,7 @@ struct FiredSummaryView: View {
                 statColumn(
                     label: "Career Record",
                     value: "\(career.totalWins)-\(career.totalLosses)",
-                    color: career.totalWins >= career.totalLosses ? .success : .danger
+                    color: career.totalWins >= career.totalLosses ? .success : .dangerText
                 )
                 statColumn(
                     label: "Win %",

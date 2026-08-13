@@ -100,13 +100,19 @@ struct DSActionBar: View {
                 .frame(width: 3)
             VStack(alignment: .leading, spacing: DSSpacing.xxs) {
                 Text(explainer.title.uppercased())
-                    .font(DSType.display(11, .heavy))
+                    .font(DSType.display(DSType.Size.caption, .heavy))
                     .tracking(0.7)
                     .foregroundStyle(explainer.isWarning ? Color.alertOrange : Color.accentGold)
                     .lineLimit(1)
+                // Readability sweep: this line states what committing does and
+                // what it costs, so it is *read*, not glanced at. It shipped as
+                // 12 pt regular `textSecondary` and was the user's own example
+                // of "small dim text I can't read". Body step, medium weight,
+                // `textPrimary` — the bar has no fixed height, so the extra
+                // ~2 pt of line box is absorbed by the 44 pt button row.
                 Text(LocalizedStringKey(explainer.message))
-                    .font(DSType.text(12, .regular))
-                    .foregroundStyle(Color.textSecondary)
+                    .font(DSType.text(DSType.Size.body, .medium))
+                    .foregroundStyle(Color.textPrimary)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }

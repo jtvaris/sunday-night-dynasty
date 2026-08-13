@@ -247,6 +247,33 @@ struct DSSlat: Identifiable, Equatable {
     /// "Something is owed in here" — a 7 pt dot, the place slat's only mark.
     var hasObligation: Bool = false
 
+    // MARK: - #194 v2 addition
+
+    /// **Who this slat belongs to**, as a colour — the club on the card, the
+    /// franchise holding the wave. `nil` on every band that has no owner, which
+    /// is all of them but the draft's.
+    ///
+    /// Distinct from ``tint``, and deliberately so: `tint` re-colours the `done`
+    /// slat's TOP RULE and check, i.e. it re-states an outcome the state channel
+    /// is already drawing (W green / L red). `accent` says nothing about state —
+    /// it is an identity, and it is therefore drawn on channels no state uses:
+    /// a bottom rule, and (on `current` only) a wash that fades in from the
+    /// trailing edge across the empty half of the widened slat.
+    ///
+    /// **The gold rule is untouched.** `current` keeps its 3 pt `accentGold` top
+    /// rule and its gold NOW pill, because those mark where the *process* is
+    /// standing and an owner colour must never be able to impersonate them.
+    ///
+    /// **Contrast.** The wash is capped at 0.08 anywhere the slat prints words
+    /// and only ramps past that after 50 % of the width, which no title, numeral
+    /// or sub-caption reaches on a `currentFlex`-widened slat. Measured against
+    /// the brightest owner colour in the league: `textTertiaryReadable` on the
+    /// sub-caption line stays at 4.85 : 1 (the un-washed value is 4.86 : 1).
+    /// A caller handing this a raw brand colour is the caller's bug — the draft
+    /// room passes `DraftTeamTint.accentIfKnown`, which is lifted to ≥ 3 : 1
+    /// against the plate first.
+    var accent: Color? = nil
+
     /// A destination slat: an icon, a word, and no state channels (#165).
     ///
     /// A factory rather than a memberwise call because `state` has no default
@@ -555,6 +582,22 @@ private struct DSSlatButton: View {
                     .stroke(Color.textTertiary.opacity(0.30), lineWidth: 1)
             }
 
+            // The owner's colour (#194 v2). Two layers, both no-ops when the
+            // caller sets no `accent`, and neither of them touching a channel a
+            // state already owns — see `DSSlat.accent`.
+            if let accent = ownerAccent {
+                if slat.state == .current {
+                    DSSlatShape(slant: slant).fill(ownerWash(accent))
+                }
+                Rectangle()
+                    .fill(accent)
+                    .frame(height: ownerRuleHeight)
+                    // Mirrors the top rule's `offset(x: slant)`: the bottom edge
+                    // of the parallelogram runs `slant` to the LEFT of the top
+                    // one, so the rule has to lean the other way to land on it.
+                    .offset(x: -slant, y: height - ownerRuleHeight)
+            }
+
             if ruleHeight > 0 {
                 Rectangle()
                     .fill(ruleColor)
@@ -714,6 +757,39 @@ private struct DSSlatButton: View {
         case .future: return AnyShapeStyle(Color.backgroundPrimary)
         case .locked: return AnyShapeStyle(Color.backgroundPlate)
         }
+    }
+
+    // MARK: Channel 1b — the owner (#194 v2)
+
+    /// The owner colour, but only on the two states where identity is news.
+    ///
+    /// `done` is excluded on purpose: a finished slat already spends its two
+    /// colour slots on `tint` (the top rule and the check), and a third mark
+    /// under the same cell turns the ribbon's history into stripes. `locked` and
+    /// `place` have no owner by definition.
+    private var ownerAccent: Color? {
+        guard !isPlace, slat.state == .current || slat.state == .future else { return nil }
+        return slat.accent
+    }
+
+    /// The live cell states its owner twice as loudly as an upcoming one.
+    private var ownerRuleHeight: CGFloat { slat.state == .current ? 3 : 2 }
+
+    /// Flat and faint under the words; a real block of club colour in the empty
+    /// trailing half of the widened `current` slat. See `DSSlat.accent` for the
+    /// measurement that fixes 0.08 as the ceiling under text and 0.50 as the
+    /// earliest the ramp may start.
+    private func ownerWash(_ accent: Color) -> LinearGradient {
+        LinearGradient(
+            stops: [
+                .init(color: accent.opacity(0.08), location: 0.00),
+                .init(color: accent.opacity(0.08), location: 0.50),
+                .init(color: accent.opacity(0.20), location: 0.72),
+                .init(color: accent.opacity(0.55), location: 1.00)
+            ],
+            startPoint: .leading,
+            endPoint: .trailing
+        )
     }
 
     // MARK: Channel 2 — top rule

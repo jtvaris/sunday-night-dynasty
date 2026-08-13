@@ -233,8 +233,8 @@ struct OwnerBudgetView: View {
     private func stepperButton(system: String, enabled: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: system)
-                .font(.system(size: 24))
-                .foregroundStyle(enabled ? Color.accentGold : Color.textTertiary.opacity(0.4))
+                .font(.system(size: DSType.Size.title2))
+                .foregroundStyle(enabled ? Color.accentGold : Color.textTertiaryReadable)
         }
         .buttonStyle(.plain)
         .disabled(!enabled)

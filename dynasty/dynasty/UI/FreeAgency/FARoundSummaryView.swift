@@ -430,7 +430,7 @@ struct FARoundSummaryView: View {
             HStack(spacing: 8) {
                 Image(systemName: icon)
                     .foregroundStyle(color)
-                    .font(.system(size: 14))
+                    .font(.system(size: DSType.Size.body))
                 Text(title)
                     .font(.subheadline.weight(.bold))
                     .foregroundStyle(color)

@@ -24,6 +24,21 @@ enum PlayClockSetting: String, CaseIterable, Identifiable {
 
 struct SettingsView: View {
 
+    /// Where this sheet was opened from (#200). Same screen either way — the
+    /// two rows that only make sense with no career loaded are dropped in
+    /// `.career`, rather than shipping a second settings screen that would
+    /// drift out of sync with this one within a release.
+    enum Context {
+        /// Title screen. The full sheet.
+        case mainMenu
+        /// The top bar's gear, with a career open behind the sheet.
+        case career
+    }
+
+    /// Defaults to `.mainMenu` so the existing title-screen call site is
+    /// untouched.
+    var context: Context = .mainMenu
+
     @Environment(\.dismiss) private var dismiss
 
     // Audio
@@ -68,11 +83,26 @@ struct SettingsView: View {
                 Form {
                     audioSection
                     gameplaySection
+                    // Tutorial keeps its Reset Tips row in a career (the hints
+                    // it re-arms are career-screen hints) and loses only the
+                    // replay row, which hands off to the title screen.
                     tutorialSection
-                    dataSection
+                    // Wiping every save from inside a live career is a footgun
+                    // with no undo: the career on the other side of the sheet
+                    // keeps running over deleted preferences.
+                    if context == .mainMenu {
+                        dataSection
+                    }
                     aboutSection
                 }
                 .scrollContentBackground(.hidden)
+                // Live audio (#200): the score has to duck *while the thumb is
+                // moving*, mid-track — a volume you can only hear after the
+                // next track change is a volume you cannot set by ear.
+                .onChange(of: soundEnabled) { _, _ in applyAudioSettingsNow() }
+                .onChange(of: soundVolume) { _, _ in applyAudioSettingsNow() }
+                .onChange(of: musicEnabled) { _, _ in applyAudioSettingsNow() }
+                .onChange(of: musicVolume) { _, _ in applyAudioSettingsNow() }
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.large)
@@ -214,22 +244,32 @@ struct SettingsView: View {
         }
     }
 
+    private var tutorialFooter: LocalizedStringKey {
+        context == .mainMenu
+            ? "Replay Tutorial walks through the major systems from the main menu. Reset Tips shows the one-time hints (dashboard tour, first-snap walkthrough, in-game banners) again."
+            : "Reset Tips shows the one-time hints (dashboard tour, first-snap walkthrough, in-game banners) again. The full tutorial replays from the main menu."
+    }
+
     private var tutorialSection: some View {
         Section {
-            Button {
-                pendingTutorialReplay = true
-                dismiss()
-            } label: {
-                HStack {
-                    Label("Replay Tutorial", systemImage: "graduationcap.fill")
-                        .foregroundStyle(Color.textPrimary)
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(Color.textSecondary)
+            // Main menu only: the tutorial is a title-screen sheet, so from a
+            // career this row could do nothing but set a flag and close.
+            if context == .mainMenu {
+                Button {
+                    pendingTutorialReplay = true
+                    dismiss()
+                } label: {
+                    HStack {
+                        Label("Replay Tutorial", systemImage: "graduationcap.fill")
+                            .foregroundStyle(Color.textPrimary)
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(Color.textSecondary)
+                    }
                 }
+                .listRowBackground(Color.backgroundSecondary)
             }
-            .listRowBackground(Color.backgroundSecondary)
 
             // R37: re-arm every one-time coach mark and hint banner.
             Button {
@@ -246,7 +286,7 @@ struct SettingsView: View {
         } header: {
             sectionHeader("Tutorial")
         } footer: {
-            Text("Replay Tutorial walks through the major systems from the main menu. Reset Tips shows the one-time hints (dashboard tour, first-snap walkthrough, in-game banners) again.")
+            Text(tutorialFooter)
                 .foregroundStyle(Color.textTertiary)
         }
     }
@@ -319,6 +359,25 @@ struct SettingsView: View {
     }
 
     // MARK: - Helpers
+
+    /// Make the two audio directors re-read the audio keys *now*.
+    ///
+    /// This is not a second read path — it re-posts the one they already
+    /// listen to. `MusicDirector.settingsChanged` (MusicDirector.swift) and
+    /// `AudioDirector.settingsChanged` (Match/AudioDirector.swift) both observe
+    /// `UserDefaults.didChangeNotification` and reconcile their live players
+    /// against the current keys; each recomputes a target and fades to it, so
+    /// firing the handler twice for one slider step is idempotent. They are
+    /// also the only two observers of that notification in the app, so nothing
+    /// else can be surprised by the extra post.
+    ///
+    /// `@AppStorage`'s own write posts it as well. The explicit call is here so
+    /// that a slider drag cannot depend on how the framework batches defaults
+    /// writes for its live response — that is the behaviour being promised.
+    private func applyAudioSettingsNow() {
+        NotificationCenter.default.post(name: UserDefaults.didChangeNotification,
+                                        object: UserDefaults.standard)
+    }
 
     private func sectionHeader(_ title: LocalizedStringKey) -> some View {
         Text(title)

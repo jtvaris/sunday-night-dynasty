@@ -62,7 +62,7 @@ struct FAVisitResultSheet: View {
     private var headerCard: some View {
         VStack(spacing: 10) {
             Image(systemName: "building.2.crop.circle.fill")
-                .font(.system(size: 40))
+                .font(.system(size: DSType.Size.display))
                 .foregroundStyle(Color.accentGold)
             Text("\(outcome.playerName) toured the facility")
                 .font(.title3.weight(.bold))

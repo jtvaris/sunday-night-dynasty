@@ -342,7 +342,7 @@ struct TeamSelectionView: View {
         if let templateLoadError {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 12))
+                    .font(.system(size: DSType.Size.footnote))
                     .foregroundStyle(Color.warning)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("\(leagueSource.displayName) league unavailable — starting a Generated league instead.")
@@ -371,7 +371,7 @@ struct TeamSelectionView: View {
             // already name the league the screen is about to show.
             HStack(spacing: 6) {
                 Image(systemName: leagueSource.icon)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: DSType.Size.caption, weight: .semibold))
                 Text(leagueSource.summaryLabel)
                     .font(DSType.display(DSType.Size.footnote, .bold))
                     .tracking(0.5)
@@ -412,11 +412,17 @@ struct TeamSelectionView: View {
             Spacer().frame(width: 16) // matches chevron column
         }
         .font(DSType.display(DSType.Size.caption, .heavy))
-        .tracking(1.2)
+        // Readability sweep: the tracking is what overflows the 60 pt
+        // "DIFFICULTY" column, not the type size — 10 glyphs at 11 pt fit, the
+        // 12 pt of letter-spacing on top of them do not. Halving the tracking
+        // buys the width back at full size, and the scale floor is raised from
+        // 0.7 (which bottomed out at 7.7 pt, under the legibility floor) to a
+        // value that cannot take the label below 10 pt on any device.
+        .tracking(0.6)
         // R39 device coverage: "DIFFICULTY" wrapped to "DIFFICULT/Y" inside
         // its 60 pt column on iPad mini — scale down instead of wrapping.
         .lineLimit(1)
-        .minimumScaleFactor(0.7)
+        .minimumScaleFactor(0.92)
         .foregroundStyle(Color.textTertiary)
         .padding(.leading, 56) // skip past logo
     }
@@ -442,11 +448,11 @@ struct TeamSelectionView: View {
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "line.3.horizontal.decrease")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: DSType.Size.caption, weight: .semibold))
                     Text(situationFilter == "All" ? "Filter" : situationFilter)
                         .font(DSType.text(DSType.Size.footnote, .semibold))
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.system(size: DSType.Size.micro, weight: .bold))
                 }
                 .foregroundStyle(situationFilter == "All" ? Color.textSecondary : Color.accentBlue)
                 .padding(.horizontal, 10)
@@ -475,11 +481,11 @@ struct TeamSelectionView: View {
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "arrow.up.arrow.down")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: DSType.Size.caption, weight: .semibold))
                     Text(sortMode.label)
                         .font(DSType.text(DSType.Size.footnote, .semibold))
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.system(size: DSType.Size.micro, weight: .bold))
                 }
                 .foregroundStyle(sortMode == .division ? Color.textSecondary : Color.accentBlue)
                 .padding(.horizontal, 10)
@@ -504,7 +510,7 @@ struct TeamSelectionView: View {
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: compareModeOn ? "checkmark.square.fill" : "square.grid.2x2")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: DSType.Size.caption, weight: .semibold))
                     Text(compareModeOn ? "Compare On" : "Compare")
                         .font(DSType.text(DSType.Size.footnote, .semibold))
                 }
@@ -906,7 +912,7 @@ private struct CompactTeamRow: View {
             // Compare-mode checkbox (replaces chevron affordance during compare).
             if compareModeOn {
                 Image(systemName: isSelectedForCompare ? "checkmark.square.fill" : "square")
-                    .font(.system(size: 18, weight: .semibold))
+                    .font(.system(size: DSType.Size.title3, weight: .semibold))
                     .foregroundStyle(isSelectedForCompare ? Color.accentBlue : Color.textTertiary)
                     .frame(width: 22)
             }
@@ -917,7 +923,7 @@ private struct CompactTeamRow: View {
 
                 if preview.isLocked {
                     Image(systemName: "lock.fill")
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.system(size: DSType.Size.micro, weight: .bold))
                         .foregroundStyle(Color.backgroundPrimary)
                         .padding(3)
                         .background(Circle().fill(Color.textTertiary))
@@ -959,7 +965,7 @@ private struct CompactTeamRow: View {
             HStack(spacing: 1) {
                 ForEach(1...5, id: \.self) { star in
                     Image(systemName: star <= preview.difficulty ? "star.fill" : "star")
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.micro))
                         .foregroundStyle(star <= preview.difficulty ? difficultyColor : Color.textTertiary.opacity(0.3))
                 }
             }
@@ -989,7 +995,7 @@ private struct CompactTeamRow: View {
             // Owner patience icon + seasons (#112 widened)
             VStack(spacing: 1) {
                 Image(systemName: preview.ownerPatienceIcon)
-                    .font(.system(size: 12))
+                    .font(.system(size: DSType.Size.footnote))
                     .foregroundStyle(ownerPatienceColor)
                 Text("\(preview.patienceSeasons)yr")
                     .font(DSType.display(DSType.Size.caption, .semibold))
@@ -999,7 +1005,7 @@ private struct CompactTeamRow: View {
 
             if !compareModeOn {
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: DSType.Size.micro, weight: .semibold))
                     .foregroundStyle(Color.textTertiary)
                     .frame(width: 16)
             } else {
@@ -1046,13 +1052,13 @@ private struct MiniTeamCard: View {
 
             // Name
             Text(team.name)
-                .font(.system(size: min(13, height * 0.1), weight: .bold))
+                .font(.system(size: max(DSType.Size.footnote, min(DSType.Size.body, height * 0.1)), weight: .bold))
                 .foregroundStyle(Color.textPrimary)
                 .lineLimit(1)
 
             // City
             Text(team.city)
-                .font(.system(size: min(10, height * 0.07)))
+                .font(.system(size: max(DSType.Size.caption, min(DSType.Size.footnote, height * 0.07))))
                 .foregroundStyle(Color.textSecondary)
                 .lineLimit(1)
 
@@ -1060,14 +1066,14 @@ private struct MiniTeamCard: View {
             HStack(spacing: 1) {
                 ForEach(1...5, id: \.self) { star in
                     Image(systemName: star <= preview.difficulty ? "star.fill" : "star")
-                        .font(.system(size: min(7, height * 0.05)))
+                        .font(.system(size: max(DSType.Size.micro, min(DSType.Size.caption, height * 0.05))))
                         .foregroundStyle(star <= preview.difficulty ? Color.warning : Color.textTertiary)
                 }
             }
 
             // Situation
             Text(preview.situation.uppercased())
-                .font(.system(size: min(8, height * 0.06), weight: .bold))
+                .font(.system(size: max(DSType.Size.micro, min(DSType.Size.caption, height * 0.06)), weight: .bold))
                 .foregroundStyle(situationColor)
                 .lineLimit(1)
         }
@@ -1339,7 +1345,7 @@ private struct TeamDetailSheet: View {
         VStack(spacing: 6) {
             HStack(spacing: 4) {
                 Image(systemName: icon)
-                    .font(.system(size: 11))
+                    .font(.system(size: DSType.Size.caption))
                     .foregroundStyle(Color.textTertiary)
                 Text(label)
                     .font(DSType.display(DSType.Size.caption, .semibold))
@@ -1394,7 +1400,7 @@ private struct TeamDetailSheet: View {
                     HStack(spacing: 3) {
                         ForEach(1...5, id: \.self) { star in
                             Image(systemName: star <= preview.difficulty ? "star.fill" : "star")
-                                .font(.system(size: 14))
+                                .font(.system(size: DSType.Size.body))
                                 .foregroundStyle(star <= preview.difficulty ? difficultyColor : Color.textTertiary.opacity(0.4))
                         }
                     }
@@ -1432,7 +1438,7 @@ private struct TeamDetailSheet: View {
             HStack(spacing: 16) {
                 HStack(spacing: 6) {
                     Image(systemName: preview.ownerPatienceIcon)
-                        .font(.system(size: 14))
+                        .font(.system(size: DSType.Size.body))
                         .foregroundStyle(ownerPatienceColor)
                     Text(preview.ownerPatience)
                         .font(.subheadline.weight(.semibold))
@@ -1496,7 +1502,7 @@ private struct TeamDetailSheet: View {
 
             HStack(spacing: 12) {
                 Image(systemName: "figure.american.football")
-                    .font(.system(size: 20))
+                    .font(.system(size: DSType.Size.title2))
                     .foregroundStyle(Color.textSecondary)
 
                 VStack(alignment: .leading, spacing: 2) {
@@ -1593,7 +1599,7 @@ private struct TeamDetailSheet: View {
 
             HStack(spacing: 8) {
                 Image(systemName: "dollarsign.square.fill")
-                    .font(.system(size: 16))
+                    .font(.system(size: DSType.Size.callout))
                     .foregroundStyle(preview.coachingBudget >= 40 ? Color.success : preview.coachingBudget >= 30 ? Color.accentBlue : Color.warning)
                 Text("$\(preview.coachingBudget)M")
                     .font(.title3.weight(.bold))
@@ -1619,7 +1625,7 @@ private struct TeamDetailSheet: View {
         if preview.isLocked {
             HStack(spacing: 8) {
                 Image(systemName: "lock.fill")
-                    .font(.system(size: 13))
+                    .font(.system(size: DSType.Size.body))
                     .foregroundStyle(Color.warning)
                 Text("Complete one full season to unlock this team")
                     .font(DSType.text(DSType.Size.footnote, .medium, prose: true))
@@ -1747,7 +1753,7 @@ private struct CompareTeamsSheet: View {
                             HStack(spacing: 1) {
                                 ForEach(1...5, id: \.self) { star in
                                     Image(systemName: star <= catalog.preview(for: team).difficulty ? "star.fill" : "star")
-                                        .font(.system(size: 9))
+                                        .font(.system(size: DSType.Size.micro))
                                         .foregroundStyle(star <= catalog.preview(for: team).difficulty ? Color.warning : Color.textTertiary.opacity(0.4))
                                 }
                             }

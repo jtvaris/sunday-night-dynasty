@@ -165,7 +165,7 @@ struct PracticeSquadView: View {
     private func summaryStat(_ title: String, _ value: String, tint: Color) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title.uppercased())
-                .font(.system(size: 10, weight: .semibold))
+                .font(.system(size: DSType.Size.micro, weight: .semibold))
                 .foregroundStyle(Color.textSecondary)
             Text(value)
                 .font(.subheadline.weight(.bold).monospacedDigit())
@@ -212,7 +212,7 @@ struct PracticeSquadView: View {
     private var emptyState: some View {
         VStack(spacing: DSSpacing.sm) {
             Image(systemName: "person.3.sequence.fill")
-                .font(.system(size: 34))
+                .font(.system(size: DSType.Size.display))
                 .foregroundStyle(Color.textSecondary.opacity(0.5))
             Text(tab == .own
                  ? "No practice squad yet. Squads are stocked on cutdown day, at the end of the preseason."
@@ -250,7 +250,7 @@ struct PracticeSquadView: View {
                     .font(.subheadline.weight(.bold).monospacedDigit())
                     .foregroundStyle(Color.textPrimary)
                 Text("POT \(player.assessedPotential ?? "—")")
-                    .font(.system(size: 10))
+                    .font(.system(size: DSType.Size.micro))
                     .foregroundStyle(Color.textSecondary)
             }
 

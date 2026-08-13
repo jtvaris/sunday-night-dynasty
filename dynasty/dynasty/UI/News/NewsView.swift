@@ -330,7 +330,7 @@ struct NewsView: View {
     private func newsSubLabel(_ title: String, icon: String, color: Color) -> some View {
         HStack(spacing: 5) {
             Image(systemName: icon)
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: DSType.Size.caption, weight: .bold))
             Text(title.uppercased())
                 .font(.system(size: 10, weight: .heavy))
                 .tracking(0.8)

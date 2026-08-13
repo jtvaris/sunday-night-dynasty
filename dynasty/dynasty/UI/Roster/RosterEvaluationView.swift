@@ -710,19 +710,19 @@ struct RosterEvaluationView: View {
                 // Dual grade: Starter / Depth
                 HStack(spacing: 2) {
                     Text("S:")
-                        .font(.system(size: 9, weight: .medium))
+                        .font(.system(size: DSType.Size.micro, weight: .medium))
                         .foregroundStyle(Color.textTertiary)
                     Text(rowData.starterGrade)
-                        .font(.system(size: 13, weight: .bold))
+                        .font(.system(size: DSType.Size.body, weight: .bold))
                         .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(rowData.starterGrade))
                     Text("/")
-                        .font(.system(size: 11))
+                        .font(.system(size: DSType.Size.caption))
                         .foregroundStyle(Color.textTertiary)
                     Text("D:")
-                        .font(.system(size: 9, weight: .medium))
+                        .font(.system(size: DSType.Size.micro, weight: .medium))
                         .foregroundStyle(Color.textTertiary)
                     Text(rowData.depthGrade)
-                        .font(.system(size: 13, weight: .bold))
+                        .font(.system(size: DSType.Size.body, weight: .bold))
                         .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(rowData.depthGrade))
                 }
                 .frame(width: 80)
@@ -773,7 +773,7 @@ struct RosterEvaluationView: View {
 
                         if ownAssessment == nil && priority == nil {
                             Text("—")
-                                .font(.system(size: 9, weight: .medium))
+                                .font(.system(size: DSType.Size.micro, weight: .medium))
                                 .foregroundStyle(Color.textTertiary)
                         } else {
                             VStack(alignment: .trailing, spacing: 2) {
@@ -1137,7 +1137,7 @@ struct RosterEvaluationView: View {
             NavigationLink(destination: PlayerDetailView(player: player)) {
                 HStack(spacing: 8) {
                     Image(systemName: "person.text.rectangle")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.system(size: DSType.Size.body, weight: .semibold))
                     Text("View Player Details")
                         .font(.subheadline.weight(.bold))
                     Spacer()
@@ -1647,7 +1647,7 @@ struct RosterEvaluationView: View {
     private func capStatColumn(label: String, value: String, color: Color) -> some View {
         VStack(spacing: 5) {
             Text(value)
-                .font(.system(size: 18, weight: .bold).monospacedDigit())
+                .font(.system(size: DSType.Size.title3, weight: .bold).monospacedDigit())
                 .foregroundStyle(color)
                 .minimumScaleFactor(0.6)
                 .lineLimit(1)
@@ -1683,7 +1683,7 @@ struct RosterEvaluationView: View {
             HStack(spacing: 10) {
                 Image(systemName: icon)
                     .foregroundStyle(Color.accentGold)
-                    .font(.system(size: 15))
+                    .font(.system(size: DSType.Size.callout))
                 Text(title)
                     .font(.headline)
                     .foregroundStyle(Color.accentGold)
@@ -1915,7 +1915,7 @@ struct RosterEvaluationView: View {
         return HStack(spacing: 8) {
             // Position chip
             Text(player.position.rawValue)
-                .font(.system(size: 11, weight: .heavy))
+                .font(.system(size: DSType.Size.caption, weight: .heavy))
                 .foregroundStyle(Color.textPrimary)
                 .frame(width: 30, height: 22)
                 .background(Color.accentBlue.opacity(0.85), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
@@ -1923,7 +1923,7 @@ struct RosterEvaluationView: View {
             // Starter badge
             if isStarter {
                 Text("S")
-                    .font(.system(size: 10, weight: .heavy))
+                    .font(.system(size: DSType.Size.micro, weight: .heavy))
                     .foregroundStyle(Color.backgroundPrimary)
                     .frame(width: 18, height: 18)
                     .background(Color.success, in: RoundedRectangle(cornerRadius: 3))
@@ -1940,7 +1940,7 @@ struct RosterEvaluationView: View {
                         .lineLimit(1)
                     if player.isInjured {
                         Text("INJ")
-                            .font(.system(size: 9, weight: .heavy))
+                            .font(.system(size: DSType.Size.micro, weight: .heavy))
                             .foregroundStyle(Color.danger)
                             .padding(.horizontal, 4)
                             .padding(.vertical, 1)
@@ -1957,7 +1957,7 @@ struct RosterEvaluationView: View {
             // Age
             VStack(spacing: 1) {
                 Text("\(player.age)")
-                    .font(.system(size: 16, weight: .bold).monospacedDigit())
+                    .font(.system(size: DSType.Size.callout, weight: .bold).monospacedDigit())
                     .foregroundStyle(Color.textPrimary)
                 Text("AGE")
                     .font(.system(size: DSType.Size.micro, weight: .semibold))
@@ -1969,7 +1969,7 @@ struct RosterEvaluationView: View {
             // Contract years remaining (red flag if expiring)
             VStack(spacing: 1) {
                 Text("\(player.contractYearsRemaining)")
-                    .font(.system(size: 16, weight: .bold).monospacedDigit())
+                    .font(.system(size: DSType.Size.callout, weight: .bold).monospacedDigit())
                     .foregroundStyle(isExpiring ? Color.danger : Color.textPrimary)
                 Text(isExpiring ? "EXP" : "YRS")
                     .font(.system(size: DSType.Size.micro, weight: .semibold))
@@ -1980,19 +1980,19 @@ struct RosterEvaluationView: View {
 
             // Trend arrow
             Image(systemName: trend.icon)
-                .font(.system(size: 12, weight: .bold))
+                .font(.system(size: DSType.Size.footnote, weight: .bold))
                 .foregroundStyle(trend.color)
                 .frame(width: 16)
 
             // OVR (color-coded)
             Text("\(player.overall)")
-                .font(.system(size: 16, weight: .bold).monospacedDigit())
+                .font(.system(size: DSType.Size.callout, weight: .bold).monospacedDigit())
                 .foregroundStyle(Color.forRating(player.overall))
                 .frame(width: 32, alignment: .trailing)
 
             // Morale emoji
             Text(moraleEmoji(player.morale))
-                .font(.system(size: 13))
+                .font(.system(size: DSType.Size.body))
                 .frame(width: 20, alignment: .center)
 
             // Salary

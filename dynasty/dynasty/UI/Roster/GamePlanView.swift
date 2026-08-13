@@ -552,7 +552,7 @@ struct GamePlanView: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: DSSpacing.sm) {
                     Image(systemName: "sparkles")
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(.system(size: DSType.Size.callout, weight: .semibold))
                         .foregroundStyle(Color.eliteGreen)
                         .frame(width: 34, height: 34)
                         .background(Circle().fill(Color.eliteGreen.opacity(0.12)))
@@ -601,7 +601,7 @@ struct GamePlanView: View {
                             .foregroundStyle(Color.textTertiary)
                         ForEach(PlanSlider.allCases.filter { recommendation.changedSliders.contains($0) }, id: \.self) { slider in
                             Text(slider.shortLabel)
-                                .font(.system(size: 9, weight: .bold))
+                                .font(.system(size: DSType.Size.micro, weight: .bold))
                                 .foregroundStyle(Color.eliteGreen)
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 2)
@@ -653,7 +653,7 @@ struct GamePlanView: View {
         } label: {
             HStack(spacing: DSSpacing.sm) {
                 Image(systemName: preset.icon)
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.system(size: DSType.Size.callout, weight: .semibold))
                     .foregroundStyle(Color.accentGold)
                     .frame(width: 34, height: 34)
                     .background(Circle().fill(Color.accentGold.opacity(0.12)))
@@ -716,7 +716,7 @@ struct GamePlanView: View {
                     // Drilling in progress: name, progress line, cancel.
                     HStack(spacing: DSSpacing.sm) {
                         Image(systemName: "figure.strengthtraining.functional")
-                            .font(.system(size: 16, weight: .semibold))
+                            .font(.system(size: DSType.Size.callout, weight: .semibold))
                             .foregroundStyle(Color.accentGold)
                             .frame(width: 34, height: 34)
                             .background(Circle().fill(Color.accentGold.opacity(0.12)))
@@ -733,7 +733,7 @@ struct GamePlanView: View {
                             practice.onSelect(nil)
                         } label: {
                             Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 18))
+                                .font(.system(size: DSType.Size.title3))
                                 .foregroundStyle(Color.textTertiary)
                         }
                         .buttonStyle(.plain)
@@ -769,7 +769,7 @@ struct GamePlanView: View {
                     } label: {
                         HStack(spacing: DSSpacing.sm) {
                             Image(systemName: "plus.circle.fill")
-                                .font(.system(size: 16, weight: .semibold))
+                                .font(.system(size: DSType.Size.callout, weight: .semibold))
                                 .foregroundStyle(Color.accentGold)
                             Text("Choose a play to drill")
                                 .font(.subheadline.weight(.semibold))
@@ -1017,7 +1017,7 @@ struct GamePlanView: View {
             Image(systemName: icon)
                 .font(.system(size: DSType.Size.micro, weight: .bold))
             Text(label)
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: DSType.Size.micro, weight: .bold))
         }
         .foregroundStyle(color)
         .padding(.horizontal, 7)

@@ -445,7 +445,7 @@ struct MentoringView: View {
 
     private func positionBadge(_ position: Position) -> some View {
         Text(position.rawValue)
-            .font(.system(size: 9, weight: .bold))
+            .font(.system(size: DSType.Size.micro, weight: .bold))
             .foregroundStyle(Color.textPrimary)
             .frame(width: 28)
             .padding(.vertical, 3)

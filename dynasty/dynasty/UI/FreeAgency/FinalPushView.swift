@@ -204,6 +204,15 @@ struct FinalPushView: View {
                     player: player,
                     negotiationType: .extend,
                     teamCapSpace: max(0, team?.availableCap ?? 0),
+                    // #186 — the gate must plan the deal this screen BOOKS.
+                    // `applyReSignOffer` REPLACES the expiring contract, so the
+                    // deal charges the league year that is open. The default
+                    // `.extendExisting` would have read `contractYearsRemaining
+                    // == 1` (which every man on this list carries until the
+                    // rollover decrements it) as a year still to run and quoted
+                    // the re-sign against next season's projected cap while the
+                    // booking charged it to this one.
+                    dealApplication: .replaceContract,
                     onDealCompleted: { offer in
                         guard let team else { return }
                         // The same execution path the Quick Offer flow uses, so
@@ -235,7 +244,7 @@ struct FinalPushView: View {
             HStack(spacing: 10) {
                 Image(systemName: "arrow.triangle.2.circlepath")
                     .foregroundStyle(Color.accentGold)
-                    .font(.system(size: 15))
+                    .font(.system(size: DSType.Size.callout))
                 Text("Final Push \u{2014} Re-sign or Let Walk")
                     .font(.headline)
                     .foregroundStyle(Color.accentGold)
@@ -305,7 +314,7 @@ struct FinalPushView: View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 8) {
                 Text(rumor.position)
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.system(size: DSType.Size.caption, weight: .bold))
                     .foregroundStyle(Color.textPrimary)
                     .frame(width: 28)
                     .padding(.vertical, 2)
@@ -323,7 +332,7 @@ struct FinalPushView: View {
                         .background(Color.accentGold, in: Capsule())
                 }
                 Text("\(rumor.overall) OVR")
-                    .font(.system(size: 9, weight: .semibold).monospacedDigit())
+                    .font(.system(size: DSType.Size.caption, weight: .semibold).monospacedDigit())
                     .foregroundStyle(Color.forRating(rumor.overall))
                 Spacer()
                 Text("~\(formatMillions(rumor.projectedSalary))/yr")
@@ -333,19 +342,19 @@ struct FinalPushView: View {
             HStack(spacing: 6) {
                 if rumor.suitorAbbrs.isEmpty {
                     Text("Market still forming")
-                        .font(.system(size: 9).italic())
+                        .font(.system(size: DSType.Size.caption).italic())
                         .foregroundStyle(Color.textTertiary)
                 } else {
                     HStack(spacing: 3) {
                         Image(systemName: "eye.fill")
                             .font(.system(size: DSType.Size.micro))
                         Text("\(rumor.suitorAbbrs.joined(separator: ", ")) circling")
-                            .font(.system(size: 9, weight: .medium))
+                            .font(.system(size: DSType.Size.caption, weight: .medium))
                     }
                     .foregroundStyle(Color.danger)
                 }
                 Text("\u{2022} \(TamperingRumorEngine.motivationBlurb(rumor.motivation))")
-                    .font(.system(size: 9).italic())
+                    .font(.system(size: DSType.Size.caption).italic())
                     .foregroundStyle(Color.textSecondary)
                     .lineLimit(1)
                 Spacer()
@@ -371,7 +380,7 @@ struct FinalPushView: View {
                 HStack(spacing: 10) {
                     Image(systemName: "calendar.badge.plus")
                         .foregroundStyle(Color.accentBlue)
-                        .font(.system(size: 15))
+                        .font(.system(size: DSType.Size.callout))
                     Text("Fifth-Year Options")
                         .font(.headline)
                         .foregroundStyle(Color.accentBlue)
@@ -580,7 +589,7 @@ struct FinalPushView: View {
     private var noExpiringCard: some View {
         VStack(spacing: 12) {
             Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 36))
+                .font(.system(size: DSType.Size.display))
                 .foregroundStyle(Color.success)
             Text("No Expiring Contracts")
                 .font(.headline)
@@ -816,7 +825,7 @@ struct FinalPushView: View {
             // Salary slider
             HStack(spacing: 8) {
                 Text(formatMillions(500))
-                    .font(.system(size: 9).monospacedDigit())
+                    .font(.system(size: DSType.Size.caption).monospacedDigit())
                     .foregroundStyle(Color.textTertiary)
                 Slider(
                     value: Binding(
@@ -832,7 +841,7 @@ struct FinalPushView: View {
                 )
                 .tint(Color.accentGold)
                 Text(formatMillions(75000))
-                    .font(.system(size: 9).monospacedDigit())
+                    .font(.system(size: DSType.Size.caption).monospacedDigit())
                     .foregroundStyle(Color.textTertiary)
             }
 
@@ -1288,9 +1297,9 @@ struct FinalPushView: View {
             Image(systemName: persona.symbolName)
                 .font(.system(size: DSType.Size.micro))
             Text("Agent: \(AgentPersona.agentName(for: player.id))")
-                .font(.system(size: 9, weight: .semibold))
+                .font(.system(size: DSType.Size.caption, weight: .semibold))
             Text(persona.styleLabel)
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: DSType.Size.caption, weight: .bold))
         }
         .foregroundStyle(color.opacity(0.9))
         .padding(.horizontal, 5)
@@ -1444,7 +1453,7 @@ struct FinalPushView: View {
             Image(systemName: icon)
                 .font(.system(size: DSType.Size.micro))
             Text(label)
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: DSType.Size.caption, weight: .bold))
         }
         .foregroundStyle(Color.accentGold.opacity(0.8))
         .padding(.horizontal, 5)

@@ -375,7 +375,7 @@ struct PressConferenceView: View {
                 .shadow(color: Color.black.opacity(0.5), radius: 10, y: 4)
                 .overlay(alignment: .bottom) {
                     Image(systemName: "mic.fill")
-                        .font(.system(size: 24))
+                        .font(.system(size: DSType.Size.title2))
                         .foregroundStyle(Color.accentGold)
                         .shadow(color: Color.accentGold.opacity(0.4), radius: 10)
                         .shadow(color: Color.black.opacity(0.55), radius: 4, y: 2)
@@ -383,7 +383,7 @@ struct PressConferenceView: View {
                 }
 
             Text(career.playerName)
-                .font(DSType.text(16, .bold))
+                .font(DSType.text(DSType.Size.callout, .bold))
                 .foregroundStyle(Color.textPrimary)
 
             Text(session.ident.uppercased())
@@ -403,7 +403,7 @@ struct PressConferenceView: View {
                 .padding(.top, DSSpacing.xs)
 
             Text("The media is waiting. Choose your words carefully \u{2014} they will be remembered.")
-                .font(DSType.text(15, .regular, prose: true))
+                .font(DSType.text(DSType.Size.callout, .regular, prose: true))
                 .foregroundStyle(Color.textPrimary.opacity(0.72))
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, DSSpacing.xl)
@@ -568,7 +568,7 @@ struct PressConferenceView: View {
     private var standingStrip: some View {
         VStack(spacing: DSSpacing.xs) {
             Text("BEFORE THIS SESSION")
-                .font(DSType.display(11, .heavy))
+                .font(DSType.display(DSType.Size.caption, .heavy))
                 .tracking(0.7)
                 .foregroundStyle(Color.textSecondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -612,13 +612,13 @@ struct PressConferenceView: View {
     private func standingItem(icon: String, label: String, value: String, color: Color) -> some View {
         VStack(spacing: DSSpacing.xxs) {
             Image(systemName: icon)
-                .font(.system(size: 12))
+                .font(.system(size: DSType.Size.footnote))
                 .foregroundStyle(color)
             Text(value)
                 .font(DSType.display(DSType.Size.title3, .heavy))
                 .foregroundStyle(Color.textPrimary)
             Text(label.uppercased())
-                .font(DSType.display(11, .semibold))
+                .font(DSType.display(DSType.Size.caption, .semibold))
                 .tracking(0.6)
                 .foregroundStyle(Color.textTertiaryReadable)
         }
@@ -636,7 +636,7 @@ struct PressConferenceView: View {
 
         return VStack(spacing: DSSpacing.xs) {
             Text("RUNNING IMPACT")
-                .font(DSType.display(11, .heavy))
+                .font(DSType.display(DSType.Size.caption, .heavy))
                 .tracking(0.7)
                 .foregroundStyle(Color.textSecondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -653,7 +653,7 @@ struct PressConferenceView: View {
             // paints the severity's colour.
             HStack(spacing: DSSpacing.xxs) {
                 Image(systemName: feedback.icon)
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: DSType.Size.caption, weight: .bold))
                 Text(feedback.text)
                     .font(DSType.text(DSType.Size.footnote, .semibold))
                     .fixedSize(horizontal: false, vertical: true)
@@ -680,12 +680,12 @@ struct PressConferenceView: View {
         let color: Color = value > 0 ? Color.success : value < 0 ? Color.dangerText : Color.textTertiaryReadable
         return HStack(spacing: DSSpacing.xxs) {
             Image(systemName: icon)
-                .font(.system(size: 11))
+                .font(.system(size: DSType.Size.caption))
             Text(label.uppercased())
-                .font(DSType.display(11, .semibold))
+                .font(DSType.display(DSType.Size.caption, .semibold))
                 .tracking(0.4)
             Text(value > 0 ? "+\(value)" : "\(value)")
-                .font(DSType.display(11, .heavy))
+                .font(DSType.display(DSType.Size.caption, .heavy))
         }
         .foregroundStyle(color)
         .padding(.horizontal, DSSpacing.xs)
@@ -717,10 +717,10 @@ struct PressConferenceView: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(question.reporterName)
-                        .font(DSType.text(14, .bold))
+                        .font(DSType.text(DSType.Size.body, .bold))
                         .foregroundStyle(Color.textPrimary)
                     Text(question.outlet.uppercased())
-                        .font(DSType.display(11, .heavy))
+                        .font(DSType.display(DSType.Size.caption, .heavy))
                         .tracking(0.6)
                         .foregroundStyle(Color.accentGold)
                 }
@@ -732,7 +732,7 @@ struct PressConferenceView: View {
                         .fill(stanceColor)
                         .frame(width: 6, height: 6)
                     Text(stance.label.uppercased())
-                        .font(DSType.display(11, .heavy))
+                        .font(DSType.display(DSType.Size.caption, .heavy))
                         .tracking(0.6)
                 }
                 .foregroundStyle(stanceColor)
@@ -758,7 +758,7 @@ struct PressConferenceView: View {
             // The prompt stands alone. It is the subject of the screen, so it
             // is the one bordered, elevated insert on it (§2.11).
             Text("\u{201C}\(question.question)\u{201D}")
-                .font(DSType.text(18, .semibold, prose: true))
+                .font(DSType.text(DSType.Size.title3, .semibold, prose: true))
                 .italic()
                 .foregroundStyle(Color.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -803,9 +803,9 @@ struct PressConferenceView: View {
                 HStack(spacing: DSSpacing.xs) {
                     HStack(spacing: DSSpacing.xxs) {
                         Image(systemName: response.tone.icon)
-                            .font(.system(size: 11, weight: .bold))
+                            .font(.system(size: DSType.Size.caption, weight: .bold))
                         Text(response.tone.label.uppercased())
-                            .font(DSType.display(11, .heavy))
+                            .font(DSType.display(DSType.Size.caption, .heavy))
                             .tracking(0.6)
                     }
                     .foregroundStyle(tint)
@@ -827,7 +827,7 @@ struct PressConferenceView: View {
                 }
 
                 Text("\u{201C}\(response.text)\u{201D}")
-                    .font(DSType.text(15, .medium, prose: true))
+                    .font(DSType.text(DSType.Size.callout, .medium, prose: true))
                     .foregroundStyle(isDisabled ? Color.textTertiaryReadable : Color.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
                     .multilineTextAlignment(.leading)
@@ -887,13 +887,13 @@ struct PressConferenceView: View {
                 let color = hintColor(hint.direction)
                 HStack(spacing: DSSpacing.xxs) {
                     Image(systemName: hint.audience.icon)
-                        .font(.system(size: 11))
+                        .font(.system(size: DSType.Size.caption))
                         .foregroundStyle(Color.textSecondary)
                     Text(hint.audience.label)
                         .font(DSType.text(DSType.Size.footnote, .medium))
                         .foregroundStyle(Color.textSecondary)
                     Image(systemName: hint.direction.glyph)
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.system(size: DSType.Size.micro, weight: .bold))
                         .foregroundStyle(color)
                     Text(hint.phrase)
                         .font(DSType.text(DSType.Size.footnote, .semibold))
@@ -930,9 +930,9 @@ struct PressConferenceView: View {
     private func vanillaChip(_ label: String) -> some View {
         HStack(spacing: DSSpacing.xxs) {
             Image(systemName: "text.badge.xmark")
-                .font(.system(size: 10, weight: .bold))
+                .font(.system(size: DSType.Size.micro, weight: .bold))
             Text(label.uppercased())
-                .font(DSType.display(11, .heavy))
+                .font(DSType.display(DSType.Size.caption, .heavy))
                 .tracking(0.5)
         }
         .foregroundStyle(Color.alertOrange)
@@ -958,11 +958,11 @@ struct PressConferenceView: View {
             Button(action: { toggleHeadlinePreview(index: index) }) {
                 HStack(spacing: DSSpacing.xxs) {
                     Image(systemName: "newspaper")
-                        .font(.system(size: 11))
+                        .font(.system(size: DSType.Size.caption))
                     Text(isExpanded ? "Hide headline preview" : "Preview headline")
-                        .font(DSType.display(11, .semibold))
+                        .font(DSType.display(DSType.Size.caption, .semibold))
                     Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.system(size: DSType.Size.micro, weight: .bold))
                 }
                 .foregroundStyle(Color.textTertiaryReadable)
                 .padding(.horizontal, DSSpacing.xs)
@@ -978,7 +978,7 @@ struct PressConferenceView: View {
             if isExpanded {
                 HStack(alignment: .top, spacing: DSSpacing.xs) {
                     Image(systemName: "quote.opening")
-                        .font(.system(size: 11))
+                        .font(.system(size: DSType.Size.caption))
                         .foregroundStyle(Color.accentGold.opacity(0.7))
                     Text(response.mediaReaction)
                         .font(DSType.text(DSType.Size.footnote, .medium, prose: true))
@@ -1017,11 +1017,11 @@ struct PressConferenceView: View {
         VStack(alignment: .leading, spacing: DSSpacing.sm) {
             HStack(alignment: .top, spacing: DSSpacing.sm) {
                 Image(systemName: "newspaper.fill")
-                    .font(.system(size: 16))
+                    .font(.system(size: DSType.Size.callout))
                     .foregroundStyle(Color.accentGold)
 
                 Text(reactionText)
-                    .font(DSType.text(14, .medium, prose: true))
+                    .font(DSType.text(DSType.Size.body, .medium, prose: true))
                     .italic()
                     .foregroundStyle(Color.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1031,7 +1031,7 @@ struct PressConferenceView: View {
                 Divider().overlay(Color.accentGold.opacity(0.2))
 
                 Text("WHAT IT ACTUALLY COST")
-                    .font(DSType.display(11, .heavy))
+                    .font(DSType.display(DSType.Size.caption, .heavy))
                     .tracking(0.7)
                     .foregroundStyle(Color.textSecondary)
 
@@ -1080,10 +1080,10 @@ struct PressConferenceView: View {
 
         return HStack(spacing: DSSpacing.xxs) {
             Image(systemName: icon)
-                .font(.system(size: 11))
+                .font(.system(size: DSType.Size.caption))
                 .foregroundStyle(Color.textSecondary)
             Text(label.uppercased())
-                .font(DSType.display(11, .semibold))
+                .font(DSType.display(DSType.Size.caption, .semibold))
                 .tracking(0.4)
                 .foregroundStyle(Color.textSecondary)
             Text(value > 0 ? "+\(value)" : "\(value)")
@@ -1200,10 +1200,10 @@ struct PressConferenceView: View {
         VStack(alignment: .leading, spacing: DSSpacing.xs) {
             HStack(spacing: DSSpacing.xs) {
                 Image(systemName: "checkmark.seal.fill")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: DSType.Size.body, weight: .semibold))
                     .foregroundStyle(Color.accentGold)
                 Text(session.ident.uppercased())
-                    .font(DSType.display(11, .heavy))
+                    .font(DSType.display(DSType.Size.caption, .heavy))
                     .tracking(0.7)
                     .foregroundStyle(Color.accentGold)
                     .lineLimit(1)
@@ -1216,7 +1216,7 @@ struct PressConferenceView: View {
 
             // #121: say what media perception actually affects.
             Text("That is how the room writes you up. It shapes free-agent interest, fan engagement and the tone of your coverage.")
-                .font(DSType.text(14, .regular, prose: true))
+                .font(DSType.text(DSType.Size.body, .regular, prose: true))
                 .foregroundStyle(Color.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -1239,7 +1239,7 @@ struct PressConferenceView: View {
 
         return VStack(alignment: .leading, spacing: DSSpacing.xs) {
             Text("WHAT CHANGED")
-                .font(DSType.display(11, .heavy))
+                .font(DSType.display(DSType.Size.caption, .heavy))
                 .tracking(0.7)
                 .foregroundStyle(Color.textSecondary)
 
@@ -1247,7 +1247,7 @@ struct PressConferenceView: View {
                 GridRow {
                     ForEach(cells, id: \.label) { cell in
                         Text(cell.label.uppercased())
-                            .font(DSType.display(11, .heavy))
+                            .font(DSType.display(DSType.Size.caption, .heavy))
                             .tracking(0.6)
                             .foregroundStyle(Color.textTertiaryReadable)
                             .lineLimit(1)
@@ -1270,7 +1270,7 @@ struct PressConferenceView: View {
                         // The row always reserves its context line so cells with
                         // and without a baseline sit at one height (§2.2).
                         Text(cell.context ?? " ")
-                            .font(DSType.display(11, .semibold))
+                            .font(DSType.display(DSType.Size.caption, .semibold))
                             .foregroundStyle(Color.textTertiaryReadable)
                             .lineLimit(1)
                     }
@@ -1294,7 +1294,7 @@ struct PressConferenceView: View {
 
         return VStack(alignment: .leading, spacing: DSSpacing.xs) {
             Text("YOUR APPROACH")
-                .font(DSType.display(11, .heavy))
+                .font(DSType.display(DSType.Size.caption, .heavy))
                 .tracking(0.7)
                 .foregroundStyle(Color.textSecondary)
 
@@ -1302,9 +1302,9 @@ struct PressConferenceView: View {
                 ForEach(counts, id: \.tone) { item in
                     HStack(spacing: DSSpacing.xxs) {
                         Image(systemName: item.tone.icon)
-                            .font(.system(size: 11))
+                            .font(.system(size: DSType.Size.caption))
                         Text("\(item.count) \(item.tone.label.uppercased())")
-                            .font(DSType.display(11, .heavy))
+                            .font(DSType.display(DSType.Size.caption, .heavy))
                             .tracking(0.5)
                     }
                     .foregroundStyle(toneColor(item.tone))
@@ -1320,14 +1320,14 @@ struct PressConferenceView: View {
     private func summaryQuotes(result: PressConferenceResult) -> some View {
         VStack(alignment: .leading, spacing: DSSpacing.sm) {
             Text("YOUR KEY QUOTES")
-                .font(DSType.display(11, .heavy))
+                .font(DSType.display(DSType.Size.caption, .heavy))
                 .tracking(0.7)
                 .foregroundStyle(Color.textSecondary)
 
             ForEach(result.selectedResponses) { response in
                 VStack(alignment: .leading, spacing: DSSpacing.xxs) {
                     Text("\u{201C}\(response.responseText)\u{201D}")
-                        .font(DSType.text(14, .regular, prose: true))
+                        .font(DSType.text(DSType.Size.body, .regular, prose: true))
                         .italic()
                         .foregroundStyle(Color.textPrimary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1355,13 +1355,13 @@ struct PressConferenceView: View {
     private func summaryPromises(result: PressConferenceResult) -> some View {
         VStack(alignment: .leading, spacing: DSSpacing.sm) {
             Text("PROMISES TRACKED")
-                .font(DSType.display(11, .heavy))
+                .font(DSType.display(DSType.Size.caption, .heavy))
                 .tracking(0.7)
                 .foregroundStyle(Color.warning)
 
             HStack(alignment: .top, spacing: DSSpacing.xs) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 12))
+                    .font(.system(size: DSType.Size.footnote))
                     .foregroundStyle(Color.warning)
                 Text("These are settled in the season review. Deliver and the quote holds up; fall short and it runs next to the final standings.")
                     .font(DSType.text(DSType.Size.footnote, .regular, prose: true))
@@ -1373,7 +1373,7 @@ struct PressConferenceView: View {
                 VStack(alignment: .leading, spacing: DSSpacing.xxs) {
                     HStack(alignment: .top, spacing: DSSpacing.xs) {
                         Image(systemName: "bookmark.fill")
-                            .font(.system(size: 11))
+                            .font(.system(size: DSType.Size.caption))
                             .foregroundStyle(Color.accentGold)
                         Text("\u{201C}\(promise.statement)\u{201D}")
                             .font(DSType.text(DSType.Size.footnote, .regular, prose: true))
@@ -1382,7 +1382,7 @@ struct PressConferenceView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Text("\(promise.kind.shortLabel.uppercased()) \u{00B7} \(promise.kind.thresholdCopy)")
-                        .font(DSType.display(11, .semibold))
+                        .font(DSType.display(DSType.Size.caption, .semibold))
                         .foregroundStyle(Color.warning)
                         .padding(.leading, DSSpacing.lg)
                         .fixedSize(horizontal: false, vertical: true)

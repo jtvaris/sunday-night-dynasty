@@ -15,6 +15,15 @@ struct TopNavigationBar: View {
     /// Opens the inbox. When nil the envelope button is hidden entirely.
     var onInboxTapped: (() -> Void)?
 
+    /// Opens Settings (#200). When nil the gear is hidden entirely — the bar
+    /// stays usable in any host that has no settings destination to offer.
+    ///
+    /// Settings existed only behind the title screen, so changing the music
+    /// level or the play clock meant abandoning the career, changing it, and
+    /// loading back in. It belongs in the persistent chrome for the same
+    /// reason the inbox does: it is a place you go from wherever you are.
+    var onSettingsTapped: (() -> Void)?
+
     // MARK: - Bookmark Definitions
 
     struct Bookmark: Identifiable {
@@ -79,13 +88,17 @@ struct TopNavigationBar: View {
 
             Spacer(minLength: 8)
 
-            // MARK: Right — Inbox + Calendar + Quit
+            // MARK: Right — Inbox + Calendar + Settings + Quit
             HStack(spacing: 8) {
                 if onInboxTapped != nil {
                     inboxButton
                 }
 
                 calendarButton
+
+                if onSettingsTapped != nil {
+                    settingsButton
+                }
 
                 Button {
                     onQuitTapped?()
@@ -199,13 +212,33 @@ struct TopNavigationBar: View {
         .accessibilityLabel("Inbox, \(unreadInboxCount) unread")
     }
 
+    // MARK: - Settings Button
+
+    /// Gear, sitting between the calendar and the quit door — the last stop in
+    /// the "app-level" half of the cluster, before the one control that leaves
+    /// the career. Deliberately `textSecondary` rather than gold: the calendar
+    /// is the bar's call to action and only one thing in a cluster gets to be.
+    private var settingsButton: some View {
+        Button {
+            onSettingsTapped?()
+        } label: {
+            Image(systemName: "gearshape")
+                .font(.system(size: DSType.Size.title3))
+                .foregroundStyle(Color.textSecondary)
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Settings")
+    }
+
     // MARK: - Calendar Button
 
     private var calendarButton: some View {
         Button(action: onCalendarTapped) {
             ZStack(alignment: .topTrailing) {
                 Image(systemName: "calendar.badge.clock")
-                    .font(.system(size: 20))
+                    .font(.system(size: DSType.Size.title2))
                     .foregroundStyle(Color.accentGold)
                     .frame(minWidth: 44, minHeight: 44)
                     .contentShape(Rectangle())
@@ -234,7 +267,10 @@ struct TopNavigationBar: View {
             teamAbbreviation: "KC",
             teamName: "Kansas City Stockyards",
             pendingTaskCount: 3,
-            onCalendarTapped: {}
+            onCalendarTapped: {},
+            unreadInboxCount: 2,
+            onInboxTapped: {},
+            onSettingsTapped: {}
         )
         Spacer()
     }

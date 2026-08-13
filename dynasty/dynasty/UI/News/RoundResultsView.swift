@@ -156,7 +156,7 @@ struct RoundResultsView: View {
 
             if let tag = game.tag {
                 Text(tag.label)
-                    .font(.system(size: 9, weight: .heavy))
+                    .font(.system(size: DSType.Size.caption, weight: .heavy))
                     .tracking(0.5)
                     .foregroundStyle(tag.color)
                     .padding(.horizontal, 6)

@@ -715,10 +715,10 @@ struct CareerDashboardView: View {
             // Header
             HStack {
                 Image(systemName: "tray.full.fill")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: DSType.Size.body, weight: .semibold))
                     .foregroundStyle(Color.accentGold)
                 Text("Messages")
-                    .font(.system(size: 14, weight: .bold))
+                    .font(.system(size: DSType.Size.body, weight: .bold))
                     .foregroundStyle(Color.accentGold)
                     .textCase(.uppercase)
                     .tracking(0.5)
@@ -726,7 +726,7 @@ struct CareerDashboardView: View {
                 let unread = inboxMessages.filter { !$0.isRead }.count
                 if unread > 0 {
                     Text("\(unread)")
-                        .font(.system(size: 10, weight: .bold).monospacedDigit())
+                        .font(.system(size: DSType.Size.micro, weight: .bold).monospacedDigit())
                         .foregroundStyle(.white)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
@@ -757,7 +757,7 @@ struct CareerDashboardView: View {
                         inboxFilter = filter
                     } label: {
                         Text(filter.rawValue)
-                            .font(.system(size: 11, weight: inboxFilter == filter ? .bold : .medium))
+                            .font(.system(size: DSType.Size.caption, weight: inboxFilter == filter ? .bold : .medium))
                             .foregroundStyle(inboxFilter == filter ? Color.accentGold : Color.textTertiary)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 6)
@@ -801,7 +801,7 @@ struct CareerDashboardView: View {
                                 onTaskSelected(.inbox)
                             } label: {
                                 Text("\(filtered.count - 5) more message\(filtered.count - 5 == 1 ? "" : "s")")
-                                    .font(.system(size: 11, weight: .semibold))
+                                    .font(.system(size: DSType.Size.caption, weight: .semibold))
                                     .foregroundStyle(Color.accentGold)
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 10)
@@ -838,7 +838,7 @@ struct CareerDashboardView: View {
 
                 // Sender avatar
                 Image(systemName: message.sender.icon)
-                    .font(.system(size: 14))
+                    .font(.system(size: DSType.Size.body))
                     .foregroundStyle(Color.accentGold)
                     .frame(width: 28, height: 28)
                     .background(Color.backgroundTertiary)
@@ -847,28 +847,28 @@ struct CareerDashboardView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack {
                         Text(message.sender.displayName)
-                            .font(.system(size: 12, weight: message.isRead ? .medium : .bold))
+                            .font(.system(size: DSType.Size.footnote, weight: message.isRead ? .medium : .bold))
                             .foregroundStyle(Color.textPrimary)
                             .lineLimit(1)
                         Spacer()
                         Text(message.date)
-                            .font(.system(size: 9, weight: .medium))
+                            .font(.system(size: DSType.Size.caption, weight: .medium))
                             .foregroundStyle(Color.textTertiary)
                     }
 
                     Text(message.subject)
-                        .font(.system(size: 11, weight: message.isRead ? .regular : .semibold))
+                        .font(.system(size: DSType.Size.caption, weight: message.isRead ? .regular : .semibold))
                         .foregroundStyle(message.isRead ? Color.textSecondary : Color.textPrimary)
                         .lineLimit(1)
 
                     if message.actionRequired {
                         HStack(spacing: 3) {
                             Image(systemName: "exclamationmark.triangle.fill")
-                                .font(.system(size: 8))
+                                .font(.system(size: DSType.Size.micro))
                                 .foregroundStyle(Color.danger)
                             Text("Action Required")
-                                .font(.system(size: 9, weight: .bold))
-                                .foregroundStyle(Color.danger)
+                                .font(.system(size: DSType.Size.caption, weight: .bold))
+                                .foregroundStyle(Color.dangerText)
                         }
                     }
                 }
@@ -1056,10 +1056,10 @@ struct CareerDashboardView: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: action.icon)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: DSType.Size.footnote, weight: .semibold))
                     .foregroundStyle(Color.draftStealGold)
                 Text(action.label)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: DSType.Size.caption, weight: .semibold))
                     .foregroundStyle(Color.textPrimary)
             }
             .padding(.horizontal, 10)
@@ -1091,10 +1091,10 @@ struct CareerDashboardView: View {
             DashboardTile(icon: "trophy.fill", title: "Honors") {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("All-Star & All-Pro")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: DSType.Size.caption, weight: .medium))
                         .foregroundStyle(Color.accentGold)
                     Text("Selections arrive in your inbox")
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(Color.textSecondary)
                         .lineLimit(1)
                 }
@@ -1115,11 +1115,11 @@ struct CareerDashboardView: View {
             DashboardTile(icon: "star.fill", title: "Team Accolades") {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Legacy: \(signedLegacy(career.legacy.totalPoints))")
-                        .font(.system(size: 12, weight: .bold).monospacedDigit())
+                        .font(.system(size: DSType.Size.footnote, weight: .bold).monospacedDigit())
                         .foregroundStyle(Color.accentGold)
                     Text(career.ownerSeasonReview.map { "Owner verdict: \($0.verdict.label)" }
                          ?? seasonRecordSummary)
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(Color.textSecondary)
                         .lineLimit(1)
                 }
@@ -1137,10 +1137,10 @@ struct CareerDashboardView: View {
             DashboardTile(icon: "doc.text.fill", title: "Season Recap") {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(seasonRecordSummary)
-                        .font(.system(size: 12, weight: .bold))
+                        .font(.system(size: DSType.Size.footnote, weight: .bold))
                         .foregroundStyle(Color.textPrimary)
                     Text("Final standings & summary")
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(Color.textSecondary)
                         .lineLimit(1)
                 }
@@ -1177,10 +1177,10 @@ struct CareerDashboardView: View {
                     // on a live tile — never read `team.salaryCap`, and deceptive
                     // precisely because $285M is close to a number the docs used.
                     Text(threeYearCapProjection)
-                        .font(.system(size: 12, weight: .bold).monospacedDigit())
+                        .font(.system(size: DSType.Size.footnote, weight: .bold).monospacedDigit())
                         .foregroundStyle(Color.accentGold)
                     Text("Projection across 3 seasons")
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(Color.textSecondary)
                         .lineLimit(1)
                 }
@@ -1198,17 +1198,17 @@ struct CareerDashboardView: View {
                     // R31: real numbers from the last owner review / goal log
                     if let review = career.ownerSeasonReview {
                         Text("\(review.goalsAchieved) of \(max(review.goalsTotal, 1)) met")
-                            .font(.system(size: 12, weight: .bold).monospacedDigit())
+                            .font(.system(size: DSType.Size.footnote, weight: .bold).monospacedDigit())
                             .foregroundStyle(review.goalsAchieved * 2 >= review.goalsTotal ? Color.success : Color.warning)
                         Text("Owner verdict: \(review.verdict.label)")
-                            .font(.system(size: 10))
+                            .font(.system(size: DSType.Size.footnote))
                             .foregroundStyle(Color.textSecondary)
                     } else {
                         Text("Owner mandates")
-                            .font(.system(size: 12, weight: .bold))
+                            .font(.system(size: DSType.Size.footnote, weight: .bold))
                             .foregroundStyle(Color.textPrimary)
                         Text("Meet the owner")
-                            .font(.system(size: 10))
+                            .font(.system(size: DSType.Size.footnote))
                             .foregroundStyle(Color.textSecondary)
                     }
                 }
@@ -1225,10 +1225,10 @@ struct CareerDashboardView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     let unread = inboxMessages.filter { !$0.isRead }.count
                     Text("\(unread) unread")
-                        .font(.system(size: 12, weight: .bold).monospacedDigit())
+                        .font(.system(size: DSType.Size.footnote, weight: .bold).monospacedDigit())
                         .foregroundStyle(unread > 0 ? Color.accentGold : Color.textSecondary)
                     Text("Offseason news")
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(Color.textSecondary)
                 }
             }
@@ -1251,10 +1251,10 @@ struct CareerDashboardView: View {
             DashboardTile(icon: "list.bullet.rectangle.fill", title: "Mock Draft") {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("\(readMocks) of 2 read")
-                        .font(.system(size: 11, weight: .medium).monospacedDigit())
+                        .font(.system(size: DSType.Size.caption, weight: .medium).monospacedDigit())
                         .foregroundStyle(Color.accentGold)
                     Text("Compare to Big Board")
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(Color.textSecondary)
                         .lineLimit(1)
                 }
@@ -1289,10 +1289,10 @@ struct CareerDashboardView: View {
             DashboardTile(icon: "exclamationmark.triangle.fill", title: "Team Needs") {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(needs.isEmpty ? "Loading\u{2026}" : needs.joined(separator: " "))
-                        .font(.system(size: 13, weight: .bold))
+                        .font(.system(size: DSType.Size.body, weight: .bold))
                         .foregroundStyle(needs.isEmpty ? Color.textSecondary : Color.warning)
                     Text("Thinnest groups on your roster")
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(Color.textSecondary)
                         .lineLimit(1)
                 }
@@ -1308,10 +1308,10 @@ struct CareerDashboardView: View {
             DashboardTile(icon: "figure.run", title: "Pro Days") {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Schedule visits")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: DSType.Size.caption, weight: .medium))
                         .foregroundStyle(Color.accentGold)
                     Text("Workouts & interviews")
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(Color.textSecondary)
                         .lineLimit(1)
                 }
@@ -1357,15 +1357,15 @@ struct CareerDashboardView: View {
             VStack(alignment: .leading, spacing: 4) {
                 if openPositionBattles.isEmpty {
                     Text("None active")
-                        .font(.system(size: 12, weight: .bold))
+                        .font(.system(size: DSType.Size.footnote, weight: .bold))
                         .foregroundStyle(Color.textSecondary)
                     Text("Camp competitions open in Training Camp")
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(Color.textSecondary)
                         .lineLimit(2)
                 } else {
                     Text("\(openPositionBattles.count) active")
-                        .font(.system(size: 12, weight: .bold).monospacedDigit())
+                        .font(.system(size: DSType.Size.footnote, weight: .bold).monospacedDigit())
                         .foregroundStyle(Color.accentGold)
                     ForEach(openPositionBattles.prefix(3), id: \.id) { battle in
                         Button {
@@ -1377,7 +1377,7 @@ struct CareerDashboardView: View {
                     }
                     if openPositionBattles.count > 3 {
                         Text("+ \(openPositionBattles.count - 3) more")
-                            .font(.system(size: 9, weight: .medium))
+                            .font(.system(size: DSType.Size.footnote, weight: .medium))
                             .foregroundStyle(Color.textTertiary)
                     }
                 }
@@ -1391,22 +1391,22 @@ struct CareerDashboardView: View {
         let leader = battle.currentLeaderID.flatMap { id in roster.first { $0.id == id } }
         return HStack(spacing: 4) {
             Text(battle.positionRaw)
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: DSType.Size.caption, weight: .bold))
                 .foregroundStyle(Color.accentGold)
                 .frame(width: 24, alignment: .leading)
             Text(names.isEmpty ? "Open spot" : names)
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: DSType.Size.micro, weight: .medium))
                 .foregroundStyle(Color.textPrimary)
                 .lineLimit(1)
             Spacer(minLength: 2)
             if let leader {
                 Text(leader.lastName)
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: DSType.Size.caption, weight: .semibold))
                     .foregroundStyle(Color.success)
                     .lineLimit(1)
             }
             Image(systemName: "chevron.right")
-                .font(.system(size: 8, weight: .semibold))
+                .font(.system(size: DSType.Size.micro, weight: .semibold))
                 .foregroundStyle(Color.textTertiary)
         }
         .contentShape(Rectangle())
@@ -1445,21 +1445,21 @@ struct CareerDashboardView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     if top.isEmpty {
                         Text("Not graded yet")
-                            .font(.system(size: 11, weight: .medium))
+                            .font(.system(size: DSType.Size.caption, weight: .medium))
                             .foregroundStyle(Color.textSecondary)
                         Text("Grades land during Training Camp")
-                            .font(.system(size: 10))
+                            .font(.system(size: DSType.Size.footnote))
                             .foregroundStyle(Color.textSecondary)
                             .lineLimit(1)
                     } else {
                         ForEach(top, id: \.name) { entry in
                             HStack(spacing: 4) {
                                 Text(entry.grade.displayLabel)
-                                    .font(.system(size: 10, weight: .heavy))
+                                    .font(.system(size: DSType.Size.micro, weight: .heavy))
                                     .foregroundStyle(Color.accentGold)
                                     .frame(width: 20, alignment: .leading)
                                 Text(entry.name)
-                                    .font(.system(size: 11, weight: .medium))
+                                    .font(.system(size: DSType.Size.caption, weight: .medium))
                                     .foregroundStyle(Color.textPrimary)
                                     .lineLimit(1)
                             }
@@ -1472,19 +1472,27 @@ struct CareerDashboardView: View {
     }
 
     private var preseasonGamesTile: some View {
-        Button {
-            onTaskSelected(.schedule)
+        // #205b: the tile advertised "3 exhibition games" and opened the
+        // SCHEDULE — a screen no preseason fixture has ever existed on, because
+        // the slate is a career blob and not a `Game` row. It points at the
+        // slate itself now, and its second line reports the real count off
+        // `PreseasonState` instead of promising three games in the abstract.
+        let flow = career.preseasonState.flatMap { $0.matches(career: career) ? $0 : nil }
+        let played = flow?.results.count ?? 0
+        let total = flow?.slate.count ?? PreseasonFlowBand.gameCount
+        return Button {
+            onTaskSelected(.preseason)
         } label: {
             DashboardTile(icon: "sportscourt", title: "Preseason") {
                 VStack(alignment: .leading, spacing: 4) {
                     // Preseason is a camp/evaluation phase in this build — no
                     // scored W-L record is tracked, so show the tile's purpose
                     // instead of a fabricated "0-0 record" stat.
-                    Text("Evaluate roster")
-                        .font(.system(size: 11, weight: .medium))
+                    Text(flow?.isComplete == true ? "Slate complete" : "Evaluate roster")
+                        .font(.system(size: DSType.Size.caption, weight: .medium))
                         .foregroundStyle(Color.accentGold)
-                    Text("3 exhibition games")
-                        .font(.system(size: 10))
+                    Text("\(played) of \(total) exhibitions played")
+                        .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(Color.textSecondary)
                 }
             }
@@ -1499,10 +1507,10 @@ struct CareerDashboardView: View {
             DashboardTile(icon: "list.number", title: "Depth Chart") {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("View")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: DSType.Size.caption, weight: .medium))
                         .foregroundStyle(Color.accentGold)
                     Text("Starters & backups")
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(Color.textSecondary)
                 }
             }
@@ -1520,10 +1528,10 @@ struct CareerDashboardView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     let injuredCount = players.filter { $0.injuryWeeksRemaining > 0 }.count
                     Text("\(injuredCount) out")
-                        .font(.system(size: 12, weight: .bold).monospacedDigit())
-                        .foregroundStyle(injuredCount > 0 ? Color.danger : Color.success)
+                        .font(.system(size: DSType.Size.footnote, weight: .bold).monospacedDigit())
+                        .foregroundStyle(injuredCount > 0 ? Color.dangerText : Color.success)
                     Text("Status updates weekly")
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(Color.textSecondary)
                 }
             }
@@ -1545,10 +1553,10 @@ struct CareerDashboardView: View {
                         allTeamsByID[game.homeTeamID == team?.id ? game.awayTeamID : game.homeTeamID]
                     }
                     Text(opponent.map { "Vs \($0.abbreviation)" } ?? "Vs \u{2014}")
-                        .font(.system(size: 12, weight: .bold))
+                        .font(.system(size: DSType.Size.footnote, weight: .bold))
                         .foregroundStyle(Color.accentGold)
                     Text("Strengths & weaknesses")
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(Color.textSecondary)
                         .lineLimit(1)
                 }
@@ -1568,12 +1576,12 @@ struct CareerDashboardView: View {
             DashboardTile(icon: "clock.fill", title: "TRADE DEADLINE", highlighted: true) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Passes after Week \(WeekAdvancer.tradeDeadlineWeek)")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(Color.danger)
+                        .font(.system(size: DSType.Size.footnote, weight: .bold))
+                        .foregroundStyle(Color.dangerText)
                     Text(pendingOffers > 0
                          ? "\(pendingOffers) offer\(pendingOffers == 1 ? "" : "s") expire\(pendingOffers == 1 ? "s" : "") — answer them"
                          : "Last chance for deals this season")
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(pendingOffers > 0 ? Color.accentGold : Color.textSecondary)
                         .lineLimit(2)
                 }
@@ -1589,10 +1597,10 @@ struct CareerDashboardView: View {
             DashboardTile(icon: "rosette", title: "Playoff Bracket") {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("WC / DIV / CONF / SB")
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.system(size: DSType.Size.caption, weight: .bold))
                         .foregroundStyle(Color.accentGold)
                     Text("Postseason path")
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(Color.textSecondary)
                         .lineLimit(1)
                 }
@@ -1608,10 +1616,10 @@ struct CareerDashboardView: View {
             DashboardTile(icon: "figure.run.circle.fill", title: "Training Plan") {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Set focus")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: DSType.Size.caption, weight: .medium))
                         .foregroundStyle(Color.accentGold)
                     Text("Tactical / Physical / Technical")
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(Color.textSecondary)
                         .lineLimit(1)
                 }
@@ -1625,10 +1633,10 @@ struct CareerDashboardView: View {
             DashboardTile(icon: "heart.text.square.fill", title: "Workload") {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Monitor camp load")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: DSType.Size.caption, weight: .medium))
                         .foregroundStyle(Color.accentGold)
                     Text("Injury & burnout risk")
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(Color.textSecondary)
                         .lineLimit(1)
                 }
@@ -1649,10 +1657,10 @@ struct CareerDashboardView: View {
             DashboardTile(icon: "scissors", title: "Roster Cuts", highlighted: cutsRemaining > 0) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(cutsRemaining > 0 ? "\(cutsRemaining) cuts remaining" : "Roster set")
-                        .font(.system(size: 12, weight: .bold))
+                        .font(.system(size: DSType.Size.footnote, weight: .bold))
                         .foregroundStyle(cutsRemaining > 0 ? Color.warning : Color.success)
                     Text("90 → 75 → 65 → 53")
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(Color.textSecondary)
                 }
             }
@@ -1665,10 +1673,10 @@ struct CareerDashboardView: View {
             DashboardTile(icon: "scope", title: "Week Prep") {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Week \(career.currentWeek) prep")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: DSType.Size.caption, weight: .medium))
                         .foregroundStyle(Color.accentGold)
                     Text("General vs opponent focus")
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(Color.textSecondary)
                         .lineLimit(1)
                 }
@@ -1690,9 +1698,9 @@ struct CareerDashboardView: View {
         } label: {
             HStack(spacing: 3) {
                 Text(title)
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: DSType.Size.caption, weight: .bold))
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: DSType.Size.micro, weight: .bold))
             }
             .foregroundStyle(Color.accentGold)
             .padding(.horizontal, 8)
@@ -1712,10 +1720,10 @@ struct CareerDashboardView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Image(systemName: "calendar")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: DSType.Size.footnote, weight: .semibold))
                     .foregroundStyle(Color.accentGold)
                 Text("UPCOMING")
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.system(size: DSType.Size.footnote, weight: .bold))
                     .foregroundStyle(Color.accentGold)
                     .tracking(0.5)
                 Spacer()
@@ -1743,10 +1751,10 @@ struct CareerDashboardView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Image(systemName: "list.number")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: DSType.Size.footnote, weight: .semibold))
                     .foregroundStyle(Color.accentGold)
                 Text("DIVISION")
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.system(size: DSType.Size.footnote, weight: .bold))
                     .foregroundStyle(Color.accentGold)
                     .tracking(0.5)
                 Spacer()
@@ -1773,7 +1781,7 @@ struct CareerDashboardView: View {
                     Text("PCT")
                         .frame(width: 40, alignment: .trailing)
                 }
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: DSType.Size.caption, weight: .bold))
                 .foregroundStyle(Color.textTertiary)
                 .textCase(.uppercase)
 
@@ -1791,14 +1799,14 @@ struct CareerDashboardView: View {
                         HStack(spacing: 4) {
                             if isLeader {
                                 Image(systemName: "crown.fill")
-                                    .font(.system(size: 8))
+                                    .font(.system(size: DSType.Size.micro))
                                     .foregroundStyle(Color.accentGold)
                                     .frame(width: 10)
                             } else {
                                 Spacer().frame(width: 10)
                             }
                             Text(t?.abbreviation ?? "???")
-                                .font(.system(size: 11, weight: isMyTeam ? .heavy : .medium))
+                                .font(.system(size: DSType.Size.caption, weight: isMyTeam ? .heavy : .medium))
                                 .foregroundStyle(isMyTeam ? Color.accentGold : Color.textSecondary)
                                 .frame(width: 34, alignment: .leading)
 
@@ -1806,17 +1814,17 @@ struct CareerDashboardView: View {
                             // abbreviation and the W-L column, and matches the
                             // full Standings screen's team column.
                             Text(t?.fullName ?? "")
-                                .font(.system(size: 11, weight: .regular))
+                                .font(.system(size: DSType.Size.caption, weight: .regular))
                                 .foregroundStyle(isMyTeam ? Color.textSecondary : Color.textTertiaryReadable)
                                 .lineLimit(1)
                         }
                         Spacer(minLength: 8)
                         Text(wl)
-                            .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                            .font(.system(size: DSType.Size.caption, weight: .semibold).monospacedDigit())
                             .foregroundStyle(isMyTeam ? Color.textPrimary : Color.textSecondary)
                             .frame(width: 48, alignment: .trailing)
                         Text(pctStr)
-                            .font(.system(size: 10, weight: .regular).monospacedDigit())
+                            .font(.system(size: DSType.Size.micro, weight: .regular).monospacedDigit())
                             .foregroundStyle(Color.textTertiary)
                             .frame(width: 40, alignment: .trailing)
                     }
@@ -1839,12 +1847,12 @@ struct CareerDashboardView: View {
 
         return HStack(spacing: 8) {
             Text("Wk \(game.week)")
-                .font(.system(size: 10, weight: .bold).monospacedDigit())
+                .font(.system(size: DSType.Size.micro, weight: .bold).monospacedDigit())
                 .foregroundStyle(Color.textTertiary)
                 .frame(width: 34, alignment: .leading)
 
             Text("\(prefix) \(oppAbbr)")
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: DSType.Size.caption, weight: .semibold))
                 .foregroundStyle(Color.textPrimary)
                 .lineLimit(1)
 
@@ -1852,14 +1860,14 @@ struct CareerDashboardView: View {
 
             if isHome {
                 Text("HOME")
-                    .font(.system(size: 8, weight: .heavy))
+                    .font(.system(size: DSType.Size.micro, weight: .heavy))
                     .foregroundStyle(Color.success)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
                     .background(Color.success.opacity(0.12).cornerRadius(3))
             } else {
                 Text("AWAY")
-                    .font(.system(size: 8, weight: .heavy))
+                    .font(.system(size: DSType.Size.micro, weight: .heavy))
                     .foregroundStyle(Color.textTertiary)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
@@ -1901,7 +1909,7 @@ struct CareerDashboardView: View {
             DashboardTile(icon: "shield.fill", title: "Team") {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(team?.fullName ?? "No Team")
-                        .font(.system(size: 14, weight: .bold))
+                        .font(.system(size: DSType.Size.body, weight: .bold))
                         .foregroundStyle(Color.textPrimary)
                         .lineLimit(1)
 
@@ -1912,15 +1920,15 @@ struct CareerDashboardView: View {
                             .foregroundStyle(Color.textPrimary)
 
                         Text(divisionRank)
-                            .font(.system(size: 14, weight: .semibold).monospacedDigit())
+                            .font(.system(size: DSType.Size.body, weight: .semibold).monospacedDigit())
                             .foregroundStyle(Color.textSecondary)
                     }
 
                     // Win/loss streak indicator
                     if let streak = currentStreak, streak.count > 1 {
                         Text(streak.label)
-                            .font(.system(size: 12, weight: .bold).monospacedDigit())
-                            .foregroundStyle(streak.isWin ? Color.success : Color.danger)
+                            .font(.system(size: DSType.Size.footnote, weight: .bold).monospacedDigit())
+                            .foregroundStyle(streak.isWin ? Color.success : Color.dangerText)
                     }
                 }
             }
@@ -1941,20 +1949,20 @@ struct CareerDashboardView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
                         Text("Players")
-                            .font(.system(size: 10))
+                            .font(.system(size: DSType.Size.caption))
                             .foregroundStyle(Color.textSecondary)
                         Spacer()
                         Text("\(rosterCount)")
-                            .font(.system(size: 14, weight: .bold).monospacedDigit())
+                            .font(.system(size: DSType.Size.body, weight: .bold).monospacedDigit())
                             .foregroundStyle(Color.textPrimary)
                     }
                     HStack {
                         Text("Cap Space")
-                            .font(.system(size: 10))
+                            .font(.system(size: DSType.Size.caption))
                             .foregroundStyle(Color.textSecondary)
                         Spacer()
                         Text(formatCap(team?.availableCap ?? 0))
-                            .font(.system(size: 14, weight: .bold).monospacedDigit())
+                            .font(.system(size: DSType.Size.body, weight: .bold).monospacedDigit())
                             .foregroundStyle(Color.success)
                     }
                 }
@@ -1978,25 +1986,25 @@ struct CareerDashboardView: View {
                             // tile without a face.
                             UserPortraitView(career: career, size: .small)
                             Text("HC")
-                                .font(.system(size: 10, weight: .bold))
+                                .font(.system(size: DSType.Size.micro, weight: .bold))
                                 .foregroundStyle(Color.accentGold)
                             Text("You")
-                                .font(.system(size: 12, weight: .medium))
+                                .font(.system(size: DSType.Size.footnote, weight: .medium))
                                 .foregroundStyle(Color.textPrimary)
                         }
                     } else if let hc = headCoach {
                         HStack(spacing: 4) {
                             Text("HC")
-                                .font(.system(size: 10, weight: .bold))
+                                .font(.system(size: DSType.Size.micro, weight: .bold))
                                 .foregroundStyle(Color.accentGold)
                             Text(hc.fullName)
-                                .font(.system(size: 12, weight: .medium))
+                                .font(.system(size: DSType.Size.footnote, weight: .medium))
                                 .foregroundStyle(Color.textPrimary)
                                 .lineLimit(1)
                         }
                     } else {
                         Text("No head coach")
-                            .font(.system(size: 11))
+                            .font(.system(size: DSType.Size.caption))
                             .foregroundStyle(Color.textSecondary)
                     }
 
@@ -2015,22 +2023,22 @@ struct CareerDashboardView: View {
                     HStack(spacing: 6) {
                         HStack(spacing: 2) {
                             Text("\(filledSlots)")
-                                .font(.system(size: 18, weight: .bold).monospacedDigit())
+                                .font(.system(size: DSType.Size.title3, weight: .bold).monospacedDigit())
                                 .foregroundStyle(Color.textPrimary)
                             Text("/")
-                                .font(.system(size: 14, weight: .medium))
+                                .font(.system(size: DSType.Size.body, weight: .medium))
                                 .foregroundStyle(Color.textTertiary)
                             Text("\(totalSlots)")
-                                .font(.system(size: 18, weight: .bold).monospacedDigit())
+                                .font(.system(size: DSType.Size.title3, weight: .bold).monospacedDigit())
                                 .foregroundStyle(Color.textSecondary)
                         }
                         Text("Staff")
-                            .font(.system(size: 11, weight: .medium))
+                            .font(.system(size: DSType.Size.caption, weight: .medium))
                             .foregroundStyle(Color.textSecondary)
                         Spacer()
                         if isFullyStaffed {
                             Image(systemName: "checkmark.circle.fill")
-                                .font(.system(size: 16))
+                                .font(.system(size: DSType.Size.callout))
                                 .foregroundStyle(Color.success)
                         }
                     }
@@ -2058,20 +2066,20 @@ struct CareerDashboardView: View {
                         let budgetColor = remaining > 10_000 ? Color.success : remaining > 5_000 ? Color.accentGold : Color.warning
                         HStack(spacing: 4) {
                             Image(systemName: "dollarsign.square.fill")
-                                .font(.system(size: 10))
+                                .font(.system(size: DSType.Size.micro))
                                 .foregroundStyle(budgetColor)
                             Text("Budget")
-                                .font(.system(size: 9))
+                                .font(.system(size: DSType.Size.caption))
                                 .foregroundStyle(Color.textTertiary)
                             Spacer()
                             Text(StaffLedger.money(remaining))
-                                .font(.system(size: 11, weight: .bold).monospacedDigit())
+                                .font(.system(size: DSType.Size.caption, weight: .bold).monospacedDigit())
                                 .foregroundStyle(budgetColor)
                             Text("/")
-                                .font(.system(size: 9))
+                                .font(.system(size: DSType.Size.caption))
                                 .foregroundStyle(Color.textTertiary)
                             Text(StaffLedger.money(ledger.coachingBudget))
-                                .font(.system(size: 9, weight: .medium).monospacedDigit())
+                                .font(.system(size: DSType.Size.caption, weight: .medium).monospacedDigit())
                                 .foregroundStyle(Color.textTertiary)
                         }
                     }
@@ -2093,10 +2101,10 @@ struct CareerDashboardView: View {
                     if draftClass.isEmpty {
                         HStack(spacing: 6) {
                             Image(systemName: "person.badge.magnifyingglass")
-                                .font(.system(size: 16))
+                                .font(.system(size: DSType.Size.callout))
                                 .foregroundStyle(Color.textTertiary)
                             Text("Hire scouts to begin scouting")
-                                .font(.system(size: 11, weight: .medium))
+                                .font(.system(size: DSType.Size.caption, weight: .medium))
                                 .foregroundStyle(Color.textSecondary)
                         }
                     } else {
@@ -2104,15 +2112,15 @@ struct CareerDashboardView: View {
                         if let prospect = draftClass.first {
                             HStack(spacing: 4) {
                                 Text("#1")
-                                    .font(.system(size: 10, weight: .bold))
+                                    .font(.system(size: DSType.Size.micro, weight: .bold))
                                     .foregroundStyle(Color.accentGold)
                                 Text("\(prospect.firstName) \(prospect.lastName)")
-                                    .font(.system(size: 12, weight: .medium))
+                                    .font(.system(size: DSType.Size.footnote, weight: .medium))
                                     .foregroundStyle(Color.textPrimary)
                                     .lineLimit(1)
                             }
                             Text("\(prospect.position.rawValue) \u{2014} \(prospect.college)")
-                                .font(.system(size: 10))
+                                .font(.system(size: DSType.Size.micro))
                                 .foregroundStyle(Color.textSecondary)
                                 .lineLimit(1)
                         }
@@ -2122,13 +2130,13 @@ struct CareerDashboardView: View {
                         let defenseCount = draftClass.filter { $0.position.side == .defense }.count
                         HStack(spacing: 12) {
                             Text("\(draftClass.count) total")
-                                .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                                .font(.system(size: DSType.Size.micro, weight: .semibold).monospacedDigit())
                                 .foregroundStyle(Color.textPrimary)
                             Text("OFF \(offenseCount)")
-                                .font(.system(size: 9, weight: .medium).monospacedDigit())
+                                .font(.system(size: DSType.Size.caption, weight: .medium).monospacedDigit())
                                 .foregroundStyle(Color.textTertiary)
                             Text("DEF \(defenseCount)")
-                                .font(.system(size: 9, weight: .medium).monospacedDigit())
+                                .font(.system(size: DSType.Size.caption, weight: .medium).monospacedDigit())
                                 .foregroundStyle(Color.textTertiary)
                         }
                     }
@@ -2154,11 +2162,11 @@ struct CareerDashboardView: View {
 
                         HStack(alignment: .firstTextBaseline) {
                             Text("Used")
-                                .font(.system(size: 10))
+                                .font(.system(size: DSType.Size.caption))
                                 .foregroundStyle(Color.textSecondary)
                             if isCapTight {
                                 Text("CAP TIGHT")
-                                    .font(.system(size: 8, weight: .black))
+                                    .font(.system(size: DSType.Size.micro, weight: .black))
                                     .foregroundStyle(.white)
                                     .tracking(0.5)
                                     .padding(.horizontal, 5)
@@ -2167,7 +2175,7 @@ struct CareerDashboardView: View {
                             }
                             Spacer()
                             Text(formatCap(t.currentCapUsage))
-                                .font(.system(size: 16, weight: .bold).monospacedDigit())
+                                .font(.system(size: DSType.Size.callout, weight: .bold).monospacedDigit())
                                 .foregroundStyle(isCapTight ? Color.warning : Color.textPrimary)
                         }
 
@@ -2186,7 +2194,7 @@ struct CareerDashboardView: View {
                                 // and two screens disagreeing about one division
                                 // reads as a bug in the money, not in the format.
                                 Text(String(format: "%.1f%%", usedFraction * 100))
-                                    .font(.system(size: 8, weight: .bold).monospacedDigit())
+                                    .font(.system(size: DSType.Size.micro, weight: .bold).monospacedDigit())
                                     .foregroundStyle(.white.opacity(0.9))
                                     .padding(.leading, 4)
                             }
@@ -2195,27 +2203,27 @@ struct CareerDashboardView: View {
 
                         HStack(alignment: .firstTextBaseline) {
                             Text("Available")
-                                .font(.system(size: 10))
+                                .font(.system(size: DSType.Size.caption))
                                 .foregroundStyle(Color.textSecondary)
                             Spacer()
                             Text(formatCap(t.availableCap))
-                                .font(.system(size: 16, weight: .bold).monospacedDigit())
-                                .foregroundStyle(t.availableCap > 0 ? Color.success : Color.danger)
+                                .font(.system(size: DSType.Size.callout, weight: .bold).monospacedDigit())
+                                .foregroundStyle(t.availableCap > 0 ? Color.success : Color.dangerText)
                         }
 
                         // Total cap line
                         HStack {
                             Text("Total Cap")
-                                .font(.system(size: 9))
+                                .font(.system(size: DSType.Size.caption))
                                 .foregroundStyle(Color.textTertiary)
                             Spacer()
                             Text(formatCap(t.salaryCap))
-                                .font(.system(size: 10, weight: .medium).monospacedDigit())
+                                .font(.system(size: DSType.Size.micro, weight: .medium).monospacedDigit())
                                 .foregroundStyle(Color.textTertiary)
                         }
                     } else {
                         Text("No cap data")
-                            .font(.system(size: 11))
+                            .font(.system(size: DSType.Size.caption))
                             .foregroundStyle(Color.textSecondary)
                     }
                 }
@@ -2236,11 +2244,11 @@ struct CareerDashboardView: View {
                     // Locker Room screen prints ("Elite 100/100").
                     HStack {
                         Text("Chemistry")
-                            .font(.system(size: 10))
+                            .font(.system(size: DSType.Size.caption))
                             .foregroundStyle(Color.textSecondary)
                         Spacer()
                         Text("\(LockerRoomEngine.chemistryLabel(teamChemistry)) \(teamChemistry)/100")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.system(size: DSType.Size.footnote, weight: .semibold))
                             .foregroundStyle(chemistryColor(teamChemistry))
                     }
 
@@ -2261,11 +2269,11 @@ struct CareerDashboardView: View {
                     // Morale percentage
                     HStack {
                         Text("Team Morale")
-                            .font(.system(size: 10))
+                            .font(.system(size: DSType.Size.caption))
                             .foregroundStyle(Color.textSecondary)
                         Spacer()
                         Text("\(teamMorale)%")
-                            .font(.system(size: 14, weight: .bold).monospacedDigit())
+                            .font(.system(size: DSType.Size.body, weight: .bold).monospacedDigit())
                             .foregroundStyle(moraleColor(teamMorale))
                     }
 
@@ -2273,15 +2281,15 @@ struct CareerDashboardView: View {
                     if let qb = startingQB {
                         HStack(spacing: 4) {
                             Text("QB")
-                                .font(.system(size: 9, weight: .bold))
+                                .font(.system(size: DSType.Size.caption, weight: .bold))
                                 .foregroundStyle(Color.accentGold)
                             Text(qb.lastName)
-                                .font(.system(size: 10, weight: .medium))
+                                .font(.system(size: DSType.Size.micro, weight: .medium))
                                 .foregroundStyle(Color.textSecondary)
                                 .lineLimit(1)
                             Spacer()
                             Image(systemName: qb.morale >= 70 ? "face.smiling" : (qb.morale >= 40 ? "face.dashed" : "cloud.rain"))
-                                .font(.system(size: 10))
+                                .font(.system(size: DSType.Size.micro))
                                 .foregroundStyle(moraleColor(qb.morale))
                         }
                     }
@@ -2303,7 +2311,7 @@ struct CareerDashboardView: View {
                         keyPlayerRow(label: "QB1", player: qb)
                     } else {
                         Text("No starting QB")
-                            .font(.system(size: 11))
+                            .font(.system(size: DSType.Size.caption))
                             .foregroundStyle(Color.textSecondary)
                     }
 
@@ -2329,16 +2337,16 @@ struct CareerDashboardView: View {
     private func keyPlayerRow(label: String, player: Player) -> some View {
         HStack(spacing: 4) {
             Text(label)
-                .font(.system(size: 9, weight: .heavy))
+                .font(.system(size: DSType.Size.caption, weight: .heavy))
                 .foregroundStyle(Color.accentGold)
                 .frame(width: 28, alignment: .leading)
             Text(player.fullName)
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: DSType.Size.footnote, weight: .medium))
                 .foregroundStyle(Color.textPrimary)
                 .lineLimit(1)
             Spacer()
             Text("\(player.overall)")
-                .font(.system(size: 14, weight: .bold).monospacedDigit())
+                .font(.system(size: DSType.Size.body, weight: .bold).monospacedDigit())
                 .foregroundStyle(Color.forRating(player.overall))
         }
     }
@@ -2353,7 +2361,7 @@ struct CareerDashboardView: View {
             VStack(alignment: .leading, spacing: 4) {
                 if positionGroupGrades.isEmpty {
                     Text("No roster data")
-                        .font(.system(size: 11))
+                        .font(.system(size: DSType.Size.caption))
                         .foregroundStyle(Color.textSecondary)
                 } else {
                     // Find weakest group (#146)
@@ -2376,7 +2384,7 @@ struct CareerDashboardView: View {
                     }
                     // Key first: "S: A / D: B-" was unreadable without it.
                     Text("S = starters \u{00B7} D = depth \u{00B7} tap a grade for details")
-                        .font(.system(size: 9, weight: .medium))
+                        .font(.system(size: DSType.Size.footnote, weight: .medium))
                         .foregroundStyle(Color.textTertiary)
                         .lineLimit(2)
                         .padding(.top, 2)
@@ -2388,29 +2396,29 @@ struct CareerDashboardView: View {
     private func positionGradeRow(_ item: (group: String, starterGrade: String, depthGrade: String, starterOVR: Int, depthOVR: Int), isWeakest: Bool = false) -> some View {
         HStack(spacing: 2) {
             Text(item.group)
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: DSType.Size.micro, weight: .medium))
                 .foregroundStyle(Color.textSecondary)
                 .frame(width: 22, alignment: .leading)
             Text("S:")
-                .font(.system(size: 9, weight: .medium))
+                .font(.system(size: DSType.Size.caption, weight: .medium))
                 .foregroundStyle(Color.textTertiary)
             gradeButton(group: item.group, kind: "S", grade: item.starterGrade, ovr: item.starterOVR)
             Text("/")
-                .font(.system(size: 11))
+                .font(.system(size: DSType.Size.caption))
                 .foregroundStyle(Color.textTertiary)
             Text("D:")
-                .font(.system(size: 9, weight: .medium))
+                .font(.system(size: DSType.Size.caption, weight: .medium))
                 .foregroundStyle(Color.textTertiary)
             gradeButton(group: item.group, kind: "D", grade: item.depthGrade, ovr: item.depthOVR)
             if isWeakest {
                 Text("NEED")
-                    .font(.system(size: 7, weight: .heavy))
+                    .font(.system(size: DSType.Size.micro, weight: .heavy))
                     // R39 device coverage: on iPad mini the grid column runs
                     // out of width and this badge wrapped into a vertical
                     // letter stack — shrink instead of wrapping.
                     .lineLimit(1)
                     .minimumScaleFactor(0.5)
-                    .foregroundStyle(Color.danger)
+                    .foregroundStyle(Color.dangerText)
                     .padding(.horizontal, 3)
                     .padding(.vertical, 1)
                     .background(
@@ -2429,7 +2437,7 @@ struct CareerDashboardView: View {
             positionGradePopoverID = id
         } label: {
             Text(grade)
-                .font(.system(size: 13, weight: .bold))
+                .font(.system(size: DSType.Size.body, weight: .bold))
                 .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(grade))
                 .padding(.horizontal, 2)
                 .contentShape(Rectangle())
@@ -2455,17 +2463,17 @@ struct CareerDashboardView: View {
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Text(group)
-                    .font(.system(size: 11, weight: .heavy))
+                    .font(.system(size: DSType.Size.caption, weight: .heavy))
                     .foregroundStyle(Color.accentGold)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
                     .background(Capsule().fill(Color.accentGold.opacity(0.15)))
                 Text(kindLabel)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: DSType.Size.caption, weight: .semibold))
                     .foregroundStyle(Color.textSecondary)
                 Spacer()
                 Text(grade)
-                    .font(.system(size: 22, weight: .black))
+                    .font(.system(size: DSType.Size.title2, weight: .black))
                     .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(grade))
             }
 
@@ -2473,13 +2481,13 @@ struct CareerDashboardView: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("\(grade): \(description)")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: DSType.Size.footnote, weight: .semibold))
                     .foregroundStyle(Color.textPrimary)
                 Text(percentile)
-                    .font(.system(size: 11))
+                    .font(.system(size: DSType.Size.caption))
                     .foregroundStyle(Color.textSecondary)
                 Text("Average OVR: \(ovr)")
-                    .font(.system(size: 11, weight: .medium).monospacedDigit())
+                    .font(.system(size: DSType.Size.caption, weight: .medium).monospacedDigit())
                     .foregroundStyle(Color.textTertiary)
             }
         }
@@ -2553,10 +2561,10 @@ struct CareerDashboardView: View {
                 if contractsHighPriority {
                     HStack(spacing: 4) {
                         Image(systemName: "exclamationmark.octagon.fill")
-                            .font(.system(size: 9, weight: .bold))
+                            .font(.system(size: DSType.Size.micro, weight: .bold))
                             .foregroundStyle(.white)
                         Text("HIGH PRIORITY")
-                            .font(.system(size: 9, weight: .black))
+                            .font(.system(size: DSType.Size.caption, weight: .black))
                             .foregroundStyle(.white)
                             .tracking(0.5)
                     }
@@ -2566,7 +2574,7 @@ struct CareerDashboardView: View {
                 } else if !expiringContractPlayers.isEmpty {
                     // Outside the window: an amber chip, not a red alarm.
                     Text("\(expiringContractPlayers.count) expiring")
-                        .font(.system(size: 9, weight: .heavy))
+                        .font(.system(size: DSType.Size.caption, weight: .heavy))
                         .foregroundStyle(Color.warning)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
@@ -2575,21 +2583,21 @@ struct CareerDashboardView: View {
 
                 if expiringContractPlayers.isEmpty {
                     Text("No expiring contracts")
-                        .font(.system(size: 11))
+                        .font(.system(size: DSType.Size.caption))
                         .foregroundStyle(Color.textSecondary)
                 } else {
                     if contractsHighPriority {
                         HStack(alignment: .firstTextBaseline) {
                             Text("\(expiringContractPlayers.count)")
-                                .font(.system(size: 20, weight: .bold).monospacedDigit())
-                                .foregroundStyle(Color.danger)
+                                .font(.system(size: DSType.Size.title2, weight: .bold).monospacedDigit())
+                                .foregroundStyle(Color.dangerText)
                             Text("expiring contract\(expiringContractPlayers.count == 1 ? "" : "s")")
-                                .font(.system(size: 11, weight: .medium))
+                                .font(.system(size: DSType.Size.caption, weight: .medium))
                                 .foregroundStyle(Color.textSecondary)
                         }
                     } else {
                         Text("Re-sign window opens in the offseason")
-                            .font(.system(size: 10))
+                            .font(.system(size: DSType.Size.footnote))
                             .foregroundStyle(Color.textSecondary)
                             .lineLimit(2)
                     }
@@ -2611,9 +2619,9 @@ struct CareerDashboardView: View {
                     } label: {
                         HStack(spacing: 3) {
                             Text("View all in Salary Cap")
-                                .font(.system(size: 9, weight: .heavy))
+                                .font(.system(size: DSType.Size.footnote, weight: .heavy))
                             Image(systemName: "arrow.right")
-                                .font(.system(size: 8, weight: .bold))
+                                .font(.system(size: DSType.Size.micro, weight: .bold))
                         }
                         .foregroundStyle(Color.accentGold)
                         .contentShape(Rectangle())
@@ -2629,25 +2637,25 @@ struct CareerDashboardView: View {
         return HStack(spacing: 4) {
             if isStar {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 8))
+                    .font(.system(size: DSType.Size.micro))
                     .foregroundStyle(Color.warning)
             }
             Text(player.position.rawValue)
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: DSType.Size.caption, weight: .bold))
                 .foregroundStyle(isStar ? Color.warning : Color.accentGold)
             Text(player.lastName)
-                .font(.system(size: 10, weight: isStar ? .bold : .medium))
+                .font(.system(size: DSType.Size.micro, weight: isStar ? .bold : .medium))
                 .foregroundStyle(Color.textPrimary)
                 .lineLimit(1)
             Spacer()
             Text("\(player.overall)")
-                .font(.system(size: 10, weight: .bold).monospacedDigit())
+                .font(.system(size: DSType.Size.micro, weight: .bold).monospacedDigit())
                 .foregroundStyle(Color.forRating(player.overall))
             Text(formatCap(player.annualSalary))
-                .font(.system(size: 9, weight: .semibold).monospacedDigit())
+                .font(.system(size: DSType.Size.caption, weight: .semibold).monospacedDigit())
                 .foregroundStyle(Color.textTertiary)
             Image(systemName: "chevron.right")
-                .font(.system(size: 8, weight: .semibold))
+                .font(.system(size: DSType.Size.micro, weight: .semibold))
                 .foregroundStyle(Color.textTertiary)
         }
         .contentShape(Rectangle())
@@ -2669,33 +2677,33 @@ struct CareerDashboardView: View {
                             // Leading-edge portrait, same rhythm as a coach row.
                             PersonFaceView(owner: owner, size: .small)
                             Text(owner.name)
-                                .font(.system(size: 13, weight: .bold))
+                                .font(.system(size: DSType.Size.body, weight: .bold))
                                 .foregroundStyle(Color.textPrimary)
                                 .lineLimit(1)
                             Spacer()
                             if hasPendingOwnerWhim {
                                 Image(systemName: "envelope.badge.fill")
-                                    .font(.system(size: 11))
+                                    .font(.system(size: DSType.Size.caption))
                                     .foregroundStyle(Color.warning)
                             }
                         }
 
                         HStack(spacing: 4) {
                             Image(systemName: archetype.icon)
-                                .font(.system(size: 8))
+                                .font(.system(size: DSType.Size.micro))
                             Text(archetype.displayName)
-                                .font(.system(size: 9, weight: .bold))
+                                .font(.system(size: DSType.Size.caption, weight: .bold))
                         }
                         .foregroundStyle(Color.accentGold)
 
                         // Job security meter
                         HStack {
                             Text("Job Security")
-                                .font(.system(size: 10))
+                                .font(.system(size: DSType.Size.caption))
                                 .foregroundStyle(Color.textSecondary)
                             Spacer()
                             Text(security.level.label)
-                                .font(.system(size: 10, weight: .bold))
+                                .font(.system(size: DSType.Size.micro, weight: .bold))
                                 .foregroundStyle(jobSecurityColor(security.level))
                         }
                         GeometryReader { geo in
@@ -2714,37 +2722,37 @@ struct CareerDashboardView: View {
                         if let primary = evaluatedOwnerGoals.first(where: { $0.priority == .primary }) {
                             HStack(spacing: 4) {
                                 Image(systemName: primary.isAchieved ? "star.fill" : "target")
-                                    .font(.system(size: 8))
+                                    .font(.system(size: DSType.Size.micro))
                                     .foregroundStyle(primary.isAchieved ? Color.accentGold : Color.textSecondary)
                                 Text(primary.title)
-                                    .font(.system(size: 9, weight: .semibold))
+                                    .font(.system(size: DSType.Size.caption, weight: .semibold))
                                     .foregroundStyle(Color.textSecondary)
                                     .lineLimit(1)
                                 Spacer()
                                 if let target = primary.target {
                                     Text("\(primary.progress)/\(target)")
-                                        .font(.system(size: 9, weight: .bold).monospacedDigit())
+                                        .font(.system(size: DSType.Size.caption, weight: .bold).monospacedDigit())
                                         .foregroundStyle(primary.isAchieved ? Color.accentGold : Color.textSecondary)
                                 } else if primary.isAchieved {
                                     Text("Met")
-                                        .font(.system(size: 9, weight: .bold))
+                                        .font(.system(size: DSType.Size.caption, weight: .bold))
                                         .foregroundStyle(Color.accentGold)
                                 }
                             }
                         } else {
                             HStack {
                                 Text("Satisfaction")
-                                    .font(.system(size: 10))
+                                    .font(.system(size: DSType.Size.caption))
                                     .foregroundStyle(Color.textSecondary)
                                 Spacer()
                                 Text("\(owner.satisfaction)%")
-                                    .font(.system(size: 12, weight: .bold).monospacedDigit())
+                                    .font(.system(size: DSType.Size.footnote, weight: .bold).monospacedDigit())
                                     .foregroundStyle(satisfactionColor(owner.satisfaction))
                             }
                         }
                     } else {
                         Text("No owner data")
-                            .font(.system(size: 11))
+                            .font(.system(size: DSType.Size.caption))
                             .foregroundStyle(Color.textSecondary)
                     }
                 }
@@ -2784,21 +2792,21 @@ struct CareerDashboardView: View {
             VStack(alignment: .leading, spacing: 6) {
                 if let record = previousSeasonRecord, let year = previousSeasonYear {
                     Text("Season \(String(year))")
-                        .font(.system(size: 12, weight: .bold))
+                        .font(.system(size: DSType.Size.footnote, weight: .bold))
                         .foregroundStyle(Color.textPrimary)
 
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(record)
-                            .font(.system(size: 18, weight: .bold).monospacedDigit())
+                            .font(.system(size: DSType.Size.title3, weight: .bold).monospacedDigit())
                             .foregroundStyle(Color.textPrimary)
                         Spacer()
                         if career.championships > 0 {
                             HStack(spacing: 3) {
                                 Image(systemName: "trophy.fill")
-                                    .font(.system(size: 12))
+                                    .font(.system(size: DSType.Size.footnote))
                                     .foregroundStyle(Color.accentGold)
                                 Text("\(career.championships)")
-                                    .font(.system(size: 12, weight: .bold).monospacedDigit())
+                                    .font(.system(size: DSType.Size.footnote, weight: .bold).monospacedDigit())
                                     .foregroundStyle(Color.accentGold)
                             }
                         }
@@ -2808,15 +2816,15 @@ struct CareerDashboardView: View {
                         if career.playoffAppearances > 0 {
                             HStack(spacing: 3) {
                                 Image(systemName: "flag.fill")
-                                    .font(.system(size: 9))
+                                    .font(.system(size: DSType.Size.micro))
                                     .foregroundStyle(Color.success)
                                 Text("\(career.playoffAppearances) playoff\(career.playoffAppearances == 1 ? "" : "s")")
-                                    .font(.system(size: 10, weight: .medium))
+                                    .font(.system(size: DSType.Size.micro, weight: .medium))
                                     .foregroundStyle(Color.textSecondary)
                             }
                         }
                         Text("Career: \(career.totalWins)-\(career.totalLosses)")
-                            .font(.system(size: 10, weight: .medium))
+                            .font(.system(size: DSType.Size.micro, weight: .medium))
                             .foregroundStyle(Color.textTertiary)
                     }
                 }
@@ -2842,11 +2850,11 @@ struct CareerDashboardView: View {
                     let picks = WeekAdvancer.currentDraftPicks.filter { $0.currentTeamID == career.teamID }
                     if let firstPick = picks.first {
                         Text("Pick #\(firstPick.pickNumber)")
-                            .font(.system(size: 16, weight: .bold).monospacedDigit())
+                            .font(.system(size: DSType.Size.callout, weight: .bold).monospacedDigit())
                             .foregroundStyle(Color.accentGold)
                     }
                     Text("\(picks.count) pick(s)")
-                        .font(.system(size: 10).monospacedDigit())
+                        .font(.system(size: DSType.Size.micro).monospacedDigit())
                         .foregroundStyle(Color.textSecondary)
                 }
             }
@@ -2882,15 +2890,15 @@ struct CareerDashboardView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
                         Text("Available Cap")
-                            .font(.system(size: 10))
+                            .font(.system(size: DSType.Size.caption))
                             .foregroundStyle(Color.textSecondary)
                         Spacer()
                         Text(formatCap(team?.availableCap ?? 0))
-                            .font(.system(size: 12, weight: .bold).monospacedDigit())
+                            .font(.system(size: DSType.Size.footnote, weight: .bold).monospacedDigit())
                             .foregroundStyle(Color.success)
                     }
                     Text(stepLabel)
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.micro))
                         .foregroundStyle(Color.accentGold)
                         .lineLimit(1)
                 }
@@ -2928,10 +2936,10 @@ struct CareerDashboardView: View {
     private var debugSkipToFABanner: some View {
         HStack(spacing: 8) {
             Image(systemName: "wrench.and.screwdriver.fill")
-                .font(.system(size: 11, weight: .bold))
+                .font(.system(size: DSType.Size.caption, weight: .bold))
                 .foregroundStyle(Color.accentGold)
             Text("DEBUG")
-                .font(.system(size: 10, weight: .black))
+                .font(.system(size: DSType.Size.micro, weight: .black))
                 .foregroundStyle(Color.accentGold)
             Spacer(minLength: 4)
             Button {
@@ -2940,7 +2948,7 @@ struct CareerDashboardView: View {
             } label: {
                 Label(debugSkipRunning ? "Skipping…" : "Skip → \(debugSkipTargetLabel)",
                       systemImage: debugSkipRunning ? "hourglass" : "forward.end.fill")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: DSType.Size.caption, weight: .semibold))
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                     .background(Color.accentGold.opacity(0.18))
@@ -3019,14 +3027,14 @@ struct CareerDashboardView: View {
         if let blocker = advanceBlocker {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "exclamationmark.octagon.fill")
-                    .font(.system(size: 14, weight: .bold))
+                    .font(.system(size: DSType.Size.body, weight: .bold))
                     .foregroundStyle(Color.danger)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(blocker.title)
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(Color.danger)
+                        .font(.system(size: DSType.Size.footnote, weight: .bold))
+                        .foregroundStyle(Color.dangerText)
                     Text(blocker.detail)
-                        .font(.system(size: 11))
+                        .font(.system(size: DSType.Size.caption))
                         .foregroundStyle(Color.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -3088,15 +3096,15 @@ struct CareerDashboardView: View {
     private func satisfactionCard(icon: String, label: String, value: String, color: Color) -> some View {
         VStack(spacing: 4) {
             Image(systemName: icon)
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: DSType.Size.body, weight: .semibold))
                 .foregroundStyle(color)
             Text(value)
-                .font(.system(size: 13, weight: .bold).monospacedDigit())
+                .font(.system(size: DSType.Size.body, weight: .bold).monospacedDigit())
                 .foregroundStyle(color)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
             Text(label)
-                .font(.system(size: 9, weight: .medium))
+                .font(.system(size: DSType.Size.caption, weight: .medium))
                 .foregroundStyle(Color.textSecondary)
                 .textCase(.uppercase)
                 .tracking(0.3)
@@ -3239,21 +3247,21 @@ struct CareerDashboardView: View {
 
         HStack(spacing: 10) {
             Image(systemName: "calendar.badge.clock")
-                .font(.system(size: 18, weight: .semibold))
+                .font(.system(size: DSType.Size.title3, weight: .semibold))
                 .foregroundStyle(Color.accentGold)
 
             VStack(alignment: .leading, spacing: 2) {
                 if weeks > 0 {
                     Text("Week 1 in ~\(weeks) week\(weeks == 1 ? "" : "s")")
-                        .font(.system(size: 12, weight: .bold))
+                        .font(.system(size: DSType.Size.footnote, weight: .bold))
                         .foregroundStyle(Color.textPrimary)
                 } else {
                     Text("Season starts soon")
-                        .font(.system(size: 12, weight: .bold))
+                        .font(.system(size: DSType.Size.footnote, weight: .bold))
                         .foregroundStyle(Color.textPrimary)
                 }
                 Text("Currently: \(phaseLabel)")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: DSType.Size.micro, weight: .medium))
                     .foregroundStyle(Color.textSecondary)
             }
             Spacer()
@@ -3740,7 +3748,7 @@ struct CareerDashboardView: View {
         HStack(alignment: .top, spacing: DSSpacing.md) {
             VStack {
                 Image(systemName: icon)
-                    .font(.system(size: 32, weight: .semibold))
+                    .font(.system(size: DSType.Size.title1, weight: .semibold))
                     .foregroundStyle(accent)
                     .frame(width: 44, height: 44)
                 Spacer()
@@ -3855,11 +3863,17 @@ struct CareerDashboardView: View {
     /// a tile that said "None active", and an "A+" glued onto whichever player
     /// happened to have the highest OVR, which is not a camp grade at all. The
     /// card also offered "View Training Plan" and then opened the roster.
+    ///
+    /// The "Day N / 21" counter is gone for the same reason: it was derived
+    /// from `career.currentWeek`, which sits at 19+ for the whole offseason
+    /// (only `startNewSeason` resets it), so `min(21, currentWeek)` printed
+    /// "Day 21 / 21" on the first visit — and there is no 21-day camp clock in
+    /// the model to print honestly instead. Camp is one visit, so the header
+    /// names the phase and the rows carry the real numbers.
     private var campHeroCard: some View {
-        let dayNum = max(1, min(21, career.currentWeek == 0 ? 7 : career.currentWeek))
         let topGrade = topCampGraded.first
         return phaseCardBase(icon: "figure.strengthtraining.traditional", accent: .accentGold) {
-            heroHeader("Training Camp · Day \(dayNum) / 21")
+            heroHeader("Training Camp · Install & Evaluation")
             heroStatRow("Workload heatmap",
                         value: "\(overloadedShare)% overloaded",
                         accent: overloadedShare >= 20 ? .warning : .accentGold)
@@ -3874,18 +3888,38 @@ struct CareerDashboardView: View {
     /// "60% starters / 40% backups" row was describing a number that does not
     /// exist, and "View Snap Counts" opened a roster that has none. What the
     /// preseason actually decides is who dresses and who is healthy enough to.
+    ///
+    /// The game number is the phase's own business, never the week counter's.
+    /// `career.currentWeek` is 19+ from the playoffs onwards and is only reset
+    /// in `startNewSeason`, so the old `min(3, career.currentWeek)` printed
+    /// "Game 3 / 3" from the first exhibition on. `PreseasonState.step` is the
+    /// authority `PreseasonView` itself reads (`currentGame`), so the hub reads
+    /// the same value and the two screens cannot disagree. A missing or stale
+    /// blob (different career, last year's slate) falls back to Game 1, which
+    /// is exactly what a freshly opened preseason is.
     private var preseasonHeroCard: some View {
-        let gameNum = max(1, min(3, career.currentWeek))
+        let flow = career.preseasonState.flatMap { $0.matches(career: career) ? $0 : nil }
+        let slateComplete = flow?.isComplete ?? false
+        let gameNum = min(PreseasonFlowBand.gameCount, max(1, flow?.step.gameIndex ?? 1))
         let injuredCount = players.filter(\.isInjured).count
         let standouts = topCampGraded.count
         return phaseCardBase(icon: "sportscourt.fill", accent: .accentGold) {
-            heroHeader("Preseason · Game \(gameNum) / 3")
+            heroHeader(slateComplete
+                       ? "Preseason · Slate complete"
+                       : "Preseason · Game \(gameNum) / \(PreseasonFlowBand.gameCount)")
+            heroStatRow("Exhibitions played",
+                        value: "\(flow?.results.count ?? 0) of \(flow?.slate.count ?? PreseasonFlowBand.gameCount)",
+                        accent: slateComplete ? .success : .accentGold)
             heroStatRow("Roster", value: "\(players.count) in camp")
             heroStatRow("Camp standouts", value: standouts == 0 ? "None graded yet" : "\(standouts) at A or better")
             heroStatRow("Injuries",
                         value: injuredCount == 0 ? "Fully healthy" : "\(injuredCount) OUT",
                         accent: injuredCount == 0 ? .success : .warning)
-            heroActionLink(title: "Set Depth Chart", destination: .depthChart)
+            // #205b: the card's one link is the thing the phase is FOR. It used
+            // to open the depth chart — a screen with its own task row — while
+            // the slate this card is describing had no door anywhere in the app.
+            heroActionLink(title: slateComplete ? "Review Preseason" : "Play Preseason Game",
+                           destination: .preseason)
         }
     }
 
@@ -4504,24 +4538,36 @@ struct CareerDashboardView: View {
     /// the offseason hero card's other numbers and disagreed with all of them.
     ///
     /// Now it is the same definition `FranchiseTagView`'s banner uses: contracts
-    /// that still run next year, plus tags booked for it, against the projected
-    /// cap. One arithmetic, so the dashboard and the tag screen cannot show the
-    /// user two different 2027s.
+    /// that still run next year, plus every forward row booked for it, against
+    /// the projected cap. One arithmetic — literally `DealTargetYear.space`, the
+    /// function the negotiation gate and `CapOverviewView`'s Y+1 bar read — so
+    /// the dashboard and the cap screen cannot show the user two different 2027s.
+    ///
+    /// **#186 — it counted tags only.** This tile hand-rolled the sum and passed
+    /// `forwardCommitted` the tagged men, which was the whole forward table back
+    /// when the tag was the only thing that could book a future year. A deferred
+    /// extension now parks its charge in the same table while deliberately
+    /// leaving `annualSalary` at the old rate until the binding rollover, so an
+    /// extended man was counted at his OLD number and his row was missed
+    /// entirely: extend a $12.0M player at $45.0M and this card overstated next
+    /// year's room by $33.0M while the Cap screen, correctly, showed the club
+    /// over. Delegating removes the second copy of the arithmetic rather than
+    /// repairing it — the whole roster goes in, and the row supersedes the man's
+    /// stale salary for the years it covers.
     private var nextYearCapSpace: String {
         guard let team else { return "—" }
-        let nextCap = Double(team.salaryCap) * (1.0 + ContractEngine.capGrowthPerSeason)
-        let underContract = players
-            .filter { $0.contractYearsRemaining > 1 && !$0.isFranchiseTagged }
-            .reduce(0) { $0 + $1.annualSalary }
-        let tags = CommittedCapLedger.forwardCommitted(
-            playerIDs: players.filter(\.isFranchiseTagged).map(\.id),
+        let space = DealTargetYear.space(
+            team: team,
+            roster: players,
+            currentSeason: career.currentSeason,
+            seasonsAhead: 1,
             careerID: career.id,
-            season: career.currentSeason + 1
+            excluding: nil
         )
         // Negative room is a real state (a club can be committed past next
         // year's projected cap), and `formatCap` renders it as "$-8.3M" — a
         // string that reads as a typo rather than as a problem. Named instead.
-        let capSpace = Int(nextCap) - underContract - tags
+        let capSpace = space.available
         return capSpace >= 0 ? formatCap(capSpace) : "Over by " + formatCap(-capSpace)
     }
 
@@ -4626,24 +4672,24 @@ private struct DashboardTile<Content: View>: View {
             // Header
             HStack(spacing: 6) {
                 Image(systemName: icon)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: DSType.Size.footnote, weight: .semibold))
                     .foregroundStyle(Color.accentGold)
                 Text(title)
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: DSType.Size.caption, weight: .bold))
                     .foregroundStyle(Color.accentGold)
                     .textCase(.uppercase)
                     .tracking(0.5)
                 Spacer()
                 if highlighted {
                     Text("ACTIVE")
-                        .font(.system(size: 8, weight: .heavy))
+                        .font(.system(size: DSType.Size.micro, weight: .heavy))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
                         .background(Capsule().fill(Color.accentGold))
                 }
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: DSType.Size.micro, weight: .medium))
                     .foregroundStyle(Color.textTertiary)
             }
 
@@ -4764,7 +4810,7 @@ private struct CoachingStaffReviewSheet: View {
                     Button(missingRequiredRoles.isEmpty ? "Advance" : "Advance Anyway") {
                         onConfirm()
                     }
-                    .font(.system(size: 15, weight: .bold))
+                    .font(.system(size: DSType.Size.callout, weight: .bold))
                     .foregroundStyle(missingRequiredRoles.isEmpty ? Color.accentGold : Color.warning)
                 }
             }
@@ -4776,7 +4822,7 @@ private struct CoachingStaffReviewSheet: View {
     private var headerSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("COACHING STAFF REVIEW")
-                .font(.system(size: 13, weight: .black))
+                .font(.system(size: DSType.Size.body, weight: .black))
                 .foregroundStyle(Color.accentGold)
                 .tracking(1.0)
 
@@ -4793,19 +4839,19 @@ private struct CoachingStaffReviewSheet: View {
             // Section header
             HStack(spacing: 6) {
                 Image(systemName: "person.2.fill")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: DSType.Size.footnote, weight: .semibold))
                     .foregroundStyle(Color.accentGold)
                 // #133: labelled for the population it counts. Bare "STAFF"
                 // here read as a contradiction of the dashboard tile's
                 // "23 / 23 Staff" — that one includes the scouting department,
                 // this list is the coaching seats it enumerates below.
                 Text("COACHING STAFF")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: DSType.Size.caption, weight: .bold))
                     .foregroundStyle(Color.accentGold)
                     .tracking(0.5)
                 Spacer()
                 Text("\(ledger.filledCoachSlots)/\(ledger.totalCoachSlots) filled")
-                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                    .font(.system(size: DSType.Size.caption, weight: .semibold).monospacedDigit())
                     .foregroundStyle(Color.textSecondary)
             }
             .padding(.bottom, 8)
@@ -4873,19 +4919,19 @@ private struct CoachingStaffReviewSheet: View {
         HStack(spacing: 8) {
             // Status icon
             Image(systemName: isFilled ? "checkmark.circle.fill" : (isRequired ? "exclamationmark.triangle.fill" : "circle"))
-                .font(.system(size: 14))
+                .font(.system(size: DSType.Size.body))
                 .foregroundStyle(isFilled ? Color.success : (isRequired ? Color.warning : Color.textTertiary))
                 .frame(width: 18)
 
             // Role abbreviation
             Text(role.abbreviation)
-                .font(.system(size: 10, weight: .heavy))
+                .font(.system(size: DSType.Size.micro, weight: .heavy))
                 .foregroundStyle(Color.accentGold)
                 .frame(width: 30, alignment: .leading)
 
             // Name
             Text(name)
-                .font(.system(size: 13, weight: isFilled ? .medium : .bold))
+                .font(.system(size: DSType.Size.body, weight: isFilled ? .medium : .bold))
                 .foregroundStyle(isFilled ? Color.textPrimary : Color.warning)
                 .lineLimit(1)
 
@@ -4894,7 +4940,7 @@ private struct CoachingStaffReviewSheet: View {
             // Scheme badge (for coordinators)
             if let scheme = schemeName {
                 Text(scheme)
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: DSType.Size.caption, weight: .semibold))
                     .foregroundStyle(Color.accentGold)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
@@ -4907,7 +4953,7 @@ private struct CoachingStaffReviewSheet: View {
             // OVR
             if let ovr = overall {
                 Text("\(ovr)")
-                    .font(.system(size: 13, weight: .bold).monospacedDigit())
+                    .font(.system(size: DSType.Size.body, weight: .bold).monospacedDigit())
                     .foregroundStyle(Color.forRating(ovr))
                     .frame(width: 30, alignment: .trailing)
             }
@@ -4926,10 +4972,10 @@ private struct CoachingStaffReviewSheet: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
                 Image(systemName: "book.closed.fill")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: DSType.Size.footnote, weight: .semibold))
                     .foregroundStyle(Color.accentGold)
                 Text("SCHEMES & EXPERTISE")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: DSType.Size.caption, weight: .bold))
                     .foregroundStyle(Color.accentGold)
                     .tracking(0.5)
             }
@@ -4983,15 +5029,15 @@ private struct CoachingStaffReviewSheet: View {
             // Offensive scheme
             HStack(spacing: 5) {
                 Image(systemName: "football.fill")
-                    .font(.system(size: 10))
+                    .font(.system(size: DSType.Size.micro))
                     .foregroundStyle(Color.accentBlue)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("OFFENSE")
-                        .font(.system(size: 8, weight: .heavy))
+                        .font(.system(size: DSType.Size.micro, weight: .heavy))
                         .foregroundStyle(Color.textTertiary)
                         .tracking(0.3)
                     Text(oc?.offensiveScheme?.displayName ?? "Not Set")
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.system(size: DSType.Size.caption, weight: .bold))
                         .foregroundStyle(oc?.offensiveScheme != nil ? Color.textPrimary : Color.textTertiary)
                 }
             }
@@ -5004,15 +5050,15 @@ private struct CoachingStaffReviewSheet: View {
             // Defensive scheme
             HStack(spacing: 5) {
                 Image(systemName: "shield.fill")
-                    .font(.system(size: 10))
+                    .font(.system(size: DSType.Size.micro))
                     .foregroundStyle(Color.danger)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("DEFENSE")
-                        .font(.system(size: 8, weight: .heavy))
+                        .font(.system(size: DSType.Size.micro, weight: .heavy))
                         .foregroundStyle(Color.textTertiary)
                         .tracking(0.3)
                     Text(dc?.defensiveScheme?.displayName ?? "Not Set")
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.system(size: DSType.Size.caption, weight: .bold))
                         .foregroundStyle(dc?.defensiveScheme != nil ? Color.textPrimary : Color.textTertiary)
                 }
             }
@@ -5059,7 +5105,7 @@ private struct CoachingStaffReviewSheet: View {
                     .fill(color)
                     .frame(width: 7, height: 7)
                 Text("\(expertise)")
-                    .font(.system(size: 9, weight: .bold).monospacedDigit())
+                    .font(.system(size: DSType.Size.caption, weight: .bold).monospacedDigit())
                     .foregroundStyle(color)
             }
         }
@@ -5101,10 +5147,10 @@ private struct CoachingStaffReviewSheet: View {
             // Current scheme header
             HStack(spacing: 6) {
                 Image(systemName: isOffensive ? "football.fill" : "shield.fill")
-                    .font(.system(size: 11))
+                    .font(.system(size: DSType.Size.caption))
                     .foregroundStyle(isOffensive ? Color.accentBlue : Color.danger)
                 Text("\(isOffensive ? "OFFENSIVE" : "DEFENSIVE") SCHEME: \(scheme)")
-                    .font(.system(size: 10, weight: .heavy))
+                    .font(.system(size: DSType.Size.micro, weight: .heavy))
                     .foregroundStyle(Color.textPrimary)
                     .tracking(0.3)
             }
@@ -5134,28 +5180,28 @@ private struct CoachingStaffReviewSheet: View {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 4) {
                         Image(systemName: "arrow.triangle.swap")
-                            .font(.system(size: 9))
+                            .font(.system(size: DSType.Size.micro))
                             .foregroundStyle(significantlyBetter ? Color.warning : Color.textTertiary)
                         Text("Alternative: \(alt.name)")
-                            .font(.system(size: 10, weight: .bold))
+                            .font(.system(size: DSType.Size.micro, weight: .bold))
                             .foregroundStyle(significantlyBetter ? Color.warning : Color.textSecondary)
                     }
 
                     HStack(spacing: 12) {
                         HStack(spacing: 3) {
                             Text("Coach:")
-                                .font(.system(size: 9))
+                                .font(.system(size: DSType.Size.caption))
                                 .foregroundStyle(Color.textTertiary)
                             Text("\(alt.coachFit)%")
-                                .font(.system(size: 9, weight: .bold).monospacedDigit())
+                                .font(.system(size: DSType.Size.caption, weight: .bold).monospacedDigit())
                                 .foregroundStyle(fitBarColor(alt.coachFit))
                         }
                         HStack(spacing: 3) {
                             Text("Roster:")
-                                .font(.system(size: 9))
+                                .font(.system(size: DSType.Size.caption))
                                 .foregroundStyle(Color.textTertiary)
                             Text("\(alt.rosterFit)%")
-                                .font(.system(size: 9, weight: .bold).monospacedDigit())
+                                .font(.system(size: DSType.Size.caption, weight: .bold).monospacedDigit())
                                 .foregroundStyle(fitBarColor(alt.rosterFit))
                         }
                     }
@@ -5164,9 +5210,9 @@ private struct CoachingStaffReviewSheet: View {
                     if significantlyBetter {
                         HStack(spacing: 4) {
                             Image(systemName: "lightbulb.fill")
-                                .font(.system(size: 9))
+                                .font(.system(size: DSType.Size.footnote))
                             Text("Consider switching -- \(alt.name) may be a better fit")
-                                .font(.system(size: 9, weight: .medium))
+                                .font(.system(size: DSType.Size.footnote, weight: .medium))
                         }
                         .foregroundStyle(Color.warning)
                         .padding(.leading, 13)
@@ -5185,11 +5231,11 @@ private struct CoachingStaffReviewSheet: View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
                 Text(label)
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: DSType.Size.caption, weight: .semibold))
                     .foregroundStyle(Color.textSecondary)
                     .frame(width: 60, alignment: .leading)
                 Text("\(percent)%")
-                    .font(.system(size: 11, weight: .bold).monospacedDigit())
+                    .font(.system(size: DSType.Size.caption, weight: .bold).monospacedDigit())
                     .foregroundStyle(color)
                 // Progress bar
                 GeometryReader { geo in
@@ -5204,7 +5250,7 @@ private struct CoachingStaffReviewSheet: View {
                 .frame(height: 6)
             }
             Text(detail)
-                .font(.system(size: 9))
+                .font(.system(size: DSType.Size.caption))
                 .foregroundStyle(Color.textTertiary)
                 .padding(.leading, 66)
         }
@@ -5298,15 +5344,15 @@ private struct CoachingStaffReviewSheet: View {
 
         return HStack(spacing: 6) {
             Image(systemName: "person.2.wave.2.fill")
-                .font(.system(size: 10))
+                .font(.system(size: DSType.Size.micro))
                 .foregroundStyle(gradeColor)
                 .frame(width: 18)
             Text("Staff chemistry: **\(grade)**")
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: DSType.Size.caption, weight: .medium))
                 .foregroundStyle(Color.textPrimary)
             Spacer()
             Text(grade)
-                .font(.system(size: 10, weight: .bold))
+                .font(.system(size: DSType.Size.micro, weight: .bold))
                 .foregroundStyle(gradeColor)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
@@ -5352,10 +5398,10 @@ private struct CoachingStaffReviewSheet: View {
             if !vacantRoles.isEmpty {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 12))
+                        .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(Color.warning)
                     Text("\(vacantRoles.count) position\(vacantRoles.count == 1 ? "" : "s") still vacant")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: DSType.Size.body, weight: .semibold))
                         .foregroundStyle(Color.warning)
                 }
             }
@@ -5363,26 +5409,26 @@ private struct CoachingStaffReviewSheet: View {
             if !missingRequiredRoles.isEmpty {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.octagon.fill")
-                        .font(.system(size: 12))
+                        .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(Color.danger)
                     Text("Missing: \(missingRequiredRoles.map { $0.displayName }.joined(separator: ", "))")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Color.danger)
+                        .font(.system(size: DSType.Size.footnote, weight: .medium))
+                        .foregroundStyle(Color.dangerText)
                 }
 
                 Text("Without coordinators: -20% offense/defense efficiency, slower player development")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(Color.danger.opacity(0.8))
+                    .font(.system(size: DSType.Size.footnote, weight: .medium))
+                    .foregroundStyle(Color.dangerText)
                     .padding(.leading, 18)
             }
 
             if !areSchemesSet {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 12))
+                        .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(Color.warning)
                     Text("Schemes not fully configured. Go to Staff > Schemes to set them.")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.system(size: DSType.Size.footnote, weight: .medium))
                         .foregroundStyle(Color.warning)
                 }
             }
@@ -5405,11 +5451,11 @@ private struct CoachingStaffReviewSheet: View {
             } label: {
                 HStack(spacing: 10) {
                     Image(systemName: "lock.fill")
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(.system(size: DSType.Size.callout, weight: .semibold))
                     Text(missingRequiredRoles.isEmpty && areSchemesSet
                          ? "Confirm & Advance to Review Roster"
                          : "Lock in Anyway & Advance")
-                        .font(.system(size: 15, weight: .bold))
+                        .font(.system(size: DSType.Size.callout, weight: .bold))
                 }
                 .foregroundStyle(Color.backgroundPrimary)
                 .frame(maxWidth: .infinity)
@@ -5427,7 +5473,7 @@ private struct CoachingStaffReviewSheet: View {
                 onCancel()
             } label: {
                 Text("Cancel")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: DSType.Size.body, weight: .semibold))
                     .foregroundStyle(Color.textSecondary)
                     .frame(maxWidth: .infinity)
                     .frame(height: 44)

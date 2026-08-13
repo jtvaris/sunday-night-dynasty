@@ -27,7 +27,7 @@ struct QuarterReportView: View {
             ScrollView {
                 VStack(spacing: 14) {
                     Text("END OF Q\(endedQuarter)")
-                        .font(.system(size: 13, weight: .black))
+                        .font(.system(size: DSType.Size.body, weight: .black))
                         .foregroundStyle(Color.backgroundPrimary)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 5)
@@ -39,7 +39,7 @@ struct QuarterReportView: View {
 
                     Button(action: onContinue) {
                         Text("Continue")
-                            .font(.system(size: 16, weight: .black))
+                            .font(.system(size: DSType.Size.callout, weight: .black))
                             .foregroundStyle(Color.backgroundPrimary)
                             .padding(.horizontal, 44)
                             .padding(.vertical, 13)
@@ -65,7 +65,7 @@ struct QuarterReportView: View {
         HStack(spacing: 14) {
             scoreBlock(abbr: awayTeam.abbreviation, score: engine.awayScore, isPlayer: !playerTeamIsHome)
             Text("—")
-                .font(.system(size: 14, weight: .black))
+                .font(.system(size: DSType.Size.body, weight: .black))
                 .foregroundStyle(Color.textTertiary)
             scoreBlock(abbr: homeTeam.abbreviation, score: engine.homeScore, isPlayer: playerTeamIsHome)
         }
@@ -77,10 +77,10 @@ struct QuarterReportView: View {
     private func scoreBlock(abbr: String, score: Int, isPlayer: Bool) -> some View {
         HStack(spacing: 7) {
             Text(abbr)
-                .font(.system(size: 14, weight: .heavy))
+                .font(.system(size: DSType.Size.body, weight: .heavy))
                 .foregroundStyle(isPlayer ? Color.accentGold : Color.textPrimary)
             Text("\(score)")
-                .font(.system(size: 19, weight: .black).monospacedDigit())
+                .font(.system(size: DSType.Size.title2, weight: .black).monospacedDigit())
                 .foregroundStyle(isPlayer ? Color.accentGold : Color.textPrimary)
         }
     }
@@ -132,10 +132,10 @@ struct QuarterPlayersPanel: View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 6) {
                 Image(systemName: icon)
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: DSType.Size.micro, weight: .bold))
                     .foregroundStyle(Color.accentGold)
                 Text(title)
-                    .font(.system(size: 10, weight: .black))
+                    .font(.system(size: DSType.Size.micro, weight: .black))
                     .foregroundStyle(Color.textTertiary)
                     .tracking(1.5)
             }
@@ -166,10 +166,10 @@ struct QuarterPlayersPanel: View {
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 4) {
                     Text(player.shortName)
-                        .font(.system(size: 11.5, weight: .bold))
+                        .font(.system(size: DSType.Size.footnote, weight: .bold))
                         .foregroundStyle(Color.textPrimary)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.7)
+                        .minimumScaleFactor(0.85)
                     Text("#\(player.displayNumber)")
                         .font(.system(size: DSType.Size.micro, weight: .bold).monospacedDigit())
                         .foregroundStyle(Color.textTertiary)
@@ -187,7 +187,7 @@ struct QuarterPlayersPanel: View {
                             .font(.system(size: DSType.Size.micro, weight: .semibold).monospacedDigit())
                             .foregroundStyle(Color.textSecondary)
                             .lineLimit(1)
-                            .minimumScaleFactor(0.75)
+                            .minimumScaleFactor(0.9)
                     }
                 }
             }
@@ -241,7 +241,7 @@ struct QuarterPlayersPanel: View {
                 Text("SUB? → \(bench.shortName)")
                     .font(.system(size: DSType.Size.micro, weight: .black))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .minimumScaleFactor(0.9)
             }
             .foregroundStyle(subsEnabled ? Color.backgroundPrimary : Color.textTertiary)
             .padding(.horizontal, 7)
@@ -343,7 +343,7 @@ struct QuarterPlayersPanel: View {
                     Image(systemName: expanded.wrappedValue ? "chevron.down" : "chevron.right")
                         .font(.system(size: DSType.Size.micro, weight: .black))
                     Text("BENCH (\(bench.count))")
-                        .font(.system(size: 9, weight: .black))
+                        .font(.system(size: DSType.Size.caption, weight: .black))
                         .tracking(1.0)
                     Spacer(minLength: 0)
                 }
@@ -380,10 +380,10 @@ struct QuarterPlayersPanel: View {
                 .foregroundStyle(Color.textTertiary)
                 .frame(width: 24, alignment: .leading)
             Text(player.shortName)
-                .font(.system(size: 10.5, weight: .semibold))
+                .font(.system(size: DSType.Size.caption, weight: .semibold))
                 .foregroundStyle(Color.textSecondary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.75)
+                .minimumScaleFactor(0.9)
             formIcon(engine.formStreak(player.id))
             temperamentBadge(player)
             if snaps > 0 {
@@ -393,7 +393,7 @@ struct QuarterPlayersPanel: View {
             }
             Spacer(minLength: 3)
             Text("\(player.overall)")
-                .font(.system(size: 10.5, weight: .black).monospacedDigit())
+                .font(.system(size: DSType.Size.caption, weight: .black).monospacedDigit())
                 .foregroundStyle(Color.forRating(player.overall))
             fatigueBar(player.fatigue)
         }
@@ -417,7 +417,7 @@ struct QuarterPlayersPanel: View {
                 .stroke(ringColor, style: StrokeStyle(lineWidth: 3, lineCap: .round))
                 .rotationEffect(.degrees(-90))
             Text("\(grade)")
-                .font(.system(size: 11.5, weight: .black).monospacedDigit())
+                .font(.system(size: DSType.Size.footnote, weight: .black).monospacedDigit())
                 .foregroundStyle(gradeColor(grade))
         }
         .frame(width: diameter, height: diameter)
@@ -432,7 +432,7 @@ struct QuarterPlayersPanel: View {
 
     private func trendArrow(_ trend: Int) -> some View {
         Image(systemName: trend >= 2 ? "arrow.up.right" : (trend <= -2 ? "arrow.down.right" : "arrow.right"))
-            .font(.system(size: 9, weight: .black))
+            .font(.system(size: DSType.Size.micro, weight: .black))
             .foregroundStyle(trend >= 2 ? Color.success : (trend <= -2 ? Color.danger : Color.textTertiary))
     }
 
@@ -441,12 +441,12 @@ struct QuarterPlayersPanel: View {
         switch streak {
         case .hot:
             Image(systemName: "flame.fill")
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: DSType.Size.micro, weight: .bold))
                 .foregroundStyle(Color.warning)
                 .accessibilityLabel(Text("Hot streak"))
         case .cold:
             Image(systemName: "snowflake")
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: DSType.Size.micro, weight: .bold))
                 .foregroundStyle(Color.accentBlue)
                 .accessibilityLabel(Text("Cold streak"))
         case nil:

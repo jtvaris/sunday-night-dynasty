@@ -127,7 +127,7 @@ struct DSResultSheet: View {
         VStack(alignment: .leading, spacing: DSSpacing.xs) {
             HStack(spacing: DSSpacing.xs) {
                 Image(systemName: tone.icon)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: DSType.Size.body, weight: .semibold))
                     .foregroundStyle(tone.accent)
                 Text(eyebrow.uppercased())
                     .font(DSType.display(11, .heavy))

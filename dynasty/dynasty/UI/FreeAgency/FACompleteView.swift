@@ -90,7 +90,7 @@ struct FACompleteView: View {
                         .tint(Color.accentGold)
                     Text("Loading FA Summary...")
                         .font(.subheadline)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(Color.textSecondary)
                 }
             } else {
             VStack(spacing: 0) {
@@ -224,7 +224,7 @@ struct FACompleteView: View {
 
         return VStack(spacing: 12) {
             Image(systemName: narrative.icon)
-                .font(.system(size: 56))
+                .font(.system(size: DSType.Size.hero))
                 .foregroundStyle(narrative.iconColor)
                 .shadow(color: narrative.iconColor.opacity(0.4), radius: 12)
 
@@ -375,7 +375,7 @@ struct FACompleteView: View {
             HStack(spacing: 20) {
                 // Large grade letter
                 Text(faGrade.grade)
-                    .font(.system(size: 56, weight: .black))
+                    .font(.system(size: DSType.Size.hero, weight: .black))
                     .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(faGrade.grade))
                     .frame(width: 80)
 

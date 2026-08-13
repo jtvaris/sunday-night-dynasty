@@ -42,6 +42,24 @@ struct LeagueRostersView: View {
     }
 
     @State private var mode: BrowseMode = .teams
+
+    // MARK: Column sorts (#187)
+
+    /// The club board's sortable columns.
+    ///
+    /// There is no separate "as the standings had it" default case: `record` IS
+    /// the standings order (wins first, then fewest losses), so the board opens
+    /// with `REC` marked descending and every column is reachable from every
+    /// other one. A default that no tap can return to is a dead state.
+    enum ClubSort: Hashable { case club, record, roster, ovr }
+
+    /// The player search's sortable columns. Opens on `OVR` descending, which is
+    /// the order the search shipped with.
+    enum SearchSort: Hashable { case player, club, age, salary, ovr }
+
+    @State private var clubSort = DSSortState<ClubSort>(key: .record)
+    @State private var searchSort = DSSortState<SearchSort>(key: .ovr)
+
     @State private var searchText: String = ""
     @State private var filterPosition: Position?
     @State private var minOVR: Int = 0
@@ -146,13 +164,10 @@ struct LeagueRostersView: View {
     // MARK: - Division Section
 
     private func divisionSection(_ division: Division, rosters: [UUID: [Player]]) -> some View {
-        let teams = allTeams
-            .filter { $0.conference == conference && $0.division == division }
-            .sorted { lhs, rhs in
-                if lhs.wins != rhs.wins { return lhs.wins > rhs.wins }
-                if lhs.losses != rhs.losses { return lhs.losses < rhs.losses }
-                return lhs.abbreviation < rhs.abbreviation
-            }
+        let teams = sortedClubs(
+            allTeams.filter { $0.conference == conference && $0.division == division },
+            rosters: rosters
+        )
 
         return VStack(alignment: .leading, spacing: DSSpacing.xs) {
             // The division head is `DSGroupRollup` — Big Board's tier header,
@@ -164,7 +179,11 @@ struct LeagueRostersView: View {
                 tint: Color.accentGold
             )
 
-            LeagueBoardHeaderRow()
+            // One sort state behind all four division headers, so tapping OVR
+            // anywhere re-orders the whole conference the same way. Four
+            // independently-sorted tables on one screen would be four answers to
+            // one question.
+            LeagueBoardHeaderRow(sort: $clubSort)
 
             ForEach(teams) { team in
                 NavigationLink {
@@ -253,6 +272,39 @@ struct LeagueRostersView: View {
         )
     }
 
+    /// One division's clubs, in the order the header says they are in (#187).
+    ///
+    /// `dsSorted` because the tiebreak is not optional here: three clubs at 2-2
+    /// with 53 men each compare equal on two of the four columns, and without a
+    /// total order the division table reshuffles itself every time SwiftUI
+    /// re-evaluates the body. Clubs tie on the club code — a human-readable,
+    /// stable last word — before falling through to the id the standard requires.
+    private func sortedClubs(_ teams: [Team], rosters: [UUID: [Player]]) -> [Team] {
+        let asc = clubSort.ascending
+        return teams.dsSorted(asc, id: \.id) { lhs, rhs in
+            let primary: ComparisonResult
+            switch clubSort.key {
+            case .club:
+                primary = dsCompare(lhs.fullName, rhs.fullName)
+            case .record:
+                // The standings order, expressed ascending: fewest wins first,
+                // then most losses. Descending is therefore the table the
+                // board has always opened on.
+                let wins = dsCompare(lhs.wins, rhs.wins)
+                primary = wins != .orderedSame ? wins : dsCompare(rhs.losses, lhs.losses)
+            case .roster:
+                primary = dsCompare(rosters[lhs.id]?.count ?? 0, rosters[rhs.id]?.count ?? 0)
+            case .ovr:
+                primary = dsCompare(
+                    startingLineupOverall(rosters[lhs.id] ?? [], chart: userCharts[lhs.id]),
+                    startingLineupOverall(rosters[rhs.id] ?? [], chart: userCharts[rhs.id])
+                )
+            }
+            if primary != .orderedSame { return primary }
+            return dsCompare(lhs.abbreviation, rhs.abbreviation)
+        }
+    }
+
     /// Cap room, as a state rather than a sentence: over the cap is a different
     /// KIND of trade partner from under it.
     private func capSlot(_ team: Team) -> DSStateSlot {
@@ -302,19 +354,22 @@ private enum LeagueColumn {
 // MARK: - League Board Header Row
 
 private struct LeagueBoardHeaderRow: View {
+    @Binding var sort: DSSortState<LeagueRostersView.ClubSort>
+
     var body: some View {
         DSListHeaderRow(
             density: .scan,
             reservesBadge: true,
             badgeLabel: "TM",
             portraitWidth: 0,
-            identityLabel: "CLUB",
             affordance: .disclosure
         ) {
+            DSSortableColumnHeader("CLUB", key: .club, sort: $sort, alignment: .leading)
+        } columns: {
             Spacer(minLength: DSSpacing.xxs)
-            DSColumnHeader("REC", width: LeagueColumn.record)
-            DSColumnHeader("PLR", width: LeagueColumn.roster)
-            DSColumnHeader("OVR", width: LeagueColumn.ovr)
+            DSSortableColumnHeader("REC", key: .record, sort: $sort, width: LeagueColumn.record)
+            DSSortableColumnHeader("PLR", key: .roster, sort: $sort, width: LeagueColumn.roster)
+            DSSortableColumnHeader("OVR", key: .ovr,    sort: $sort, width: LeagueColumn.ovr)
         }
         // Matches the row's own inner inset, so the labels sit over their
         // numbers rather than 8 pt to the left of them.
@@ -325,19 +380,22 @@ private struct LeagueBoardHeaderRow: View {
 // MARK: - Player Search Header Row
 
 private struct LeagueSearchHeaderRow: View {
+    @Binding var sort: DSSortState<LeagueRostersView.SearchSort>
+
     var body: some View {
         DSListHeaderRow(
             density: .scan,
             reservesBadge: true,
             badgeLabel: "POS",
-            identityLabel: "PLAYER",
             affordance: .disclosure
         ) {
+            DSSortableColumnHeader("PLAYER", key: .player, sort: $sort, alignment: .leading)
+        } columns: {
             Spacer(minLength: DSSpacing.xxs)
-            DSColumnHeader("CLUB", width: LeagueColumn.team)
-            DSColumnHeader("AGE",  width: LeagueColumn.age)
-            DSColumnHeader("SAL",  width: LeagueColumn.money)
-            DSColumnHeader("OVR",  width: LeagueColumn.ovr)
+            DSSortableColumnHeader("CLUB", key: .club,   sort: $sort, width: LeagueColumn.team)
+            DSSortableColumnHeader("AGE",  key: .age,    sort: $sort, width: LeagueColumn.age)
+            DSSortableColumnHeader("SAL",  key: .salary, sort: $sort, width: LeagueColumn.money)
+            DSSortableColumnHeader("OVR",  key: .ovr,    sort: $sort, width: LeagueColumn.ovr)
         }
         .padding(.horizontal, DSSpacing.xs)
     }
@@ -446,7 +504,7 @@ struct LeagueTeamRosterView: View {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 12) {
                     Text(team.abbreviation)
-                        .font(.system(size: 16, weight: .heavy))
+                        .font(.system(size: DSType.Size.callout, weight: .heavy))
                         .foregroundStyle(.white)
                         .frame(width: 54)
                         .padding(.vertical, 9)
@@ -542,7 +600,30 @@ extension LeagueRostersView {
             return true
         }
 
-        return matches.sorted { $0.overall > $1.overall }
+        // #187: the header's column, with the id tiebreak that makes the order
+        // total. This list is capped at `searchResultCap`, so an unstable
+        // comparator would not just reshuffle rows — it would change WHICH 120
+        // of a 400-hit result the user is shown, from one redraw to the next.
+        let lookup = teamsByID
+        let asc = searchSort.ascending
+        return matches.dsSorted(asc, id: \.id) { lhs, rhs in
+            switch searchSort.key {
+            case .player:
+                let last = dsCompare(lhs.lastName, rhs.lastName)
+                return last != .orderedSame ? last : dsCompare(lhs.firstName, rhs.firstName)
+            case .club:
+                return dsCompare(
+                    lhs.teamID.flatMap { lookup[$0]?.abbreviation } ?? "",
+                    rhs.teamID.flatMap { lookup[$0]?.abbreviation } ?? ""
+                )
+            case .age:
+                return dsCompare(lhs.age, rhs.age)
+            case .salary:
+                return dsCompare(lhs.annualSalary, rhs.annualSalary)
+            case .ovr:
+                return dsCompare(lhs.overall, rhs.overall)
+            }
+        }
     }
 
     private var teamsByID: [UUID: Team] {
@@ -581,7 +662,7 @@ extension LeagueRostersView {
                         )
                         .padding(.bottom, 2)
 
-                        LeagueSearchHeaderRow()
+                        LeagueSearchHeaderRow(sort: $searchSort)
 
                         ForEach(shown) { player in
                             NavigationLink {
@@ -746,7 +827,7 @@ extension LeagueRostersView {
                 .font(DSType.text(13, .semibold))
             if let systemImage {
                 Image(systemName: systemImage)
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: DSType.Size.caption, weight: .bold))
             }
         }
         .lineLimit(1)

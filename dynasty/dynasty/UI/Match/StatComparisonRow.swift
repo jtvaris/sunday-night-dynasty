@@ -42,7 +42,7 @@ struct StatComparisonRow: View {
         VStack(spacing: 6) {
             // Centered label
             Text(label)
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: DSType.Size.footnote, weight: .semibold))
                 .foregroundStyle(Color.textTertiary)
                 .frame(maxWidth: .infinity, alignment: .center)
 
@@ -50,11 +50,11 @@ struct StatComparisonRow: View {
             HStack(spacing: 8) {
                 // Away value (right-aligned)
                 Text(awayValue)
-                    .font(.system(size: 14, weight: .bold).monospacedDigit())
+                    .font(.system(size: DSType.Size.body, weight: .bold).monospacedDigit())
                     .foregroundStyle(awayTextColor)
                     .frame(width: 48, alignment: .trailing)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+                    .minimumScaleFactor(0.8)
 
                 // Proportional bar
                 GeometryReader { geo in
@@ -86,11 +86,11 @@ struct StatComparisonRow: View {
 
                 // Home value (left-aligned)
                 Text(homeValue)
-                    .font(.system(size: 14, weight: .bold).monospacedDigit())
+                    .font(.system(size: DSType.Size.body, weight: .bold).monospacedDigit())
                     .foregroundStyle(homeTextColor)
                     .frame(width: 48, alignment: .leading)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+                    .minimumScaleFactor(0.8)
             }
         }
         .accessibilityElement(children: .ignore)

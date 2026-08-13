@@ -129,7 +129,7 @@ struct CoachesBoardView: View {
         HStack(spacing: 14) {
             HStack(spacing: 8) {
                 Image(systemName: "rectangle.grid.3x2.fill")
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.system(size: DSType.Size.body, weight: .bold))
                     .foregroundStyle(Color.accentGold)
                 Text("COACH'S BOARD · \(teamAbbr)")
                     .font(DSType.display(DSType.Size.body, .black))
@@ -158,7 +158,7 @@ struct CoachesBoardView: View {
             if !engine.pendingSubstitutions.isEmpty {
                 HStack(spacing: 5) {
                     Image(systemName: "clock.fill")
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.system(size: DSType.Size.micro, weight: .bold))
                     Text(engine.pendingSubstitutions.count == 1
                          ? "1 sub at next whistle"
                          : "\(engine.pendingSubstitutions.count) subs at next whistle")
@@ -174,7 +174,7 @@ struct CoachesBoardView: View {
                 dismiss()
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 15, weight: .bold))
+                    .font(.system(size: DSType.Size.callout, weight: .bold))
                     .foregroundStyle(Color.textPrimary)
                     .frame(width: 44, height: 44)
                     .background(Color.backgroundTertiary, in: Circle())
@@ -238,7 +238,11 @@ struct CoachesBoardView: View {
         GeometryReader { geo in
             let unit = currentUnit
             let slots = showingOffense ? CoachesBoardView.offenseSlots : CoachesBoardView.defenseSlots
-            let cardWidth = min(76, max(52, geo.size.width * 0.125))
+            // 0.135 is the widest factor the tightest slot pitch allows: the
+            // O-line / D-line columns sit 0.14 apart, so anything wider makes
+            // neighbouring cards collide. Every extra point here is text room
+            // for the 11 pt name line below.
+            let cardWidth = min(76, max(52, geo.size.width * 0.135))
             ZStack {
                 boardBackdrop
                 ForEach(Array(unit.players.enumerated()), id: \.element.id) { role, player in
@@ -295,7 +299,7 @@ struct CoachesBoardView: View {
                 context.draw(
                     Text("LOS")
                         .font(DSType.display(DSType.Size.caption, .black))
-                        .foregroundStyle(.white.opacity(0.55)),
+                        .foregroundStyle(.white.opacity(0.78)),
                     at: CGPoint(x: size.width - 26, y: losY - 10)
                 )
             }
@@ -319,11 +323,17 @@ struct CoachesBoardView: View {
             withAnimation(.easeInOut(duration: 0.15)) { selectedPlayerID = player.id }
         } label: {
             VStack(spacing: 3) {
-                gradeRing(grade: grade, fatigue: fatigue, diameter: 44, gradeFontSize: 17)
+                gradeRing(grade: grade, fatigue: fatigue, diameter: 44,
+                          gradeFontSize: DSType.Size.title3)
                 Text(player.shortName)
-                    .font(DSType.text(DSType.Size.micro, .bold))
+                    .font(DSType.text(DSType.Size.caption, .bold))
                     .foregroundStyle(Color.textPrimary)
                     .lineLimit(1)
+                    // The card is hard-capped at 52–76 pt by the slot pitch, so
+                    // "J. Bonaventure" cannot render at 11 pt here. This floor is
+                    // an overflow guard, not a legibility target: names ship at
+                    // 11 pt and only long surnames shrink — losing the tail of a
+                    // name to truncation is worse than a smaller full name.
                     .minimumScaleFactor(0.7)
                 Text("#\(player.displayNumber) \(player.position.rawValue)")
                     .font(DSType.display(DSType.Size.caption, .black))
@@ -332,7 +342,7 @@ struct CoachesBoardView: View {
                     .minimumScaleFactor(0.75)
             }
             .padding(.vertical, 7)
-            .padding(.horizontal, 3)
+            .padding(.horizontal, 2)
             .frame(width: width)
             .background(
                 RoundedRectangle(cornerRadius: 11)
@@ -415,7 +425,7 @@ struct CoachesBoardView: View {
             legendDot(color: .danger, label: "<55")
             Text("· ring = fatigue")
                 .font(DSType.text(DSType.Size.micro, .semibold, prose: true))
-                .foregroundStyle(.white.opacity(0.5))
+                .foregroundStyle(.white.opacity(0.85))
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
@@ -427,7 +437,7 @@ struct CoachesBoardView: View {
             Circle().fill(color).frame(width: 7, height: 7)
             Text(label)
                 .font(DSType.display(DSType.Size.micro, .bold))
-                .foregroundStyle(.white.opacity(0.7))
+                .foregroundStyle(.white.opacity(0.85))
         }
     }
 
@@ -459,7 +469,7 @@ struct CoachesBoardView: View {
             ForEach(engine.pendingSubstitutions) { sub in
                 HStack(spacing: 8) {
                     Image(systemName: "arrow.triangle.2.circlepath")
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.system(size: DSType.Size.caption, weight: .bold))
                         .foregroundStyle(Color.warning)
                     Text("\(sub.benchName) in for \(sub.fieldName)")
                         .font(DSType.text(DSType.Size.body, .semibold))
@@ -470,7 +480,7 @@ struct CoachesBoardView: View {
                         engine.cancelSubstitution(sub.id)
                     } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 17))
+                            .font(.system(size: DSType.Size.title3))
                             .foregroundStyle(Color.textTertiary)
                             .frame(width: 32, height: 32)
                     }
@@ -564,7 +574,7 @@ struct CoachesBoardView: View {
                         .font(DSType.display(DSType.Size.footnote, .semibold))
                         .foregroundStyle(Color.textSecondary)
                         .lineLimit(2)
-                        .minimumScaleFactor(0.8)
+                        .minimumScaleFactor(0.85)
                 }
                 Spacer(minLength: 0)
             }
@@ -625,15 +635,15 @@ struct CoachesBoardView: View {
         switch player.mentalTemperament {
         case .egoDriven:
             Image(systemName: "crown.fill")
-                .font(.system(size: 10, weight: .bold))
+                .font(.system(size: DSType.Size.micro, weight: .bold))
                 .foregroundStyle(Color.accentGold)
         case .streaky:
             Image(systemName: "bolt.fill")
-                .font(.system(size: 10, weight: .bold))
+                .font(.system(size: DSType.Size.micro, weight: .bold))
                 .foregroundStyle(Color.warning)
         case .unflappable:
             Image(systemName: "checkmark.seal.fill")
-                .font(.system(size: 10, weight: .bold))
+                .font(.system(size: DSType.Size.micro, weight: .bold))
                 .foregroundStyle(Color.accentBlue)
         case .neutral:
             EmptyView()
@@ -676,7 +686,7 @@ struct CoachesBoardView: View {
 
     private func trendArrow(_ trend: Int) -> some View {
         Image(systemName: trend >= 2 ? "arrow.up.right" : (trend <= -2 ? "arrow.down.right" : "arrow.right"))
-            .font(.system(size: 14, weight: .black))
+            .font(.system(size: DSType.Size.body, weight: .black))
             .foregroundStyle(trendColor(trend))
     }
 
@@ -699,7 +709,7 @@ struct CoachesBoardView: View {
                 .foregroundStyle(total == 0 ? Color.textTertiaryReadable : Color.textSecondary)
                 .frame(width: 104, alignment: .leading)
                 .lineLimit(1)
-                .minimumScaleFactor(0.7)
+                .minimumScaleFactor(0.9)
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.backgroundTertiary)
@@ -825,7 +835,7 @@ struct CoachesBoardView: View {
             if isQueued {
                 HStack(spacing: 4) {
                     Image(systemName: "clock.fill")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.system(size: DSType.Size.micro, weight: .bold))
                     Text("QUEUED")
                         .font(DSType.display(DSType.Size.micro, .black))
                 }
@@ -844,7 +854,7 @@ struct CoachesBoardView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "arrow.up.circle.fill")
-                            .font(.system(size: 11, weight: .bold))
+                            .font(.system(size: DSType.Size.caption, weight: .bold))
                         Text("SUB IN")
                             .font(DSType.display(DSType.Size.caption, .black))
                             .tracking(0.5)
@@ -915,7 +925,7 @@ struct CoachesBoardView: View {
     private func sectionTitle(_ text: String, icon: String, tint: Color) -> some View {
         HStack(spacing: 6) {
             Image(systemName: icon)
-                .font(.system(size: 10, weight: .bold))
+                .font(.system(size: DSType.Size.micro, weight: .bold))
                 .foregroundStyle(tint)
             Text(text)
                 .font(DSType.display(DSType.Size.caption, .heavy))

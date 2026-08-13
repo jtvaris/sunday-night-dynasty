@@ -259,7 +259,7 @@ struct FantasyDraftView: View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("ROUND \(currentRound) OF \(FantasyDraftEngine.rosterSize) \u{2022} PICK \(pickInRound)/\(teams.count)")
-                    .font(.system(size: 10, weight: .heavy).monospacedDigit())
+                    .font(.system(size: DSType.Size.micro, weight: .heavy).monospacedDigit())
                     .tracking(1.2)
                     .foregroundStyle(Color.textTertiary)
                 HStack(spacing: 8) {
@@ -267,10 +267,10 @@ struct FantasyDraftView: View {
                         TeamLogoPlaceholder(abbreviation: team.abbreviation, size: 26)
                     }
                     Text(isUserTurn ? "You're on the clock" : "Simulating...")
-                        .font(.system(size: 17, weight: .bold))
+                        .font(.system(size: DSType.Size.title3, weight: .bold))
                         .foregroundStyle(Color.textPrimary)
                     Text("\(userRoster.count)/\(FantasyDraftEngine.rosterSize) drafted")
-                        .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                        .font(.system(size: DSType.Size.footnote, weight: .semibold).monospacedDigit())
                         .foregroundStyle(Color.textSecondary)
                 }
             }
@@ -316,9 +316,9 @@ struct FantasyDraftView: View {
     private func actionChip(icon: String, label: String, tint: Color) -> some View {
         HStack(spacing: 5) {
             Image(systemName: icon)
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: DSType.Size.caption, weight: .semibold))
             Text(label)
-                .font(.system(size: 12, weight: .bold))
+                .font(.system(size: DSType.Size.footnote, weight: .bold))
         }
         .foregroundStyle(tint)
         .padding(.horizontal, 12)
@@ -334,12 +334,12 @@ struct FantasyDraftView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 Text("NEEDS")
-                    .font(.system(size: 9, weight: .heavy))
+                    .font(.system(size: DSType.Size.micro, weight: .heavy))
                     .tracking(1.2)
                     .foregroundStyle(Color.textTertiary)
                 if userNeeds.isEmpty {
                     Text("Roster blueprint filled")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: DSType.Size.caption, weight: .semibold))
                         .foregroundStyle(Color.success)
                 }
                 ForEach(userNeeds, id: \.position) { need in
@@ -347,7 +347,7 @@ struct FantasyDraftView: View {
                         positionFilter = positionFilter == need.position ? nil : need.position
                     } label: {
                         Text("\(need.position.rawValue)\(need.missing > 1 ? " \u{00D7}\(need.missing)" : "")")
-                            .font(.system(size: 11, weight: .bold))
+                            .font(.system(size: DSType.Size.caption, weight: .bold))
                             .foregroundStyle(positionFilter == need.position ? Color.backgroundPrimary : Color.warning)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
@@ -378,7 +378,7 @@ struct FantasyDraftView: View {
     private func filterChip(label: String, isOn: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(label)
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: DSType.Size.footnote, weight: .semibold))
                 .foregroundStyle(isOn ? Color.backgroundPrimary : Color.textSecondary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
@@ -394,7 +394,7 @@ struct FantasyDraftView: View {
     private var bestAvailableList: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("BEST AVAILABLE")
-                .font(.system(size: 10, weight: .heavy))
+                .font(.system(size: DSType.Size.micro, weight: .heavy))
                 .tracking(1.2)
                 .foregroundStyle(Color.textTertiary)
 
@@ -412,17 +412,17 @@ struct FantasyDraftView: View {
     private func poolRow(_ entry: FantasyDraftEngine.PoolEntry) -> some View {
         HStack(spacing: 10) {
             Text(entry.position.rawValue)
-                .font(.system(size: 11, weight: .heavy))
+                .font(.system(size: DSType.Size.caption, weight: .heavy))
                 .foregroundStyle(Color.textSecondary)
                 .frame(width: 36, alignment: .leading)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(entry.name)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: DSType.Size.body, weight: .semibold))
                     .foregroundStyle(Color.textPrimary)
                     .lineLimit(1)
                 Text("Age \(entry.age)")
-                    .font(.system(size: 10).monospacedDigit())
+                    .font(.system(size: DSType.Size.caption).monospacedDigit())
                     .foregroundStyle(Color.textTertiary)
             }
 
@@ -430,7 +430,7 @@ struct FantasyDraftView: View {
 
             VStack(spacing: 0) {
                 Text("\(entry.overall)")
-                    .font(.system(size: 16, weight: .black).monospacedDigit())
+                    .font(.system(size: DSType.Size.callout, weight: .black).monospacedDigit())
                     .foregroundStyle(Color.forRating(entry.overall))
                 Text("OVR")
                     .font(.system(size: DSType.Size.micro, weight: .bold))
@@ -442,7 +442,7 @@ struct FantasyDraftView: View {
                 draftForUser(entry)
             } label: {
                 Text("DRAFT")
-                    .font(.system(size: 11, weight: .heavy))
+                    .font(.system(size: DSType.Size.caption, weight: .heavy))
                     .tracking(0.8)
                     .foregroundStyle(Color.backgroundPrimary)
                     .padding(.horizontal, 12)
@@ -466,7 +466,7 @@ struct FantasyDraftView: View {
     private var recentPicksPanel: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("LATEST PICKS")
-                .font(.system(size: 10, weight: .heavy))
+                .font(.system(size: DSType.Size.micro, weight: .heavy))
                 .tracking(1.2)
                 .foregroundStyle(Color.textTertiary)
 
@@ -474,7 +474,7 @@ struct FantasyDraftView: View {
                 VStack(spacing: 4) {
                     if recentPicks.isEmpty {
                         Text("The board is live — your pick opens the draft.")
-                            .font(.system(size: 11))
+                            .font(.system(size: DSType.Size.footnote))
                             .foregroundStyle(Color.textTertiary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(8)
@@ -482,20 +482,20 @@ struct FantasyDraftView: View {
                     ForEach(recentPicks) { pick in
                         HStack(spacing: 8) {
                             Text("R\(pick.round)")
-                                .font(.system(size: 9, weight: .bold).monospacedDigit())
+                                .font(.system(size: DSType.Size.micro, weight: .bold).monospacedDigit())
                                 .foregroundStyle(Color.textTertiary)
                                 .frame(width: 26, alignment: .leading)
                             Text(pick.teamAbbreviation)
-                                .font(.system(size: 11, weight: .heavy))
+                                .font(.system(size: DSType.Size.caption, weight: .heavy))
                                 .foregroundStyle(pick.isUserPick ? Color.accentGold : Color.textSecondary)
                                 .frame(width: 34, alignment: .leading)
                             VStack(alignment: .leading, spacing: 0) {
                                 Text(pick.playerName)
-                                    .font(.system(size: 11, weight: .semibold))
+                                    .font(.system(size: DSType.Size.footnote, weight: .semibold))
                                     .foregroundStyle(Color.textPrimary)
                                     .lineLimit(1)
                                 Text("\(pick.position.rawValue) \u{2022} \(pick.overall) OVR")
-                                    .font(.system(size: 9).monospacedDigit())
+                                    .font(.system(size: DSType.Size.caption).monospacedDigit())
                                     .foregroundStyle(Color.textTertiary)
                             }
                             Spacer(minLength: 0)
@@ -560,7 +560,7 @@ struct FantasyDraftView: View {
                     VStack(spacing: 10) {
                         TeamLogoPlaceholder(abbreviation: team.abbreviation, size: 64)
                         Text("Draft Complete")
-                            .font(.system(size: 26, weight: .bold))
+                            .font(.system(size: DSType.Size.title1, weight: .bold))
                             .foregroundStyle(Color.textPrimary)
                         Text("Your \(team.fullName) roster is set — \(userRoster.count) players drafted.")
                             .font(.subheadline)
@@ -573,10 +573,10 @@ struct FantasyDraftView: View {
                     ForEach(summaryGroups, id: \.label) { group in
                         VStack(spacing: 4) {
                             Text("\(group.count)")
-                                .font(.system(size: 20, weight: .bold).monospacedDigit())
+                                .font(.system(size: DSType.Size.title2, weight: .bold).monospacedDigit())
                                 .foregroundStyle(Color.textPrimary)
                             Text(group.label)
-                                .font(.system(size: 9, weight: .bold))
+                                .font(.system(size: DSType.Size.caption, weight: .bold))
                                 .foregroundStyle(Color.textTertiary)
                         }
                         .frame(maxWidth: .infinity)
@@ -587,21 +587,21 @@ struct FantasyDraftView: View {
 
                 VStack(alignment: .leading, spacing: 6) {
                     Text("TOP OF YOUR CLASS")
-                        .font(.system(size: 10, weight: .heavy))
+                        .font(.system(size: DSType.Size.micro, weight: .heavy))
                         .tracking(1.2)
                         .foregroundStyle(Color.textTertiary)
                     ForEach(userRoster.sorted { $0.overall > $1.overall }.prefix(8)) { entry in
                         HStack(spacing: 10) {
                             Text(entry.position.rawValue)
-                                .font(.system(size: 11, weight: .heavy))
+                                .font(.system(size: DSType.Size.caption, weight: .heavy))
                                 .foregroundStyle(Color.textSecondary)
                                 .frame(width: 36, alignment: .leading)
                             Text(entry.name)
-                                .font(.system(size: 14, weight: .semibold))
+                                .font(.system(size: DSType.Size.body, weight: .semibold))
                                 .foregroundStyle(Color.textPrimary)
                             Spacer()
                             Text("\(entry.overall) OVR")
-                                .font(.system(size: 13, weight: .bold).monospacedDigit())
+                                .font(.system(size: DSType.Size.body, weight: .bold).monospacedDigit())
                                 .foregroundStyle(Color.forRating(entry.overall))
                         }
                         .padding(.vertical, 4)
@@ -614,7 +614,7 @@ struct FantasyDraftView: View {
                     finish()
                 } label: {
                     Text("START YOUR CAREER")
-                        .font(.system(size: 16, weight: .bold))
+                        .font(.system(size: DSType.Size.callout, weight: .bold))
                         .tracking(1.5)
                         .foregroundStyle(Color.backgroundPrimary)
                         .frame(maxWidth: 500)

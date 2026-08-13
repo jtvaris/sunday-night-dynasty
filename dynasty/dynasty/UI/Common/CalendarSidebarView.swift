@@ -259,7 +259,7 @@ struct CalendarSidebarView: View {
             switch task.status {
             case .done:
                 Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 20))
+                    .font(.system(size: DSType.Size.title2))
                     .foregroundStyle(Color.accentGold)
             case .inProgress:
                 Image(systemName: task.icon)

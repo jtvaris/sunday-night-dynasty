@@ -342,7 +342,7 @@ struct PlayerRowView: View {
 
             // Development potential indicator
             Text(shortPotentialLabel)
-                .font(.system(size: 13, weight: .bold))
+                .font(.system(size: DSType.Size.body, weight: .bold))
                 .foregroundStyle(shortPotentialColor)
                 .dsColumn(20)
 
@@ -637,7 +637,7 @@ struct PlayerRowView: View {
         }()
         return VStack(spacing: 0) {
             Text(label)
-                .font(.system(size: 16, weight: .bold))
+                .font(.system(size: DSType.Size.callout, weight: .bold))
                 .foregroundStyle(form.color)
         }
         .dsColumn(DSListColumn.glyph)
@@ -786,7 +786,7 @@ struct PlayerRowView: View {
 
     private var moraleIndicator: some View {
         Image(systemName: moraleSystemImage)
-            .font(.system(size: 16))
+            .font(.system(size: DSType.Size.callout))
             .foregroundStyle(moraleColor)
             .accessibilityLabel("Morale \(moraleLabel)")
     }
@@ -796,7 +796,7 @@ struct PlayerRowView: View {
             if player.isInjured {
                 HStack(spacing: 2) {
                     Image(systemName: "cross.circle.fill")
-                        .font(.system(size: 14))
+                        .font(.system(size: DSType.Size.body))
                         .foregroundStyle(Color.danger)
                     Text("\(player.injuryWeeksRemaining)")
                         .font(DSType.display(11, .bold))
@@ -804,7 +804,7 @@ struct PlayerRowView: View {
                 }
             } else {
                 Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 14))
+                    .font(.system(size: DSType.Size.body))
                     .foregroundStyle(Color.success)
             }
         }
@@ -815,7 +815,7 @@ struct PlayerRowView: View {
         Group {
             let trend = developmentTrend
             Image(systemName: trend.icon)
-                .font(.system(size: 14, weight: .bold))
+                .font(.system(size: DSType.Size.body, weight: .bold))
                 .foregroundStyle(trend.color)
         }
         .accessibilityLabel("Development \(developmentTrend.label)")

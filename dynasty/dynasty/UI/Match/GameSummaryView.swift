@@ -115,14 +115,14 @@ struct GameSummaryView: View {
             // FINAL badge (+ weather chip when the game wasn't played clear)
             HStack(spacing: 8) {
                 Text("FINAL")
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.system(size: DSType.Size.footnote, weight: .bold))
                     .foregroundStyle(Color.accentGold)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 4)
                     .background(Color.accentGold.opacity(0.15), in: Capsule())
                 if let weather, weather != .clear {
                     Label(weather.label, systemImage: weather.symbolName)
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.system(size: DSType.Size.caption, weight: .bold))
                         .foregroundStyle(Color.accentBlue)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 4)
@@ -143,7 +143,7 @@ struct GameSummaryView: View {
 
                 // Divider dash
                 Text("—")
-                    .font(.system(size: 28, weight: .thin))
+                    .font(.system(size: DSType.Size.title1, weight: .thin))
                     .foregroundStyle(Color.textTertiary)
                     .frame(width: 40)
 
@@ -176,17 +176,17 @@ struct GameSummaryView: View {
     ) -> some View {
         VStack(alignment: alignment, spacing: 4) {
             Text(abbreviation)
-                .font(.system(size: 28, weight: .heavy))
+                .font(.system(size: DSType.Size.title1, weight: .heavy))
                 .foregroundStyle(isWinner ? Color.accentGold : Color.textPrimary)
 
             Text(fullName)
-                .font(.system(size: 12))
+                .font(.system(size: DSType.Size.footnote))
                 .foregroundStyle(Color.textSecondary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.7)
+                .minimumScaleFactor(0.85)
 
             Text("\(score)")
-                .font(.system(size: 48, weight: .black).monospacedDigit())
+                .font(.system(size: DSType.Size.hero, weight: .black).monospacedDigit())
                 .foregroundStyle(isWinner ? Color.accentGold : Color.textSecondary)
         }
         .frame(maxWidth: .infinity, alignment: alignment == .leading ? .leading : .trailing)
@@ -203,13 +203,13 @@ struct GameSummaryView: View {
             // Header column
             VStack(alignment: .trailing, spacing: 6) {
                 Text("")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: DSType.Size.footnote, weight: .semibold))
                     .frame(height: 18)
                 Text(awayTeam.abbreviation)
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.system(size: DSType.Size.footnote, weight: .bold))
                     .foregroundStyle(Color.textSecondary)
                 Text(homeTeam.abbreviation)
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.system(size: DSType.Size.footnote, weight: .bold))
                     .foregroundStyle(Color.textSecondary)
             }
             .frame(width: 44, alignment: .trailing)
@@ -220,14 +220,14 @@ struct GameSummaryView: View {
             ForEach(0..<quarters, id: \.self) { idx in
                 VStack(spacing: 6) {
                     Text(idx < 4 ? "Q\(idx + 1)" : "OT")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: DSType.Size.footnote, weight: .semibold))
                         .foregroundStyle(Color.textTertiary)
                         .frame(height: 18)
                     Text(quarterScore(scores: boxScore.away.quarterScores, index: idx))
-                        .font(.system(size: 14, weight: .semibold).monospacedDigit())
+                        .font(.system(size: DSType.Size.body, weight: .semibold).monospacedDigit())
                         .foregroundStyle(Color.textPrimary)
                     Text(quarterScore(scores: boxScore.home.quarterScores, index: idx))
-                        .font(.system(size: 14, weight: .semibold).monospacedDigit())
+                        .font(.system(size: DSType.Size.body, weight: .semibold).monospacedDigit())
                         .foregroundStyle(Color.textPrimary)
                 }
                 .frame(maxWidth: .infinity)
@@ -241,14 +241,14 @@ struct GameSummaryView: View {
 
             VStack(spacing: 6) {
                 Text("F")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: DSType.Size.footnote, weight: .semibold))
                     .foregroundStyle(Color.textTertiary)
                     .frame(height: 18)
                 Text("\(boxScore.away.score)")
-                    .font(.system(size: 13, weight: .heavy).monospacedDigit())
+                    .font(.system(size: DSType.Size.body, weight: .heavy).monospacedDigit())
                     .foregroundStyle(boxScore.away.score > boxScore.home.score ? Color.accentGold : Color.textPrimary)
                 Text("\(boxScore.home.score)")
-                    .font(.system(size: 13, weight: .heavy).monospacedDigit())
+                    .font(.system(size: DSType.Size.body, weight: .heavy).monospacedDigit())
                     .foregroundStyle(boxScore.home.score > boxScore.away.score ? Color.accentGold : Color.textPrimary)
             }
             .frame(width: 32)
@@ -283,7 +283,7 @@ struct GameSummaryView: View {
             cardHeader(title: "Your Plan", systemImage: "scope")
 
             Text("What you drew up before kickoff, against what the game actually did.")
-                .font(.system(size: 12))
+                .font(.system(size: DSType.Size.footnote))
                 .foregroundStyle(Color.textTertiary)
 
             VStack(spacing: 10) {
@@ -299,25 +299,25 @@ struct GameSummaryView: View {
     private func planReceiptRow(_ row: PlanRow) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             Text(row.label)
-                .font(.system(size: 12, weight: .bold))
+                .font(.system(size: DSType.Size.footnote, weight: .bold))
                 .foregroundStyle(Color.textSecondary)
                 .frame(width: 108, alignment: .leading)
             HStack(spacing: 6) {
                 Text(row.planned)
-                    .font(.system(size: 12))
+                    .font(.system(size: DSType.Size.footnote))
                     .foregroundStyle(Color.textTertiary)
                 Image(systemName: "arrow.right")
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.system(size: DSType.Size.micro, weight: .bold))
                     .foregroundStyle(Color.textTertiary)
                 Text(row.actual)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: DSType.Size.footnote, weight: .semibold))
                     .foregroundStyle(Color.textPrimary)
             }
             .lineLimit(1)
-            .minimumScaleFactor(0.7)
+            .minimumScaleFactor(0.85)
             Spacer(minLength: 8)
             Text(row.verdict)
-                .font(.system(size: 10, weight: .black))
+                .font(.system(size: DSType.Size.micro, weight: .black))
                 .foregroundStyle(row.positive ? Color.success : Color.warning)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
@@ -524,7 +524,7 @@ struct GameSummaryView: View {
                 // Away performers
                 VStack(alignment: .leading, spacing: 10) {
                     Text(awayTeam.abbreviation)
-                        .font(.system(size: 12, weight: .bold))
+                        .font(.system(size: DSType.Size.footnote, weight: .bold))
                         .foregroundStyle(Color.textTertiary)
                         .padding(.bottom, 2)
 
@@ -540,7 +540,7 @@ struct GameSummaryView: View {
                 // Home performers
                 VStack(alignment: .leading, spacing: 10) {
                     Text(homeTeam.abbreviation)
-                        .font(.system(size: 12, weight: .bold))
+                        .font(.system(size: DSType.Size.footnote, weight: .bold))
                         .foregroundStyle(Color.textTertiary)
                         .padding(.bottom, 2)
 
@@ -637,14 +637,14 @@ struct GameSummaryView: View {
             // Non-collapsible header row outside the DisclosureGroup
             HStack(spacing: 8) {
                 Image(systemName: "arrow.right.to.line")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: DSType.Size.body, weight: .semibold))
                     .foregroundStyle(Color.accentGold)
                 Text("Drive Summary")
-                    .font(.system(size: 16, weight: .bold))
+                    .font(.system(size: DSType.Size.callout, weight: .bold))
                     .foregroundStyle(Color.textPrimary)
                 Spacer()
                 Text("\(boxScore.drives.count) drives")
-                    .font(.system(size: 12))
+                    .font(.system(size: DSType.Size.footnote))
                     .foregroundStyle(Color.textTertiary)
             }
             .padding(.horizontal, 20)
@@ -679,10 +679,10 @@ struct GameSummaryView: View {
     private func cardHeader(title: String, systemImage: String) -> some View {
         HStack(spacing: 8) {
             Image(systemName: systemImage)
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: DSType.Size.body, weight: .semibold))
                 .foregroundStyle(Color.accentGold)
             Text(title)
-                .font(.system(size: 16, weight: .bold))
+                .font(.system(size: DSType.Size.callout, weight: .bold))
                 .foregroundStyle(Color.textPrimary)
         }
     }
@@ -698,20 +698,20 @@ private struct PlayerStatRow: View {
             HStack(spacing: 6) {
                 // Position badge
                 Text(stat.position.rawValue)
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: DSType.Size.micro, weight: .bold))
                     .foregroundStyle(Color.textPrimary)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
                     .background(positionColor, in: RoundedRectangle(cornerRadius: 3))
 
                 Text(stat.playerName)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: DSType.Size.body, weight: .semibold))
                     .foregroundStyle(Color.textPrimary)
                     .lineLimit(1)
             }
 
             Text(statLine)
-                .font(.system(size: 11).monospacedDigit())
+                .font(.system(size: DSType.Size.caption).monospacedDigit())
                 .foregroundStyle(Color.textSecondary)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -775,14 +775,14 @@ private struct HighlightRow: View {
         HStack(alignment: .top, spacing: 12) {
             // Quarter pill
             Text(quarterLabel)
-                .font(.system(size: 10, weight: .bold))
+                .font(.system(size: DSType.Size.micro, weight: .bold))
                 .foregroundStyle(accentColor)
                 .frame(width: 28, height: 20)
                 .background(accentColor.opacity(0.15), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
 
             // Description
             Text(play.description)
-                .font(.system(size: 14))
+                .font(.system(size: DSType.Size.body))
                 .foregroundStyle(Color.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -790,7 +790,7 @@ private struct HighlightRow: View {
             // Yards badge (only for plays with notable yardage)
             if play.yardsGained != 0 {
                 Text(yardsBadgeText)
-                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                    .font(.system(size: DSType.Size.caption, weight: .semibold).monospacedDigit())
                     .foregroundStyle(accentColor)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
@@ -856,22 +856,22 @@ private struct DriveDisclosureRow: View {
                 HStack(spacing: 12) {
                     // Drive number
                     Text("#\(drive.driveNumber)")
-                        .font(.system(size: 12, weight: .bold).monospacedDigit())
+                        .font(.system(size: DSType.Size.footnote, weight: .bold).monospacedDigit())
                         .foregroundStyle(Color.textTertiary)
                         .frame(width: 28, alignment: .leading)
 
                     // Team abbrev
                     Text(teamAbbrev)
-                        .font(.system(size: 14, weight: .bold))
+                        .font(.system(size: DSType.Size.body, weight: .bold))
                         .foregroundStyle(Color.textPrimary)
                         .frame(width: 36, alignment: .leading)
 
                     // Result
                     HStack(spacing: 4) {
                         Image(systemName: resultIcon)
-                            .font(.system(size: 10))
+                            .font(.system(size: DSType.Size.micro))
                         Text(drive.result.rawValue)
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.system(size: DSType.Size.footnote, weight: .semibold))
                     }
                     .foregroundStyle(resultColor)
 
@@ -885,7 +885,7 @@ private struct DriveDisclosureRow: View {
 
                     // Chevron
                     Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: DSType.Size.footnote, weight: .semibold))
                         .foregroundStyle(Color.textTertiary)
                         .frame(width: 18)
                 }
@@ -919,9 +919,9 @@ private struct DriveDisclosureRow: View {
 
     private func statPill(value: String, icon: String?) -> some View {
         HStack(spacing: 4) {
-            if let icon { Image(systemName: icon).font(.system(size: 10)) }
+            if let icon { Image(systemName: icon).font(.system(size: DSType.Size.micro)) }
             Text(value)
-                .font(.system(size: 11).monospacedDigit())
+                .font(.system(size: DSType.Size.caption).monospacedDigit())
                 .foregroundStyle(Color.textSecondary)
         }
     }
@@ -947,21 +947,21 @@ private struct PlayDescriptionRow: View {
         HStack(alignment: .top, spacing: 10) {
             // Down-and-distance pill
             Text(downDistanceLabel)
-                .font(.system(size: 9, weight: .semibold).monospacedDigit())
+                .font(.system(size: DSType.Size.caption, weight: .semibold).monospacedDigit())
                 .foregroundStyle(accentColor)
-                .frame(width: 48, alignment: .trailing)
+                .frame(width: 56, alignment: .trailing)
                 .padding(.top, 2)
 
             // Description text
             Text(play.description)
-                .font(.system(size: 12))
+                .font(.system(size: DSType.Size.footnote))
                 .foregroundStyle(Color.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             // Yards
             Text(play.yardsGained >= 0 ? "+\(play.yardsGained)" : "\(play.yardsGained)")
-                .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                .font(.system(size: DSType.Size.caption, weight: .semibold).monospacedDigit())
                 .foregroundStyle(play.yardsGained > 0 ? Color.textPrimary : Color.danger)
                 .frame(width: 36, alignment: .trailing)
         }

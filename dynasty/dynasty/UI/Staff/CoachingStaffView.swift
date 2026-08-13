@@ -375,13 +375,13 @@ struct CoachingStaffView: View {
         switch badge {
         case .tier(let n):
             Text("\(n)")
-                .font(.system(size: 10, weight: .black))
+                .font(.system(size: DSType.Size.micro, weight: .black))
                 .foregroundStyle(Color.backgroundPrimary)
                 .frame(width: 18, height: 18)
                 .background(Circle().fill(Color.accentGold))
         case .optional(let icon):
             Image(systemName: icon)
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: DSType.Size.micro, weight: .bold))
                 .foregroundStyle(Color.accentGold)
                 .frame(width: 18, height: 18)
                 .background(Circle().strokeBorder(Color.accentGold.opacity(0.5), lineWidth: 1.5))
@@ -1719,12 +1719,12 @@ struct CoachingStaffView: View {
                     if isBudgetOverspent {
                         HStack(spacing: 8) {
                             Image(systemName: "exclamationmark.triangle.fill")
-                                .font(.system(size: 16))
+                                .font(.system(size: DSType.Size.callout))
                                 .foregroundStyle(Color.danger)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("Over Budget")
                                     .font(.subheadline.weight(.bold))
-                                    .foregroundStyle(Color.danger)
+                                    .foregroundStyle(Color.dangerText)
                                 Text(overBudgetMessage)
                                     .font(.caption)
                                     .foregroundStyle(Color.textSecondary)
@@ -1841,7 +1841,7 @@ struct CoachingStaffView: View {
                             Spacer()
                             if let range = coordinatorsSalaryRange {
                                 Text(range)
-                                    .font(.system(size: 9, weight: .medium))
+                                    .font(.system(size: DSType.Size.caption, weight: .medium))
                                     .foregroundStyle(Color.textTertiary)
                             }
                             let filledCount = coaches.filter { [CoachRole.offensiveCoordinator, .defensiveCoordinator, .specialTeamsCoordinator].contains($0.role) }.count
@@ -1888,7 +1888,7 @@ struct CoachingStaffView: View {
                             // #270: Cost range to fill vacant slots
                             if let costRange = positionCoachesCostRange {
                                 Text(costRange)
-                                    .font(.system(size: 9, weight: .medium))
+                                    .font(.system(size: DSType.Size.caption, weight: .medium))
                                     .foregroundStyle(Color.textTertiary)
                             }
                             let filledCount = positionCoaches.count
@@ -1927,7 +1927,7 @@ struct CoachingStaffView: View {
                                 } label: {
                                     HStack(spacing: 6) {
                                         Text("4")
-                                            .font(.system(size: 10, weight: .black))
+                                            .font(.system(size: DSType.Size.micro, weight: .black))
                                             .foregroundStyle(Color.backgroundPrimary)
                                             .frame(width: 18, height: 18)
                                             .background(Circle().fill(Color.accentGold))
@@ -1938,7 +1938,7 @@ struct CoachingStaffView: View {
                                         // #270: Cost range to fill
                                         if let costRange = medicalCostRange {
                                             Text(costRange)
-                                                .font(.system(size: 9, weight: .medium))
+                                                .font(.system(size: DSType.Size.caption, weight: .medium))
                                                 .foregroundStyle(Color.textTertiary)
                                         }
                                         // #275: Filled/total count
@@ -1973,7 +1973,7 @@ struct CoachingStaffView: View {
                                 } label: {
                                     HStack(spacing: 6) {
                                         Text("5")
-                                            .font(.system(size: 10, weight: .black))
+                                            .font(.system(size: DSType.Size.micro, weight: .black))
                                             .foregroundStyle(Color.backgroundPrimary)
                                             .frame(width: 18, height: 18)
                                             .background(Circle().fill(Color.accentGold))
@@ -1984,7 +1984,7 @@ struct CoachingStaffView: View {
                                         // #270: Cost range to fill
                                         if let costRange = scoutingCostRange {
                                             Text(costRange)
-                                                .font(.system(size: 9, weight: .medium))
+                                                .font(.system(size: DSType.Size.caption, weight: .medium))
                                                 .foregroundStyle(Color.textTertiary)
                                         }
                                         // #275: Filled/total count
@@ -2023,7 +2023,7 @@ struct CoachingStaffView: View {
                         } label: {
                             HStack(spacing: 6) {
                                 Text("4")
-                                    .font(.system(size: 10, weight: .black))
+                                    .font(.system(size: DSType.Size.micro, weight: .black))
                                     .foregroundStyle(Color.backgroundPrimary)
                                     .frame(width: 18, height: 18)
                                     .background(Circle().fill(Color.accentGold))
@@ -2034,7 +2034,7 @@ struct CoachingStaffView: View {
                                 // #270: Cost range to fill
                                 if let costRange = medicalCostRange {
                                     Text(costRange)
-                                        .font(.system(size: 9, weight: .medium))
+                                        .font(.system(size: DSType.Size.caption, weight: .medium))
                                         .foregroundStyle(Color.textTertiary)
                                 }
                                 // #275: Filled/total count
@@ -2067,7 +2067,7 @@ struct CoachingStaffView: View {
                         } label: {
                             HStack(spacing: 6) {
                                 Text("5")
-                                    .font(.system(size: 10, weight: .black))
+                                    .font(.system(size: DSType.Size.micro, weight: .black))
                                     .foregroundStyle(Color.backgroundPrimary)
                                     .frame(width: 18, height: 18)
                                     .background(Circle().fill(Color.accentGold))
@@ -2078,7 +2078,7 @@ struct CoachingStaffView: View {
                                 // #270: Cost range to fill
                                 if let costRange = scoutingCostRange {
                                     Text(costRange)
-                                        .font(.system(size: 9, weight: .medium))
+                                        .font(.system(size: DSType.Size.caption, weight: .medium))
                                         .foregroundStyle(Color.textTertiary)
                                 }
                                 // #275: Filled/total count
@@ -2190,19 +2190,19 @@ struct CoachingStaffView: View {
         return VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("OFFENSIVE SCHEME FAMILIES")
-                    .font(.system(size: 11, weight: .black))
+                    .font(.system(size: DSType.Size.caption, weight: .black))
                     .tracking(1.5)
                     .foregroundStyle(Color.accentGold)
                 Spacer()
                 Text("Tap to apply")
-                    .font(.system(size: 9))
+                    .font(.system(size: DSType.Size.caption))
                     .foregroundStyle(Color.textTertiary)
             }
 
             ForEach(offensiveSchemeFamilies, id: \.family) { group in
                 VStack(alignment: .leading, spacing: 8) {
                     Text(group.family.uppercased())
-                        .font(.system(size: 10, weight: .heavy))
+                        .font(.system(size: DSType.Size.micro, weight: .heavy))
                         .tracking(1.0)
                         .foregroundStyle(Color.textSecondary)
 
@@ -2246,10 +2246,10 @@ struct CoachingStaffView: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Image(systemName: isActive ? "checkmark.seal.fill" : "football")
-                        .font(.system(size: 11))
+                        .font(.system(size: DSType.Size.caption))
                         .foregroundStyle(isActive ? Color.accentGold : Color.accentBlue.opacity(0.8))
                     Text(scheme.displayName)
-                        .font(.system(size: 12, weight: .bold))
+                        .font(.system(size: DSType.Size.footnote, weight: .bold))
                         .foregroundStyle(isActive ? Color.accentGold : Color.textPrimary)
                         .lineLimit(1)
                     Spacer(minLength: 0)
@@ -2259,7 +2259,7 @@ struct CoachingStaffView: View {
                     Image(systemName: "person.2.fill")
                         .font(.system(size: DSType.Size.micro))
                     Text(count == 0 ? "No staff knows this" : "\(count) coach\(count == 1 ? "" : "es") know this")
-                        .font(.system(size: 9, weight: .medium))
+                        .font(.system(size: DSType.Size.caption, weight: .medium))
                 }
                 .foregroundStyle(coachCountColor(count))
             }
@@ -2291,19 +2291,19 @@ struct CoachingStaffView: View {
         return VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("DEFENSIVE SCHEME FAMILIES")
-                    .font(.system(size: 11, weight: .black))
+                    .font(.system(size: DSType.Size.caption, weight: .black))
                     .tracking(1.5)
                     .foregroundStyle(Color.accentGold)
                 Spacer()
                 Text("Tap to apply")
-                    .font(.system(size: 9))
+                    .font(.system(size: DSType.Size.caption))
                     .foregroundStyle(Color.textTertiary)
             }
 
             ForEach(defensiveSchemeFamilies, id: \.family) { group in
                 VStack(alignment: .leading, spacing: 8) {
                     Text(group.family.uppercased())
-                        .font(.system(size: 10, weight: .heavy))
+                        .font(.system(size: DSType.Size.micro, weight: .heavy))
                         .tracking(1.0)
                         .foregroundStyle(Color.textSecondary)
 
@@ -2346,10 +2346,10 @@ struct CoachingStaffView: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Image(systemName: isActive ? "checkmark.seal.fill" : "shield")
-                        .font(.system(size: 11))
+                        .font(.system(size: DSType.Size.caption))
                         .foregroundStyle(isActive ? Color.accentGold : Color.danger.opacity(0.8))
                     Text(scheme.displayName)
-                        .font(.system(size: 12, weight: .bold))
+                        .font(.system(size: DSType.Size.footnote, weight: .bold))
                         .foregroundStyle(isActive ? Color.accentGold : Color.textPrimary)
                         .lineLimit(1)
                     Spacer(minLength: 0)
@@ -2359,7 +2359,7 @@ struct CoachingStaffView: View {
                     Image(systemName: "person.2.fill")
                         .font(.system(size: DSType.Size.micro))
                     Text(count == 0 ? "No staff knows this" : "\(count) coach\(count == 1 ? "" : "es") know this")
-                        .font(.system(size: 9, weight: .medium))
+                        .font(.system(size: DSType.Size.caption, weight: .medium))
                 }
                 .foregroundStyle(coachCountColor(count))
             }
@@ -2398,7 +2398,7 @@ struct CoachingStaffView: View {
     private var offensiveSchemeCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("OFFENSIVE SCHEME")
-                .font(.system(size: 11, weight: .black))
+                .font(.system(size: DSType.Size.caption, weight: .black))
                 .tracking(1.5)
                 .foregroundStyle(Color.accentGold)
 
@@ -2460,7 +2460,7 @@ struct CoachingStaffView: View {
     private var defensiveSchemeCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("DEFENSIVE SCHEME")
-                .font(.system(size: 11, weight: .black))
+                .font(.system(size: DSType.Size.caption, weight: .black))
                 .tracking(1.5)
                 .foregroundStyle(Color.accentGold)
 
@@ -2529,7 +2529,7 @@ struct CoachingStaffView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(title)
-                .font(.system(size: 11, weight: .black))
+                .font(.system(size: DSType.Size.caption, weight: .black))
                 .tracking(1.5)
                 .foregroundStyle(Color.accentGold)
 
@@ -2550,7 +2550,7 @@ struct CoachingStaffView: View {
 
                     HStack(spacing: 8) {
                         Text(player.position.rawValue)
-                            .font(.system(size: 10, weight: .bold).monospacedDigit())
+                            .font(.system(size: DSType.Size.micro, weight: .bold).monospacedDigit())
                             .foregroundStyle(Color.textTertiary)
                             .frame(width: 28, alignment: .leading)
 
@@ -2574,7 +2574,7 @@ struct CoachingStaffView: View {
                         .frame(width: 80, height: 8)
 
                         Text("\(fitPercent)%")
-                            .font(.system(size: 10, weight: .bold).monospacedDigit())
+                            .font(.system(size: DSType.Size.micro, weight: .bold).monospacedDigit())
                             .foregroundStyle(fitColor)
                             .frame(width: 32, alignment: .trailing)
                     }
@@ -2623,7 +2623,7 @@ struct CoachingStaffView: View {
     private var schemeImpactCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("SCHEME IMPACT")
-                .font(.system(size: 11, weight: .black))
+                .font(.system(size: DSType.Size.caption, weight: .black))
                 .tracking(1.5)
                 .foregroundStyle(Color.accentGold)
 
@@ -2650,7 +2650,7 @@ struct CoachingStaffView: View {
     private func schemeImpactRow(icon: String, text: String) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: icon)
-                .font(.system(size: 10))
+                .font(.system(size: DSType.Size.micro))
                 .foregroundStyle(Color.accentGold.opacity(0.7))
                 .frame(width: 14)
             Text(text)
@@ -2683,7 +2683,7 @@ struct CoachingStaffView: View {
                 // Staff Overview
                 VStack(alignment: .leading, spacing: 12) {
                     Text("STAFF OVERVIEW")
-                        .font(.system(size: 11, weight: .black))
+                        .font(.system(size: DSType.Size.caption, weight: .black))
                         .tracking(1.5)
                         .foregroundStyle(Color.accentGold)
 
@@ -2701,7 +2701,7 @@ struct CoachingStaffView: View {
                 // Budget Summary
                 VStack(alignment: .leading, spacing: 12) {
                     Text("BUDGET SUMMARY")
-                        .font(.system(size: 11, weight: .black))
+                        .font(.system(size: DSType.Size.caption, weight: .black))
                         .tracking(1.5)
                         .foregroundStyle(Color.accentGold)
 
@@ -2718,7 +2718,7 @@ struct CoachingStaffView: View {
                     HStack {
                         Spacer()
                         Text(budgetContext.label)
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(.system(size: DSType.Size.micro, weight: .semibold))
                             .foregroundStyle(budgetContext.color)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
@@ -2765,7 +2765,7 @@ struct CoachingStaffView: View {
                         Spacer()
                         Text("$\(formatBudget(remainingBudget))M")
                             .font(.headline.weight(.bold).monospacedDigit())
-                            .foregroundStyle(remainingBudget >= 0 ? Color.success : Color.danger)
+                            .foregroundStyle(remainingBudget >= 0 ? Color.success : Color.dangerText)
                     }
                 }
                 .padding(16)
@@ -2775,7 +2775,7 @@ struct CoachingStaffView: View {
                 // Staff Ratings
                 VStack(alignment: .leading, spacing: 12) {
                     Text("STAFF RATINGS")
-                        .font(.system(size: 11, weight: .black))
+                        .font(.system(size: DSType.Size.caption, weight: .black))
                         .tracking(1.5)
                         .foregroundStyle(Color.accentGold)
 
@@ -2788,7 +2788,7 @@ struct CoachingStaffView: View {
                             let ovr = coachOverall(coach)
                             HStack(spacing: 10) {
                                 Text(coach.role.abbreviation)
-                                    .font(.system(size: 10, weight: .bold))
+                                    .font(.system(size: DSType.Size.micro, weight: .bold))
                                     .foregroundStyle(Color.backgroundPrimary)
                                     .padding(.horizontal, 6)
                                     .padding(.vertical, 3)
@@ -2803,7 +2803,7 @@ struct CoachingStaffView: View {
                                 Spacer()
 
                                 Text("\(ovr)")
-                                    .font(.system(size: 16, weight: .bold).monospacedDigit())
+                                    .font(.system(size: DSType.Size.callout, weight: .bold).monospacedDigit())
                                     .foregroundStyle(Color.forRating(ovr))
                             }
 
@@ -2820,7 +2820,7 @@ struct CoachingStaffView: View {
                 // Readiness Check
                 VStack(alignment: .leading, spacing: 12) {
                     Text("READINESS CHECK")
-                        .font(.system(size: 11, weight: .black))
+                        .font(.system(size: DSType.Size.caption, weight: .black))
                         .tracking(1.5)
                         .foregroundStyle(Color.accentGold)
 
@@ -2845,10 +2845,10 @@ struct CoachingStaffView: View {
     private func reviewStatBadge(value: String, label: String, color: Color) -> some View {
         VStack(spacing: 4) {
             Text(value)
-                .font(.system(size: 22, weight: .black).monospacedDigit())
+                .font(.system(size: DSType.Size.title2, weight: .black).monospacedDigit())
                 .foregroundStyle(color)
             Text(label)
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: DSType.Size.micro, weight: .medium))
                 .foregroundStyle(Color.textTertiary)
         }
         .frame(width: 72, height: 56)
@@ -2858,7 +2858,7 @@ struct CoachingStaffView: View {
     private func readinessRow(label: String, filled: Bool) -> some View {
         HStack(spacing: 8) {
             Image(systemName: filled ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: 14))
+                .font(.system(size: DSType.Size.body))
                 .foregroundStyle(filled ? Color.success : Color.textTertiary)
             Text(label)
                 .font(.subheadline)
@@ -2927,7 +2927,7 @@ struct CoachingStaffView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
                 Image(systemName: "envelope.badge.fill")
-                    .font(.system(size: 20))
+                    .font(.system(size: DSType.Size.title2))
                     .foregroundStyle(Color.accentGold)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("\(request.requestingTeamName) want your \(request.coachRole.abbreviation)")
@@ -2981,9 +2981,9 @@ struct CoachingStaffView: View {
             if !request.canBlock {
                 HStack(spacing: 6) {
                     Image(systemName: "info.circle")
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.micro))
                     Text("\(request.coachName) is in the final year of their contract — the interview cannot be blocked.")
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: DSType.Size.micro, weight: .medium))
                 }
                 .foregroundStyle(Color.warning)
             }
@@ -3113,7 +3113,7 @@ struct CoachingStaffView: View {
 
         return HStack(spacing: 10) {
             Image(systemName: icon)
-                .font(.system(size: 14))
+                .font(.system(size: DSType.Size.body))
                 .foregroundStyle(color)
                 .frame(width: 22)
 
@@ -3122,7 +3122,7 @@ struct CoachingStaffView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(Color.textPrimary)
                 Text(move.detail)
-                    .font(.system(size: 10))
+                    .font(.system(size: DSType.Size.micro))
                     .foregroundStyle(Color.textSecondary)
             }
 
@@ -3406,7 +3406,7 @@ struct CoachingStaffView: View {
                         .frame(width: 22, height: 22)
                 } else {
                     Image(systemName: "wand.and.stars")
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(.system(size: DSType.Size.callout, weight: .semibold))
                         .foregroundStyle(Color.accentGold)
                         .frame(width: 22, height: 22)
                 }
@@ -3424,7 +3424,7 @@ struct CoachingStaffView: View {
                         .multilineTextAlignment(.leading)
                     if !isAutoHiring && !autoHireSpendSubtitle.isEmpty {
                         Text(autoHireSpendSubtitle)
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(.system(size: DSType.Size.micro, weight: .semibold))
                             .foregroundStyle(Color.accentGold)
                             .fixedSize(horizontal: false, vertical: true)
                             .multilineTextAlignment(.leading)
@@ -3435,7 +3435,7 @@ struct CoachingStaffView: View {
 
                 if !isAutoHiring {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 12, weight: .bold))
+                        .font(.system(size: DSType.Size.footnote, weight: .bold))
                         .foregroundStyle(Color.textTertiary)
                 }
             }
@@ -3586,7 +3586,7 @@ struct CoachingStaffView: View {
                     HStack(spacing: 4) {
                         Text("Used $\(formatBudget(totalCoachSalaryUsed))M of $\(formatBudget(coachingBudget))M")
                             .font(.caption)
-                            .foregroundStyle(remainingBudget >= 0 ? Color.textSecondary : Color.danger)
+                            .foregroundStyle(remainingBudget >= 0 ? Color.textSecondary : Color.dangerText)
 
                         // Budget change from last season (#80) — spelled out, so a
                         // year-over-year cut can never read as an overspend.
@@ -3601,7 +3601,7 @@ struct CoachingStaffView: View {
 
                     // League-average context indicator
                     Text(budgetContext.label)
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.system(size: DSType.Size.micro, weight: .semibold))
                         .foregroundStyle(budgetContext.color)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
@@ -3612,9 +3612,9 @@ struct CoachingStaffView: View {
                 VStack(alignment: .trailing, spacing: 2) {
                     Text("$\(formatBudget(remainingBudget))M")
                         .font(.headline.weight(.bold).monospacedDigit())
-                        .foregroundStyle(remainingBudget >= 0 ? Color.success : Color.danger)
+                        .foregroundStyle(remainingBudget >= 0 ? Color.success : Color.dangerText)
                     Text("remaining")
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.micro))
                         .foregroundStyle(Color.textTertiary)
                 }
             }
@@ -3635,19 +3635,19 @@ struct CoachingStaffView: View {
             HStack {
                 HStack(spacing: 6) {
                     Image(systemName: "binoculars")
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.micro))
                         .foregroundStyle(Color.accentBlue)
                     Text("Scouting Budget")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(Color.textPrimary)
                     Text("Used $\(formatBudget(totalScoutSalaryUsed))M of $\(formatBudget(scoutingBudget))M")
                         .font(.caption)
-                        .foregroundStyle(remainingScoutBudget >= 0 ? Color.textSecondary : Color.danger)
+                        .foregroundStyle(remainingScoutBudget >= 0 ? Color.textSecondary : Color.dangerText)
                 }
                 Spacer()
                 Text("$\(formatBudget(remainingScoutBudget))M left")
                     .font(.caption.weight(.bold).monospacedDigit())
-                    .foregroundStyle(remainingScoutBudget >= 0 ? Color.success : Color.danger)
+                    .foregroundStyle(remainingScoutBudget >= 0 ? Color.success : Color.dangerText)
             }
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
@@ -3664,19 +3664,19 @@ struct CoachingStaffView: View {
             HStack {
                 HStack(spacing: 6) {
                     Image(systemName: "cross.case")
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.micro))
                         .foregroundStyle(Color.success)
                     Text("Medical Budget")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(Color.textPrimary)
                     Text("Used $\(formatBudget(totalMedicalSalaryUsed))M of $\(formatBudget(medicalBudget))M")
                         .font(.caption)
-                        .foregroundStyle(remainingMedicalBudget >= 0 ? Color.textSecondary : Color.danger)
+                        .foregroundStyle(remainingMedicalBudget >= 0 ? Color.textSecondary : Color.dangerText)
                 }
                 Spacer()
                 Text("$\(formatBudget(remainingMedicalBudget))M left")
                     .font(.caption.weight(.bold).monospacedDigit())
-                    .foregroundStyle(remainingMedicalBudget >= 0 ? Color.success : Color.danger)
+                    .foregroundStyle(remainingMedicalBudget >= 0 ? Color.success : Color.dangerText)
             }
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
@@ -3706,7 +3706,7 @@ struct CoachingStaffView: View {
             HStack(spacing: 14) {
                 // HC badge
                 Text("HC")
-                    .font(.system(size: 16, weight: .black))
+                    .font(.system(size: DSType.Size.callout, weight: .black))
                     .foregroundStyle(Color.backgroundPrimary)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
@@ -3727,7 +3727,7 @@ struct CoachingStaffView: View {
                     UserPortraitView(career: career, size: .medium)
                         .overlay(alignment: .bottomTrailing) {
                             Image(systemName: "pencil.circle.fill")
-                                .font(.system(size: 16))
+                                .font(.system(size: DSType.Size.callout))
                                 .symbolRenderingMode(.palette)
                                 .foregroundStyle(Color.backgroundPrimary, Color.accentGold)
                                 .offset(x: 2, y: 2)
@@ -3769,15 +3769,15 @@ struct CoachingStaffView: View {
             // Fix #36: Coaching style bonus for player-as-HC
             HStack(spacing: 4) {
                 Text("+\(career.coachingStyle.bonusValue) \(career.coachingStyle.bonusAttribute)")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: DSType.Size.caption, weight: .semibold))
                     .foregroundStyle(Color.success)
             }
 
             HStack(spacing: 4) {
                 Image(systemName: "lightbulb.fill")
-                    .font(.system(size: 9))
+                    .font(.system(size: DSType.Size.micro))
                 Text(coordinatorComplementNote(for: career.coachingStyle))
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: DSType.Size.micro, weight: .medium))
             }
             .foregroundStyle(Color.accentGold.opacity(0.8))
 
@@ -3787,7 +3787,7 @@ struct CoachingStaffView: View {
                 activeHireSheet = .portrait
             } label: {
                 Label("Change portrait", systemImage: "person.crop.circle")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: DSType.Size.caption, weight: .semibold))
                     .foregroundStyle(Color.accentBlue)
             }
             .buttonStyle(.plain)
@@ -3811,7 +3811,7 @@ struct CoachingStaffView: View {
                         Text(CoachingEngine.chemistrySymbol(score: chemistry))
                             .font(.caption)
                         Text(CoachingEngine.chemistryLabel(score: chemistry))
-                            .font(.system(size: 10, weight: .medium))
+                            .font(.system(size: DSType.Size.micro, weight: .medium))
                     }
                     .foregroundStyle(chemistryColor(for: chemistry))
                     .padding(.leading, 56) // align with name after badge
@@ -3837,7 +3837,7 @@ struct CoachingStaffView: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Text(coach.role.abbreviation)
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: DSType.Size.micro, weight: .bold))
                     .foregroundStyle(Color.backgroundPrimary)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
@@ -3846,7 +3846,7 @@ struct CoachingStaffView: View {
                 Spacer()
 
                 Text("\(keyAttr.value)")
-                    .font(.system(size: 14, weight: .bold).monospacedDigit())
+                    .font(.system(size: DSType.Size.body, weight: .bold).monospacedDigit())
                     .foregroundStyle(Color.forRating(keyAttr.value))
             }
 
@@ -3868,19 +3868,19 @@ struct CoachingStaffView: View {
 
             HStack(spacing: 4) {
                 Text("\(coach.yearsExperience)yr")
-                    .font(.system(size: 9).monospacedDigit())
+                    .font(.system(size: DSType.Size.caption).monospacedDigit())
                     .foregroundStyle(Color.textTertiary)
                 Text("\u{00B7}")
                     .foregroundStyle(Color.textTertiary)
                 Text("$\(coach.salary)K")
-                    .font(.system(size: 9).monospacedDigit())
+                    .font(.system(size: DSType.Size.caption).monospacedDigit())
                     .foregroundStyle(Color.textTertiary)
 
                 // Chemistry pip vs HC (small inline checkmark / warning / X)
                 if coach.role != .headCoach, let chem = chemistryWithHC(coach: coach) {
                     Spacer(minLength: 2)
                     Text(CoachingEngine.chemistrySymbol(score: chem))
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.system(size: DSType.Size.micro, weight: .bold))
                         .foregroundStyle(chemistryColor(for: chem))
                         .accessibilityLabel("Chemistry with head coach: \(CoachingEngine.chemistryLabel(score: chem))")
                 }
@@ -3907,7 +3907,7 @@ struct CoachingStaffView: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Text(role.abbreviation)
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.system(size: DSType.Size.micro, weight: .bold))
                         .foregroundStyle(Color.textTertiary)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
@@ -3916,7 +3916,7 @@ struct CoachingStaffView: View {
                     Spacer()
 
                     Image(systemName: "plus.circle")
-                        .font(.system(size: 12))
+                        .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(Color.accentGold)
                 }
 
@@ -3928,13 +3928,13 @@ struct CoachingStaffView: View {
                 // #51: Impact hint in compact card
                 if let impact = hiringImpactDescription(for: role) {
                     Text(impact)
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.system(size: DSType.Size.caption, weight: .semibold))
                         .foregroundStyle(Color.success)
                         .lineLimit(1)
                 }
 
                 Text(estimatedSalaryRange(for: role))
-                    .font(.system(size: 9))
+                    .font(.system(size: DSType.Size.caption))
                     .foregroundStyle(Color.textTertiary)
             }
             .padding(8)
@@ -3957,7 +3957,7 @@ struct CoachingStaffView: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Text(role.abbreviation)
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.system(size: DSType.Size.micro, weight: .bold))
                         .foregroundStyle(Color.textTertiary)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
@@ -3966,7 +3966,7 @@ struct CoachingStaffView: View {
                     Spacer()
 
                     Image(systemName: "plus.circle")
-                        .font(.system(size: 12))
+                        .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(Color.accentGold)
                 }
 
@@ -3977,13 +3977,13 @@ struct CoachingStaffView: View {
 
                 if let impact = hiringImpactDescription(for: role) {
                     Text(impact)
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.system(size: DSType.Size.caption, weight: .semibold))
                         .foregroundStyle(Color.success)
                         .lineLimit(1)
                 }
 
                 Text(estimatedSalaryRange(for: role))
-                    .font(.system(size: 9))
+                    .font(.system(size: DSType.Size.caption))
                     .foregroundStyle(Color.textTertiary)
             }
             .padding(8)
@@ -4070,14 +4070,14 @@ struct CoachingStaffView: View {
                             switch hiringPriority(for: role) {
                             case .high:
                                 Text("High Priority")
-                                    .font(.system(size: 9, weight: .bold))
+                                    .font(.system(size: DSType.Size.caption, weight: .bold))
                                     .foregroundStyle(.white)
                                     .padding(.horizontal, 6)
                                     .padding(.vertical, 2)
                                     .background(Color.danger, in: Capsule())
                             case .recommended:
                                 Text("Recommended")
-                                    .font(.system(size: 9, weight: .semibold))
+                                    .font(.system(size: DSType.Size.caption, weight: .semibold))
                                     .foregroundStyle(Color.warning)
                             case .normal:
                                 EmptyView()
@@ -4090,13 +4090,13 @@ struct CoachingStaffView: View {
 
                         // Fix #35: Estimated salary range
                         Text(estimatedSalaryRange(for: role))
-                            .font(.system(size: 10))
+                            .font(.system(size: DSType.Size.micro))
                             .foregroundStyle(Color.textTertiary)
 
                         // Fix #32: Position group boost description
                         if let boost = positionGroupBoost(for: role) {
                             Text(boost)
-                                .font(.system(size: 10, weight: .medium))
+                                .font(.system(size: DSType.Size.micro, weight: .medium))
                                 .foregroundStyle(Color.accentBlue.opacity(0.8))
                         }
 
@@ -4106,7 +4106,7 @@ struct CoachingStaffView: View {
                                 Image(systemName: "chart.line.uptrend.xyaxis")
                                     .font(.system(size: DSType.Size.micro))
                                 Text(impact)
-                                    .font(.system(size: 10, weight: .semibold))
+                                    .font(.system(size: DSType.Size.micro, weight: .semibold))
                             }
                             .foregroundStyle(Color.success)
                         }
@@ -4131,7 +4131,7 @@ struct CoachingStaffView: View {
         HStack(spacing: 12) {
             // Role badge
             Text(scout.scoutRole.abbreviation)
-                .font(.system(size: 12, weight: .bold))
+                .font(.system(size: DSType.Size.footnote, weight: .bold))
                 .foregroundStyle(Color.backgroundPrimary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
@@ -4165,10 +4165,10 @@ struct CoachingStaffView: View {
             // Accuracy rating
             VStack(alignment: .trailing, spacing: 4) {
                 Text("\(scout.accuracy)")
-                    .font(.system(size: 18, weight: .bold).monospacedDigit())
+                    .font(.system(size: DSType.Size.title3, weight: .bold).monospacedDigit())
                     .foregroundStyle(Color.forRating(scout.accuracy))
                 Text("Accuracy")
-                    .font(.system(size: 10))
+                    .font(.system(size: DSType.Size.micro))
                     .foregroundStyle(Color.textTertiary)
             }
         }
@@ -4195,14 +4195,14 @@ struct CoachingStaffView: View {
                     switch scoutHiringPriority(for: role) {
                     case .high:
                         Text("High Priority")
-                            .font(.system(size: 9, weight: .bold))
+                            .font(.system(size: DSType.Size.caption, weight: .bold))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(Color.danger, in: Capsule())
                     case .recommended:
                         Text("Recommended")
-                            .font(.system(size: 9, weight: .semibold))
+                            .font(.system(size: DSType.Size.caption, weight: .semibold))
                             .foregroundStyle(Color.warning)
                     case .normal:
                         EmptyView()
@@ -4215,7 +4215,7 @@ struct CoachingStaffView: View {
 
                 // #53: Salary range
                 Text(estimatedScoutSalaryRange(for: role))
-                    .font(.system(size: 10))
+                    .font(.system(size: DSType.Size.micro))
                     .foregroundStyle(Color.textTertiary)
 
                 // #53: Hiring impact
@@ -4223,7 +4223,7 @@ struct CoachingStaffView: View {
                     Image(systemName: "chart.line.uptrend.xyaxis")
                         .font(.system(size: DSType.Size.micro))
                     Text(scoutHiringImpact(for: role))
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.system(size: DSType.Size.micro, weight: .semibold))
                 }
                 .foregroundStyle(Color.success)
             }
@@ -4297,7 +4297,7 @@ private struct HeadCoachCardView: View {
 
                 // HC badge -- larger
                 Text("HC")
-                    .font(.system(size: 16, weight: .black))
+                    .font(.system(size: DSType.Size.callout, weight: .black))
                     .foregroundStyle(Color.backgroundPrimary)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
@@ -4328,12 +4328,12 @@ private struct HeadCoachCardView: View {
                     // Fix #36: Coaching style bonus
                     HStack(spacing: 4) {
                         Text("+\(topAttribute.value) \(topAttribute.name)")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(.system(size: DSType.Size.caption, weight: .semibold))
                             .foregroundStyle(Color.success)
                         Text("\u{00B7}")
                             .foregroundStyle(Color.textTertiary)
                         Text(coach.personality.displayName)
-                            .font(.system(size: 11, weight: .medium))
+                            .font(.system(size: DSType.Size.caption, weight: .medium))
                             .foregroundStyle(Color.accentBlue)
                     }
                 }
@@ -4343,10 +4343,10 @@ private struct HeadCoachCardView: View {
                 // Play calling rating -- larger
                 VStack(alignment: .trailing, spacing: 4) {
                     Text("\(coach.playCalling)")
-                        .font(.system(size: 24, weight: .bold).monospacedDigit())
+                        .font(.system(size: DSType.Size.title2, weight: .bold).monospacedDigit())
                         .foregroundStyle(Color.forRating(coach.playCalling))
                     Text("Play Calling")
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.micro))
                         .foregroundStyle(Color.textTertiary)
                 }
             }
@@ -4359,9 +4359,9 @@ private struct HeadCoachCardView: View {
             // Fix #36: Coordinator complement note
             HStack(spacing: 4) {
                 Image(systemName: "lightbulb.fill")
-                    .font(.system(size: 9))
+                    .font(.system(size: DSType.Size.micro))
                 Text(coordinatorNote)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: DSType.Size.micro, weight: .medium))
             }
             .foregroundStyle(Color.accentGold.opacity(0.8))
 
@@ -4369,9 +4369,9 @@ private struct HeadCoachCardView: View {
             if menteeCount > 0 {
                 HStack(spacing: 4) {
                     Image(systemName: "person.3.fill")
-                        .font(.system(size: 9))
+                        .font(.system(size: DSType.Size.micro))
                     Text("Coaching Tree: \(menteeCount)")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.system(size: DSType.Size.micro, weight: .semibold))
                 }
                 .foregroundStyle(Color.accentBlue)
                 .padding(.horizontal, 8)
@@ -4438,7 +4438,7 @@ private struct CoachRowWithDescriptionView: View {
             HStack(spacing: 12) {
                 // Role badge
                 Text(coach.role.abbreviation)
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.system(size: DSType.Size.footnote, weight: .bold))
                     .foregroundStyle(Color.backgroundPrimary)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
@@ -4473,10 +4473,10 @@ private struct CoachRowWithDescriptionView: View {
                     // Mini star rating + primary strength
                     HStack(spacing: 6) {
                         Text(CoachingEngine.starString(for: averageAttribute))
-                            .font(.system(size: 10))
+                            .font(.system(size: DSType.Size.micro))
                             .foregroundStyle(Color.accentGold)
                         Text(primaryStrength)
-                            .font(.system(size: 10, weight: .medium))
+                            .font(.system(size: DSType.Size.micro, weight: .medium))
                             .foregroundStyle(Color.textTertiary)
                     }
                 }
@@ -4486,10 +4486,10 @@ private struct CoachRowWithDescriptionView: View {
                 // Key attribute
                 VStack(alignment: .trailing, spacing: 4) {
                     Text("\(keyAttribute.value)")
-                        .font(.system(size: 18, weight: .bold).monospacedDigit())
+                        .font(.system(size: DSType.Size.title3, weight: .bold).monospacedDigit())
                         .foregroundStyle(Color.forRating(keyAttribute.value))
                     Text(keyAttribute.name)
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.micro))
                         .foregroundStyle(Color.textTertiary)
                 }
             }
@@ -4530,7 +4530,7 @@ private struct CoachRowView: View {
         HStack(spacing: 12) {
             // Role badge
             Text(coach.role.abbreviation)
-                .font(.system(size: 12, weight: .bold))
+                .font(.system(size: DSType.Size.footnote, weight: .bold))
                 .foregroundStyle(Color.backgroundPrimary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
@@ -4565,10 +4565,10 @@ private struct CoachRowView: View {
             // Key attribute
             VStack(alignment: .trailing, spacing: 4) {
                 Text("\(keyAttribute.value)")
-                    .font(.system(size: 18, weight: .bold).monospacedDigit())
+                    .font(.system(size: DSType.Size.title3, weight: .bold).monospacedDigit())
                     .foregroundStyle(Color.forRating(keyAttribute.value))
                 Text(keyAttribute.name)
-                    .font(.system(size: 10))
+                    .font(.system(size: DSType.Size.micro))
                     .foregroundStyle(Color.textTertiary)
             }
         }
@@ -4770,7 +4770,7 @@ private struct SimpleMedicalHireSheet: View {
                         HStack(spacing: 12) {
                             // OVR badge
                             Text("\(ovr)")
-                                .font(.system(size: 16, weight: .bold).monospacedDigit())
+                                .font(.system(size: DSType.Size.callout, weight: .bold).monospacedDigit())
                                 .foregroundStyle(Color.forRating(ovr))
                                 .frame(width: 32)
 
@@ -4808,7 +4808,7 @@ private struct SimpleMedicalHireSheet: View {
                                         Text("Hire")
                                             .font(.caption.weight(.bold))
                                         Text("$\(String(format: "%.1f", Double(candidate.salary) / 1000.0))M/yr")
-                                            .font(.system(size: 9).monospacedDigit())
+                                            .font(.system(size: DSType.Size.caption).monospacedDigit())
                                     }
                                     .foregroundStyle(isOverBudget ? Color.textTertiary : Color.backgroundPrimary)
                                     .padding(.horizontal, 12)

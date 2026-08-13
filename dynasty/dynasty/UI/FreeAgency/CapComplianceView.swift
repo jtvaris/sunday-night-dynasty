@@ -138,14 +138,22 @@ struct CapComplianceView: View {
                 Button("Release \(player.fullName)", role: .destructive) {
                     releasePlayer(player)
                 }
+                // #208 G1: re-checked with the dialog open, because the roster
+                // can move under it (a trade, an injury) after the lever was
+                // tapped.
+                .disabled(releaseBlockReason(for: player) != nil)
                 Button("Cancel", role: .cancel) {}
             }
         } message: {
             if let player = releaseTarget {
-                // One number, from the engine that books the release (#68) —
-                // simple mode used to be told it got the whole salary back.
-                let split = releaseSplit(for: player)
-                Text("Releasing \(player.fullName) frees \(formatMillions(split.capSavings)) of cap space and leaves \(formatMillions(split.deadCap)) of dead money on your books this year.")
+                if let reason = releaseBlockReason(for: player) {
+                    Text(reason)
+                } else {
+                    // One number, from the engine that books the release (#68) —
+                    // simple mode used to be told it got the whole salary back.
+                    let split = releaseSplit(for: player)
+                    Text("Releasing \(player.fullName) frees \(formatMillions(split.capSavings)) of cap space and leaves \(formatMillions(split.deadCap)) of dead money on your books this year.")
+                }
             }
         }
         .alert("He wants his release", isPresented: .init(
@@ -192,14 +200,14 @@ struct CapComplianceView: View {
             HStack(spacing: DSSpacing.xs) {
                 Image(systemName: isOverCap ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
                     .foregroundStyle(isOverCap ? Color.danger : Color.success)
-                    .font(.system(size: 15))
+                    .font(.system(size: DSType.Size.callout))
                 Text(isOverCap ? "OVER THE CAP" : "Cap Compliant")
                     .font(.headline)
                     .foregroundStyle(isOverCap ? Color.danger : Color.success)
                 Spacer()
                 if !enforcesCap {
                     Text("SANDBOX")
-                        .font(.system(size: 9, weight: .black))
+                        .font(.system(size: DSType.Size.caption, weight: .black))
                         .foregroundStyle(Color.textPrimary)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
@@ -219,7 +227,7 @@ struct CapComplianceView: View {
                             .font(.subheadline)
                             .foregroundStyle(Color.textSecondary)
                         Text(formatMillions(capOverage))
-                            .font(.system(size: 34, weight: .black).monospacedDigit())
+                            .font(.system(size: DSType.Size.display, weight: .black).monospacedDigit())
                             .foregroundStyle(Color.danger)
                         Text("over the salary cap")
                             .font(.subheadline)
@@ -310,7 +318,7 @@ struct CapComplianceView: View {
             HStack(spacing: DSSpacing.xs) {
                 Image(systemName: "slider.horizontal.3")
                     .foregroundStyle(Color.accentGold)
-                    .font(.system(size: 15))
+                    .font(.system(size: DSType.Size.callout))
                 Text("Levers — Ranked by Cap Freed")
                     .font(.headline)
                     .foregroundStyle(Color.accentGold)
@@ -353,7 +361,7 @@ struct CapComplianceView: View {
             // Identity + what he costs
             HStack(spacing: DSSpacing.xs) {
                 Text(player.position.rawValue)
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.system(size: DSType.Size.caption, weight: .bold))
                     .foregroundStyle(Color.textPrimary)
                     .frame(width: 28)
                     .padding(.vertical, 2)
@@ -374,21 +382,29 @@ struct CapComplianceView: View {
                         .font(.caption.weight(.bold).monospacedDigit())
                         .foregroundStyle(Color.textPrimary)
                     Text("\(player.contractYearsRemaining) yr\(player.contractYearsRemaining == 1 ? "" : "s") left")
-                        .font(.system(size: 9).monospacedDigit())
+                        .font(.system(size: DSType.Size.caption).monospacedDigit())
                         .foregroundStyle(player.contractYearsRemaining <= 1 ? Color.warning : Color.textTertiary)
                 }
             }
 
             // The three levers, each labelled with its own honest number.
             HStack(spacing: DSSpacing.xs) {
+                // #208 G1 — a lever the club is not allowed to pull is DEAD and
+                // says why, the same as the Restructure lever beside it already
+                // does when there is no deal to restructure. Cap trouble is not
+                // a licence to field no quarterback; the way out of this room is
+                // the other two levers, or a trade.
+                let releaseBlock = releaseBlockReason(for: player)
                 leverButton(
                     title: "Release",
-                    headline: split.capSavings >= 0
-                        ? "+\(formatMillions(split.capSavings))"
-                        : formatMillions(split.capSavings),
-                    footnote: "\(formatMillions(split.deadCap)) dead",
-                    tint: split.capSavings > 0 ? Color.danger : Color.textTertiary,
-                    enabled: true
+                    headline: releaseBlock == nil
+                        ? (split.capSavings >= 0
+                            ? "+\(formatMillions(split.capSavings))"
+                            : formatMillions(split.capSavings))
+                        : "\u{2014}",
+                    footnote: releaseBlock ?? "\(formatMillions(split.deadCap)) dead",
+                    tint: releaseBlock == nil && split.capSavings > 0 ? Color.danger : Color.textTertiary,
+                    enabled: releaseBlock == nil
                 ) {
                     releaseTarget = player
                 }
@@ -435,9 +451,14 @@ struct CapComplianceView: View {
                     .font(.caption.weight(.bold).monospacedDigit())
                     .foregroundStyle(enabled ? Color.textPrimary : Color.textTertiary)
                 Text(footnote)
-                    .font(.system(size: 9))
+                    .font(.system(size: DSType.Size.caption))
                     .foregroundStyle(Color.textTertiary)
-                    .lineLimit(1)
+                    // Two lines, not one (#208 G1): the money footnotes are all
+                    // short enough to be unaffected, but a blocked lever's
+                    // reason is a sentence and it must be readable rather than
+                    // scaled into a smear.
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
                     .minimumScaleFactor(0.75)
             }
             .frame(maxWidth: .infinity)
@@ -477,7 +498,13 @@ struct CapComplianceView: View {
     /// has not given, and ranking on a figure nobody has agreed to would put the
     /// screen's most speculative lever at the top of its list.
     private func bestSaving(for player: Player) -> Int {
-        let release = releaseSplit(for: player).capSavings
+        // #208 G1 — a release the club is not allowed to make is not a saving,
+        // so it cannot rank. Otherwise the last quarterback, whose salary is
+        // usually the largest on the sheet, would sit at the top of a list of
+        // ways out with a dead button on his row.
+        let release = releaseBlockReason(for: player) == nil
+            ? releaseSplit(for: player).capSavings
+            : 0
         let restructure = restructureQuote(for: player)?.immediateRelief ?? 0
         return max(release, restructure)
     }
@@ -502,6 +529,18 @@ struct CapComplianceView: View {
             contract: contractsByPlayer[player.id],
             capMode: career.capMode,
             leagueYearRemaining: leagueYearRemaining
+        )
+    }
+
+    /// Why this man's Release lever is dead, or `nil` (#208 G1). `players` is
+    /// the club's roster this screen already loaded, so the lever, the confirm
+    /// dialog and the engine's own door all count the same room.
+    private func releaseBlockReason(for player: Player) -> String? {
+        guard let team else { return nil }
+        return CapManagementEngine.releaseBlockReason(
+            player: player,
+            team: team,
+            roster: players
         )
     }
 
@@ -531,15 +570,33 @@ struct CapComplianceView: View {
         // ONE authority (#68) — and cap-mode aware, which the old
         // `cutPlayerSimple` never was: a sandbox release must not credit a cap
         // it never charged.
-        CapManagementEngine.applyRelease(
+        let split = CapManagementEngine.applyRelease(
             player: player,
             team: team,
+            // #208 G1 — same roster the lever was drawn from.
+            authority: .club(roster: players),
             contract: contractsByPlayer[player.id],
             capMode: career.capMode,
             leagueYearRemaining: leagueYearRemaining,
             careerID: career.id,
+            // #188: a compliance cut is the biggest dead-money source there is
+            // — it has to be attributable by name on the Cap screen.
+            reason: .capCompliance,
+            seasonYear: career.currentSeason,
             modelContext: modelContext
         )
+        // Refused (#208 G1): nothing moved. Drop the dialog and reload so the
+        // lever redraws dead with its reason on it.
+        guard !split.isRefused else {
+            releaseTarget = nil
+            loadData()
+            return
+        }
+        // Symmetry with `applyRestructure` / `applyPayCut` below (#188). A
+        // release deletes `Contract` rows and rewrites the club's cap usage;
+        // leaving that to the autosave meant the one destructive action on this
+        // screen was the only one not flushed at the moment it committed.
+        try? modelContext.save()
         releaseTarget = nil
         loadData()
     }
@@ -719,7 +776,7 @@ struct RestructureQuoteSheet: View {
                     .font(.subheadline)
                     .foregroundStyle(Color.textSecondary)
                 Text(formatMillions(quote.immediateRelief))
-                    .font(.system(size: 32, weight: .black).monospacedDigit())
+                    .font(.system(size: DSType.Size.display, weight: .black).monospacedDigit())
                     .foregroundStyle(Color.success)
                 Text("this year")
                     .font(.subheadline)

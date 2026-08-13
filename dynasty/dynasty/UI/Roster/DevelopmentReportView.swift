@@ -437,10 +437,10 @@ struct DevelopmentReportView: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
                     Image(systemName: "sparkles")
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.system(size: DSType.Size.micro, weight: .bold))
                         .foregroundStyle(Color.eliteGreen)
                     Text("THE STAFF WOULD START HERE")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.system(size: DSType.Size.micro, weight: .bold))
                         .tracking(0.7)
                         .foregroundStyle(Color.textTertiary)
                 }
@@ -546,7 +546,7 @@ struct DevelopmentReportView: View {
 
     private func reasonChip(_ text: String, color: Color) -> some View {
         Text(text)
-            .font(.system(size: 9, weight: .bold))
+            .font(.system(size: DSType.Size.micro, weight: .bold))
             .foregroundStyle(color)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
@@ -559,7 +559,7 @@ struct DevelopmentReportView: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
                 Image(systemName: "chart.bar.fill")
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: DSType.Size.micro, weight: .bold))
                     .foregroundStyle(Color.eliteGreen)
                 Text("\(payoff.focusGains) focus gain\(payoff.focusGains == 1 ? "" : "s")")
                     .font(.caption.weight(.bold))
@@ -578,7 +578,7 @@ struct DevelopmentReportView: View {
             // Full-season totals genuinely do not exist in the save — say so
             // rather than let "10 reports" read as "the whole year".
             Text("Across the last \(payoff.reportCount) weekly report\(payoff.reportCount == 1 ? "" : "s") — the log keeps 10, so this is a rolling window, not a season total.")
-                .font(.system(size: 9))
+                .font(.system(size: DSType.Size.footnote))
                 .foregroundStyle(Color.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -611,7 +611,7 @@ struct DevelopmentReportView: View {
                             .foregroundStyle(Color.textSecondary)
                         if pastPeak {
                             Text("PAST PEAK")
-                                .font(.system(size: 9, weight: .bold))
+                                .font(.system(size: DSType.Size.micro, weight: .bold))
                                 .foregroundStyle(Color.warning)
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 2)
@@ -659,11 +659,11 @@ struct DevelopmentReportView: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: player.trainingFocusArea?.icon ?? "target")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: DSType.Size.caption, weight: .semibold))
                 Text(player.trainingFocusArea?.displayName ?? "Pick Area")
                     .font(.caption.weight(.semibold))
                 Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: DSType.Size.micro, weight: .semibold))
             }
             .foregroundStyle(Color.accentBlue)
             .padding(.horizontal, 10)
@@ -1015,7 +1015,7 @@ struct DevelopmentReportView: View {
                 .lineLimit(2)
             Spacer()
             Text(entry.reason.label.uppercased())
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: DSType.Size.micro, weight: .bold))
                 .foregroundStyle(color)
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
@@ -1068,7 +1068,7 @@ struct DevelopmentReportView: View {
     private var pickerLegend: some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: "info.circle")
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: DSType.Size.caption, weight: .semibold))
                 .foregroundStyle(Color.accentBlue)
             Text("Ranked by expected gain — the weekly chance times the room the staff can see. **%/wk** is the chance one week's extra reps produce a +1; **headroom** is how many points he still has under his ceiling, and it is a scouting read, not a fact. The room needs two seasons with a player before it names the number — one under an elite developer — so newer men show a range or a tier instead.")
                 .font(.caption2)
@@ -1144,7 +1144,7 @@ struct DevelopmentReportView: View {
 
     private func positionBadge(_ position: Position) -> some View {
         Text(position.rawValue)
-            .font(.system(size: 11, weight: .bold))
+            .font(.system(size: DSType.Size.caption, weight: .bold))
             .foregroundStyle(Color.backgroundPrimary)
             .frame(width: 34, height: 22)
             .background(

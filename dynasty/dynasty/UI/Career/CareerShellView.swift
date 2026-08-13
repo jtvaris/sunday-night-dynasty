@@ -41,6 +41,11 @@ struct CareerShellView: View {
         /// §2.6: the standard ending. A process that terminates in the shell
         /// puts its outcome here instead of inventing a fifth way to say "done".
         case result
+        /// #200: app settings, opened from the top bar's gear. A side task in
+        /// the purest sense — nothing in the career changes, and it ends by
+        /// being closed. It takes the existing slot rather than a sixth
+        /// `.sheet` modifier for the reason the whole comment above exists.
+        case settings
 
         var id: String { rawValue }
     }
@@ -220,6 +225,192 @@ struct CareerShellView: View {
     /// so nothing latches and getting legal is the only exit needed.
     @State private var pendingCapCompliance: WeekAdvancer.CapComplianceViolation?
 
+    /// #205b — set when `performShellAdvance` refuses to leave `.preseason`
+    /// with exhibitions still on the slate. Same shape as the two gates above,
+    /// and derived on every advance from `PreseasonEngine.canLeavePreseason`,
+    /// so nothing latches: playing the last game is the only exit it needs.
+    @State private var pendingPreseasonSlate: PreseasonState?
+
+    /// #208e — set when `performShellAdvance` refuses to leave an offseason
+    /// phase with a starter slot standing empty.
+    ///
+    /// The QA run hit this as a club that could not advance and was never told
+    /// which slot was the problem — the returner rows are two taps below the
+    /// fold on a screen whose other twenty-two slots were full, so "find it"
+    /// was the whole task. The gap therefore travels as the SLOTS, not as a
+    /// boolean, and the alert reads them out by name.
+    @State private var pendingDepthChartGap: DepthChartGap?
+
+    /// The empty starter slots one advance is blocked on.
+    struct DepthChartGap {
+        /// Empty slots that the club could actually fill from its own roster,
+        /// in `DepthChartSlot.allCases` order so the reading is stable.
+        let slots: [DepthChartSlot]
+
+        /// "Special Teams: Kick Returner unassigned" — the line the QA run asked
+        /// for, one per slot, capped so a chart that was never touched cannot
+        /// turn the alert into a wall of text.
+        var lines: [String] {
+            slots.prefix(4).map { "\($0.side.rawValue): \($0.displayName) unassigned" }
+        }
+
+        var overflow: Int { max(0, slots.count - 4) }
+    }
+
+    private var depthChartGapAlertBinding: Binding<Bool> {
+        Binding<Bool>(
+            get: { pendingDepthChartGap != nil },
+            set: { presented in
+                if !presented { pendingDepthChartGap = nil }
+            }
+        )
+    }
+
+    /// Hoisted out of the `.alert` chain in `body`: inline, the binding closure
+    /// plus the interpolated message pushed the shell's modifier stack past the
+    /// type-checker's budget. Same semantics, one solver step each.
+    private var preseasonSlateAlertBinding: Binding<Bool> {
+        Binding<Bool>(
+            get: { pendingPreseasonSlate != nil },
+            set: { presented in
+                if !presented { pendingPreseasonSlate = nil }
+            }
+        )
+    }
+
+    /// Same hoist as `preseasonSlateAlertBinding`, for the same reason: four
+    /// `.alert`s in one modifier chain, each carrying an inline `Binding`
+    /// closure and an interpolated message, is what pushed the shell past the
+    /// type-checker's budget. Semantics unchanged.
+    private var staffBlockAlertBinding: Binding<Bool> {
+        Binding<Bool>(
+            get: { pendingStaffBlock != nil },
+            set: { presented in
+                if !presented { pendingStaffBlock = nil }
+            }
+        )
+    }
+
+    private var rosterLimitAlertBinding: Binding<Bool> {
+        Binding<Bool>(
+            get: { pendingRosterLimit != nil },
+            set: { presented in
+                if !presented { pendingRosterLimit = nil }
+            }
+        )
+    }
+
+    private var capComplianceAlertBinding: Binding<Bool> {
+        Binding<Bool>(
+            get: { pendingCapCompliance != nil },
+            set: { presented in
+                if !presented { pendingCapCompliance = nil }
+            }
+        )
+    }
+
+    /// Rung-aware copy: the gate now covers all three cut days, so a camp club
+    /// held at 75 must not be told "the season opens with a 53-man active
+    /// roster" — the deadline it is standing on is the one `CutDay.dueWhen`
+    /// names.
+    private static func rosterLimitMessage(for violation: WeekAdvancer.RosterLimitViolation) -> String {
+        let count: Int = violation.rosterCount
+        let title: String = violation.rung.slatTitle
+        let due: String = violation.rung.dueWhen
+        let excess: Int = violation.excess
+        return "You're carrying \(count) players. \(title) is due \(due) — release \(excess) more before advancing."
+    }
+
+    private static func capComplianceMessage(for violation: WeekAdvancer.CapComplianceViolation) -> String {
+        let overage: String = CommittedCapLedger.money(violation.overage)
+        let lever: String = CommittedCapLedger.money(violation.bestLeverSavings)
+        let opening: String = "Your club is \(overage) over the cap. "
+        let middle: String = "Release, restructure or renegotiate until the books balance — no week can be "
+        let close: String = "advanced while you are over. The largest single saving on your roster right now is \(lever)."
+        return opening + middle + close
+    }
+
+    /// The phases the lineup gate is armed in — the offseason run where the
+    /// chart is both written and broken. See the gate in `performShellAdvance`
+    /// for why the regular season is deliberately not on this list.
+    private static let lineupPhases: Set<SeasonPhase> = [
+        .otas, .trainingCamp, .preseason, .rosterCuts
+    ]
+
+    /// #208e — the blocker that NAMES the slot.
+    private static func depthChartGapMessage(for gap: DepthChartGap) -> String {
+        let named: String = gap.lines.joined(separator: "\n")
+        let more: String = gap.overflow > 0 ? "\n\u{2026} and \(gap.overflow) more." : ""
+        let close: String = "\n\nOpen the depth chart and assign them \u{2014} Auto-Set fills every empty slot in one tap."
+        return named + more + close
+    }
+
+    /// The empty starter slots this club could fill but has not.
+    ///
+    /// **Only ever the slots a body exists for.** A club with no kicker on the
+    /// roster has a hole no amount of depth-chart work will close, and a gate
+    /// with no key is a bricked save — the same anti-deadlock rule
+    /// `userCapComplianceViolation` applies. A returner slot accepts anyone, so
+    /// it is fillable as long as the club has a player at all, which is exactly
+    /// why the KR gap the QA run found was both real and fixable.
+    ///
+    /// A slot pointing at a man who is no longer on the roster counts as empty:
+    /// that is how the gap appears in the first place — the chart is written in
+    /// OTAs and the cutdown then releases the man in it.
+    ///
+    /// "Fillable" is counted per ROOM, not per slot. `DepthChart.assign` pulls a
+    /// man out of every other position slot when he takes one, so three WR slots
+    /// need three receivers — a club carrying two can never close WR3, and
+    /// reporting it would be the bricked save this rule is written to avoid.
+    /// The returner slots are the deliberate exception in the model
+    /// (`acceptsAnyPosition`): they take anybody and may double up, so one body
+    /// on the roster makes both of them fillable.
+    private static func depthChartGaps(chart: DepthChart, roster: [Player]) -> [DepthChartSlot] {
+        let available = roster.filter { !$0.isRetired }
+        guard !available.isEmpty else { return [] }
+        let onRoster = Set(available.map(\.id))
+
+        var bodiesByPosition: [Position: Int] = [:]
+        for player in available {
+            bodiesByPosition[player.position, default: 0] += 1
+        }
+
+        func isFilled(_ slot: DepthChartSlot) -> Bool {
+            guard let starter = chart.starter(for: slot) else { return false }
+            return onRoster.contains(starter)
+        }
+
+        // Slots already standing, per room — what is left over is what the club
+        // can still cover.
+        var spareByPosition: [Position: Int] = bodiesByPosition
+        for slot in DepthChartSlot.allCases
+        where !slot.acceptsAnyPosition && isFilled(slot) {
+            spareByPosition[slot.basePosition, default: 0] -= 1
+        }
+
+        var gaps: [DepthChartSlot] = []
+        for slot in DepthChartSlot.allCases where !isFilled(slot) {
+            if slot.acceptsAnyPosition {
+                gaps.append(slot)
+                continue
+            }
+            let spare = spareByPosition[slot.basePosition] ?? 0
+            guard spare > 0 else { continue }
+            spareByPosition[slot.basePosition] = spare - 1
+            gaps.append(slot)
+        }
+        return gaps
+    }
+
+    private static func preseasonSlateMessage(for state: PreseasonState?) -> String {
+        let remaining: Int = PreseasonEngine.gamesRemaining(state)
+        let plural: String = remaining == 1 ? "" : "s"
+        let opening: String = "You have \(remaining) preseason game\(plural) left to play. "
+        let body: String = "Final cuts are made on what these games show — the bubble has no film on it "
+        let close: String = "until the slate is finished."
+        return opening + body + close
+    }
+
     /// TRACK B — the draft class the fog is about to come off, assembled when
     /// the calendar crosses into training camp (`WeekAdvancer` arms the
     /// once-per-season flag; this presents it). `nil` at every other moment.
@@ -252,7 +443,16 @@ struct CareerShellView: View {
         }
     }
 
-    var body: some View {
+    /// The shell's own chrome — top bar, week band, navigation stack, waiver
+    /// overlay — split out of `body`.
+    ///
+    /// Purely a type-checker split, no behaviour change: with the stack, five
+    /// alerts, the environment injection and the lifecycle/observer block all
+    /// in one expression, the solver ran out of budget and reported "unable to
+    /// type-check this expression in reasonable time" on an unrelated line
+    /// inside the `.task` closure (multi-statement closures join the enclosing
+    /// constraint system). Three declarations, three smaller problems.
+    private var shellStack: some View {
         VStack(spacing: 0) {
             // Persistent top navigation bar
             TopNavigationBar(
@@ -274,6 +474,10 @@ struct CareerShellView: View {
                     navigationPath = NavigationPath()
                     navigationPath.append(ShellDestination.inbox)
                 },
+                // #200: settings without leaving the career. Straight into the
+                // one sheet slot — no state to prepare, and if something else
+                // already holds the slot the gear is behind that modal anyway.
+                onSettingsTapped: { shellSheet = .settings },
                 onBookmarkTapped: { destination in
                     handleBookmarkNavigation(destination)
                 }
@@ -346,15 +550,19 @@ struct CareerShellView: View {
         }
         .background(Color.backgroundPrimary)
         .navigationBarBackButtonHidden(true)
+    }
+
+    /// The three advance gates plus the quit confirmation, in the order they
+    /// were applied inline. A function only so this group is its own
+    /// type-checking problem — see `shellStack`.
+    private func gateAlerts(_ content: some View) -> some View {
+        content
         // #158 — the staff gate's voice. Same shape as the two gates below it:
         // `performShellAdvance` is a precheck, and a refusal the user cannot
         // read is a button that "just doesn't work".
         .alert(
             "Staff Not Ready",
-            isPresented: Binding(
-                get: { pendingStaffBlock != nil },
-                set: { if !$0 { pendingStaffBlock = nil } }
-            ),
+            isPresented: staffBlockAlertBinding,
             presenting: pendingStaffBlock
         ) { _ in
             Button("Go to Staff") {
@@ -367,10 +575,7 @@ struct CareerShellView: View {
         }
         .alert(
             "Roster Over the Limit",
-            isPresented: Binding(
-                get: { pendingRosterLimit != nil },
-                set: { if !$0 { pendingRosterLimit = nil } }
-            ),
+            isPresented: rosterLimitAlertBinding,
             presenting: pendingRosterLimit
         ) { violation in
             Button("Go to Cuts") {
@@ -379,10 +584,7 @@ struct CareerShellView: View {
             }
             Button("Cancel", role: .cancel) { pendingRosterLimit = nil }
         } message: { violation in
-            Text(
-                "You're carrying \(violation.rosterCount) players. The season opens with a "
-                + "\(violation.ceiling)-man active roster — release \(violation.excess) more before advancing."
-            )
+            Text(Self.rosterLimitMessage(for: violation))
         }
         // #102 — the cap gate. Same shape as the roster gate above and for the
         // same reason: the advance mutates a season's worth of state and cannot
@@ -391,10 +593,7 @@ struct CareerShellView: View {
         // over-cap banner is the door to the compliance workspace.
         .alert(
             "Over the Salary Cap",
-            isPresented: Binding(
-                get: { pendingCapCompliance != nil },
-                set: { if !$0 { pendingCapCompliance = nil } }
-            ),
+            isPresented: capComplianceAlertBinding,
             presenting: pendingCapCompliance
         ) { violation in
             Button("Fix the Cap") {
@@ -403,12 +602,38 @@ struct CareerShellView: View {
             }
             Button("Cancel", role: .cancel) { pendingCapCompliance = nil }
         } message: { violation in
-            Text(
-                "Your club is \(CommittedCapLedger.money(violation.overage)) over the cap. "
-                + "Release, restructure or renegotiate until the books balance — no week can be "
-                + "advanced while you are over. The largest single saving on your roster right now "
-                + "is \(CommittedCapLedger.money(violation.bestLeverSavings))."
-            )
+            Text(Self.capComplianceMessage(for: violation))
+        }
+        // #208e — the lineup gate. Same family again, and the one thing it does
+        // differently is the whole point of it: it names the slot. "Go to Depth
+        // Chart" lands on the screen whose Auto-Set closes every gap at once.
+        .alert(
+            "Lineup Incomplete",
+            isPresented: depthChartGapAlertBinding,
+            presenting: pendingDepthChartGap
+        ) { _ in
+            Button("Go to Depth Chart") {
+                pendingDepthChartGap = nil
+                navigationPath.append(ShellDestination.depthChart)
+            }
+            Button("Cancel", role: .cancel) { pendingDepthChartGap = nil }
+        } message: { gap in
+            Text(Self.depthChartGapMessage(for: gap))
+        }
+        // #205b — the preseason gate, third of the same family. "Play the
+        // Games" pushes the slate itself; there is no other door to it.
+        .alert(
+            "Preseason Slate Unplayed",
+            isPresented: preseasonSlateAlertBinding,
+            presenting: pendingPreseasonSlate
+        ) { _ in
+            Button("Play the Games") {
+                pendingPreseasonSlate = nil
+                navigationPath.append(ShellDestination.preseason)
+            }
+            Button("Cancel", role: .cancel) { pendingPreseasonSlate = nil }
+        } message: { state in
+            Text(Self.preseasonSlateMessage(for: state))
         }
         .alert("Quit to Main Menu?", isPresented: $showQuitConfirmation) {
             Button("Quit", role: .destructive) {
@@ -426,6 +651,10 @@ struct CareerShellView: View {
         } message: {
             Text("Your progress is saved automatically.")
         }
+    }
+
+    var body: some View {
+        gateAlerts(shellStack)
         // TRACK B: every roster surface under this shell reads the fog context
         // from the environment instead of having a `Career` threaded into it.
         // Applied OUTSIDE the presentation modifiers above on purpose — sheets
@@ -584,6 +813,13 @@ struct CareerShellView: View {
                 )
                 .interactiveDismissDisabled(true)
             }
+
+        case .settings:
+            // `.career` hides the two rows that only mean something on the
+            // title screen (tutorial replay, save-data wipe); everything else —
+            // audio, play clock, quarter reports — is exactly what a coach
+            // wants to reach mid-week without abandoning the save.
+            SettingsView(context: .career)
         }
     }
 
@@ -701,6 +937,13 @@ struct CareerShellView: View {
         case .voluntaryWorkout:
             // Asked and answered — drop any leftover request.
             workoutPromptArmed = false
+
+        case .settings:
+            // Nothing to reconcile: settings write straight to UserDefaults and
+            // the audio directors reconcile themselves from that. It still has
+            // to be listed — the switch is exhaustive on purpose, so a slot
+            // added later cannot silently skip its own clean-up.
+            break
 
         case .none:
             break
@@ -1111,10 +1354,14 @@ struct CareerShellView: View {
             return
         }
 
-        // 53-man gate. `WeekAdvancer.trimAIRosters` enforces the ceiling for the
-        // other 31 clubs only — the user does his own cuts, and until now nothing
-        // checked that he had. Refuse the advance rather than start a season on an
-        // illegal roster; the letter makes the refusal findable afterwards.
+        // Cut-ladder gate — all three rungs (75 / 65 / 53), not only the last.
+        // `WeekAdvancer.trimAIRosters` enforces the ceiling for the other 31
+        // clubs only: the user does his own cuts, and nothing checked that he
+        // had. Refuse the advance rather than break camp — or open a season —
+        // on an illegal roster; the letter makes the refusal findable
+        // afterwards. The ceiling comes from `CutDay.rung(dueIn:)`, the same
+        // authority the left rail's ladder row reads, so the panel and the gate
+        // cannot disagree about what "over" means (#154f).
         if let violation = WeekAdvancer.userRosterLimitViolation(
             career: career,
             modelContext: modelContext
@@ -1150,6 +1397,71 @@ struct CareerShellView: View {
                 persistInbox()
             }
             return
+        }
+
+        // #208e lineup gate. A club whose depth chart has an empty starter slot
+        // could not advance and was never told which slot — the QA run spent the
+        // block hunting for a Kick Returner two scroll positions below the fold.
+        // The refusal now carries the slot names.
+        //
+        // Three things keep this narrow rather than a new rule:
+        //
+        // * **Offseason lineup phases only.** In the regular season the sim
+        //   fields `WeekAdvancer.startingLineupIDs`, which is derived from the
+        //   roster and not from the chart, so a hole there costs nothing and a
+        //   gate would be pure friction. The hole MATTERS across the offseason,
+        //   where the chart is what camp, the preseason slate and the cutdown
+        //   all read the club's intentions from — and it is created there too,
+        //   by releasing the man a slot points at.
+        // * **A chart the user owns.** With `depthChartData == nil` nothing has
+        //   ever been saved and every slot is "empty"; that state belongs to the
+        //   required "Set depth chart" task, which already names itself in the
+        //   rail. Gating it here would replace one pointer with twenty-six.
+        // * **Fillable slots only.** `depthChartGaps` ignores a slot the club
+        //   has no body for, so this can never brick a save — the same
+        //   anti-deadlock rule the cap gate applies.
+        if Self.lineupPhases.contains(career.currentPhase),
+           let data = career.depthChartData,
+           let chart = try? JSONDecoder().decode(DepthChart.self, from: data),
+           let teamID = career.teamID {
+            let descriptor = FetchDescriptor<Player>(
+                predicate: #Predicate<Player> { $0.teamID == teamID }
+            )
+            let roster = (try? modelContext.fetch(descriptor)) ?? []
+            let gaps = Self.depthChartGaps(chart: chart, roster: roster)
+            if !gaps.isEmpty {
+                pendingDepthChartGap = DepthChartGap(slots: gaps)
+                return
+            }
+        }
+
+        // #205b preseason gate. The exhibitions are the evidence the 53-man cut
+        // is made on, so leaving `.preseason` with games unplayed skips the
+        // whole wave: no familiarity banked, no preseason injuries, an empty
+        // bubble table on the cut screen — and `PreseasonState.step` frozen on
+        // `.plan(1)` for the season. The panel's Advance button already refuses
+        // (the required slate row is not `.done`), but the Season Guide sheet
+        // calls straight in here, exactly the hole #158 closed for the staff
+        // gate.
+        //
+        // `ensuredPreseasonState()` SEEDS before asking: `canLeavePreseason(nil)`
+        // is `true` by design, so gating on an unseeded blob would wave every
+        // save through. A slate that cannot be drawn at all still passes, so
+        // this can never brick a career.
+        if career.currentPhase == .preseason {
+            let slate = ensuredPreseasonState()
+            if !PreseasonEngine.canLeavePreseason(slate) {
+                pendingPreseasonSlate = slate
+                let letter = PreseasonEngine.unplayedSlateInboxMessage(
+                    slate,
+                    season: career.currentSeason
+                )
+                if !inboxMessages.contains(where: { $0.subject == letter.subject }) {
+                    inboxMessages.append(letter)
+                    persistInbox()
+                }
+                return
+            }
         }
 
         // #38: remember whether this was a regular-season game week — the round
@@ -1537,6 +1849,10 @@ struct CareerShellView: View {
         case draftReportCard
         // Camp destinations
         case trainingPlan, workloadDashboard, rosterCuts, gameWeekPrep
+        /// #205b — the three-game preseason slate (`PreseasonView`). An
+        /// in-phase step machine inside `.preseason`, the way `.freeAgency`
+        /// hosts its five steps: no new `SeasonPhase` case, no new week.
+        case preseason
     }
 
     @ViewBuilder
@@ -1747,6 +2063,26 @@ struct CareerShellView: View {
             WorkloadDashboard(roster: teamRoster)
         case .rosterCuts:
             RosterCutView(career: career, roster: teamRoster)
+        case .preseason:
+            // The cut route is handed in rather than reached for: this view is
+            // pushed onto the shell's own `navigationPath`, and the shell is
+            // the only thing that owns it. One closure keeps `PreseasonView`
+            // previewable and keeps this route to a single line of wiring.
+            PreseasonView(
+                career: career,
+                roster: teamRoster,
+                onOpenRosterCuts: { navigationPath.append(ShellDestination.rosterCuts) }
+            )
+            .onAppear {
+                markTaskVisited(for: .preseason)
+                refreshTaskCompletionStatus()
+            }
+            // The slate row ticks off the blob, and the blob only moves while
+            // this screen is open — so the rail has to be re-derived on the way
+            // out, the same way the draft room's does.
+            .onDisappear {
+                refreshTaskCompletionStatus()
+            }
         case .gameWeekPrep:
             GameWeekPrepPicker(
                 career: career,
@@ -1947,6 +2283,39 @@ struct CareerShellView: View {
         return (try? modelContext.fetch(descriptor)) ?? []
     }
 
+    /// The preseason slate, SEEDED — `nil` outside `.preseason` (#205b).
+    ///
+    /// Two consumers, one answer: the required "Play the preseason slate" row's
+    /// completion and `performShellAdvance`'s refusal. Both have to ask about a
+    /// blob that exists, because `PreseasonEngine.canLeavePreseason(nil)` is
+    /// `true` on purpose (a save that never reached preseason cannot be held in
+    /// it) — so gating on an unseeded save would let every career walk past the
+    /// slate, which is the bug this closes rather than a new one.
+    ///
+    /// `PreseasonView.seedFlowIfNeeded` seeds the same way, and both go through
+    /// `PreseasonEngine.openPreseasonIfNeeded`: a blob that still
+    /// `matches(career:)` is handed back untouched, so whichever surface asks
+    /// first draws the slate and the other reads it. The draw itself has exactly
+    /// one implementation, in the engine.
+    @discardableResult
+    private func ensuredPreseasonState() -> PreseasonState? {
+        guard career.currentPhase == .preseason else { return nil }
+        let existing = career.preseasonState
+        if let existing, existing.matches(career: career) { return existing }
+        let cid = career.id
+        let teams = (try? modelContext.fetch(
+            FetchDescriptor<Team>(predicate: #Predicate<Team> { $0.careerID == cid })
+        )) ?? []
+        let state = PreseasonEngine.openPreseasonIfNeeded(
+            existing: existing,
+            career: career,
+            teams: teams
+        )
+        career.preseasonState = state
+        try? modelContext.save()
+        return state
+    }
+
     /// Counts how many consecutive prior weeks the user spent at >=70%
     /// opponent-specific prep — drives the GameWeekPrepPicker drift warning.
     private var consecutiveOpponentPrepWeeks: Int {
@@ -2059,6 +2428,10 @@ struct CareerShellView: View {
         case .workloadDashboard:   shellDest = .workloadDashboard
         case .rosterCuts:          shellDest = .rosterCuts
         case .gameWeekPrep:        shellDest = .gameWeekPrep
+        // #205b — the exhibition slate. Reached from the required camp task
+        // row, from the hub's preseason hero card and from the league office's
+        // letter when an advance is refused.
+        case .preseason:           shellDest = .preseason
         }
 
         // §2.8: the calendar is a sheet and a task destination is a push, so the
@@ -2095,6 +2468,12 @@ struct CareerShellView: View {
             // it. A recorded `.done` here would out-rank that and re-open a
             // locked stage, so the store deliberately does not carry them.
             guard DraftPrepStep.stage(forTaskKey: task.matchKey) == nil else { continue }
+            // Same reasoning for the cutdown rungs: the roster count is their
+            // only authority and it can move in both directions inside one
+            // phase. A recorded `.done` out-ranks a re-derivation, so a club
+            // that claimed a man off waivers after making its 75 would come
+            // back from a relaunch with a green rung over an illegal roster.
+            guard TaskGenerator.cutLadderRung(forTaskKey: task.matchKey) == nil else { continue }
             statuses[task.matchKey] = task.status
         }
         TaskProgressStore.merge(statuses, in: taskCycle, season: career.currentSeason)
@@ -2214,6 +2593,67 @@ struct CareerShellView: View {
         }
 
         for index in currentTasks.indices {
+            // The cutdown ladder (#205a §5.1) — the ONE row per camp phase that
+            // answers to the roster count, and the only one in this function
+            // that answers to it in BOTH directions.
+            //
+            // Handled ahead of the `.done` guard on purpose. A camp roster can
+            // grow again after the rung is met — a waiver claim, a trade, a
+            // signing — and a rung latched at `.done` would leave the rail's
+            // banner silent and the Advance button live while
+            // `WeekAdvancer.userRosterLimitViolation` refuses the advance with
+            // an alert. That split (the panel not knowing what the gate knows)
+            // is #154f, and the fix is that both read the same count.
+            //
+            // The counter on the title is re-stamped here for the same reason
+            // the draft-prep counters are: the list is only rebuilt on a phase
+            // or week change, and every offseason phase holds the week still,
+            // so "Cut to 75 (80 currently)" would sit there all camp while the
+            // user cut his way down to 75.
+            // #205b — the preseason slate. Handled ahead of the `.done` guard
+            // for the same reason the cut ladder is: the counter on the title
+            // has to move as the games are played, and the list is only rebuilt
+            // on a phase change, so a frozen title would read "(0/3 played)"
+            // through the whole slate.
+            //
+            // Completion is the engine's own exit predicate, asked of a SEEDED
+            // blob (`ensuredPreseasonState`), so this row and
+            // `performShellAdvance` can never disagree — the split that made
+            // #154f a bug. An undrawable slate (broken league, no opponents)
+            // answers `true` and the row ticks: a phase nobody can leave is
+            // worse than a phase nobody has to play.
+            if currentTasks[index].matchKey == TaskGenerator.preseasonSlateTaskKey {
+                let slate = ensuredPreseasonState()
+                let played = slate?.results.count ?? 0
+                let total = slate?.slate.count ?? 0
+                currentTasks[index].title = TaskGenerator.preseasonSlateTitle(
+                    gamesPlayed: played,
+                    slateSize: total
+                )
+                if PreseasonEngine.canLeavePreseason(slate) {
+                    currentTasks[index].status = .done
+                } else {
+                    currentTasks[index].status = played > 0 ? .inProgress : .todo
+                }
+                continue
+            }
+
+            if let rung = TaskGenerator.cutLadderRung(forTaskKey: currentTasks[index].matchKey) {
+                let over = rosterCount > rung.target
+                currentTasks[index].title = TaskGenerator.cutLadderTitle(rung, rosterCount: rosterCount)
+                currentTasks[index].status = over ? .todo : .done
+                // …and `isRequired` with it. `rosterLadderTask` arms the row
+                // with `isRequired: over > 0` at generation time, and the list
+                // is only rebuilt on a phase or week change — so a club that
+                // entered the phase already under the rung carried a row that
+                // could never become required again. Re-stamping only `status`
+                // left the row red and the counter at zero, which is the exact
+                // panel/gate split the comment above claims to have closed:
+                // `incompleteRequiredCount` filters on `isRequired && != .done`.
+                currentTasks[index].isRequired = over
+                continue
+            }
+
             guard currentTasks[index].status != .done else { continue }
             let task = currentTasks[index]
 
@@ -2274,9 +2714,9 @@ struct CareerShellView: View {
             case "Hire Defensive Coordinator":
                 if hasDC { currentTasks[index].status = .done }
 
-            // Roster Cuts — verified by actual game state (roster count)
-            case _ where task.title.contains("Finalize 53-man roster"):
-                if rosterCount <= 53 { currentTasks[index].status = .done }
+            // The 53-man row used to be matched here by title substring. It is a
+            // cut-ladder rung like the other two now, and all three are handled
+            // above off `CutDay.target` — one authority for the whole ladder.
 
             // Review Roster tasks — check actual game state / user confirmations
             case "Review Position Group Grades":

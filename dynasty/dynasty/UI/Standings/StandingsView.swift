@@ -692,7 +692,7 @@ private struct StandingsRowDetailSheet: View {
     private var headerRow: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(detail.teamName)
-                .font(.system(size: 20, weight: .heavy))
+                .font(.system(size: DSType.Size.title2, weight: .heavy))
                 .foregroundStyle(Color.textPrimary)
             Text(recordString)
                 .font(.system(size: 14, weight: .semibold).monospacedDigit())
@@ -735,7 +735,7 @@ private struct StandingsRowDetailSheet: View {
     private func rankBadge(label: String, value: String, tint: Color) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label)
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: DSType.Size.caption, weight: .bold))
                 .tracking(1)
                 .foregroundStyle(Color.textTertiary)
             Text(value)
@@ -803,7 +803,7 @@ private struct StandingsRowDetailSheet: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: DSType.Size.body, weight: .semibold))
                     .foregroundStyle(Color.textPrimary)
                 if let detail {
                     Text(detail)

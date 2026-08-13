@@ -287,7 +287,7 @@ struct SquadDynamicsView: View {
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: icon)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: DSType.Size.callout, weight: .semibold))
                     .foregroundStyle(iconColor)
                     .frame(width: 22)
                 VStack(alignment: .leading, spacing: 1) {
@@ -347,7 +347,7 @@ struct SquadDynamicsView: View {
                     }
                     Spacer()
                     Text("\(chemistry)")
-                        .font(.system(size: 40, weight: .bold, design: .rounded).monospacedDigit())
+                        .font(.system(size: DSType.Size.display, weight: .bold, design: .rounded).monospacedDigit())
                         .foregroundStyle(chemistryColor(chemistry))
                     Text("/ 100")
                         .font(.title3)
@@ -521,7 +521,7 @@ struct SquadDynamicsView: View {
         return VStack(spacing: 10) {
             HStack(spacing: 10) {
                 Image(systemName: impact.icon)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: DSType.Size.body, weight: .semibold))
                     .foregroundStyle(impact.color)
                 Text(group.archetype.displayName + "s")
                     .font(.subheadline.weight(.semibold))
@@ -609,7 +609,7 @@ struct SquadDynamicsView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
                 Image(systemName: motivationIcon(group.motivation))
-                    .font(.system(size: 14))
+                    .font(.system(size: DSType.Size.body))
                     .foregroundStyle(motivationColor(group.motivation))
                     .frame(width: 20)
                 Text(group.motivation.rawValue)
@@ -746,7 +746,7 @@ struct SquadDynamicsView: View {
                                 .fill(Color.accentGold.opacity(0.15))
                                 .frame(width: 44, height: 44)
                             Text(initials(captain.fullName))
-                                .font(.system(size: 15, weight: .bold))
+                                .font(.system(size: DSType.Size.callout, weight: .bold))
                                 .foregroundStyle(Color.accentGold)
                         }
                         VStack(alignment: .leading, spacing: 3) {
@@ -865,7 +865,7 @@ struct SquadDynamicsView: View {
                 .foregroundStyle(Color.accentBlue)
             Image(systemName: "bolt.fill")
                 .font(.caption2)
-                .foregroundStyle(Color.accentBlue.opacity(0.6))
+                .foregroundStyle(Color.accentBlue)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -1058,7 +1058,7 @@ struct SquadDynamicsView: View {
                                     .fill(Color.accentBlue.opacity(0.15))
                                     .frame(width: 28, height: 28)
                                 Image(systemName: eventIcon(events[index]))
-                                    .font(.system(size: 11, weight: .semibold))
+                                    .font(.system(size: DSType.Size.caption, weight: .semibold))
                                     .foregroundStyle(Color.accentBlue)
                             }
                             .padding(.top, 2)

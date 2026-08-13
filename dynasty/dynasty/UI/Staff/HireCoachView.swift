@@ -210,23 +210,23 @@ struct HireCoachView: View {
                     .progressViewStyle(.circular)
                     .tint(Color.accentGold)
                 Text("Building the candidate pool\u{2026}")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: DSType.Size.callout, weight: .semibold))
                     .foregroundStyle(Color.textSecondary)
                 Text("Your scouts are working the phones for \(role.displayName.lowercased()) candidates.")
-                    .font(.system(size: 13))
+                    .font(.system(size: DSType.Size.body))
                     .foregroundStyle(Color.textTertiary)
                     .multilineTextAlignment(.center)
             } else {
                 Image(systemName: "line.3.horizontal.decrease.circle")
-                    .font(.system(size: 34))
+                    .font(.system(size: DSType.Size.display))
                     .foregroundStyle(Color.textTertiary)
                 Text("No candidates match your filters")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: DSType.Size.callout, weight: .semibold))
                     .foregroundStyle(Color.textSecondary)
                 Text(filtersActive
                      ? "\(candidates.count) \(role.displayName.lowercased()) candidates are available. Clear a filter above to see them."
                      : "Nobody is available for this job right now.")
-                    .font(.system(size: 13))
+                    .font(.system(size: DSType.Size.body))
                     .foregroundStyle(Color.textTertiary)
                     .multilineTextAlignment(.center)
                 if filtersActive {
@@ -235,7 +235,7 @@ struct HireCoachView: View {
                         schemeFilter = "All"
                         personalityFilter = "All"
                     }
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: DSType.Size.body, weight: .semibold))
                     .foregroundStyle(Color.accentGold)
                 }
             }
@@ -418,7 +418,7 @@ struct HireCoachView: View {
                         .foregroundStyle(Color.textTertiary)
                     Text("$\(formatBudget(remainingBudget))M")
                         .font(.headline.weight(.bold).monospacedDigit())
-                        .foregroundStyle(remainingBudget > 0 ? Color.success : Color.danger)
+                        .foregroundStyle(remainingBudget > 0 ? Color.success : Color.dangerText)
                 }
                 Spacer()
 
@@ -439,7 +439,7 @@ struct HireCoachView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "line.3.horizontal.decrease.circle")
-                            .font(.system(size: 12))
+                            .font(.system(size: DSType.Size.footnote))
                         Text(schemeFilter == "All" ? "Scheme" : schemeFilter)
                             .font(.caption2.weight(.medium))
                     }
@@ -478,7 +478,7 @@ struct HireCoachView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "person.crop.circle")
-                            .font(.system(size: 12))
+                            .font(.system(size: DSType.Size.footnote))
                         Text(personalityFilter == "All"
                              ? "Personality"
                              : (PersonalityArchetype(rawValue: personalityFilter)?.displayName ?? "Personality"))
@@ -499,7 +499,7 @@ struct HireCoachView: View {
                 } label: {
                     HStack(spacing: 3) {
                         Image(systemName: "questionmark.circle")
-                            .font(.system(size: 11))
+                            .font(.system(size: DSType.Size.caption))
                         Text("Colors")
                             .font(.caption2.weight(.medium))
                     }
@@ -532,15 +532,15 @@ struct HireCoachView: View {
             if showValueLegend {
                 HStack(spacing: 12) {
                     Image(systemName: "info.circle.fill")
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.micro))
                         .foregroundStyle(Color.accentGold)
                     Text("Val = skill-to-salary ratio: Great = high skill/low salary, Poor = low skill/high salary")
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: DSType.Size.micro, weight: .medium))
                         .foregroundStyle(Color.textSecondary)
                     Spacer()
                     Button { showValueLegend = false } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 12))
+                            .font(.system(size: DSType.Size.footnote))
                             .foregroundStyle(Color.textTertiary)
                     }
                     .accessibilityLabel("Dismiss value legend")
@@ -556,15 +556,15 @@ struct HireCoachView: View {
                 if !desc.isEmpty {
                     HStack(spacing: 8) {
                         Image(systemName: "info.circle.fill")
-                            .font(.system(size: 10))
+                            .font(.system(size: DSType.Size.micro))
                             .foregroundStyle(Color.accentBlue)
                         Text("\(label): \(desc)")
-                            .font(.system(size: 10, weight: .medium))
+                            .font(.system(size: DSType.Size.micro, weight: .medium))
                             .foregroundStyle(Color.textSecondary)
                         Spacer()
                         Button { showSchemeTip = false } label: {
                             Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 12))
+                                .font(.system(size: DSType.Size.footnote))
                                 .foregroundStyle(Color.textTertiary)
                         }
                         .accessibilityLabel("Dismiss scheme tip")
@@ -578,7 +578,7 @@ struct HireCoachView: View {
             if showRatingLegend {
                 HStack(spacing: 10) {
                     Image(systemName: "paintpalette.fill")
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.micro))
                         .foregroundStyle(Color.accentGold)
                     legendSwatch(color: .success, label: "≥80 Elite")
                     legendSwatch(color: .accentGold, label: "60–79 Solid")
@@ -587,7 +587,7 @@ struct HireCoachView: View {
                     Spacer()
                     Button { showRatingLegend = false } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 12))
+                            .font(.system(size: DSType.Size.footnote))
                             .foregroundStyle(Color.textTertiary)
                     }
                     .accessibilityLabel("Dismiss color legend")
@@ -600,7 +600,7 @@ struct HireCoachView: View {
             if let current = currentCoach {
                 HStack(spacing: 8) {
                     Image(systemName: "arrow.left.arrow.right")
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.micro))
                         .foregroundStyle(Color.accentGold)
                     Text("Replacing:")
                         .font(.caption2.weight(.semibold))
@@ -639,9 +639,9 @@ struct HireCoachView: View {
                     Text("Scheme")
                     Image(systemName: "info.circle")
                         .font(.system(size: DSType.Size.micro))
-                        .foregroundStyle(Color.accentBlue.opacity(0.6))
+                        .foregroundStyle(Color.accentBlue.opacity(0.85))
                 }
-                .frame(width: 62)
+                .frame(width: 70)
             }
             .foregroundStyle(sortColumn == .scheme ? Color.accentGold : Color.textTertiary)
             .accessibilityLabel("Scheme column")
@@ -665,7 +665,7 @@ struct HireCoachView: View {
                     Text("Val")
                     Image(systemName: "info.circle")
                         .font(.system(size: DSType.Size.micro))
-                        .foregroundStyle(Color.accentGold.opacity(0.6))
+                        .foregroundStyle(Color.accentGold.opacity(0.85))
                 }
                 .frame(width: 40)
             }
@@ -676,7 +676,7 @@ struct HireCoachView: View {
             Text("")
                 .frame(width: 64)
         }
-        .font(.system(size: 10, weight: .semibold))
+        .font(.system(size: DSType.Size.micro, weight: .semibold))
         .foregroundStyle(Color.textTertiary)
     }
 
@@ -736,7 +736,7 @@ struct HireCoachView: View {
                 .fill(color)
                 .frame(width: 10, height: 10)
             Text(label)
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: DSType.Size.micro, weight: .medium))
                 .foregroundStyle(Color.textSecondary)
         }
     }
@@ -761,7 +761,7 @@ struct HireCoachView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 4) {
                         Text(candidate.fullName)
-                            .font(.system(size: 13, weight: .bold))
+                            .font(.system(size: DSType.Size.body, weight: .bold))
                             .foregroundStyle(isOverBudget ? Color.textTertiary : Color.textPrimary)
                             .lineLimit(1)
                         // Potential label badge
@@ -824,20 +824,20 @@ struct HireCoachView: View {
                         } label: {
                             HStack(spacing: 2) {
                                 Text(candidate.personality.shortLabel)
-                                    .font(.system(size: 9, weight: .medium))
+                                    .font(.system(size: DSType.Size.caption, weight: .medium))
                                     .foregroundStyle(Color.accentBlue)
                                     .lineLimit(1)
                                 Image(systemName: "info.circle")
                                     .font(.system(size: DSType.Size.micro))
-                                    .foregroundStyle(Color.accentBlue.opacity(0.6))
+                                    .foregroundStyle(Color.accentBlue.opacity(0.85))
                             }
                         }
                         .buttonStyle(.plain)
                         // Fix #63: OVR delta vs current
                         if let delta = ovrDelta {
                             Text(delta >= 0 ? "+\(delta)" : "\(delta)")
-                                .font(.system(size: 9, weight: .bold).monospacedDigit())
-                                .foregroundStyle(delta > 0 ? Color.success : delta < 0 ? Color.danger : Color.textTertiary)
+                                .font(.system(size: DSType.Size.caption, weight: .bold).monospacedDigit())
+                                .foregroundStyle(delta > 0 ? Color.success : delta < 0 ? Color.dangerText : Color.textTertiary)
                         }
                     }
                 }
@@ -845,17 +845,17 @@ struct HireCoachView: View {
 
                 // Age
                 Text("\(candidate.age)")
-                    .font(.system(size: 11).monospacedDigit())
+                    .font(.system(size: DSType.Size.caption).monospacedDigit())
                     .foregroundStyle(Color.textSecondary)
                     .frame(width: 34)
 
                 // Scheme
                 Text(schemeLabel(candidate))
-                    .font(.system(size: 9, weight: .medium))
+                    .font(.system(size: DSType.Size.caption, weight: .medium))
                     .foregroundStyle(Color.accentBlue)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                    .frame(width: 62)
+                    .minimumScaleFactor(0.91)  // floor the shrink at 10pt (11 * 0.91)
+                    .frame(width: 70)
 
                 // Fix #38: Scheme/roster fit indicator — only when team has comparable scheme.
                 if hasInferableTeamScheme {
@@ -880,30 +880,30 @@ struct HireCoachView: View {
 
                 // OVR numeric
                 Text("\(ovr)")
-                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .font(.system(size: DSType.Size.caption, weight: .bold, design: .monospaced))
                     .foregroundStyle(Color.forRating(ovr))
                     .frame(width: 36)
 
                 // Key skill numerics
                 Text("\(candidate.playCalling)")
-                    .font(.system(size: 11, design: .monospaced))
+                    .font(.system(size: DSType.Size.caption, design: .monospaced))
                     .foregroundStyle(Color.forRating(candidate.playCalling))
                     .frame(width: 36)
 
                 Text("\(candidate.playerDevelopment)")
-                    .font(.system(size: 11, design: .monospaced))
+                    .font(.system(size: DSType.Size.caption, design: .monospaced))
                     .foregroundStyle(Color.forRating(candidate.playerDevelopment))
                     .frame(width: 36)
 
                 Text("\(candidate.gamePlanning)")
-                    .font(.system(size: 11, design: .monospaced))
+                    .font(.system(size: DSType.Size.caption, design: .monospaced))
                     .foregroundStyle(Color.forRating(candidate.gamePlanning))
                     .frame(width: 36)
 
                 // Salary
                 Text(salaryFormatted(candidate.salary))
-                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
-                    .foregroundStyle(isOverBudget ? Color.danger : Color.textSecondary)
+                    .font(.system(size: DSType.Size.caption, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(isOverBudget ? Color.dangerText : Color.textSecondary)
                     .frame(width: 56)
 
                 // Fix #60: Value badge
@@ -916,7 +916,7 @@ struct HireCoachView: View {
                 Group {
                     if isHired {
                         Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 14))
+                            .font(.system(size: DSType.Size.body))
                             .foregroundStyle(Color.success)
                     } else if isRejected {
                         // #271: Rejected candidate badge
@@ -926,11 +926,11 @@ struct HireCoachView: View {
                             .lineLimit(1)
                     } else if isOverBudget {
                         Image(systemName: "xmark.circle")
-                            .font(.system(size: 14))
-                            .foregroundStyle(Color.danger.opacity(0.5))
+                            .font(.system(size: DSType.Size.body))
+                            .foregroundStyle(Color.dangerText.opacity(0.85))
                     } else {
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(.system(size: DSType.Size.caption, weight: .semibold))
                             .foregroundStyle(Color.textTertiary)
                     }
                 }
@@ -1349,14 +1349,14 @@ private struct CandidateDetailSheet: View {
     private var careerHistoryCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("CAREER HISTORY")
-                .font(.system(size: 11, weight: .black))
+                .font(.system(size: DSType.Size.caption, weight: .black))
                 .tracking(1.5)
                 .foregroundStyle(Color.accentGold)
 
             ForEach(careerHistoryLines, id: \.self) { line in
                 HStack(spacing: 8) {
                     Image(systemName: "clock.arrow.circlepath")
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.micro))
                         .foregroundStyle(Color.textTertiary)
                     Text(line)
                         .font(.caption)
@@ -1471,14 +1471,14 @@ private struct CandidateDetailSheet: View {
     private var projectedImpactCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("PROJECTED CONTRIBUTION")
-                .font(.system(size: 11, weight: .black))
+                .font(.system(size: DSType.Size.caption, weight: .black))
                 .tracking(1.5)
                 .foregroundStyle(Color.accentGold)
 
             ForEach(projectedImpactEstimates, id: \.label) { item in
                 HStack(spacing: 10) {
                     Image(systemName: item.icon)
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: DSType.Size.footnote, weight: .semibold))
                         .foregroundStyle(item.color)
                         .frame(width: 18)
                     Text(item.label)
@@ -1486,13 +1486,13 @@ private struct CandidateDetailSheet: View {
                         .foregroundStyle(Color.textSecondary)
                     Spacer()
                     Text(item.value)
-                        .font(.system(size: 12, weight: .bold).monospacedDigit())
+                        .font(.system(size: DSType.Size.footnote, weight: .bold).monospacedDigit())
                         .foregroundStyle(item.color)
                 }
             }
 
             Text("Estimates based on attribute deltas vs. league average.")
-                .font(.system(size: 9, weight: .medium))
+                .font(.system(size: DSType.Size.caption, weight: .medium))
                 .foregroundStyle(Color.textTertiary)
         }
         .padding(16)
@@ -1516,7 +1516,7 @@ private struct CandidateDetailSheet: View {
                 .font(.system(size: DSType.Size.micro, weight: .bold))
                 .foregroundStyle(color)
             Text(label)
-                .font(.system(size: 9, weight: .semibold))
+                .font(.system(size: DSType.Size.caption, weight: .semibold))
                 .foregroundStyle(color)
         }
         .padding(.horizontal, 8)
@@ -1692,7 +1692,7 @@ private struct CandidateDetailSheet: View {
     private var rankingBadge: some View {
         HStack(spacing: 8) {
             Image(systemName: "number")
-                .font(.system(size: 10, weight: .bold))
+                .font(.system(size: DSType.Size.micro, weight: .bold))
                 .foregroundStyle(Color.accentGold)
             Text("Ranked #\(candidateRank) of \(totalCandidates) candidates")
                 .font(.caption.weight(.semibold))
@@ -1700,7 +1700,7 @@ private struct CandidateDetailSheet: View {
             Spacer()
             if candidateRank <= 3 {
                 Text("Best Available")
-                    .font(.system(size: 10, weight: .black))
+                    .font(.system(size: DSType.Size.micro, weight: .black))
                     .foregroundStyle(Color.backgroundPrimary)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
@@ -1722,7 +1722,7 @@ private struct CandidateDetailSheet: View {
                 PersonFaceView(coach: candidate, size: .large, ringColor: .accentGold)
 
                 Text(candidate.role.abbreviation)
-                    .font(.system(size: 14, weight: .black))
+                    .font(.system(size: DSType.Size.body, weight: .black))
                     .foregroundStyle(Color.backgroundPrimary)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
@@ -1753,10 +1753,10 @@ private struct CandidateDetailSheet: View {
                 let ovr = coachOverall(candidate)
                 VStack(spacing: 2) {
                     Text("\(ovr)")
-                        .font(.system(size: 22, weight: .black).monospacedDigit())
+                        .font(.system(size: DSType.Size.title2, weight: .black).monospacedDigit())
                         .foregroundStyle(Color.forRating(ovr))
                     Text("OVR")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.system(size: DSType.Size.caption, weight: .bold))
                         .foregroundStyle(Color.textTertiary)
                     Text(ovrContextLabel(ovr))
                         .font(.system(size: DSType.Size.micro, weight: .semibold))
@@ -1768,7 +1768,7 @@ private struct CandidateDetailSheet: View {
                 // #89: Coach development potential
                 VStack(spacing: 2) {
                     Text(candidatePotentialLabel)
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.system(size: DSType.Size.caption, weight: .bold))
                         .foregroundStyle(candidatePotentialColor)
                     Text("Potential")
                         .font(.system(size: DSType.Size.micro, weight: .medium))
@@ -1790,7 +1790,7 @@ private struct CandidateDetailSheet: View {
                     HStack(spacing: 4) {
                         Circle().fill(fit.color).frame(width: 8, height: 8)
                         Text(fit.label)
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(.system(size: DSType.Size.micro, weight: .semibold))
                             .foregroundStyle(fit.color)
                     }
                     .padding(.horizontal, 8)
@@ -1826,7 +1826,7 @@ private struct CandidateDetailSheet: View {
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: "handshake.fill")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.system(size: DSType.Size.callout, weight: .semibold))
                 VStack(spacing: 2) {
                     Text("Offer Contract")
                         .font(.headline.weight(.bold))
@@ -1881,14 +1881,14 @@ private struct CandidateDetailSheet: View {
         return VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("VS CURRENT \(candidate.role.abbreviation)")
-                    .font(.system(size: 11, weight: .black))
+                    .font(.system(size: DSType.Size.caption, weight: .black))
                     .tracking(1.5)
                     .foregroundStyle(Color.accentGold)
                 Spacer()
                 // #87: Upgrade summary
                 Text("vs \(current.fullName) (\(curOVR) OVR) — \(delta >= 0 ? "+\(delta)" : "\(delta)") \(delta > 0 ? "upgrade" : delta < 0 ? "downgrade" : "even")")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(delta > 0 ? Color.success : delta < 0 ? Color.danger : Color.textTertiary)
+                    .font(.system(size: DSType.Size.micro, weight: .semibold))
+                    .foregroundStyle(delta > 0 ? Color.success : delta < 0 ? Color.dangerText : Color.textTertiary)
             }
 
             HStack(spacing: 16) {
@@ -1899,7 +1899,7 @@ private struct CandidateDetailSheet: View {
                         .foregroundStyle(Color.textSecondary)
                         .lineLimit(1)
                     Text("\(curOVR)")
-                        .font(.system(size: 18, weight: .black).monospacedDigit())
+                        .font(.system(size: DSType.Size.title3, weight: .black).monospacedDigit())
                         .foregroundStyle(Color.forRating(curOVR))
                     Text(salaryFormatted(current.salary))
                         .font(.caption2.monospacedDigit())
@@ -1910,11 +1910,11 @@ private struct CandidateDetailSheet: View {
                 // Arrow with delta
                 VStack(spacing: 2) {
                     Image(systemName: "arrow.right")
-                        .font(.system(size: 14, weight: .bold))
+                        .font(.system(size: DSType.Size.body, weight: .bold))
                         .foregroundStyle(Color.textTertiary)
                     Text(delta >= 0 ? "+\(delta)" : "\(delta)")
-                        .font(.system(size: 12, weight: .bold).monospacedDigit())
-                        .foregroundStyle(delta > 0 ? Color.success : delta < 0 ? Color.danger : Color.textTertiary)
+                        .font(.system(size: DSType.Size.footnote, weight: .bold).monospacedDigit())
+                        .foregroundStyle(delta > 0 ? Color.success : delta < 0 ? Color.dangerText : Color.textTertiary)
                 }
 
                 // New candidate
@@ -1924,7 +1924,7 @@ private struct CandidateDetailSheet: View {
                         .foregroundStyle(Color.textPrimary)
                         .lineLimit(1)
                     Text("\(newOVR)")
-                        .font(.system(size: 18, weight: .black).monospacedDigit())
+                        .font(.system(size: DSType.Size.title3, weight: .black).monospacedDigit())
                         .foregroundStyle(Color.forRating(newOVR))
                     Text(salaryFormatted(candidate.salary))
                         .font(.caption2.monospacedDigit())
@@ -1949,8 +1949,8 @@ private struct CandidateDetailSheet: View {
                             .font(.system(size: DSType.Size.micro, weight: .medium))
                             .foregroundStyle(Color.textTertiary)
                         Text(d >= 0 ? "+\(d)" : "\(d)")
-                            .font(.system(size: 10, weight: .bold).monospacedDigit())
-                            .foregroundStyle(d > 0 ? Color.success : d < 0 ? Color.danger : Color.textTertiary)
+                            .font(.system(size: DSType.Size.micro, weight: .bold).monospacedDigit())
+                            .foregroundStyle(d > 0 ? Color.success : d < 0 ? Color.dangerText : Color.textTertiary)
                     }
                     .frame(maxWidth: .infinity)
                 }
@@ -1965,7 +1965,7 @@ private struct CandidateDetailSheet: View {
     private var noCurrentCoachCard: some View {
         HStack(spacing: 10) {
             Image(systemName: "person.badge.plus")
-                .font(.system(size: 16, weight: .semibold))
+                .font(.system(size: DSType.Size.callout, weight: .semibold))
                 .foregroundStyle(Color.accentBlue)
             VStack(alignment: .leading, spacing: 2) {
                 Text("New hire — no current \(candidate.role.abbreviation)")
@@ -1996,31 +1996,31 @@ private struct CandidateDetailSheet: View {
 
         return VStack(alignment: .leading, spacing: 8) {
             Text("PROJECTED IMPACT")
-                .font(.system(size: 11, weight: .black))
+                .font(.system(size: DSType.Size.caption, weight: .black))
                 .tracking(1.5)
                 .foregroundStyle(Color.accentGold)
 
             HStack(spacing: 10) {
                 Image(systemName: "chart.line.uptrend.xyaxis")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: DSType.Size.body, weight: .semibold))
                     .foregroundStyle(avgBoost >= 0 ? Color.success : Color.danger)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Expected \(sideLabel) boost: \(avgBoost >= 0 ? "+" : "")\(String(format: "%.1f", avgBoost))% efficiency")
                         .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(avgBoost >= 0 ? Color.success : Color.danger)
+                        .foregroundStyle(avgBoost >= 0 ? Color.success : Color.dangerText)
                     HStack(spacing: 12) {
                         Text("Play Calling: \(playBoost >= 0 ? "+" : "")\(String(format: "%.1f", playBoost))%")
                             .font(.caption)
-                            .foregroundStyle(playBoost >= 0 ? Color.success.opacity(0.8) : Color.danger.opacity(0.8))
+                            .foregroundStyle(playBoost >= 0 ? Color.success.opacity(0.8) : Color.dangerText.opacity(0.8))
                         Text("Player Dev: \(devBoost >= 0 ? "+" : "")\(String(format: "%.1f", devBoost))%")
                             .font(.caption)
-                            .foregroundStyle(devBoost >= 0 ? Color.success.opacity(0.8) : Color.danger.opacity(0.8))
+                            .foregroundStyle(devBoost >= 0 ? Color.success.opacity(0.8) : Color.dangerText.opacity(0.8))
                     }
                 }
             }
 
             Text("Compared to league average (\(Int(leagueAvg)) rating)")
-                .font(.system(size: 9, weight: .medium))
+                .font(.system(size: DSType.Size.caption, weight: .medium))
                 .foregroundStyle(Color.textTertiary)
         }
         .padding(16)
@@ -2033,7 +2033,7 @@ private struct CandidateDetailSheet: View {
     private var attributesCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("ATTRIBUTES")
-                .font(.system(size: 11, weight: .black))
+                .font(.system(size: DSType.Size.caption, weight: .black))
                 .tracking(1.5)
                 .foregroundStyle(Color.accentGold)
 
@@ -2073,11 +2073,11 @@ private struct CandidateDetailSheet: View {
         let tier = attributeTier(value)
         return HStack(spacing: 6) {
             Text(name)
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: DSType.Size.micro, weight: .medium))
                 .foregroundStyle(Color.textSecondary)
             Spacer()
             Text(tier.label)
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: DSType.Size.caption, weight: .bold))
                 .foregroundStyle(tier.color)
                 .padding(.horizontal, 5)
                 .padding(.vertical, 2)
@@ -2086,7 +2086,7 @@ private struct CandidateDetailSheet: View {
                         .fill(tier.color.opacity(tier.isElite ? 0.18 : 0.10))
                 )
             Text("\(value)")
-                .font(.system(size: 16, weight: .bold).monospacedDigit())
+                .font(.system(size: DSType.Size.callout, weight: .bold).monospacedDigit())
                 .foregroundStyle(Color.forRating(value))
         }
         .padding(.horizontal, 10)
@@ -2112,7 +2112,7 @@ private struct CandidateDetailSheet: View {
     private var backgroundCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("BACKGROUND")
-                .font(.system(size: 11, weight: .black))
+                .font(.system(size: DSType.Size.caption, weight: .black))
                 .tracking(1.5)
                 .foregroundStyle(Color.accentGold)
 
@@ -2130,7 +2130,7 @@ private struct CandidateDetailSheet: View {
     private var schemeFitCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("SCHEME FIT")
-                .font(.system(size: 11, weight: .black))
+                .font(.system(size: DSType.Size.caption, weight: .black))
                 .tracking(1.5)
                 .foregroundStyle(Color.accentGold)
 
@@ -2188,14 +2188,14 @@ private struct CandidateDetailSheet: View {
                 Divider().overlay(Color.surfaceBorder)
 
                 Text("SCHEME EXPERTISE")
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.system(size: DSType.Size.caption, weight: .bold))
                     .tracking(1)
                     .foregroundStyle(Color.textTertiary)
 
                 ForEach(candidate.schemeExpertise.sorted(by: { $0.value > $1.value }), id: \.key) { scheme, value in
                     HStack(spacing: 8) {
                         Text(scheme)
-                            .font(.system(size: 11, weight: .medium))
+                            .font(.system(size: DSType.Size.caption, weight: .medium))
                             .foregroundStyle(Color.textSecondary)
                             .frame(width: 80, alignment: .leading)
 
@@ -2212,7 +2212,7 @@ private struct CandidateDetailSheet: View {
                         .frame(height: 6)
 
                         Text(LetterGrade.from(numericValue: value).rawValue)
-                            .font(.system(size: 11, weight: .bold))
+                            .font(.system(size: DSType.Size.caption, weight: .bold))
                             .foregroundStyle(Color.forRating(value))
                             .frame(width: 24, alignment: .trailing)
                     }
@@ -2229,14 +2229,14 @@ private struct CandidateDetailSheet: View {
     private var coachingStyleCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("COACHING STYLE")
-                .font(.system(size: 11, weight: .black))
+                .font(.system(size: DSType.Size.caption, weight: .black))
                 .tracking(1.5)
                 .foregroundStyle(Color.accentGold)
 
             // Personality
             HStack(spacing: 8) {
                 Image(systemName: "person.fill")
-                    .font(.system(size: 14))
+                    .font(.system(size: DSType.Size.body))
                     .foregroundStyle(Color.accentBlue)
                 Text(candidate.personality.displayName)
                     .font(.subheadline.weight(.semibold))
@@ -2248,12 +2248,12 @@ private struct CandidateDetailSheet: View {
                 let isNegative = item.effect.contains("-") || item.effect.lowercased().contains("risk")
                 HStack(spacing: 6) {
                     Image(systemName: item.icon)
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.micro))
                         .foregroundStyle(isNegative ? Color.danger : Color.success)
                         .frame(width: 16)
                     Text(item.effect)
                         .font(.caption)
-                        .foregroundStyle(isNegative ? Color.danger : Color.success)
+                        .foregroundStyle(isNegative ? Color.dangerText : Color.success)
                 }
             }
 
@@ -2263,7 +2263,7 @@ private struct CandidateDetailSheet: View {
             let chem = chemistryPrediction
             HStack(spacing: 8) {
                 Image(systemName: "person.2.fill")
-                    .font(.system(size: 14))
+                    .font(.system(size: DSType.Size.body))
                     .foregroundStyle(chem.color)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("HC Chemistry: \(chem.label)")
@@ -2285,7 +2285,7 @@ private struct CandidateDetailSheet: View {
     private var negotiationCard: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("NEGOTIATE")
-                .font(.system(size: 11, weight: .black))
+                .font(.system(size: DSType.Size.caption, weight: .black))
                 .tracking(1.5)
                 .foregroundStyle(Color.accentGold)
 
@@ -2298,7 +2298,7 @@ private struct CandidateDetailSheet: View {
                     Spacer()
                     Text(salaryFormatted(Int(proposedSalary)))
                         .font(.headline.weight(.bold).monospacedDigit())
-                        .foregroundStyle(isOverBudget ? Color.danger : Color.accentGold)
+                        .foregroundStyle(isOverBudget ? Color.dangerText : Color.accentGold)
                 }
 
                 let minSalary = max(100, Double(candidate.salary) * 0.5)
@@ -2332,7 +2332,7 @@ private struct CandidateDetailSheet: View {
                 // Fix #65: Budget after hire
                 Text("Budget after: $\(formatBudget(budgetAfterHire))M")
                     .font(.caption.weight(.medium).monospacedDigit())
-                    .foregroundStyle(budgetAfterHire >= 0 ? Color.textSecondary : Color.danger)
+                    .foregroundStyle(budgetAfterHire >= 0 ? Color.textSecondary : Color.dangerText)
             }
             .padding(8)
             .background(
@@ -2346,7 +2346,7 @@ private struct CandidateDetailSheet: View {
                 HStack(spacing: 6) {
                     Image(systemName: assessment.color == .danger ? "xmark.circle.fill" :
                             assessment.color == .warning ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
-                        .font(.system(size: 12))
+                        .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(assessment.color)
                     Text(assessment.label)
                         .font(.caption.weight(.semibold))
@@ -2374,10 +2374,10 @@ private struct CandidateDetailSheet: View {
                 // #162: Contract length effect on salary/acceptance
                 HStack(spacing: 6) {
                     Image(systemName: "calendar.badge.clock")
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.micro))
                         .foregroundStyle(Color.textTertiary)
                     Text(contractLengthEffect)
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: DSType.Size.micro, weight: .medium))
                         .foregroundStyle(Color.textSecondary)
                 }
             }
@@ -2408,7 +2408,7 @@ private struct CandidateDetailSheet: View {
                         .foregroundStyle(rejectionChance > 0.5 ? Color.danger : Color.warning)
                     Text("Rejection risk: \(Int(rejectionChance * 100))%")
                         .font(.subheadline.weight(.medium))
-                        .foregroundStyle(rejectionChance > 0.5 ? Color.danger : Color.warning)
+                        .foregroundStyle(rejectionChance > 0.5 ? Color.dangerText : Color.warning)
                 }
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -2424,7 +2424,7 @@ private struct CandidateDetailSheet: View {
                         .foregroundStyle(Color.danger)
                     Text("Over budget")
                         .font(.subheadline.weight(.medium))
-                        .foregroundStyle(Color.danger)
+                        .foregroundStyle(Color.dangerText)
                 }
             }
 
@@ -2458,7 +2458,7 @@ private struct CandidateDetailSheet: View {
                         } label: {
                             HStack(spacing: 6) {
                                 Image(systemName: "handshake.fill")
-                                    .font(.system(size: 14))
+                                    .font(.system(size: DSType.Size.body))
                                 Text("Accept Counter: \(salaryFormatted(counter))/yr")
                                     .font(.subheadline.weight(.bold))
                             }
@@ -2493,7 +2493,7 @@ private struct CandidateDetailSheet: View {
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "handshake.fill")
-                            .font(.system(size: 16, weight: .semibold))
+                            .font(.system(size: DSType.Size.callout, weight: .semibold))
                         VStack(spacing: 2) {
                             Text("Offer Contract")
                                 .font(.headline.weight(.bold))
@@ -2606,7 +2606,7 @@ private struct CandidateDetailSheet: View {
 
     private func schemeTag(_ text: String, color: Color) -> some View {
         Text(text)
-            .font(.system(size: 11, weight: .medium))
+            .font(.system(size: DSType.Size.caption, weight: .medium))
             .foregroundStyle(Color.textSecondary)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)

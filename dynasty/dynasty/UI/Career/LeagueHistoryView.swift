@@ -317,7 +317,7 @@ struct LeagueHistoryView: View {
                 .font(.title3.weight(.bold))
                 .foregroundStyle(Color.textPrimary)
             Text(label.uppercased())
-                .font(.system(size: 9, weight: .semibold))
+                .font(.system(size: DSType.Size.caption, weight: .semibold))
                 .tracking(0.6)
                 .foregroundStyle(Color.textSecondary)
         }
@@ -336,7 +336,7 @@ struct LeagueHistoryView: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Image(systemName: "trophy.fill")
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.micro))
                         .foregroundStyle(Color.accentGold)
                     Text(summary.championTeamName)
                         .font(.subheadline.weight(.semibold))
@@ -496,7 +496,7 @@ struct LeagueHistoryView: View {
     private func emptyCard(icon: String, text: String) -> some View {
         HStack(spacing: DSSpacing.sm) {
             Image(systemName: icon)
-                .font(.system(size: 18))
+                .font(.system(size: DSType.Size.title3))
                 .foregroundStyle(Color.textTertiary)
             Text(text)
                 .font(.caption)
