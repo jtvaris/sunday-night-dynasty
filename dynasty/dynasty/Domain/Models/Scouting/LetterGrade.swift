@@ -125,12 +125,29 @@ struct GradeRange: Codable, Equatable {
             low = best
             high = best
         } else {
-            // Medium confidence — tighten range toward new observation
-            if newGrade.rank > low.rank { low = low.shifted(by: -1) }  // raise floor
-            if newGrade.rank < high.rank { high = high.shifted(by: 1) } // lower ceiling
-            // Ensure new grade is within range
-            if newGrade < low { low = newGrade }
-            if newGrade > high { high = newGrade }
+            // Medium confidence — the second report NARROWS the band by one
+            // step toward its observation. `shifted(by:)` counts POSITIVE as
+            // better (see its clamp against `allCases`, which runs A+ first),
+            // so raising the floor is `+1` and lowering the ceiling is `-1`.
+            //
+            // Which edge moves depends on where the observation landed:
+            //
+            //   inside the band  → floor up AND ceiling down (width -2)
+            //   above the band   → floor up; the ceiling already sits on the
+            //                      right side of the observation (width -1)
+            //   below the band   → ceiling down, same argument (width -1)
+            //
+            // Neither edge may cross the other or step past the observation
+            // itself, which is what the two clamps buy — and a report never
+            // stretches the band open to swallow an observation that fell
+            // outside it. One dissenting look is worth one step of doubt, not
+            // a wider guess than you held before you ordered the report.
+            if newGrade.rank > low.rank {
+                low = min(low.shifted(by: 1), min(newGrade, high))
+            }
+            if newGrade.rank < high.rank {
+                high = max(high.shifted(by: -1), max(newGrade, low))
+            }
         }
     }
 }

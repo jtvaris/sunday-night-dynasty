@@ -20,6 +20,11 @@ struct RoundRecapData {
         let position: Position
         let publicGrade: PickGrade
         let isGem: Bool
+        /// The clock filed this one, not the user (#207). The recap is the
+        /// first calm moment of the night, so it is also the place a user who
+        /// was away from the iPad finds out that a card was handed in for him
+        /// — and, because the grade sits on the same row, what it cost.
+        var isAutoPick: Bool = false
     }
 
     struct LeagueStealRow: Identifiable {
@@ -55,7 +60,7 @@ enum RoundRecapBuilder {
     ) -> RoundRecapData {
         // 1) User picks in this round, in pick order.
         let userPicks = allPickResults
-            .filter { $0.isUserPick || $0.ownerOverride }
+            .filter { $0.isUserPick || $0.isAutoPick }
             .sorted { $0.pickNumber < $1.pickNumber }
             .map { result in
                 RoundRecapData.UserPickRow(
@@ -63,7 +68,8 @@ enum RoundRecapBuilder {
                     playerName: result.playerName,
                     position: result.position,
                     publicGrade: result.grade,
-                    isGem: result.isGem
+                    isGem: result.isGem,
+                    isAutoPick: result.isAutoPick
                 )
             }
 

@@ -37,6 +37,29 @@ final class CollegeProspect {
     var scoutedPersonality: PersonalityArchetype?
     var scoutGrade: String?           // Legacy letter grade from scoutedOverall
 
+    /// Which instrument produced the personality read currently on the card
+    /// (`PersonalitySource.rawValue`). `nil` means "unknown provenance": either
+    /// nothing has read him yet, or the row predates this field.
+    ///
+    /// The card used to claim "From your interview" for a read that a routine
+    /// scout report had quietly re-rolled on top of the interview's answer
+    /// (#185). Storing the source is what lets the writer refuse a weaker
+    /// instrument and lets the UI attribute the line honestly.
+    ///
+    /// Stored property with an INLINE default, never an `init` parameter, so the
+    /// migration stays lightweight.
+    var scoutedPersonalitySourceRaw: String? = nil
+
+    /// Typed view of `scoutedPersonalitySourceRaw`. Kept here beside its storage
+    /// rather than down in the computed-properties section on purpose: that
+    /// section is the block the balance harness splices verbatim, and it must
+    /// stay free of types the harness does not compile.
+    /// `ScoutingEngine.recordPersonalityRead` is the only setter in the build.
+    var scoutedPersonalitySource: PersonalitySource? {
+        get { scoutedPersonalitySourceRaw.flatMap { PersonalitySource(rawValue: $0) } }
+        set { scoutedPersonalitySourceRaw = newValue?.rawValue }
+    }
+
     // MARK: - Grade-Based Scouting (new system)
 
     /// Overall prospect grade as a range that narrows with more scout reports.
@@ -242,6 +265,27 @@ final class CollegeProspect {
 
     /// Pre-rendered college stat line. `nil` falls back to the legacy computed line.
     var collegeStatLineStored: String? = nil
+
+    // MARK: - Usage suppression / hidden gems (task #181)
+    //
+    // Two more stored properties with INLINE defaults, never `init` parameters.
+
+    /// Why this prospect never got on the field — "sat behind a first-round
+    /// pick", "lost the job in fall camp and never got it back". EMPTY is the
+    /// normal case and is the single source of truth for
+    /// `collegeSampleStatus`: a man with a burial reason has a production
+    /// record the market cannot read, however good he actually is.
+    ///
+    /// The narrative hook exists because the mechanic is otherwise invisible:
+    /// "89 snaps" alone reads as a bad player, and the whole point of the
+    /// buried cohort is that a real minority of them are not.
+    var collegeBurialReason: String = ""
+
+    /// Snaps played in his last college season. Only meaningful on a
+    /// `limitedSample` prospect (a full-season starter's snap count is not
+    /// modelled and stays `0`); it is what the stat line is rendered from and
+    /// what `DraftClassBuilder` derives his production SCORE from.
+    var collegeSnapsPlayed: Int = 0
 
     /// Version of the generator that produced this prospect. `0` = legacy
     /// (pre-overhaul) class, `2` = `DraftClassBuilder`.
@@ -475,27 +519,17 @@ final class CollegeProspect {
         "\(firstName) \(lastName)"
     }
 
-    /// Number of scout reports filed for this prospect (0-3+ scale).
-    var scoutReportCount: Int {
-        scoutingReports.count
-    }
-
-    /// Confidence level label based on number of scouting reports.
-    var scoutConfidenceLabel: String {
-        switch scoutingReports.count {
-        case 0:  return "No Intel"
-        case 1:  return "Low"
-        case 2:  return "Medium"
-        default: return "High"
-        }
-    }
-
-    /// Filled/empty dot string representing scouting confidence (max 3 dots).
-    var scoutConfidenceDots: String {
-        let filled = min(scoutingReports.count, 3)
-        let empty = 3 - filled
-        return String(repeating: "\u{25CF}", count: filled) + String(repeating: "\u{25CB}", count: empty)
-    }
+    /// #184: the raw-tally trio that used to live here — `scoutReportCount`,
+    /// `scoutConfidenceLabel`, `scoutConfidenceDots` — is retired. All three
+    /// counted `scoutingReports.count`, which includes the inherited
+    /// `Previous Staff` row `applyPreScoutedData` stamps on the top of every
+    /// class, so every screen that picked one up told the user this building
+    /// had watched ~250 men it had never seen, and disagreed with the prospect
+    /// card next to it. The counters the UI is allowed to show are
+    /// `ProspectFog.ownReportCount` (number) and `ProspectFog.confidenceDots`
+    /// (glyphs), both capped by `ScoutEvaluationBudget.maxReportsPerProspect`.
+    /// Read `scoutingReports` directly only when you mean every piece of paper
+    /// on file, the previous regime's included.
 
     /// R27: Name of the scout who filed the most recent report, for the
     /// "scouted by X" attribution line on prospect cards.
@@ -524,6 +558,20 @@ final class CollegeProspect {
         case belowAvg    = "Below Avg"
     }
 
+    /// Whether the production record is a season of football or a handful of
+    /// snaps (task #181, "hidden gems").
+    ///
+    /// Deliberately a SEPARATE enum rather than a fifth `CollegeProductionTier`
+    /// case: a tier answers "how good was he when he played", and a buried
+    /// prospect has a perfectly real (low) answer to that — the extra thing the
+    /// board needs to say is that the answer is drawn from 89 snaps. Folding it
+    /// into the tier would also have collapsed the two axes into one column on
+    /// every board that renders a tier chip.
+    enum CollegeSampleStatus: String {
+        case full          = ""
+        case limitedSample = "Limited Sample"
+    }
+
     /// Level of college competition faced. Easier competition inflates production.
     enum CollegeCompetitionLevel: String {
         case powerFive = "P5"
@@ -546,14 +594,29 @@ final class CollegeProspect {
         developmentArchetypeRaw.flatMap { DevelopmentArchetype(rawValue: $0) }
     }
 
-    /// Number of seasons started in college (1–4).
+    /// Whether this row was written by the generator that owns the college
+    /// production fields. Everything below branches on THIS rather than on a
+    /// `0`/`nil` sentinel in an individual field, because `0` is now a legal
+    /// generated value for `collegeYearsStartedStored` (a buried prospect who
+    /// never started a game).
+    var hasGeneratedProduction: Bool { generatorVersion >= 2 }
+
+    /// Number of seasons started in college (0–4). `0` only occurs on a
+    /// `limitedSample` prospect.
     var collegeYearsStarted: Int {
+        if hasGeneratedProduction { return max(0, min(4, collegeYearsStartedStored)) }
         if collegeYearsStartedStored > 0 { return collegeYearsStartedStored }
-        // Legacy fallback for prospects generated before the overhaul.
-        let base = max(1, min(3, age - 19))
-        if truePotential >= 88 { return min(4, base + 1) }
-        if truePotential <= 60 { return max(1, base - 1) }
-        return base
+        // LEGACY (generatorVersion < 2) — NEUTRAL, not derived.
+        //
+        // This branch used to read `truePotential`, i.e. the hidden ceiling the
+        // entire fog exists to keep off the screen, and leak it into a field
+        // rendered unfogged on the prospect card: an 88-potential prospect
+        // printed one more year of starts than an identical 60-potential one,
+        // for free, before a single scout was spent. The public surface is now
+        // a flat age-derived estimate that knows nothing it should not.
+        // Migration: task #171 backfills these rows, after which the branch is
+        // dead (see docs/SWIFTDATA_MIGRATION_PLAN.md).
+        return max(1, min(3, age - 19))
     }
 
     /// College production tier — Elite/Above Avg/Average/Below Avg.
@@ -562,16 +625,26 @@ final class CollegeProspect {
            let tier = CollegeProductionTier(rawValue: stored) {
             return tier
         }
-        // Legacy fallback: blend of position attributes (60%) and ceiling (40%).
-        let attrOvr = Double(truePositionAttributes.overall)
-        let combined = attrOvr * 0.6 + Double(truePotential) * 0.4
-        switch combined {
-        case 88...:    return .elite
-        case 78..<88:  return .aboveAvg
-        case 65..<78:  return .average
-        default:       return .belowAvg
-        }
+        // LEGACY (generatorVersion < 2) — NEUTRAL, not derived. Same leak as
+        // above and a worse one: the old fallback was 60 % true position
+        // attributes + 40 % `truePotential`, which made the production chip a
+        // near-direct readout of the hidden grade on every pre-overhaul save.
+        // A legacy row now reads "Average" and says nothing at all, which is
+        // the honest answer for a row that never recorded a production number.
+        // Migration: task #171.
+        return .average
     }
+
+    /// Whether the production record is a handful of snaps rather than a
+    /// season. Derived from the burial reason so there is exactly one field
+    /// that can turn it on.
+    var collegeSampleStatus: CollegeSampleStatus {
+        collegeBurialReason.isEmpty ? .full : .limitedSample
+    }
+
+    /// Convenience for board rows: `true` when the production tier below is
+    /// drawn from `collegeSnapsPlayed` snaps and should be read as such.
+    var hasLimitedCollegeSample: Bool { collegeSampleStatus == .limitedSample }
 
     /// Maps a 20–99 production score onto a tier. Shared with the generator so
     /// stored and fallback tiers use one threshold table.
@@ -585,24 +658,92 @@ final class CollegeProspect {
     }
 
     /// Position-specific representative stat-line (e.g. "3,420 yds · 28 TD" for QB).
-    /// Numbers scale with `collegeProductionTier` so they read naturally.
+    ///
+    /// SEMANTICS (task #181). The tier is a RATE — "how good was he when he
+    /// played" — so the line it renders is his BEST SEASON, not a career total,
+    /// and per-season numbers therefore do NOT scale with years started. Only
+    /// genuinely cumulative quantities (an offensive lineman's career starts)
+    /// carry the year count, and they say "career" on the line so the two
+    /// cannot be misread as the same thing.
     var collegeStatLine: String {
         if let stored = collegeStatLineStored { return stored }
         return CollegeProspect.statLine(
             position: position,
             tier: collegeProductionTier,
-            yearsStarted: collegeYearsStarted
+            yearsStarted: collegeYearsStarted,
+            seed: CollegeProspect.productionSeed(id),
+            limitedSampleSnaps: hasLimitedCollegeSample ? collegeSnapsPlayed : 0
         )
+    }
+
+    /// Stable 64-bit fold of a prospect UUID (FNV-1a). `hashValue` is seeded per
+    /// process, so it would re-roll the stat line on every launch.
+    static func productionSeed(_ id: UUID) -> UInt64 {
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        withUnsafeBytes(of: id.uuid) { raw in
+            for byte in raw {
+                hash = (hash ^ UInt64(byte)) &* 0x0000_0100_0000_01b3
+            }
+        }
+        return hash
+    }
+
+    /// Deterministic scatter in −1…+1 for one number of one prospect's stat
+    /// line. `productionSpread` turns it into a percentage.
+    ///
+    /// Without it a (position, tier, years) triple has exactly one printable
+    /// line, so the whole game shipped 16 stat lines per position and a board
+    /// of 350 read as a lookup table rather than as football. SplitMix64 over
+    /// `(seed, index)` — same input, same line, forever, which is what lets the
+    /// generator pre-render into `collegeStatLineStored` and the fallback path
+    /// agree.
+    static func productionJitter(seed: UInt64, index: Int) -> Double {
+        var z = seed &+ (UInt64(bitPattern: Int64(index) &+ 1) &* 0x9E37_79B9_7F4A_7C15)
+        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+        z ^= (z >> 31)
+        return Double(z % 2001) / 1000.0 - 1.0   // −1.000 … +1.000
+    }
+
+    /// Half-width of the scatter window around a stat, as a fraction.
+    ///
+    /// 8 % is the headline number and it is what a yardage total gets. It
+    /// cannot be the whole rule, though: 8 % of an Elite corner's 3.9
+    /// interceptions is 0.31, which rounds away to a constant, and a class of
+    /// 35 corners then prints "4 INT" 35 times. The window therefore widens on
+    /// small counting stats to whatever spans ±2 whole units — which is also
+    /// the more honest model, because interception and sack totals genuinely
+    /// swing far harder season-to-season than yardage does.
+    static func productionSpread(_ scaledBaseline: Double) -> Double {
+        max(0.08, 2.0 / max(1.0, scaledBaseline))
     }
 
     /// Renders the stat line for a tier/position/years combination. Static so the
     /// generator can pre-render it into `collegeStatLineStored`.
+    ///
+    /// - Parameters:
+    ///   - seed: `productionSeed(prospect.id)`. `0` renders the unjittered
+    ///     baseline line and is only for previews.
+    ///   - limitedSampleSnaps: non-zero switches to the usage line of a
+    ///     prospect who never got on the field (task #181).
     static func statLine(
         position: Position,
         tier: CollegeProductionTier,
-        yearsStarted: Int
+        yearsStarted: Int,
+        seed: UInt64 = 0,
+        limitedSampleSnaps: Int = 0
     ) -> String {
-        // Per-tier multipliers applied to a position baseline.
+        if limitedSampleSnaps > 0 {
+            return usageLine(
+                position: position,
+                snaps: limitedSampleSnaps,
+                starts: max(0, min(4, yearsStarted)),
+                seed: seed
+            )
+        }
+
+        // Per-tier multiplier on a position baseline. The baselines are
+        // one-season figures for a starter at that position.
         let tierMultiplier: Double
         switch tier {
         case .elite:    tierMultiplier = 1.30
@@ -611,33 +752,161 @@ final class CollegeProspect {
         case .belowAvg: tierMultiplier = 0.72
         }
 
-        func scaled(_ baseline: Double) -> Int {
-            Int((baseline * tierMultiplier * Double(yearsStarted) / 3.0).rounded())
+        var jitterIndex = 0
+        func jitter() -> Double {
+            jitterIndex += 1
+            return productionJitter(seed: seed, index: jitterIndex)
+        }
+        /// Applies the per-prospect scatter to an already tier-scaled figure.
+        func scatter(_ value: Double) -> Int {
+            max(0, Int((value * (1.0 + jitter() * productionSpread(value))).rounded()))
+        }
+
+        /// A per-season rate where MORE is better.
+        func rate(_ baseline: Double) -> Int { scatter(baseline * tierMultiplier) }
+
+        /// A pure USAGE quantity that carries no tier information at all —
+        /// field-goal attempts, punts, extra points. Spread across its real
+        /// per-season range instead of scattered around one baseline, because
+        /// these are the only numbers on a specialist's line.
+        func usage(_ low: Double, _ high: Double) -> Int {
+            Int((low + (high - low) * (jitter() + 1.0) / 2.0).rounded())
+        }
+
+        /// A per-season rate where LESS is better — interceptions thrown, sacks
+        /// surrendered. These used to be multiplied by the same tier factor as
+        /// the good numbers, which printed the Elite quarterback as the most
+        /// careless passer in the class and the Elite tackle as the worst pass
+        /// protector. Dividing is the correct direction and keeps one knob.
+        func negRate(_ baseline: Double) -> Int { scatter(baseline / tierMultiplier) }
+
+        /// The share of his team's games a starter at this tier actually
+        /// started — benchings and knocks, not talent. Scales the ONE genuinely
+        /// cumulative stat on the board.
+        let availability: Double
+        switch tier {
+        case .elite:    availability = 1.00
+        case .aboveAvg: availability = 0.98
+        case .average:  availability = 0.95
+        case .belowAvg: availability = 0.90
+        }
+        /// Career starts: 12 games a season, capped at the four years of
+        /// eligibility. A four-year Elite starter prints 48, not the 57 the
+        /// old `years/3` scaling produced for a man who cannot have played
+        /// more than ~50 college games.
+        func careerStarts() -> Int {
+            let seasons = Double(max(1, min(4, yearsStarted)))
+            return max(1, scatter(seasons * 12.0 * availability))
         }
 
         switch position {
         case .QB:
-            return "\(scaled(3000)) pass yds · \(scaled(26)) TD · \(scaled(8)) INT"
+            return "\(rate(3000)) pass yds · \(rate(26)) TD · \(negRate(8)) INT"
         case .RB, .FB:
-            return "\(scaled(1100)) rush yds · \(scaled(11)) TD"
+            return "\(rate(1100)) rush yds · \(rate(11)) TD"
         case .WR:
-            return "\(scaled(1080)) rec yds · \(scaled(9)) TD"
+            return "\(rate(1080)) rec yds · \(rate(9)) TD"
         case .TE:
-            return "\(scaled(720)) rec yds · \(scaled(7)) TD"
+            return "\(rate(720)) rec yds · \(rate(7)) TD"
         case .LT, .LG, .C, .RG, .RT:
-            return "\(scaled(33)) starts · \(scaled(7)) sacks allowed"
+            // Pressures allowed is the stat that actually separates college
+            // linemen (sacks allowed is a 4–11 integer and starts is a count of
+            // games), so the line carries all three.
+            return "\(careerStarts()) career starts · \(negRate(7)) sacks · \(negRate(24)) pressures"
         case .DE, .DT:
-            return "\(scaled(58)) tkl · \(scaled(8)) sacks · \(scaled(13)) TFL"
+            return "\(rate(58)) tkl · \(rate(8)) sacks · \(rate(13)) TFL"
         case .OLB, .MLB:
-            return "\(scaled(95)) tkl · \(scaled(4)) sacks · \(scaled(2)) INT"
+            return "\(rate(95)) tkl · \(rate(4)) sacks · \(rate(2)) INT"
         case .CB:
-            return "\(scaled(46)) tkl · \(scaled(13)) PD · \(scaled(3)) INT"
+            return "\(rate(46)) tkl · \(rate(13)) PD · \(rate(3)) INT"
         case .FS, .SS:
-            return "\(scaled(82)) tkl · \(scaled(8)) PD · \(scaled(3)) INT"
+            return "\(rate(82)) tkl · \(rate(8)) PD · \(rate(3)) INT"
         case .K:
-            return "\(scaled(22))/\(scaled(28)) FG · \(scaled(40)) XP"
+            // Attempts are USAGE and carry no tier information; the make rate
+            // is the whole skill. The old line scaled makes and attempts by the
+            // same factor, so every kicker in the game printed 79 % whatever
+            // his tier was — and a four-year Elite kicker printed 38/49, which
+            // is not a season and not a career.
+            let makeRate: Double
+            switch tier {
+            case .elite:    makeRate = 0.88
+            case .aboveAvg: makeRate = 0.82
+            case .average:  makeRate = 0.75
+            case .belowAvg: makeRate = 0.66
+            }
+            let attempts = usage(16, 32)
+            let makes = Int((Double(attempts) * makeRate).rounded())
+            return "\(makes)/\(attempts) FG · \(usage(30, 52)) XP"
         case .P:
-            return "\(scaled(43)) yd avg · \(scaled(28)) inside-20"
+            // Gross average lives in a 39–48 yd band in the real world, so it
+            // is drawn from a per-tier LEVEL rather than a multiplier: 46.5 ×
+            // 1.30 × 4/3 was printing 80-yard punt averages.
+            let grossAverage: Double
+            switch tier {
+            case .elite:    grossAverage = 46.5
+            case .aboveAvg: grossAverage = 44.5
+            case .average:  grossAverage = 42.5
+            case .belowAvg: grossAverage = 40.0
+            }
+            // A percentage window is wrong for this one number: 8 % of a punt
+            // average is ±3.7 yd, which is the whole league spread. It gets an
+            // absolute ±1.2 yd instead.
+            let average = grossAverage + jitter() * 1.2
+            return String(format: "%.1f yd avg · %d punts · %d inside-20",
+                          average, usage(44, 78), rate(24))
+        }
+    }
+
+    /// The stat line of a prospect who never got on the field (task #181).
+    ///
+    /// Everything here is driven by SNAPS, not by a tier: the number the board
+    /// is being shown is how little tape exists, and the small counting stats
+    /// that fall out of it are what a rotational player produces. The tier is
+    /// still rendered beside it and is still low — that is the trap the
+    /// mechanic is built on.
+    private static func usageLine(
+        position: Position,
+        snaps: Int,
+        starts: Int,
+        seed: UInt64
+    ) -> String {
+        var jitterIndex = 100
+        func jitter() -> Double {
+            jitterIndex += 1
+            return productionJitter(seed: seed, index: jitterIndex)
+        }
+        func scatter(_ value: Double) -> Int {
+            max(0, Int((value * (1.0 + jitter() * productionSpread(value))).rounded()))
+        }
+        func per(_ ratePerSnap: Double) -> Int { scatter(Double(snaps) * ratePerSnap) }
+        let prefix = starts > 0 ? "\(snaps) snaps · 1 start" : "\(snaps) snaps"
+
+        switch position {
+        case .QB:
+            return "\(prefix) · \(per(4.6)) pass yds · \(per(0.030)) TD"
+        case .RB, .FB:
+            let carries = per(0.32)
+            return "\(prefix) · \(carries) car, \(scatter(Double(carries) * 5.1)) yds"
+        case .WR:
+            let catches = per(0.095)
+            return "\(prefix) · \(catches) rec, \(scatter(Double(catches) * 12.8)) yds"
+        case .TE:
+            let catches = per(0.070)
+            return "\(prefix) · \(catches) rec, \(scatter(Double(catches) * 11.0)) yds"
+        case .LT, .LG, .C, .RG, .RT:
+            return "\(prefix) · rotational duty"
+        case .DE, .DT:
+            return "\(prefix) · \(per(0.085)) tkl · \(per(0.012)) sacks"
+        case .OLB, .MLB:
+            return "\(prefix) · \(per(0.140)) tkl · \(per(0.008)) sacks"
+        case .CB:
+            return "\(prefix) · \(per(0.070)) tkl · \(per(0.020)) PD"
+        case .FS, .SS:
+            return "\(prefix) · \(per(0.100)) tkl · \(per(0.015)) PD"
+        case .K, .P:
+            // Specialists are excluded from the buried cohort by the generator;
+            // this branch exists so the switch stays exhaustive.
+            return "\(prefix) · backup duty"
         }
     }
 
@@ -874,6 +1143,45 @@ final class CollegeProspect {
 
 enum ProspectFlag: String, Codable {
     case none, mustHave, sleeper, avoid
+}
+
+// MARK: - Personality read provenance (task #185)
+
+/// Which instrument produced the personality read on a prospect's card.
+///
+/// The cases are ordered by how much of a man's character the instrument can
+/// actually see, and `strength` is that order made explicit: the inherited
+/// league consensus is hearsay, a filed scout report is tape, a private workout
+/// is a day in your own facility, and an interview is forty minutes across a
+/// table. A read may only be replaced by an instrument at least as strong, so a
+/// routine weekly report can never quietly overwrite what the user learned by
+/// spending an interview slot — and an interview read is replaceable only by
+/// another interview.
+enum PersonalitySource: String, Codable, CaseIterable {
+    case leagueConsensus
+    case report
+    case interview
+    case workout
+
+    /// Higher sees more. Used by `ScoutingEngine.recordPersonalityRead`.
+    var strength: Int {
+        switch self {
+        case .leagueConsensus: return 0
+        case .report:          return 1
+        case .workout:         return 2
+        case .interview:       return 3
+        }
+    }
+
+    /// How the read should be attributed on the prospect card.
+    var attributionLabel: String {
+        switch self {
+        case .leagueConsensus: return "League consensus"
+        case .report:          return "From scouting reports"
+        case .interview:       return "From your interview"
+        case .workout:         return "From the private workout"
+        }
+    }
 }
 
 // MARK: - Declaration window (task #78, finding S11)

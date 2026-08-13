@@ -277,6 +277,63 @@ enum DraftClassBuilder {
         return error
     }
 
+    /// What the consensus can grade a `limitedSample` prospect at, in OVR
+    /// points (task #181).
+    ///
+    /// Anchored on the USAGE record rather than on the man, because the usage
+    /// record is literally everything the room has: 89 snaps of a redshirt
+    /// sophomore. `applyBuriedUsage` spans the buried production score over
+    /// 20…66 by construction, and this maps that span onto 38…64 — from
+    /// "nobody in the building has heard of him" to the bottom of the
+    /// draftable board, which is where a man with one spot start belongs
+    /// however good he turns out to be.
+    ///
+    /// The top of the range is the load-bearing number: 64 sits below
+    /// `talentTarget(slot: 224)` ≈ 66–69, i.e. inside the last two rounds, so
+    /// "the market never puts a prospect it has not seen in the early rounds"
+    /// holds BY CONSTRUCTION rather than by tuning. See `usageErrorDamping`
+    /// for the other half of that guarantee.
+    static func usageAnchor(for prospect: CollegeProspect) -> Double {
+        let score = Double(min(66, max(20, prospect.collegeProductionScore)))
+        return 38.0 + (score - 20.0) * (26.0 / 46.0)
+    }
+
+    /// How much of the ordinary consensus error survives on a man nobody has
+    /// tape on.
+    ///
+    /// An opinion formed from 89 snaps cannot be a strong opinion in either
+    /// direction, and the fat tail especially: `consensusFatTail*` models a
+    /// room that watched a season of film and got it badly wrong, and there is
+    /// no season of film here to get wrong. At 0.25 the σ = 5 draw becomes
+    /// σ = 1.25 and the 8–14 point fat tail becomes 2–3.5, so the worst case a
+    /// buried prospect can board at is `64 + 0.25·(3σ + 14)` ≈ 71 — still below
+    /// the round-4 line.
+    static let usageErrorDamping = 0.25
+
+    /// How far the consensus marks a man DOWN for never having played, in OVR
+    /// points — `trueOverall − usageAnchor`.
+    ///
+    /// Folded into `consensusErrorStored` rather than applied to the board
+    /// ordering alone, on purpose: `consensusOverall` is `trueOverall + error`
+    /// and is what `ProspectFog` bands and `DraftIntel.publicOVREstimate` read,
+    /// so suppressing the projection without suppressing the grade would have
+    /// printed a round-6 projection beside a first-round public grade. The
+    /// market's read is ONE read.
+    ///
+    /// Note what this does to the two ends of the buried cohort. A first-round
+    /// talent with 135 snaps (true 83, production 45) boards at ~52; a
+    /// genuinely middling one with the same record (true 64) boards at ~52 as
+    /// well. On the PUBLIC board they are indistinguishable — which is exactly
+    /// the discrimination the scouting spend is being sold for. The scouting
+    /// report path reads `trueAttributes` and is untouched.
+    ///
+    /// Deterministic: both inputs are stored fields, so the same class produces
+    /// the same suppression on every relaunch.
+    static func usageSuppression(for prospect: CollegeProspect) -> Double {
+        guard prospect.hasLimitedCollegeSample else { return 0 }
+        return max(0, Double(prospect.trueOverall) - usageAnchor(for: prospect))
+    }
+
     /// Draws the market's error on every prospect, stores it, and rebuilds
     /// `draftProjection` as the PUBLIC board rather than the true grade band.
     ///
@@ -299,9 +356,15 @@ enum DraftClassBuilder {
 
         var perceived = [Double](repeating: 0, count: prospects.count)
         for index in prospects.indices {
-            let error = consensusError(careerID: careerID, prospectID: prospects[index].id)
-            prospects[index].consensusErrorStored = Int(error.rounded())
-            perceived[index] = Double(prospects[index].trueOverall) + error
+            let prospect = prospects[index]
+            var error = consensusError(careerID: careerID, prospectID: prospect.id)
+            if prospect.hasLimitedCollegeSample {
+                // No tape: the read collapses onto the usage anchor and what
+                // is left of the ordinary error is damped (task #181).
+                error = error * usageErrorDamping - usageSuppression(for: prospect)
+            }
+            prospect.consensusErrorStored = Int(error.rounded())
+            perceived[index] = Double(prospect.trueOverall) + error
         }
 
         // UUID tie-break: `sorted(by:)` is not stable, and two men on identical
@@ -852,13 +915,10 @@ enum DraftClassBuilder {
         learning: Int,
         overall: Int
     ) {
-        // Years started: polished / older prospects have more starts on tape.
-        var years = max(1, min(4, prospect.age - 19 + archetype.yearsStartedShift))
-        if Double.random(in: 0...1) < 0.15 { years = max(1, min(4, years + (Bool.random() ? 1 : -1))) }
-        prospect.collegeYearsStartedStored = years
-
         // Competition level: 74 % P5 / 20 % G5 / 6 % FCS, early slots skew P5 —
         // an FCS prospect near the top of the board is the "small-school riser".
+        // Drawn before the usage branch because a buried prospect is buried
+        // somewhere, and the school is the flavour on the burial reason.
         let roll = Double.random(in: 0...1)
         let p5Bias = slot <= 60 ? 0.16 : 0.0
         let level: CollegeProspect.CollegeCompetitionLevel
@@ -870,6 +930,17 @@ enum DraftClassBuilder {
             level = .fcs
         }
         prospect.collegeCompetitionLevelRaw = level.rawValue
+
+        // --- The buried branch (task #181) -----------------------------------
+        if drawsBuriedUsage(position: prospect.position, age: prospect.age, archetype: archetype) {
+            applyBuriedUsage(to: prospect, level: level)
+            return
+        }
+
+        // Years started: polished / older prospects have more starts on tape.
+        var years = max(1, min(4, prospect.age - 19 + archetype.yearsStartedShift))
+        if Double.random(in: 0...1) < 0.15 { years = max(1, min(4, years + (Bool.random() ? 1 : -1))) }
+        prospect.collegeYearsStartedStored = years
 
         let compBonus: Double
         switch level {
@@ -897,8 +968,122 @@ enum DraftClassBuilder {
         prospect.collegeStatLineStored = CollegeProspect.statLine(
             position: prospect.position,
             tier: tier,
-            yearsStarted: years
+            yearsStarted: years,
+            seed: CollegeProspect.productionSeed(prospect.id)
         )
+    }
+
+    // MARK: - Step 7b: usage suppression / hidden gems (task #181)
+    //
+    // Before this, `collegeProductionScore` was a monotone function of
+    // `trueOverall` plus σ = 7 of noise, so the production column and the
+    // hidden grade were the same statement made twice. A user who learned to
+    // read the tier chip had a free, unfogged, always-correct estimate of a
+    // number the entire scouting economy exists to charge him for.
+    //
+    // The fix is not more noise — noise is symmetric and forgettable. It is a
+    // SECOND CAUSE for a low production number: a small slice of every class
+    // never got on the field at all, and for those men production measures
+    // USAGE and nothing else. Most of them are exactly what they look like.
+    // A real minority are not, and finding them is a scouting decision with a
+    // reason behind it rather than a coin flip.
+    //
+    // The cohort's ability distribution is deliberately NOT re-drawn: the
+    // burial roll is independent of the talent backbone, so the buried slice
+    // inherits the class pyramid — mostly middling players, roughly one
+    // first-round talent per class. That is the mix the design asked for and it
+    // falls out of independence rather than out of a tuned table.
+
+    /// Whether this prospect's college career is a usage story rather than a
+    /// production story.
+    ///
+    /// Gated on underclassmen: a 22-year-old with no starts behind him is a
+    /// career backup, not a man who has not had his turn yet, and putting him
+    /// in the cohort would fill it with prospects for whom the low grade is
+    /// simply correct. Specialists are excluded — a kicker is not buried on a
+    /// depth chart, he is the kicker or he is not on the team.
+    ///
+    /// The per-archetype rates run against `yearsStartedShift`: a polished
+    /// prospect is polished BECAUSE he has played, so he is the least likely to
+    /// have sat. Class share works out at ≈ 4–6 % (measured; see the
+    /// `draftclass` gate §7.9c).
+    static func drawsBuriedUsage(position: Position, age: Int, archetype: Archetype) -> Bool {
+        guard position != .K, position != .P else { return false }
+        guard age < CollegeProspect.seniorAge else { return false }
+        let rate: Double
+        switch archetype {
+        case .polished: rate = 0.03
+        case .balanced: rate = 0.09
+        case .raw:      rate = 0.13
+        }
+        return Double.random(in: 0...1) < rate
+    }
+
+    /// Writes the buried prospect's production record: snaps instead of a
+    /// season, a score derived from those snaps, and the narrative hook that
+    /// keeps "89 snaps" from reading as "bad player" with no further comment.
+    private static func applyBuriedUsage(
+        to prospect: CollegeProspect,
+        level: CollegeProspect.CollegeCompetitionLevel
+    ) {
+        // 0 or 1 starts — a spot start when the man ahead tweaked a hamstring
+        // is the most tape any of these prospects has.
+        let starts = Double.random(in: 0...1) < 0.55 ? 0 : 1
+        prospect.collegeYearsStartedStored = starts
+
+        let snaps = PositionPhysicalProfile.clampInt(
+            PositionPhysicalProfile.gaussian(mean: 120, sd: 45),
+            35...240
+        )
+        prospect.collegeSnapsPlayed = snaps
+        prospect.collegeBurialReason = burialReason(level: level, starts: starts)
+
+        // PRODUCTION FROM USAGE, NOT FROM ABILITY. This is the whole mechanic:
+        // the score the public board reads is a function of how much he played
+        // and of nothing else, so `corr(production, trueOverall)` over this
+        // slice is ~0 by construction. Span 20…66 keeps a buried man inside
+        // Below Avg / low Average, which is what an unproductive season looks
+        // like on a chip.
+        let raw = 24.0
+            + 30.0 * Double(snaps - 35) / 205.0
+            + Double(starts) * 4.0
+            + PositionPhysicalProfile.gaussian(mean: 0, sd: 3)
+        let score = PositionPhysicalProfile.clampInt(raw, 20...66)
+        prospect.collegeProductionScore = score
+
+        let tier = CollegeProspect.productionTier(forScore: score)
+        prospect.collegeProductionTierStored = tier.rawValue
+        prospect.collegeStatLineStored = CollegeProspect.statLine(
+            position: prospect.position,
+            tier: tier,
+            yearsStarted: starts,
+            seed: CollegeProspect.productionSeed(prospect.id),
+            limitedSampleSnaps: snaps
+        )
+    }
+
+    /// English-only, one line, written as the scouting-report sentence a board
+    /// row can quote verbatim.
+    private static func burialReason(
+        level: CollegeProspect.CollegeCompetitionLevel,
+        starts: Int
+    ) -> String {
+        var pool = [
+            "sat behind a first-round pick",
+            "buried on a loaded depth chart",
+            "lost the job in fall camp and never got it back",
+            "transferred in and sat out a season",
+            "redshirted, then lost a year to injury",
+            "stuck behind a fifth-year senior",
+            "played special teams only",
+        ]
+        if starts > 0 {
+            pool.append("one spot start, then back to the bench")
+        }
+        if level == .powerFive {
+            pool.append("four-star recruit who never won the job")
+        }
+        return pool.randomElement() ?? pool[0]
     }
 
     // MARK: - Step 8: NFL readiness

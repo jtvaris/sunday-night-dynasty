@@ -444,6 +444,24 @@ enum DraftEngine {
     /// cap, cap-relative. It was a flat `Int.random(in: 450...750)` on a
     /// 1-2 year term until task #89, which is what this comment used to describe;
     /// a one-year UDFA deal expired before the man had played a second season.
+    ///
+    /// ## This is the door that closes the pool (#204 defect D1)
+    ///
+    /// Signing a man **consumes** him: `prospect.isDeclaringForDraft = false` is
+    /// set here, at the single conversion point every UDFA signing path in the
+    /// game routes through — the Draft Day panel, the OTAs market and any future
+    /// caller. It used to be the *callers'* job, and the bulk OTAs loop simply
+    /// never did it, so every AI-signed UDFA stayed "declared" for
+    /// `ClassDepthView`, the scouting hub and `ScoutingEngine.getUDFAPool`'s own
+    /// membership filter until `purgeStaleSeasonData` deleted the row a season
+    /// later. Those screens were telling the user that a hundred men who already
+    /// had jobs were still available.
+    ///
+    /// Putting it here rather than in each caller also makes the two signing
+    /// paths mutually exclusive by construction: the pool predicate is one
+    /// authority (`ScoutingEngine.udfaPoolMembers`), so a man signed on draft
+    /// night is not in the pool the OTAs board opens on. No process-global
+    /// "already handled this season" flag is needed to prevent double-signing.
     static func convertUDFAToPlayer(
         prospect: CollegeProspect,
         teamID: UUID,
@@ -474,7 +492,47 @@ enum DraftEngine {
             annualSalary: contract.salary
         )
         copyProspectMetadata(from: prospect, to: player)
+        prospect.isDeclaringForDraft = false   // consumed — see the doc comment (D1)
         return player
+    }
+
+    /// The overall an undrafted prospect would ENTER the league at, without
+    /// building a `Player`.
+    ///
+    /// The UDFA market needs this to price a man and to read his path to a role,
+    /// and it must not create a `Player` to find out: that would claim a face out
+    /// of a pool `MultiSeasonSmokeTest.auditFaces` already reports running to
+    /// `free=0`, for a candidate nobody may end up signing
+    /// (`OFFSEASON_ROSTER_PLAN.md` §2.1).
+    ///
+    /// **Exact, not an estimate.** `Player.overall` and
+    /// `CollegeProspect.overallValue` are the same weighted mean
+    /// (`skill·0.5 + physical·0.3 + mental·0.2`), and ``scaleAttribute`` is affine
+    /// in the attribute, so scaling the three group means with the same three
+    /// factors ``convertUDFAToPlayer`` uses reproduces the converted player's
+    /// overall to within per-attribute integer rounding.
+    ///
+    /// Using `prospect.trueOverall` instead would be a real distortion, not a
+    /// nuance: an undrafted man converts at ~55 OVR against a college true value
+    /// in the mid-60s, so the raw number would have every UDFA reading as
+    /// competition for a starter in `SigningInterestEngine.roleScore`.
+    static func udfaEntryOverall(prospect: CollegeProspect) -> Int {
+        let factors = rookieScaleFactors(
+            readiness: prospect.nflReadiness,
+            learning: prospect.trueLearning,
+            potential: prospect.truePotential,
+            undrafted: true
+        )
+        let skill = scaledMean(prospect.truePositionAttributes.overall, factor: factors.skill)
+        let physical = scaledMean(prospect.truePhysical.average, factor: factors.physical)
+        let mental = scaledMean(prospect.trueMental.average, factor: factors.mental)
+        return Int((skill * 0.5 + physical * 0.3 + mental * 0.2).rounded())
+    }
+
+    /// ``scaleAttribute`` over a group MEAN — the same affine map, undivided by
+    /// per-attribute rounding.
+    private static func scaledMean(_ value: Double, factor: Double) -> Double {
+        Double(attributeFloor) + (value - Double(attributeFloor)) * factor
     }
 
     // MARK: - Rookie Scaling

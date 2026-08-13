@@ -96,6 +96,11 @@ final class CollegeProspect {
     var collegeProductionScore: Int = 0
     var collegeProductionTierStored: String? = nil
     var collegeStatLineStored: String? = nil
+    /// Usage suppression / hidden gems (task #181). Written by the synced
+    /// `DraftClassBuilder.applyBuriedUsage`; `collegeSampleStatus` and
+    /// `usageSuppression` in the spliced math read them back.
+    var collegeBurialReason: String = ""
+    var collegeSnapsPlayed: Int = 0
     var generatorVersion: Int = 0
 
     /// Hometown, written by the synced `DraftClassBuilder` from the staged

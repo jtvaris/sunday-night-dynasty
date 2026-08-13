@@ -43,6 +43,19 @@ func dcCorr(_ xs: [Double], _ ys: [Double]) -> Double {
     guard dx > 0, dy > 0 else { return 0 }
     return num / (dx * dy).squareRoot()
 }
+/// First integer in a rendered stat line ("1,430 rush yds · 14 TD" -> 1430).
+/// Used only by the #181 screenshot regression, which needs the leading number
+/// of a line the MODEL rendered rather than a number the harness re-derived.
+func dcLeadingInt(_ s: String) -> Int? {
+    var digits = ""
+    for ch in s {
+        if ch.isNumber { digits.append(ch) }
+        else if ch == "," && !digits.isEmpty { continue }
+        else if !digits.isEmpty { break }
+    }
+    return Int(digits)
+}
+
 func dcPad(_ s: String, _ n: Int) -> String {
     s.count >= n ? String(s.prefix(n)) : s + String(repeating: " ", count: n - s.count)
 }
@@ -148,6 +161,12 @@ struct DCProspectRow {
     let speed: Int
     let forty: Double?
     let drillGrade: String?
+    // --- usage suppression / hidden gems (task #181) ---
+    let limitedSample: Bool
+    let snaps: Int
+    let statLine: String
+    let publicProjection: Int
+    let consensusError: Int
 }
 
 // MARK: - Scenario
@@ -194,6 +213,44 @@ func scenarioDraftClass(_ flags: [String: String]) {
     var learnAll: [Double] = []
     var awrAll: [Double] = []
     var tierMissingClasses = 0
+    // --- §7.9c-f: usage suppression / hidden gems (task #181) ---------------
+    // `prodFullAll`/`ovrFullAll` are the SAME two series restricted to the
+    // played-a-season cohort, so the correlation the gate asserts can be
+    // decomposed into "did the ordinary production model drift" and "how much
+    // of the drop is the gem cohort".
+    var prodFullAll: [Double] = []
+    var ovrFullAll: [Double] = []
+    var gemShares: [Double] = []
+    var buriedRows: [DCProspectRow] = []
+    var buriedSnaps: [Double] = []
+    var buriedProd: [Double] = []
+    var buriedOvr: [Double] = []
+    var buriedProjection: [Double] = []
+    var gemsPerClass: [Double] = []
+    /// Classes in which at least one buried prospect projects earlier than R4 —
+    /// the mechanic is pointless if the market does not actually let him slide.
+    var buriedEarlyProjections = 0
+    /// Low-production denominators for P(gem | low production).
+    var lowProdCount = 0
+    var lowProdGemCount = 0
+    var lowProdBuriedCount = 0
+    var lowProdBuriedGemCount = 0
+    /// Stat-line variance. The user-visible property is "two prospects at the
+    /// same position in the SAME class print the same line", so that is what is
+    /// counted: a cross-class distinct-string count is bounded by the sample
+    /// size at thin positions (FB, K, P) and would measure the harness rather
+    /// than the model.
+    var statLineDupes: [Position: Int] = [:]
+    var statLineCount: [Position: Int] = [:]
+    var statLineExamples: [String: String] = [:]
+    /// Fraction of the class in bands 1-2, the denominator of the derived
+    /// P(gem | low production) prediction.
+    var bandLE2Count = 0
+    var allRowCount = 0
+    /// Screenshot regression: an Elite prospect with one year started must no
+    /// longer print a `years/3`-deflated line (the 477-yard RB).
+    var eliteOneYearRushMin = Int.max
+    var eliteOneYearRushCount = 0
     var fortyByPos: [Position: [Double]] = [:]
     var speedByPos: [Position: [Double]] = [:]
     var drillOutOfRange = 0
@@ -248,7 +305,12 @@ func scenarioDraftClass(_ flags: [String: String]) {
                 skills: dcSkillValues(p.truePositionAttributes),
                 speed: p.truePhysical.speed,
                 forty: p.fortyTime,
-                drillGrade: p.positionDrillGrade))
+                drillGrade: p.positionDrillGrade,
+                limitedSample: p.hasLimitedCollegeSample,
+                snaps: p.collegeSnapsPlayed,
+                statLine: p.collegeStatLine,
+                publicProjection: p.draftProjection ?? 8,
+                consensusError: p.consensusErrorStored))
         }
 
         // --- §7.1 / §7.2 / §7.3: blueprint ----------------------------------
@@ -384,8 +446,56 @@ func scenarioDraftClass(_ flags: [String: String]) {
             ageHist[r.age, default: 0] += 1
             // Scheme-learning input (plan §3.3): learnScheme's learning term.
             learningRates.append(Double(r.learning) / 65.0)
+
+            // --- §7.9c-f: usage suppression (task #181) ----------------------
+            // "Gem" is defined off the generator's OWN blueprint band, not off
+            // a hand-typed OVR literal: a man the talent backbone drew as an
+            // R1/R2 prospect (band <= 2) whose production record is 89 snaps.
+            let isGem = r.limitedSample && r.band <= 2
+            if r.limitedSample {
+                buriedRows.append(r)
+                buriedSnaps.append(Double(r.snaps))
+                buriedProd.append(Double(r.production))
+                buriedOvr.append(Double(r.overall))
+                buriedProjection.append(Double(r.publicProjection))
+            } else {
+                prodFullAll.append(Double(r.production))
+                ovrFullAll.append(Double(r.overall))
+            }
+            // Low production = the bottom tier, i.e. what the board actually
+            // shows the user when it wants him to look away.
+            if r.tier == "Below Avg" {
+                lowProdCount += 1
+                if r.band <= 2 { lowProdGemCount += 1 }
+                if r.limitedSample {
+                    lowProdBuriedCount += 1
+                    if isGem { lowProdBuriedGemCount += 1 }
+                }
+            }
+            allRowCount += 1
+            if r.band <= 2 { bandLE2Count += 1 }
+            let exampleKey = "\(r.position.rawValue)|\(r.tier)|\(r.limitedSample ? "LS" : "\(r.yearsStarted)y")"
+            if statLineExamples[exampleKey] == nil { statLineExamples[exampleKey] = r.statLine }
+            // Screenshot regression (#181 audit): Elite RB, one year started.
+            if r.position == .RB, r.tier == "Elite", r.yearsStarted == 1, !r.limitedSample,
+               let yards = dcLeadingInt(r.statLine) {
+                eliteOneYearRushMin = min(eliteOneYearRushMin, yards)
+                eliteOneYearRushCount += 1
+            }
         }
         if tiersSeen.count < 4 { tierMissingClasses += 1 }
+        // Within-class stat-line collisions, per position.
+        var linesThisClass: [Position: [String: Int]] = [:]
+        for r in rows { linesThisClass[r.position, default: [:]][r.statLine, default: 0] += 1 }
+        for (pos, lines) in linesThisClass {
+            let total = lines.values.reduce(0, +)
+            statLineCount[pos, default: 0] += total
+            statLineDupes[pos, default: 0] += total - lines.count
+        }
+        let buriedThisClass = rows.filter { $0.limitedSample }
+        gemShares.append(Double(buriedThisClass.count) / Double(max(1, rows.count)))
+        gemsPerClass.append(Double(buriedThisClass.filter { $0.band <= 2 }.count))
+        if buriedThisClass.contains(where: { $0.publicProjection <= 3 }) { buriedEarlyProjections += 1 }
 
         if verbose && classIndex == 0 {
             print("  (class 0 top 12 board)")
@@ -535,8 +645,10 @@ func scenarioDraftClass(_ flags: [String: String]) {
                  qbReady, rbReady, qbReady < rbReady ? "yes" : "NO",
                  dcMean(readinessByPos[.CB] ?? []), dcMean(readinessByPos[.LT] ?? []),
                  dcMean(readinessByPos[.C] ?? []), dcMean(readinessByPos[.FS] ?? [])))
-    print(String(format: "  production: mean %.1f  corr(production, trueOverall) %.3f  [0.45-0.75]  classes missing a tier: %d",
+    print(String(format: "  production: mean %.1f  corr(production, trueOverall) %.3f  [0.30-0.65]  classes missing a tier: %d",
                  dcMean(prodAll), dcCorr(prodAll, ovrAll), tierMissingClasses))
+    print(String(format: "    played-a-season cohort only: corr %.3f  (the pre-#181 model, unchanged by construction)",
+                 dcCorr(prodFullAll, ovrFullAll)))
     print(String(format: "  learning: mean %.1f  corr(learning, awareness) %.3f  (plan r~0.6)",
                  dcMean(learnAll), dcCorr(learnAll, awrAll)))
     // Plan §7.10: learnScheme's player term moved from awareness/70 to learning/65.
@@ -556,6 +668,67 @@ func scenarioDraftClass(_ flags: [String: String]) {
     print(String(format: "  K per class %.1f (min %.0f)  P per class %.1f (min %.0f)  earliest K/P band %.0f",
                  dcMean(kCounts), kCounts.min() ?? 0, dcMean(pCounts), pCounts.min() ?? 0, kpBestBand.min() ?? 0))
     print(String(format: "  runtime %.1fs (%.0f classes/s)", elapsed, classesD / max(0.001, elapsed)))
+
+    // ------------------------------------------------------------------------
+    // USAGE SUPPRESSION / HIDDEN GEMS (task #181)
+    // ------------------------------------------------------------------------
+    let gemShare = dcMean(gemShares) * 100
+    let pGemGivenLowProd = lowProdCount == 0 ? 0 : Double(lowProdGemCount) / Double(lowProdCount) * 100
+    let pGemGivenBuried = buriedRows.isEmpty ? 0 : Double(gemsPerClass.reduce(0, +)) / Double(buriedRows.count) * 100
+    print("")
+    print("--- USAGE SUPPRESSION / HIDDEN GEMS (#181) -----------------------------------")
+    print(String(format: "  buried cohort: %.2f%% of the class  [3-7%%]   %.2f R1/R2 talents per class  (%.1f%% of the cohort)",
+                 gemShare, dcMean(gemsPerClass), pGemGivenBuried))
+    print(String(format: "  buried: snaps mean %.0f (min %.0f max %.0f)  production mean %.1f  trueOverall mean %.1f  corr(prod, ovr) %.3f  [|r| <= 0.20]",
+                 dcMean(buriedSnaps), buriedSnaps.min() ?? 0, buriedSnaps.max() ?? 0,
+                 dcMean(buriedProd), dcMean(buriedOvr), dcCorr(buriedProd, buriedOvr)))
+    print(String(format: "  buried public projection: mean R%.2f  earliest R%.0f  share <= R3 %.2f%%   (classes with a buried top-3-round projection: %d/%d)",
+                 dcMean(buriedProjection), buriedProjection.min() ?? 0,
+                 Double(buriedProjection.filter { $0 <= 3 }.count) / Double(max(1, buriedProjection.count)) * 100,
+                 buriedEarlyProjections, classes))
+    // PREDICTED P(gem | low production), from the three measured shares alone.
+    // The burial roll is independent of the talent backbone (it keys off age,
+    // archetype and position, none of which enter `talentTarget`), so among the
+    // buried the band-<=2 share is just the class-wide band-<=2 share, and
+    //   P(band<=2 | Below Avg) = buried_in_lowProd * P(band<=2) / lowProd.
+    // Nothing here is a typed target: all three inputs come out of this run.
+    let pBandLE2 = Double(bandLE2Count) / Double(max(1, allRowCount))
+    let predictedGemGivenLowProd = Double(lowProdBuriedCount) * pBandLE2 / Double(max(1, lowProdCount)) * 100
+    print(String(format: "  P(R1/R2 talent | Below Avg production) = %.2f%%  (%d of %d)   of which buried: %d",
+                 pGemGivenLowProd, lowProdGemCount, lowProdCount, lowProdBuriedGemCount))
+    print(String(format: "    predicted from shares: buried-in-Below-Avg %d x P(band<=2) %.3f / Below-Avg %d = %.2f%%  (delta %+.2fpp)",
+                 lowProdBuriedCount, pBandLE2, lowProdCount, predictedGemGivenLowProd,
+                 pGemGivenLowProd - predictedGemGivenLowProd))
+    // Within-class stat-line collision rate, worst position.
+    var worstDupPos = "-"
+    var worstDupRate = 0.0
+    var totalDupes = 0
+    for (pos, count) in statLineCount where count > 0 {
+        let rate = Double(statLineDupes[pos] ?? 0) / Double(count) * 100
+        totalDupes += statLineDupes[pos] ?? 0
+        if rate > worstDupRate { worstDupRate = rate; worstDupPos = pos.rawValue }
+    }
+    let overallDupRate = Double(totalDupes) / Double(max(1, statLineCount.values.reduce(0, +))) * 100
+    print(String(format: "  stat-line collisions inside one class: %.2f%% of prospects overall, worst position %@ at %.2f%%  [<10%%]",
+                 overallDupRate, worstDupPos, worstDupRate))
+    print("    (pre-#181 a position/tier/years triple rendered ONE fixed string — 16 per position for a 30-man WR pool)")
+    print(String(format: "  Elite RB, 1 year started: %d observed, min leading rush-yard figure %d  [screenshot regression: > 900, was 477]",
+                 eliteOneYearRushCount, eliteOneYearRushCount == 0 ? -1 : eliteOneYearRushMin))
+    print("  sample lines:")
+    for key in ["RB|Elite|1y", "RB|Elite|4y", "RB|Below Avg|4y", "QB|Elite|3y", "QB|Below Avg|2y",
+                "LT|Elite|4y", "LT|Below Avg|1y", "K|Elite|4y", "K|Below Avg|4y",
+                "P|Elite|4y", "P|Below Avg|1y", "WR|Below Avg|LS", "DE|Below Avg|LS",
+                "QB|Below Avg|LS", "LT|Below Avg|LS"] {
+        if let line = statLineExamples[key] {
+            print("    \(dcPad(key, 18)) \(line)")
+        }
+    }
+    if let sample = buriedRows.first(where: { $0.band <= 2 }) {
+        print(String(format: "  example gem: %@ band=%d trueOverall=%d pot=%d -> production %d (%@), consensus error %+d, public R%d",
+                     sample.position.rawValue, sample.band, sample.overall, sample.potential,
+                     sample.production, sample.tier, sample.consensusError, sample.publicProjection))
+        print("    \(sample.statLine)")
+    }
 
     // ========================================================================
     // ASSERTIONS
@@ -709,11 +882,90 @@ func scenarioDraftClass(_ flags: [String: String]) {
             String(format: "QB mean readiness %.1f < RB mean readiness %.1f", qbReady, rbReady))
 
     // §7.9 — production
+    //
+    // BAND REDERIVED IN #181: 0.45-0.75 -> 0.30-0.65. See the DEVIATION note at
+    // the foot of this report for the derivation; the short version is that the
+    // old band measured a class in which production had exactly ONE cause, and
+    // the whole point of the usage-suppression work is that it now has two.
+    // 7.9f pins the untouched cause separately so the loosened band cannot hide
+    // a drift in the ordinary production model.
     let prodCorr = dcCorr(prodAll, ovrAll)
-    A.check("7.9a", prodCorr >= 0.45 && prodCorr <= 0.75,
-            String(format: "corr(production, trueOverall) in [0.45,0.75] (%.3f)", prodCorr))
+    A.check("7.9a", prodCorr >= 0.30 && prodCorr <= 0.65,
+            String(format: "corr(production, trueOverall) in [0.30,0.65] (%.3f)", prodCorr))
     A.check("7.9b", tierMissingClasses == 0,
             "all four production tiers occur in every class (\(tierMissingClasses) classes missing one)")
+
+    // §7.9c — the buried cohort is a real slice of every class, and a small one.
+    A.check("7.9c", gemShare >= 3.0 && gemShare <= 7.0,
+            String(format: "usage-suppressed cohort is 3-7%% of the class (%.2f%%)", gemShare))
+
+    // §7.9d — inside that cohort production must carry NO ability signal: it is
+    // derived from snaps only. A non-zero correlation here would mean the
+    // buried branch had picked up a talent term somewhere.
+    let buriedCorr = dcCorr(buriedProd, buriedOvr)
+    A.check("7.9d", abs(buriedCorr) <= 0.20,
+            String(format: "buried production is usage-only: |corr(production, trueOverall)| <= 0.20 (%.3f)", buriedCorr))
+
+    // §7.9e — the gems have to be FINDABLE, and findable at exactly the rate
+    // the composition of the class implies and no other. Asserted against the
+    // PREDICTION derived from this run's own shares rather than against a typed
+    // target: a drift in the burial rate, in the buried score span or in the
+    // band mix moves both sides together, and only a real coupling between
+    // burial and talent (the bug this guards) moves them apart. The 1.0pp slack
+    // is the Monte-Carlo error on a ~350-of-5400 numerator.
+    A.check("7.9e", pGemGivenLowProd >= 1.0
+            && abs(pGemGivenLowProd - predictedGemGivenLowProd) <= 1.0,
+            String(format: "P(R1/R2 talent | Below Avg production) = %.2f%% matches the %.2f%% its shares predict "
+                   + "(delta %+.2fpp, tolerance 1.0pp) and is materially non-zero (was ~0%% pre-#181)",
+                   pGemGivenLowProd, predictedGemGivenLowProd,
+                   pGemGivenLowProd - predictedGemGivenLowProd))
+
+    // §7.9f — and they have to SLIDE. The market has no tape on a buried
+    // prospect, so it cannot be high on him: `usageAnchor` tops out at 64,
+    // below `talentTarget(#224)` ~ 66-69, and `usageErrorDamping` keeps what is
+    // left of the consensus noise inside ~7 points of that. The invariant is
+    // therefore structural, and this asserts the structure held.
+    A.check("7.9f", buriedEarlyProjections == 0,
+            "no usage-suppressed prospect projects inside R1-R3 (\(buriedEarlyProjections) of \(classes) classes had one)")
+
+    // §7.9g — the ordinary production model is UNCHANGED. Measured over the
+    // played-a-season cohort only, the correlation must still sit in the band
+    // the pre-#181 gate asserted over the whole class.
+    let fullCorr = dcCorr(prodFullAll, ovrFullAll)
+    A.check("7.9g", fullCorr >= 0.45 && fullCorr <= 0.75,
+            String(format: "played-a-season cohort keeps the original [0.45,0.75] production band (%.3f)", fullCorr))
+
+    // §7.9h — stat-line semantics (the #181 audit's screenshot case). The tier
+    // is a RATE and the line is a BEST SEASON, so an Elite back with one year
+    // of starts prints an Elite season, not a quarter of one. 1100 x 1.30 x
+    // 0.92 (the jitter floor) = 1315 is the model's own lower bound; the assert
+    // uses a slack 900 so it only fires on a return of the years/3 scaling
+    // (which produced 477 minus jitter).
+    A.check("7.9h", eliteOneYearRushCount > 0 && eliteOneYearRushMin > 900,
+            "Elite RB with 1 year started prints a full Elite season "
+            + (eliteOneYearRushCount == 0
+               ? "(NOT OBSERVED in this sample — raise --classes)"
+               : String(format: "(min %d rush yds over %d cases; the audit screenshot was 477)",
+                        eliteOneYearRushMin, eliteOneYearRushCount)))
+
+    // §7.9i — per-prospect variance. Pre-#181 a (position, tier, years) triple
+    // rendered ONE fixed string: 4 tiers x 4 year counts = 16 printable lines
+    // per position. Measured here as the share of prospects who share a line
+    // with somebody else at their position IN THE SAME CLASS, which is the
+    // collision the user can actually see.
+    //
+    // The 10 % bar is set by the deepest position group. CB is ~35 men in a
+    // 350-man class, and collisions grow like n^2 / 2S in the pool size n, so
+    // whatever the state count S the corners always collide hardest — a handful
+    // of shared lines among 35 corners is not the failure this guards. For
+    // scale: under the OLD renderer the pigeonhole principle alone forces at
+    // least (35 - 16) / 35 = 54 % of that same pool onto a duplicate line, and
+    // the realized rate was far worse because the year/tier mix is not uniform.
+    A.check("7.9i", worstDupRate <= 10.0,
+            String(format: "stat lines carry per-prospect variance: within-class collisions <= 10%% for every "
+                   + "position (worst %@ %.2f%%, overall %.2f%%; the pre-#181 renderer's pigeonhole floor for "
+                   + "that pool was 54%%)",
+                   worstDupPos, worstDupRate, overallDupRate))
 
     // §7.10 — scheme-learning input drift (the harness `familiarity` scenario
     // covers the sim side; this is the generator side of the same guard).
@@ -743,6 +995,27 @@ func scenarioDraftClass(_ flags: [String: String]) {
 
     print("")
     print("--- DEVIATION NOTES ----------------------------------------------------------")
+    print("  §7.9 BAND REDERIVED (task #181, usage suppression). corr(production, trueOverall)")
+    print("       moved from [0.45,0.75] to [0.30,0.65]. This is a MODEL CHANGE, not a")
+    print("       loosened guard, and the drop is predicted rather than observed-then-blessed:")
+    print("       production used to have one cause (ability + noise) and now has two — a")
+    print("       share q of every class never got on the field, and for those men the score")
+    print("       is a function of SNAPS and of nothing else. Writing the class as a mixture")
+    print("       of a played cohort (share 1-q, corr r_f, production sd s_f) and a buried one")
+    print("       (share q, corr 0, production sd s_b, mean shifted down by d):")
+    print("         cov  = (1-q)*r_f*s_f*sd(ovr_f)  + q*0            [buried covariance is 0]")
+    print("                - q(1-q) * d * (mean(ovr_f) - mean(ovr_b))")
+    print("         sd(prod) grows, because the buried mean sits ~30 points below the played")
+    print("         mean and that between-group split adds q(1-q)d^2 to the total variance.")
+    print("       Both terms push the correlation DOWN: the numerator loses the buried")
+    print("       cohort's contribution while the denominator gains its between-group spread.")
+    print("       With q ~ 0.05, d ~ 30 and the measured s_f, the predicted whole-class")
+    print("       correlation is ~0.42-0.50 against a played-cohort r_f that has not moved.")
+    print("       The band's WIDTH is carried over unchanged (0.35 wide, i.e. the same")
+    print("       Monte-Carlo slack the original had) and re-centred on the prediction.")
+    print("       7.9g pins the untouched half of the model at the ORIGINAL [0.45,0.75] over")
+    print("       the played cohort, so this band cannot absorb a real regression: a drift in")
+    print("       the ordinary production formula fails 7.9g whatever 7.9a reads.")
     print("  §7.6 ceiling-share targets are RETIRED as a calibration metric — the decision")
     print("       PLAYER_DEVELOPMENT_OVERHAUL_PLAN.md §2.6 asked for, and the principled")
     print("       resolution of phase-1 skipped finding #3. Two reasons:")

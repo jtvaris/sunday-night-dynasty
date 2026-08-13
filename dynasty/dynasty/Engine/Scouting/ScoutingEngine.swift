@@ -130,100 +130,72 @@ enum ScoutingEngine {
         )
     }
 
-    // MARK: - Scouting Process
+    // MARK: - Personality Reads
+    //
+    // Every personality read in the build funnels through the two functions
+    // below. Before #185 the honest version of this roll lived inside
+    // `scoutProspect` — a function with ZERO callers — while the code that
+    // actually ran, `applyReport`, flipped a hard-coded 70 % coin that ignored
+    // the scout's `personalityRead` and his character focus entirely. The dead
+    // function is gone; its logic lives here, where the live path calls it.
 
-    /// Has a scout evaluate a prospect, returning a scouting report and updating the prospect's scouted fields.
-    static func scoutProspect(prospect: CollegeProspect, scout: Scout) -> ScoutingReport {
-        // Determine accuracy modifier
-        var accuracyBonus = 0
-        if let spec = scout.positionSpecialization, spec == prospect.position {
-            accuracyBonus += 10
+    /// What a scout files when he watched the man and still cannot tell you
+    /// anything. Named rather than inlined because `applyPersonalityRead` has to
+    /// recognise a shrug and refuse to turn it into an archetype on the card.
+    static let inconclusivePersonalityNote =
+        "Hard to get a clear read on personality. Seems fine on the surface."
+
+    /// Rolls one evaluator's read of a prospect's character.
+    ///
+    /// A miss is not "no answer" — it is a CONFIDENT WRONG answer, which is the
+    /// fog this game ships: a scout who cannot read a man still files an
+    /// opinion. The CALLER decides what a miss is allowed to do; see
+    /// `applyReport`'s F7 rule — a miss must never degrade a read that is
+    /// already on the card.
+    ///
+    /// - Parameters:
+    ///   - trueArchetype: The prospect's real archetype.
+    ///   - readSkill: The evaluator's `personalityRead` (1–99).
+    ///   - characterFocus: `true` when the scout is assigned to character work.
+    ///     Worth +20, the same bonus `generateScoutReport` gives the prose note.
+    /// - Returns: The archetype read, and whether it is the true one.
+    static func rollPersonalityRead(
+        trueArchetype: PersonalityArchetype,
+        readSkill: Int,
+        characterFocus: Bool
+    ) -> (archetype: PersonalityArchetype, accurate: Bool) {
+        let threshold = min(99, readSkill + (characterFocus ? 20 : 0))
+        if Int.random(in: 1...100) <= threshold {
+            return (trueArchetype, true)
         }
-        // Focus position bonus: +15% accuracy when scout focuses on the prospect's position
-        if let focusPos = scout.focusPosition, focusPos == prospect.position {
-            accuracyBonus += 15
+        let wrong = PersonalityArchetype.allCases
+            .filter { $0 != trueArchetype }
+            .randomElement() ?? trueArchetype
+        return (wrong, false)
+    }
+
+    /// The one writer of `scoutedPersonality`, and the only place that stamps
+    /// where the read came from.
+    ///
+    /// Refuses a read from an instrument weaker than the one already on file
+    /// (`PersonalitySource.strength`): a routine weekly report cannot overwrite
+    /// what a private workout established, and an interview read can only be
+    /// revised by another interview — which is what makes the card's
+    /// "From your interview" attribution true rather than decorative.
+    ///
+    /// - Returns: `true` when the read was written.
+    @discardableResult
+    static func recordPersonalityRead(
+        _ archetype: PersonalityArchetype,
+        source: PersonalitySource,
+        on prospect: CollegeProspect
+    ) -> Bool {
+        if let current = prospect.scoutedPersonalitySource, source.strength < current.strength {
+            return false
         }
-        let effectiveAccuracy = min(99, scout.accuracy + accuracyBonus)
-
-        // Calculate scouted overall with error margin
-        let maxError = max(1, 30 - (effectiveAccuracy * 30 / 100))
-        let overallError = Int.random(in: -maxError...maxError)
-        let scoutedOvr = min(99, max(1, prospect.trueOverall + overallError))
-        prospect.scoutedOverall = scoutedOvr
-
-        // Calculate scouted potential with error margin based on potentialRead
-        // Mental focus gives +15 bonus to potential read accuracy
-        let mentalBonus = scout.focusAttribute == .mental ? 15 : 0
-        let effectivePotentialRead = min(99, scout.potentialRead + mentalBonus)
-        let potentialMaxError = max(1, 30 - (effectivePotentialRead * 30 / 100))
-        let potentialError = Int.random(in: -potentialMaxError...potentialMaxError)
-        let scoutedPot = min(99, max(1, prospect.truePotential + potentialError))
-        prospect.scoutedPotential = scoutedPot
-
-        // Personality read — character focus gives +20 bonus
-        let characterBonus = scout.focusAttribute == .character ? 20 : 0
-        let personalityRoll = Int.random(in: 1...100)
-        if personalityRoll <= min(99, scout.personalityRead + characterBonus) {
-            prospect.scoutedPersonality = prospect.truePersonality.archetype
-        } else {
-            // Wrong personality assessment
-            let wrongArchetypes = PersonalityArchetype.allCases.filter { $0 != prospect.truePersonality.archetype }
-            prospect.scoutedPersonality = wrongArchetypes.randomElement()
-        }
-
-        // Scout grade based on scouted overall
-        prospect.scoutGrade = LetterGrade.from(numericValue: scoutedOvr).rawValue
-
-        // Confidence level based on scout accuracy and experience
-        let baseConfidence = Double(effectiveAccuracy) / 100.0
-        let experienceBonus = min(0.15, Double(scout.experience) * 0.015)
-        // Focus attribute bonus: physical/mental focus gives +10% confidence on overall/potential reads
-        let focusAttrBonus: Double = (scout.focusAttribute == .physical || scout.focusAttribute == .mental) ? 0.10 : 0.0
-        let confidence = min(1.0, baseConfidence + experienceBonus + focusAttrBonus)
-
-        // Generate notes
-        let strengthNotes = generateStrengthNotes(for: prospect, accuracy: effectiveAccuracy)
-        let weaknessNotes = generateWeaknessNotes(for: prospect, accuracy: effectiveAccuracy)
-        let personalityNotes = generatePersonalityNotes(for: prospect, scout: scout)
-
-        // Generate per-attribute letter grades
-        let mentalGrades = generateMentalGrades(
-            mental: prospect.trueMental,
-            learning: prospect.trueLearning,
-            competitiveness: prospect.trueCompetitiveness,
-            accuracy: effectiveAccuracy,
-            positionSpec: scout.positionSpecialization == prospect.position,
-            mentalFocus: scout.focusAttribute == .mental
-        )
-        let positionGrades = generatePositionSkillGrades(
-            attributes: prospect.truePositionAttributes,
-            accuracy: effectiveAccuracy,
-            positionSpec: scout.positionSpecialization == prospect.position,
-            physicalFocus: scout.focusAttribute == .physical
-        )
-        let overallLetterGrade = LetterGrade.from(numericValue: scoutedOvr)
-        let potentialLabel = PotentialLabel.from(
-            potential: prospect.truePotential,
-            noise: max(0, 3 - (effectivePotentialRead / 30))
-        )
-
-        return ScoutingReport(
-            prospectID: prospect.id,
-            scoutID: scout.id,
-            scoutName: scout.fullName,
-            date: currentDateString(),
-            phase: .collegeSeason,
-            overallGrade: scoutedOvr,
-            potentialGrade: scoutedPot,
-            strengthNotes: strengthNotes,
-            weaknessNotes: weaknessNotes,
-            personalityNotes: personalityNotes,
-            confidenceLevel: confidence,
-            mentalGrades: mentalGrades,
-            positionSkillGrades: positionGrades,
-            overallLetterGrade: overallLetterGrade,
-            potentialLabel: potentialLabel
-        )
+        prospect.scoutedPersonality = archetype
+        prospect.scoutedPersonalitySource = source
+        return true
     }
 
     // MARK: - Phase-Based Scout Report Generation
@@ -270,7 +242,7 @@ enum ScoutingEngine {
         if personalityRoll <= min(99, scout.personalityRead + characterBonus) {
             personalityNotes = accuratePersonalityNote(archetype: prospect.truePersonality.archetype)
         } else if personalityRoll <= min(99, scout.personalityRead + characterBonus) + 25 {
-            personalityNotes = "Hard to get a clear read on personality. Seems fine on the surface."
+            personalityNotes = inconclusivePersonalityNote
         } else {
             personalityNotes = nil
         }
@@ -407,7 +379,13 @@ enum ScoutingEngine {
     }
 
     /// Apply a scouting report to update prospect's visible attributes based on the best available report.
-    static func applyReport(report: ScoutingReport, to prospect: CollegeProspect) {
+    ///
+    /// - Parameter scout: The scout who filed `report`, when one exists. His
+    ///   `personalityRead` and character focus decide whether the report's
+    ///   character read lands, so pass him wherever he is in hand. `nil` means
+    ///   the filer is not a scout — a coaching-staff workout, a broadcast
+    ///   showcase desk — and the personality read is left to that caller.
+    static func applyReport(report: ScoutingReport, to prospect: CollegeProspect, scout: Scout? = nil) {
         // Add report to the prospect's collection
         prospect.scoutingReports.append(report)
 
@@ -426,18 +404,52 @@ enum ScoutingEngine {
         // New: Update grade-based scouting fields
         applyGradeBasedFields(report: report, to: prospect)
 
-        // Use personality from the highest-confidence report that has personality notes
-        if let _ = prospect.scoutingReports
-            .filter({ $0.personalityNotes != nil })
-            .max(by: { $0.confidenceLevel < $1.confidenceLevel }) {
-            let personalityRoll = Int.random(in: 1...100)
-            if personalityRoll <= 70 {
-                prospect.scoutedPersonality = prospect.truePersonality.archetype
-            } else {
-                let wrongArchetypes = PersonalityArchetype.allCases.filter { $0 != prospect.truePersonality.archetype }
-                prospect.scoutedPersonality = wrongArchetypes.randomElement()
-            }
-        }
+        applyPersonalityRead(from: report, scout: scout, to: prospect)
+    }
+
+    /// The personality half of `applyReport`, split out because #185 found four
+    /// separate bugs living in the six lines it replaces:
+    ///
+    /// 1. It re-rolled whenever ANY report on file carried personality notes —
+    ///    including the inherited "Previous Staff" row every top-50 prospect
+    ///    starts the save with — so a report that read nothing still rewrote the
+    ///    card. Only the report BEING FILED can move the read now.
+    /// 2. It flipped a fixed 70 % coin, throwing away the scout's
+    ///    `personalityRead` and his character focus. It now rolls the real
+    ///    instrument, the same one that wrote the report's prose note.
+    /// 3. It could overwrite the read the card attributes to the user's own
+    ///    interview. `recordPersonalityRead` refuses weaker instruments.
+    /// 4. A missed read replaced a good answer with a wrong one — #fleet review
+    ///    F7, which had been fixed for the workout path only. A miss now writes
+    ///    only onto a blank card; otherwise the earlier read stands.
+    private static func applyPersonalityRead(
+        from report: ScoutingReport,
+        scout: Scout?,
+        to prospect: CollegeProspect
+    ) {
+        // No scout, no instrument to roll. The coaching staff's private workout
+        // files its own read right after this returns (`conductPrivateWorkout`).
+        guard let scout else { return }
+
+        // THIS report has to have produced a character read. `nil` notes mean
+        // the scout came back with nothing, and the inconclusive note means he
+        // came back with a shrug — a shrug must not turn into an archetype on
+        // the card, or the paragraph and the label contradict each other on the
+        // same screen.
+        guard let notes = report.personalityNotes,
+              notes != inconclusivePersonalityNote else { return }
+
+        let read = rollPersonalityRead(
+            trueArchetype: prospect.truePersonality.archetype,
+            readSkill: scout.personalityRead,
+            characterFocus: scout.focusAttribute == .character
+        )
+
+        // A confident misread is legitimate fog on a blank card. It is never an
+        // upgrade on a read that is already on file (F7).
+        guard read.accurate || prospect.scoutedPersonality == nil else { return }
+
+        recordPersonalityRead(read.archetype, source: .report, on: prospect)
     }
 
     /// Aggregates grade data from all reports into progressive GradeRange fields.
@@ -451,8 +463,12 @@ enum ScoutingEngine {
                 prospect.scoutedOverallGrade = existing
             } else {
                 // First report — wide range (±2 grades)
-                let low = letterGrade.shifted(by: 2)   // 2 grades worse
-                let high = letterGrade.shifted(by: -2)  // 2 grades better
+                // `shifted(by:)` counts POSITIVE as BETTER, so the floor is the
+                // negative step. The old spelling had the two swapped and only
+                // survived because `GradeRange.init` re-sorts them — the same
+                // sign confusion that broke `incorporate` (#183).
+                let low = letterGrade.shifted(by: -2)  // 2 grades worse
+                let high = letterGrade.shifted(by: 2)  // 2 grades better
                 prospect.scoutedOverallGrade = GradeRange(low: low, high: high, reportCount: 1)
             }
         }
@@ -465,8 +481,8 @@ enum ScoutingEngine {
                     range.incorporate(newGrade: grade)
                     existing[key] = range
                 } else {
-                    let low = grade.shifted(by: 2)
-                    let high = grade.shifted(by: -2)
+                    let low = grade.shifted(by: -2)   // 2 grades worse
+                    let high = grade.shifted(by: 2)    // 2 grades better
                     existing[key] = GradeRange(low: low, high: high, reportCount: 1)
                 }
             }
@@ -481,8 +497,8 @@ enum ScoutingEngine {
                     range.incorporate(newGrade: grade)
                     existing[key] = range
                 } else {
-                    let low = grade.shifted(by: 2)
-                    let high = grade.shifted(by: -2)
+                    let low = grade.shifted(by: -2)   // 2 grades worse
+                    let high = grade.shifted(by: 2)    // 2 grades better
                     existing[key] = GradeRange(low: low, high: high, reportCount: 1)
                 }
             }
@@ -1496,9 +1512,13 @@ enum ScoutingEngine {
         let noteCount = min(characterPool.count, Int.random(in: 1...3))
         let characterNotes = Array(characterPool.prefix(noteCount))
 
-        // 4. Update prospect state
+        // 4. Update prospect state. The interview is the strongest character
+        //    instrument in the build, so its read always lands — and stamping
+        //    the source is what stops the next routine scout report from
+        //    silently re-rolling it while the card still says the user's own
+        //    meeting produced it (#185).
         prospect.interviewCompleted = true
-        prospect.scoutedPersonality = revealedPersonality
+        recordPersonalityRead(revealedPersonality, source: .interview, on: prospect)
         prospect.interviewFootballIQ = footballIQ
         prospect.interviewCharacterNotes = characterNotes
         prospect.interviewNotes = characterNotes.joined(separator: ". ") + "."
@@ -1534,7 +1554,7 @@ enum ScoutingEngine {
                 prospects[i].proDayCompleted = true
                 // Still generate a scout report
                 let report = generateScoutReport(scout: scout, prospect: prospects[i], phase: .proDay)
-                applyReport(report: report, to: prospects[i])
+                applyReport(report: report, to: prospects[i], scout: scout)
                 continue
             }
 
@@ -1557,7 +1577,7 @@ enum ScoutingEngine {
 
             // Generate scout report at Pro Day phase
             let report = generateScoutReport(scout: scout, prospect: prospects[i], phase: .proDay)
-            applyReport(report: report, to: prospects[i])
+            applyReport(report: report, to: prospects[i], scout: scout)
         }
 
         scout.proDaysAttended += 1
@@ -1975,25 +1995,31 @@ enum ScoutingEngine {
         // `scoutedMentalGrades` / `scoutedPositionGrades`. Filing through it is
         // what makes the session show up on the prospect card at all.
         //
-        // #fleet review F7: the read on file before the session. `applyReport`'s
-        // generic 70 % personality roll can overwrite a CORRECT archetype an
-        // interview already wrote with a wrong one, so a slot the user spent to
-        // learn more about a man could make the card less accurate than it was.
-        let personalityBefore = prospect.scoutedPersonality
+        // Personality is NOT `applyReport`'s business here: no `scout:` is
+        // passed, because the filer is the coaching staff and the session ran
+        // its own sharper roll (the 85 % above) before this line. #fleet review
+        // F7 used to be handled by saving the read, letting `applyReport`'s
+        // generic coin flip clobber it, and putting it back; #185 removed the
+        // coin flip, so the restore dance is gone with it.
         applyReport(report: report, to: prospect)
 
-        // `applyReport`'s personality roll is the generic 70 % one every filed
-        // report gets. A private session is sharper than that, and the modal is
-        // about to print the read: when the staff got one (the 85 % roll above),
-        // pin the card to the same answer so the two cannot contradict each
-        // other on the same screen. When the session's own read MISSED, the
-        // generic roll is not an upgrade on whatever was already there — put
-        // the earlier read back rather than let a coin flip degrade it
-        // (#fleet review F7).
+        // The session's own read, filed through the one writer. A miss writes
+        // nothing at all — what was on the card stays on the card (F7). A hit
+        // writes the truth, unless the man has already sat across a table from
+        // this staff: an interview reads character better than a field session
+        // does, so `recordPersonalityRead` refuses, and the modal then says
+        // nothing about character rather than printing a line the card's own
+        // label would contradict.
+        let personalityNoteForModal: String?
         if personalityRead != nil {
-            prospect.scoutedPersonality = prospect.truePersonality.archetype
-        } else if let personalityBefore {
-            prospect.scoutedPersonality = personalityBefore
+            let written = recordPersonalityRead(
+                prospect.truePersonality.archetype,
+                source: .workout,
+                on: prospect
+            )
+            personalityNoteForModal = written ? personalityRead : nil
+        } else {
+            personalityNoteForModal = nil
         }
 
         prospect.proDayCompleted = true
@@ -2009,7 +2035,7 @@ enum ScoutingEngine {
             gradeBefore: gradeBefore,
             gradeAfter: prospect.effectiveOverallGrade,
             schemeFitNote: schemeFitNotes,
-            personalityNote: personalityRead,
+            personalityNote: personalityNoteForModal,
             impressions: impressions
         )
     }
@@ -3084,11 +3110,59 @@ enum ScoutingEngine {
 
     // MARK: - UDFA Pool
 
-    /// Returns undrafted prospects sorted by trueOverall (best first) for UDFA signing.
+    /// **Membership** in the undrafted pool — the one authority for who is in it.
+    ///
+    /// Ordering is deliberately NOT part of membership: the UDFA market (#204)
+    /// needs two different orders over the same set and they must not be able to
+    /// disagree about *who* is in it. See ``getUDFAPool`` (fog-safe, the order any
+    /// user-facing surface may read) and ``getUDFAPoolByTrueValue`` (engine-only).
+    ///
+    /// A man leaves the pool the moment he is signed, because every signing path
+    /// routes through `DraftEngine.convertUDFAToPlayer`, which clears
+    /// `isDeclaringForDraft` (defect D1). That is also what makes the market
+    /// double-signing-proof: the Draft Day panel and the OTAs board read this
+    /// same predicate, so a man signed on draft night is simply not in the pool
+    /// the OTAs board opens on.
+    static func udfaPoolMembers(prospects: [CollegeProspect]) -> [CollegeProspect] {
+        prospects.filter { $0.isDeclaringForDraft && $0.mockDraftPickNumber == nil }
+    }
+
+    /// The undrafted pool in **fog-safe** order: the user's own board, best
+    /// scouted grade first.
+    ///
+    /// This used to sort by `trueOverall` and it was a live fog leak (defect D2,
+    /// `OFFSEASON_ROSTER_PLAN.md` §0): the OTAs inbox message printed
+    /// `pool.prefix(5)` off that sort, i.e. the league's REAL top five undrafted
+    /// men, straight past the scouting screen the whole draft is played through.
+    /// Invariant (5) says a user-facing surface may only be ordered by what his
+    /// own department has seen, so the key here is `effectiveOverallGrade` — the
+    /// scouted band, with the legacy `scoutedOverall` / `scoutGrade` fallbacks —
+    /// and an unscouted man sorts last rather than being silently ranked.
+    ///
+    /// Ties break on `lastName` then `id`, so the same board comes back in the
+    /// same order twice. (Grade midpoints tie constantly — a `Dictionary`- or
+    /// hash-ordered tiebreak would reshuffle the board on every redraw.)
     static func getUDFAPool(prospects: [CollegeProspect]) -> [CollegeProspect] {
-        return prospects
-            .filter { $0.isDeclaringForDraft && $0.mockDraftPickNumber == nil }
-            .sorted { $0.trueOverall > $1.trueOverall }
+        udfaPoolMembers(prospects: prospects).sorted { lhs, rhs in
+            let lhsRank = lhs.effectiveOverallGrade?.midGrade.rank ?? Int.min
+            let rhsRank = rhs.effectiveOverallGrade?.midGrade.rank ?? Int.min
+            if lhsRank != rhsRank { return lhsRank > rhsRank }
+            if lhs.lastName != rhs.lastName { return lhs.lastName < rhs.lastName }
+            return lhs.id.uuidString < rhs.id.uuidString
+        }
+    }
+
+    /// The undrafted pool in **true-value** order, best first.
+    ///
+    /// ENGINE-ONLY. An AI club runs its own scouting department, so its internal
+    /// board may be the real one; nothing derived from this order may be printed,
+    /// badged, sorted into a user-facing list or leaked through an inbox message.
+    /// The only caller is `UDFAMarketEngine`'s AI bidding pass.
+    static func getUDFAPoolByTrueValue(prospects: [CollegeProspect]) -> [CollegeProspect] {
+        udfaPoolMembers(prospects: prospects).sorted { lhs, rhs in
+            if lhs.trueOverall != rhs.trueOverall { return lhs.trueOverall > rhs.trueOverall }
+            return lhs.id.uuidString < rhs.id.uuidString
+        }
     }
 
     // MARK: - Pre-Scouted Data (First Season)
@@ -3116,15 +3190,21 @@ enum ScoutingEngine {
                 prospects[idx].scoutedPotential = min(99, max(1,
                     prospects[idx].truePotential + potError))
 
-                // Personality revealed (80% accurate)
-                if Int.random(in: 1...100) <= 80 {
-                    prospects[idx].scoutedPersonality = prospects[idx].truePersonality.archetype
-                } else {
-                    let wrong = PersonalityArchetype.allCases.filter {
-                        $0 != prospects[idx].truePersonality.archetype
-                    }
-                    prospects[idx].scoutedPersonality = wrong.randomElement()
-                }
+                // Personality revealed (80% accurate). This is INHERITED work —
+                // the previous department's file, not anything the user's staff
+                // saw — so it is stamped `.leagueConsensus`, the weakest source
+                // there is: any read your own people produce may replace it
+                // (#185).
+                let inheritedRead = rollPersonalityRead(
+                    trueArchetype: prospects[idx].truePersonality.archetype,
+                    readSkill: 80,
+                    characterFocus: false
+                )
+                recordPersonalityRead(
+                    inheritedRead.archetype,
+                    source: .leagueConsensus,
+                    on: prospects[idx]
+                )
 
                 // Generate a pre-scout report
                 let report = ScoutingReport(
@@ -3455,7 +3535,7 @@ enum ScoutingEngine {
 
             let scout = scouts[filed % scouts.count]
             let report = generateScoutReport(scout: scout, prospect: prospects[i], phase: .combine)
-            applyReport(report: report, to: prospects[i])
+            applyReport(report: report, to: prospects[i], scout: scout)
             filed += 1
         }
         return filed
@@ -3720,7 +3800,7 @@ enum ScoutingEngine {
         // revealed mental grade block. We pass a copy via the non-inout overload,
         // then re-apply onto the inout binding.
         prospect.interviewCompleted = true
-        prospect.scoutedPersonality = interview.personality
+        recordPersonalityRead(interview.personality, source: .interview, on: prospect)
         prospect.interviewFootballIQ = interview.footballIQ
         prospect.interviewCharacterNotes = interview.characterNotes
 
@@ -4738,8 +4818,9 @@ enum ScoutingEngine {
             // band tightens on the report paths that run `applyGradeBasedFields`
             // (combine / pro day / workout / top-30); the weekly in-season pass
             // firms a read up the older way, by stacking reports — which is
-            // exactly what `scoutConfidenceLabel` and the confidence dots show
-            // the user. Either counts, and a prospect we had never seen before
+            // exactly what `ProspectFog.confidenceDots` and the card's
+            // confidence band show the user. Either counts, and a prospect we
+            // had never seen before
             // does not (he is a `firstLook`, not a tightened read).
             if old.reportCount > 0 {
                 let newWidth = prospect.scoutedOverallGrade.map { $0.high.rank - $0.low.rank }

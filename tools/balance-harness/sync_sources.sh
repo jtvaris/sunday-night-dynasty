@@ -405,6 +405,13 @@ sed -n '/^    enum CollegeProductionTier: String {$/,/^    \/\/ MARK: - Boom\/Bu
 grep -q 'static func overallValue' "$PRODUCTION" || die "CollegeProspect splice missing overallValue — repo layout changed."
 grep -q 'var trueOverall: Int' "$PRODUCTION"     || die "CollegeProspect splice missing trueOverall — repo layout changed."
 grep -q 'static func productionTier' "$PRODUCTION" || die "CollegeProspect splice missing productionTier — repo layout changed."
+# Task #181: the usage-suppression math (limited-sample status, the deterministic
+# stat-line jitter and the best-season stat line itself) has to come through the
+# same splice, or the `draftclass` gate would measure a harness-local stat line.
+grep -q 'enum CollegeSampleStatus' "$PRODUCTION"     || die "CollegeProspect splice missing CollegeSampleStatus (#181) — repo layout changed."
+grep -q 'var hasLimitedCollegeSample' "$PRODUCTION"  || die "CollegeProspect splice missing hasLimitedCollegeSample (#181) — repo layout changed."
+grep -q 'static func productionJitter' "$PRODUCTION" || die "CollegeProspect splice missing productionJitter (#181) — repo layout changed."
+grep -q 'static func statLine' "$PRODUCTION"         || die "CollegeProspect splice missing statLine (#181) — repo layout changed."
 PROSPECT_OUT="$SRC_OUT/CollegeProspect.swift"
 awk -v production="$PRODUCTION" '
   /^[[:space:]]*\/\/ @@SPLICE:PRODUCTION@@[[:space:]]*$/ { while ((getline line < production) > 0) print line; close(production); next }

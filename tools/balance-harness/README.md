@@ -212,10 +212,19 @@ The shipped `CollegeProspect` is a SwiftData `@Model` pulling in SwiftUI and the
 whole scouting graph. `driver/CollegeProspect.harness.swift` supplies the storage
 (plain `var`s with the same names and init labels) and splices the **math block**
 verbatim from the repo: the production/competition/archetype enums,
-`collegeYearsStarted`, `productionTier(forScore:)`, `statLine(…)` and — the one
-the scenario actually measures — `trueOverall` / `overallValue(…)`. Same
+`collegeYearsStarted`, `productionTier(forScore:)`, `statLine(…)`, the task-#181
+usage-suppression math (`CollegeSampleStatus`, `hasLimitedCollegeSample`,
+`productionSeed` / `productionJitter` / `productionSpread`) and — the one the
+scenario actually measures — `trueOverall` / `overallValue(…)`. Same
 fail-closed contract as `SimPlayer.swift`: if the repo anchors move, the sync
 dies instead of measuring a stale formula.
+
+`draftclass` §7.9 band history: `corr(production, trueOverall)` was
+`[0.45, 0.75]` while production had one cause, and moved to `[0.30, 0.65]` in
+task #181 when ~4.5 % of every class gained a second one (usage suppression).
+The old band survives unchanged as **7.9g**, measured over the played-a-season
+cohort, so the widened whole-class band cannot hide a regression in the ordinary
+production model. Derivation is printed in the scenario's DEVIATION NOTES.
 
 `MANIFEST.txt` records the role (`VERBATIM` / `EXTRACT` / `ASSEMBLED` /
 `HARNESS`), the staged file's SHA, and the repo source SHA for every file.
