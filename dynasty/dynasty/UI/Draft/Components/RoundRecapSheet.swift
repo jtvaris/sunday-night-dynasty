@@ -19,21 +19,44 @@ struct RoundRecapSheet: View {
                 yourPicksSection
                 reputationDeltasCard
                 leagueStealsCard
-
-                Button {
-                    coordinator.dismissRoundRecap()
-                } label: {
-                    Text("Continue Draft")
-                        .font(.body.weight(.semibold))
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .tint(Color.accentGold)
-                .padding(.top, DSSpacing.sm)
             }
             .padding(DSSpacing.lg)
         }
+        // THE WAY OUT IS CHROME, NOT THE LAST ROW OF THE SCROLL (v3.3 round 1
+        // judge, finding 6).
+        //
+        // "Continue Draft" was the final child inside the `ScrollView`, and a
+        // round recap is not a fixed-length document: three picks and four
+        // steals is taller than the 620 pt form sheet iPadOS hands this, so
+        // the button rendered wherever the content happened to end. The
+        // verdict caught the worst version of that — content overrunning the
+        // plate by eleven pixels, so the sheet's own mask sliced the gold
+        // capsule flat and the offcut sat over the live board rows behind it,
+        // looking like a paint bug and reading as a dead control.
+        //
+        // As a `safeAreaInset` it is chrome: always at the foot of the plate,
+        // always whole, with the scroll's content inset by exactly its height
+        // so the last steal can still be scrolled clear of it. The plate under
+        // it is opaque for the same reason the control bar's is — a
+        // translucent bar over a scrolling list is a bar the eye loses.
+        .safeAreaInset(edge: .bottom, spacing: 0) { continueBar }
+        .background(Color.backgroundPrimary)
+    }
+
+    private var continueBar: some View {
+        Button {
+            coordinator.dismissRoundRecap()
+        } label: {
+            Text("Continue Draft")
+                .font(.body.weight(.semibold))
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.large)
+        .tint(Color.accentGold)
+        .padding(.horizontal, DSSpacing.lg)
+        .padding(.top, DSSpacing.sm)
+        .padding(.bottom, DSSpacing.lg)
         .background(Color.backgroundPrimary)
     }
 
@@ -76,13 +99,37 @@ struct RoundRecapSheet: View {
                             .font(.caption)
                     }
                 }
-                Text(row.position.rawValue)
-                    .font(.caption)
-                    .foregroundStyle(Color.textSecondary)
+                HStack(spacing: DSSpacing.xxs) {
+                    Text(row.position.rawValue)
+                        .font(.caption)
+                        .foregroundStyle(Color.textSecondary)
+                    // WHO ACTUALLY HANDED THE CARD IN (#207). Without this the
+                    // recap presents an auto-pick as one of "Your Picks This
+                    // Round" — with a grade against the user's name — and a
+                    // user who stepped away for ninety seconds has no way at
+                    // all to tell it apart from a call he made himself.
+                    if row.isAutoPick {
+                        // `danger`, the same ink the reveal card and the ticker
+                        // row use for this one fact. One meaning, one colour:
+                        // orange in this room means "you", and the whole point
+                        // of the line is that this card was NOT you.
+                        Text("AUTO-PICK \u{2014} CLOCK EXPIRED")
+                            .font(DSType.display(DSType.Size.caption, .heavy))
+                            .tracking(0.4)
+                            .foregroundStyle(Color.danger)
+                            .lineLimit(1)
+                    }
+                }
             }
             Spacer()
             gradeChip(row.publicGrade)
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            "Pick \(row.pickNumber), \(row.playerName), \(row.position.rawValue), "
+            + "grade \(row.publicGrade.rawValue)"
+            + (row.isAutoPick ? ". Auto-pick, the clock expired" : "")
+        )
         .padding(DSSpacing.sm)
         .frame(maxWidth: .infinity)
         .cardBackground()

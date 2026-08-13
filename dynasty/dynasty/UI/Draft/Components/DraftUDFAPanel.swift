@@ -5,13 +5,18 @@ import SwiftUI
 /// Shown when the draft completes: left column recaps the user's draft class,
 /// right column lists the best remaining undrafted prospects (ranked by the
 /// user's scout grades — hidden OVR never shown). The user may sign up to
-/// five UDFAs on cheap 1-2 year deals before releasing the pool to the
-/// league; AI teams then round-robin the best of the rest.
+/// five UDFAs on the standard undrafted deal here, on draft night, before the
+/// rest of the class goes to the open market.
+///
+/// #208 G2 — "Finish" no longer signs the class out to the AI. It closes the
+/// user's window and nothing else: the remainder stays declared, and
+/// `UDFAMarketEngine` runs the contested market through OTAs
+/// (`DraftDayCoordinator.finishUDFASigning` carries the full account).
 struct DraftUDFAPanel: View {
     @ObservedObject var coordinator: DraftDayCoordinator
 
     private var userResults: [PickResult] {
-        coordinator.allPickResults.filter { $0.isUserPick || $0.ownerOverride }
+        coordinator.allPickResults.filter { $0.isUserPick || $0.isAutoPick }
     }
 
     var body: some View {
@@ -149,7 +154,7 @@ struct DraftUDFAPanel: View {
                         .lineLimit(1)
                     if trend == .rising || trend == .falling {
                         Image(systemName: trend.icon)
-                            .font(.system(size: 9, weight: .bold))
+                            .font(.system(size: DSType.Size.caption, weight: .bold))
                             .foregroundStyle(trend.color)
                     }
                     if need >= 0.5 {
@@ -201,7 +206,7 @@ struct DraftUDFAPanel: View {
         HStack(spacing: DSSpacing.md) {
             if coordinator.udfaStageFinished {
                 Label(
-                    coordinator.udfaAISummary ?? "UDFA market closed.",
+                    coordinator.udfaAISummary ?? "Your draft-night window is closed.",
                     systemImage: "checkmark.seal.fill"
                 )
                 .font(.caption)
@@ -211,14 +216,14 @@ struct DraftUDFAPanel: View {
                     .font(.caption2)
                     .foregroundStyle(Color.textSecondary)
             } else {
-                Text("Unsigned prospects go to the open market when you finish.")
+                Text("Everyone you leave stays on the market — the league bids through OTAs.")
                     .font(.caption2)
                     .foregroundStyle(Color.textSecondary)
                 Spacer()
                 Button {
                     coordinator.finishUDFASigning()
                 } label: {
-                    Label("Finish — league signs the rest", systemImage: "flag.checkered")
+                    Label("Finish — the rest go to the market", systemImage: "flag.checkered")
                         .font(.callout.weight(.semibold))
                 }
                 .buttonStyle(.borderedProminent)

@@ -54,6 +54,20 @@ final class DraftDayCoordinator: ObservableObject {
     @Published private(set) var allPickResults: [PickResult] = []
     @Published private(set) var lastRoundShown: Int = 0
 
+    /// **Which of the user's cards the CLOCK filed, not the user** (#207).
+    ///
+    /// The `PickResult` carries the same fact as `isAutoPick`, but the ticker's
+    /// history rows are built from `DraftPick` — the persisted row — and a
+    /// `DraftPick` has no idea who handed it in. Rather than widen the SwiftData
+    /// model for a fact that only lives as long as draft night, the coordinator
+    /// keeps the pick numbers here and every surface asks
+    /// ``isAutoPick(pickNumber:)``.
+    @Published private(set) var autoPickNumbers: Set<Int> = []
+
+    /// Was this slot filed by the expiring clock rather than by the user?
+    /// Always `false` for the other 31 clubs — they have no clock to lose.
+    func isAutoPick(pickNumber: Int) -> Bool { autoPickNumbers.contains(pickNumber) }
+
     // MARK: - Trades (R24 pick swaps, rebuilt in Wave 4)
 
     /// The offer on the table: an AI club buying one of the user's picks, or a
@@ -187,7 +201,8 @@ final class DraftDayCoordinator: ObservableObject {
     /// alert, or a round recap. The clock does not tick under it.
     ///
     /// This is the other half of the same defect. The confirm alert is raised
-    /// from the pick sheet and the 120 s clock kept running behind it, so at any
+    /// from the live big board (#197 — it used to be the retired pick sheet)
+    /// and the 120 s clock kept running behind it, so at any
     /// speed above 1× a user reading the card could be overridden mid-decision:
     /// the tap landed on `selectProspect` after the slot had already been filed
     /// by `DraftEngine.aiMakePick`, and `guard isUserOnClock` swallowed it.
@@ -197,7 +212,7 @@ final class DraftDayCoordinator: ObservableObject {
     /// Nothing may run the pick clock down while the user owes an answer.
     var isClockHeld: Bool { isPickConfirmationOpen || pendingRoundRecap != nil }
 
-    /// The pick sheet reports its confirm alert opening and closing.
+    /// `LiveBigBoardPanel` reports its confirm alert opening and closing.
     func setPickConfirmationOpen(_ open: Bool) {
         isPickConfirmationOpen = open
     }
@@ -246,6 +261,11 @@ final class DraftDayCoordinator: ObservableObject {
     private let recorder: DraftStoryRecorder
     private var clockTask: Task<Void, Never>?
     private var sequenceCounter: Int = 0
+
+    /// Whose turn was on screen when the user hit Pause (`.playing` or
+    /// `.userPick`). Held so `resume` restores the stance it froze rather than
+    /// re-opening the slot — see the note on `resume()`.
+    private var pausedMode: Mode?
 
     // MARK: - Lifecycle
 
@@ -466,65 +486,88 @@ final class DraftDayCoordinator: ObservableObject {
         beginCurrentPick()
     }
 
+    /// Freezes the pick clock where it stands.
+    ///
+    /// Task #195: pausing is a *transport* action and must not touch the pick.
+    /// Only `mode` moves; `clockSeconds` is left exactly as it was, and
+    /// `pausedMode` remembers whose turn was frozen so `resume` can put it back
+    /// without re-deriving it from board state.
     func pause() {
+        guard mode == .playing || mode == .userPick else { return }
         clockTask?.cancel()
+        pausedMode = mode
         mode = .paused
     }
 
+    /// Un-freezes the clock at the second it stopped on.
+    ///
+    /// Task #195 BUG: this used to call `beginCurrentPick()`, which is the
+    /// *slot-opening* routine — it re-announced `.onTheClock`, re-rolled the
+    /// incoming trade-up window, and, the visible symptom, reset `clockSeconds`
+    /// to a full 120 / 60. Pausing with eleven seconds left and resuming handed
+    /// the user two full minutes back, so Pause was a free timeout and the clock
+    /// meant nothing.
+    ///
+    /// Resuming re-arms the same countdown instead: the slot is already open, so
+    /// the only thing that has to restart is the ticking task, and it reads the
+    /// `clockSeconds` that pause left behind.
     func resume() {
         guard mode == .paused else { return }
-        beginCurrentPick()
+        let fallback: Mode = isUserOnClock ? .userPick : .playing
+        let restored: Mode = pausedMode ?? fallback
+        pausedMode = nil
+        mode = restored
+        // The move-up call sheet holds the clock in its own right and restarts it
+        // itself on close (`closeTradeUpBoard`). Starting a second loop here would
+        // run the pick down underneath an open sheet.
+        guard !isTradeUpBoardOpen else { return }
+        startClockLoop(forUser: restored == .userPick)
     }
 
     func setSpeed(_ newSpeed: Double) {
         speed = max(0.25, min(8.0, newSpeed))
     }
 
+    /// The room's one fast-forward (#195): run the AI's night out until the user
+    /// is back at the podium, or — when his card count is spent — until the draft
+    /// is over.
+    ///
+    /// `autoAdvanceUntil` stops early on the two things the user has to answer,
+    /// a ringing phone and a round recap, so a tap can land short of the target;
+    /// that is the point, not a shortfall. Tapping again carries on.
     func skipToMyPick() {
         guard userTeamID != nil else { return }
+        // Nothing to fast-forward before the draft is under way or after it has
+        // ended — and a board opened outside the draft phase never starts, so
+        // without this the button would play the whole thing out in July.
+        guard mode == .playing || mode == .paused else { return }
+        // `autoAdvanceUntil` finishes by calling `beginCurrentPick()`, which
+        // re-opens the slot and puts a FULL clock on it. That is correct when
+        // cards were actually turned and wrong when none were, so the two ways
+        // the predicate can already be satisfied at the door are refused here
+        // rather than costing the user a slot's worth of ticking: he is on the
+        // clock, or a rival GM is on the phone and the tape is stopped for him.
+        guard !isUserOnClock, pendingTradeOffer == nil else { return }
         clockTask?.cancel()
         autoAdvanceUntil { coordinator in
             coordinator.isUserOnClock || coordinator.mode == .complete
         }
     }
 
-    func skipToNextEvent() {
-        clockTask?.cancel()
-        // Both stop conditions are STATE, not edges, so they have to be read
-        // relative to where this tap started — otherwise tapping "next event"
-        // immediately after a slide (or with a target banner still queued)
-        // satisfies the predicate before a single card is turned and the button
-        // does nothing. The slide test used to be true on nearly every pick
-        // (see `DraftIntel.isBigSlide`), which is exactly how that stayed
-        // hidden: a fast-forward that never forwarded looked like one that
-        // stopped at every event.
-        let startIndex = currentPickIndex
-        let dramaBaseline = pendingDrama.count
-        autoAdvanceUntil { coordinator in
-            if coordinator.isUserOnClock || coordinator.mode == .complete { return true }
-            guard coordinator.currentPickIndex > startIndex else { return false }
-            if coordinator.lastPickResult?.isBigDrop == true { return true }
-            // Own board news: a marked target taken, or one still sitting there
-            // with the user's turn in sight.
-            return coordinator.pendingDrama.dropFirst(dramaBaseline).contains { event in
-                switch event {
-                case .targetSniped, .targetOnTheBoard: return true
-                default: return false
-                }
-            }
-        }
-    }
-
-    func skipToNextRound() {
-        guard let pick = currentPick else { return }
-        clockTask?.cancel()
-        let targetRound = pick.round + 1
-        autoAdvanceUntil { coordinator in
-            (coordinator.currentPick?.round ?? 0) >= targetRound ||
-            coordinator.isUserOnClock ||
-            coordinator.mode == .complete
-        }
-    }
+    // #195 removed `skipToNextEvent()` and `skipToNextRound()`. The rail carried
+    // three fast-forwards — "My pick", "Next event", "Next round" — and not one
+    // of them named where it would stop, so the user learned to tap whichever
+    // one moved the board and never found out why it halted. `skipToMyPick` is
+    // now the only one, and it needs no round variant: `autoAdvanceUntil`
+    // already breaks at a round recap and at a ringing phone, which is every
+    // stop the other two could reach that the user would want.
+    //
+    // The lesson those predicates paid for is worth keeping: their stop
+    // conditions were STATE, not edges, so they had to be read against a
+    // baseline captured at the tap. `lastPickResult?.isBigDrop` was true on
+    // nearly every card before `DraftIntel.isBigSlide` was fixed, and a
+    // fast-forward that satisfied its own predicate before turning a single card
+    // looked exactly like one that stopped at every event.
 
     // MARK: - User pick
 
@@ -677,7 +720,14 @@ final class DraftDayCoordinator: ObservableObject {
     // MARK: Trade UP (the user calls)
 
     /// Opens the call sheet. Freezes the clock without touching `mode`, so the
-    /// pick sheet stays up when the user calls from his own turn.
+    /// room keeps its on-the-clock stance when the user calls from his own turn
+    /// (#197: that used to mean "the pick sheet stays up"; the sheet is retired
+    /// and the stance now lives on the board and the control bar).
+    ///
+    /// Cancelling the task is the whole freeze: `clockSeconds` is deliberately
+    /// left alone so `closeTradeUpBoard` resumes the same countdown (#195 — the
+    /// same remaining-time contract as Pause/Resume; pricing the board is not a
+    /// way to buy back two minutes of thinking time).
     func openTradeUpBoard(for prospect: CollegeProspect? = nil) {
         guard userTeamID != nil, mode != .complete, mode != .loading else { return }
         clockTask?.cancel()
@@ -692,6 +742,9 @@ final class DraftDayCoordinator: ObservableObject {
         tradeUpQuotes = []
         tradeUpProspect = nil
         tradeUpMessage = nil
+        // Picks the countdown back up mid-stride (`startClockLoop` never resets
+        // `clockSeconds`). A user who paused before calling stays paused and
+        // keeps his Resume button.
         if mode == .playing || mode == .userPick {
             startClockLoop(forUser: mode == .userPick)
         }
@@ -1023,7 +1076,18 @@ final class DraftDayCoordinator: ObservableObject {
 
     // MARK: - Internal pick flow
 
+    /// Opens a slot: announces it, gives the market its rolls, and puts a FULL
+    /// clock on it.
+    ///
+    /// This is the only place `clockSeconds` is allowed to be reset, which is
+    /// what makes "resume where you stopped" (`resume`, `closeTradeUpBoard`)
+    /// possible at all — anything that merely re-arms the countdown calls
+    /// `startClockLoop` instead.
     private func beginCurrentPick() {
+        // A new slot ends any frozen stance the user left behind (skipping
+        // forward while paused reaches here).
+        pausedMode = nil
+
         guard let pick = currentPick else {
             completeDraft()
             return
@@ -1072,6 +1136,10 @@ final class DraftDayCoordinator: ObservableObject {
         }
     }
 
+    /// Re-arms the one-second countdown against whatever `clockSeconds` already
+    /// holds. It never sets that value — every caller other than
+    /// `beginCurrentPick` (resume, closing the move-up sheet) is resuming a slot
+    /// that is already open and must pick the count up mid-stride.
     private func startClockLoop(forUser: Bool) {
         clockTask?.cancel()
         clockTask = Task { [weak self] in
@@ -1097,17 +1165,32 @@ final class DraftDayCoordinator: ObservableObject {
         // second time, which would skip the next club's turn entirely.
         guard let pick = currentPick, !claimedPickNumbers.contains(pick.pickNumber) else { return }
         if forUser {
-            // Owner override: AI picks for the user using BPA logic.
-            // `DraftEngine.aiMakePick` traps on an empty board, and the user
-            // cannot select from one either, so an exhausted pool must skip
-            // the pick instead of running the clock into a `fatalError`.
-            if let team = teamsByID[pick.currentTeamID], !availableProspects.isEmpty {
-                let roster = rosters[pick.currentTeamID] ?? []
-                let chosen = DraftEngine.aiMakePick(
-                    team: team,
-                    availableProspects: availableProspects,
-                    teamRoster: roster
-                )
+            // THE CLOCK FILES FROM THE USER'S BOARD, NOT FROM THE LEAGUE AI
+            // (#207).
+            //
+            // This branch used to call `DraftEngine.aiMakePick`, i.e. the same
+            // routine the other 31 clubs use — which scores `trueOverall` and
+            // `truePotential` through `AIDraftPerception`. Handing the user's
+            // own card to it is the room's single worst fog breach: it reaches
+            // straight past the board he spent a spring building, files on a
+            // rating he is never allowed to see, and leaves him with a rookie
+            // and no account of where the name came from.
+            //
+            // `UserDraftBoard.autoPick` is the same decision taken from HIS
+            // chair — marks first (`elite` > `target`), then his persisted
+            // board order, then the fogged media consensus for a class he never
+            // touched. It cannot read a hidden number, and every name it can
+            // return is one he could have pointed at himself.
+            //
+            // The empty-pool guard stays: the user cannot select from an
+            // exhausted board either, so the slot is skipped rather than run
+            // into a trap. (`autoPick` returns `nil` there rather than
+            // `fatalError`-ing, but the explicit test keeps the intent local.)
+            if !availableProspects.isEmpty,
+               let chosen = UserDraftBoard.autoPick(
+                   among: availableProspects,
+                   boardRanks: userBoardRanks
+               ) {
                 completePick(pick: pick, prospect: chosen, isUserPick: false, ownerOverride: true)
             }
             advance()
@@ -1142,6 +1225,10 @@ final class DraftDayCoordinator: ObservableObject {
         // One writer per slot, whoever gets here first.
         guard !claimedPickNumbers.contains(pick.pickNumber), !pick.isComplete else { return false }
         claimedPickNumbers.insert(pick.pickNumber)
+        // Recorded in the same breath as the claim, so the ticker's history
+        // rows — which are built from `DraftPick`, not from `PickResult` — can
+        // label the card the clock filed (#207).
+        if ownerOverride { autoPickNumbers.insert(pick.pickNumber) }
 
         // Convert prospect → Player
         let player = DraftEngine.convertToPlayer(
@@ -1230,6 +1317,31 @@ final class DraftDayCoordinator: ObservableObject {
         pickGrade.careerID = career.id
         modelContext.insert(pickGrade)
 
+        // THE DOSSIER, READ BEFORE THE ROSTER MOVES (#203).
+        //
+        // Every field on `PickResult.Dossier` has to be sampled here, in this
+        // order, or it answers a different question than the card asks:
+        //
+        //   * the prospect leaves `availableProspects` on the next line, so a
+        //     view holding only the `PickResult` can never look his age, school,
+        //     mark or fogged band up again;
+        //   * `fillsPickerNeed` is about the hole the club had **when it walked
+        //     to the podium**. Sampled after `rosters[...].append(player)` it is
+        //     measured against a roster that already contains the man being
+        //     evaluated, which is how a first-round corner stops counting as a
+        //     corner need in the same frame he was drafted to fill one.
+        let dossier = PickResult.Dossier(
+            college: prospect.college,
+            age: prospect.age,
+            userMark: prospect.userMark,
+            userBoardRank: userBoardRanks[prospect.id],
+            consensusRank: publicBoardRanks[prospect.id],
+            read: ProspectFog.read(prospect),
+            fillsPickerNeed: DraftEngine
+                .topTeamNeeds(roster: rosters[pick.currentTeamID] ?? [], limit: 3)
+                .contains(prospect.position)
+        )
+
         // Update local state
         if let idx = availableProspects.firstIndex(where: { $0.id == prospect.id }) {
             availableProspects.remove(at: idx)
@@ -1281,8 +1393,9 @@ final class DraftDayCoordinator: ObservableObject {
             isGem: grade.isGemCandidate,
             isBigDrop: isBigDrop,
             isUserPick: isUserPick,
-            ownerOverride: ownerOverride,
-            faceID: prospect.faceID
+            isAutoPick: ownerOverride,
+            faceID: prospect.faceID,
+            dossier: dossier
         )
         lastPickResult = result
         allPickResults.append(result)
@@ -1326,7 +1439,12 @@ final class DraftDayCoordinator: ObservableObject {
         pendingDrama.append(contentsOf: drama)
 
         // The board the user marked up months ago finally pays out tonight.
-        if !isUserPick,
+        //
+        // `!ownerOverride` as well as `!isUserPick` (#207): an auto-pick is not
+        // a user pick by the flag, but it IS the user's club walking to the
+        // podium — firing the sniped sting there told him a rival had taken a
+        // man his own war room had just drafted for him.
+        if !isUserPick, !ownerOverride,
            let mark = DraftIntel.mark(for: prospect),
            let sting = DraftDramaEngine.targetSnipedBeat(
                playerName: Self.shortName(result.playerName),
@@ -1456,62 +1574,43 @@ final class DraftDayCoordinator: ObservableObject {
         try? modelContext.save()
     }
 
-    /// Closes the UDFA window: AI teams round-robin the best remaining
-    /// prospects (~10 each, mirroring the old OTAs bulk signing), everything
-    /// processed here is marked so the OTAs fallback can't double-sign.
+    /// Closes the **user's** draft-night window. It signs nobody else and it
+    /// consumes nobody else.
+    ///
+    /// ## #208 G2 — this method was the reason the camp was empty
+    ///
+    /// It used to be the league's whole undrafted market: 31 AI clubs
+    /// round-robined **ten men each** out of the remainder here, on draft night,
+    /// and then the last loop cleared `isDeclaringForDraft` on **every**
+    /// prospect still standing. Both halves are gone, and the second one is the
+    /// load-bearing removal.
+    ///
+    /// `ScoutingEngine.udfaPoolMembers` — the single pool predicate — is
+    /// `isDeclaringForDraft && mockDraftPickNumber == nil`. Clearing the flag on
+    /// the whole remainder meant that by the time the advance left `.draft`,
+    /// `UDFAMarketEngine.openMarket` found an empty pool and opened the market
+    /// in its CLOSED state; `closeMarket` at the `.otas` exit then wrote
+    /// `unsignedProspectIDs = []`; and `CampRosterEngine.fillCampRosters` — whose
+    /// second source is exactly that survivor list
+    /// (`UDFAMarketEngine.campInviteCandidates`) — was left with the free-agent
+    /// pool alone. QA measured the consequence precisely: 32 clubs took ~3 men
+    /// each out of a ~100-man pool, the user's roster peaked at 61, and the
+    /// "Cut to 75" / "Cut to 65" rungs were satisfied on arrival.
+    ///
+    /// So the calendar now reads the way `OFFSEASON_ROSTER_PLAN.md` §1 states
+    /// it: the user may sign up to ``maxUDFASignings`` on draft night, the rest
+    /// of the class stays declared, `openMarket` seeds a live market at the
+    /// `.draft` exit, the 31 clubs bid against him through `.otas`, and whoever
+    /// is still unsigned when `closeMarket` runs becomes camp-invite inventory.
+    /// One market, one pool predicate, one signing door.
     func finishUDFASigning() {
         guard mode == .complete, !udfaStageFinished else { return }
         udfaStageFinished = true
 
         let remaining = udfaPool.filter { !signedUDFAProspectIDs.contains($0.id) }
-        let aiTeams = teamsByID.values.filter { $0.id != userTeamID }.shuffled()
-        var aiSignedCount = 0
-
-        if !aiTeams.isEmpty {
-            let perTeamCap = 10
-            var signedPerTeam: [UUID: Int] = [:]
-            var teamIndex = 0
-            for prospect in remaining {
-                // Find the next team that still has room.
-                var assigned: Team?
-                for _ in 0..<aiTeams.count {
-                    let team = aiTeams[teamIndex % aiTeams.count]
-                    teamIndex += 1
-                    if signedPerTeam[team.id, default: 0] < perTeamCap {
-                        assigned = team
-                        break
-                    }
-                }
-                guard let team = assigned else { break }   // every team is full
-                let player = DraftEngine.convertUDFAToPlayer(
-                    prospect: prospect,
-                    teamID: team.id,
-                    salaryCap: team.salaryCap
-                )
-                let aiSchemes = schemesByTeam[team.id]
-                DraftEngine.initializeRookieFamiliarity(
-                    player: player,
-                    prospect: prospect,
-                    offensiveScheme: aiSchemes?.offense,
-                    defensiveScheme: aiSchemes?.defense,
-                    isUndrafted: true
-                )
-                player.careerID = career.id
-                modelContext.insert(player)
-                rosters[team.id, default: []].append(player)
-                team.currentCapUsage += player.annualSalary
-                signedPerTeam[team.id, default: 0] += 1
-                aiSignedCount += 1
-                prospect.isDeclaringForDraft = false
-            }
-        }
-
-        // Close the window for everyone left unsigned as well.
-        for prospect in remaining where prospect.isDeclaringForDraft {
-            prospect.isDeclaringForDraft = false
-        }
         WeekAdvancer.udfaStageCompletedSeasons.insert(career.currentSeason)
-        udfaAISummary = "League closed the UDFA market: \(aiSignedCount) undrafted players signed across \(aiTeams.count) teams."
+        udfaAISummary = "\(remaining.count) undrafted players go to the open market. "
+            + "The league bids through OTAs."
         try? modelContext.save()
     }
 
@@ -1940,9 +2039,58 @@ struct PickResult: Identifiable {
     let isGem: Bool
     let isBigDrop: Bool
     let isUserPick: Bool
-    let ownerOverride: Bool
+    /// **The clock filed this card, not the user** (#207).
+    ///
+    /// The old name for this flag was `ownerOverride`, which described the
+    /// mechanism (the room picking on the owner's behalf) rather than the fact
+    /// the user has to be told. It is written by exactly one path — the
+    /// `forUser` branch of `tickClock` reaching zero — so `isUserPick` and
+    /// `isAutoPick` are never both true, and every "my picks" filter in the
+    /// room reads `isUserPick || isAutoPick`.
+    let isAutoPick: Bool
     /// Portrait of the drafted prospect, carried so the War Room's "last pick"
     /// line can show a face without re-fetching the (already removed) prospect.
     /// `nil` is normal — it renders the placeholder silhouette.
     var faceID: String? = nil
+
+    /// What the room knows about the *man*, as opposed to the *call* (#203).
+    ///
+    /// `nil` on any result built before this shipped and on the synthetic
+    /// results a preview hands in; every renderer treats a missing dossier as
+    /// "print the call and nothing else", never as an empty row.
+    var dossier: Dossier? = nil
+}
+
+extension PickResult {
+
+    /// The reveal card's payload: the four or five facts a broadcast puts on
+    /// screen the second a name is read out, sampled at the podium because the
+    /// prospect leaves `availableProspects` in the same breath.
+    ///
+    /// ## Fog discipline
+    ///
+    /// Nothing here is a number the user has not earned. `read` is
+    /// `ProspectFog.read` — the identical band, with its identical
+    /// `Source`, that the big board two columns to the left prints beside the
+    /// same man, so the card cannot say more than the board already does.
+    /// `userMark` and `userBoardRank` are the user's OWN annotations, which the
+    /// fog never covered. `consensusRank`, the college and the age are public.
+    /// `trueOverall` does not appear and must not be added.
+    struct Dossier {
+        let college: String
+        let age: Int
+        /// The user's own verdict on this man, months ago. The night the board
+        /// pays out — or the night somebody else takes the name off it.
+        let userMark: ProspectMarkTier
+        /// His 1-based slot on the user's own board (`UserDraftBoard`), when the
+        /// user ever gave him one.
+        let userBoardRank: Int?
+        /// His 1-based media-consensus slot.
+        let consensusRank: Int?
+        /// The fogged grade band — never the true overall.
+        let read: ProspectFog.Read
+        /// He plays one of the three loudest holes on the DRAFTING club's
+        /// roster, measured before he was added to it.
+        let fillsPickerNeed: Bool
+    }
 }

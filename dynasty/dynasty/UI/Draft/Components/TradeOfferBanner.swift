@@ -9,11 +9,19 @@ import SwiftUI
 // version is gone — `DraftControlBar` raises the same offer as a `DSActionBar`
 // at the bottom, where every other commit in the app lives.
 //
-// What remains is the ONE call site that is not an overlay: `PickSheetView`
-// presents the card inline in its own scroll body while the user is on the
-// clock, because the sheet already owns the screen and its own bottom bar
-// belongs to the pick he came here to make. A card inside a surface is a card;
-// the same card floating over a board is an overlay mechanism.
+// Its one remaining call site was `PickSheetView`, which presented the card
+// inline in its own scroll body while the user was on the clock. **#197 retired
+// that sheet, so this component currently has NO call site.** It is kept, and
+// only kept, because the rule it encodes is still the room's rule — a card
+// inside a surface that owns the screen is a card; the same card floating over
+// the board is an overlay mechanism — and any future inline offer surface must
+// be this one rather than a sixth hand-rolled banner.
+//
+// An offer arriving while the user is on the clock is answered on
+// `DraftControlBar`: its `stance` now gives the bar to the phone in every mode,
+// which is what stopped #197 from making such an offer unanswerable.
+//
+// If nothing has adopted it by the next dead-code sweep, delete the file.
 //
 // Restyled onto the shared vocabulary: `DSType`'s two voices, `.dsGhost` /
 // `.dsPrimary` (the 44 pt, genuinely-disabled-grey set), and one accent instead

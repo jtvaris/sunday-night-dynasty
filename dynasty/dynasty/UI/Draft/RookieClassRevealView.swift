@@ -510,10 +510,10 @@ struct RookieClassRevealView: View {
         HStack(alignment: .top, spacing: 16) {
             VStack(spacing: 2) {
                 Text(summary.classGrade)
-                    .font(.system(size: 40, weight: .heavy, design: .rounded))
+                    .font(.system(size: DSType.Size.display, weight: .heavy, design: .rounded))
                     .foregroundStyle(Color.accentGold)
                 Text(String(localized: "CLASS GRADE"))
-                    .font(.system(size: 9, weight: .heavy))
+                    .font(.system(size: DSType.Size.caption, weight: .heavy))
                     .tracking(0.5)
                     .foregroundStyle(Color.textTertiary)
             }
@@ -640,7 +640,7 @@ struct RookieClassRevealView: View {
                 Spacer(minLength: 0)
                 if let grade = row.pressGrade {
                     Text(String(localized: "Press \(grade.rawValue) · \(grade.qualifier)"))
-                        .font(.system(size: 9, weight: .heavy))
+                        .font(.system(size: DSType.Size.caption, weight: .heavy))
                         .tracking(0.4)
                         .foregroundStyle(pressTint(grade))
                         .padding(.horizontal, 6)

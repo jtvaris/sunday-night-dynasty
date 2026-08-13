@@ -119,6 +119,69 @@ enum UserDraftBoard {
         return Array(ordered.filter { $0.userMark != .avoid }.prefix(limit))
     }
 
+    /// THE NAME THE ROOM HANDS IN WHEN THE CLOCK BEATS THE USER (#207).
+    ///
+    /// The draft's expiry path used to call `DraftEngine.aiMakePick` — the
+    /// league AI, scoring `trueOverall` / `truePotential` through
+    /// `AIDraftPerception`. On the user's own card that is a fog breach with a
+    /// scoreboard attached: the room reached past the board he spent a spring
+    /// building and filed on the hidden rating, so a man his scouts had never
+    /// seen could arrive with a first-round grade and the user would have no
+    /// account of where the name came from.
+    ///
+    /// This is the same decision made from the USER's chair, and it reads
+    /// exactly three things, all of them his:
+    ///
+    ///   1. **His marks.** `elite` before `target` — the two tiers that mean
+    ///      "I want him". Inside a tier, his own board order breaks the tie.
+    ///   2. **His board.** `prospectCustomBoard`, the order the Big Board
+    ///      persists, for everyone he ever gave a slot.
+    ///   3. **The media**, fogged, for a class he never touched — the same
+    ///      `mediaConsensusOrder` the public board on screen is printed from.
+    ///
+    /// `avoid` is a veto, not a demotion: a man the user crossed off is skipped
+    /// at every step above, and reached for only when the pool holds nobody
+    /// else at all (better a name than a forfeited card).
+    ///
+    /// Nothing here can see a hidden rating. `scoutedOverall` is not read
+    /// either — the board order already contains whatever the user's scouts
+    /// told him, at the resolution he chose to believe them.
+    ///
+    /// - Parameters:
+    ///   - pool: the men still on the board.
+    ///   - boardRanks: the caller's cached `slotMap`, measured over the whole
+    ///     DECLARED class so the ordering does not renumber itself as the pool
+    ///     shrinks. Pass `[:]` to have it derived from `pool`.
+    /// - Returns: `nil` only for an empty pool.
+    static func autoPick(among pool: [CollegeProspect], boardRanks: [UUID: Int]) -> CollegeProspect? {
+        guard !pool.isEmpty else { return nil }
+        let ranks = boardRanks.isEmpty ? slotMap(among: pool) : boardRanks
+
+        /// His board order, with the media as the tie-break for two men the
+        /// board never separated. A total order, so `min(by:)` is stable.
+        func boardOrder(_ lhs: CollegeProspect, _ rhs: CollegeProspect) -> Bool {
+            let l = ranks[lhs.id] ?? Int.max
+            let r = ranks[rhs.id] ?? Int.max
+            if l != r { return l < r }
+            return consensusOrder(lhs, rhs)
+        }
+
+        // 1) The marks, best tier first.
+        for tier in [ProspectMarkTier.elite, .target] {
+            if let best = pool.filter({ $0.userMark == tier }).min(by: boardOrder) {
+                return best
+            }
+        }
+        // 2) The board he built, for anyone he ranked.
+        let ranked = pool.filter { $0.userMark != .avoid && ranks[$0.id] != nil }
+        if let best = ranked.min(by: boardOrder) { return best }
+        // 3) The fogged media consensus — best player available, publicly.
+        let unvetoed = pool.filter { $0.userMark != .avoid }
+        if let best = unvetoed.min(by: consensusOrder) { return best }
+        // 4) Nothing left but men he crossed off. Still better than a forfeit.
+        return pool.min(by: consensusOrder)
+    }
+
     /// Media consensus, preferring the shared board rank when one has been
     /// published and falling back to `DraftIntel`'s comparator.
     private static func consensusOrder(_ lhs: CollegeProspect, _ rhs: CollegeProspect) -> Bool {

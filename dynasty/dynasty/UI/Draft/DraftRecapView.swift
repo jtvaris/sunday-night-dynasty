@@ -437,7 +437,7 @@ struct DraftRecapView: View {
     private var emptyState: some View {
         VStack(spacing: DSSpacing.sm) {
             Image(systemName: "list.clipboard")
-                .font(.system(size: 44))
+                .font(.system(size: DSType.Size.hero))
                 .foregroundStyle(Color.textTertiary)
             Text("No Draft On Record")
                 .font(.title3.weight(.semibold))

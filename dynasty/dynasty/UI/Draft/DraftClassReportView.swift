@@ -284,7 +284,7 @@ struct DraftClassReportView: View {
     private func statPill(label: String, value: String) -> some View {
         HStack(spacing: 3) {
             Text(label)
-                .font(.system(size: 9, weight: .semibold))
+                .font(.system(size: DSType.Size.caption, weight: .semibold))
                 .foregroundStyle(Color.textTertiary)
             Text(value)
                 .font(.system(size: 11, weight: .semibold))
@@ -370,7 +370,7 @@ struct DraftClassReportView: View {
     private var emptyState: some View {
         VStack(spacing: DSSpacing.sm) {
             Image(systemName: "doc.text.magnifyingglass")
-                .font(.system(size: 40))
+                .font(.system(size: DSType.Size.display))
                 .foregroundStyle(Color.textTertiary)
             Text("No draft classes yet")
                 .font(.headline)

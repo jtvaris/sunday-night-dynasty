@@ -160,6 +160,17 @@ extension DraftPickBand.Model {
             // may already act in. Never a fifth state, never a colour.
             isAvailable: state == .future && isUsers,
             outcome: outcome,
+            // The club that made the pick, in its own colours (#194 A).
+            //
+            // `DSSlat.tint` is documented as "optional tint for a `done` slat's
+            // top rule", and the renderer reads it in exactly two places — the
+            // 2 pt rule and the check glyph that replaces the numeral — so this
+            // is the band's existing channel, used for the thing it was built
+            // for, on the one screen where a finished step *belongs to somebody*.
+            // Set only on `done` on purpose: the current slat's rule is gold and
+            // stays gold, so a club colour can never be mistaken for "the room
+            // is standing here".
+            tint: state == .done ? DraftTeamTint.accentIfKnown(for: abbrev) : nil,
             isLive: state == .current,
             accessibilityText: accessibilityText(
                 pick: pick,
@@ -167,7 +178,21 @@ extension DraftPickBand.Model {
                 abbrev: abbrev,
                 team: team,
                 isUsers: isUsers
-            )
+            ),
+            // THE CELL ON THE CLOCK WEARS THE CLUB (#194 v2).
+            //
+            // `tint` above covers the cards already handed in; this covers the
+            // two states it deliberately does not touch. `DSSlat.accent` draws
+            // it on channels no state owns — a bottom rule on both, plus a wash
+            // across the empty trailing half of the widened `current` slat — so
+            // the ribbon reads as thirty-two clubs taking turns rather than as
+            // nine identical navy parallelograms.
+            //
+            // The gold budget is untouched: the current slat's 3 pt top rule and
+            // its NOW pill are still the only gold in the band, which is what
+            // keeps "the room is standing HERE" separable from "and this is who
+            // is standing there".
+            accent: state == .done ? nil : DraftTeamTint.accentIfKnown(for: abbrev)
         )
     }
 
