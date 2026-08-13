@@ -186,19 +186,29 @@ struct ProspectGradeBandCell: View {
     var body: some View {
         VStack(spacing: 0) {
             if let grade {
+                // Both the single letter and the two-letter band read at the
+                // 11 pt display floor now. The band used to drop to 8 pt to buy
+                // width in a 26 pt column, which made the UNCERTAIN grade — the
+                // one that needs reading — the smallest text on the row. The
+                // condensed voice buys that width back instead: "C+/A-" sets
+                // inside 26 pt at 11 pt condensed, where 11 pt text would not.
                 Text(grade.displayText)
-                    .font(.system(size: grade.isSingleGrade ? 10 : 8, weight: .bold))
+                    .font(DSType.display(11, .bold))
                     .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(grade.midGrade.rawValue))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+                    // 10 pt hard stop: "C+/A-" already sets inside 26 pt at the
+                    // full 11 pt, so this may never buy width by shrinking.
+                    .minimumScaleFactor(0.91)
             } else {
                 Text("?")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(DSType.display(11, .medium))
                     .foregroundStyle(Color.textTertiary)
             }
             Text(label)
-                .font(.system(size: 7, weight: .medium))
+                .font(.system(size: DSType.Size.micro, weight: .medium))
                 .foregroundStyle(Color.textTertiary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
         }
     }
 }
@@ -234,13 +244,21 @@ struct ProspectWorkTick: View {
 /// where five percentile bands have nowhere to put a sixth colour.
 enum ProspectMeasurableTier {
     /// Maps a 1-99 percentile to its phrase and its colour.
-    static func label(for percentile: Int) -> (text: String, color: Color) {
+    ///
+    /// `short` is the same verdict clipped to fit a drill column. Three of the
+    /// five phrases ("Above Avg", "Below Avg", "Bottom 25%") are wider than a
+    /// 44 pt cell at 11 pt condensed, and a `minimumScaleFactor` that let them
+    /// in would render them at 8-10 pt — under the legibility floor, for the
+    /// three quarters of every class that sits below the 75th percentile. The
+    /// abbreviation buys the point size back. `text` stays the full phrase for
+    /// VoiceOver and for the wide combine table.
+    static func label(for percentile: Int) -> (text: String, short: String, color: Color) {
         switch percentile {
-        case 90...:    return ("Top 10%", .eliteGreen)
-        case 75..<90:  return ("Top 25%", .success)
-        case 50..<75:  return ("Above Avg", .accentBlue)
-        case 25..<50:  return ("Below Avg", .warning)
-        default:       return ("Bottom 25%", .danger)
+        case 90...:    return ("Top 10%", "Top 10%", .eliteGreen)
+        case 75..<90:  return ("Top 25%", "Top 25%", .success)
+        case 50..<75:  return ("Above Avg", "Abv Avg", .accentBlue)
+        case 25..<50:  return ("Below Avg", "Blw Avg", .warning)
+        default:       return ("Bottom 25%", "Bot 25%", .danger)
         }
     }
 }
@@ -288,49 +306,63 @@ struct ProspectMeasurableCell: View {
     var body: some View {
         VStack(spacing: 0) {
             Text(value ?? empty)
-                .font(.system(size: 10, weight: .bold).monospacedDigit())
+                .font(DSType.display(11, .bold))
                 .foregroundStyle(
                     value == nil
                         ? Color.textTertiary
                         : (fidelity == .full ? Color.textPrimary : Color.textTertiaryReadable)
                 )
                 .lineLimit(1)
-                .minimumScaleFactor(0.65)
+                // 10 pt hard stop, not a fitting mechanism: the widest reading
+                // this cell prints ("10'11\"", "~4.50") clears 44 pt at 11 pt.
+                .minimumScaleFactor(0.91)
 
             // The phrase sits directly under the number it grades, above the
             // drill label: the label is a constant down the column (pure
             // identification, and the block's header is one "COMBINE" span, so
             // it is the ONLY thing naming the column), while the phrase is the
-            // signal the eye is hunting. Three 7-10 pt lines stack to ~29 pt,
-            // which is inside the 30 pt portrait that already sets the row
-            // height — so the percentile costs no vertical space at all.
+            // signal the eye is hunting.
+            //
+            // All three lines were 7-10 pt to stack inside the 30 pt portrait.
+            // 7 pt is unreadable at arm's length on an iPad, and the row height
+            // is set by content rather than by a fixed frame, so the number and
+            // the phrase move to the 11 pt condensed display voice, the label to
+            // the 10 pt floor, and the row grows the few points it needs.
+            //
+            // The phrase prints its ABBREVIATED form: "Above Avg" and
+            // "Bottom 25%" measure past a 44 pt cell at 11 pt, and letting
+            // `minimumScaleFactor` swallow the overflow would put the three
+            // sub-75th-percentile tiers — most of the class — back under the
+            // 10 pt floor. The scale factor here is a 10 pt hard stop (0.91 of
+            // 11), not a fitting mechanism: every short phrase already fits.
             if let percentile, value != nil {
                 let tier = ProspectMeasurableTier.label(for: percentile)
-                Text(tier.text)
-                    .font(.system(size: 7, weight: .semibold))
+                Text(tier.short)
+                    .font(DSType.display(11, .semibold))
                     .foregroundStyle(tier.color)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.6)
+                    .minimumScaleFactor(0.91)
             } else if reservesPercentileLine {
                 Text(" ")
-                    .font(.system(size: 7, weight: .semibold))
+                    .font(DSType.display(11, .semibold))
                     .accessibilityHidden(true)
             }
 
             Text(label)
-                .font(.system(size: 7, weight: .medium))
+                .font(.system(size: DSType.Size.micro, weight: .medium))
                 .foregroundStyle(Color.textTertiary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.7)
+                // No scale factor: the longest label ("BENCH") clears 44 pt at
+                // the 10 pt floor, so nothing here may shrink below it.
         }
         .frame(width: prospectMeasurableWidth, alignment: .center)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityText)
     }
 
-    /// VoiceOver reads the three lines as one sentence — a 7 pt label, a number
-    /// and a phrase announced as three separate elements is worse than useless
-    /// on a 42 pt column.
+    /// VoiceOver reads the three lines as one sentence — a label, a number and
+    /// a phrase announced as three separate elements is worse than useless on a
+    /// 42 pt column.
     private var accessibilityText: String {
         guard let value else { return "\(label): \(empty == "?" ? "not measured" : "did not run")" }
         guard let percentile else { return "\(label) \(value)" }
@@ -359,19 +391,24 @@ struct ProspectDrillGradeCell: View {
     var body: some View {
         VStack(spacing: 0) {
             Text(grade ?? empty)
-                .font(.system(size: 10, weight: .bold))
+                .font(DSType.display(11, .bold))
                 .foregroundStyle(grade.map { PositionGradeCalculator.gradeColorForLetter($0) }
                                  ?? Color.textTertiary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.7)
+                // 10 pt hard stop; a single letter grade never needs it.
+                .minimumScaleFactor(0.91)
             if reservesPercentileLine {
+                // Same 11 pt line the neighbours' percentile phrase now sets,
+                // so the DRILL label still lands level with 40YD / BENCH / ….
                 Text(" ")
-                    .font(.system(size: 7, weight: .semibold))
+                    .font(DSType.display(11, .semibold))
                     .accessibilityHidden(true)
             }
             Text("DRILL")
-                .font(.system(size: 7, weight: .medium))
+                .font(.system(size: DSType.Size.micro, weight: .medium))
                 .foregroundStyle(Color.textTertiary)
+                .lineLimit(1)
+                // No scale factor: "DRILL" clears the 34 pt column at 10 pt.
         }
         .frame(width: prospectDrillGradeWidth, alignment: .center)
         .accessibilityElement(children: .ignore)
@@ -422,17 +459,18 @@ struct ProspectRiskBadge: View {
         if risk != .unknown {
             HStack(spacing: 2) {
                 Image(systemName: risk.icon)
-                    .font(.system(size: 8))
+                    .font(.system(size: DSType.Size.micro))
                 Text(Self.label(risk))
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.system(size: DSType.Size.micro, weight: .bold))
             }
             .foregroundStyle(.white)
+            .lineLimit(1)
             .padding(.horizontal, 5)
             .padding(.vertical, 2)
             .background(Self.tint(risk).opacity(0.85), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
         } else {
             Text("--")
-                .font(.system(size: 9))
+                .font(.system(size: DSType.Size.micro))
                 .foregroundStyle(Color.textTertiary)
         }
     }
@@ -522,7 +560,7 @@ struct ProspectRowIdentity<Detail: View>: View {
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 4) {
                     Text(prospect.fullName)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: DSType.Size.body, weight: .semibold))
                         .foregroundStyle(Color.textPrimary)
                         .lineLimit(1)
 
@@ -538,7 +576,7 @@ struct ProspectRowIdentity<Detail: View>: View {
 
                 HStack(spacing: 5) {
                     Text(prospect.college)
-                        .font(.system(size: DSType.Size.micro))
+                        .font(.system(size: DSType.Size.caption))
                         .foregroundStyle(Color.textTertiary)
                         .lineLimit(1)
                     // The MEDIA's projected round — public information, the same
@@ -546,7 +584,7 @@ struct ProspectRowIdentity<Detail: View>: View {
                     // read. Never `trueOverall`.
                     if let round = prospect.draftProjection {
                         Text("Rd\(round)")
-                            .font(.system(size: DSType.Size.micro, weight: .semibold).monospacedDigit())
+                            .font(.system(size: DSType.Size.caption, weight: .semibold).monospacedDigit())
                             .foregroundStyle(Color.textTertiary)
                     }
                     detail
@@ -598,11 +636,13 @@ extension ProspectRowIdentity where Detail == EmptyView {
 let prospectMeasurableLabels = ["40YD", "BENCH", "VERT", "BROAD", "3CONE", "SHUT"]
 
 /// One drill column. Wider than the 32 pt attribute cells it replaced because
-/// "~4.5" and "126" are four glyphs where "91" was two — and 38 → 42 now that
-/// "Bottom 25%" sets under the number. Deliberately NOT wider than that: the
-/// Physical block is seven columns and every point here is seven points off
-/// the name column on three different surfaces.
-let prospectMeasurableWidth: CGFloat = 42
+/// "~4.5" and "126" are four glyphs where "91" was two — and 38 → 42 → 44 now
+/// that the percentile verdict sets under the number and must clear 10 pt while
+/// doing it ("Top 25%" is the widest of the abbreviated tiers). Deliberately NOT
+/// wider than that: the Physical block is seven columns and every point here is
+/// seven points off the name column on three different surfaces — which is why
+/// the tiers abbreviate rather than the column growing to hold "Bottom 25%".
+let prospectMeasurableWidth: CGFloat = 44
 
 /// The Pos Drill column that closes the Physical block. Narrower than a drill
 /// cell: it prints one letter, never a percentile phrase.
@@ -627,6 +667,18 @@ struct ProspectColumnContext {
     /// then prints "\u{2014}" instead of the board's "Fair" default, which
     /// would otherwise be a fabricated verdict.
     var knowsSchemeFit: Bool = true
+    /// Drops FIT out of the Overview block entirely, for a host whose lens
+    /// cannot answer it for anybody.
+    ///
+    /// `knowsSchemeFit` is the honest *cell*: this host has no coordinators, so
+    /// this man's verdict is an em-dash. This is the honest *column*: on the
+    /// draft-night board every row is an em-dash, because a fit verdict is
+    /// gated on a scouted read and the room prints a class the user mostly
+    /// never filed on — so the column is 32 pt of dashes taken off the one
+    /// elastic column beside it, the name (v3 round 1, judge P1). The spring
+    /// board, where the user is doing the scouting the column reports on, keeps
+    /// it: the default is `true` and no scouting surface passes this.
+    var includesSchemeFit: Bool = true
     /// "High" / "Med" / "Set".
     var needLevel: String = "Set"
     /// `false` when the host has no roster loaded.
@@ -755,15 +807,26 @@ enum ProspectColumns {
             // College production — what he did on Saturdays, in public.
             ProductionTierChip(tier: prospect.collegeProductionTier, width: 46)
 
-            schemeFitCell(prospect, context)
-                .frame(width: 32, alignment: .center)
+            if context.includesSchemeFit {
+                schemeFitCell(prospect, context)
+                    .frame(width: 32, alignment: .center)
+            }
 
             needCell(context)
                 .frame(width: 32, alignment: .center)
 
             if context.includesRisk {
+                // 64 → 80: the badge's label sits on the 10 pt floor now, and
+                // the widest badge — bolt glyph + 2 pt + "Boom/Bust" bold + the
+                // badge's own 5 pt of horizontal padding each side — measures
+                // ~78 pt there. A 64 pt frame does not clip an oversized child,
+                // it lets it paint over the NEED column beside it; a 76 pt one
+                // truncates it to "Boom/Bus…" under the badge's `lineLimit(1)`.
+                // So the column buys the two points of headroom from the
+                // elastic name column rather than cutting the one risk tier a
+                // reader most needs to see whole.
                 ProspectRiskBadge(risk: prospect.riskLevel)
-                    .frame(width: 64, alignment: .center)
+                    .frame(width: 80, alignment: .center)
             }
         }
     }
@@ -774,23 +837,28 @@ enum ProspectColumns {
         _ context: ProspectColumnContext
     ) -> some View {
         if let fit = context.schemeFit {
-            let color: Color = fit == "Good" ? .success : (fit == "Fair" ? .warning : .danger)
+            // `dangerText`, not `danger`: the red fill colour measures ~3.4:1 as
+            // WORDS on the card surface and this cell is nothing but a word.
+            let color: Color = fit == "Good" ? .success : (fit == "Fair" ? .warning : .dangerText)
             Text(fit)
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: DSType.Size.caption, weight: .bold))
                 .foregroundStyle(color)
+                .lineLimit(1)
         } else if !context.knowsSchemeFit {
             // No coordinators on this screen: say nothing rather than "Fair".
             Text("\u{2014}")
-                .font(.system(size: 9))
+                .font(.system(size: DSType.Size.caption))
                 .foregroundStyle(Color.textTertiary)
         } else if prospect.position.side == .specialTeams {
             Text("N/A")
-                .font(.system(size: 8))
+                .font(.system(size: DSType.Size.caption))
                 .foregroundStyle(Color.textTertiary)
+                .lineLimit(1)
         } else {
             Text("Fair")
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: DSType.Size.caption, weight: .bold))
                 .foregroundStyle(Color.warning)
+                .lineLimit(1)
         }
     }
 
@@ -798,22 +866,25 @@ enum ProspectColumns {
     private static func needCell(_ context: ProspectColumnContext) -> some View {
         if !context.knowsNeeds {
             Text("\u{2014}")
-                .font(.system(size: 9))
+                .font(.system(size: DSType.Size.caption))
                 .foregroundStyle(Color.textTertiary)
         } else {
             switch context.needLevel {
             case "High":
                 Text("High")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(Color.danger)
+                    .font(.system(size: DSType.Size.caption, weight: .bold))
+                    .foregroundStyle(Color.dangerText)
+                    .lineLimit(1)
             case "Med":
                 Text("Med")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.system(size: DSType.Size.caption, weight: .bold))
                     .foregroundStyle(Color.warning)
+                    .lineLimit(1)
             default:
                 Text("Set")
-                    .font(.system(size: 8, weight: .medium))
+                    .font(.system(size: DSType.Size.caption, weight: .medium))
                     .foregroundStyle(Color.success)
+                    .lineLimit(1)
             }
         }
     }
@@ -833,9 +904,13 @@ enum ProspectColumns {
         let filed = context.reportCount ?? ScoutEvaluationBudget.chargeableReports(prospect)
         Group {
             Text("\(filed)/\(ScoutEvaluationBudget.maxReportsPerProspect)")
-                .font(.system(size: 10, weight: .bold).monospacedDigit())
+                .font(.system(size: DSType.Size.caption, weight: .bold).monospacedDigit())
+                // "0/3" is the hole the user is scanning for — the one cell in
+                // the block he MUST be able to read. `textTertiary` at 50 %
+                // took it under 3:1; the readable tertiary keeps it quiet
+                // without taking it under the AA floor.
                 .foregroundStyle(filed == 0
-                                 ? Color.textTertiary.opacity(0.5)
+                                 ? Color.textTertiaryReadable
                                  : (filed >= 2 ? Color.success : Color.accentBlue))
                 .frame(width: 32, alignment: .center)
 
@@ -872,17 +947,20 @@ enum ProspectColumns {
         let tint: Color
         switch disclosure {
         case .hidden:
+            // Was `textTertiary` at 50 % — a "?" nobody could see is the same
+            // as an empty cell, and "the file is shut" is the fact this column
+            // exists to report.
             text = "?"
-            tint = Color.textTertiary.opacity(0.5)
+            tint = Color.textTertiaryReadable
         case .count:
             text = total == 0 ? "\u{2014}" : "\(total)?"
             tint = total == 0 ? Color.textTertiary : Color.warning
         case .full:
             text = total == 0 ? "CLEAN" : "\(total)"
-            tint = total == 0 ? Color.success : Color.danger
+            tint = total == 0 ? Color.success : Color.dangerText
         }
         return Text(text)
-            .font(.system(size: 9, weight: .heavy))
+            .font(.system(size: DSType.Size.micro, weight: .heavy))
             .foregroundStyle(tint)
             .lineLimit(1)
             .minimumScaleFactor(0.7)
@@ -1082,13 +1160,15 @@ enum ProspectColumns {
                     )
                 }
                 .frame(width: 46, alignment: .center)
-                Text("FIT")
-                    .frame(width: 32, alignment: .center)
+                if context.includesSchemeFit {
+                    Text("FIT")
+                        .frame(width: 32, alignment: .center)
+                }
                 Text("NEED")
                     .frame(width: 32, alignment: .center)
                 if context.includesRisk {
                     Text("RISK")
-                        .frame(width: 64, alignment: .center)
+                        .frame(width: 80, alignment: .center)
                 }
             case .workup:
                 HStack(spacing: 2) {
@@ -1131,7 +1211,12 @@ enum ProspectColumns {
                     .frame(width: 32 * 4, alignment: .center)
             }
         }
-        .font(.system(size: 8, weight: .bold))
+        // The display voice at its 11 pt floor, not an 8 pt literal. The board
+        // already wraps this block in `DSType.display(11, .heavy)`; the inner
+        // 8 pt font won that contest at every call site, which is why the
+        // column labels read four points smaller than the header they sit in.
+        // Condensed keeps "VISIT" inside its 34 pt column at the bigger size.
+        .font(DSType.display(11, .heavy))
         .foregroundStyle(Color.textTertiary)
     }
 }

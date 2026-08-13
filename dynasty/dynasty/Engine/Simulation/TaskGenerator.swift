@@ -15,7 +15,21 @@ struct GameTask: Identifiable, Codable, Equatable {
     let description: String
     let icon: String          // SF Symbol name
     let destination: TaskDestination
-    let isRequired: Bool
+    /// Mutable for the same reason `title` and `status` are: the list is only
+    /// rebuilt on a PHASE or WEEK change, and every offseason phase holds the
+    /// week still, so a requirement decided at generation time is frozen for
+    /// the whole phase.
+    ///
+    /// The cut ladder is the row that needs it. `rosterLadderTask` arms it with
+    /// `isRequired: over > 0` — correct at the instant the phase opened, wrong
+    /// the moment a waiver claim, a trade or a practice-squad promotion pushes
+    /// the club back OVER the rung. The refresh re-derived `status` from the
+    /// live count in both directions and could not re-derive this, so the row
+    /// went red while `incompleteRequiredCount` still read 0 and Advance stayed
+    /// live — the panel/gate split #154f is named after, re-opened one field
+    /// down. ``CareerShellView/refreshTaskCompletionStatus`` re-stamps it beside
+    /// the title and the status now.
+    var isRequired: Bool
     var status: TaskStatus
 
     /// `true` when **opening the task's screen is the work** — "Check Salary Cap
@@ -207,6 +221,10 @@ enum TaskDestination: String, Codable, CaseIterable {
     case lockerRoom
     case inbox
     case rosterEvaluation
+    /// #205b — the three-game exhibition slate (`PreseasonView`), reached
+    /// through `ShellDestination.preseason`. Not a phase: three steps inside
+    /// `.preseason`, the way free agency holds five inside `.freeAgency`.
+    case preseason
     case franchiseTag
     case interviewReport
     case personalWorkouts
@@ -365,7 +383,10 @@ enum TaskGenerator {
     ///   - phase: The current season phase.
     ///   - career: The player's career model.
     ///   - team: The player's team (optional -- nil if not yet assigned).
-    ///   - rosterCount: Number of players currently on the active roster.
+    ///   - rosterCount: Number of players currently on the club, or `nil` when
+    ///     the caller does not know it. `nil` is not "assume 53": it is the
+    ///     upcoming-phase preview in the left rail, and the count-dependent rows
+    ///     render there as *named but unstarted* rather than as satisfied.
     ///   - hasPendingTradeOffers: Whether unanswered trade offers exist.
     ///   - hasHeadCoach: Whether the team currently has a head coach.
     ///   - hasOC: Whether the team currently has an offensive coordinator.
@@ -382,7 +403,7 @@ enum TaskGenerator {
         for phase: SeasonPhase,
         career: Career,
         team: Team?,
-        rosterCount: Int = 53,
+        rosterCount: Int? = nil,
         hasPendingTradeOffers: Bool = false,
         hasHeadCoach: Bool = true,
         hasOC: Bool = true,
@@ -432,9 +453,9 @@ enum TaskGenerator {
         case .otas:
             phaseTasks = otasTasks()
         case .trainingCamp:
-            phaseTasks = trainingCampTasks()
+            phaseTasks = trainingCampTasks(rosterCount: rosterCount)
         case .preseason:
-            phaseTasks = preseasonTasks()
+            phaseTasks = preseasonTasks(rosterCount: rosterCount)
         case .rosterCuts:
             phaseTasks = rosterCutsTasks(rosterCount: rosterCount)
         case .regularSeason:
@@ -484,6 +505,105 @@ enum TaskGenerator {
             status: .done
         )
         return [banner] + capComplianceTasks(phase: phase, career: career, team: team) + phaseTasks
+    }
+
+    // MARK: - The cutdown ladder on the calendar (#205a §5.1)
+
+    /// **The one place a cut-ladder row is written** — title, copy, requirement
+    /// and status, for whichever rung `phase` is due to deliver.
+    ///
+    /// Until this wave all three rungs were emitted into `.rosterCuts` as three
+    /// hand-written, permanently-optional rows: "Cut to 75" and "Cut to 65" sat
+    /// under a roster that was already at 60, pointing at a screen that had
+    /// nothing for them to do. They were ghost pointers in the precise sense
+    /// #134b names — rows whose calculation authority was a comment.
+    ///
+    /// Now there is one authority for all three, and it is ``CutDay``:
+    ///
+    /// * ``CutDay/duePhase`` decides WHERE the row appears — the same mapping
+    ///   the advance gate's exit ceiling and `RosterCutView.stage` read.
+    /// * ``CutDay/target`` decides WHAT it asks for — the same number the
+    ///   ladder band draws.
+    /// * ``CutDay/slatTitle`` IS the row's title, so the menu row and the slat
+    ///   the user lands on cannot end up calling the same rung two things.
+    ///
+    /// The title carries a live counter when the club is over ("Cut to 75 (80
+    /// currently)"); ``GameTask/matchKey`` strips it, so the row's identity is
+    /// the bare rung name in the progress store and in the completion refresh.
+    ///
+    /// - Parameter rosterCount: `nil` where the count is not known — the
+    ///   upcoming-phase PREVIEW in the left rail, which renders phases the club
+    ///   has not reached. A preview that assumed a legal roster used to draw
+    ///   the rung as already satisfied, which is the one thing a preview of a
+    ///   step must never say. Unknown means "this is coming": named, not
+    ///   required, not ticked.
+    static func rosterLadderTask(phase: SeasonPhase, rosterCount: Int?) -> GameTask? {
+        guard let rung = CutDay.rung(dueIn: phase) else { return nil }
+
+        guard let count = rosterCount else {
+            return GameTask(
+                phase: phase,
+                title: rung.slatTitle,
+                description: rung.ladderDescription,
+                icon: "scissors",
+                destination: .rosterCuts,
+                isRequired: false
+            )
+        }
+
+        let over = max(0, count - rung.target)
+        return GameTask(
+            phase: phase,
+            title: cutLadderTitle(rung, rosterCount: count),
+            description: over > 0
+                ? "Release \(over) more player\(over == 1 ? "" : "s") to reach the \(rung.target)-man limit. \(rung.ladderDescription)"
+                : "Your roster is at \(count) \u{2014} inside the \(rung.target)-man limit.",
+            icon: "scissors",
+            destination: .rosterCuts,
+            isRequired: over > 0,
+            status: over > 0 ? .todo : .done
+        )
+    }
+
+    /// A rung's row title at a given roster count — the counter included.
+    ///
+    /// Written once and read twice: by the generator when the list is built,
+    /// and by the shell's completion refresh when it re-stamps the counter after
+    /// a cut. A second copy of this format string in the shell is exactly how
+    /// the draft-prep counters ended up frozen (#104).
+    static func cutLadderTitle(_ rung: CutDay, rosterCount: Int) -> String {
+        rosterCount > rung.target
+            ? "\(rung.slatTitle) (\(rosterCount) currently)"
+            : rung.slatTitle
+    }
+
+    /// The rung a task row belongs to, or `nil` for every other row.
+    ///
+    /// The shell's completion refresh keys off this rather than off a copy of
+    /// the three titles: the row's status and its live counter both have to be
+    /// re-derived from the roster count after every cut, and the list itself is
+    /// only rebuilt on a phase or week change.
+    static func cutLadderRung(forTaskKey key: String) -> CutDay? {
+        CutDay.allCases.first { $0.slatTitle == key }
+    }
+
+    // MARK: - The preseason slate row (#205b)
+
+    /// The slate row's identity — its ``GameTask/matchKey``.
+    ///
+    /// Written once and read twice, exactly like the cut ladder's title: by the
+    /// generator that emits the row and by the shell's completion refresh that
+    /// re-stamps its counter and derives its status. A second copy of this
+    /// string is how the draft-prep counters froze (#104).
+    static let preseasonSlateTaskKey = "Play the preseason slate"
+
+    /// The slate row's title with its live counter ("… (1 of 3 played)").
+    ///
+    /// ``GameTask/matchKey`` strips the parenthetical, so the row's identity in
+    /// `TaskProgressStore` and in the completion refresh stays the bare key.
+    static func preseasonSlateTitle(gamesPlayed: Int, slateSize: Int) -> String {
+        guard slateSize > 0 else { return preseasonSlateTaskKey }
+        return "\(preseasonSlateTaskKey) (\(gamesPlayed)/\(slateSize) played)"
     }
 
     // MARK: - Cap Compliance (cap-compliance wave)
@@ -988,20 +1108,31 @@ enum TaskGenerator {
                 isRequired: false,
                 progress: prepProgress
             ),
-            GameTask(
-                phase: .proDays,
-                title: "Finalize Big Board",
-                description: "Make your final prospect rankings before the draft.",
-                icon: "list.number",
-                destination: .bigBoard,
-                isRequired: false
-            ),
+            // #193: no "Finalize Big Board" row here. The board is never
+            // *finished* — entering the draft is what finalises it — so a
+            // tickable step asking the user to declare it done was asking for a
+            // decision the game does not model. It also shipped twice, once in
+            // this phase and once in `draftTasks`, so a user who ticked it in
+            // April met it again on draft day.
+            //
+            // Nothing is lost: every draft-facing row in this list
+            // (`.proDayTour`, `.workouts`, `.top30Visits`, `.mockDraft`) already
+            // carries the scoped "Big Board" chip from
+            // `TimelineTasksPanel.secondaryAction`, which is the passive link
+            // the row wanted in the first place.
         ]
     }
 
     private static func draftTasks(isDraftComplete: Bool) -> [GameTask] {
-        var tasks: [GameTask] = [
-            // REQUIRED: enter the draft
+        [
+            // REQUIRED: enter the draft.
+            //
+            // #193: this row is also the board's link. Its `.draft` destination
+            // gives it the gold "Big Board" chip from
+            // `TimelineTasksPanel.secondaryAction`, so the board sits one tap
+            // away from the only step this phase actually demands — without a
+            // second row claiming the board is a piece of work that can be
+            // ticked off. Going into the draft IS finalising the board.
             GameTask(
                 phase: .draft,
                 title: "Enter the Draft",
@@ -1010,15 +1141,6 @@ enum TaskGenerator {
                 destination: .draft,
                 isRequired: true,
                 status: isDraftComplete ? .done : .todo
-            ),
-            // Optional
-            GameTask(
-                phase: .draft,
-                title: "Finalize Big Board",
-                description: "Make final adjustments to your prospect rankings before draft day.",
-                icon: "list.number",
-                destination: .bigBoard,
-                isRequired: false
             ),
             GameTask(
                 phase: .draft,
@@ -1029,8 +1151,6 @@ enum TaskGenerator {
                 isRequired: false
             ),
         ]
-
-        return tasks
     }
 
     private static func otasTasks() -> [GameTask] {
@@ -1081,8 +1201,8 @@ enum TaskGenerator {
         ]
     }
 
-    private static func trainingCampTasks() -> [GameTask] {
-        [
+    private static func trainingCampTasks(rosterCount: Int?) -> [GameTask] {
+        var tasks: [GameTask] = [
             // REQUIRED: set training focus per camp week
             GameTask(
                 phase: .trainingCamp,
@@ -1126,10 +1246,38 @@ enum TaskGenerator {
                 isRequired: false
             ),
         ]
+        // The first rung of the ladder: camp breaks at 75. Required only while
+        // the club is actually over it, exactly the shape the 53 row has always
+        // used — one authority, `rosterLadderTask`.
+        if let ladder = rosterLadderTask(phase: .trainingCamp, rosterCount: rosterCount) {
+            tasks.append(ladder)
+        }
+        return tasks
     }
 
-    private static func preseasonTasks() -> [GameTask] {
-        [
+    private static func preseasonTasks(rosterCount: Int?) -> [GameTask] {
+        var tasks: [GameTask] = [
+            // REQUIRED: the slate itself. #205b's whole point — three
+            // exhibitions whose evidence the 75→65→53 cut is made on. Without
+            // this row nothing in the app ever pointed at `PreseasonView`: the
+            // phase's only required task was "Set training focus", so Advance
+            // walked straight to `.rosterCuts` with 0/3 games played, no
+            // familiarity banked, no preseason injuries rolled and an empty
+            // bubble table on the cut screen.
+            //
+            // The shell derives its completion from
+            // `PreseasonEngine.canLeavePreseason` (which is true for a slate
+            // that could not be drawn at all), re-stamps the counter on the
+            // title, and refuses the advance on the same predicate — so the
+            // panel's Advance button and `performShellAdvance` cannot disagree.
+            GameTask(
+                phase: .preseason,
+                title: preseasonSlateTaskKey,
+                description: "Three exhibitions. Choose who dresses for each one: rested starters bank nothing and risk nothing, a full-tilt night installs the playbook fastest and pays for it in exposure. Every snap is evidence for the cut to 53.",
+                icon: "sportscourt.fill",
+                destination: .preseason,
+                isRequired: true
+            ),
             // REQUIRED: training focus continues through preseason
             GameTask(
                 phase: .preseason,
@@ -1139,15 +1287,12 @@ enum TaskGenerator {
                 destination: .trainingPlan,
                 isRequired: true
             ),
-            GameTask(
-                phase: .preseason,
-                title: "Review preseason results",
-                description: "Preseason games auto-simulate. Review results and stat lines.",
-                icon: "play.rectangle.fill",
-                destination: .schedule,
-                isRequired: false,
-                status: .done  // auto-simulated
-            ),
+            // The "Review preseason results" row that used to sit here is gone.
+            // It shipped hardcoded `.done` with the copy "Preseason games
+            // auto-simulate", pointing at the schedule screen — where no
+            // preseason fixture has ever existed. A ghost pointer at a thing
+            // that does not exist (#134b). The slate row above is its
+            // replacement, and it points at a screen that exists.
             GameTask(
                 phase: .preseason,
                 title: "Finalize depth chart",
@@ -1173,55 +1318,25 @@ enum TaskGenerator {
                 isRequired: false
             ),
         ]
+        // The second rung: the preseason slate ends at 65.
+        if let ladder = rosterLadderTask(phase: .preseason, rosterCount: rosterCount) {
+            tasks.append(ladder)
+        }
+        return tasks
     }
 
-    private static func rosterCutsTasks(rosterCount: Int) -> [GameTask] {
-        let overLimit = rosterCount > 53
-        var tasks: [GameTask] = [
-            // REQUIRED only if over 53
-            GameTask(
-                phase: .rosterCuts,
-                title: overLimit
-                    ? "Finalize 53-man roster (\(rosterCount) currently)"
-                    : "Roster is at 53 players",
-                description: overLimit
-                    ? "You must release \(rosterCount - 53) player(s) to reach the 53-man limit."
-                    : "Your roster meets the 53-man requirement.",
-                icon: "scissors",
-                destination: .rosterCuts,
-                isRequired: overLimit,
-                status: overLimit ? .todo : .done
-            ),
-        ]
+    private static func rosterCutsTasks(rosterCount: Int?) -> [GameTask] {
+        var tasks: [GameTask] = []
 
-        // Camp-cut staging tasks. The 90→75 / 75→65 / 65→53 progression is the
-        // canonical NFL flow; tasks deep-link into the multi-stage RosterCutView.
-        tasks.append(GameTask(
-            phase: .rosterCuts,
-            title: "Cut to 75",
-            description: "First wave of camp cuts. Trim the roster from 90 to 75 players.",
-            icon: "scissors",
-            destination: .rosterCuts,
-            isRequired: false
-        ))
-
-        tasks.append(GameTask(
-            phase: .rosterCuts,
-            title: "Cut to 65",
-            description: "Second wave of camp cuts. Trim the roster from 75 to 65 players.",
-            icon: "scissors",
-            destination: .rosterCuts,
-            isRequired: false
-        ))
-
-        tasks.append(GameTask(
-            phase: .rosterCuts,
-            title: "Cut to 53",
-            description: "Final wave — set your 53-man active roster.",
-            icon: "scissors",
-            destination: .rosterCuts,
-            isRequired: false
-        ))
+        // The last rung — and the ONLY one this phase emits now. "Cut to 75" and
+        // "Cut to 65" used to be appended here as permanently-optional rows,
+        // three cut days deep in a phase where only the third could ever be
+        // worked; they have moved to the phases where they fall due
+        // (`CutDay.duePhase`). Nothing here decides the copy or the requirement:
+        // `rosterLadderTask` writes all three rungs the same way.
+        if let ladder = rosterLadderTask(phase: .rosterCuts, rosterCount: rosterCount) {
+            tasks.append(ladder)
+        }
 
         // §5.1: the squad is STOCKED automatically when this phase ends (own
         // cuts first, then street free agents) — the task is the heads-up that
@@ -1427,6 +1542,19 @@ enum TaskGenerator {
     /// that used to unlock by looking at a screen stopped unlocking.
     static func incompleteRequiredCount(in tasks: [GameTask]) -> Int {
         tasks.filter { $0.isRequired && $0.status != .done }.count
+    }
+
+    /// The first required task still holding the advance shut — the row the
+    /// blocker banner has to **name** (#193).
+    ///
+    /// A bare count ("Complete 1 required task to advance") sends the user
+    /// hunting through the list for a row it refuses to point at, and he picks
+    /// the wrong one: the reported case was a user certain the Big Board was
+    /// blocking him while the actual gate was "Get under the salary cap".
+    /// Same predicate as ``incompleteRequiredCount(in:)``, so the number and the
+    /// name can never describe different rows.
+    static func firstIncompleteRequired(in tasks: [GameTask]) -> GameTask? {
+        tasks.first { $0.isRequired && $0.status != .done }
     }
 
     /// Returns true when every required task is `.done`. The user must still tap

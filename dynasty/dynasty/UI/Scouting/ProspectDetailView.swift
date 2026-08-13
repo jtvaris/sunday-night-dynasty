@@ -122,12 +122,45 @@ enum ScoutEvaluationAvailability {
     }
 }
 
+/// What the war room hands the prospect card when it opens one on draft night
+/// (#196b).
+///
+/// The card used to be reachable on the clock only as an iPad form sheet — a
+/// small centred panel with a `Close` button — while the actual selection lived
+/// in a second, competing modal ("Make Your Pick"). One man, two surfaces, and
+/// the one with the whole scouting file on it was the one that could not draft
+/// him. This is the other half of the fix: the card is the full screen, and the
+/// commit is on it.
+///
+/// Deliberately three fields and no coordinator reference. `ProspectDetailView`
+/// is the scouting hub's screen first; giving it a `DraftDayCoordinator` would
+/// couple every spring surface to the draft room. The room keeps its own state
+/// and hands the card a slot number and two closures.
+struct ProspectDraftContext {
+    /// The slot the user is on the clock with, or `nil` when somebody else is at
+    /// the podium. Read live: the room re-evaluates the cover's content as the
+    /// clock ticks, so a card left open through an expiry loses its gold CTA
+    /// rather than offering a pick that `selectProspect` would silently refuse.
+    var pickNumber: Int?
+    /// Set when the man himself is gone — another club filed on him while this
+    /// card was open. Read live for the same reason `pickNumber` is: the cover
+    /// holds one captured prospect and the room keeps drafting behind it. When
+    /// it is non-nil there is no primary, and the bar says WHY in his own terms
+    /// rather than falling back to the generic off-the-clock hint.
+    var unavailableReason: String? = nil
+    /// Hands the card in. Only called while `pickNumber != nil`.
+    var onDraft: () -> Void
+    /// Back to the board. A full-screen cover has no swipe-to-dismiss, so the
+    /// card owns its own exit — and the exit is always the draft, never the hub.
+    var onBack: () -> Void
+}
+
 struct ProspectDetailView: View {
     let career: Career
     let prospect: CollegeProspect
 
     /// `true` when this card was opened from the war room while the draft clock
-    /// is running (`LiveBigBoardPanel`, `PickSheetView`).
+    /// is running (`LiveBigBoardPanel`).
     ///
     /// The card is a READ on draft night. Every one of its priced, rationed
     /// actions is a spring action that mutates the man the user is about to
@@ -145,6 +178,10 @@ struct ProspectDetailView: View {
     /// and are the whole point of having the card on the clock.
     var isLiveDraftCard: Bool = false
 
+    /// Non-nil when the war room opened this card (#196b). It is what turns the
+    /// read into a decision: see ``ProspectDraftContext`` and `draftActionBar`.
+    var draftContext: ProspectDraftContext? = nil
+
     @Environment(\.modelContext) private var modelContext
     @State private var scouts: [Scout] = []
     @State private var coaches: [Coach] = []
@@ -153,6 +190,11 @@ struct ProspectDetailView: View {
     /// A film-study result waiting for the scout picker to finish dismissing
     /// (#117) — presented from the sheet's `onDismiss`, never mid-transition.
     @State private var pendingFilmResult: FilmStudyOutcome?
+    /// The page's scroll proxy, captured inside `ScrollViewReader` so the MEET
+    /// slot can jump to the Interview card (#180). A `ScrollViewProxy` is only
+    /// vended inside the reader's closure, and the slot that uses it is built
+    /// four view layers down.
+    @State private var scrollProxy: ScrollViewProxy?
     @State private var showInterviewResult = false
     @State private var interviewResult: (personality: PersonalityArchetype, footballIQ: Int, characterNotes: [String])?
     @State private var positionRank: Int?
@@ -312,7 +354,19 @@ struct ProspectDetailView: View {
         return .available(cost: cost, slotsLeft: evaluationSlotsLeft)
     }
 
+    /// The scroll id the Interview card carries, and the MEET slot's target.
+    private static let interviewAnchor = "prospect.interview"
+
     var body: some View {
+        // The reader wraps the page rather than living inside it: `DSDetailPage`
+        // owns the `ScrollView`, and it is shared with the player and coach
+        // cards, so the anchor this screen needs cannot be installed there.
+        ScrollViewReader { proxy in
+            page.onAppear { scrollProxy = proxy }
+        }
+    }
+
+    private var page: some View {
         DSDetailPage {
             prospectHero
         } cards: {
@@ -332,7 +386,9 @@ struct ProspectDetailView: View {
                 // `ProspectFog.AttributeDisclosure`; this outer gate is what
                 // keeps an unscouted man from showing a grade block at all.
                 if isScouted { scoutingReportCard }
-                if prospect.interviewCompleted { interviewResultsCard }
+                if prospect.interviewCompleted {
+                    interviewResultsCard.id(Self.interviewAnchor)
+                }
                 characterFileCard
                 riskFlagsCard
                 instrumentsCard
@@ -417,6 +473,33 @@ struct ProspectDetailView: View {
                     prospect: prospect,
                     slotsLeft: evaluationSlotsLeft
                 )
+            case .filmRecord:
+                // The FILM slot reopening a report filed earlier. `gradeBefore`
+                // is `nil` on purpose: the band the user was looking at before
+                // that report landed is not stored anywhere, and inventing one
+                // would be a fabrication dressed as intel (the same rule
+                // `WorkoutReportEntry.init(filed:report:)` follows).
+                if let report = latestOwnFilmReport {
+                    FilmStudyResultSheet(
+                        outcome: FilmStudyOutcome(
+                            report: report,
+                            gradeBefore: nil,
+                            gradeAfter: effectiveOverallGrade
+                        ),
+                        prospect: prospect,
+                        slotsLeft: evaluationSlotsLeft
+                    )
+                }
+            case .workoutRecord:
+                if let report = latestWorkoutReport {
+                    ProspectWorkoutRecordSheet(
+                        entry: WorkoutReportEntry(filed: prospect, report: report),
+                        staffName: report.scoutName,
+                        occasion: "Private workout \u{00B7} \(career.currentSeason)",
+                        slotsUsed: career.workoutsUsed,
+                        slotsLeft: max(0, Self.maxWorkouts - career.workoutsUsed)
+                    )
+                }
             }
         }
     }
@@ -435,6 +518,12 @@ struct ProspectDetailView: View {
         /// pick-then-see-the-result shape the interview and workout have,
         /// instead of the sheet closing on a silently narrower band.
         case filmResult(FilmStudyOutcome)
+        /// A report filed EARLIER, reopened from the FILM slot (#180). Carries
+        /// no payload: the report is read off the prospect at present time, so
+        /// the slot cannot hand the sheet a stale copy of it.
+        case filmRecord
+        /// The private-workout session, reopened from the WORK slot.
+        case workoutRecord
 
         var id: String {
             switch self {
@@ -442,6 +531,8 @@ struct ProspectDetailView: View {
             case .markNote:      return "markNote"
             case .workoutResult: return "workoutResult"
             case .filmResult:    return "filmResult"
+            case .filmRecord:    return "filmRecord"
+            case .workoutRecord: return "workoutRecord"
             }
         }
     }
@@ -467,13 +558,14 @@ struct ProspectDetailView: View {
         DSDetailCard(
             "My Verdict",
             icon: "star.circle.fill",
-            explainer: "Your mark is what the war room sorts by on draft night. The note is why.",
+            // NOTE-CENTRED (#192). The tier buttons that used to open this card
+            // moved into the hero's mark lane, where they are one tap from the
+            // name and the grade instead of a card down the column. Two controls
+            // writing one piece of state is the duplication §2.13 forbids, and
+            // the copy of it that lost is the one further from the subject.
+            explainer: "The mark is in the header \u{2014} it is what the war room sorts by on draft night. This is why.",
             isSubject: true
         ) {
-            ProspectMarkPicker(prospect: prospect) {
-                try? modelContext.save()
-            }
-
             Button {
                 activeSheet = .markNote
             } label: {
@@ -660,9 +752,23 @@ struct ProspectDetailView: View {
                         ProspectInfoPill(label: "Ht", value: heightLabel)
                         ProspectInfoPill(label: "Wt", value: "\(prospect.weight) lbs")
                     }
-                }
 
-                Spacer()
+                    // The verdict, in the lane the hero was already reserving
+                    // (#192). See `heroMarkLane` — the grade column on the right
+                    // is ~50 pt taller than this one, so the strip lands in dead
+                    // space rather than pushing the page down.
+                    heroMarkLane
+                        .frame(maxWidth: 440)
+                        .padding(.top, DSSpacing.xxs)
+                }
+                // The lane is the one flexible thing in this row, and the
+                // `Spacer` below is the other: without a priority the HStack
+                // splits the free width evenly between them and the four
+                // buttons come out half-size in a narrow (split-view) column.
+                // The identity block asks first; the spacer takes what is left.
+                .layoutPriority(1)
+
+                Spacer(minLength: DSSpacing.xs)
 
                 if let gradeRange = effectiveOverallGrade {
                     VStack(spacing: 2) {
@@ -703,10 +809,91 @@ struct ProspectDetailView: View {
         }
     }
 
+    // MARK: - Mark lane (#192)
+
+    /// **The four marks, as buttons, in the hero.**
+    ///
+    /// The mark used to be TWO controls for one piece of state: a floating
+    /// `Mark` menu in the action bar's bottom-left gutter — two taps to set a
+    /// tier, and a menu is a control that hides its own options — plus a
+    /// duplicate four-button picker inside `My Verdict`, a card away down the
+    /// lead column. The verdict is the first thing a user forms on this screen
+    /// and the only thing the war room sorts by on the clock, so the control
+    /// belongs with the identity block and the grade: one tap per tier, the
+    /// live one lit, all four always visible.
+    ///
+    /// **Not gold, on purpose.** Gold is the commit CTA's fill — the action
+    /// bar's primary is the screen's one gold button, and P5 allows exactly one.
+    /// A mark is free, local, reversible and stays live on draft night when
+    /// every priced action is shut, so the active tier is a *washed* chip in the
+    /// tier's own colour with a coloured rule around it, never a filled button.
+    /// `.elite`'s tier colour IS `accentGold` (it is gold on every board row and
+    /// chip in the app, and that identity is not this screen's to break), so the
+    /// wash is what keeps it from reading as a second CTA.
+    private var heroMarkLane: some View {
+        HStack(spacing: DSSpacing.xs) {
+            ForEach(ProspectMarkTier.choices) { tier in
+                markLaneButton(tier)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Your mark")
+    }
+
+    private func markLaneButton(_ tier: ProspectMarkTier) -> some View {
+        let isSelected = prospect.userMark == tier
+        return Button {
+            // Tapping the live tier clears it — the same toggle `ProspectMarkMenu`
+            // and every row control use, so the mark can be undone where it was
+            // set rather than only from a menu's "Clear Mark".
+            prospect.setUserMark(isSelected ? .none : tier)
+            try? modelContext.save()
+        } label: {
+            HStack(spacing: DSSpacing.xxs) {
+                Image(systemName: tier.icon)
+                    .font(.system(size: DSType.Size.footnote, weight: .semibold))
+                Text(tier.label)
+                    .font(.system(size: DSType.Size.footnote, weight: .heavy))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            .foregroundStyle(isSelected ? tier.color : Color.textSecondary)
+            .frame(maxWidth: .infinity)
+            .frame(height: 44)
+            .background(
+                RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                    .fill(isSelected ? tier.color.opacity(0.16) : Color.backgroundTertiary)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                    .strokeBorder(
+                        isSelected ? tier.color : Color.surfaceBorder,
+                        lineWidth: isSelected ? 1.5 : 1
+                    )
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(tier.label): \(tier.blurb)")
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+    }
+
     // MARK: - Scout Confidence Badge
 
+    /// The three dots under the hero grade: how many looks of YOUR OWN are
+    /// behind the band above them.
+    ///
+    /// Counted on `ProspectFog.ownReportCount` (#184). The retired
+    /// `scoutReportCount` was the raw `scoutingReports.count`, which includes
+    /// the `Previous Staff`
+    /// row `applyPreScoutedData` stamps on the top of every class — so a save
+    /// on its first day showed one lit dot and "Low confidence · 1/3 scouts"
+    /// on 250 men nobody in the building had watched, and the denominator was
+    /// wrong too: three is `ScoutEvaluationBudget.maxReportsPerProspect`, a cap
+    /// on reports the user PAYS for, and the inherited row does not count
+    /// against it (`chargeableReports`). One counter, one meaning.
     private var scoutConfidenceBadge: some View {
-        let count = prospect.scoutReportCount
+        let count = ProspectFog.ownReportCount(prospect)
         let confidenceColor: Color
         let confidenceLabel: String
         switch count {
@@ -715,25 +902,23 @@ struct ProspectDetailView: View {
         case 2:  confidenceColor = .accentBlue;   confidenceLabel = "Medium"
         default: confidenceColor = .success;      confidenceLabel = "High"
         }
-        // The grade above is only as reliable as the number of scout visits behind
-        // it — make that explicit so the user knows whether to trust it or send
-        // more scouts.
+        let cap = ScoutEvaluationBudget.maxReportsPerProspect
         return HStack(spacing: 4) {
             HStack(spacing: 2) {
-                ForEach(0..<3, id: \.self) { i in
+                ForEach(0..<cap, id: \.self) { i in
                     Circle()
                         .fill(i < count ? confidenceColor : confidenceColor.opacity(0.3))
                         .frame(width: 6, height: 6)
                 }
             }
-            Text("\(confidenceLabel) confidence · \(count)/3 scouts")
+            Text("\(confidenceLabel) confidence \u{00B7} \(count)/\(cap) reports")
                 .font(.system(size: DSType.Size.micro, weight: .semibold))
                 .foregroundStyle(confidenceColor)
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
         .background(confidenceColor.opacity(0.12), in: Capsule())
-        .help("Grade reliability: \(confidenceLabel.lowercased()) — \(count) of 3 possible scout visits completed.")
+        .help("Grade reliability: \(confidenceLabel.lowercased()) \u{2014} \(count) of \(cap) reports your department has filed on him.")
     }
 
     // MARK: - Potential Badge
@@ -1252,14 +1437,7 @@ struct ProspectDetailView: View {
                         Text(personality.displayName)
                             .font(.system(size: DSType.Size.body, weight: .semibold))
                             .foregroundStyle(Color.textPrimary)
-                        // "Scouts' read" is only honest when OUR report exists —
-                        // `applyPreScoutedData` hands the class's top names a
-                        // personality with no instrument behind it, and its
-                        // inherited row still sits in `scoutingReports`; that
-                        // read is the league's, not this building's.
-                        Text(prospect.interviewCompleted
-                             ? "From your interview"
-                             : (ProspectFog.hasOwnReport(prospect) ? "Scouts' read" : "League consensus"))
+                        Text(personalityAttribution)
                             .font(.system(size: DSType.Size.caption))
                             .foregroundStyle(Color.textTertiaryReadable)
                     }
@@ -1272,37 +1450,129 @@ struct ProspectDetailView: View {
 
             positionGradesGrid
 
-            // Status indicators — ONE pill per instrument the spring offers,
-            // so the card answers "what have I run on this man" in a glance
-            // (#117: it used to show two of the five and the user reasonably
-            // read that as the complete list). Film and Workout are derived
-            // from the report ledger: a workout has no flag of its own (it
-            // files a `.personalWorkout` report AND sets `proDayCompleted`,
-            // see #115), and the pre-scout "Previous Staff" freebie must not
-            // light Film Study for work this regime never ordered.
-            HStack(spacing: 12) {
-                StatusPill(label: "Film Study", completed: hasOwnFilmReport)
-                StatusPill(label: "Interview",  completed: prospect.interviewCompleted)
-                StatusPill(label: "Pro Day",    completed: prospect.proDayCompleted)
-                StatusPill(label: "Workout",    completed: hasWorkoutReport)
-                StatusPill(label: "Top-30 Visit", completed: hasTop30Visit)
-            }
+            // The instrument strip — ONE reserved slot per tool the spring
+            // offers, so the card answers "what have I run on this man" in a
+            // glance (#117: it used to show two of the five and the user
+            // reasonably read that as the complete list).
+            ProspectInstrumentStrip(slots: instrumentSlots)
         }
     }
 
-    /// A tape report THIS regime ordered — the Film Study pill's predicate.
-    /// The pre-scout "Previous Staff" rows and the workout's own report are
-    /// both excluded: the first is inherited, the second has its own pill.
-    private var hasOwnFilmReport: Bool {
-        prospect.scoutingReports.contains {
-            $0.scoutName != "Previous Staff" && $0.phase != .personalWorkout
+    // MARK: - Personality attribution (#185)
+
+    /// Names the instrument that produced the personality currently on the card.
+    ///
+    /// It reads the stored provenance (`scoutedPersonalitySource`, written only
+    /// by `ScoutingEngine.recordPersonalityRead`) rather than guessing from
+    /// flags. The guess it replaces — "interviewCompleted ? your interview :
+    /// hasOwnReport ? scouts : consensus" — was wrong in both directions: a
+    /// report filed AFTER the meeting used to be credited to the meeting, and
+    /// an interview read on a man your department had also filmed could be
+    /// re-attributed to the film. Naming the wrong instrument is worse than
+    /// naming none, because the whole point of the label is to tell the user
+    /// how much to discount the read.
+    ///
+    /// `nil` provenance is the league's read: either nothing has looked at him
+    /// yet beyond the inherited board, or the row predates the field.
+    private var personalityAttribution: String {
+        (prospect.scoutedPersonalitySource ?? .leagueConsensus).attributionLabel
+    }
+
+    // MARK: - Instrument slots (#180)
+
+    /// The five pre-draft instruments as fixed state slots.
+    ///
+    /// This was five `StatusPill`s ("Film Study", "Interview", "Pro Day",
+    /// "Workout", "Top-30 Visit") in a plain `HStack`: ~600 pt of pill in the
+    /// ~305 pt middle column, so at three columns every label broke
+    /// letter-by-letter and the row rendered as five vertical alphabet columns.
+    /// It is the shared `DSStatusPill` vocabulary now — 4-letter idents, a
+    /// dashed reserved slot for work nobody has done (§2.2: the HOLE is what
+    /// the user scans for), and a strip that wraps whole pills.
+    ///
+    /// Film and Workout are derived from the report ledger rather than from a
+    /// flag: a workout has no flag of its own (it files a `.personalWorkout`
+    /// report AND sets `proDayCompleted`, see #115), and the pre-scout
+    /// `Previous Staff` freebie must not light Film Study for work this regime
+    /// never ordered.
+    ///
+    /// The three instruments that keep a card are also the way back to it —
+    /// see ``ProspectInstrumentStrip`` for why those look different.
+    private var instrumentSlots: [ProspectInstrumentSlot] {
+        // Film reports only — `ownReportCount` also counts the private
+        // workout's `.personalWorkout` row, which has its own slot two along.
+        let filmReports = prospect.scoutingReports.filter {
+            $0.scoutName != ProspectFog.inheritedScoutName && $0.phase != .personalWorkout
+        }.count
+        // A filed report grades EVERY key (`applyGradeBasedFields`), so this is
+        // the honest yield of the film work rather than a slice of it.
+        let bands = ProspectFog.mentalDisclosure(prospect).grades.count
+            + ProspectFog.positionSkillDisclosure(prospect).grades.count
+
+        return [
+            ProspectInstrumentSlot(
+                ident: "FILM",
+                name: "Film study",
+                isSet: latestOwnFilmReport != nil,
+                yield: bands > 0
+                    ? "\(filmReports) report\(filmReports == 1 ? "" : "s") \u{2192} \(bands) bands"
+                    : "\(filmReports) report\(filmReports == 1 ? "" : "s") filed",
+                open: latestOwnFilmReport == nil ? nil : { activeSheet = .filmRecord }
+            ),
+            ProspectInstrumentSlot(
+                ident: "MEET",
+                name: "Interview",
+                isSet: prospect.interviewCompleted,
+                yield: prospect.interviewFootballIQ.map { "IQ \($0) + personality" } ?? "meeting held",
+                open: prospect.interviewCompleted ? { scrollToInterview() } : nil
+            ),
+            ProspectInstrumentSlot(
+                ident: "PRO DAY",
+                name: "Pro day",
+                isSet: prospect.proDayCompleted,
+                yield: "measurables verified",
+                open: nil
+            ),
+            ProspectInstrumentSlot(
+                ident: "WORK",
+                name: "Private workout",
+                isSet: latestWorkoutReport != nil,
+                yield: "session on file",
+                open: latestWorkoutReport == nil ? nil : { activeSheet = .workoutRecord }
+            ),
+            ProspectInstrumentSlot(
+                ident: "T30",
+                name: "Top-30 visit",
+                isSet: hasTop30Visit,
+                yield: "medical + character file open",
+                open: nil
+            ),
+        ]
+    }
+
+    /// The most recent tape report THIS regime ordered — what the FILM slot
+    /// reports and reopens. The inherited `Previous Staff` rows and the
+    /// workout's own report are both excluded: the first is not this
+    /// building's work, the second has its own slot.
+    private var latestOwnFilmReport: ScoutingReport? {
+        prospect.scoutingReports.last {
+            $0.scoutName != ProspectFog.inheritedScoutName && $0.phase != .personalWorkout
         }
     }
 
     /// A private workout files a `.personalWorkout` report rather than setting
     /// a flag of its own (see #115) — the ledger is the truth here.
-    private var hasWorkoutReport: Bool {
-        prospect.scoutingReports.contains { $0.phase == .personalWorkout }
+    private var latestWorkoutReport: ScoutingReport? {
+        prospect.scoutingReports.last { $0.phase == .personalWorkout }
+    }
+
+    /// The MEET slot's destination. The meeting's result is a whole card on
+    /// this page rather than a sheet, so the slot takes the user to it instead
+    /// of opening a second copy of it in a modal.
+    private func scrollToInterview() {
+        withAnimation(.easeInOut(duration: 0.25)) {
+            scrollProxy?.scrollTo(Self.interviewAnchor, anchor: .top)
+        }
     }
 
     /// Facility visits are recorded per club, so the pill answers for THIS
@@ -1433,16 +1703,20 @@ struct ProspectDetailView: View {
         VStack(spacing: 2) {
             Text("\u{2014}")
                 .font(.caption.weight(.bold))
-                .foregroundStyle(Color.textTertiary.opacity(0.6))
+                .foregroundStyle(Color.textTertiary)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 3)
                 .background(
                     RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                         .fill(Color.textTertiary.opacity(0.06))
                 )
+            // The KEY is the information in a locked cell — it names which of
+            // the eight attributes is still unread. At 60 % tertiary it was the
+            // faintest text on the card; `textTertiaryReadable` keeps it quiet
+            // against the filled cells beside it without going under AA.
             Text(key)
                 .font(.caption2)
-                .foregroundStyle(Color.textTertiary.opacity(0.6))
+                .foregroundStyle(Color.textTertiaryReadable)
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(key) not read yet")
@@ -1540,25 +1814,38 @@ struct ProspectDetailView: View {
                 }
             }
 
-            // Personality badge with colored background (Task 1)
+            // Personality badge with colored background (Task 1).
+            //
+            // The attribution under it comes from the SAME stored provenance as
+            // the Scouting Report card's (#185). It is not decoration on this
+            // card either: the badge shows whatever read is currently on file,
+            // and on a man who was interviewed the meeting is only usually the
+            // instrument behind it — a misread meeting writes nothing onto a
+            // card that already carries a report's read, and a legacy save
+            // carries no provenance at all. The line says which of those it is.
             if let personality = prospect.scoutedPersonality {
-                HStack {
+                HStack(alignment: .firstTextBaseline) {
                     Text("Personality")
                         .font(.subheadline)
                         .foregroundStyle(Color.textSecondary)
                     Spacer()
-                    HStack(spacing: 4) {
-                        Image(systemName: "person.fill")
-                            .font(.caption2)
-                        Text(personality.displayName)
-                            .font(.subheadline.weight(.bold))
+                    VStack(alignment: .trailing, spacing: 2) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "person.fill")
+                                .font(.caption2)
+                            Text(personality.displayName)
+                                .font(.subheadline.weight(.bold))
+                        }
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(
+                            Capsule().fill(personalityDetailBadgeColor(personality))
+                        )
+                        Text(personalityAttribution)
+                            .font(.system(size: DSType.Size.caption))
+                            .foregroundStyle(Color.textTertiaryReadable)
                     }
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(
-                        Capsule().fill(personalityDetailBadgeColor(personality))
-                    )
                 }
             }
 
@@ -1607,7 +1894,7 @@ struct ProspectDetailView: View {
                                 .foregroundStyle(Color.danger)
                             Text("Low IQ = slower scheme learning, more mental errors")
                                 .font(.caption2)
-                                .foregroundStyle(Color.danger)
+                                .foregroundStyle(Color.dangerText)
                         }
                     }
                 }
@@ -1625,7 +1912,7 @@ struct ProspectDetailView: View {
                             .foregroundStyle(Color.danger)
                         Text("OFF-FIELD CONCERNS REPORTED")
                             .font(.subheadline.weight(.heavy))
-                            .foregroundStyle(Color.danger)
+                            .foregroundStyle(Color.dangerText)
                     }
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1877,46 +2164,181 @@ struct ProspectDetailView: View {
     /// Snapshot of college playing time + production. Generator v2 stores this
     /// as a noisy signal (`collegeProductionScore`) that correlates with — but
     /// does not reveal — the prospect's true grade.
+    ///
+    /// TWO POPULATIONS, TWO PRESENTATIONS (#181). ~5 % of a class never got on
+    /// the field, and `DraftClassBuilder.applyBuriedUsage` derives their
+    /// production score from SNAPS and from nothing else — over that slice
+    /// `corr(production, trueOverall)` is ~0 by construction. So the tier those
+    /// men carry is not a weak verdict on their football, it is not a verdict
+    /// at all, and printing "Below Avg" beside 89 snaps was the card asserting
+    /// a quality judgment the engine never made. The buried card reads the
+    /// burial narrative instead, a neutral **Limited sample** chip in a tint
+    /// deliberately outside the grade palette, and a footnote that says the
+    /// tape is thin rather than that the player is.
+    ///
+    /// FOG. Everything on this card is public record and renders identically
+    /// for the gem and for the genuine backup: the reason string is generated
+    /// from competition level and starts, never from ability; the chip is one
+    /// chip for the whole cohort; and no line here narrows toward whether the
+    /// man behind the thin tape is worth a pick. Finding that out is what
+    /// instruments are for — which is the entire point of the mechanic.
     @ViewBuilder
     private var collegeProductionCard: some View {
+        let isBuried = prospect.hasLimitedCollegeSample
         DSDetailCard(
             "College Production",
             icon: "chart.bar.xaxis",
             explainer: "A noisy public signal. It correlates with his grade; it does not reveal it."
         ) {
             VStack(alignment: .leading, spacing: DSSpacing.xs) {
+                // The narrative hook. Without it "89 snaps" reads as one thing
+                // only — bad player — and the whole buried cohort collapses
+                // into noise the user learns to skip.
+                if let narrative = burialNarrative {
+                    HStack(alignment: .top, spacing: DSSpacing.xxs) {
+                        Image(systemName: "text.quote")
+                            .font(.system(size: DSType.Size.micro))
+                            .foregroundStyle(Color.textTertiaryReadable)
+                        Text(narrative)
+                            .font(.system(size: DSType.Size.footnote))
+                            .foregroundStyle(Color.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityElement(children: .combine)
+                }
+
                 HStack(spacing: 16) {
                     productionTile(label: "Years Started", value: "\(prospect.collegeYearsStarted)/4")
-                    productionTile(
-                        label: "Production",
-                        value: prospect.collegeProductionTier.displayName,
-                        color: prospect.collegeProductionTier.chipColor
-                    )
+                    if isBuried {
+                        productionTile(
+                            label: "Production",
+                            value: String(localized: "Limited sample"),
+                            color: Self.limitedSampleTint,
+                            asChip: true
+                        )
+                    } else {
+                        productionTile(
+                            label: "Production",
+                            value: prospect.collegeProductionTier.displayName,
+                            color: prospect.collegeProductionTier.chipColor
+                        )
+                    }
                     if let level = prospect.collegeCompetitionLevel {
                         productionTile(label: String(localized: "Competition"), value: level.longName)
                     }
                 }
-                HStack(spacing: 8) {
-                    Image(systemName: "chart.bar.xaxis")
-                        .font(.caption)
-                        .foregroundStyle(Color.textSecondary)
-                    Text(prospect.collegeStatLine)
-                        .font(.subheadline.monospacedDigit())
-                        .foregroundStyle(Color.textPrimary)
+
+                // The qualifier is load-bearing: the same row of numbers means
+                // "his best year" for a receiver and "everything he ever did"
+                // for a tackle, and an unlabelled line let the user read a
+                // four-year lineman's career starts as a single season.
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(statLineQualifier.uppercased())
+                        .font(.system(size: DSType.Size.micro, weight: .semibold))
+                        .foregroundStyle(Color.textTertiaryReadable)
+                    HStack(spacing: 8) {
+                        Image(systemName: "chart.bar.xaxis")
+                            .font(.caption)
+                            .foregroundStyle(Color.textSecondary)
+                        Text(prospect.collegeStatLine)
+                            .font(.subheadline.monospacedDigit())
+                            .foregroundStyle(Color.textPrimary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
-                DSDetailNote(text: "Heavy starter snaps and strong production already factor into his grade and his ceiling.")
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityElement(children: .combine)
+
+                DSDetailNote(text: productionFootnote)
             }
         }
     }
 
-    private func productionTile(label: String, value: String, color: Color = .textPrimary) -> some View {
+    /// Tint for the **Limited sample** chip. Slate, and deliberately not a
+    /// member of the grade ladder (`Color.forGrade`: elite green / success /
+    /// accent blue / warning / alert orange / danger) — the chip states that
+    /// the record is thin, and any verdict colour would put back the quality
+    /// judgment the chip exists to remove.
+    private static let limitedSampleTint = Color.textTertiaryReadable
+
+    /// The burial reason as a sentence, or `nil` for a prospect who played.
+    ///
+    /// `collegeBurialReason` is stored as a lower-case fragment ("sat behind a
+    /// first-round pick") so a board row can quote it inline; the card is the
+    /// one place it stands alone, so it is capitalised and stopped here rather
+    /// than in the generator.
+    private var burialNarrative: String? {
+        let reason = prospect.collegeBurialReason
+        guard !reason.isEmpty else { return nil }
+        return reason.prefix(1).uppercased() + String(reason.dropFirst()) + "."
+    }
+
+    /// What span of football the stat line covers.
+    ///
+    /// `CollegeProspect.statLine` renders per-season RATES for every position
+    /// except the offensive line, whose line leads with cumulative career
+    /// starts; a buried prospect's usage line is the snaps of his last season.
+    private var statLineQualifier: String {
+        if prospect.hasLimitedCollegeSample { return String(localized: "Last season") }
+        switch prospect.position {
+        case .LT, .LG, .C, .RG, .RT: return String(localized: "Career")
+        default:                     return String(localized: "Best season")
+        }
+    }
+
+    /// The footnote under the numbers.
+    ///
+    /// The line it replaces ("...already factor into his grade and his
+    /// ceiling") was false in the direction that matters: production is a
+    /// SIGNAL generated alongside the grade, not an input to it, and reading it
+    /// as an input invites the user to double-count the same evidence. It also
+    /// printed under a man who had never started a game, congratulating him on
+    /// heavy starter snaps.
+    private var productionFootnote: String {
+        if prospect.hasLimitedCollegeSample {
+            return String(localized: "Barely saw the field \u{2014} the tape is thin by design.")
+        }
+        let tier = prospect.collegeProductionTier
+        if prospect.collegeYearsStarted >= 3, tier == .elite || tier == .aboveAvg {
+            return String(localized: "Heavy starter snaps and strong production \u{2014} as deep a college record as this board carries.")
+        }
+        return String(localized: "Public record of what he did in college. What it is worth in the pro game is your department's call.")
+    }
+
+    /// One production/competition figure.
+    ///
+    /// `asChip` wraps the value in a capsule instead of tinting bare text, so a
+    /// non-verdict value cannot be mistaken for a tier read in a colour nobody
+    /// recognises.
+    private func productionTile(
+        label: String,
+        value: String,
+        color: Color = .textPrimary,
+        asChip: Bool = false
+    ) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label)
                 .font(.caption2)
                 .foregroundStyle(Color.textTertiary)
-            Text(value)
-                .font(.subheadline.weight(.bold))
-                .foregroundStyle(color)
+            if asChip {
+                Text(value)
+                    .font(.system(size: DSType.Size.caption, weight: .bold))
+                    .foregroundStyle(color)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        Capsule()
+                            .fill(color.opacity(0.15))
+                            .overlay(Capsule().strokeBorder(color.opacity(0.35)))
+                    )
+            } else {
+                Text(value)
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(color)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(8)
@@ -2158,6 +2580,8 @@ struct ProspectDetailView: View {
             icon: "list.number",
             explainer: "Where the league expects him to go, and what that slot costs the cap."
         ) {
+            onTheClockValueRow
+
             DSDetailRow(
                 "Declaring for Draft",
                 prospect.isDeclaringForDraft ? "Yes" : "No",
@@ -2182,6 +2606,50 @@ struct ProspectDetailView: View {
                 InterestBadge(level: prospect.interestLevel)
             }
         }
+    }
+
+    /// The one read the retired pick sheet had that this card did not: **is he
+    /// worth THIS slot?** (#196b/#197.)
+    ///
+    /// The sheet printed a value chip on every row and the card printed none,
+    /// so moving the commit onto the card would have moved the decision away
+    /// from the number it is made against. Same helper the coordinator grades
+    /// the finished pick with — `DraftIntel.pickValueDelta` — so the sentence
+    /// the user reads before the pick and the grade he is given after it cannot
+    /// disagree.
+    ///
+    /// Deliberately the VALUE read only, not the sheet's full STEAL/HOF-TRACK
+    /// chip: that one takes a team-need score and a scheme fit the card has no
+    /// access to, and a grade computed from defaults would be a fabrication
+    /// dressed as intel.
+    @ViewBuilder
+    private var onTheClockValueRow: some View {
+        if let pick = draftContext?.pickNumber {
+            let delta = DraftIntel.pickValueDelta(
+                for: prospect,
+                pickNumber: pick,
+                consensusRank: DraftIntel.consensusRank(for: prospect.id)
+            )
+            DSDetailRow(
+                "At Your Pick #\(pick)",
+                pickValueLabel(delta),
+                tint: pickValueTint(delta)
+            )
+        }
+    }
+
+    /// Positive is value (the board had him gone by now), negative is a reach.
+    /// The ±4 dead band is the same one the war room's row chips used.
+    private func pickValueLabel(_ delta: Int) -> String {
+        if delta >= 4 { return "Value \u{00B7} +\(delta) vs the board" }
+        if delta <= -4 { return "Reach \u{00B7} \(delta) vs the board" }
+        return "Fair value at this slot"
+    }
+
+    private func pickValueTint(_ delta: Int) -> Color {
+        if delta >= 4 { return .draftStealGold }
+        if delta <= -4 { return .warning }
+        return .textSecondary
     }
 
     // MARK: - Actions Section
@@ -2388,41 +2856,87 @@ struct ProspectDetailView: View {
     /// actions is unchanged: the mark is still the primary and still a `Menu`,
     /// and one CTA appears per instrument whose window is open right now.
     ///
-    /// The mark keeps its own control rather than becoming a bar `Action`,
-    /// because it is a *menu*, not a commit — `DSActionBar.Action` is a
-    /// closure, and a menu needs to own its label.
+    /// The bar carries no mark control of its own (#192). It used to host a
+    /// floating `Mark` menu in a strip above the commits — a *third* place to
+    /// state one opinion, two taps deep, in the corner of the screen furthest
+    /// from the man it was about. The tiers are buttons in the hero now
+    /// (`heroMarkLane`); what stays here is the STATUS the strip was really
+    /// providing — the explainer's `UNMARKED` / `YOUR MARK` rule, which reads
+    /// off the same `prospect.userMark` and therefore updates the moment a
+    /// header button is tapped.
     @ViewBuilder
     private var prospectActionBar: some View {
-        VStack(spacing: 0) {
-            // The mark strip, above the commits. Marking is free, local and
-            // reversible, and it stays live on draft night when every priced
-            // action below it is shut — so it does not belong in a commit slot.
-            HStack(spacing: DSSpacing.xs) {
-                markMenu
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, DSSpacing.md)
-            .padding(.vertical, DSSpacing.xs)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.backgroundPlate)
-
-            DSActionBar(
-                explainer: .init(
-                    title: prospect.isMarked ? "Your mark" : "Unmarked",
-                    message: markExplainer,
-                    isWarning: isLiveDraftCard
-                ),
-                ghost: canWorkout ? .init(title: "Workout", handler: { performWorkout() }) : nil,
-                secondary: canInterview ? .init(title: "Interview", handler: { performInterview() }) : nil,
-                primary: evaluationAvailability.isAvailable
-                    ? .init(
-                        title: isScouted ? "Order Another Report" : "Order Film Study",
-                        caption: evaluationCostCaption,
-                        handler: { activeSheet = .sendScout }
-                      )
-                    : nil
-            )
+        if let draft = draftContext {
+            draftActionBar(draft)
+        } else {
+            springActionBar
         }
+    }
+
+    /// **Draft night's bar** (#196b). The card is the room's decision surface
+    /// now, so the bar carries the decision:
+    ///
+    ///   ON THE CLOCK ... the gold `Draft him — Pick #N`. This is the screen's
+    ///                    one gold fill; every spring commit is closed tonight
+    ///                    (`isLiveDraftCard`), so nothing competes for it.
+    ///   OFF THE BOARD .. no primary either, and the reason named: a card left
+    ///                    open across the pick that took him would otherwise
+    ///                    re-light its gold CTA the moment the user's turn came
+    ///                    around and commit a man who is already signed.
+    ///   OTHERWISE ...... no primary at all. A gold button on a card opened
+    ///                    while another club is at the podium would be a commit
+    ///                    the engine refuses — `selectProspect` guards on
+    ///                    `isUserOnClock` — i.e. the dead-primary defect §2.5
+    ///                    exists to stop.
+    ///
+    /// `Back to the draft` is a secondary in both stances and is never absent:
+    /// a full-screen cover has no swipe-to-dismiss, and the way back is always
+    /// the board, never the hub the card is pushed from in the spring.
+    private func draftActionBar(_ draft: ProspectDraftContext) -> some View {
+        DSActionBar(
+            explainer: .init(
+                title: draft.unavailableReason != nil
+                    ? "Off the board"
+                    : draft.pickNumber.map { "You are on the clock \u{2014} #\($0)" }
+                        ?? "Draft night",
+                message: draft.unavailableReason
+                    ?? (draft.pickNumber != nil
+                        ? "Hand this card in and **\(prospect.fullName)** is yours. The clock is still running behind this screen."
+                        : Self.liveDraftHint),
+                isWarning: draft.pickNumber == nil
+            ),
+            secondary: .init(
+                title: "Back to the draft",
+                handler: draft.onBack
+            ),
+            primary: draft.pickNumber.map { pick in
+                DSActionBar.Action(
+                    title: "Draft him \u{2014} Pick #\(pick)",
+                    caption: "\(prospect.position.rawValue) \u{00B7} \(prospect.college)",
+                    accessibilityLabel: "Draft \(prospect.fullName) with pick number \(pick)",
+                    handler: draft.onDraft
+                )
+            }
+        )
+    }
+
+    private var springActionBar: some View {
+        DSActionBar(
+            explainer: .init(
+                title: prospect.isMarked ? "Your mark" : "Unmarked",
+                message: markExplainer,
+                isWarning: isLiveDraftCard
+            ),
+            ghost: canWorkout ? .init(title: "Workout", handler: { performWorkout() }) : nil,
+            secondary: canInterview ? .init(title: "Interview", handler: { performInterview() }) : nil,
+            primary: evaluationAvailability.isAvailable
+                ? .init(
+                    title: isScouted ? "Order Another Report" : "Order Film Study",
+                    caption: evaluationCostCaption,
+                    handler: { activeSheet = .sendScout }
+                  )
+                : nil
+        )
     }
 
     /// What the bar's explainer says. On draft night it is the blocked-commit
@@ -2432,7 +2946,7 @@ struct ProspectDetailView: View {
         if prospect.isMarked {
             return "**\(prospect.userMark.label)** on your board\(prospect.userMarkNote.isEmpty ? "" : " \u{00B7} note attached")."
         }
-        return "He is not on your board yet. A mark is what the war room sorts by on the clock."
+        return "He is not on your board yet \u{2014} pick a tier in the header. A mark is what the war room sorts by on the clock."
     }
 
     /// "$450K · 4 of 6 evaluations left" — the two numbers the commit spends,
@@ -2441,50 +2955,6 @@ struct ProspectDetailView: View {
     private var evaluationCostCaption: String? {
         guard case let .available(cost, slotsLeft) = evaluationAvailability else { return nil }
         return "$\(cost)K \u{00B7} \(slotsLeft) of \(ScoutEvaluationBudget.slotsPerCycle) left"
-    }
-
-    /// The ONE mark. This used to toggle `prospectFlag` between must-have and
-    /// none, which the star store, the watchlist bookmark and the user grade
-    /// all disagreed with.
-    ///
-    /// It sits in the bar's explainer gutter rather than in a button slot: the
-    /// bar's four slots are for commits, and marking is a picker that is free,
-    /// local and reversible — it stays live even on draft night, when every
-    /// priced action above is shut.
-    private var markMenu: some View {
-        Menu {
-            ProspectMarkMenu(
-                prospect: prospect,
-                onChange: { try? modelContext.save() },
-                onEditNote: { activeSheet = .markNote }
-            )
-        } label: {
-            let mark = prospect.userMark
-            Label(
-                mark == .none ? "Mark" : mark.label,
-                systemImage: mark == .none ? "circle.dashed" : mark.icon
-            )
-            .font(.system(size: DSType.Size.body, weight: .bold))
-            .foregroundStyle(mark == .none ? Color.textPrimary : mark.color)
-            .padding(.horizontal, DSSpacing.sm)
-            .frame(minHeight: 44)
-            .background(
-                RoundedRectangle(cornerRadius: DSCornerRadius.inline)
-                    .fill(mark == .none ? Color.backgroundTertiary : mark.color.opacity(0.22))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: DSCornerRadius.inline)
-                    .strokeBorder(
-                        mark == .none ? Color.surfaceBorder : mark.color,
-                        lineWidth: mark == .none ? 1 : 1.5
-                    )
-            )
-        }
-        .accessibilityLabel(
-            prospect.isMarked
-                ? "Your mark: \(prospect.userMark.label). Change it"
-                : "Unmarked. Set your mark"
-        )
     }
 
     // MARK: - Helpers
@@ -2786,27 +3256,151 @@ private struct CombineMeasurableRow: View {
     }
 }
 
-private struct StatusPill: View {
-    let label: String
-    let completed: Bool
+// MARK: - Instrument strip (#180)
+
+/// One pre-draft instrument's reserved slot on the prospect card.
+private struct ProspectInstrumentSlot: Identifiable {
+    /// The 3-7 character ident the pill prints. Short by contract — §2.2's
+    /// worked example is a 87 pt word painted over its neighbour in a 66 pt
+    /// column.
+    let ident: String
+    /// What VoiceOver and the yield line call it.
+    let name: String
+    /// Has this instrument been run on this man by THIS building?
+    let isSet: Bool
+    /// What it bought, in four or five words. Only rendered when `isSet`.
+    let yield: String?
+    /// Reopens what it bought. `nil` for the two instruments that keep no card
+    /// of their own — a pro day and a Top-30 visit change what the rest of the
+    /// page is allowed to show rather than producing a document.
+    let open: (() -> Void)?
+
+    var id: String { ident }
+}
+
+/// The reserved row of instrument slots, plus one line naming what the run
+/// ones actually bought.
+///
+/// `DSStatusPill` is deliberately flat and inert in every state — its own
+/// documentation says "anything raised is interactive; this never is", after an
+/// iteration shipped a static chip and a tappable one that looked identical.
+/// So a slot the user can act on is NOT a differently-tinted pill: it is the
+/// pill plus a chevron, in a button, and the pill inside it keeps the same
+/// vocabulary as the four that do nothing.
+private struct ProspectInstrumentStrip: View {
+    let slots: [ProspectInstrumentSlot]
 
     var body: some View {
-        HStack(spacing: 5) {
-            Image(systemName: completed ? "checkmark.circle.fill" : "circle")
-                .foregroundStyle(completed ? Color.success : Color.textTertiary)
-                .font(.subheadline)
-            Text(label)
-                .font(.subheadline)
-                .foregroundStyle(completed ? Color.textPrimary : Color.textTertiary)
+        VStack(alignment: .leading, spacing: 6) {
+            // Whole pills wrap, never letters. `DSStatusPill` fixes its own
+            // horizontal size, so an over-full `HStack` does not compress —
+            // it overflows, which is exactly the defect this replaces.
+            ViewThatFits(in: .horizontal) {
+                strip([slots])
+                strip([Array(slots.prefix(3)), Array(slots.dropFirst(3))])
+                strip(slots.map { [$0] })
+            }
+
+            Text(yieldLine ?? "No instrument has been run on him yet.")
+                .font(.system(size: DSType.Size.micro, weight: .semibold))
+                .foregroundStyle(yieldLine == nil ? Color.textTertiaryReadable : Color.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityLabel(yieldLine.map { "What your work bought: \($0)" }
+                    ?? "No instrument has been run on him yet")
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .frame(minHeight: 44)
-        .background(
-            RoundedRectangle(cornerRadius: DSCornerRadius.inline)
-                .fill(completed ? Color.success.opacity(0.15) : Color.backgroundTertiary)
-        )
-        .accessibilityLabel("\(label) \(completed ? "completed" : "not completed")")
+    }
+
+    private func strip(_ rows: [[ProspectInstrumentSlot]]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                HStack(spacing: 4) {
+                    ForEach(row) { pill($0) }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func pill(_ slot: ProspectInstrumentSlot) -> some View {
+        if slot.isSet, let open = slot.open {
+            Button(action: open) {
+                HStack(spacing: 2) {
+                    DSStatusPill(label: slot.ident, tone: .ok, showsDot: false)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: DSType.Size.micro, weight: .heavy))
+                        .foregroundStyle(Color.success)
+                }
+                .padding(.vertical, 6)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(slot.name), done\(slot.yield.map { ", \($0)" } ?? "")")
+            .accessibilityHint("Opens what it bought")
+        } else {
+            DSStatusPill(
+                label: slot.ident,
+                tone: slot.isSet ? .ok : .empty,
+                showsDot: false,
+                spokenLabel: slot.isSet
+                    ? "\(slot.name), done\(slot.yield.map { ", \($0)" } ?? "")"
+                    : "\(slot.name), not done"
+            )
+        }
+    }
+
+    /// "FILM 2 reports → 12 bands · MEET IQ 84 + personality". The idents
+    /// repeat so the line reads against the strip above it rather than asking
+    /// the user to hold five positions in his head.
+    private var yieldLine: String? {
+        let parts = slots.compactMap { slot -> String? in
+            guard slot.isSet, let yield = slot.yield else { return nil }
+            return "\(slot.ident) \(yield)"
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: "  \u{00B7}  ")
+    }
+}
+
+// MARK: - Workout record sheet
+
+/// The private-workout session, reopened from the WORK slot.
+///
+/// Renders through `WorkoutBatchReportView` in its saved-report mode — the same
+/// card the workouts tab prints for a session filed earlier this cycle, so one
+/// workout reads the same wherever the user opens it. `isSavedReport` is what
+/// suppresses the before → after grade row: the pre-workout band is not stored.
+private struct ProspectWorkoutRecordSheet: View {
+    let entry: WorkoutReportEntry
+    let staffName: String
+    let occasion: String
+    let slotsUsed: Int
+    let slotsLeft: Int
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color.backgroundPrimary.ignoresSafeArea()
+                WorkoutBatchReportView(
+                    batch: WorkoutBatch(
+                        entries: [entry],
+                        staffName: staffName,
+                        occasion: occasion,
+                        slotsUsed: slotsUsed,
+                        slotsLeft: slotsLeft
+                    ),
+                    isSavedReport: true
+                )
+            }
+            .navigationTitle(entry.prospectName)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
     }
 }
 

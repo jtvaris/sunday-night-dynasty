@@ -329,7 +329,7 @@ struct CombineResultsView<Header: View>: View {
                         .tint(Color.accentGold)
                     Text("Loading Combine Results...")
                         .font(.subheadline)
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(Color.textSecondary)
                 }
             } else {
             List {
@@ -613,7 +613,7 @@ struct CombineResultsView<Header: View>: View {
                             .font(.caption)
                         Text("COMBINE FALLERS")
                             .font(.caption.weight(.heavy))
-                            .foregroundStyle(Color.danger)
+                            .foregroundStyle(Color.dangerText)
                     }
 
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -644,14 +644,14 @@ struct CombineResultsView<Header: View>: View {
             VStack(spacing: 1) {
                 // New (current) grade on top — prominent
                 Text(prospect.scoutGrade ?? "--")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(isRiser ? Color.success : Color.danger)
+                    .font(.system(size: DSType.Size.caption, weight: .bold))
+                    .foregroundStyle(isRiser ? Color.success : Color.dangerText)
                 Image(systemName: isRiser ? "arrow.up" : "arrow.down")
                     .font(.system(size: DSType.Size.micro, weight: .bold))
                     .foregroundStyle(isRiser ? Color.success : Color.danger)
                 // Old (pre-combine) grade below — dimmed
                 Text(prospect.preCombineGrade ?? "--")
-                    .font(.system(size: 9))
+                    .font(.system(size: DSType.Size.caption))
                     .foregroundStyle(Color.textTertiary)
             }
         }
@@ -903,7 +903,7 @@ struct CombineResultsView<Header: View>: View {
 
             // Chevron for row navigation
             Image(systemName: "chevron.right")
-                .font(.system(size: 10, weight: .semibold))
+                .font(.system(size: DSType.Size.micro, weight: .semibold))
                 .foregroundStyle(Color.textTertiary)
                 .frame(width: CombineW.chevron)
         }
@@ -940,7 +940,7 @@ struct CombineResultsView<Header: View>: View {
 
             if prospect.combineMediaMention != nil {
                 Image(systemName: "megaphone.fill")
-                    .font(.system(size: 9))
+                    .font(.system(size: DSType.Size.micro))
                     .foregroundStyle(isNegativeMediaMention(prospect.combineMediaMention!) ? Color.danger : Color.accentGold)
                     .onTapGesture {
                         mediaPopoverProspectID = mediaPopoverProspectID == prospect.id ? nil : prospect.id
@@ -1089,9 +1089,9 @@ struct CombineResultsView<Header: View>: View {
         let reports = ScoutEvaluationBudget.chargeableReports(prospect)
         return Group {
             Text("\(reports)/\(ScoutEvaluationBudget.maxReportsPerProspect)")
-                .font(.system(size: 10, weight: .bold).monospacedDigit())
+                .font(.system(size: DSType.Size.micro, weight: .bold).monospacedDigit())
                 .foregroundStyle(reports == 0
-                                 ? Color.textTertiary.opacity(0.5)
+                                 ? Color.textTertiary
                                  : (reports >= 2 ? Color.success : Color.accentBlue))
                 .frame(width: CombineW.reports)
 
@@ -1167,7 +1167,7 @@ struct CombineResultsView<Header: View>: View {
         case .unknown:     text = "--";         tint = .textTertiary
         }
         return Text(text)
-            .font(.system(size: 8, weight: .bold))
+            .font(.system(size: DSType.Size.micro, weight: .bold))
             .foregroundStyle(risk == .unknown ? tint : .white)
             .lineLimit(1)
             .minimumScaleFactor(0.7)
@@ -1209,7 +1209,7 @@ struct CombineResultsView<Header: View>: View {
     private var emptyState: some View {
         VStack(spacing: 20) {
             Image(systemName: "figure.run")
-                .font(.system(size: 52))
+                .font(.system(size: DSType.Size.hero))
                 .foregroundStyle(Color.textTertiary)
 
             Text(emptyStateTitle)
@@ -1271,7 +1271,7 @@ struct CombineResultsView<Header: View>: View {
         let split = ScoutingEngine.splitTaggedMention(mention)
         return VStack(alignment: .leading, spacing: 6) {
             Text(split.category.uppercased())
-                .font(.system(size: 9, weight: .heavy))
+                .font(.system(size: DSType.Size.caption, weight: .heavy))
                 .foregroundStyle(Color.textTertiary)
 
             Text("\"\(split.headline)\"")
@@ -1292,7 +1292,7 @@ struct CombineResultsView<Header: View>: View {
         let participation = ScoutingEngine.combineParticipation(for: prospect)
         return VStack(alignment: .leading, spacing: 6) {
             Text(participation.badge ?? "DNP")
-                .font(.system(size: 9, weight: .heavy))
+                .font(.system(size: DSType.Size.caption, weight: .heavy))
                 .foregroundStyle(Color.warning)
 
             Text(participation.reason ?? "")
@@ -1301,7 +1301,7 @@ struct CombineResultsView<Header: View>: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             Text("Send a scout to his pro day to get the missing numbers.")
-                .font(.system(size: 10))
+                .font(.system(size: DSType.Size.footnote))
                 .foregroundStyle(Color.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }

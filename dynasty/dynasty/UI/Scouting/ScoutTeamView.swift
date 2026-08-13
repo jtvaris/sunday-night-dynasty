@@ -107,7 +107,7 @@ struct ScoutTeamView: View {
                                     .foregroundStyle(Color.textSecondary)
                                 Text(remainingScoutBudget >= 0 ? "(\(formattedRemaining) left)" : "(\(formattedRemaining) over)")
                                     .font(.caption.weight(.semibold))
-                                    .foregroundStyle(remainingScoutBudget >= 0 ? Color.success : Color.danger)
+                                    .foregroundStyle(remainingScoutBudget >= 0 ? Color.success : Color.dangerText)
                                 Spacer()
                                 if let spec = dominantSpecialization {
                                     Text("\(spec.rawValue) Specialist: +10% accuracy on \(spec.rawValue) evaluations")
@@ -300,7 +300,7 @@ struct ScoutTeamView: View {
             HStack {
                 Spacer()
                 Text("Focus: position/attribute boosts accuracy \u{00B7} Watch: Top 50/150 targets get more weekly visits")
-                    .font(.system(size: 9))
+                    .font(.system(size: DSType.Size.caption))
                     .foregroundStyle(Color.textTertiary)
                     .frame(minWidth: 260, alignment: .center)
             }
@@ -313,7 +313,7 @@ struct ScoutTeamView: View {
     private var emptyState: some View {
         VStack(spacing: 20) {
             Image(systemName: "person.3")
-                .font(.system(size: 52))
+                .font(.system(size: DSType.Size.hero))
                 .foregroundStyle(Color.textTertiary)
 
             Text("No Scouts on Staff")
@@ -364,7 +364,7 @@ struct ScoutTableRow: View {
         let diff = averageRating - salaryTier
         if diff >= 5 { return ("Great", Color.success) }
         if diff >= -5 { return ("Fair", Color.accentGold) }
-        return ("Overpaid", Color.danger)
+        return ("Overpaid", Color.dangerText)
     }
 
     // MARK: - Qualitative Labels (#33)
@@ -373,7 +373,7 @@ struct ScoutTableRow: View {
         if value >= 80 { return ("Elite", Color.success) }
         if value >= 70 { return ("Good", Color.accentBlue) }
         if value >= 55 { return ("Avg", Color.accentGold) }
-        return ("Low", Color.danger)
+        return ("Low", Color.dangerText)
     }
 
     var body: some View {
@@ -391,14 +391,14 @@ struct ScoutTableRow: View {
                     .foregroundStyle(Color.textPrimary)
                     .lineLimit(1)
                 Text("\(scout.experience) yr exp")
-                    .font(.system(size: 9))
+                    .font(.system(size: DSType.Size.caption))
                     .foregroundStyle(Color.textTertiary)
             }
             .frame(minWidth: 100, alignment: .leading)
 
             // Specialization position
             Text(scout.positionSpecialization?.rawValue ?? "GEN")
-                .font(.system(size: 10, weight: .bold))
+                .font(.system(size: DSType.Size.caption, weight: .bold))
                 .foregroundStyle(scout.positionSpecialization != nil ? Color.accentBlue : Color.textTertiary)
                 .frame(width: 40, alignment: .center)
 
@@ -428,8 +428,9 @@ struct ScoutTableRow: View {
 
             // Value indicator (#31)
             Text(valueRating.label)
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: DSType.Size.caption, weight: .bold))
                 .foregroundStyle(valueRating.color)
+                .lineLimit(1)
                 .frame(width: 52, alignment: .center)
 
             Spacer(minLength: 4)
@@ -444,7 +445,7 @@ struct ScoutTableRow: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "mappin.circle.fill")
-                            .font(.system(size: 10))
+                            .font(.system(size: DSType.Size.micro))
                         Text(scout.focusPosition?.rawValue ?? "All Pos.")
                             .font(.caption.weight(.semibold))
                         Image(systemName: "chevron.down")
@@ -472,7 +473,7 @@ struct ScoutTableRow: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: scout.focusAttribute?.icon ?? "gearshape")
-                            .font(.system(size: 10))
+                            .font(.system(size: DSType.Size.micro))
                         Text(scout.focusAttribute?.label ?? "General")
                             .font(.caption.weight(.semibold))
                         Image(systemName: "chevron.down")
@@ -502,7 +503,7 @@ struct ScoutTableRow: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: scout.assignmentPool?.icon ?? "globe.americas")
-                            .font(.system(size: 10))
+                            .font(.system(size: DSType.Size.micro))
                         Text(scout.assignmentPool?.label ?? "Region")
                             .font(.caption.weight(.semibold))
                         Image(systemName: "chevron.down")
@@ -541,7 +542,7 @@ struct ScoutTableRow: View {
                 .foregroundStyle(Color.forRating(value))
             Text(qual.text)
                 .font(.system(size: DSType.Size.micro))
-                .foregroundStyle(qual.color.opacity(0.8))
+                .foregroundStyle(qual.color)
         }
     }
 

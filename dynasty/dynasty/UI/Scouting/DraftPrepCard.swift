@@ -383,12 +383,12 @@ struct DraftPrepCard: View {
                     }
                     if isExpanded {
                         Text(phaseSubtitle)
-                            .font(.system(size: 9))
+                            .font(.system(size: DSType.Size.caption))
                             .foregroundStyle(Color.textTertiary)
                             .lineLimit(1)
                     } else {
                         Text(collapsedSummary(snapshot))
-                            .font(.system(size: 9))
+                            .font(.system(size: DSType.Size.caption))
                             .foregroundStyle(Color.textTertiary)
                             .lineLimit(1)
                     }
@@ -396,14 +396,14 @@ struct DraftPrepCard: View {
                 Spacer()
                 if !snapshot.attention.isEmpty {
                     Text("\(snapshot.attention.count)")
-                        .font(.system(size: 9, weight: .heavy).monospacedDigit())
+                        .font(.system(size: DSType.Size.micro, weight: .heavy).monospacedDigit())
                         .foregroundStyle(Color.backgroundPrimary)
                         .frame(width: 15, height: 15)
                         .background(Circle().fill(Color.warning))
                         .accessibilityLabel("\(snapshot.attention.count) items need attention")
                 }
                 Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: DSType.Size.micro, weight: .bold))
                     .foregroundStyle(Color.textTertiary)
             }
             .padding(.horizontal, 12)
@@ -501,10 +501,10 @@ struct DraftPrepCard: View {
         VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: 4) {
                 Image(systemName: icon)
-                    .font(.system(size: 9))
+                    .font(.system(size: DSType.Size.micro))
                     .foregroundStyle(tint)
                 Text(value)
-                    .font(.system(size: 12, weight: .heavy).monospacedDigit())
+                    .font(.system(size: DSType.Size.footnote, weight: .heavy).monospacedDigit())
                     .foregroundStyle(tint)
             }
             Text(label)
@@ -537,10 +537,10 @@ struct DraftPrepCard: View {
             if items.isEmpty {
                 HStack(spacing: 6) {
                     Image(systemName: "checkmark.seal.fill")
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.micro))
                         .foregroundStyle(Color.success)
                     Text(emptyAttentionCopy(snapshot.coverage))
-                        .font(.system(size: 10))
+                        .font(.system(size: DSType.Size.caption))
                         .foregroundStyle(Color.textSecondary)
                 }
                 .padding(.vertical, 3)
@@ -581,16 +581,16 @@ struct DraftPrepCard: View {
     private func attentionRowLabel(_ item: AttentionItem, prospect: CollegeProspect?) -> some View {
         HStack(spacing: 7) {
             Image(systemName: item.icon)
-                .font(.system(size: 10))
+                .font(.system(size: DSType.Size.micro))
                 .foregroundStyle(item.tint)
                 .frame(width: 14)
             VStack(alignment: .leading, spacing: 0) {
                 Text(item.title)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: DSType.Size.caption, weight: .semibold))
                     .foregroundStyle(Color.textPrimary)
                     .lineLimit(1)
                 Text(item.detail)
-                    .font(.system(size: 9))
+                    .font(.system(size: DSType.Size.caption))
                     .foregroundStyle(Color.textTertiary)
                     .lineLimit(1)
             }

@@ -105,7 +105,7 @@ struct DraftOrderView: View {
                         .tint(Color.accentGold)
                     Text("Loading Draft Order...")
                         .font(.subheadline)
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(Color.textSecondary)
                 }
             } else {
             VStack(spacing: 0) {
@@ -288,11 +288,11 @@ struct DraftOrderView: View {
                 ForEach(userPicks) { pick in
                     VStack(spacing: 2) {
                         Text("#\(pick.pickNumber)")
-                            .font(.system(size: 14, weight: .heavy).monospacedDigit())
+                            .font(.system(size: DSType.Size.body, weight: .heavy).monospacedDigit())
                             .foregroundStyle(Color.accentGold)
 
                         Text("Rd \(pick.round)")
-                            .font(.system(size: 9, weight: .semibold))
+                            .font(.system(size: DSType.Size.caption, weight: .semibold))
                             .foregroundStyle(Color.textSecondary)
 
                         if pick.originalTeamID != pick.currentTeamID,
@@ -344,7 +344,7 @@ struct DraftOrderView: View {
             // Pick number with value indicator
             VStack(spacing: 1) {
                 Text("\(pick.pickNumber)")
-                    .font(.system(size: 16, weight: .heavy).monospacedDigit())
+                    .font(.system(size: DSType.Size.callout, weight: .heavy).monospacedDigit())
                     .foregroundStyle(isUserPick ? Color.accentGold : Color.textPrimary)
 
                 // Pick value indicator
@@ -356,7 +356,7 @@ struct DraftOrderView: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(team?.abbreviation ?? "???")
-                        .font(.system(size: 13, weight: .bold))
+                        .font(.system(size: DSType.Size.body, weight: .bold))
                         .foregroundStyle(isUserPick ? Color.accentGold : Color.textPrimary)
                         .frame(width: 38, height: 24)
                         .background(
@@ -403,7 +403,7 @@ struct DraftOrderView: View {
                                 .font(.system(size: DSType.Size.micro))
                                 .foregroundStyle(Color.accentBlue)
                             Text("Originally: \(origAbbr) \u{2192} \(currentAbbr)")
-                                .font(.system(size: 9, weight: .semibold))
+                                .font(.system(size: DSType.Size.caption, weight: .semibold))
                                 .foregroundStyle(Color.accentBlue)
                         }
                     }
@@ -431,7 +431,7 @@ struct DraftOrderView: View {
             // trade market actually charges, so this screen speaks the same
             // language as the war room and the Trade Center (decision §7.1).
             Text("\(pickValueLabel(pickNumber: pick.pickNumber)) · \(PickValueChart.points(forPick: pick.pickNumber))")
-                .font(.system(size: 9, weight: .semibold).monospacedDigit())
+                .font(.system(size: DSType.Size.caption, weight: .semibold).monospacedDigit())
                 .foregroundStyle(pickValueColor(pickNumber: pick.pickNumber))
                 .padding(.horizontal, 6)
                 .padding(.vertical, 3)
@@ -527,7 +527,7 @@ struct DraftOrderView: View {
     private var emptyState: some View {
         VStack(spacing: 20) {
             Image(systemName: "list.number")
-                .font(.system(size: 52))
+                .font(.system(size: DSType.Size.hero))
                 .foregroundStyle(Color.textTertiary)
 
             Text("No Draft Picks Available")
@@ -629,7 +629,7 @@ struct NextYearClassSection: View {
     private func nextYearProspectRow(rank: Int, prospect: ScoutingEngine.NextYearProspect) -> some View {
         HStack(spacing: 10) {
             Text("\(rank)")
-                .font(.system(size: 14, weight: .heavy).monospacedDigit())
+                .font(.system(size: DSType.Size.body, weight: .heavy).monospacedDigit())
                 .foregroundStyle(rank <= 3 ? Color.accentGold : Color.textTertiary)
                 .frame(width: 28, alignment: .trailing)
 

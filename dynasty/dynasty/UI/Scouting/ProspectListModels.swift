@@ -163,7 +163,9 @@ enum ProspectRoundFormat {
 /// arrows means something.
 struct ProspectMarketArrow: View {
     let prospect: CollegeProspect
-    var font: Font = .system(size: 9, weight: .heavy)
+    // 11 pt condensed, the same voice as the grade-change arrow it sits beside
+    // in the projection column — the rounds moved are a number the user reads.
+    var font: Font = DSType.display(DSType.Size.caption, .heavy)
 
     var body: some View {
         if let move = prospect.marketMove, move != 0 {
@@ -210,8 +212,9 @@ struct ProspectDeclarationChip: View {
 
     private func chip(_ text: String, _ color: Color) -> some View {
         Text(text)
-            .font(.system(size: 7, weight: .bold))
+            .font(.system(size: DSType.Size.caption, weight: .bold))
             .foregroundStyle(color)
+            .lineLimit(1)
             .padding(.horizontal, 3)
             .padding(.vertical, 1)
             .overlay(
@@ -332,7 +335,8 @@ struct ProspectCompareSheet: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                 Text(read.source.label.uppercased())
-                    .font(.system(size: 7, weight: .bold))
+                    .font(.system(size: DSType.Size.caption, weight: .bold))
+                    .lineLimit(1)
                     .foregroundStyle(Color.textTertiary)
             }
             .accessibilityElement(children: .ignore)
@@ -371,7 +375,7 @@ struct ProspectCompareSheet: View {
     private func compareRowView(row: CompareRow) -> some View {
         HStack(spacing: 6) {
             Text(row.label)
-                .font(.system(size: 9, weight: .heavy))
+                .font(.system(size: DSType.Size.caption, weight: .heavy))
                 .foregroundStyle(Color.textTertiary)
                 .frame(width: 66, alignment: .leading)
             ForEach(Array(row.values.enumerated()), id: \.offset) { index, value in
@@ -552,7 +556,14 @@ struct ProspectCompareSheet: View {
 
     private var scoutingRows: [CompareRow] {
         [
-            row("REPORTS", { "\($0.scoutReportCount)" }, score: { $0.scoutReportCount }),
+            // #184: OUR reports, not the class's paper. `scoutingReports` also
+            // carries the inherited `Previous Staff` row `applyPreScoutedData`
+            // stamps on ~250 men before day one — a raw tally here printed
+            // "REPORTS 1" beside a card that says "Unscouted", and credited
+            // this building for the previous regime's looks.
+            row("REPORTS",
+                { "\(ProspectFog.ownReportCount($0))" },
+                score: { ProspectFog.ownReportCount($0) }),
             row("INTERVIEW", { $0.interviewCompleted ? "Yes" : "No" },
                 score: { $0.interviewCompleted ? 1 : 0 }),
             row("PRO DAY", { $0.proDayCompleted ? "Yes" : "No" },

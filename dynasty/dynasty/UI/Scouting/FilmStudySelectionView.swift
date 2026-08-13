@@ -540,7 +540,9 @@ struct FilmStudySelectionView<Board: View>: View {
                     .tint(Color.accentGold)
                 Text("Loading Film Study...")
                     .font(.subheadline)
-                    .foregroundColor(.secondary)
+                    // `.secondary` resolves against the system's light scheme
+                    // here and lands ~3:1 on the midnight ground.
+                    .foregroundStyle(Color.textSecondary)
             }
         }
     }
@@ -583,9 +585,9 @@ struct FilmStudySelectionView<Board: View>: View {
                 Button(action: onDismiss) {
                     HStack(spacing: 8) {
                         Image(systemName: "chevron.left")
-                            .font(.system(size: 13, weight: .bold))
+                            .font(.system(size: DSType.Size.body, weight: .bold))
                         Text(dismissTitle)
-                            .font(.system(size: 14, weight: .bold))
+                            .font(.system(size: DSType.Size.body, weight: .bold))
                     }
                     .foregroundStyle(Color.backgroundPrimary)
                     .frame(maxWidth: .infinity)
@@ -757,10 +759,10 @@ struct FilmStudySelectionView<Board: View>: View {
 
             HStack(spacing: 4) {
                 Image(systemName: "sparkles")
-                    .font(.system(size: 9))
+                    .font(.system(size: DSType.Size.caption))
                     .foregroundStyle(Color.accentGold)
                 Text("Reveals: overall band \u{00B7} all eight mental grades \u{00B7} every position skill \u{00B7} strengths, weaknesses and a personality read")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: DSType.Size.footnote, weight: .medium))
                     .foregroundStyle(Color.textTertiary)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
@@ -768,7 +770,7 @@ struct FilmStudySelectionView<Board: View>: View {
 
             if let leadScoutName {
                 Text("Sessions run by \(leadScoutName) \u{00B7} \(occasionLabel)")
-                    .font(.system(size: 9))
+                    .font(.system(size: DSType.Size.footnote))
                     .foregroundStyle(Color.textTertiary)
             }
 
@@ -799,8 +801,8 @@ struct FilmStudySelectionView<Board: View>: View {
             withAnimation(.easeInOut(duration: 0.15)) { surface = target }
         } label: {
             HStack(spacing: 3) {
-                Image(systemName: icon).font(.system(size: 9))
-                Text(label).font(.system(size: 10, weight: .bold))
+                Image(systemName: icon).font(.system(size: DSType.Size.micro))
+                Text(label).font(.system(size: DSType.Size.caption, weight: .bold))
             }
             .foregroundStyle(isSelected ? Color.backgroundPrimary : Color.textSecondary)
             .padding(.horizontal, 9)
@@ -931,9 +933,9 @@ struct FilmStudySelectionView<Board: View>: View {
                 } label: {
                     HStack(spacing: 3) {
                         Image(systemName: "doc.text.magnifyingglass")
-                            .font(.system(size: 9))
+                            .font(.system(size: DSType.Size.caption))
                         Text("View Report (\(filedCache.count))")
-                            .font(.system(size: 10, weight: .bold))
+                            .font(.system(size: DSType.Size.footnote, weight: .bold))
                     }
                     .foregroundStyle(Color.accentGold)
                     .padding(.horizontal, 8)
@@ -985,7 +987,7 @@ struct FilmStudySelectionView<Board: View>: View {
                 .tracking(0.5)
             if let subtitle {
                 Text(subtitle)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: DSType.Size.footnote, weight: .medium))
                     .foregroundStyle(Color.textTertiary)
             }
         }
@@ -1023,7 +1025,10 @@ struct FilmStudySelectionView<Board: View>: View {
             }
             Text("NEXT").frame(width: 48, alignment: .trailing)
         }
-        .font(.system(size: 9, weight: .heavy))
+        // The display voice at its 11 pt floor — the same font
+        // `ProspectColumns.headers` sets on the block between the pinned
+        // columns, so the two halves of one header row read as one row.
+        .font(DSType.display(11, .heavy))
         .foregroundStyle(Color.textTertiary)
         .padding(.vertical, 6)
         .padding(.horizontal, 4)
@@ -1176,7 +1181,7 @@ struct FilmStudySelectionView<Board: View>: View {
                 Image(systemName: canAct ? "film.fill" : "lock.fill")
                     .font(.system(size: 14, weight: .bold))
                 Text(reason ?? "Order Film Study (\(selectedIDs.count)) \u{2014} $\(selectedSpend)K")
-                    .font(.system(size: 15, weight: .bold))
+                    .font(.system(size: DSType.Size.callout, weight: .bold))
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
             }
@@ -1524,10 +1529,10 @@ struct FilmStudyBatchReportView: View {
     private func summaryPill(icon: String, text: String, color: Color) -> some View {
         HStack(spacing: 4) {
             Image(systemName: icon)
-                .font(.system(size: 9))
+                .font(.system(size: DSType.Size.caption))
                 .foregroundStyle(color)
             Text(text)
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: DSType.Size.caption, weight: .medium))
                 .foregroundStyle(color)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
@@ -1548,7 +1553,7 @@ struct FilmStudyBatchReportView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text(entry.prospectName)
-                            .font(.system(size: 15, weight: .bold))
+                            .font(.system(size: DSType.Size.callout, weight: .bold))
                             .foregroundStyle(Color.textPrimary)
                         Text(entry.position.rawValue)
                             .font(.system(size: 11, weight: .bold))
@@ -1568,7 +1573,7 @@ struct FilmStudyBatchReportView: View {
                 // interview report puts its letter.
                 VStack(spacing: 1) {
                     Text(entry.bandAfter?.displayText ?? "\u{2014}")
-                        .font(.system(size: 20, weight: .heavy))
+                        .font(.system(size: DSType.Size.title2, weight: .heavy))
                         .foregroundStyle(gradeColor(entry.bandAfter))
                         .lineLimit(1)
                         .minimumScaleFactor(0.6)
@@ -1615,7 +1620,7 @@ struct FilmStudyBatchReportView: View {
             }
 
             Text("Filed by \(entry.scoutName)")
-                .font(.system(size: DSType.Size.micro, weight: .medium))
+                .font(.system(size: DSType.Size.footnote, weight: .medium))
                 .foregroundStyle(Color.textTertiary)
         }
         .padding(12)
@@ -1636,10 +1641,10 @@ struct FilmStudyBatchReportView: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 4) {
                 Image(systemName: icon)
-                    .font(.system(size: 9))
+                    .font(.system(size: DSType.Size.caption))
                     .foregroundStyle(tint)
                 Text(title)
-                    .font(.system(size: 10, weight: .heavy))
+                    .font(.system(size: DSType.Size.caption, weight: .heavy))
                     .foregroundStyle(tint)
                     .tracking(0.3)
             }

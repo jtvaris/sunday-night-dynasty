@@ -519,6 +519,12 @@ enum CareerScopedDefaults {
         // state, so a deleted save must not leave a "already repaired" stamp
         // behind for the next career that reuses the slot.
         "prospectBandRepairVersion",
+        // `ProDayTourReceiptStore.defaultsKey` (#189) — what the club's own
+        // pro-day circuit brought home this cycle, and the marker that it ran
+        // at all. Season-stamped, so it expires on its own; listed here so a
+        // deleted save cannot hand a new career a circuit it never sent, with
+        // the stage's one-shot gate already spent.
+        "proDayTourReceipt",
         "scoutingPendingTab",
         // #162 — the same one-shot tab hint for `CoachingStaffView`, written by
         // `CareerShellView.handleTaskNavigation` and cleared by the view. Listed

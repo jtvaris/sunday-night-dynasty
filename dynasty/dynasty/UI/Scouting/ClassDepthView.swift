@@ -230,11 +230,18 @@ struct ClassDepthTierCounts {
 enum ClassDepthVerdict: String {
     case thin, average, deep
 
-    var label: String {
+    /// The one word the row prints, as the right half of the labeled pair
+    /// "Class depth: Deep".
+    ///
+    /// Title case, not shouted. The row carries THREE different claims — the
+    /// quality of the top, the size of the pool, and the club's own hole — and
+    /// an ALL-CAPS verdict beside two sentence-case ones reads as the only one
+    /// that matters, which is exactly the confusion #179 was filed about.
+    var word: String {
         switch self {
-        case .thin:    return "THIN"
-        case .average: return "AVERAGE"
-        case .deep:    return "DEEP"
+        case .thin:    return "Thin"
+        case .average: return "Average"
+        case .deep:    return "Deep"
         }
     }
 
@@ -258,20 +265,24 @@ enum ClassDepthVerdict: String {
     }
 }
 
-/// What the top of this group looks like, said WITHOUT counts. The row never
-/// prints how many draftable men a group carries \u{2014} a media projection is not
-/// precise enough to justify a number, and an exact count would hand the user
-/// a draft-strategy table nobody in a real building gets before the combine.
-/// Depth and top-end quality as words is the honest resolution.
+/// What the top of this group looks like \u{2014} a QUALITY read, not a volume one.
+///
+/// It used to be the row's only word ("Strong at the top") sitting beside an
+/// unlabelled DEEP/THIN pill, and the two read as competing verdicts on the same
+/// question. They are not: this one answers "is there a man here worth the
+/// fourth pick", and ``ClassDepthVerdict`` answers "how many bodies are there".
+/// Both are now printed as labeled pairs so the difference is on the screen
+/// rather than in this comment.
 enum ClassDepthTopEnd {
     case strong, fair, weak, empty
 
-    var phrase: String {
+    /// The right half of the labeled pair "Top end: Strong".
+    var word: String {
         switch self {
-        case .strong: return "Strong at the top"
-        case .fair:   return "Fair at the top"
-        case .weak:   return "Weak at the top"
-        case .empty:  return "No top-end talent"
+        case .strong: return "Strong"
+        case .fair:   return "Fair"
+        case .weak:   return "Weak"
+        case .empty:  return "None"
         }
     }
 
@@ -360,8 +371,8 @@ struct ClassDepthView: View {
     /// The declaration header — declared / early entries / returned / Showcase
     /// reports, plus the sentence that reads them — is this surface's insight: a
     /// once-a-January orientation over a screen whose actual content is the nine
-    /// depth bars. It folds with the hub's chevron so the bars start at the top
-    /// on every visit after the first.
+    /// position-group rows. It folds with the hub's chevron so the rows start at
+    /// the top on every visit after the first.
     var insightsExpanded: Bool = true
     /// Hands the user to the Big Board with the group already filtered. The
     /// depth read is a scan; the board is where he works.
@@ -391,7 +402,7 @@ struct ClassDepthView: View {
                         .tint(Color.accentGold)
                     Text("Reading the class...")
                         .font(.subheadline)
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(Color.textSecondary)
                 }
             } else if rows.isEmpty {
                 emptyState
@@ -511,10 +522,10 @@ struct ClassDepthView: View {
     private func summaryTile(value: String, label: String, tint: Color) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             Text(value)
-                .font(.system(size: 20, weight: .black).monospacedDigit())
+                .font(.system(size: DSType.Size.title2, weight: .black).monospacedDigit())
                 .foregroundStyle(tint)
             Text(label)
-                .font(.system(size: 9, weight: .semibold))
+                .font(.system(size: DSType.Size.caption, weight: .semibold))
                 .foregroundStyle(Color.textTertiaryReadable)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -541,21 +552,22 @@ struct ClassDepthView: View {
     // MARK: - Position rows
 
     private func groupRow(_ row: ClassDepthRow) -> some View {
-        // NINE bars, EIGHT chips (#142). `ProspectPositionFilter` has no K/P
-        // case and is not getting one: it is the hub's shared filter and a tenth
-        // chip would land on the Big Board, the combine table, the film list and
-        // the workout list, all of which exist to rank draftable football
-        // players. See ``ClassDepthGroup`` for the whole argument.
+        // NINE rows, EIGHT position chips (#142). `ProspectPositionFilter` has
+        // no K/P case and is not getting one: it is the hub's shared filter and
+        // a tenth chip would land on the Big Board, the combine table, the film
+        // list and the workout list, all of which exist to rank draftable
+        // football players. See ``ClassDepthGroup`` for the whole argument.
         //
-        // So the specialists' bar is a READ, not a door — and it is drawn as
+        // So the specialists' row is a READ, not a door — and it is drawn as
         // one. The row carries no tap target and no hint at all rather than a
         // tap that silently does nothing: an affordance that promises a filtered
         // board it cannot deliver is worse than no affordance.
         let chip = row.group.chip
         return VStack(alignment: .leading, spacing: 7) {
             groupHeadline(row)
+            signalLine(row)
+            tierChips(row)
             depthBar(row)
-            tierLegend(row)
             topNames(row)
         }
         .padding(.vertical, 4)
@@ -574,10 +586,15 @@ struct ClassDepthView: View {
         .accessibilityHint(chip == nil ? "" : "Opens the Big Board filtered to this group")
     }
 
+    /// WHO the row is about, and how big he is: the position code, the group in
+    /// words, and the size of the declared pool. Nothing on this line is a
+    /// judgement \u{2014} the judgements are the line below it \u{2014} except the club's own
+    /// hole, which is pushed to the far right because it is the only thing here
+    /// that is about the USER's roster rather than about the class.
     private func groupHeadline(_ row: ClassDepthRow) -> some View {
         HStack(spacing: 8) {
             Text(row.group.label)
-                .font(.system(size: 12, weight: .heavy))
+                .font(.system(size: DSType.Size.footnote, weight: .heavy))
                 .foregroundStyle(Color.textPrimary)
                 .frame(width: 38, height: 22)
                 .background(
@@ -585,31 +602,98 @@ struct ClassDepthView: View {
                     in: RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                 )
 
-            Text(row.topEnd.phrase)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(row.topEnd.tint)
+            Text(row.group.longLabel)
+                .font(.system(size: DSType.Size.body, weight: .bold))
+                .foregroundStyle(Color.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
 
-            Spacer(minLength: 0)
+            Text("\(row.counts.total) declared")
+                .font(.system(size: DSType.Size.caption, weight: .semibold).monospacedDigit())
+                .foregroundStyle(Color.textTertiaryReadable)
+                .lineLimit(1)
 
-            chip(row.verdict.label, tint: row.verdict.tint)
-            needChip(row.needLevel)
+            Spacer(minLength: 4)
+
+            needPill(row.needLevel)
         }
     }
 
-    private func tierLegend(_ row: ClassDepthRow) -> some View {
-        HStack(spacing: 10) {
+    /// The two class reads, NAMED. They were a phrase and an unlabelled pill
+    /// ("Strong at the top" \u{2026} DEEP) and read as one verdict arguing with
+    /// itself; labelling each half says which question it answers.
+    private func signalLine(_ row: ClassDepthRow) -> some View {
+        HStack(spacing: 6) {
+            signalPair(label: "Top end", value: row.topEnd.word, tint: row.topEnd.tint)
+            Text("\u{00B7}")
+                .font(.system(size: DSType.Size.caption, weight: .bold))
+                .foregroundStyle(Color.textTertiaryReadable)
+            signalPair(label: "Class depth", value: row.verdict.word, tint: row.verdict.tint)
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func signalPair(label: String, value: String, tint: Color) -> some View {
+        HStack(spacing: 4) {
+            Text("\(label):")
+                .font(.system(size: DSType.Size.caption, weight: .semibold))
+                .foregroundStyle(Color.textTertiaryReadable)
+            Text(value)
+                .font(.system(size: DSType.Size.caption, weight: .heavy))
+                .foregroundStyle(tint)
+        }
+        .lineLimit(1)
+    }
+
+    /// The tier split, as counts.
+    ///
+    /// This is the same four numbers the bar below is drawn from \u{2014} they were
+    /// already on the screen, encoded as segment widths under a legend of four
+    /// coloured dots that said only "this band is non-empty". Two glyphs to say
+    /// less than one number. The chips print the count and drop the legend; the
+    /// bar keeps only the job the chips cannot do, which is the comparison
+    /// against a league-typical intake.
+    private func tierChips(_ row: ClassDepthRow) -> some View {
+        HStack(spacing: 5) {
             ForEach(ClassDepthTier.allCases) { tier in
-                tierKey(tier, present: row.counts.count(tier) > 0)
+                tierChip(tier, count: row.counts.count(tier))
             }
             Spacer(minLength: 0)
         }
+    }
+
+    private func tierChip(_ tier: ClassDepthTier, count: Int) -> some View {
+        // An empty band is still drawn, greyed: "this class has nobody in that
+        // tier" is a scouting read, and a chip that vanishes would make the four
+        // bands land in different places on every row.
+        let present = count > 0
+        return HStack(spacing: 4) {
+            Text(tier.label)
+                .font(.system(size: DSType.Size.caption, weight: .semibold))
+                .foregroundStyle(present ? Color.textSecondary : Color.textTertiaryReadable)
+            Text("\(count)")
+                .font(.system(size: DSType.Size.caption, weight: .heavy).monospacedDigit())
+                .foregroundStyle(present ? tier.tint : Color.textTertiaryReadable)
+        }
+        .lineLimit(1)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(
+            (present ? tier.tint.opacity(0.14) : Color.backgroundTertiary),
+            in: RoundedRectangle(cornerRadius: DSCornerRadius.tight)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DSCornerRadius.tight)
+                .strokeBorder(present ? tier.tint.opacity(0.45) : Color.clear, lineWidth: 1)
+        )
+        .accessibilityHidden(true)
     }
 
     @ViewBuilder
     private func topNames(_ row: ClassDepthRow) -> some View {
         if row.top.isEmpty {
             Text("Nobody in this group is projected to be drafted.")
-                .font(.system(size: 10))
+                .font(.system(size: DSType.Size.footnote))
                 .foregroundStyle(Color.textTertiaryReadable)
         } else {
             VStack(spacing: 3) {
@@ -628,57 +712,58 @@ struct ClassDepthView: View {
     /// somewhere to grow into instead of pinning it at the end.
     private static let barHeadroom: Double = 1.5
 
+    /// The bar is now SECONDARY \u{2014} thinner, and under the chips that carry the
+    /// numbers. Its one remaining job is the tick: the counts say how many, and
+    /// only the tick says how many a league-typical class carries. It is labeled
+    /// now, because an unexplained hairline standing in a bar is a puzzle rather
+    /// than a baseline.
     private func depthBar(_ row: ClassDepthRow) -> some View {
         let track = Self.barTrack
         let ceiling = max(1.0, row.expectedDraftable * Self.barHeadroom)
         let filled = min(track, CGFloat(Double(row.counts.draftable) / ceiling) * track)
         let draftable = max(1, row.counts.draftable)
+        let tickX = track / CGFloat(Self.barHeadroom)
         func segment(_ count: Int) -> CGFloat {
             guard row.counts.draftable > 0 else { return 0 }
             return filled * CGFloat(Double(count) / Double(draftable))
         }
-        return ZStack(alignment: .leading) {
-            RoundedRectangle(cornerRadius: 4)
-                .fill(Color.backgroundTertiary)
-                .frame(width: track, height: 8)
+        return VStack(alignment: .leading, spacing: 1) {
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(Color.backgroundTertiary)
+                    .frame(width: track, height: 6)
 
-            HStack(spacing: 0) {
+                HStack(spacing: 0) {
+                    Rectangle()
+                        .fill(ClassDepthTier.blueChip.tint)
+                        .frame(width: segment(row.counts.blueChip))
+                    Rectangle()
+                        .fill(ClassDepthTier.roundOneTwo.tint)
+                        .frame(width: segment(row.counts.roundOneTwo))
+                    Rectangle()
+                        .fill(ClassDepthTier.roundThreeFive.tint)
+                        .frame(width: segment(row.counts.roundThreeFive))
+                }
+                .frame(height: 6)
+                .clipShape(RoundedRectangle(cornerRadius: 3))
+
+                // Where a league-typical class would have reached.
                 Rectangle()
-                    .fill(ClassDepthTier.blueChip.tint)
-                    .frame(width: segment(row.counts.blueChip))
-                Rectangle()
-                    .fill(ClassDepthTier.roundOneTwo.tint)
-                    .frame(width: segment(row.counts.roundOneTwo))
-                Rectangle()
-                    .fill(ClassDepthTier.roundThreeFive.tint)
-                    .frame(width: segment(row.counts.roundThreeFive))
+                    .fill(Color.textPrimary.opacity(0.75))
+                    .frame(width: 1.5, height: 12)
+                    .offset(x: tickX)
             }
-            .frame(height: 8)
-            .clipShape(RoundedRectangle(cornerRadius: 4))
+            .frame(width: track, height: 12, alignment: .leading)
 
-            // Where a league-typical class would have reached.
-            Rectangle()
-                .fill(Color.textPrimary.opacity(0.75))
-                .frame(width: 1.5, height: 14)
-                .offset(x: track / CGFloat(Self.barHeadroom))
+            // Sits immediately to the right of the tick, so it names the line
+            // rather than the end of the bar.
+            Text("lg avg")
+                .font(.system(size: DSType.Size.micro, weight: .semibold))
+                .foregroundStyle(Color.textTertiaryReadable)
+                .fixedSize()
+                .offset(x: tickX + 3)
         }
-        .frame(width: track, height: 14, alignment: .leading)
-        .accessibilityHidden(true)
-    }
-
-    /// Colour key for the bar's segments \u{2014} presence only, never a count. A dim
-    /// dot says "this class has nobody in that band", which is a scouting read;
-    /// a number would be a spreadsheet the media board can't actually back.
-    private func tierKey(_ tier: ClassDepthTier, present: Bool) -> some View {
-        HStack(spacing: 3) {
-            Circle()
-                .fill(present ? tier.tint : tier.tint.opacity(0.25))
-                .frame(width: 6, height: 6)
-            Text(tier.label)
-                .font(.system(size: 9))
-                .foregroundStyle(present ? Color.textSecondary : Color.textTertiaryReadable)
-                .lineLimit(1)
-        }
+        .frame(width: track, alignment: .leading)
         .accessibilityHidden(true)
     }
 
@@ -688,7 +773,7 @@ struct ClassDepthView: View {
             ProspectSelectionPositionBadge(position: prospect.position)
 
             Text(prospect.fullName)
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: DSType.Size.footnote, weight: .semibold))
                 .foregroundStyle(Color.textPrimary)
                 .lineLimit(1)
 
@@ -716,7 +801,7 @@ struct ClassDepthView: View {
         let read = ProspectFog.read(prospect)
         let isScouted = read.source == .scouts
         return Text(isScouted ? read.text : ProspectRoundFormat.projectedRoundText(for: prospect.draftProjection))
-            .font(.system(size: 11, weight: .heavy))
+            .font(.system(size: DSType.Size.caption, weight: .heavy))
             .foregroundStyle(isScouted ? Color.accentGold : Color.textTertiaryReadable)
             .lineLimit(1)
             .minimumScaleFactor(0.7)
@@ -730,28 +815,30 @@ struct ClassDepthView: View {
 
     // MARK: - Small parts
 
-    private func chip(_ text: String, tint: Color) -> some View {
-        Text(text)
-            .font(.system(size: 9, weight: .heavy))
-            .foregroundStyle(tint)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .overlay(
-                RoundedRectangle(cornerRadius: 3)
-                    .strokeBorder(tint.opacity(0.5), lineWidth: 1)
-            )
-    }
-
-    private func needChip(_ level: String) -> some View {
-        let tint: Color = level == "High" ? .danger : (level == "Med" ? .warning : .success)
-        return HStack(spacing: 3) {
-            Text("NEED")
-                .font(.system(size: 8, weight: .semibold))
+    /// The club's own hole at this group.
+    ///
+    /// Says YOUR NEED, not NEED. Two of the three reads on this row are about
+    /// the CLASS and this one is about the user's roster; a bare "NEED HIGH"
+    /// beside "Class depth: Thin" invited reading both as the same complaint.
+    /// The bordered pill and the possessive word separate them.
+    private func needPill(_ level: String) -> some View {
+        let tint: Color = level == "High" ? .dangerText : (level == "Med" ? .warning : .success)
+        return HStack(spacing: 4) {
+            Text("YOUR NEED")
+                .font(.system(size: DSType.Size.micro, weight: .semibold))
                 .foregroundStyle(Color.textTertiaryReadable)
             Text(level.uppercased())
-                .font(.system(size: 9, weight: .heavy))
+                .font(.system(size: DSType.Size.caption, weight: .heavy))
                 .foregroundStyle(tint)
         }
+        .lineLimit(1)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .overlay(
+            RoundedRectangle(cornerRadius: DSCornerRadius.tight)
+                .strokeBorder(tint.opacity(0.45), lineWidth: 1)
+        )
+        .accessibilityHidden(true)
     }
 
     private func sectionHeader(_ title: String, systemImage: String, tint: Color) -> some View {
@@ -762,7 +849,7 @@ struct ClassDepthView: View {
     }
 
     private var footnote: some View {
-        Text("Tiers are the MEDIA's projected round \u{2014} public information, and blunt on purpose. Gold grades are your own scouts; a grey \"Rd n\" is a man nobody in your building has filed on. The tick on each bar is what a league-typical class carries at that position.")
+        Text("Tier counts are the MEDIA's projected round \u{2014} public information, and blunt on purpose. \"Top end\" is the quality of the first names; \"Class depth\" is how many draftable bodies there are against the \"lg avg\" tick, what a league-typical class carries at that position. Gold grades are your own scouts; a grey \"Rd n\" is a man nobody in your building has filed on.")
             .font(.caption2)
             .foregroundStyle(Color.textTertiaryReadable)
             .fixedSize(horizontal: false, vertical: true)
@@ -771,7 +858,7 @@ struct ClassDepthView: View {
     private var emptyState: some View {
         VStack(spacing: 16) {
             Image(systemName: "person.3.sequence")
-                .font(.system(size: 48))
+                .font(.system(size: DSType.Size.hero))
                 .foregroundStyle(Color.textTertiary)
             Text("No Draft Class Yet")
                 .font(.title3.weight(.semibold))
@@ -785,9 +872,18 @@ struct ClassDepthView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    /// The row read aloud in the same three named parts the eye gets, plus the
+    /// tier counts \u{2014} which VoiceOver has no other way to reach, since the chips
+    /// and the bar are both hidden from it in favour of this one sentence.
     private func accessibilityText(_ row: ClassDepthRow) -> String {
-        var parts = ["\(row.group.longLabel): \(row.verdict.label.lowercased()) class"]
-        parts.append(row.topEnd.phrase.lowercased())
+        var parts = ["\(row.group.longLabel), \(row.counts.total) declared"]
+        parts.append("top end \(row.topEnd.word.lowercased())")
+        parts.append("class depth \(row.verdict.word.lowercased())")
+        parts.append(
+            ClassDepthTier.allCases
+                .map { "\($0.label) \(row.counts.count($0))" }
+                .joined(separator: ", ")
+        )
         parts.append(row.needLevel == "Set" ? "your roster is stocked here" : "\(row.needLevel) need on your roster")
         return parts.joined(separator: ". ")
     }

@@ -284,7 +284,7 @@ struct Top30VisitsView: View {
     private var lockedState: some View {
         VStack(spacing: 16) {
             Image(systemName: "house.badge.clock")
-                .font(.system(size: 44))
+                .font(.system(size: DSType.Size.hero))
                 .foregroundStyle(Color.textTertiary)
             Text("The Visit Book Is Not Open")
                 .font(.title3.weight(.semibold))
@@ -318,9 +318,9 @@ struct Top30VisitsView: View {
                 Button(action: onDismiss) {
                     HStack(spacing: 8) {
                         Image(systemName: "chevron.left")
-                            .font(.system(size: 13, weight: .bold))
+                            .font(.system(size: DSType.Size.body, weight: .bold))
                         Text(dismissTitle)
-                            .font(.system(size: 14, weight: .bold))
+                            .font(.system(size: DSType.Size.body, weight: .bold))
                     }
                     .foregroundStyle(Color.backgroundPrimary)
                     .frame(maxWidth: .infinity)
@@ -451,7 +451,7 @@ struct Top30VisitsView: View {
                 .frame(height: 6)
 
                 Text("A visit opens the medical, the character file and a revised football IQ. It costs a slot and no money.")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: DSType.Size.footnote, weight: .medium))
                     .foregroundStyle(Color.textTertiary)
             }
             .padding(.vertical, 2)
@@ -466,10 +466,10 @@ struct Top30VisitsView: View {
         HStack(spacing: 3) {
             if let icon {
                 Image(systemName: icon)
-                    .font(.system(size: 9))
+                    .font(.system(size: DSType.Size.micro))
             }
             Text(text)
-                .font(.system(size: 10, weight: .bold))
+                .font(.system(size: DSType.Size.caption, weight: .bold))
         }
         .foregroundStyle(tint)
         .padding(.horizontal, 8)
@@ -537,7 +537,7 @@ struct Top30VisitsView: View {
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                        .font(.system(size: 17))
+                        .font(.system(size: DSType.Size.title3))
                         .foregroundStyle(isSelected ? Color.accentGold : Color.textTertiary)
                         .frame(width: 20)
 
@@ -564,16 +564,16 @@ struct Top30VisitsView: View {
                         }
                         HStack(spacing: 6) {
                             Text(read.text)
-                                .font(.system(size: 9, weight: .bold))
+                                .font(.system(size: DSType.Size.caption, weight: .bold))
                                 .foregroundStyle(read.source.tint)
                             Text(prospect.college)
-                                .font(.system(size: 9))
+                                .font(.system(size: DSType.Size.caption))
                                 .foregroundStyle(Color.textTertiary)
                                 .lineLimit(1)
                             if teamNeeds.contains(prospect.position) {
                                 Text("NEED")
                                     .font(.system(size: DSType.Size.micro, weight: .black))
-                                    .foregroundStyle(Color.danger)
+                                    .foregroundStyle(Color.dangerText)
                             }
                             // A blocked row says WHY on the row rather than
                             // going quietly grey. (`!canAct` never reaches a
@@ -597,7 +597,10 @@ struct Top30VisitsView: View {
             // NavigationLink: fill the last slot and every remaining row
             // becomes a surprise navigation push. The button stays live and
             // `toggle` refuses over-cap adds itself (#120 review F5).
-            .opacity(selectable ? 1.0 : 0.55)
+            // 0.55 → 0.75: the row still has to read as unavailable, but at 55 %
+            // the man's NAME — and the line explaining why he cannot be picked
+            // — fell under the contrast floor.
+            .opacity(selectable ? 1.0 : 0.75)
             .accessibilityLabel("\(prospect.fullName), \(prospect.position.rawValue), \(prospect.college)")
             .accessibilityValue(isSelected ? "Invited to the building" : read.accessibilityText)
             .accessibilityAddTraits(isSelected ? [.isSelected] : [])
@@ -637,7 +640,7 @@ struct Top30VisitsView: View {
                 Image(systemName: canAct ? "person.crop.circle.badge.checkmark" : "lock.fill")
                     .font(.system(size: 14, weight: .bold))
                 Text(reason ?? "Host Top-30 Visits (\(selectedIDs.count))")
-                    .font(.system(size: 15, weight: .bold))
+                    .font(.system(size: DSType.Size.callout, weight: .bold))
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
             }
@@ -1041,10 +1044,10 @@ struct Top30BatchReportView: View {
     private func summaryPill(icon: String, text: String, color: Color) -> some View {
         HStack(spacing: 4) {
             Image(systemName: icon)
-                .font(.system(size: 9))
+                .font(.system(size: DSType.Size.caption))
                 .foregroundStyle(color)
             Text(text)
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: DSType.Size.caption, weight: .medium))
                 .foregroundStyle(color)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
@@ -1071,7 +1074,7 @@ struct Top30BatchReportView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text(entry.prospectName)
-                            .font(.system(size: 15, weight: .bold))
+                            .font(.system(size: DSType.Size.callout, weight: .bold))
                             .foregroundStyle(Color.textPrimary)
                         Text(entry.position.rawValue)
                             .font(.system(size: 11, weight: .bold))
@@ -1098,7 +1101,7 @@ struct Top30BatchReportView: View {
                 if let fit = entry.teamFit {
                     VStack(spacing: 1) {
                         Text("\(Int((fit * 100).rounded()))%")
-                            .font(.system(size: 20, weight: .heavy).monospacedDigit())
+                            .font(.system(size: DSType.Size.title2, weight: .heavy).monospacedDigit())
                             .foregroundStyle(fitColor(fit))
                             .lineLimit(1)
                             .minimumScaleFactor(0.6)
@@ -1207,7 +1210,7 @@ struct Top30BatchReportView: View {
             ForEach(lines, id: \.self) { line in
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "circle.fill")
-                        .font(.system(size: 5))
+                        .font(.system(size: 5))  // ds-lint:allow(font) list bullet ornament — a glyph-drawn dot, carries no text
                         .foregroundStyle(tint)
                         .padding(.top, 5)
                     Text(line)

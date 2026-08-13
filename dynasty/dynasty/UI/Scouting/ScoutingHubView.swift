@@ -63,6 +63,19 @@ struct ScoutingHubView: View {
     /// rule; after that it is wherever the user last stood.
     @State private var lastWarRoomTab: ScoutingTab = .board
 
+    /// True while the user is standing on a screen pushed out of the hub — a
+    /// prospect card, a scout's page — rather than on the hub itself (#191).
+    ///
+    /// The hub stays alive underneath a push, and the model work done up there
+    /// (a workout run from a prospect card moves `Career.prepStep`) reaches its
+    /// observers all the same. Without this flag the tab auto-advance fired
+    /// against a user who was not looking, and Back dropped him on a surface he
+    /// had never opened. Cleared one run loop AFTER the hub reappears, because
+    /// the `onChange` carrying the change made while away is delivered in the
+    /// same update as `onAppear` and there is no ordering guarantee between the
+    /// two — clearing it synchronously would re-open the race it closes.
+    @State private var isAwayOnPushedScreen = false
+
     /// The man a board row sent to the interview room (#125), ticked on arrival
     /// and cleared the moment the user leaves the room — otherwise walking back
     /// in a week later would re-tick a name he never asked for again.
@@ -84,16 +97,34 @@ struct ScoutingHubView: View {
         switch selectedTab {
         // `.classDepth` is not a prospect TABLE, but it is a per-position read
         // and the chips narrow it to one group exactly as they narrow the board.
-        case .board, .film, .combine, .classDepth: return true
-        default:                                   return false
+        //
+        // `.workouts` IS a prospect table and was missing from this list (#190).
+        // `WorkoutsTabView` takes `$positionFilter` and filters its candidate
+        // list on it — but the hub drew no chip row over that tab and the screen
+        // hosts none of its own, so the shared binding narrowed the invite list
+        // INVISIBLY: pick QB on the Big Board, walk into Private Workouts, and
+        // the room is empty with no control anywhere on screen to say why or to
+        // undo it. A filter with no visible control is not a filter, it is a
+        // fault. (`.top30` and `.proDays` stay off the list on purpose: neither
+        // screen reads the binding, so a chip row over them would be the mirror
+        // fault — a control that does nothing.)
+        case .board, .film, .combine, .classDepth, .workouts: return true
+        default:                                              return false
         }
     }
 
     /// Whether the HUB draws the chip row, as opposed to the surface hosting it
     /// on its own table. See the layer-4 comment in ``processChrome`` — the Big
     /// Board takes it (`hostsPositionChips`), everything else leaves it here.
-    private var hostsPositionFilterChips: Bool {
-        positionFilterAppliesToCurrentTab && selectedTab != .board
+    private func hostsPositionFilterChips(progress: DraftPrepProgress) -> Bool {
+        guard positionFilterAppliesToCurrentTab, selectedTab != .board else { return false }
+        // `WorkoutsTabView` is the one surface here that REPLACES its table with
+        // a lock panel when its stage is shut — off the same `canAct` the hub
+        // hands it — and chips over a lock panel filter nothing. The film and
+        // combine surfaces keep their tables (and want their filters) after
+        // their own stage closes, so they are deliberately not gated.
+        if selectedTab == .workouts { return progress.canAct(.workouts) }
+        return true
     }
 
     // MARK: - Body
@@ -159,7 +190,7 @@ struct ScoutingHubView: View {
                         .tint(Color.accentGold)
                     Text("Loading Scouting...")
                         .font(.subheadline)
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(Color.textSecondary)
                 }
             } else {
                 loadedBody
@@ -178,6 +209,15 @@ struct ScoutingHubView: View {
                     .accessibilityLabel("Hire scout")
                 }
             }
+        }
+        // Push / pop bookkeeping for `isAwayOnPushedScreen` (#191). `onDisappear`
+        // on a stack root fires when a child is pushed over it, `onAppear` when
+        // that child pops — the same pair `CareerDashboardView` uses to refresh
+        // its staff tile on the way back.
+        .onDisappear { isAwayOnPushedScreen = true }
+        .onAppear {
+            // See the property's doc comment for why this is deferred.
+            DispatchQueue.main.async { isAwayOnPushedScreen = false }
         }
         .task {
             loadData()
@@ -328,6 +368,20 @@ struct ScoutingHubView: View {
             // yanking him out of one because a background ledger moved the
             // pipeline is the same class of defect as a screen that deletes
             // itself. The band is one tap away when he wants the new room.
+            //
+            // AND NEVER WHILE THE HUB IS OFF SCREEN (#191). The rule above is
+            // right and it was one case short: a *stage* room is a place the
+            // user chose to stand in too, for exactly as long as he is standing
+            // on a screen pushed out of it. Every instrument the pipeline moves
+            // on can be run from the prospect card — a private workout, a film
+            // order, an interview — so "open a man from Private Workouts, run
+            // his workout, press Back" landed the user on a surface he never
+            // asked for, and once the pipeline reaches `.ready` that surface is
+            // the Big Board (`ScoutingTab.forStage(.ready)`), which is exactly
+            // the report. A push is not a transition the user made through the
+            // process; it is a detour he is coming back from, and he comes back
+            // to the room he left. The band still carries the new room.
+            guard !isAwayOnPushedScreen else { return }
             guard newStep != oldStep, !Self.warRoomTabs.contains(selectedTab) else { return }
             if selectedTab == ScoutingTab.forStage(oldStep) {
                 selectedTab = ScoutingTab.forStage(newStep)
@@ -837,6 +891,7 @@ struct ScoutingHubView: View {
         let coverage = coverageReadout()
         let owedMock = pendingMock(progress)
         let owedMockText = owedMock.map { "\($0.displayName) has not been filed" } ?? ""
+        let hostsChips = hostsPositionFilterChips(progress: progress)
         return VStack(spacing: 0) {
             // Layer 1: THE NAVIGATION. One row: the War Room place slat, a seam,
             // then the six rooms in calendar order, each carrying its state and
@@ -907,7 +962,7 @@ struct ScoutingHubView: View {
             // would follow the user onto the combine.
             .id(selectedTab.rawValue)
             .padding(.horizontal, 12)
-            .padding(.bottom, hostsPositionFilterChips ? 6 : 8)
+            .padding(.bottom, hostsChips ? 6 : 8)
 
             // Layer 3: the shared filter, LAST, so it sits on the table rather
             // than between two blocks of prose. The table's own controls (mode
@@ -918,7 +973,7 @@ struct ScoutingHubView: View {
             // one surface whose controls are a stack ABOVE its list rather than
             // inside its list header, so a chip row pinned here would be four
             // controls away from the table it filters (#142).
-            if hostsPositionFilterChips {
+            if hostsChips {
                 positionFilterChips
                     .padding(.horizontal, 16)
                     .padding(.bottom, 6)
@@ -1688,7 +1743,7 @@ private struct CombineReportSheet: View {
                     Section {
                         VStack(spacing: 8) {
                             Image(systemName: "newspaper.fill")
-                                .font(.system(size: 36))
+                                .font(.system(size: DSType.Size.display))
                                 .foregroundStyle(Color.accentGold)
                             Text("COMBINE REPORT")
                                 .font(.title2.weight(.black))
@@ -1918,10 +1973,10 @@ private struct HireScoutSheet: View {
                     Color.backgroundPrimary.ignoresSafeArea()
                     VStack(spacing: 20) {
                         Image(systemName: "person.3.fill")
-                            .font(.system(size: 48))
+                            .font(.system(size: DSType.Size.hero))
                             .foregroundStyle(Color.textTertiary)
                         Text("Scout Staff Full")
-                            .font(.system(size: 22, weight: .bold))
+                            .font(.system(size: DSType.Size.title2, weight: .bold))
                             .foregroundStyle(Color.textPrimary)
                         Text("You have filled all 8 scout slots.")
                             .font(.subheadline)

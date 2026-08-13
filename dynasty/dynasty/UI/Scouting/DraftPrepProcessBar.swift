@@ -645,7 +645,7 @@ struct ScoutingInsightsSection<Content: View>: View {
                             .lineLimit(1)
                         if let stateChip {
                             Text(stateChip)
-                                .font(.system(size: 8, weight: .black))
+                                .font(.system(size: DSType.Size.micro, weight: .black))
                                 .foregroundStyle(stateChipTint)
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 1)
@@ -661,10 +661,10 @@ struct ScoutingInsightsSection<Content: View>: View {
                 Spacer(minLength: 4)
 
                 Text("INSIGHTS")
-                    .font(.system(size: 9, weight: .heavy))
+                    .font(.system(size: DSType.Size.caption, weight: .heavy))
                     .foregroundStyle(Color.textTertiaryReadable)
                 Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                    .font(.system(size: 10, weight: .black))
+                    .font(.system(size: DSType.Size.micro, weight: .black))
                     .foregroundStyle(Color.textSecondary)
             }
             .contentShape(Rectangle())

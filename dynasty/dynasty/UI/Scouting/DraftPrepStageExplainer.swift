@@ -246,7 +246,7 @@ struct DraftPrepStageExplainer: View {
                 }
 
                 Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.system(size: DSType.Size.micro, weight: .bold))
                     .foregroundStyle(Color.textTertiary)
             }
             .contentShape(Rectangle())

@@ -86,7 +86,7 @@ struct ScoutNotesView: View {
                         .tint(Color.accentGold)
                     Text("Reading the board...")
                         .font(.subheadline)
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(Color.textSecondary)
                 }
             } else if scoutedProspects.isEmpty {
                 emptyState
@@ -377,7 +377,7 @@ struct ScoutNotesView: View {
     private var emptyState: some View {
         VStack(spacing: 16) {
             Image(systemName: "note.text")
-                .font(.system(size: 52))
+                .font(.system(size: DSType.Size.hero))
                 .foregroundStyle(Color.textTertiary)
 
             Text("No Notes Yet")

@@ -189,7 +189,7 @@ struct TimelineTasksPanel: View {
                 Spacer()
 
                 Image(systemName: showCompletedPhases ? "chevron.up" : "chevron.down")
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.system(size: DSType.Size.caption, weight: .bold))
                     .foregroundStyle(Color.textTertiary)
             }
             .padding(.horizontal, 14)
@@ -224,7 +224,7 @@ struct TimelineTasksPanel: View {
 
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 14))
-                    .foregroundStyle(Color.textTertiary.opacity(0.5))
+                    .foregroundStyle(Color.textTertiaryReadable)
 
                 Rectangle()
                     .fill(Color.textTertiary.opacity(0.3))
@@ -239,12 +239,12 @@ struct TimelineTasksPanel: View {
             Spacer()
 
             Text("Complete")
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(Color.textTertiary.opacity(0.6))
+                .font(.system(size: DSType.Size.caption, weight: .semibold))
+                .foregroundStyle(Color.textTertiaryReadable)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 2)
-        .opacity(0.6)
+        .opacity(0.85)
     }
 
     // MARK: - Current Phase
@@ -285,7 +285,7 @@ struct TimelineTasksPanel: View {
                 Spacer()
 
                 Text("NOW")
-                    .font(.system(size: 9, weight: .black))
+                    .font(.system(size: DSType.Size.caption, weight: .black))
                     .foregroundStyle(Color.backgroundPrimary)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
@@ -384,7 +384,7 @@ struct TimelineTasksPanel: View {
                     // title that wrapped, reading as if it belonged to neither line.
                     HStack(alignment: .firstTextBaseline, spacing: 5) {
                         Text(task.title)
-                            .font(.system(size: 13, weight: done ? .regular : (locked ? .regular : .medium)))
+                            .font(.system(size: DSType.Size.body, weight: done ? .regular : (locked ? .regular : .medium)))
                             .foregroundStyle(done ? Color.textTertiary : (locked ? Color.textTertiary : Color.textPrimary))
                             .strikethrough(done, color: Color.textTertiary)
                             .lineLimit(2)
@@ -420,7 +420,7 @@ struct TimelineTasksPanel: View {
 
                     if !done && !locked {
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 9, weight: .semibold))
+                            .font(.system(size: DSType.Size.caption, weight: .semibold))
                             .foregroundStyle(Color.textTertiary)
                     }
                 }
@@ -550,6 +550,17 @@ struct TimelineTasksPanel: View {
         }
     }
 
+    /// The required row the advance banner names (#193).
+    ///
+    /// The NEXT row wherever one is startable — the same task the list already
+    /// wears the NEXT chip on, so the banner and the row agree. When every
+    /// remaining required row is locked behind a prerequisite there is no
+    /// startable one, and the banner falls back to the first incomplete
+    /// required task so it still says *something* the user can find in the list.
+    private var blockingRequiredTask: GameTask? {
+        nextActionableTask ?? TaskGenerator.firstIncompleteRequired(in: tasks)
+    }
+
     /// Determines if a combine/proDays task is locked behind an unfinished prerequisite.
     private func isTaskLocked(_ task: GameTask) -> Bool {
         guard task.status == .todo, task.isRequired else { return false }
@@ -600,13 +611,28 @@ struct TimelineTasksPanel: View {
                     // is. A zero-count sentence over a disabled button is worse
                     // than silence — it sends the user hunting through a list
                     // where every row is already ticked (#154f).
-                    if count > 0 {
+                    //
+                    // #193: and when it IS the blocker, it NAMES the row. The
+                    // count alone stated the size of the problem and withheld
+                    // its identity, so the user guessed — one reported case had
+                    // him convinced the (optional) Big Board row was holding the
+                    // draft shut while the actual gate was the salary cap. The
+                    // name is the unlocked next row where there is one, so the
+                    // banner never points at a step the user cannot start yet.
+                    if count > 0, let blocking = blockingRequiredTask {
                         Label(
-                            "Complete \(count) required task\(count == 1 ? "" : "s") to advance",
+                            "Required: \(blocking.title)",
                             systemImage: "exclamationmark.triangle.fill"
                         )
                         .font(.system(size: 12, weight: .heavy))
                         .foregroundStyle(Color.danger)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                        if count > 1 {
+                            Text("\(count - 1) more required task\(count == 2 ? "" : "s") after it.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(Color.textSecondary)
+                        }
                     }
 
                     if let blocker = advanceBlocker {
@@ -634,7 +660,7 @@ struct TimelineTasksPanel: View {
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "chevron.right.2")
-                        .font(.system(size: 13, weight: .bold))
+                        .font(.system(size: DSType.Size.body, weight: .bold))
                     Text(advanceButtonLabel)
                         .font(.system(size: 14, weight: .bold))
                 }
@@ -726,7 +752,12 @@ struct TimelineTasksPanel: View {
                 for: phase,
                 career: career,
                 team: nil,
-                rosterCount: 53,
+                // NOT 53. This rail draws phases the club has not reached, and
+                // a hardcoded legal roster made the camp cut-downs render as
+                // already satisfied — "Cut to 75", ticked, in a preview of a
+                // phase that has not happened. `nil` is the honest input: the
+                // generator names the rung and leaves it unstarted (#205a §5.1).
+                rosterCount: nil,
                 hasPendingTradeOffers: false,
                 hasHeadCoach: true,
                 hasOC: true,
@@ -768,7 +799,7 @@ struct TimelineTasksPanel: View {
                 }
 
                 Text(entry.name)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: DSType.Size.body, weight: .semibold))
                     .foregroundStyle(Color.textSecondary)
                     .textCase(.uppercase)
 
@@ -782,7 +813,7 @@ struct TimelineTasksPanel: View {
             .padding(.top, 6)
 
             Text(groupCaption(for: entry.phase))
-                .font(.system(size: 9, weight: .semibold))
+                .font(.system(size: DSType.Size.caption, weight: .semibold))
                 .foregroundStyle(Color.textTertiary)
                 .textCase(.uppercase)
                 .tracking(0.4)
@@ -841,7 +872,7 @@ struct TimelineTasksPanel: View {
 
             Text("+ \(remainingFutureCount) more phase\(remainingFutureCount == 1 ? "" : "s")")
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(Color.textTertiary.opacity(0.5))
+                .foregroundStyle(Color.textTertiaryReadable)
 
             Spacer()
         }

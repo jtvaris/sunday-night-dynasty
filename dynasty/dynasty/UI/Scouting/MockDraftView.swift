@@ -189,7 +189,7 @@ struct MockDraftView: View {
                         .tint(Color.accentBlue)
                     Text("Loading Mock Draft...")
                         .font(.subheadline)
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(Color.textSecondary)
                 }
             } else {
             VStack(spacing: 0) {
@@ -548,10 +548,10 @@ struct MockDraftView: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 4) {
                 Image(systemName: entry.symbol)
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: DSType.Size.micro, weight: .bold))
                     .foregroundStyle(Color.accentBlue)
                 Text(entry.brand)
-                    .font(.system(size: 10, weight: .heavy))
+                    .font(.system(size: DSType.Size.caption, weight: .heavy))
                     .foregroundStyle(Color.textPrimary)
             }
             Text(entry.prospectName)
@@ -564,7 +564,7 @@ struct MockDraftView: View {
                     .font(.system(size: DSType.Size.micro))
                     .foregroundStyle(confidenceColor(for: entry.confidence))
                 Text("\(entry.confidence)% confidence")
-                    .font(.system(size: 9, weight: .medium).monospacedDigit())
+                    .font(.system(size: DSType.Size.caption, weight: .medium).monospacedDigit())
                     .foregroundStyle(confidenceColor(for: entry.confidence))
             }
         }
@@ -786,7 +786,7 @@ struct MockDraftView: View {
                         // Media comment
                         if !pick.mediaComment.isEmpty {
                             Text(pick.mediaComment)
-                                .font(.system(size: 9, weight: .semibold))
+                                .font(.system(size: DSType.Size.caption, weight: .semibold))
                                 .foregroundStyle(mediaCommentColor(pick.mediaComment))
                                 .italic()
                         }
@@ -795,7 +795,7 @@ struct MockDraftView: View {
                     // Big board comparison
                     if let boardRank = userBoardRank(for: prospect.id) {
                         Text("Your Board: #\(boardRank) | Mock: #\(pick.pickNumber)")
-                            .font(.system(size: 9, weight: .medium).monospacedDigit())
+                            .font(.system(size: DSType.Size.caption, weight: .medium).monospacedDigit())
                             .foregroundStyle(Color.textTertiary)
                     }
                 }
@@ -913,7 +913,7 @@ struct MockDraftView: View {
                 }
                 if let rank = target.boardRank {
                     Text("Your Board: #\(rank)")
-                        .font(.system(size: 9).monospacedDigit())
+                        .font(.system(size: DSType.Size.caption).monospacedDigit())
                         .foregroundStyle(Color.textTertiary)
                 }
             }
@@ -929,7 +929,7 @@ struct MockDraftView: View {
                 Text(target.read.isBandEstimate
                      ? "Round-band estimate"
                      : "Mocked #\(target.read.expectedPick)")
-                    .font(.system(size: 9))
+                    .font(.system(size: DSType.Size.caption))
                     .foregroundStyle(Color.textTertiary)
             }
         }
@@ -1065,7 +1065,7 @@ struct MockDraftView: View {
                     .foregroundStyle(Color.textTertiary)
                 if !teamDraftPicks.isEmpty {
                     Text("Send: \(hint.offerDescription) (\(hint.packagePoints) pts)")
-                        .font(.system(size: 9, weight: .medium).monospacedDigit())
+                        .font(.system(size: DSType.Size.caption, weight: .medium).monospacedDigit())
                         .foregroundStyle(hint.feasible ? Color.success : Color.warning)
                         .lineLimit(1)
                         .minimumScaleFactor(0.85)
@@ -1076,7 +1076,7 @@ struct MockDraftView: View {
                 Text(hint.feasible
                      ? "Callable on draft night from the Big Board or the pick sheet."
                      : "Short \(-hint.valueDelta) pts — add future capital before the draft.")
-                    .font(.system(size: 9))
+                    .font(.system(size: DSType.Size.caption))
                     .foregroundStyle(Color.textTertiary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
@@ -1198,13 +1198,13 @@ struct MockDraftView: View {
                 // the men you marked survive it.
                 if hint.targetCount > 0 {
                     Text("\(hint.targetCount) of your targets still there at #\(hint.buyerPickNumber): \(hint.survivingTargets.joined(separator: ", "))")
-                        .font(.system(size: 9, weight: .medium))
+                        .font(.system(size: DSType.Size.caption, weight: .medium))
                         .foregroundStyle(Color.success)
                         .lineLimit(1)
                         .minimumScaleFactor(0.85)
                 } else {
                     Text("None of your marked targets survive to #\(hint.buyerPickNumber) \u{2014} sliding costs you the board.")
-                        .font(.system(size: 9, weight: .medium))
+                        .font(.system(size: DSType.Size.caption, weight: .medium))
                         .foregroundStyle(Color.warning)
                         .lineLimit(1)
                         .minimumScaleFactor(0.85)
@@ -1398,7 +1398,7 @@ struct MockDraftView: View {
     private var emptyState: some View {
         VStack(spacing: 20) {
             Image(systemName: "doc.text.magnifyingglass")
-                .font(.system(size: 52))
+                .font(.system(size: DSType.Size.hero))
                 .foregroundStyle(Color.textTertiary)
 
             Text("No Mock Draft Available")

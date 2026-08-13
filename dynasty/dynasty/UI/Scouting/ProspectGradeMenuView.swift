@@ -67,7 +67,7 @@ struct ProspectMarkButton: View {
             ProspectMarkMenu(prospect: prospect, onChange: onChange, onEditNote: onEditNote)
         } label: {
             Image(systemName: prospect.isMarked ? prospect.userMark.icon : "circle.dashed")
-                .font(.system(size: 15))
+                .font(.system(size: DSType.Size.callout))
                 .foregroundStyle(prospect.isMarked ? prospect.userMark.color : Color.textTertiary)
                 .frame(width: 44, height: 44)
                 .contentShape(Rectangle())
@@ -116,7 +116,7 @@ struct ProspectValueChip: View {
     var body: some View {
         if let read, read.isMeaningful {
             Text(compact ? read.chipText : read.label)
-                .font(.system(size: compact ? 8 : 9, weight: .heavy).monospacedDigit())
+                .font(.system(size: compact ? DSType.Size.micro : DSType.Size.caption, weight: .heavy).monospacedDigit())
                 .foregroundStyle(read.tint)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
@@ -127,7 +127,7 @@ struct ProspectValueChip: View {
                 )
         } else {
             Text("\u{2014}")
-                .font(.system(size: compact ? 8 : 9, weight: .medium))
+                .font(.system(size: compact ? DSType.Size.micro : DSType.Size.caption, weight: .medium))
                 .foregroundStyle(Color.textTertiary)
                 .accessibilityHidden(true)
         }
@@ -152,9 +152,9 @@ struct ProspectMarkPicker: View {
                     } label: {
                         VStack(spacing: 2) {
                             Image(systemName: tier.icon)
-                                .font(.system(size: 13, weight: .semibold))
+                                .font(.system(size: DSType.Size.body, weight: .semibold))
                             Text(tier.label)
-                                .font(.system(size: 10, weight: .bold))
+                                .font(.system(size: DSType.Size.micro, weight: .bold))
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.8)
                         }
@@ -362,13 +362,13 @@ struct DualGradeDisplay: View {
         if let userGrade = store.grade(for: prospectID) {
             HStack(spacing: 2) {
                 Text(userGrade.letterGrade)
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: DSType.Size.caption, weight: .bold))
                     .foregroundStyle(Color.success)
                 Text("/")
-                    .font(.system(size: 9, weight: .medium))
+                    .font(.system(size: DSType.Size.micro, weight: .medium))
                     .foregroundStyle(Color.textTertiary)
                 Text(scoutGradeText)
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: DSType.Size.caption, weight: .bold))
                     .foregroundStyle(Color.accentGold)
                 trajectoryArrow
             }
@@ -377,7 +377,7 @@ struct DualGradeDisplay: View {
         } else {
             HStack(spacing: 2) {
                 Text(scoutGradeText)
-                    .font(.system(size: 14, weight: .bold))
+                    .font(.system(size: DSType.Size.body, weight: .bold))
                     .foregroundStyle(scoutGradeColor)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
@@ -391,7 +391,7 @@ struct DualGradeDisplay: View {
     private var trajectoryArrow: some View {
         if let traj = trajectory, traj == .rising || traj == .falling {
             Image(systemName: traj.icon)
-                .font(.system(size: 9, weight: .heavy))
+                .font(.system(size: DSType.Size.micro, weight: .heavy))
                 .foregroundStyle(traj.color)
         }
     }
@@ -452,7 +452,7 @@ struct InfoTooltipButton: View {
                 if showLetterGradeKey {
                     Divider().overlay(Color.surfaceBorder)
                     Text("Grade tiers")
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.system(size: DSType.Size.micro, weight: .bold))
                         .foregroundStyle(Color.textSecondary)
                         .textCase(.uppercase)
                     LetterGradeLegend()
@@ -487,7 +487,7 @@ struct LetterGradeLegend: View {
     private func legendCell(_ letter: String, color: Color) -> some View {
         VStack(spacing: 2) {
             Text(letter)
-                .font(.system(size: 11, weight: .bold))
+                .font(.system(size: DSType.Size.caption, weight: .bold))
                 .foregroundStyle(.white)
                 .frame(width: 22, height: 22)
                 .background(color, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))

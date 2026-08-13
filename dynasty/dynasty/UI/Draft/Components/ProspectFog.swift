@@ -127,10 +127,69 @@ enum ProspectFog {
         }
     }
 
+    /// The filled/empty dot string for `prospect`, one glyph vocabulary for
+    /// every list that draws confidence dots.
+    ///
+    /// Counted on ``ownReportCount`` and capped at
+    /// `ScoutEvaluationBudget.maxReportsPerProspect` — the same counter and the
+    /// same denominator `ProspectDetailView.scoutConfidenceBadge` prints (#184).
+    /// The retired `CollegeProspect.scoutConfidenceDots` ran off raw
+    /// `scoutingReports.count`, so an untouched season-1 top-250 man showed
+    /// "●○○" in a selection list and "Unscouted · 0/3 reports" on the card he
+    /// opened from it — the same man, the same glyphs, two answers.
+    static func confidenceDots(_ prospect: CollegeProspect) -> String {
+        let cap = ScoutEvaluationBudget.maxReportsPerProspect
+        let filled = min(ownReportCount(prospect), cap)
+        return String(repeating: "\u{25CF}", count: filled)
+            + String(repeating: "\u{25CB}", count: cap - filled)
+    }
+
     /// Whether anybody in the user's own building has filed on this man. The
     /// predicate every "you have scouted N of the class" count belongs on.
     static func hasOwnReport(_ prospect: CollegeProspect) -> Bool {
         prospect.scoutingReports.contains { $0.scoutName != inheritedScoutName }
+    }
+
+    /// Whether the previous regime's freebie is the ONLY paper on him.
+    ///
+    /// A card in this state still has bands to draw — `applyPreScoutedData`
+    /// writes them — and must say whose they are, because "2 reports on file"
+    /// over inherited paper is exactly the claim #184 is about.
+    static func hasOnlyInheritedReport(_ prospect: CollegeProspect) -> Bool {
+        !prospect.scoutingReports.isEmpty && !hasOwnReport(prospect)
+    }
+
+    /// What the user calls the instrument that files a report in `phase`.
+    ///
+    /// The report ledger is the only record of *how* a band was bought, and a
+    /// count ("3 reports on file") throws that away — three regional tape
+    /// assignments and a combine trip plus two pro days are not the same
+    /// evidence. Names, not tallies.
+    static func sourceName(for phase: ScoutingPhase) -> String {
+        switch phase {
+        case .collegeSeason:   return "Film study"
+        case .seniorBowl:      return "The Showcase"
+        case .combine:         return "Combine trip"
+        case .proDay:          return "Pro day"
+        case .personalWorkout: return "Private workout"
+        }
+    }
+
+    /// The instruments THIS regime ran on him, named, in the order they were
+    /// first run. Repeats collapse to a multiplier ("Film study ×2") rather
+    /// than repeating the word.
+    static func ownReportSources(_ prospect: CollegeProspect) -> [String] {
+        var order: [String] = []
+        var counts: [String: Int] = [:]
+        for report in prospect.scoutingReports where report.scoutName != inheritedScoutName {
+            let name = sourceName(for: report.phase)
+            if counts[name] == nil { order.append(name) }
+            counts[name, default: 0] += 1
+        }
+        return order.map { name in
+            let n = counts[name] ?? 1
+            return n > 1 ? "\(name) \u{00D7}\(n)" : name
+        }
     }
 
     /// The band ONE report buys, centred on its observation: ±2 grades at
@@ -181,14 +240,22 @@ enum ProspectFog {
     /// `scoutsAttended` defaults to the career-scoped combine flag so a view can
     /// call this without threading the decision through every initialiser; pass
     /// it explicitly in previews and tests.
+    ///
+    /// Gated on ``hasOwnReport`` (#184). Off the raw ledger the inherited
+    /// `Previous Staff` row bought `.full` for the top ~250 of every season-1
+    /// class — so the combine trip was already paid for on exactly the men that
+    /// matter, and worse, the decimal point itself became a free, always-correct
+    /// readout of "true rank < 250", which is the one number the fog exists to
+    /// hide. `proDayCompleted` stays: that is a genuine own-building event.
     static func combineFidelity(
         for prospect: CollegeProspect,
         scoutsAttended: Bool = CareerScopedDefaults.bool("scoutsSentToCombine")
     ) -> MeasurableFidelity {
         if scoutsAttended { return .full }
         // Work your own building has already done on this man outranks the
-        // broadcast: a pro day or a filed report means somebody held the watch.
-        if prospect.proDayCompleted || !prospect.scoutingReports.isEmpty { return .full }
+        // broadcast: a pro day or a report THIS regime ordered means somebody
+        // held the watch. The previous department's paper does not.
+        if prospect.proDayCompleted || hasOwnReport(prospect) { return .full }
         return .broadcast
     }
 
@@ -386,6 +453,10 @@ enum ProspectFog {
 
     /// What YOUR OWN people got out of him in a room. Exact, because that is
     /// what a meeting produces; absent until somebody has spent a slot on him.
+    ///
+    /// The read carries BOTH forms: `value` is the figure the prospect card
+    /// prints, `band` the single grade it maps to, which is what the board's
+    /// MEET column renders (#182).
     static func meetRead(_ prospect: CollegeProspect) -> IQRead {
         guard let iq = prospect.interviewFootballIQ else {
             return IQRead(value: nil, band: nil, source: .none)
@@ -407,7 +478,20 @@ enum ProspectFog {
     /// fast he absorbs a playbook (`LRN`) — the same two attributes the
     /// interview itself is built from, so the band and the number the interview
     /// later returns describe one quantity rather than two.
+    ///
+    /// `scoutedMentalGrades` is a MERGED store: reports write it through
+    /// `ScoutingEngine.applyGradeBasedFields`, and so does
+    /// `revealMentalGradesFromInterview` (`AWR` and `LRN` are two of its five
+    /// keys). Reading it raw meant one combine meeting lit the gold TAPE cell on
+    /// a man nobody had ever filmed — the interview showing up in both columns,
+    /// which is the exact merge the #182 split undoes. So: no band unless a
+    /// report actually wrote mentals. That also keeps the inherited
+    /// `Previous Staff` paper out of the scouts' column, since
+    /// `applyPreScoutedData` files no mental grades at all.
     private static func tapeMentalBand(for prospect: CollegeProspect) -> GradeRange? {
+        guard prospect.scoutingReports.contains(where: { $0.mentalGrades != nil }) else {
+            return nil
+        }
         let grades = prospect.scoutedMentalGrades
         switch (grades?["AWR"], grades?["LRN"]) {
         case let (awareness?, learning?):
@@ -478,10 +562,22 @@ enum ProspectFog {
         /// The bands the work has produced. Keys absent from here are work the
         /// user has not done — never data the fog is hiding from him.
         let grades: [String: GradeRange]
-        /// Reports on file. The tape half of the attribution line.
+        /// Reports THIS regime ordered. The tape half of the attribution line,
+        /// and never `scoutingReports.count` — that tally includes the
+        /// `Previous Staff` freebie, which writes no band and buys nothing
+        /// (#184).
         let reportCount: Int
+        /// The instruments behind those reports, NAMED — "Combine trip",
+        /// "Film study ×2". A count says how much paper is in the folder; the
+        /// names say what kind of looking produced it, which is the only half
+        /// of the sentence a user can act on.
+        let sources: [String]
         /// Whether a meeting has been held. The MEET half.
         let interviewed: Bool
+        /// Bands drawn off the previous regime's inherited report and nothing
+        /// else. The line then says so, rather than going silent and letting
+        /// eight lit cells read as this building's work.
+        let inheritedOnly: Bool
 
         var hasAny: Bool { !grades.isEmpty }
 
@@ -492,15 +588,13 @@ enum ProspectFog {
             keys.filter { grades[$0] == nil }
         }
 
-        /// "2 reports on file · interview" — what paid for what is on the screen.
-        /// `nil` when there is nothing on the screen to attribute.
+        /// "Combine trip · Film study · Interview" — what paid for what is on
+        /// the screen. `nil` when there is nothing on the screen to attribute.
         var attribution: String? {
             guard hasAny else { return nil }
-            var parts: [String] = []
-            if reportCount > 0 {
-                parts.append("\(reportCount) report\(reportCount == 1 ? "" : "s") on file")
-            }
-            if interviewed { parts.append("interview") }
+            var parts = sources
+            if interviewed { parts.append("Interview") }
+            if parts.isEmpty && inheritedOnly { parts.append("Previous staff") }
             guard !parts.isEmpty else { return nil }
             return parts.joined(separator: " \u{00B7} ")
         }
@@ -511,11 +605,18 @@ enum ProspectFog {
     static let mentalKeys = ["AWR", "DEC", "WRK", "CLT", "COA", "LDR", "LRN", "CMP"]
 
     /// The mental block the user has bought on `prospect`.
+    ///
+    /// Counted on ``ownReportCount`` (#184). Off `scoutingReports.count` the
+    /// line under an untouched season-1 top-250 prospect read "1 report on
+    /// file" against the inherited `Previous Staff` row — a receipt for work
+    /// this building never ordered, printed directly under eight lit cells.
     static func mentalDisclosure(_ prospect: CollegeProspect) -> AttributeDisclosure {
         AttributeDisclosure(
             grades: prospect.scoutedMentalGrades ?? [:],
-            reportCount: prospect.scoutingReports.count,
-            interviewed: prospect.interviewCompleted
+            reportCount: ownReportCount(prospect),
+            sources: ownReportSources(prospect),
+            interviewed: prospect.interviewCompleted,
+            inheritedOnly: hasOnlyInheritedReport(prospect)
         )
     }
 
@@ -524,8 +625,10 @@ enum ProspectFog {
     static func positionSkillDisclosure(_ prospect: CollegeProspect) -> AttributeDisclosure {
         AttributeDisclosure(
             grades: prospect.scoutedPositionGrades ?? [:],
-            reportCount: prospect.scoutingReports.count,
-            interviewed: false
+            reportCount: ownReportCount(prospect),
+            sources: ownReportSources(prospect),
+            interviewed: false,
+            inheritedOnly: hasOnlyInheritedReport(prospect)
         )
     }
 
@@ -612,15 +715,23 @@ enum ProspectFog {
     ///
     /// `userTeamID` is the club whose Top-30 visits count — another team's
     /// visit tells you nothing.
+    ///
+    /// Counted on ``ownReportCount`` (#184). The freebie `applyPreScoutedData`
+    /// stamps on a third of the class is one report by the raw tally, so off
+    /// `scoutingReports.count` every pre-scouted man opened at `.count` on day
+    /// one — a torn ACL announced itself before the user had hired a scout —
+    /// and a single paid look then took him straight to `.full`. Medical and
+    /// character files open on THIS building's work.
     static func flagDisclosure(
         for prospect: CollegeProspect,
         userTeamID: UUID? = nil
     ) -> FlagDisclosure {
         let visited = userTeamID.map { prospect.top30VisitedByTeams.contains($0) } ?? false
-        if prospect.scoutingReports.count >= 2 || prospect.interviewCompleted || visited {
+        let reports = ownReportCount(prospect)
+        if reports >= 2 || prospect.interviewCompleted || visited {
             return .full
         }
-        if !prospect.scoutingReports.isEmpty || prospect.proDayCompleted || prospect.combineInvite {
+        if reports > 0 || prospect.proDayCompleted || prospect.combineInvite {
             return .count
         }
         return .hidden
@@ -628,14 +739,15 @@ enum ProspectFog {
 
     /// One line of prose telling the user what would open the file the rest of
     /// the way. Only meaningful at `.count`.
+    ///
+    /// Reads the same counter as the gate above, so the hint cannot promise a
+    /// step the gate will not honour.
     static func flagDisclosureHint(for prospect: CollegeProspect) -> String {
-        if prospect.scoutingReports.isEmpty {
-            return "File a report, meet him, or spend a Top-30 visit to read it."
+        switch ownReportCount(prospect) {
+        case 0:  return "File a report, meet him, or spend a Top-30 visit to read it."
+        case 1:  return "One more report \u{2014} or an interview \u{2014} opens the file."
+        default: return "An interview or a Top-30 visit opens the file."
         }
-        if prospect.scoutingReports.count == 1 {
-            return "One more report — or an interview — opens the file."
-        }
-        return "An interview or a Top-30 visit opens the file."
     }
 
     // MARK: - Value vs my grade
@@ -808,7 +920,10 @@ struct ProspectTapeCell: View {
     var body: some View {
         let read = ProspectFog.tapeRead(prospect)
         Text(read.text)
-            .font(.system(size: 10, weight: .bold))
+            // The ladder's floor, not a literal — a two-grade band ("C-/B+")
+            // has to survive a 40 pt column, so this cell stays at `micro`
+            // rather than taking the display voice's 11 pt.
+            .font(.system(size: DSType.Size.micro, weight: .bold))
             .foregroundStyle(read.source == .none ? Color.textTertiary.opacity(0.5) : Color.accentGold)
             .lineLimit(1)
             .minimumScaleFactor(0.65)
@@ -821,16 +936,32 @@ struct ProspectTapeCell: View {
     }
 }
 
-/// The interview room's read — an exact number in blue, or a dash until a
+/// The interview room's read — a single blue letter grade, or a dash until a
 /// combine slot has been spent on him.
+///
+/// The cell printed the raw interview figure (`82`) until this pass, which put
+/// a bare number in a strip of letter grades and asked the user to translate
+/// between two vocabularies mid-scan. It is now the ONE grade the number maps
+/// to on the same `LetterGrade.from(numericValue:)` scale every other grade in
+/// the app uses — one letter, never a band, because a meeting produces an exact
+/// read and there is no uncertainty to widen. The exact figure still lives on
+/// the prospect card's Interview section, which is where a precise number is
+/// worth reading.
+///
+/// Blue, not gold: the tint is what separates the room's read from the
+/// scouting department's tape bands beside it.
 struct ProspectMeetCell: View {
     let prospect: CollegeProspect
     var width: CGFloat = 34
 
     var body: some View {
         let read = ProspectFog.meetRead(prospect)
-        Text(read.text)
-            .font(.system(size: 11, weight: .bold).monospacedDigit())
+        // `meetRead` already carries the mapped grade in `band` (a single-grade
+        // range built from the interview figure); the dash case falls through
+        // to `read.text`, unchanged.
+        let label = read.band.map(\.low.rawValue) ?? read.text
+        Text(label)
+            .font(DSType.display(11, .bold))
             .foregroundStyle(read.source == .none ? Color.textTertiary.opacity(0.5) : Color.accentBlue)
             .lineLimit(1)
             .minimumScaleFactor(0.7)
@@ -838,7 +969,7 @@ struct ProspectMeetCell: View {
             .accessibilityLabel(
                 read.source == .none
                     ? "not interviewed \u{2014} spend a combine slot to meet him"
-                    : read.accessibilityText
+                    : "Football IQ graded \(label) from your interview"
             )
     }
 }

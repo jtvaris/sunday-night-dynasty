@@ -166,7 +166,9 @@ struct InterviewSelectionView: View {
                         .tint(Color.accentGold)
                     Text("Loading Interviews...")
                         .font(.subheadline)
-                        .foregroundColor(.secondary)
+                        // `.secondary` resolves against the system's light
+                        // scheme here and lands ~3:1 on the midnight ground.
+                        .foregroundStyle(Color.textSecondary)
                 }
             }
         } else {
@@ -257,17 +259,17 @@ struct InterviewSelectionView: View {
             // #17: Interview info tooltip
             HStack(spacing: 4) {
                 Image(systemName: "sparkles")
-                    .font(.system(size: 9))
+                    .font(.system(size: DSType.Size.caption))
                     .foregroundStyle(Color.accentGold)
                 Text("Reveals: Football IQ (exact) \u{00B7} Awareness, Learning, Compete, Leadership, Work Ethic grades \u{00B7} personality & character")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: DSType.Size.footnote, weight: .medium))
                     .foregroundStyle(Color.textTertiary)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let name = interviewerRoomName {
                 Text("Interviews run by \(name)")
-                    .font(.system(size: 9))
+                    .font(.system(size: DSType.Size.footnote))
                     .foregroundStyle(Color.textTertiary)
             }
 
@@ -290,7 +292,7 @@ struct InterviewSelectionView: View {
                 Spacer()
 
                 Text("League teams typically interview 15\u{2013}20 prospects")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: DSType.Size.footnote, weight: .medium))
                     .foregroundStyle(Color.textTertiary)
             }
 
@@ -393,9 +395,9 @@ struct InterviewSelectionView: View {
                     } label: {
                         HStack(spacing: 3) {
                             Image(systemName: "doc.text.magnifyingglass")
-                                .font(.system(size: 9))
+                                .font(.system(size: DSType.Size.caption))
                             Text("View Report (\(completedInterviewResults.count))")
-                                .font(.system(size: 10, weight: .bold))
+                                .font(.system(size: DSType.Size.footnote, weight: .bold))
                         }
                         .foregroundStyle(Color.accentGold)
                         .padding(.horizontal, 8)
@@ -428,7 +430,7 @@ struct InterviewSelectionView: View {
                         selectedProspectIDs.removeAll()
                     } label: {
                         Text("Deselect All")
-                            .font(.system(size: 10, weight: .bold))
+                            .font(.system(size: DSType.Size.caption, weight: .bold))
                             .foregroundStyle(Color.textSecondary)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
@@ -537,7 +539,7 @@ struct InterviewSelectionView: View {
                 .tracking(0.5)
             if let subtitle {
                 Text(subtitle)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: DSType.Size.footnote, weight: .medium))
                     .foregroundStyle(Color.textTertiary)
             }
         }
@@ -581,7 +583,10 @@ struct InterviewSelectionView: View {
             Text("OVR")
                 .frame(width: 50, alignment: .center)
         }
-        .font(.system(size: 9, weight: .heavy))
+        // The display voice at its 11 pt floor — the same font
+        // `ProspectColumns.headers` now sets on the block between the pinned
+        // columns, so the two halves of one header row read as one row.
+        .font(DSType.display(11, .heavy))
         .foregroundStyle(Color.textTertiary)
         .padding(.vertical, 6)
         .padding(.horizontal, 4)
@@ -661,10 +666,20 @@ struct InterviewSelectionView: View {
                     // whether the user gets "4.52" or "~4.5".
                     ProspectRowIdentity(prospect: prospect) {
                         // #20: how much the department has on him.
-                        if prospect.scoutReportCount > 0 {
-                            Text(prospect.scoutConfidenceDots)
+                        //
+                        // #184: own reports only. Off raw `scoutReportCount`
+                        // this row lit a dot for the inherited "Previous
+                        // Staff" freebie on a third of the class, and the card
+                        // the user opens from it (`scoutConfidenceBadge`)
+                        // answered "Unscouted · 0/3 reports" on the same man.
+                        // Same counter, same cap, same glyphs — all three now
+                        // come from `ProspectFog`.
+                        let ownReports = ProspectFog.ownReportCount(prospect)
+                        if ownReports > 0 {
+                            Text(ProspectFog.confidenceDots(prospect))
                                 .font(.system(size: DSType.Size.micro))
-                                .foregroundStyle(prospect.scoutReportCount >= 3 ? Color.success : Color.textTertiary)
+                                .foregroundStyle(ownReports >= ScoutEvaluationBudget.maxReportsPerProspect
+                                                 ? Color.success : Color.textTertiary)
                         }
                         // #12: the NEED badge lives on the name line rather than
                         // in a trailing column, so it survives a mode switch —
@@ -762,7 +777,7 @@ struct InterviewSelectionView: View {
                      : (selectedProspectIDs.isEmpty
                         ? "Select Prospects to Interview"
                         : "Conduct \(selectedProspectIDs.count) Interview\(selectedProspectIDs.count == 1 ? "" : "s")"))
-                    .font(.system(size: 15, weight: .bold))
+                    .font(.system(size: DSType.Size.callout, weight: .bold))
             }
             .foregroundStyle(blocked ? Color.textTertiary : Color.backgroundPrimary)
             .frame(maxWidth: .infinity)
@@ -782,7 +797,7 @@ struct InterviewSelectionView: View {
     private var allInterviewsUsedView: some View {
         VStack(spacing: 12) {
             Image(systemName: "checkmark.seal.fill")
-                .font(.system(size: 40))
+                .font(.system(size: DSType.Size.display))
                 .foregroundStyle(Color.success)
 
             Text("All Interview Slots Used")
@@ -1261,10 +1276,10 @@ struct InterviewReportView: View {
     private func summaryPill(icon: String, text: String, color: Color) -> some View {
         HStack(spacing: 4) {
             Image(systemName: icon)
-                .font(.system(size: 9))
+                .font(.system(size: DSType.Size.caption))
                 .foregroundStyle(color)
             Text(text)
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: DSType.Size.caption, weight: .medium))
                 .foregroundStyle(color)
         }
     }
@@ -1293,7 +1308,7 @@ struct InterviewReportView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text("\(result.prospect.firstName) \(result.prospect.lastName)")
-                            .font(.system(size: 15, weight: .bold))
+                            .font(.system(size: DSType.Size.callout, weight: .bold))
                             .foregroundStyle(Color.textPrimary)
 
                         Text(result.prospect.position.rawValue)
@@ -1357,12 +1372,12 @@ struct InterviewReportView: View {
                             .font(.system(size: 12, weight: .bold))
                             .foregroundStyle(iqGradeColor(result.footballIQGrade))
                         Text("(\(result.footballIQ))")
-                            .font(.system(size: 10, weight: .medium).monospacedDigit())
+                            .font(.system(size: DSType.Size.caption, weight: .medium).monospacedDigit())
                             .foregroundStyle(Color.textTertiary)
                     }
                     // Task 11: Football IQ impact explanation
                     Text("Affects scheme learning speed")
-                        .font(.system(size: DSType.Size.micro, weight: .medium))
+                        .font(.system(size: DSType.Size.footnote, weight: .medium))
                         .foregroundStyle(Color.textTertiary)
                 }
             }
@@ -1376,8 +1391,8 @@ struct InterviewReportView: View {
                                 .font(.system(size: 14))
                                 .foregroundStyle(Color.danger)
                             Text("OFF-FIELD CONCERNS")
-                                .font(.system(size: 11, weight: .heavy))
-                                .foregroundStyle(Color.danger)
+                                .font(.system(size: DSType.Size.caption, weight: .heavy))
+                                .foregroundStyle(Color.dangerText)
                         }
                         .padding(.horizontal, 8)
                         .padding(.vertical, 5)
@@ -1414,7 +1429,7 @@ struct InterviewReportView: View {
                 if !note.contains("\u{1F6A9}") && !note.contains("\u{2705}") {
                     HStack(alignment: .top, spacing: 6) {
                         Image(systemName: "quote.bubble.fill")
-                            .font(.system(size: 9))
+                            .font(.system(size: DSType.Size.caption))
                             .foregroundStyle(Color.textTertiary)
                             .frame(width: 12)
                             .padding(.top, 2)
@@ -1429,20 +1444,24 @@ struct InterviewReportView: View {
             if result.footballIQ >= 85 {
                 HStack(spacing: 4) {
                     Image(systemName: "bolt.fill")
-                        .font(.system(size: 9))
+                        .font(.system(size: DSType.Size.caption))
                         .foregroundStyle(Color.success)
+                    // Full-strength green: the 80 % wash put an explanatory
+                    // sentence under the AA floor on the card surface.
                     Text("High IQ = faster scheme learning, better in-game decisions, fewer penalties")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(Color.success.opacity(0.8))
+                        .font(.system(size: DSType.Size.footnote, weight: .medium))
+                        .foregroundStyle(Color.success)
                 }
             } else if result.footballIQ < 55 {
                 HStack(spacing: 4) {
                     Image(systemName: "exclamationmark.circle.fill")
-                        .font(.system(size: 9))
+                        .font(.system(size: DSType.Size.caption))
                         .foregroundStyle(Color.danger)
+                    // `dangerText` at full strength — `danger` at 80 % is ~2.7:1
+                    // as words, and this line is the warning itself.
                     Text("Low IQ = slower scheme learning, more mental errors, penalty-prone")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(Color.danger.opacity(0.8))
+                        .font(.system(size: DSType.Size.footnote, weight: .medium))
+                        .foregroundStyle(Color.dangerText)
                 }
             }
 
@@ -1541,8 +1560,8 @@ struct InterviewReportView: View {
                                 .fill(Color.danger)
                                 .frame(width: 6, height: 6)
                             Text(flag)
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(Color.danger)
+                                .font(.system(size: DSType.Size.footnote, weight: .semibold))
+                                .foregroundStyle(Color.dangerText)
                         }
                     }
                 }
@@ -1582,10 +1601,10 @@ struct InterviewReportView: View {
             if !parts.isEmpty {
                 HStack(spacing: 8) {
                     Image(systemName: "figure.run")
-                        .font(.system(size: 9))
+                        .font(.system(size: DSType.Size.caption))
                         .foregroundStyle(Color.textTertiary)
                     Text(parts.joined(separator: " | "))
-                        .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                        .font(.system(size: DSType.Size.footnote, weight: .semibold).monospacedDigit())
                         .foregroundStyle(Color.textTertiary)
                 }
             }
@@ -1654,10 +1673,10 @@ struct InterviewReportView: View {
             ForEach(Array(topTargets.enumerated()), id: \.element.id) { index, result in
                 HStack(spacing: 6) {
                     Text("\(index + 1).")
-                        .font(.system(size: 13, weight: .heavy).monospacedDigit())
+                        .font(.system(size: DSType.Size.body, weight: .heavy).monospacedDigit())
                         .foregroundStyle(Color.accentGold)
                     Text("\(result.prospect.firstName) \(result.prospect.lastName)")
-                        .font(.system(size: 13, weight: .bold))
+                        .font(.system(size: DSType.Size.body, weight: .bold))
                         .foregroundStyle(Color.textPrimary)
                     Text(result.prospect.position.rawValue)
                         .font(.system(size: 10, weight: .bold))

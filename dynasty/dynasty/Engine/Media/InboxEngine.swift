@@ -1426,6 +1426,60 @@ enum InboxEngine {
         )
     }
 
+    /// The club's OWN pro-day circuit, filed by the men who went (#189).
+    ///
+    /// ``proDayCircuitMessage`` above is the other half of the same week and a
+    /// different document: the league's campus circuit, read off the wire, for
+    /// men nobody in this building watched. This one exists because the trip
+    /// the user actually paid for produced no mail at all — the only record was
+    /// a panel inside `ProDayTourView` that died with the view. The stage's
+    /// whole currency is attention, and spending it left no trace in the one
+    /// place the game keeps its history.
+    ///
+    /// Returns `nil` for a circuit that saw nobody, which includes the explicit
+    /// skip. A letter announcing that the department stayed home is the no-op
+    /// with a receipt this screen has already had to delete once.
+    static func proDayTourDigestMessage(
+        schools: [String],
+        prospectsEvaluated: Int,
+        findings: [String],
+        dateString: String
+    ) -> InboxMessage? {
+        guard !schools.isEmpty, prospectsEvaluated > 0 else { return nil }
+
+        let schoolCount = schools.count
+        let schoolWord = schoolCount == 1 ? "school" : "schools"
+        let manWord = prospectsEvaluated == 1 ? "man" : "men"
+
+        var lines: [String] = [
+            "Coach,",
+            "",
+            "The department is back. \(prospectsEvaluated) \(manWord) worked out in front of our own people at \(schoolCount) \(schoolWord): \(schools.joined(separator: ", ")).",
+            "",
+            "Every one of them is filed — our watch, our eyes, our report. That is the difference between these numbers and the ones the wire prints."
+        ]
+
+        if !findings.isEmpty {
+            lines.append("")
+            lines.append("Worth your time:")
+            lines.append(contentsOf: findings.map { "- \($0)" })
+        }
+
+        lines.append("")
+        lines.append("Scouting Department")
+
+        return InboxMessage(
+            sender: .scout(name: "Director of Scouting"),
+            subject: "Pro day circuit complete \u{2014} \(prospectsEvaluated) \(manWord) seen at \(schoolCount) \(schoolWord)",
+            body: lines.joined(separator: "\n"),
+            date: dateString,
+            category: .scoutingReport,
+            attachments: [
+                MessageAttachment(title: "Open Big Board", destination: .bigBoard)
+            ]
+        )
+    }
+
     // MARK: - The two mock-draft moments (#103 §5.7)
 
     /// The personnel director's read on a mock draft: here is where the league
@@ -1602,7 +1656,14 @@ enum InboxEngine {
 
         let declared = prospects.filter(\.isDeclaringForDraft)
         guard !declared.isEmpty else { return nil }
-        let reported = declared.filter { !$0.scoutingReports.isEmpty }.count
+        // Our OWN paper only. `applyPreScoutedData` stamps a "Previous Staff"
+        // report on the top ~250 of every class at career creation, so the raw
+        // `!scoutingReports.isEmpty` ledger let the department mail "249 of 312
+        // carry one of our reports" in a save where the user had ordered zero
+        // film study — while the Scouting Hub header and the dashboard's
+        // "% scouted" (both on `ProspectFog.hasOwnReport`) said 0%. Same
+        // predicate here, so the three counters cannot disagree.
+        let reported = declared.filter(ProspectFog.hasOwnReport).count
         let interviewed = declared.filter(\.interviewCompleted).count
         let flagged = declared.filter { !($0.medicalConcerns ?? []).isEmpty }.count
 

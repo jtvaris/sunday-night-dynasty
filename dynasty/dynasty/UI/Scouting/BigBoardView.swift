@@ -967,9 +967,9 @@ struct BigBoardView<Header: View>: View {
                 Image(systemName: filed >= ScoutEvaluationBudget.maxReportsPerProspect
                       ? "checkmark.seal.fill"
                       : "doc.text.magnifyingglass")
-                    .font(.system(size: 13))
+                    .font(.system(size: DSType.Size.footnote))
                 Text(filmButtonCaption(availability, filed: filed))
-                    .font(.system(size: 7, weight: .heavy))
+                    .font(.system(size: DSType.Size.caption, weight: .heavy))
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
             }
@@ -1085,7 +1085,7 @@ struct BigBoardView<Header: View>: View {
                 .padding(.vertical, 2)
                 .background(Color.backgroundSecondary, in: Capsule())
             Text(tier.blurb)
-                .font(.system(size: 8))
+                .font(.system(size: DSType.Size.caption))
                 .foregroundStyle(Color.textTertiary)
                 .textCase(nil)
         }
@@ -1103,7 +1103,7 @@ struct BigBoardView<Header: View>: View {
                         .tint(Color.accentBlue)
                     Text("Loading Big Board...")
                         .font(.subheadline)
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(Color.textSecondary)
                 }
             } else {
                 VStack(spacing: 0) {
@@ -1589,7 +1589,10 @@ struct BigBoardView<Header: View>: View {
             // number wins and the scouts' band is the fallback — so a board row
             // printed `86 MEET` next to `C-/B+ TAPE` and asked the user to
             // compare a number with a letter in the same strip. Two instruments,
-            // two questions, two columns.
+            // two questions, two columns. MEET now speaks in letters too (#182)
+            // — one exact grade, blue, against the scouts' gold band — so the
+            // strip reads in a single vocabulary and the split carries the
+            // distinction the merged column used to hide.
             HStack(spacing: 1) {
                 Text("TAPE")
                 InfoTooltipButton(
@@ -1602,7 +1605,8 @@ struct BigBoardView<Header: View>: View {
             HStack(spacing: 1) {
                 Text("MEET")
                 InfoTooltipButton(
-                    text: "What your own people got out of him in a room. An exact football-IQ number, because that is what a meeting produces. A dash means you have not spent an interview slot on him.",
+                    text: "What your own people got out of him in a room \u{2014} his football IQ as a letter grade. One grade, not a band: a meeting produces an exact read, and the exact number is on his prospect card under Interview. A dash means you have not spent an interview slot on him.",
+                    showLetterGradeKey: true,
                     size: 9
                 )
             }
@@ -1768,7 +1772,7 @@ struct BigBoardView<Header: View>: View {
                     .foregroundStyle(Color.textPrimary)
                     .lineLimit(1)
                 Text("You: #\(entry.myRank)  Media: ~#\(entry.mediaPick)  (\(label) by \(abs(entry.gap)))")
-                    .font(.system(size: 9, weight: .medium).monospacedDigit())
+                    .font(.system(size: DSType.Size.caption, weight: .medium).monospacedDigit())
                     .foregroundStyle(Color.textTertiary)
             }
             Spacer()
@@ -1826,15 +1830,15 @@ struct BigBoardView<Header: View>: View {
                 // Tier summary (#16)
                 if needCount > 0 {
                     Text("\(needCount) need")
-                        .font(.system(size: 8, weight: .semibold))
+                        .font(.system(size: DSType.Size.caption, weight: .semibold))
                         .foregroundStyle(Color.warning)
                 }
                 if markedCount > 0 {
                     HStack(spacing: 1) {
                         Image(systemName: "bookmark.fill")
-                            .font(.system(size: 7))
+                            .font(.system(size: DSType.Size.micro))
                         Text("\(markedCount)")
-                            .font(.system(size: 8, weight: .semibold))
+                            .font(.system(size: DSType.Size.caption, weight: .semibold))
                     }
                     .foregroundStyle(Color.accentGold)
                     .accessibilityLabel("\(markedCount) marked")
@@ -1845,16 +1849,16 @@ struct BigBoardView<Header: View>: View {
                    let avgProb = tierAvailabilityProb {
                     HStack(spacing: 2) {
                         Image(systemName: "percent")
-                            .font(.system(size: 7))
+                            .font(.system(size: DSType.Size.micro))
                         Text("\(availCount)/\(count) avail @#\(pick.pickNumber) (\(Int(avgProb * 100))%)")
-                            .font(.system(size: 8, weight: .semibold))
+                            .font(.system(size: DSType.Size.caption, weight: .semibold))
                     }
                     .foregroundStyle(avgProb >= 0.6 ? Color.success : (avgProb >= 0.3 ? Color.accentBlue : Color.warning))
                 }
             }
             // Tier description (#8)
             Text(bigBoardTierDescriptions[tierIndex])
-                .font(.system(size: 8))
+                .font(.system(size: DSType.Size.caption))
                 .foregroundStyle(Color.textTertiary)
                 .textCase(nil)
         }
@@ -1984,7 +1988,7 @@ struct BigBoardView<Header: View>: View {
                         .font(.caption.weight(.semibold))
                         .lineLimit(1)
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 8, weight: .bold))
+                        .font(.system(size: DSType.Size.micro, weight: .bold))
                 }
                 .foregroundStyle(markFilter == .all ? Color.textSecondary : Color.accentGold)
                 .padding(.horizontal, 10)
@@ -2097,7 +2101,7 @@ struct BigBoardView<Header: View>: View {
                                 Text(grade.letterGrade)
                                     .font(.callout.weight(isSelected ? .bold : .regular))
                                 Text(grade.shortLabel)
-                                    .font(.system(size: 7))
+                                    .font(.system(size: DSType.Size.caption))
                                     .foregroundStyle(isSelected ? Color.backgroundPrimary.opacity(0.7) : Color.textTertiary)
                             }
                             .foregroundStyle(isSelected ? Color.backgroundPrimary : Color.textPrimary)
@@ -2388,8 +2392,8 @@ struct BigBoardRowView: View {
             ProspectColumns.cells(for: prospect, mode: attributeTab, context: columnContext)
 
             // Always-visible, and TWO columns rather than one: the tape read
-            // (a gold band from your scouts) and the meeting read (an exact blue
-            // number from your interview). `ProspectIQCell` merged them behind a
+            // (a gold band from your scouts) and the meeting read (one exact
+            // blue letter from your interview). `ProspectIQCell` merged them behind a
             // precedence rule and printed whichever won, which is right for the
             // draft room's tight rows and wrong for a board the user is scanning
             // to find the work he has not done.
@@ -2787,7 +2791,7 @@ struct ProspectNoteSheetView: View {
 
                 Text("\(noteText.count)/200")
                     .font(.caption)
-                    .foregroundStyle(noteText.count > 200 ? Color.danger : Color.textTertiary)
+                    .foregroundStyle(noteText.count > 200 ? Color.dangerText : Color.textTertiary)
 
                 Spacer()
             }

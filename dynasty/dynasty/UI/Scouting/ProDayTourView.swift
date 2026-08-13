@@ -8,13 +8,40 @@ import SwiftData
 ///
 /// Three things about this screen are deliberate (plan §5.5):
 ///
-/// 1. **One execution path.** Assigning a school *reserves* a focus slot and
-///    mutates nothing. The stage-advance button is the only thing that runs the
-///    tour. The old screen ran `attendProDay` eagerly on assignment and then
-///    offered a big gold "Send Scouts to Pro Days" button whose per-college
+/// 1. **One execution path, run once.** Assigning a school *reserves* a focus
+///    slot and mutates nothing. The stage-advance button is the only thing that
+///    runs the tour. The old screen ran `attendProDay` eagerly on assignment and
+///    then offered a big gold "Send Scouts to Pro Days" button whose per-college
 ///    guard (`contains { !$0.proDayCompleted }`) was always false by the time it
-///    was pressed — a no-op with a receipt (F5). It cannot come back: there is
-///    no engine call on the assignment path any more.
+///    was pressed — a no-op with a receipt (F5).
+///
+///    **That header used to claim the shape could not come back. It had already
+///    come back, one door further along (#189).** The screen's only gate was
+///    `canAct`, and `canAct` is `DraftPrepProgress.canAct(.proDayFocus)`, which
+///    deliberately keeps an EARLIER stage workable — so running the circuit and
+///    advancing to `.workouts` left the gold CTA, the "skip the circuit" line
+///    and every Reserve button exactly where they were. Pressing Send a second
+///    time found every reserved school's men already `proDayCompleted`,
+///    `needsRun` false for all of them, `schools` empty — the F5 no-op verbatim,
+///    and worse than the original, because the empty run then *overwrote* the
+///    real receipt with a blank one.
+///
+///    The gate is now `hasRunTour`, which is a fact about the circuit rather
+///    than about the calendar: a filed receipt for this season, or a scout who
+///    has actually attended (`proDaysAttended`, which only the tour writes).
+///    Past it there is no Send button, no skip line, no Reserve, and
+///    `advanceStage` refuses to write an empty receipt over a real one even if
+///    something else calls it. It deliberately reads NOTHING off
+///    `proDayCompleted`: the private-workout stage sets that flag too, and
+///    while the gate consulted it, one workout at a school the club had merely
+///    *booked* closed the circuit before the department ever left (#189b).
+/// 1b. **The receipt outlives the view.** `tourResult` was `@State` and nothing
+///    else, so the panel that says what the trip bought vanished on the first
+///    tab switch and never came back — the one screen in the prep whose whole
+///    output is a summary forgot it the moment you looked away. It is persisted
+///    per career and stamped with the season (`ProDayTourReceiptStore`), so the
+///    recap survives a tab change and a relaunch, and a new draft cycle starts
+///    clean without a reset hook.
 /// 2. **Nothing decodes UserDefaults in a computed property.** The custom board
 ///    is decoded once per refresh into `boardRanks`, and the whole school list
 ///    is one pure `ScoutingEngine.proDaySchoolSummaries` pass held in `@State`
@@ -53,7 +80,8 @@ struct ProDayTourView: View {
     /// Prospect ID → 1-based rank on the user's custom board. One JSON decode.
     @State private var boardRanks: [UUID: Int] = [:]
     @State private var summaries: [ScoutingEngine.ProDaySchoolSummary] = []
-    /// Schools whose pro day has already been run for us.
+    /// Schools OUR department stood on this cycle, read off the filed receipt.
+    /// Never derived from `proDayCompleted` — see `hasToured`.
     @State private var visitedColleges: Set<String> = []
     /// Declared men per school, graded-sorted, for the expanded rows.
     @State private var prospectsByCollege: [String: [CollegeProspect]] = [:]
@@ -114,7 +142,33 @@ struct ProDayTourView: View {
     private var usedSlots: Int { scouts.reduce(0) { $0 + $1.proDayColleges.count } }
     private var slotsLeft: Int { max(0, totalSlots - usedSlots) }
     private var reservedColleges: [String] { scouts.flatMap { $0.proDayColleges } }
-    private var hasRunTour: Bool { !visitedColleges.isEmpty }
+
+    /// Did the department actually travel? A fact only the tour writes.
+    ///
+    /// **Never `proDayCompleted`, and never a reservation intersected with it.**
+    /// `proDayCompleted` has three writers — `attendProDay`, the league circuit
+    /// and `ScoutingEngine.conductPersonalWorkout` — and the private-workout
+    /// writer lands on exactly the men this screen's user just reserved (marked,
+    /// board-ranked men at the schools he booked). Intersecting the reservation
+    /// ledger with it therefore does NOT narrow the question: one private
+    /// workout at a reserved school closed this screen for the whole cycle, with
+    /// the circuit never run and no longer runnable or skippable (#189b).
+    ///
+    /// `scout.proDaysAttended` is written by `ScoutingEngine.attendProDay` and
+    /// nothing else, `advanceStage` below is its only caller, and `WeekAdvancer`
+    /// zeroes it per cycle — so it means "our trip happened this cycle" and
+    /// nothing else can forge it.
+    private var hasToured: Bool { scouts.contains { $0.proDaysAttended > 0 } }
+
+    /// **The one-shot fact.** The circuit runs once a cycle, and after it has
+    /// run — or been explicitly skipped — this screen offers no way to run it
+    /// again. `canAct` cannot answer this: it stays `true` for an earlier stage
+    /// by design (see the type doc, point 1).
+    ///
+    /// Receipt or execution. The filed receipt comes first because it is the
+    /// only marker that also covers the skip, where nothing at all was written
+    /// to any prospect or scout.
+    private var hasRunTour: Bool { tourResult != nil || hasToured }
 
     private var scoutsWithSlots: [Scout] {
         scouts.filter { $0.proDayColleges.count < $0.maxProDays }
@@ -176,9 +230,16 @@ struct ProDayTourView: View {
         List {
             focusSlotGauge
             departmentSection
-            if !recommended.isEmpty && canAct { recommendedSection }
+            // "Reserve all recommended" is an invitation to spend slots. Once
+            // the department is home there is nothing left to spend them on,
+            // and an invitation that leads nowhere is the bug class this whole
+            // screen exists to close.
+            if !recommended.isEmpty && canAct && !hasRunTour { recommendedSection }
             schoolsSection
-            if let result = tourResult { resultsSection(result) }
+            // A receipt with no schools on it is the skip, or a run that found
+            // nothing to run. It closes the stage; it did not file a report,
+            // and must not draw one (F5).
+            if let result = tourResult, !result.schools.isEmpty { resultsSection(result) }
             advanceSection
         }
         .scrollContentBackground(.hidden)
@@ -195,6 +256,37 @@ struct ProDayTourView: View {
 
     // MARK: - Focus slots
 
+    /// Past tense once the trip has happened. "4/6 reserved" is a statement
+    /// about a plan, and after the department is home there is no plan left for
+    /// the user to read it as — the gauge went on describing an intention the
+    /// screen had already spent.
+    private var slotGaugeSubtitle: String {
+        let scoutWord = scouts.count == 1 ? "scout" : "scouts"
+        guard hasRunTour else {
+            return "\(usedSlots)/\(totalSlots) reserved \u{2022} \(scouts.count) \(scoutWord)"
+        }
+        guard !(tourResult?.skipped ?? false) else {
+            return "Nobody travelled \u{2022} \(scouts.count) \(scoutWord)"
+        }
+        let worked = schoolsWorked
+        return "\(worked) school\(worked == 1 ? "" : "s") worked \u{2022} \(scouts.count) \(scoutWord)"
+    }
+
+    /// How many schools the department actually stood on: the filed receipt,
+    /// which is the only place the trip itself is enumerated. A reservation can
+    /// be edited and `proDayCompleted` has writers this trip never met, so
+    /// neither may be counted here.
+    private var schoolsWorked: Int {
+        (tourResult?.skipped ?? false) ? 0 : (tourResult?.schools.count ?? 0)
+    }
+
+    /// "Focus slots" is a heading about a plan. After the act it has to name
+    /// the act.
+    private var slotGaugeTitle: String {
+        guard hasRunTour else { return "Focus slots" }
+        return (tourResult?.skipped ?? false) ? "Circuit skipped" : "Circuit spent"
+    }
+
     private var focusSlotGauge: some View {
         Section {
             HStack(spacing: 12) {
@@ -202,10 +294,10 @@ struct ProDayTourView: View {
                     .font(.title3)
                     .foregroundStyle(Color.accentBlue)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Focus slots")
+                    Text(slotGaugeTitle)
                         .font(.caption.weight(.bold))
                         .foregroundStyle(Color.textPrimary)
-                    Text("\(usedSlots)/\(totalSlots) reserved \u{2022} \(scouts.count) scout\(scouts.count == 1 ? "" : "s")")
+                    Text(slotGaugeSubtitle)
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(Color.textSecondary)
                 }
@@ -237,9 +329,12 @@ struct ProDayTourView: View {
             HStack {
                 Text("Your department")
                 Spacer()
-                Text("\(slotsLeft) slot\(slotsLeft == 1 ? "" : "s") left")
+                Text(hasRunTour
+                     ? "Circuit complete"
+                     : "\(slotsLeft) slot\(slotsLeft == 1 ? "" : "s") left")
                     .font(.caption2)
-                    .foregroundStyle(slotsLeft == 0 ? Color.danger : Color.textTertiary)
+                    .foregroundStyle(hasRunTour ? Color.success
+                                     : (slotsLeft == 0 ? Color.danger : Color.textTertiary))
             }
         }
         .listRowBackground(Color.backgroundSecondary)
@@ -253,7 +348,7 @@ struct ProDayTourView: View {
                         .fill(scout.proDayColleges.count < scout.maxProDays ? Color.accentGold.opacity(0.15) : Color.backgroundTertiary)
                         .frame(width: 32, height: 32)
                     Image(systemName: specialtyIcon(for: scout))
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: DSType.Size.body, weight: .semibold))
                         .foregroundStyle(scout.proDayColleges.count < scout.maxProDays ? Color.accentGold : Color.textTertiary)
                 }
                 VStack(alignment: .leading, spacing: 2) {
@@ -373,7 +468,7 @@ struct ProDayTourView: View {
                 VStack(alignment: .leading, spacing: 5) {
                     HStack(spacing: 8) {
                         Image(systemName: expandedColleges.contains(info.college) ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 10, weight: .bold))
+                            .font(.system(size: DSType.Size.micro, weight: .bold))
                             .foregroundStyle(Color.textTertiary)
                             .frame(width: 14)
                         Text(info.college)
@@ -423,14 +518,14 @@ struct ProDayTourView: View {
                 chip("\(info.needCount) NEED", color: .danger)
             }
             Text("\(info.declared) declared")
-                .font(.system(size: 10))
+                .font(.system(size: DSType.Size.caption))
                 .foregroundStyle(Color.textTertiary)
         }
     }
 
     private func chip(_ text: String, color: Color) -> some View {
         Text(text)
-            .font(.system(size: 10, weight: .bold))
+            .font(.system(size: DSType.Size.micro, weight: .bold))
             .foregroundStyle(color)
             .padding(.horizontal, 5)
             .padding(.vertical, 1)
@@ -451,12 +546,15 @@ struct ProDayTourView: View {
         } else if info.isFocused {
             HStack(spacing: 6) {
                 Text("RESERVED")
-                    .font(.system(size: 9, weight: .black))
+                    .font(.system(size: DSType.Size.caption, weight: .black))
                     .foregroundStyle(Color.accentGold)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
                     .background(Color.accentGold.opacity(0.14), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
-                if canAct {
+                // Releasing a booking after the trip is over cannot un-book
+                // anything — the X was still there, and it silently rewrote the
+                // ledger the recap is read against.
+                if canAct && !hasRunTour {
                     Button { releaseFocus(college: info.college) } label: {
                         Image(systemName: "xmark.circle.fill")
                             .font(.caption)
@@ -466,6 +564,11 @@ struct ProDayTourView: View {
                     .accessibilityLabel("Release \(info.college)")
                 }
             }
+        } else if hasRunTour {
+            // The circuit is behind the club and this school was not on it.
+            Text("Not on the circuit")
+                .font(.caption2)
+                .foregroundStyle(Color.textTertiary)
         } else if canAct && slotsLeft > 0 {
             Button {
                 activeSheet = .reserveScout(college: info.college)
@@ -523,12 +626,12 @@ struct ProDayTourView: View {
         let read = ProspectFog.read(prospect)
         return HStack(spacing: 8) {
             Text(boardRanks[prospect.id].map { "#\($0)" } ?? "--")
-                .font(.system(size: 10, weight: .heavy).monospacedDigit())
+                .font(.system(size: DSType.Size.micro, weight: .heavy).monospacedDigit())
                 .foregroundStyle((boardRanks[prospect.id] ?? 999) <= 10 ? Color.accentGold : Color.textTertiary)
                 .frame(width: 28, alignment: .trailing)
 
             Text(prospect.position.rawValue)
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: DSType.Size.micro, weight: .bold))
                 .foregroundStyle(Color.textPrimary)
                 .frame(width: 28, height: 18)
                 .background(positionColor(prospect.position), in: RoundedRectangle(cornerRadius: 3))
@@ -540,7 +643,7 @@ struct ProDayTourView: View {
                     .lineLimit(1)
                 HStack(spacing: 4) {
                     Text(read.text)
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.system(size: DSType.Size.caption, weight: .bold))
                         .foregroundStyle(read.source.tint)
                     if prospect.proDayCompleted {
                         Text("PRO DAY")
@@ -599,9 +702,18 @@ struct ProDayTourView: View {
 
     // MARK: - Advance
 
+    /// The CTA, the skip line — or, once the circuit is behind the club, the
+    /// closed state that replaces both.
+    ///
+    /// The `hasRunTour` branch comes FIRST and is not conditioned on `canAct`:
+    /// `canAct` stays true for a stage the club has walked past, so gating this
+    /// on it is precisely what left a live "Send the department out" over a
+    /// department that was already home (#189, type doc point 1).
     @ViewBuilder
     private var advanceSection: some View {
-        if canAct {
+        if hasRunTour {
+            circuitClosedSection
+        } else if canAct {
             Section {
                 Button { advanceStage(runTour: true) } label: {
                     HStack(spacing: 10) {
@@ -642,6 +754,44 @@ struct ProDayTourView: View {
         }
     }
 
+    /// What stands where the CTA was. A door that is shut still has to look
+    /// like a door — the alternative (drawing nothing) is the blank action slot
+    /// this screen already fixed once, in `schoolStatus`.
+    private var circuitClosedSection: some View {
+        let worked = schoolsWorked
+        let skipped = tourResult?.skipped ?? false
+        // Hoisted out of the `Text` so the branch is a plain `String` the type
+        // checker settles in one step, rather than a nested ternary of
+        // interpolated literals inside a `Text` initialiser.
+        let closedLine: String = {
+            if worked > 0 {
+                return "The department is home from \(worked) school\(worked == 1 ? "" : "s"). The circuit runs once a cycle."
+            }
+            if skipped {
+                return "You read this one off the broadcast feed \u{2014} the department stayed home."
+            }
+            return "Nothing came back from this circuit. It runs once a cycle."
+        }()
+        return Section {
+            HStack(spacing: 10) {
+                Image(systemName: worked > 0 ? "checkmark.seal.fill" : "tv")
+                    .font(.title3)
+                    .foregroundStyle(worked > 0 ? Color.success : Color.textTertiary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Circuit complete")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(Color.textPrimary)
+                    Text(closedLine)
+                        .font(.caption)
+                        .foregroundStyle(Color.textSecondary)
+                }
+                Spacer()
+            }
+            .padding(.vertical, 4)
+        }
+        .listRowBackground(Color.backgroundSecondary)
+    }
+
     // MARK: - Sheets
 
     /// Takes the college as an argument rather than reading `@State`: the enum
@@ -680,6 +830,10 @@ struct ProDayTourView: View {
     /// tour actually executes.
     private func reserveFocus(scout: Scout, college: String) {
         guard canAct else { return }
+        // The stage is a *stage* to `canAct` but a one-shot *act* to the user.
+        // Booking a school for a trip that already happened writes a
+        // reservation nothing will ever honour.
+        guard !hasRunTour else { return }
         guard scout.proDayColleges.count < scout.maxProDays else { return }
         guard !reservedColleges.contains(college) else { return }
         scout.proDayColleges.append(college)
@@ -688,8 +842,13 @@ struct ProDayTourView: View {
         onRefresh()
     }
 
+    /// `!hasRunTour` is the whole guard: past the trip nothing may be released,
+    /// and before it every reservation is still just a plan. The extra
+    /// `!visitedColleges.contains(college)` this used to carry inherited the
+    /// `proDayCompleted` false positive — a private workout at a booked school
+    /// silently swallowed the release.
     private func releaseFocus(college: String) {
-        guard canAct, !visitedColleges.contains(college) else { return }
+        guard canAct, !hasRunTour else { return }
         for scout in scouts {
             scout.proDayColleges.removeAll { $0 == college }
         }
@@ -724,9 +883,15 @@ struct ProDayTourView: View {
     /// The ONE execution path (F5) and the stage transition (§5.2) in one act.
     ///
     /// `runTour == false` is the explicit skip: the stage still closes, the
-    /// circuit simply never happened.
+    /// circuit simply never happened. Both outcomes file a receipt, because the
+    /// receipt is also the one-shot marker (`hasRunTour`) — a skip that left no
+    /// trace let the user come back and send a department the alert had just
+    /// promised would stay home.
     private func advanceStage(runTour: Bool) {
         guard canAct else { return }
+        // Belt to `advanceSection`'s braces: nothing may run the circuit twice,
+        // whatever route reaches this function.
+        guard !hasRunTour else { return }
 
         if runTour {
             var findings: [String] = []
@@ -758,17 +923,74 @@ struct ProDayTourView: View {
             // told it did.
             guard applied else { return }
 
-            tourResult = ProDayTourResult(
+            fileReceipt(ProDayTourResult(
+                season: career.currentSeason,
+                skipped: false,
                 schools: schools,
                 prospectsEvaluated: evaluated,
                 findings: Array(findings.prefix(5))
-            )
+            ))
+        } else {
+            // The skip. An empty receipt: it closes the stage and says nothing
+            // was filed, which is exactly what happened.
+            fileReceipt(ProDayTourResult(
+                season: career.currentSeason,
+                skipped: true,
+                schools: [],
+                prospectsEvaluated: 0,
+                findings: []
+            ))
         }
 
         career.advancePrepStep(to: .workouts)
         try? modelContext.save()
         refresh()
         onRefresh()
+    }
+
+    /// Writes the receipt to `@State` and to the save, and mails the digest.
+    ///
+    /// **The guard is the point.** An empty receipt may never replace a real
+    /// one. That is not hypothetical: the second press of the old CTA produced
+    /// exactly this — a run in which every reserved school was already worked,
+    /// so `schools` came back empty — and it blanked the panel that had just
+    /// told the user what the trip bought.
+    private func fileReceipt(_ receipt: ProDayTourResult) {
+        if receipt.schools.isEmpty, let existing = tourResult, !existing.schools.isEmpty {
+            return
+        }
+        tourResult = receipt
+        ProDayTourReceiptStore.save(receipt)
+        mailDigest(receipt)
+    }
+
+    /// The user's own circuit, in the inbox.
+    ///
+    /// The LEAGUE circuit already mails one (`InboxEngine.proDayCircuitMessage`,
+    /// from `WeekAdvancer`) — the public numbers off the wire. The club's own
+    /// trip, the expensive half, filed nothing anywhere: the only record it
+    /// ever existed was a `@State` panel that died with the view. The two
+    /// letters are deliberately different documents; this one is about what the
+    /// department saw with its own eyes.
+    private func mailDigest(_ receipt: ProDayTourResult) {
+        guard let message = InboxEngine.proDayTourDigestMessage(
+            schools: receipt.schools,
+            prospectsEvaluated: receipt.prospectsEvaluated,
+            findings: receipt.findings,
+            dateString: InboxEngine.dateLabel(
+                week: career.currentWeek,
+                season: receipt.season,
+                phase: career.currentPhase
+            )
+        ) else { return }
+
+        // The process-global staging channel every out-of-shell producer posts
+        // through; `CareerShellView.collectInboxMessages` drains it. Deduped
+        // against both books so a re-file cannot mail the same letter twice.
+        let alreadyFiled = career.inbox.contains { $0.subject == message.subject }
+            || WeekAdvancer.lastInboxMessages.contains { $0.subject == message.subject }
+        guard !alreadyFiled else { return }
+        WeekAdvancer.lastInboxMessages.append(message)
     }
 
     // MARK: - Refresh (the F6 fix)
@@ -797,16 +1019,13 @@ struct ProDayTourView: View {
         )
 
         var grouped: [String: [CollegeProspect]] = [:]
-        var visited: Set<String> = []
         for prospect in prospects where prospect.isDeclaringForDraft {
             grouped[prospect.college, default: []].append(prospect)
-            if prospect.proDayCompleted { visited.insert(prospect.college) }
         }
         for key in Array(grouped.keys) {
             grouped[key]?.sort { ($0.scoutedOverall ?? 0) > ($1.scoutedOverall ?? 0) }
         }
         prospectsByCollege = grouped
-        visitedColleges = visited
 
         var bestNames: [String: String] = [:]
         for summary in summaries {
@@ -816,6 +1035,21 @@ struct ProDayTourView: View {
             }
         }
         bestNameByCollege = bestNames
+
+        // The filed receipt is the source of truth for the recap, not `@State`.
+        // Season-stamped, so the read comes back `nil` in the next draft cycle
+        // and the screen opens clean without anybody remembering to reset it —
+        // the same trick `Career.prepStep` uses.
+        let receipt = ProDayTourReceiptStore.load(season: career.currentSeason) ?? tourResult
+        if let receipt {
+            tourResult = receipt
+        }
+        // …and the only enumeration of where the department stood. This used to
+        // be every school with one `proDayCompleted` man, which a single private
+        // workout at the next stage was enough to forge — the row then wore a
+        // "Visited" seal for a trip nobody took and lost its Reserve button.
+        let toured: [String] = (receipt?.skipped ?? true) ? [] : (receipt?.schools ?? [])
+        visitedColleges = Set(toured)
     }
 
     // MARK: - Helpers
@@ -861,7 +1095,7 @@ struct ProDayTourView: View {
     private func emptyState(icon: String, title: String, message: String) -> some View {
         VStack(spacing: 16) {
             Image(systemName: icon)
-                .font(.system(size: 44))
+                .font(.system(size: DSType.Size.hero))
                 .foregroundStyle(Color.textTertiary)
             Text(title)
                 .font(.title3.weight(.semibold))
@@ -879,10 +1113,58 @@ struct ProDayTourView: View {
 // MARK: - Tour result
 
 /// What the one execution produced, for the panel under the button.
-struct ProDayTourResult {
+///
+/// `Codable` and season-stamped because it is persisted: see
+/// ``ProDayTourReceiptStore``. An **empty `schools`** is meaningful — it is the
+/// skip, or a run that found nothing left to run — and every reader must treat
+/// it as "the circuit is behind us and filed nothing", never as a report.
+struct ProDayTourResult: Codable, Equatable {
+    /// The draft cycle this receipt belongs to. A receipt from an earlier
+    /// season reads as absent rather than as a tour this club just ran.
+    let season: Int
+    /// The user chose "watch it on the feed". Stored rather than inferred from
+    /// an empty `schools`, because the two empty receipts mean different things
+    /// to the reader: a skip is a decision, and a sent department that found
+    /// nobody left to watch is an accident. Telling a club that travelled it
+    /// stayed home is the same class of lie as a no-op with a receipt.
+    let skipped: Bool
     let schools: [String]
     let prospectsEvaluated: Int
     let findings: [String]
+}
+
+// MARK: - Receipt store
+
+/// The pro-day tour receipt, per career, per season.
+///
+/// `tourResult` was `@State` and nothing else, so the panel summarising the
+/// single most expensive act of the stage survived exactly as long as the view
+/// did: switching to the Big Board tab and back erased it, and so did a
+/// relaunch. Nothing else in the app records that the club's own department
+/// ever travelled — `proDayCompleted` is set by three different callers and
+/// says nothing about who paid — so the recap was the whole record, and it was
+/// the most volatile state in the screen.
+enum ProDayTourReceiptStore {
+
+    /// Listed in `CareerScopedDefaults.keys`, so a deleted save takes its
+    /// receipt with it.
+    static let defaultsKey = "proDayTourReceipt"
+
+    /// The receipt for this cycle, or `nil` — including when the stored one
+    /// belongs to a previous season, which is how the store expires without a
+    /// rollover hook.
+    static func load(season: Int) -> ProDayTourResult? {
+        guard let json: String = CareerScopedDefaults.value(defaultsKey),
+              let decoded = try? JSONDecoder().decode(ProDayTourResult.self, from: Data(json.utf8)),
+              decoded.season == season
+        else { return nil }
+        return decoded
+    }
+
+    static func save(_ receipt: ProDayTourResult) {
+        guard let data = try? JSONEncoder().encode(receipt) else { return }
+        CareerScopedDefaults.set(String(decoding: data, as: UTF8.self), defaultsKey)
+    }
 }
 
 // MARK: - Reserve-a-scout sheet
@@ -920,7 +1202,7 @@ private struct ProDayFocusScoutSheet: View {
                             if let reason = bestMatch?.reason {
                                 HStack(spacing: 4) {
                                     Image(systemName: "lightbulb.fill")
-                                        .font(.system(size: 9))
+                                        .font(.system(size: DSType.Size.micro))
                                         .foregroundStyle(Color.accentGold.opacity(0.8))
                                     Text(reason)
                                         .font(.caption2.italic())
@@ -983,7 +1265,7 @@ private struct ProDayFocusScoutSheet: View {
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: selectedScoutID == scout.id ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 18))
+                    .font(.system(size: DSType.Size.title3))
                     .foregroundStyle(selectedScoutID == scout.id ? Color.accentGold : Color.textTertiary)
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
@@ -998,7 +1280,7 @@ private struct ProDayFocusScoutSheet: View {
                             .background(Color.accentBlue.opacity(isFull ? 0.05 : 0.12), in: Capsule())
                         if isRecommended(scout) && !isFull {
                             Text("Recommended")
-                                .font(.system(size: 9, weight: .bold))
+                                .font(.system(size: DSType.Size.caption, weight: .bold))
                                 .foregroundStyle(Color.success)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
@@ -1017,7 +1299,7 @@ private struct ProDayFocusScoutSheet: View {
                 Spacer()
                 if isFull {
                     Text("FULL")
-                        .font(.system(size: 9, weight: .black))
+                        .font(.system(size: DSType.Size.caption, weight: .black))
                         .foregroundStyle(Color.danger)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
@@ -1036,7 +1318,7 @@ private struct ProDayFocusScoutSheet: View {
         let read = ProspectFog.read(prospect)
         return HStack(spacing: 8) {
             Text(prospect.position.rawValue)
-                .font(.system(size: 10, weight: .bold))
+                .font(.system(size: DSType.Size.micro, weight: .bold))
                 .foregroundStyle(Color.textPrimary)
                 .frame(width: 28, height: 18)
                 .background(
@@ -1084,7 +1366,7 @@ private struct ProDayMarkTargetSheet: View {
                             Button { onSelect(prospect) } label: {
                                 HStack(spacing: 10) {
                                     Text(prospect.position.rawValue)
-                                        .font(.system(size: 10, weight: .bold))
+                                        .font(.system(size: DSType.Size.micro, weight: .bold))
                                         .foregroundStyle(Color.textPrimary)
                                         .frame(width: 30, height: 20)
                                         .background(

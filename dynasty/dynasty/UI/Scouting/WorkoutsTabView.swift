@@ -81,7 +81,19 @@ struct WorkoutsTabView: View {
 
     @State private var searchText = ""
     @State private var sort: WorkoutSort = .board
-    @State private var boardOnly = true
+    /// OFF by default (#190).
+    ///
+    /// It shipped ON, and that made the tab's candidate set "declared, not yet
+    /// worked out, AND already marked Elite or Target" — a fourth predicate
+    /// nobody asked for, applied before the user had seen a single row. On a
+    /// fresh board (no marks at all) the list was empty and the run bar was dead
+    /// on arrival, over a stage the band was drawing as OPEN.
+    ///
+    /// The right candidate set is the one `refresh()` builds — declared men with
+    /// no `.personalWorkout` report — and the board switch, the position chips
+    /// and the search box are OPT-IN narrowings on top of it, exactly as they
+    /// are in the sibling rooms (Interviews, Top-30 Visits).
+    @State private var boardOnly = false
     @State private var showAll = false
 
     // MARK: - Batch state
@@ -129,8 +141,14 @@ struct WorkoutsTabView: View {
 
     // MARK: - Rows
 
+    /// The search box's text, normalised once. Read by the filter AND by the
+    /// empty state, which has to name the narrowing that emptied the list.
+    private var trimmedQuery: String {
+        searchText.trimmingCharacters(in: .whitespaces)
+    }
+
     private var filtered: [CollegeProspect] {
-        let query = searchText.trimmingCharacters(in: .whitespaces).lowercased()
+        let query = trimmedQuery.lowercased()
         return candidates.filter { prospect in
             guard positionFilter.matches(prospect.position) else { return false }
             guard !boardOnly || prospect.userMark.isBoardPositive else { return false }
@@ -138,6 +156,22 @@ struct WorkoutsTabView: View {
             return prospect.fullName.lowercased().contains(query)
                 || prospect.college.lowercased().contains(query)
         }
+    }
+
+    /// Whether the three opt-in narrowings are all off, i.e. the list is showing
+    /// the whole candidate pool.
+    private var filtersAreClear: Bool {
+        !boardOnly && positionFilter == .all && trimmedQuery.isEmpty
+    }
+
+    /// The way out of an empty list, in one tap. The position chip row is the
+    /// hub's and lives above this screen, so a user who narrowed to QB and then
+    /// scrolled the table has to find his way back up to a control he may not
+    /// remember touching; the escape hatch belongs where the dead end is.
+    private func clearFilters() {
+        boardOnly = false
+        positionFilter = .all
+        searchText = ""
     }
 
     private var sorted: [CollegeProspect] {
@@ -205,18 +239,37 @@ struct WorkoutsTabView: View {
     /// custom board), because "the button did nothing" is the worse failure.
     /// With neither, the capsule does not appear at all rather than guessing
     /// from a list the user has never expressed an opinion about.
-    private var recommendedProspects: [CollegeProspect] {
-        let marked = sorted.filter { $0.userMark.isBoardPositive }
-        if !marked.isEmpty { return marked }
-        return sorted.filter { boardRanks[$0.id] != nil }
+    ///
+    /// **ONE definition, unordered (#190).** The capsule's visibility test and
+    /// the fill it performs must be the same set or the button is gold paint on
+    /// a no-op, and they were not: this read `sorted` while `hasRecommended`
+    /// read `candidates`, the UNFILTERED pool. Narrow to QB with every marked
+    /// man at another position and the capsule stayed on screen doing nothing.
+    ///
+    /// Membership does not need order, so the shared definition is a `Set` over
+    /// `filtered` — the same men the list is showing — and the ordering is
+    /// applied once, in `recommendedProspects`, at the moment of the tap. That
+    /// keeps the O(n log n) sort off every body pass, which is what #120's
+    /// review F8 was about.
+    private var recommendedIDs: Set<UUID> {
+        let marked = filtered.filter { $0.userMark.isBoardPositive }
+        if !marked.isEmpty { return Set(marked.map(\.id)) }
+        return Set(filtered.filter { boardRanks[$0.id] != nil }.map(\.id))
     }
 
-    /// The capsule's visibility test alone. `recommendedProspects` re-sorts the
-    /// class to answer it, and the header asks on every body pass — a full
-    /// O(n log n) per checkbox tap for a yes/no (#120 review F8). Membership
-    /// does not need order.
+    /// The recommended men in the list's own order — `recommendedIDs` put back
+    /// through the current sort, so the fill takes the top of what the user is
+    /// actually looking at.
+    private var recommendedProspects: [CollegeProspect] {
+        let ids = recommendedIDs
+        return sorted.filter { ids.contains($0.id) }
+    }
+
+    /// The capsule's visibility test alone: is there a recommended man the
+    /// selection does NOT already hold? Anything weaker draws a control whose
+    /// tap changes nothing.
     private var hasRecommended: Bool {
-        candidates.contains { $0.userMark.isBoardPositive || boardRanks[$0.id] != nil }
+        recommendedIDs.contains { !selectedIDs.contains($0) }
     }
 
     /// Fills the selection from `recommendedProspects`, in the list's own order,
@@ -240,15 +293,57 @@ struct WorkoutsTabView: View {
     // Every blocked case carries the sentence the run bar prints. A dead control
     // that does not say why is the bug this whole wave exists to stop repeating.
 
+    /// Why the visible list is empty — the NARROWING that emptied it when one
+    /// did, and the honest "there is nobody" only when none did (#190).
+    ///
+    /// Both the rows section and the run bar print this, so the sentence under
+    /// the empty table and the sentence on the dead button are the same claim.
+    /// The bug this replaces: with a filter on, the screen said "Nobody left to
+    /// bring in" over a class full of men the user could bring in the moment he
+    /// tapped ALL — a false statement about the world dressed as a fact about
+    /// the ration.
+    private var emptyPoolReason: String {
+        // Nothing is narrowed away — the pool itself is empty.
+        if candidates.isEmpty {
+            return filedEntries.isEmpty
+                ? "No declared prospects to bring in"
+                : "Everyone available has already worked out for your staff"
+        }
+
+        var narrowings: [String] = []
+        if boardOnly { narrowings.append("the board filter") }
+        if positionFilter != .all { narrowings.append("the \(positionFilter.label) filter") }
+        if !trimmedQuery.isEmpty { narrowings.append("your search") }
+
+        // Unreachable while `filtered` is `candidates` minus exactly these three
+        // tests — but a fourth filter added later must not resurrect the lie.
+        guard let last = narrowings.last else { return "Nobody left to bring in" }
+
+        let hiders = narrowings.count == 1
+            ? last
+            : narrowings.dropLast().joined(separator: ", ") + " and " + last
+        let pool = candidates.count == 1
+            ? "The one man left to bring in is hidden by"
+            : "All \(candidates.count) men left to bring in are hidden by"
+        return "\(pool) \(hiders)"
+    }
+
     /// Why the batch cannot be run, or `nil` when it can.
     private var blockedReason: String? {
         if !canAct { return "Private workouts open at that stage" }
         if remaining == 0 {
             return "All \(DraftPrepProgress.workoutSlots) workout slots are spent this cycle"
         }
-        if candidates.isEmpty { return "Nobody left to bring in" }
-        if selectedIDs.isEmpty { return "Select Men to Bring In" }
-        return nil
+        // A live selection outranks an empty TABLE. `selectedProspects` is
+        // resolved from the unfiltered pool on purpose (see its doc comment), so
+        // a man picked before the user typed in the search box is still in the
+        // batch — and refusing to run it because the list he is no longer
+        // visible in is empty would kill a batch the button is still counting.
+        guard selectedIDs.isEmpty else { return nil }
+        // Nobody is picked, so the question is whether there is anybody TO pick
+        // on the list in front of the user — `filtered`, not `candidates` (#190).
+        if filtered.isEmpty { return emptyPoolReason }
+        return "Select Men to Bring In"
     }
 
     // MARK: - The room
@@ -309,6 +404,22 @@ struct WorkoutsTabView: View {
             }
         }
         .task { refresh() }
+        // NOT A ONE-SHOT (#190). `.task` runs once per identity, and this view
+        // keeps its identity while the HUB reloads the class underneath it —
+        // `loadData()` fires on every hub sheet dismissal and after every stage
+        // action, and the snapshots below (`candidates`, `fogRanks`,
+        // `filedEntries`) were computed from the array that was handed in when
+        // the screen was built. A man worked out from his own card, or a class
+        // re-persisted by the pro-day tour, left this list showing rows that no
+        // longer existed and hiding rows that now did.
+        //
+        // Two cheap triggers rather than one expensive one: comparing the
+        // prospect array itself would mean hashing ~350 model objects on every
+        // body pass, and these two scalars move on precisely the events that
+        // invalidate the snapshot — the class being reloaded or re-filtered, and
+        // the workout ration being spent anywhere else in the app.
+        .onChange(of: prospects.count) { _, _ in refresh() }
+        .onChange(of: career.workoutsUsed) { _, _ in refresh() }
         // ONE sheet modifier, over an `item:` slot.
         .sheet(item: $activeSheet) { sheet in
             switch sheet {
@@ -334,7 +445,7 @@ struct WorkoutsTabView: View {
     private var lockedState: some View {
         VStack(spacing: 16) {
             Image(systemName: "figure.run.circle")
-                .font(.system(size: 44))
+                .font(.system(size: DSType.Size.hero))
                 .foregroundStyle(Color.textTertiary)
             Text("Workouts Have Not Opened")
                 .font(.title3.weight(.semibold))
@@ -369,9 +480,9 @@ struct WorkoutsTabView: View {
                 Button(action: onDismiss) {
                     HStack(spacing: 8) {
                         Image(systemName: "chevron.left")
-                            .font(.system(size: 13, weight: .bold))
+                            .font(.system(size: DSType.Size.body, weight: .bold))
                         Text(dismissTitle)
-                            .font(.system(size: 14, weight: .bold))
+                            .font(.system(size: DSType.Size.body, weight: .bold))
                     }
                     .foregroundStyle(Color.backgroundPrimary)
                     .frame(maxWidth: .infinity)
@@ -495,7 +606,11 @@ struct WorkoutsTabView: View {
                         .buttonStyle(.plain)
                     }
 
-                    if hasRecommended && remaining > 0 {
+                    // `selectedIDs.count < remaining` rather than `remaining > 0`:
+                    // with the batch already at the cap the fill has no slot to
+                    // put anybody in, and the capsule would be gold paint on a
+                    // no-op.
+                    if hasRecommended && selectedIDs.count < remaining {
                         Button {
                             selectAllRecommended()
                         } label: {
@@ -533,7 +648,7 @@ struct WorkoutsTabView: View {
                 .frame(height: 6)
 
                 Text("League clubs bring in 15\u{2013}25 men for private work. A session costs a slot and no money.")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: DSType.Size.footnote, weight: .medium))
                     .foregroundStyle(Color.textTertiary)
             }
             .padding(.vertical, 2)
@@ -548,10 +663,10 @@ struct WorkoutsTabView: View {
         HStack(spacing: 3) {
             if let icon {
                 Image(systemName: icon)
-                    .font(.system(size: 9))
+                    .font(.system(size: DSType.Size.micro))
             }
             Text(text)
-                .font(.system(size: 10, weight: .bold))
+                .font(.system(size: DSType.Size.caption, weight: .bold))
         }
         .foregroundStyle(tint)
         .padding(.horizontal, 8)
@@ -562,12 +677,25 @@ struct WorkoutsTabView: View {
     private var rowsSection: some View {
         Section {
             if visible.isEmpty {
-                Text(boardOnly
-                     ? "Nobody on your board is still un-worked. Turn off the board filter to see the rest of the class."
-                     : "Nobody left to bring in.")
-                    .font(.caption2)
-                    .foregroundStyle(Color.textTertiary)
-                    .padding(.vertical, 4)
+                // ONE SENTENCE, the run bar's (#190). The two used to disagree:
+                // the table blamed the board filter whether or not it was on,
+                // and the bar said "Nobody left to bring in" over a class the
+                // user had merely narrowed. Both read `emptyPoolReason` now, so
+                // the empty table and the dead button make one claim.
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(emptyPoolReason + ".")
+                        .font(.caption2)
+                        .foregroundStyle(Color.textTertiary)
+                    if !filtersAreClear {
+                        Button { clearFilters() } label: {
+                            Text("Clear filters")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(Color.accentBlue)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.vertical, 4)
             } else {
                 ForEach(visible) { prospect in
                     workoutRow(prospect)
@@ -619,7 +747,7 @@ struct WorkoutsTabView: View {
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                        .font(.system(size: 17))
+                        .font(.system(size: DSType.Size.title3))
                         .foregroundStyle(isSelected ? Color.accentBlue : Color.textTertiary)
                         .frame(width: 20)
 
@@ -646,16 +774,16 @@ struct WorkoutsTabView: View {
                         }
                         HStack(spacing: 6) {
                             Text(read.text)
-                                .font(.system(size: 9, weight: .bold))
+                                .font(.system(size: DSType.Size.caption, weight: .bold))
                                 .foregroundStyle(read.source.tint)
                             Text(prospect.college)
-                                .font(.system(size: 9))
+                                .font(.system(size: DSType.Size.caption))
                                 .foregroundStyle(Color.textTertiary)
                                 .lineLimit(1)
                             if teamNeeds.contains(prospect.position) {
                                 Text("NEED")
                                     .font(.system(size: DSType.Size.micro, weight: .black))
-                                    .foregroundStyle(Color.danger)
+                                    .foregroundStyle(Color.dangerText)
                             }
                             // A blocked row says WHY on the row rather than
                             // going quietly grey. (`!canAct` never reaches a
@@ -679,7 +807,10 @@ struct WorkoutsTabView: View {
             // NavigationLink: fill the last slot and every remaining row
             // becomes a surprise navigation push. The button stays live and
             // `toggle` refuses over-cap adds itself (#120 review F5).
-            .opacity(selectable ? 1.0 : 0.55)
+            // 0.55 → 0.75: the row still has to read as unavailable, but at 55 %
+            // the man's NAME — and the "No slots left in this batch" line that
+            // explains the state — fell under the contrast floor.
+            .opacity(selectable ? 1.0 : 0.75)
             .accessibilityLabel("\(prospect.fullName), \(prospect.position.rawValue), \(prospect.college)")
             .accessibilityValue(isSelected ? "Selected for a private workout" : read.accessibilityText)
             .accessibilityAddTraits(isSelected ? [.isSelected] : [])
@@ -719,7 +850,7 @@ struct WorkoutsTabView: View {
                 Image(systemName: canAct ? "dumbbell.fill" : "lock.fill")
                     .font(.system(size: 14, weight: .bold))
                 Text(reason ?? "Run Private Workouts (\(selectedIDs.count))")
-                    .font(.system(size: 15, weight: .bold))
+                    .font(.system(size: DSType.Size.callout, weight: .bold))
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
             }
@@ -1103,10 +1234,10 @@ struct WorkoutBatchReportView: View {
     private func summaryPill(icon: String, text: String, color: Color) -> some View {
         HStack(spacing: 4) {
             Image(systemName: icon)
-                .font(.system(size: 9))
+                .font(.system(size: DSType.Size.caption))
                 .foregroundStyle(color)
             Text(text)
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: DSType.Size.caption, weight: .medium))
                 .foregroundStyle(color)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
@@ -1127,7 +1258,7 @@ struct WorkoutBatchReportView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text(entry.prospectName)
-                            .font(.system(size: 15, weight: .bold))
+                            .font(.system(size: DSType.Size.callout, weight: .bold))
                             .foregroundStyle(Color.textPrimary)
                         Text(entry.position.rawValue)
                             .font(.system(size: 11, weight: .bold))
@@ -1145,7 +1276,7 @@ struct WorkoutBatchReportView: View {
 
                 VStack(spacing: 1) {
                     Text(entry.bandAfter?.displayText ?? "\u{2014}")
-                        .font(.system(size: 20, weight: .heavy))
+                        .font(.system(size: DSType.Size.title2, weight: .heavy))
                         .foregroundStyle(gradeColor(entry.bandAfter))
                         .lineLimit(1)
                         .minimumScaleFactor(0.6)
@@ -1196,11 +1327,11 @@ struct WorkoutBatchReportView: View {
                     ForEach(entry.impressions, id: \.self) { line in
                         HStack(alignment: .top, spacing: 6) {
                             Image(systemName: "circle.fill")
-                                .font(.system(size: 5))
+                                .font(.system(size: 5))  // ds-lint:allow(font) list bullet ornament — a glyph-drawn dot, carries no text
                                 .foregroundStyle(Color.accentBlue)
                                 .padding(.top, 5)
                             Text(line)
-                                .font(.system(size: 12))
+                                .font(.system(size: DSType.Size.footnote))
                                 .foregroundStyle(Color.textPrimary)
                         }
                     }
@@ -1240,10 +1371,10 @@ struct WorkoutBatchReportView: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 4) {
                 Image(systemName: icon)
-                    .font(.system(size: 9))
+                    .font(.system(size: DSType.Size.caption))
                     .foregroundStyle(tint)
                 Text(title)
-                    .font(.system(size: 10, weight: .heavy))
+                    .font(.system(size: DSType.Size.caption, weight: .heavy))
                     .foregroundStyle(tint)
                     .tracking(0.4)
             }
@@ -1346,7 +1477,7 @@ struct WorkoutResultSheet: View {
             ForEach(result.impressions, id: \.self) { line in
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "circle.fill")
-                        .font(.system(size: 5))
+                        .font(.system(size: 5))  // ds-lint:allow(font) list bullet ornament — a glyph-drawn dot, carries no text
                         .foregroundStyle(Color.accentBlue)
                         .padding(.top, 5)
                     Text(line)
