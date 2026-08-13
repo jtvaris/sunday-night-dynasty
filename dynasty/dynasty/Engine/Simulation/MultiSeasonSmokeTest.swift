@@ -1279,6 +1279,12 @@ enum MultiSeasonSmokeTest {
                 player.teamID = nil
                 player.annualSalary = 0
                 player.contractYearsRemaining = 0
+                // This stand-in bypasses `CapManagementEngine.applyRelease`, so
+                // it also has to do the one thing that door does for a camp body
+                // (#205a §3.1): take the flag off him. A man who leaves a roster
+                // still flagged is exempt from the cap credit on his NEXT, fully
+                // charged release, which walks the ledger the wrong way.
+                CampRosterEngine.clearCampBodyStatus(player)
             }
             roster = Array(sorted.prefix(53))
         }

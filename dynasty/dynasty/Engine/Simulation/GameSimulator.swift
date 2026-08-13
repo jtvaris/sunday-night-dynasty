@@ -87,6 +87,16 @@ enum GameSimulator {
     ///   - weather: Optional game weather (see ``GameWeather/forGame(id:week:)``).
     ///     The SAME condition is applied to both teams on every play, so the
     ///     effect is symmetric. `nil` = today's exact behavior (clear skies).
+    ///   - homeRosterOverride: Exactly who dresses for the HOME team. `nil` =
+    ///     today's exact behavior, the club's whole `currentRoster()`.
+    ///     Passed by `PreseasonEngine` (#205b), where a coach's preseason
+    ///     policy — rest the starters, a starter series, full tilt — IS the
+    ///     decision about who suits up, and where an injured man genuinely does
+    ///     not dress (the regular-season path leaves that simplification alone
+    ///     rather than changing what a shipped season simulates).
+    ///     The holdout filter below still applies on top of an override, so no
+    ///     caller can accidentally dress a man who is refusing to report.
+    ///   - awayRosterOverride: Same, for the AWAY team.
     static func simulate(
         homeTeam: Team,
         awayTeam: Team,
@@ -97,7 +107,9 @@ enum GameSimulator {
         boostedTeamID: UUID? = nil,
         homeGamePlan: GamePlan? = nil,
         awayGamePlan: GamePlan? = nil,
-        weather: GameWeather? = nil
+        weather: GameWeather? = nil,
+        homeRosterOverride: [Player]? = nil,
+        awayRosterOverride: [Player]? = nil
     ) -> GameResult {
         // -----------------------------------------------------------------
         // 1. Setup
@@ -112,8 +124,11 @@ enum GameSimulator {
         // snapshot, so a traded / signed / drafted / cut player used to suit up
         // for the wrong team here. Two fetches per GAME (this is the per-game
         // setup, outside the play-by-play loop).
-        let homeRoster = homeTeam.currentRoster().filter { !$0.isHoldingOut }
-        let awayRoster = awayTeam.currentRoster().filter { !$0.isHoldingOut }
+        // #205b: `homeRosterOverride` / `awayRosterOverride` name exactly who
+        // dresses. `nil` — every caller that existed before preseason — keeps
+        // the `teamID` query as the only source of a roster.
+        let homeRoster = (homeRosterOverride ?? homeTeam.currentRoster()).filter { !$0.isHoldingOut }
+        let awayRoster = (awayRosterOverride ?? awayTeam.currentRoster()).filter { !$0.isHoldingOut }
         var homePlayers = homeRoster.map(SimPlayer.init(from:))
         var awayPlayers = awayRoster.map(SimPlayer.init(from:))
         var livePlayerByID: [UUID: Player] = [:]

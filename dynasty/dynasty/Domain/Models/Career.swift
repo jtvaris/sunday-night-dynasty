@@ -180,6 +180,31 @@ final class Career {
     /// writes the result here. Optional new attribute → lightweight migration.
     var inboxData: Data? = nil
 
+    // MARK: - UDFA Market (#204)
+    /// JSON-encoded `UDFAMarketState` — the undrafted free-agent market for the
+    /// CURRENT season: its round, the standing offers and the signings already
+    /// struck. Seeded on the `.draft` exit, settled on the `.otas` exit; a blob
+    /// stamped with an older season reads as "no market yet" and is re-seeded.
+    /// The market touches this one property and nothing else in the model.
+    /// Optional new attribute → lightweight migration.
+    var udfaMarketData: Data? = nil
+
+    // MARK: - Camp Roster (#205a)
+    /// The season whose 80-man camp rosters have already been assembled
+    /// (`CampRosterEngine.fillCampRosters`, `OFFSEASON_ROSTER_PLAN.md` §3.3).
+    ///
+    /// The idempotency stamp for the camp-invite wave, in the same shape as
+    /// ``lastRolloverSeason`` and ``lastBulkMarketSeason``: `currentSeason` at
+    /// the moment the camps were filled, `0` for "never". It is PERSISTED for
+    /// the reason those two are — the `.otas` exit is reachable again after a
+    /// quit and relaunch, and a process-global set (the shape the deleted UDFA
+    /// bulk block used) does not survive a cold launch, so the fill would run a
+    /// second time and put every club at its target again on top of whatever
+    /// the user had already cut.
+    ///
+    /// Inline default → SwiftData lightweight migration; never an init parameter.
+    var campFillSeason: Int = 0
+
     // MARK: - Development Reports (R26)
     /// JSON-encoded `[DevelopmentReport]` — weekly development digests for
     /// the user's team, newest first, capped at 10.
@@ -328,6 +353,13 @@ final class Career {
     /// (intervene / let it play out). `nil` when nothing is pending.
     /// Optional new attribute → lightweight migration.
     var pendingLockerRoomEventData: Data? = nil
+
+    // MARK: - Preseason (#205b)
+    /// JSON-encoded `PreseasonState` — the whole three-game exhibition slate in
+    /// one blob rather than as `Game` rows (see `PreseasonState`'s header for
+    /// why). `nil` outside the phase and before the slate is drawn.
+    /// Optional new attribute → lightweight migration.
+    var preseasonData: Data? = nil
 
     // MARK: - Multi-save isolation (careerID wave)
     /// How far this save has been through the `careerID` adoption pass.
@@ -949,6 +981,38 @@ extension Career {
         }
         set {
             pendingLockerRoomEventData = newValue.flatMap { try? JSONEncoder().encode($0) }
+        }
+    }
+
+    /// The persisted preseason slate (#205b). Assigning `nil` clears it
+    /// (caller saves the context). Career-scoped by construction — it lives on
+    /// this row — and `PreseasonState.careerID` is stamped as well.
+    var preseasonState: PreseasonState? {
+        get {
+            guard let data = preseasonData else { return nil }
+            return try? JSONDecoder().decode(PreseasonState.self, from: data)
+        }
+        set {
+            preseasonData = newValue.flatMap { try? JSONEncoder().encode($0) }
+        }
+    }
+
+    /// The persisted undrafted market (#204), decoded. Assigning `nil` clears it
+    /// (caller saves the context). Career-scoped by construction — it lives on
+    /// this row.
+    ///
+    /// **Not the market's read door.** `UDFAMarketEngine.state(career:)` is, and
+    /// it additionally checks `UDFAMarketState.season` against
+    /// `currentSeason`, so last year's blob reads as "no market yet". This
+    /// accessor is the raw codec, mirroring `preseasonState`; anything that
+    /// wants to know whether the market is live must ask the engine.
+    var udfaMarketState: UDFAMarketState? {
+        get {
+            guard let data = udfaMarketData else { return nil }
+            return try? JSONDecoder().decode(UDFAMarketState.self, from: data)
+        }
+        set {
+            udfaMarketData = newValue.flatMap { try? JSONEncoder().encode($0) }
         }
     }
 }

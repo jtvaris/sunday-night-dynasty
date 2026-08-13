@@ -3,9 +3,17 @@ import SwiftData
 
 // MARK: - Roster Cut View
 //
-// The three-stage cutdown — 90 → 75 → 65 → 53 — on the wave-3 standard:
+// The three-stage cutdown — 80 → 75 → 65 → 53 — on the wave-3 standard:
 // `DSSlatBand` for the ladder, `DSActionBar` for the commit, `DSResultSheet` for
 // the ending (UI_REDESIGN_VISION §2.1 / §2.5 / §2.6).
+//
+// **The three rungs now fall due in three different phases** (#205a §1): camp
+// breaks at 75, the preseason slate ends at 65, cutdown day sets the 53. The
+// screen is therefore reachable from `.trainingCamp`, `.preseason` and
+// `.rosterCuts`, and the one thing it had to learn is that the ladder counts
+// down only as far as the calendar has reached — see `stage`. `CutDay.duePhase`
+// is the single authority for that mapping; the left-menu rows
+// (`TaskGenerator.rosterLadderTask`) and the advance gate read the same enum.
 //
 // **What was actually wrong here was the ending, not the list.** The screen
 // committed a set of releases and then advanced its own `@State stage` — the
@@ -28,6 +36,16 @@ import SwiftData
 //      it opened with and the cutdown can never be finished.
 //   2. **The commit confirms.** A release is irreversible and career-affecting,
 //      which is exactly the class §0 counted committing on first tap.
+//
+// **And the confirm had nothing to confirm about football** (#208a). The dialog
+// priced the release in cap dollars and said nothing about the shape of what was
+// leaving, so all three quarterbacks — the starter among them — could go on one
+// sheet and the only warning was a number of millions. `RosterCutEvaluator` has
+// carried the depth guard since it was written, but it governed the
+// RECOMMENDATION only and was never asked about the commit. It is now:
+// `releaseBlockReason` closes a row the moment ticking it would take a room
+// under its floor, and `positionImpacts` puts the rooms the plan touches in the
+// confirm dialog beside the money.
 
 struct RosterCutView: View {
 
@@ -43,6 +61,11 @@ struct RosterCutView: View {
     /// first render still has the shell's snapshot to draw rather than an empty
     /// list. Refreshed on appear and after every commit.
     @State private var liveRoster: [Player]?
+    /// The club, loaded with the ledger (#208 G1). The positional guard is the
+    /// engine's, and the engine's spelling of it takes the `Team` — so the row
+    /// guard needs the same club object the commit books against instead of
+    /// fetching one per row.
+    @State private var loadedTeam: Team?
 
     @State private var positionGroup: CutPositionGroup = .all
     @State private var selectedIDs: Set<UUID> = []
@@ -68,8 +91,13 @@ struct RosterCutView: View {
         let practiceSquadFlagged: Int
         let rosterAfter: Int
         let stage: CutDay
-        /// The stage the club stands on once this one is banked, if any.
-        let nextStage: CutDay?
+        /// Men still over `stage.target` after this commit — what the club owes
+        /// on THIS cut day before the calendar will move.
+        let stillOwed: Int
+        /// The rung after this one, if the ladder has one left. It is due in a
+        /// later phase, so the sheet names that phase rather than presenting it
+        /// as work in hand.
+        let nextRung: CutDay?
     }
 
     var body: some View {
@@ -88,10 +116,7 @@ struct RosterCutView: View {
             Button("Release", role: .destructive) { performCuts() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text(
-                "This frees \(money(selectionSavings)) and leaves \(money(selectionDeadMoney)) of dead money on this year's books. "
-                + "Releases cannot be undone."
-            )
+            Text(confirmMessage)
         }
         .sheet(item: $result) { result in
             resultSheet(result)
@@ -115,12 +140,14 @@ struct RosterCutView: View {
 
     private func slat(for day: CutDay, position: Int) -> DSSlat {
         let state: DSSlat.State
-        if isComplete || day.target > stage.target {
+        if day.target > stage.target {
             // A larger target than the one the club is working to is behind it:
             // the ladder counts DOWN, so "done" is the higher number.
             state = .done
         } else if day == stage {
-            state = .current
+            // Banked, not finished: the rung the calendar asked for is met, but
+            // the rungs below it are still ahead of the club.
+            state = isDueStageComplete ? .done : .current
         } else {
             state = .future
         }
@@ -146,10 +173,13 @@ struct RosterCutView: View {
 
     /// **The one place the stage count is printed** (§2.1).
     private var headline: String {
-        guard let index = CutDay.allCases.firstIndex(of: stage), !isComplete else {
+        guard !isComplete, let index = CutDay.allCases.firstIndex(of: stage) else {
             return "Cutdown complete"
         }
-        return "Cut day \(index + 1) of \(CutDay.allCases.count)"
+        let label = "Cut day \(index + 1) of \(CutDay.allCases.count)"
+        // Banked but not finished — say so, rather than leaving a "current"
+        // headline over a ladder whose current slat has just gone green.
+        return isDueStageComplete ? "\(label) \u{00B7} banked" : label
     }
 
     private var currentSubcaption: String {
@@ -222,6 +252,7 @@ struct RosterCutView: View {
     private func row(for player: Player) -> some View {
         let isSelected = selectedIDs.contains(player.id)
         let isPS = practiceSquadIDs.contains(player.id)
+        let blockReason = releaseBlockReason(for: player)
         return HStack(spacing: DSSpacing.sm) {
             // Avatar placeholder
             Circle()
@@ -262,6 +293,19 @@ struct RosterCutView: View {
                             .foregroundStyle(Color.accentGold)
                     }
                 }
+                // §2.12 — a closed row says why it is closed, in the row. A
+                // greyed line with no reason is the thing the guard exists to
+                // stop being.
+                if let blockReason {
+                    HStack(spacing: DSSpacing.xxs) {
+                        Image(systemName: "lock.fill")
+                            .font(DSType.display(10, .bold))
+                        Text(blockReason)
+                            .font(DSType.text(DSType.Size.caption, .semibold, prose: true))
+                            .lineLimit(2)
+                    }
+                    .foregroundStyle(Color.warning)
+                }
             }
 
             Spacer()
@@ -284,6 +328,9 @@ struct RosterCutView: View {
                         .foregroundStyle(isPS ? Color.textPrimary : Color.textSecondary)
                 }
                 .buttonStyle(.plain)
+                // A man who cannot be released cannot be stashed either — the
+                // flag only means anything on the way out.
+                .disabled(blockReason != nil)
                 .accessibilityLabel(
                     isPS
                         ? "\(player.fullName) is flagged for the practice squad"
@@ -298,48 +345,127 @@ struct RosterCutView: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: DSCornerRadius.card)
-                .strokeBorder(isSelected ? Color.danger : Color.surfaceBorder, lineWidth: isSelected ? 1.5 : 1)
+                .strokeBorder(
+                    isSelected ? Color.danger : (blockReason != nil ? Color.warning.opacity(0.5) : Color.surfaceBorder),
+                    lineWidth: isSelected ? 1.5 : 1
+                )
         )
+        // Dimmed, not hidden: the man is still on the roster and his numbers
+        // still read, he simply cannot be the one who goes.
+        .opacity(blockReason == nil ? 1.0 : 0.6)
         .contentShape(Rectangle())
-        .onTapGesture { toggleSelection(player) }
+        .onTapGesture {
+            guard blockReason == nil else { return }
+            toggleSelection(player)
+        }
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-        .accessibilityHint(isSelected ? "Tap to keep him" : "Tap to mark him for release")
+        .accessibilityHint(
+            blockReason
+                ?? (isSelected ? "Tap to keep him" : "Tap to mark him for release")
+        )
     }
 
     // MARK: - The commit surface (§2.5)
 
+    /// **The bar is keyed on the selection first, the rung second.**
+    ///
+    /// It used to be keyed on `isDueStageComplete` alone, which replaced the
+    /// whole primary with "Done" the moment the rung was met — and the rows
+    /// underneath stayed fully selectable. In training camp at 74 the club is
+    /// past the 75 rung, so a user marking three men for cap room watched the
+    /// rows light up, watched the explainer price the release, and had no
+    /// button that would commit it. Cutting under the rung in hand — which the
+    /// copy here has always invited — was impossible from the one screen the
+    /// camp task row deep-links to.
+    ///
+    /// So a live selection always owns the gold, and `Done` steps back into the
+    /// secondary slot (the fixed order [ghost][secondary][PRIMARY] already puts
+    /// it left of the commit). With nothing marked the bar is exactly what it
+    /// was.
     private var actionBar: some View {
-        DSActionBar(
+        let hasSelection = !selectedIDs.isEmpty
+        // #208a: the rows cannot build an illegal sheet, but the roster can move
+        // under one. The commit is gated on the same guard the rows are.
+        let isLegal = selectionViolations.isEmpty
+        return DSActionBar(
             explainer: explainer,
-            primary: isComplete
-                ? .init(title: "Done \u{2014} roster is set", handler: { dismiss() })
+            secondary: isDueStageComplete && hasSelection ? doneAction : nil,
+            primary: isDueStageComplete && !hasSelection
+                ? doneAction
                 : .init(
-                    title: selectedIDs.isEmpty
-                        ? "Release players"
-                        : "Release \(selectedIDs.count) player\(selectedIDs.count == 1 ? "" : "s")",
-                    isEnabled: !selectedIDs.isEmpty,
+                    title: hasSelection
+                        ? "Release \(selectedIDs.count) player\(selectedIDs.count == 1 ? "" : "s")"
+                        : "Release players",
+                    isEnabled: hasSelection && isLegal,
                     handler: { showCutConfirm = true }
                 )
+        )
+    }
+
+    /// Leaving the screen with the rung banked. Primary while nothing is
+    /// marked; demoted to secondary the moment a release is priced, because a
+    /// commit outranks an exit.
+    private var doneAction: DSActionBar.Action {
+        .init(
+            title: isComplete
+                ? "Done \u{2014} roster is set"
+                : "Done \u{2014} back to \(TaskGenerator.phaseInfo(for: career.currentPhase).name)",
+            handler: { dismiss() }
         )
     }
 
     /// What committing does and what it costs (P4) — or, when it is blocked,
     /// why (§2.12: a blocked commit swaps the rule to orange and says the
     /// reason rather than presenting a dead grey button with no explanation).
+    ///
+    /// **A live selection is priced whether or not the rung is banked.** The
+    /// banked branch used to win outright, so a voluntary cut made under the
+    /// limit was described by a bar still reading "Cut to 75 is banked" while
+    /// the gold button beside it offered to release three men — the bar naming
+    /// one action and pricing another.
     private var explainer: DSActionBar.Explainer {
-        if isComplete {
+        if selectedIDs.isEmpty, isDueStageComplete {
+            // The rung in hand is met. Whether anything is still owed depends on
+            // where the calendar is, so the copy names the next rung AND the
+            // phase it falls due in — the screen is now reachable from three
+            // phases and "next: cut to 65" with no date is the kind of half
+            // sentence that reads as a demand for work due in six weeks.
+            // No invitation to cut further on the last rung: 53 is the floor a
+            // club has to field on Sunday, and "tap a player to go under it"
+            // under a legal 53 is advice to play a man short. A release is
+            // still possible — the row taps and the commit both stand — the
+            // copy simply does not solicit one.
+            guard let next = nextRung, !isComplete else {
+                return .init(
+                    title: "Cutdown complete",
+                    message: "Your roster is at **\(activeRoster.count)**. Nothing more is owed here."
+                )
+            }
             return .init(
-                title: "Cutdown complete",
-                message: "Your roster is at **\(activeRoster.count)**. Nothing more is owed here."
+                title: "\(stage.slatTitle) is banked",
+                message: "At **\(activeRoster.count)**. Next: **\(next.slatTitle)**\(dueClause(for: next)). "
+                    + "Tap a player to go under it."
             )
         }
         if selectedIDs.isEmpty {
+            // Reached only while the rung is still owed — the banked branch
+            // above has already returned otherwise — so `remaining` is always
+            // positive here and the bar is always the orange blocked state.
             return .init(
                 title: "Nobody selected",
-                message: remaining > 0
-                    ? "You are **\(remaining) over** the \(stage.target)-man limit. Tap a player to mark him for release."
-                    : "You are at the **\(stage.target)-man limit** already \u{2014} tap a player only if you want to go under it.",
-                isWarning: remaining > 0
+                message: "You are **\(remaining) over** the \(stage.target)-man limit. Tap a player to mark him for release.",
+                isWarning: true
+            )
+        }
+        // #208a — a sheet that would empty a position room is refused HERE, in
+        // the orange state §2.12 reserves for a blocked commit, rather than by a
+        // grey button with nothing to say.
+        if let short = selectionViolations.first {
+            return .init(
+                title: "\(short.position.rawValue) room would be short",
+                message: "This leaves **\(short.after)** at \(short.position.rawValue) against a "
+                    + "**\(short.minimum)**-man minimum. Unmark someone in that room to release the rest.",
+                isWarning: true
             )
         }
         let ps = practiceSquadIDs.intersection(selectedIDs).count
@@ -357,9 +483,7 @@ struct RosterCutView: View {
             tone: result.deadMoney > result.capFreed ? .bad : .neutral,
             eyebrow: "Cutdown \u{00B7} \(result.stage.slatTitle)",
             headline: "\(result.released) player\(result.released == 1 ? "" : "s") released",
-            message: result.nextStage == nil
-                ? "Your roster is at **\(result.rosterAfter)**. The cutdown is done."
-                : "Your roster is at **\(result.rosterAfter)**. Next: **\(result.nextStage!.slatTitle)**.",
+            message: resultMessage(result),
             chips: [
                 .init(id: "roster", label: "Roster", value: "\(result.rosterAfter)", context: "\(result.released) released"),
                 .init(
@@ -386,9 +510,36 @@ struct RosterCutView: View {
             cost: result.deadMoney > 0
                 ? "**\(money(result.deadMoney))** of dead cap stays on this year's books, and a flagged man can still be claimed off waivers before you sign him."
                 : "Nothing accelerated onto this year's cap. Flagged men can still be claimed off waivers before you sign them.",
-            continueTitle: result.nextStage == nil ? "Done" : "Continue",
+            continueTitle: result.stillOwed > 0 ? "Continue" : "Done",
             onContinue: { self.result = nil }
         )
+    }
+
+    /// What the club owes after the commit, in the order it matters: this cut
+    /// day first, then the next rung and the phase it falls due in, then the
+    /// end of the arc.
+    private func resultMessage(_ result: CutResult) -> String {
+        if result.stillOwed > 0 {
+            return "Your roster is at **\(result.rosterAfter)**. "
+                + "**\(result.stillOwed) more** to release to reach \(result.stage.target)."
+        }
+        if let next = result.nextRung {
+            return "Your roster is at **\(result.rosterAfter)**. "
+                + "\(result.stage.slatTitle) is banked \u{2014} next is **\(next.slatTitle)**\(dueClause(for: next))."
+        }
+        return "Your roster is at **\(result.rosterAfter)**. The cutdown is done."
+    }
+
+    /// ", due when camp breaks" — but only while that is still in the future.
+    ///
+    /// A save can reach a phase with a roster the ladder did not expect (an old
+    /// save landing in `.rosterCuts` at 80 walks the 75 rung there), and telling
+    /// that user his next cut is due "when the preseason slate ends" points him
+    /// at a phase he has already played.
+    private func dueClause(for rung: CutDay) -> String {
+        let here = TaskGenerator.phaseInfo(for: career.currentPhase).order
+        let there = TaskGenerator.phaseInfo(for: rung.duePhase).order
+        return there > here ? ", due \(rung.dueWhen)" : ""
     }
 
     // MARK: - Stage, derived
@@ -397,12 +548,53 @@ struct RosterCutView: View {
     /// a frozen snapshot; this is the club after the releases already booked.
     private var activeRoster: [Player] { liveRoster ?? roster }
 
-    /// The stage the club is working to, read off the roster rather than stored.
-    private var stage: CutDay {
-        CutDay.stage(forRosterCount: activeRoster.count) ?? .cut65To53
+    /// The stage the club is working to, read off the roster **and the
+    /// calendar** rather than stored.
+    ///
+    /// The count alone was enough while all three rungs fell due on the same
+    /// day. Now they do not: a club that reaches 75 in training camp is done
+    /// for that phase, but a purely count-derived stage rolls straight on to
+    /// "Cut to 65" and starts demanding ten more releases weeks before the
+    /// preseason is played — a red warning bar for work that is not owed yet.
+    ///
+    /// So the ladder counts down only as far as the calendar has reached: take
+    /// the count's answer, but never past the rung `career.currentPhase` is due
+    /// to deliver. The ladder counts DOWN, so "not past" is the LARGER target.
+    /// Off the cut calendar entirely (the cap workspace can open this screen in
+    /// any phase) there is no rung due, and the derivation falls back to
+    /// exactly what it was before.
+    private var stage: CutDay { dueStage(forRosterCount: activeRoster.count) }
+
+    /// The derivation itself, so the result sheet can ask it about the roster
+    /// the commit just produced without re-stating the rule.
+    private func dueStage(forRosterCount count: Int) -> CutDay {
+        let byCount = CutDay.stage(forRosterCount: count) ?? .cut65To53
+        guard let due = CutDay.rung(dueIn: career.currentPhase) else { return byCount }
+        return byCount.target > due.target ? byCount : due
     }
 
-    private var isComplete: Bool { activeRoster.count <= CutDay.cut65To53.target }
+    /// The whole 80 → 53 arc is behind the club — the roster is legal for the
+    /// season opener **and** the calendar has walked the ladder all the way
+    /// down. Both halves are needed: a club that is already at 50 in training
+    /// camp is legal, but the preseason and cutdown rungs have not happened
+    /// yet, and claiming "cutdown complete" over a band whose last two slats
+    /// are still drawn as future is the header lying about the body.
+    private var isComplete: Bool {
+        activeRoster.count <= CutDay.cut65To53.target && stage == .cut65To53
+    }
+
+    /// **This** cut day is banked — the roster is at or under the rung the
+    /// calendar is currently asking for. The commit surface reads this, not
+    /// `isComplete`: in training camp at 75 there is nothing more owed, even
+    /// though two rungs of the ladder are still ahead.
+    private var isDueStageComplete: Bool { activeRoster.count <= stage.target }
+
+    /// The rung after the one in hand, if the ladder has one left.
+    private var nextRung: CutDay? {
+        guard let index = CutDay.allCases.firstIndex(of: stage),
+              index + 1 < CutDay.allCases.count else { return nil }
+        return CutDay.allCases[index + 1]
+    }
 
     /// Men over this stage's limit before any selection.
     private var requiredCuts: Int { max(0, activeRoster.count - stage.target) }
@@ -412,6 +604,64 @@ struct RosterCutView: View {
 
     private var filteredRoster: [Player] {
         activeRoster.filter { positionGroup.includes($0.position) }
+    }
+
+    // MARK: - Positional integrity (#208a)
+
+    /// Why this row is closed, straight off the engine's guard. The view never
+    /// re-states the rule — `RosterCutEvaluator` owns it, and the AI's trim
+    /// reads the same table through `recommendCuts`.
+    ///
+    /// Asked through `CapManagementEngine` rather than the evaluator directly
+    /// (#208 G1): the door `applyRelease` checks and the sentence this row shows
+    /// have to be produced by the same call, or the sheet can offer a tick the
+    /// commit then silently refuses. `team` is only in reach once the club has
+    /// loaded; until then no row can be ticked anyway (`performCuts` needs it
+    /// too), so an unguarded render is not a reachable commit.
+    private func releaseBlockReason(for player: Player) -> String? {
+        guard let team = loadedTeam else { return nil }
+        return CapManagementEngine.releaseBlockReason(
+            player: player,
+            team: team,
+            roster: activeRoster,
+            alreadySelected: selectedIDs
+        )
+    }
+
+    /// Rooms the live selection touches — the confirm dialog's football half.
+    private var selectionImpacts: [RosterCutEvaluator.PositionImpact] {
+        RosterCutEvaluator.positionImpacts(roster: activeRoster, releasing: selectedIDs)
+    }
+
+    /// Rooms the live selection would leave short.
+    ///
+    /// Belt and braces: the rows above cannot produce such a selection, but the
+    /// roster underneath this screen is re-fetched after every commit and can
+    /// move under a selection that was legal when it was made (a trade
+    /// elsewhere, an injury). The commit checks again rather than trusting that
+    /// the list it was drawn from is still the list.
+    private var selectionViolations: [RosterCutEvaluator.PositionImpact] {
+        selectionImpacts.filter(\.isViolation)
+    }
+
+    /// What the confirm dialog says: the money, then the rooms.
+    private var confirmMessage: String {
+        var lines = [
+            "This frees \(money(selectionSavings)) and leaves \(money(selectionDeadMoney)) of dead money on this year's books."
+        ]
+        let impacts = selectionImpacts
+        if !impacts.isEmpty {
+            lines.append("Position groups after this: " + impacts.map(\.line).joined(separator: " \u{00B7} ") + ".")
+        }
+        if let short = selectionViolations.first {
+            lines.append(
+                "\(short.position.rawValue) would be left with \(short.after) \u{2014} "
+                + "under the \(short.minimum)-man minimum. Unmark someone in that room first."
+            )
+        } else {
+            lines.append("Releases cannot be undone.")
+        }
+        return lines.joined(separator: " ")
     }
 
     // MARK: - Selection
@@ -507,6 +757,11 @@ struct RosterCutView: View {
         liveRoster = (try? modelContext.fetch(FetchDescriptor<Player>(
             predicate: #Predicate<Player> { $0.teamID == teamID }
         ))) ?? []
+        // #208 G1 — the club the row guard measures against, fetched once here
+        // rather than per row.
+        loadedTeam = try? modelContext.fetch(
+            FetchDescriptor<Team>(predicate: #Predicate<Team> { $0.id == teamID })
+        ).first
 
         let contractRows = (try? modelContext.fetch(FetchDescriptor<Contract>(
             predicate: #Predicate<Contract> { $0.teamID == teamID }
@@ -530,6 +785,10 @@ struct RosterCutView: View {
 
     private func performCuts() {
         guard let teamID = career.teamID, !selectedIDs.isEmpty else { return }
+        // #208a — the last gate before the releases are booked. The rows and the
+        // action bar both refuse an illegal sheet already; this is the one that
+        // holds when the roster moved between the tap and the confirm.
+        guard selectionViolations.isEmpty else { return }
         let teamDescriptor = FetchDescriptor<Team>(predicate: #Predicate<Team> { $0.id == teamID })
         guard let team = try? modelContext.fetch(teamDescriptor).first else { return }
 
@@ -552,25 +811,46 @@ struct RosterCutView: View {
             let split = CapManagementEngine.applyRelease(
                 player: player,
                 team: team,
+                // #208 G1 — the sheet's own roster, so the door does not re-fetch
+                // one for each of the ~27 releases a cutdown books. Men already
+                // released in this loop have a cleared `teamID` and drop out of
+                // the room the engine counts, so the floors close one man at a
+                // time exactly as the row guard promised they would.
+                authority: .club(roster: activeRoster),
                 contract: contractsByPlayer[player.id],
                 capMode: career.capMode,
                 leagueYearRemaining: leagueYearRemaining,
                 careerID: career.id,
+                reason: .campCut,
+                seasonYear: career.currentSeason,
                 modelContext: modelContext
             )
+            // Refused at the door: nothing was booked, so nothing is stamped and
+            // nothing is counted. Unreachable while the row guard and
+            // `selectionViolations` agree with it — which is the point of
+            // checking a third time.
+            guard !split.isRefused else { continue }
             let isPS = practiceSquadIDs.contains(player.id)
-            let cut = RosterCut(
+            // ONE receipt per release (#188). The engine now files the row
+            // itself, so this screen no longer writes a second one — two rows
+            // for the same cut doubled the Cap screen's dead money and counted
+            // the man twice on the cutdown ladder. What the screen still owns
+            // is the camp CONTEXT the engine cannot know: which cut day the man
+            // went on, and whether the user ticked him for the practice squad.
+            // Both are stamped onto the engine's row here.
+            //
+            // `cutDayRaw` must end up a `CutDay`, not the reason: the waiver
+            // sweep, the Hard Knocks burst and this screen's own ladder all
+            // gate on `isCampCutdown`, and a row left saying "campCut" would
+            // silently drop out of every one of them.
+            stampCampContext(
                 playerID: player.id,
                 teamID: teamID,
-                seasonYear: career.currentSeason,
-                cutDayRaw: bankedStage.rawValue,
-                capSavings: split.capSavings,
-                deadCap: split.deadCap,
+                stage: bankedStage,
                 practiceSquadEligible: isPS,
+                split: split,
                 occurredAt: now
             )
-            cut.careerID = career.id
-            modelContext.insert(cut)
 
             released += 1
             capFreed += split.capSavings
@@ -593,6 +873,8 @@ struct RosterCutView: View {
 
         // §2.6 — the flow states what it did. It used to advance a `@State`
         // stage and say nothing at all.
+        let after = dueStage(forRosterCount: rosterAfter)
+        let nextIndex = (CutDay.allCases.firstIndex(of: bankedStage) ?? 0) + 1
         result = CutResult(
             released: released,
             capFreed: capFreed,
@@ -600,8 +882,85 @@ struct RosterCutView: View {
             practiceSquadFlagged: psFlagged,
             rosterAfter: rosterAfter,
             stage: bankedStage,
-            nextStage: CutDay.stage(forRosterCount: rosterAfter)
+            // Measured against the rung that was actually worked, not against
+            // whatever the count alone would roll on to: in training camp the
+            // count rolls to "cut to 65" the moment the club touches 75, and
+            // reporting ten men still owed there would invent work.
+            stillOwed: max(0, rosterAfter - max(bankedStage.target, after.target)),
+            nextRung: nextIndex < CutDay.allCases.count ? CutDay.allCases[nextIndex] : nil
         )
+    }
+
+    /// Turns the engine's release receipt into a **camp cutdown** row.
+    ///
+    /// `CapManagementEngine.applyRelease` writes one `RosterCut` per release and
+    /// stamps `cutDayRaw` with the reason it was given (`campCut` here). Only
+    /// this screen knows the rest of the camp context — the ladder stage and the
+    /// practice-squad tick — so it is applied to that same row rather than to a
+    /// second one.
+    ///
+    /// The row is found among the context's PENDING inserts first: the receipt
+    /// was created moments ago and `save()` has not run yet, so a plain fetch is
+    /// not the dependable way to reach it. The persisted fetch is the fallback
+    /// for a re-run inside the same league year, and the insert below that is
+    /// the last resort — it only ever fires when no receipt exists at all, so it
+    /// cannot bring the duplicate back.
+    private func stampCampContext(
+        playerID: UUID,
+        teamID: UUID,
+        stage: CutDay,
+        practiceSquadEligible: Bool,
+        split: CapManagementEngine.ReleaseCapSplit,
+        occurredAt: Date
+    ) {
+        let season = career.currentSeason
+        let reasonRaw = ReleaseReason.campCut.rawValue
+        let matches: (RosterCut) -> Bool = { row in
+            row.playerID == playerID
+                && row.teamID == teamID
+                && row.seasonYear == season
+                && row.cutDayRaw == reasonRaw
+        }
+
+        let pending = modelContext.insertedModelsArray
+            .compactMap { $0 as? RosterCut }
+            .filter(matches)
+        let receipt: RosterCut?
+        if let first = pending.first {
+            receipt = first
+        } else {
+            let descriptor = FetchDescriptor<RosterCut>(
+                predicate: #Predicate<RosterCut> {
+                    $0.playerID == playerID && $0.teamID == teamID && $0.seasonYear == season
+                }
+            )
+            receipt = ((try? modelContext.fetch(descriptor)) ?? []).first(where: matches)
+        }
+
+        if let receipt {
+            receipt.cutDayRaw = stage.rawValue
+            receipt.practiceSquadEligible = practiceSquadEligible
+            receipt.occurredAt = occurredAt
+            receipt.careerID = career.id
+            return
+        }
+
+        // No receipt reached storage (a release path that filed none): the
+        // cutdown ladder, the waiver sweep and the keeper list all read this
+        // row, so the screen books it rather than losing the cut.
+        let cut = RosterCut(
+            playerID: playerID,
+            teamID: teamID,
+            seasonYear: season,
+            cutDayRaw: stage.rawValue,
+            capSavings: split.capSavings,
+            deadCap: split.deadCap,
+            practiceSquadEligible: practiceSquadEligible,
+            occurredAt: occurredAt
+        )
+        cut.releaseReasonRaw = reasonRaw
+        cut.careerID = career.id
+        modelContext.insert(cut)
     }
 }
 
@@ -636,6 +995,62 @@ extension CutDay {
         if count > CutDay.cut75To65.target { return .cut75To65 }
         if count > CutDay.cut65To53.target { return .cut65To53 }
         return nil
+    }
+
+    // MARK: - The ladder on the calendar (#205a §1)
+
+    /// **The phase this rung is due in — the ladder's one calendar authority.**
+    ///
+    /// All three rungs used to be emitted into `.rosterCuts`, where a club that
+    /// had never carried more than 60 men found two of them already satisfied
+    /// and the third the only one that meant anything. With an 80-man camp the
+    /// rungs are real work, and each falls due at a different point on the
+    /// calendar:
+    ///
+    /// * `.cut90To75` — camp breaks at 75.
+    /// * `.cut75To65` — the preseason slate ends at 65.
+    /// * `.cut65To53` — cutdown day, as before.
+    ///
+    /// Three readers derive from this and none of them re-states it:
+    /// `TaskGenerator.rosterLadderTask` (the left-menu row),
+    /// `WeekAdvancer`'s phase-keyed exit ceiling (the advance gate and the AI
+    /// trim), and this screen's own `dueStage` (what it asks the user for).
+    var duePhase: SeasonPhase {
+        switch self {
+        case .cut90To75: return .trainingCamp
+        case .cut75To65: return .preseason
+        case .cut65To53: return .rosterCuts
+        }
+    }
+
+    /// The rung that falls due on the way out of `phase`, if any.
+    ///
+    /// `nil` everywhere else — and every reader treats `nil` as "the calendar
+    /// is not asking for a cut here", which is what keeps the screen usable
+    /// (and unchanged) when it is opened off-season from the cap workspace.
+    static func rung(dueIn phase: SeasonPhase) -> CutDay? {
+        allCases.first { $0.duePhase == phase }
+    }
+
+    /// When this rung falls due, as a clause that can be dropped into a
+    /// sentence — "due **when camp breaks**". Derived copy for `duePhase`, kept
+    /// beside it so the two cannot drift.
+    var dueWhen: String {
+        switch self {
+        case .cut90To75: return "when camp breaks"
+        case .cut75To65: return "when the preseason slate ends"
+        case .cut65To53: return "on cutdown day"
+        }
+    }
+
+    /// Why this rung falls where it does, in one sentence — the left-menu row's
+    /// copy. Kept next to `duePhase` so the two can never say different things.
+    var ladderDescription: String {
+        switch self {
+        case .cut90To75: return "Camp breaks with 75 men on the roster."
+        case .cut75To65: return "The preseason slate ends with 65 men on the roster."
+        case .cut65To53: return "Cutdown day \u{2014} set the 53-man active roster."
+        }
     }
 }
 

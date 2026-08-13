@@ -69,7 +69,21 @@ enum WeekAdvancer {
     static var currentMockDraft: [ScoutingEngine.MockDraftPick] = []
 
     /// R24: seasons whose UDFA signing was already handled interactively at
-    /// the end of Draft Day — the OTAs bulk-signing fallback must skip these.
+    /// the end of Draft Day.
+    ///
+    /// **Dead as a gate since #204** — nothing in this file reads it. The OTAs
+    /// bulk-signing fallback it used to guard is gone, and its job (don't sign
+    /// one class twice) belongs to `UDFAMarketState.season`, a PERSISTED stamp:
+    /// a process global is empty after a relaunch, which is exactly how the old
+    /// path could run a second time over the same class.
+    ///
+    /// It survives only because `DraftDayCoordinator` writes and reads it, and
+    /// `UI/Draft/**` is owned by the parallel v3.1 run and untouchable this wave
+    /// (plan risk R6). The two signing paths stay exclusive through the pool
+    /// predicate — `ScoutingEngine.udfaPoolMembers`, from which
+    /// `DraftEngine.convertUDFAToPlayer` removes every signed man — not through
+    /// this set. Deleted with ticket **#204f**, when the Draft Day panel is
+    /// folded into `UDFAMarketEngine`.
     static var udfaStageCompletedSeasons: Set<Int> = []
 
     /// Wave 0 trade instrumentation (`docs/TRADE_OVERHAUL_PLAN.md` §6): how many
@@ -622,6 +636,11 @@ enum WeekAdvancer {
     struct RosterLimitViolation {
         let rosterCount: Int
         let ceiling: Int
+        /// The rung the calendar is asking for — `CutDay.rung(dueIn:)` for the
+        /// phase being left. Carried so the alert and the league office's letter
+        /// can name the deadline the user is actually standing on ("camp breaks
+        /// with 75") instead of always reciting the 53-man season opener.
+        let rung: CutDay
         var excess: Int { max(0, rosterCount - ceiling) }
     }
 
@@ -632,22 +651,33 @@ enum WeekAdvancer {
     /// halfway through, so the decision belongs to the caller — the same shape
     /// as `TradeValueEngine.validationErrors`, which the Trade Center calls
     /// before it commits anything. Returns `nil` (advance freely) for every
-    /// phase except the cutdown → regular-season step.
+    /// phase the ladder does not fall due in.
+    ///
+    /// **All three rungs, not just the last one (#205a).** The gate used to
+    /// hardcode `.rosterCuts` and `PracticeSquadEngine.activeRosterCeiling`,
+    /// which left `.trainingCamp` and `.preseason` with a required ladder row
+    /// and no backstop behind it: a club that entered camp already under 75 and
+    /// then claimed its way back over walked out at 78, because the row's
+    /// `isRequired` had been decided when the phase opened. The ceiling now
+    /// comes from the same calendar authority the row does —
+    /// ``CutDay/rung(dueIn:)`` and ``CutDay/target`` — so the panel and the gate
+    /// cannot read different numbers. `.rosterCuts` still resolves to 53, which
+    /// is `PracticeSquadEngine.activeRosterCeiling` by construction.
     static func userRosterLimitViolation(
         career: Career,
         modelContext: ModelContext
     ) -> RosterLimitViolation? {
-        guard career.currentPhase == .rosterCuts,
+        guard let rung = CutDay.rung(dueIn: career.currentPhase),
               let teamID = career.teamID else { return nil }
 
         let descriptor = FetchDescriptor<Player>(
             predicate: #Predicate<Player> { $0.teamID == teamID }
         )
         let count = (try? modelContext.fetchCount(descriptor)) ?? 0
-        let ceiling = PracticeSquadEngine.activeRosterCeiling
+        let ceiling = rung.target
         guard count > ceiling else { return nil }
 
-        return RosterLimitViolation(rosterCount: count, ceiling: ceiling)
+        return RosterLimitViolation(rosterCount: count, ceiling: ceiling, rung: rung)
     }
 
     /// The league office's letter about it, so a blocked advance leaves a record
@@ -660,9 +690,10 @@ enum WeekAdvancer {
             sender: .leagueOffice,
             subject: "Roster not compliant — \(violation.rosterCount) under contract",
             body: "Your club is carrying \(violation.rosterCount) players against a "
-                + "\(violation.ceiling)-man active roster. Release \(violation.excess) more "
-                + "before the season opens; the league will not certify a week-1 roster over the limit.",
-            date: "Roster Cuts, Season \(season)",
+                + "\(violation.ceiling)-man limit. Release \(violation.excess) more: the roster "
+                + "must be at \(violation.ceiling) \(violation.rung.dueWhen), and the league "
+                + "will not certify a club over the limit.",
+            date: "\(violation.rung.duePhase.displayName), Season \(season)",
             category: .leagueNotice,
             actionRequired: true,
             actionDestination: .rosterCuts
@@ -3738,6 +3769,26 @@ enum WeekAdvancer {
                 teams: teams
             )
 
+            // #204 — the undrafted market OPENS here, at the draft exit, and
+            // signs nobody: the league only puts its opening offers out, so the
+            // board the user works during `.otas` has competition on it from the
+            // first round (`OFFSEASON_ROSTER_PLAN.md` §1 calendar row `.draft`).
+            //
+            // Idempotent through `UDFAMarketState.season`, which is a PERSISTED
+            // stamp — the old `udfaStageCompletedSeasons` process global could
+            // not survive a relaunch and so let the signing pass run twice over
+            // one class. Guarded on a non-empty class so a process that has lost
+            // it (`restoreDraftClassIfNeeded` failed / an old save with no
+            // prospect rows) cannot stamp an empty market closed for the season.
+            if !currentDraftClass.isEmpty {
+                UDFAMarketEngine.openMarket(
+                    career: career,
+                    prospects: currentDraftClass,
+                    teams: teams,
+                    allPlayers: allPlayers
+                )
+            }
+
             sendDraftCycleHeartbeat(career: career, phase: .draft)
 
         case .otas:
@@ -3747,74 +3798,92 @@ enum WeekAdvancer {
             // at the .trainingCamp boundary via PlayerDevelopmentEngine.
             applyCampWeeklyTick(career: career, phase: .otas, modelContext: modelContext, allPlayers: allPlayers)
 
-            // UDFA signing: AI teams auto-sign ~12 UDFAs each, present pool to player.
-            // R24: skipped entirely when the interactive Draft Day UDFA stage
-            // already handled this season's undrafted market.
-            if !currentDraftClass.isEmpty,
-               !udfaStageCompletedSeasons.contains(career.currentSeason) {
-                let udfaPool = ScoutingEngine.getUDFAPool(prospects: currentDraftClass)
-                // Plan §2.9.8 (fixes defect #10): the order used to be the raw
-                // team array — the same clubs picked first every single season —
-                // and each of the 31 asked for 10-14 players from a pool that
-                // was often ~28 deep, so the first two or three teams took
-                // everything and the rest signed nobody. Shuffle the order and
-                // ask for a fair share of what actually exists.
-                let aiTeams = teams.filter { $0.id != career.teamID }.shuffled()
-                let perTeamAsk = min(
-                    4,
-                    max(1, Int((Double(udfaPool.count) / 31.0).rounded(.up)))
+            // #204 — the undrafted market SETTLES here, at the OTAs exit.
+            //
+            // This replaces the bulk block that used to live in this case, whose
+            // three defects `OFFSEASON_ROSTER_PLAN.md` §0 (audit A) names: it
+            // never cleared `isDeclaringForDraft`, so signed men stayed
+            // "available" on every scouting screen (D1); its inbox message
+            // printed the pool's top five off a `trueOverall` sort, straight
+            // past the fog (D2); and it signed with no cap check, no need
+            // matching and no roster ceiling, while explicitly excluding the
+            // user's own club from the market it then mailed him about (D3).
+            //
+            // `closeMarket` runs whatever rounds are still owed — a user who
+            // never opened the board still gets a league that signed its
+            // undrafted men (risk R9: non-participation costs him the players,
+            // never a blocked calendar) — and then takes every survivor off the
+            // declaration list. Idempotent through the persisted season stamp,
+            // so a re-entered phase or a cold launch mid-OTAs cannot double-sign
+            // a class the way the process global did.
+            if !currentDraftClass.isEmpty {
+                let settlement = UDFAMarketEngine.closeMarket(
+                    career: career,
+                    prospects: currentDraftClass,
+                    teams: teams,
+                    allPlayers: allPlayers,
+                    allCoaches: allCoaches,
+                    modelContext: modelContext
                 )
-
-                var signedIDs = Set<UUID>()
-                for team in aiTeams {
-                    let available = udfaPool.filter { !signedIDs.contains($0.id) }
-                    let toSign = Array(available.prefix(perTeamAsk))
-                    let teamCoaches = allCoaches.filter { $0.teamID == team.id }
-                    for prospect in toSign {
-                        signedIDs.insert(prospect.id)
-                        // Convert prospect to player signed by this AI team.
-                        // Routed through `convertUDFAToPlayer` so the bulk OTAs
-                        // fallback applies the same rookie scaling as the
-                        // interactive Draft Day UDFA stage — building the Player
-                        // inline used to hand AI teams undrafted rookies at their
-                        // FULL true attributes, i.e. better than every drafted
-                        // rookie in the league.
-                        let player = DraftEngine.convertUDFAToPlayer(
-                            prospect: prospect,
-                            teamID: team.id,
-                            salaryCap: team.salaryCap
-                        )
-                        DraftEngine.initializeRookieFamiliarity(
-                            player: player,
-                            prospect: prospect,
-                            coaches: teamCoaches,
-                            isUndrafted: true
-                        )
-                        player.careerID = activeCareerID
-                        modelContext.insert(player)
-                        // Task #89: a signed UDFA is a cap liability like any
-                        // other. This path used to insert him and never charge
-                        // anybody, so ~150 league-wide deals were invisible on
-                        // the books until the next league-year true-up.
-                        team.currentCapUsage += player.annualSalary
-                    }
-                }
-
-                // Generate inbox message about UDFA pool for the player's team
-                let playerUDFAs = udfaPool.filter { !signedIDs.contains($0.id) }
-                if !playerUDFAs.isEmpty, career.teamID != nil {
-                    let topNames = playerUDFAs.prefix(5).map {
-                        "\($0.fullName) (\($0.position.rawValue))"
-                    }.joined(separator: ", ")
-                    let message = InboxMessage(
+                if career.teamID != nil, settlement.leagueSigningCount > 0 {
+                    // The replacement for D2's message. Counts and the user's
+                    // OWN signings only: naming a man he just signed is his own
+                    // data, while the pool's "top five" never was.
+                    let mine = settlement.userSignings
+                        .map { "\($0.prospectName) (\($0.position.rawValue))" }
+                        .joined(separator: ", ")
+                    let yours = mine.isEmpty
+                        ? "Your club signed none of them."
+                        : "You signed \(settlement.userSignings.count): \(mine)."
+                    lastInboxMessages.append(InboxMessage(
                         sender: .scout(name: "Scouting Department"),
-                        subject: "UDFA Prospects Available",
-                        body: "There are \(playerUDFAs.count) undrafted free agents available for signing. Top prospects: \(topNames).",
+                        subject: "Undrafted Market Closed",
+                        body: "\(settlement.leagueSigningCount) undrafted players signed across the league. \(yours)",
                         date: "Offseason - OTAs, Season \(career.currentSeason)",
                         category: .staffUpdate
-                    )
-                    lastInboxMessages.append(message)
+                    ))
                 }
+            }
+
+            // #205a — camp opens. The 32 clubs fill to 80 out of the unsigned
+            // pool (`OFFSEASON_ROSTER_PLAN.md` §3.3).
+            //
+            // WHY HERE, and why after the market: this is the last moment in the
+            // calendar before the cut ladder starts asking questions. The rungs
+            // themselves already shipped — `CutDay.rung(dueIn:)` puts "Cut to 75"
+            // on the `.trainingCamp` exit and "Cut to 65" on the `.preseason`
+            // exit, and `userRosterLimitViolation` gates both — but QA measured
+            // the roster settling at **64** (53 survivors + the draft class +
+            // this market), so both upper rungs were satisfied on arrival and
+            // auto-skipped. A camp that never had 80 men in it cannot have a
+            // cutdown. Running after `closeMarket` also keeps the two passes
+            // from bidding against each other for the same men: an undrafted
+            // rookie is signed as a real player at a real price first, and only
+            // what the market left over gets a camp invite.
+            //
+            // Re-fetched rather than reusing `allPlayers`: `closeMarket` just
+            // INSERTED this year's UDFA signings, and a stale snapshot would
+            // count every club's roster short by its UDFA class and fill each of
+            // them that many men past 80.
+            let campFill = CampRosterEngine.fillCampRosters(
+                career: career,
+                teams: teams,
+                allPlayers: fetchAllPlayers(modelContext: modelContext),
+                prospects: currentDraftClass,
+                allCoaches: allCoaches,
+                modelContext: modelContext
+            )
+            if career.teamID != nil, campFill.userSignings > 0 {
+                lastInboxMessages.append(InboxMessage(
+                    sender: .leagueOffice,
+                    subject: "Camp roster set — \(campFill.userRosterAfter) reporting",
+                    body: "\(campFill.userSignings) players have accepted camp invitations and "
+                        + "report with the veterans. Camp contracts are one-year minimum deals "
+                        + "that do not count against the cap while they are carried, and the "
+                        + "roster must be down to \(CutDay.cut90To75.target) when camp breaks.",
+                    date: "Offseason - OTAs, Season \(career.currentSeason)",
+                    category: .leagueNotice
+                ))
             }
 
             lastNewsItems = NewsGenerator.generateOffseasonNews(
@@ -3874,9 +3943,22 @@ enum WeekAdvancer {
                 FetchDescriptor<Owner>(predicate: #Predicate { $0.careerID == facilityCareerID })
             )) ?? []
 
+            // #205a — camp bodies take the cheap path (`OFFSEASON_ROSTER_PLAN.md`
+            // §3.3, risk R5). The camp fill puts ~500 extra men on rosters for
+            // four phases; running the full realization model over them would
+            // add ~500 players to the one development pass the balance harness
+            // is calibrated against, and it would also CHANGE them: on the
+            // street these same men get `applyAgeRegression` and nothing else,
+            // so developing them because they took a tryout would quietly move
+            // §8's age and experience bands (§6/B3) through a door nobody opened
+            // on purpose. They age exactly as they did last season — the loop
+            // below picks them up with the holdouts and the unsigned — and the
+            // camp grade is what actually decides their August.
             var offseasonOutcomes: [PlayerDevelopmentEngine.OffseasonOutcome] = []
             for team in teams {
-                let teamPlayers = allPlayers.filter { $0.teamID == team.id && !$0.isHoldingOut }
+                let teamPlayers = allPlayers.filter {
+                    $0.teamID == team.id && !$0.isHoldingOut && !CampRosterEngine.isCampBody($0)
+                }
                 let teamCoaches = allCoaches.filter { $0.teamID == team.id }
                 // Task #51: this is the ONE development pass the balance
                 // harness also runs, i.e. the control the weekly passes are
@@ -3902,8 +3984,13 @@ enum WeekAdvancer {
             // and unsigned free agents age too. Before this fix both groups
             // were frozen in time — they never regressed and never retired,
             // which slowly corrupted multi-season careers.
+            // Camp bodies join them (#205a): the loop above skipped them, so
+            // this is the pass that ages them, exactly as it did while they were
+            // unsigned.
             for player in allPlayers where !player.isRetired {
-                let agedByCamp = player.teamID != nil && !player.isHoldingOut
+                let agedByCamp = player.teamID != nil
+                    && !player.isHoldingOut
+                    && !CampRosterEngine.isCampBody(player)
                 if !agedByCamp {
                     PlayerDevelopmentEngine.applyAgeRegression(player)
                     player.fatigue = 0
@@ -4039,6 +4126,28 @@ enum WeekAdvancer {
         // Worst-record teams get higher priority. Claims stamp the cut row.
         if currentPhase == .rosterCuts && nextPhase == .regularSeason {
             processCampWaivers(career: career, teams: teams, modelContext: modelContext)
+
+            // #205a — the camp exemption falls due (`OFFSEASON_ROSTER_PLAN.md`
+            // §3.1). Whoever is still flagged has survived `trimAIRosters` and
+            // the user's own cut ladder, i.e. he made the 53, so his minimum
+            // salary goes on the club's cap sheet and he stops being a camp
+            // body.
+            //
+            // ORDERING, and it is load-bearing in both directions: after the
+            // cutdown so it charges nobody the club has just released, and
+            // BEFORE `startNewSeason` → `refillAIRosters`, which reads
+            // `availableCap` when it signs — a refill run against a ledger that
+            // is still missing every survivor's salary would spend cap room the
+            // club does not have.
+            let settlement = CampRosterEngine.settleCampBodies(
+                career: career,
+                teams: teams,
+                allPlayers: fetchAllPlayers(modelContext: modelContext)
+            )
+            if settlement.survivors > 0 {
+                print("[CampRoster] cutdown settle: \(settlement.survivors) camp bodies made the 53, "
+                      + "$\(settlement.capCharged)K charged league-wide")
+            }
         }
 
         // --- Transition to the next phase ---
@@ -6655,6 +6764,12 @@ enum WeekAdvancer {
                 }
 
                 signing.teamID = team.id
+                // A man signed to the 53 is not a camp body, whatever he was in
+                // August (#205a §3.1). The charge below is a real one, so the
+                // exemption has to be gone before it lands — a flagged man on a
+                // charged deal would be credited nothing on his next release and
+                // the club's ledger would ratchet up by his salary.
+                CampRosterEngine.clearCampBodyStatus(signing)
                 signing.contractYearsRemaining = Int.random(in: 1...2)
                 signing.annualSalary = max(750, min(signing.annualSalary, 1_500))
                 team.currentCapUsage += signing.annualSalary
@@ -6704,16 +6819,36 @@ enum WeekAdvancer {
                 .sorted { RosterValue.keepScore($0) > RosterValue.keepScore($1) }
             guard roster.count > rosterCeiling else { continue }
 
-            for player in roster.suffix(roster.count - rosterCeiling) {
+            // #208 G1 — the AI cuts down the same league the user does, under
+            // the same positional floors, and it walks PAST a man it may not
+            // release rather than stalling on him: the sweep is marked
+            // `.leagueSweep` so the door never refuses it, and the candidate
+            // list is filtered here instead. `roster` is sorted best-first, so
+            // reversed is worst-first — the order the old `suffix` produced —
+            // and each check sees the men already released in this loop as gone
+            // (their `teamID` is cleared), so the rooms close one man at a time.
+            //
+            // The floors sum to 20 against a 53-man ceiling, so a club over the
+            // limit always has legal candidates left and `overflow` always
+            // reaches zero.
+            var overflow = roster.count - rosterCeiling
+            for player in roster.reversed() where overflow > 0 {
+                guard CapManagementEngine.releaseBlockReason(
+                    player: player,
+                    team: team,
+                    roster: roster
+                ) == nil else { continue }
                 ChurnDiag.record(ChurnDiag.cut, player)
                 CapManagementEngine.applyRelease(
                     player: player,
                     team: team,
+                    authority: .leagueSweep,
                     contract: nil,
                     capMode: capMode,
                     leagueYearRemaining: leagueYearRemaining,
                     careerID: career.id
                 )
+                overflow -= 1
             }
         }
     }
@@ -8217,7 +8352,9 @@ enum WeekAdvancer {
         let recentCutsDescriptor = FetchDescriptor<RosterCut>(
             predicate: #Predicate<RosterCut> { $0.teamID == teamID && $0.seasonYear == season }
         )
-        let recentCuts = (try? modelContext.fetch(recentCutsDescriptor)) ?? []
+        // Camp storylines are about camp cuts; a cap-compliance release booked
+        // back in March is not a Hard Knocks beat (#188).
+        let recentCuts = ((try? modelContext.fetch(recentCutsDescriptor)) ?? []).filter(\.isCampCutdown)
         HardKnocksNarrator.generateCampStorylines(
             battles: battles,
             recentInjuries: recentInjuries,
@@ -8380,7 +8517,12 @@ enum WeekAdvancer {
                 $0.careerID == cid && $0.seasonYear == season && $0.claimedByTeamID == nil
             }
         )
-        let cuts = (try? modelContext.fetch(cutsDescriptor)) ?? []
+        // Camp cutdown rows only (#188). `CapManagementEngine.applyRelease` now
+        // files a receipt for every release the user makes, in-season and in
+        // the cap-compliance flow alike; those are ledger entries, not men
+        // hitting the camp waiver wire, and claiming one would hand a rival a
+        // player who has long since signed somewhere else.
+        let cuts = ((try? modelContext.fetch(cutsDescriptor)) ?? []).filter(\.isCampCutdown)
         guard !cuts.isEmpty else { return }
 
         let teamRecords = teams.map { (teamID: $0.id, wins: $0.wins, losses: $0.losses) }

@@ -226,6 +226,7 @@ extension TaskDestination {
         case .trainingPlan:         return "Training Plan"
         case .workloadDashboard:    return "Workload"
         case .rosterCuts:           return "Roster Cuts"
+        case .preseason:            return "Preseason"
         case .gameWeekPrep:         return "Game Plan"
         }
     }

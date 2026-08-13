@@ -209,6 +209,25 @@ final class Player {
     /// Whether this player has been franchise-tagged for the current season.
     var isFranchiseTagged: Bool
 
+    /// **The league year a SETTLED franchise tag is being played out in**, or 0
+    /// for everyone else. Written by `FreeAgencyEngine.settleFranchiseTags`,
+    /// cleared when the tag year's contract expires, when the man is released,
+    /// and by any deal he signs.
+    ///
+    /// `isFranchiseTagged` cannot answer the question, because the rollover that
+    /// SETTLES a tag is the same pass that clears the flag (the flag's job is to
+    /// make the expiry loop skip him, and it has to stop doing that once the tag
+    /// is his contract). From the moment the money becomes real, a tagged man is
+    /// indistinguishable from anyone else with one year left — which is how the
+    /// tag-and-extend shape came to be unreachable: extending him stacked a year
+    /// on top of the tag and parked the money in the NEXT league year instead of
+    /// replacing the tag in this one. This is the one bit of state that survives
+    /// the flag, so `DealTargetYear.plan` can still tell them apart.
+    ///
+    /// Default-value stored property, never in `init` → safe lightweight
+    /// migration.
+    var franchiseTagSeason: Int = 0
+
     /// R22: whether this player is currently holding out over their contract.
     /// A holdout player skips practice and games and does not develop until
     /// the situation is resolved or the player caves (~week 3-4).
@@ -637,7 +656,7 @@ final class Player {
 
 /// Which of his club's two rosters a player occupies (TODO §5.1).
 ///
-/// Deliberately only two cases. The NFL's injured-reserve / PUP / exempt lists
+/// Deliberately few cases. The NFL's injured-reserve / PUP / exempt lists
 /// are separate mechanics the game models through `isInjured` +
 /// `injuryWeeksRemaining`, so adding them here would give the same state two
 /// spellings.
@@ -649,11 +668,20 @@ enum RosterStatus: String, Codable, CaseIterable {
     /// develops on the depth rung, cannot dress, is cap-exempt, and can be
     /// signed away by any OTHER club at any time during the season.
     case practiceSquad
+    /// One of the extra bodies signed to fill the 80-man CAMP roster — under
+    /// contract, dresses in the exhibitions, and has no active-roster spot to
+    /// lose. Read by the preseason recap's tier ladder
+    /// (`PreseasonRecap.Tier.campBody`).
+    ///
+    /// Additive case: `rosterStatusRaw` defaults to `active` and decodes
+    /// leniently, so no persisted row changes meaning.
+    case campBody
 
     var displayName: String {
         switch self {
         case .active:        return "Active"
         case .practiceSquad: return "Practice Squad"
+        case .campBody:      return "Camp Body"
         }
     }
 
@@ -662,6 +690,7 @@ enum RosterStatus: String, Codable, CaseIterable {
         switch self {
         case .active:        return "ACT"
         case .practiceSquad: return "PS"
+        case .campBody:      return "CAMP"
         }
     }
 }
