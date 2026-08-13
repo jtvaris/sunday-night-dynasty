@@ -455,6 +455,11 @@ struct PlayerDetailView: View {
     /// cap ledger and the player's detailed `Contract` row, not just two fields
     /// on the player.
     @Environment(\.modelContext) private var modelContext
+    /// The release pops this page. The man is off the roster the moment it
+    /// commits, so the list row that pushed us here is gone too — staying put
+    /// would leave the user reading a profile of somebody who no longer plays
+    /// for him, with a "Cut / Release" bar still on it.
+    @Environment(\.dismiss) private var dismiss
 
     @State private var showCutConfirmation = false
 
@@ -597,12 +602,17 @@ struct PlayerDetailView: View {
             }
         }
         .alert("Release Player", isPresented: $showCutConfirmation) {
-            Button("Release", role: .destructive) {
-                // Release action handled by parent
-            }
+            // #208 G1: the dialog cannot be the last word on a block — it is
+            // re-evaluated here because the roster can move while it is open.
+            Button("Release", role: .destructive) { releasePlayer() }
+                .disabled(cutBlockReason != nil)
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Are you sure you want to release \(player.fullName)? This will remove them from your roster and incur a dead cap hit.")
+            if let reason = cutBlockReason {
+                Text("\(reason). Releasing \(player.fullName) would leave the room empty.")
+            } else {
+                Text("Are you sure you want to release \(player.fullName)? This will remove them from your roster and incur a dead cap hit.")
+            }
         }
         .sheet(item: $activeSheet) { sheet in
             switch sheet {
@@ -1048,7 +1058,7 @@ struct PlayerDetailView: View {
                         .font(.system(size: DSType.Size.micro))
                         .foregroundStyle(Color.textTertiary)
                     Text(comparables)
-                        .font(.system(size: DSType.Size.micro))
+                        .font(.system(size: DSType.Size.caption))
                         .foregroundStyle(Color.textTertiary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.85)
@@ -1168,7 +1178,7 @@ struct PlayerDetailView: View {
                             .font(.system(size: DSType.Size.micro))
                             .foregroundStyle(Color.accentGold)
                         Text(note)
-                            .font(.system(size: DSType.Size.micro))
+                            .font(.system(size: DSType.Size.footnote))
                             .foregroundStyle(Color.textTertiary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -1620,7 +1630,7 @@ struct PlayerDetailView: View {
                 }
                 if let note = careerTableNote(rows: rows) {
                     Text(note)
-                        .font(.system(size: DSType.Size.micro))
+                        .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(Color.textTertiaryReadable)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1884,10 +1894,7 @@ struct PlayerDetailView: View {
     private var playerActionBar: some View {
         if isUserRosterPlayer {
             DSActionBar(
-                explainer: .init(
-                    title: "Under contract",
-                    message: ownRosterExplainer
-                ),
+                explainer: ownRosterBarExplainer,
                 destructive: cutAction,
                 ghost: .init(title: "Change Position", handler: { activeSheet = .positionChange }),
                 secondary: secondaryContractAction,
@@ -1922,6 +1929,21 @@ struct PlayerDetailView: View {
         }
     }
 
+    /// §2.12 — a blocked commit swaps the gold rule for orange and the
+    /// explainer states the reason (#208 G1). The deal terms are still on the
+    /// contract card directly above; what the BAR has to say while the room is
+    /// one man deep is why the cut is shut, because the bar is where the cut is.
+    private var ownRosterBarExplainer: DSActionBar.Explainer {
+        if let reason = cutBlockReason {
+            return DSActionBar.Explainer(
+                title: "Cannot release",
+                message: reason,
+                isWarning: true
+            )
+        }
+        return DSActionBar.Explainer(title: "Under contract", message: ownRosterExplainer)
+    }
+
     /// What the bar says about the deal it is about to spend against. Both
     /// halves are quoted from the contract card directly above it, so the two
     /// numbers on one screen cannot disagree (§2.13, arithmetic gate).
@@ -1931,12 +1953,76 @@ struct PlayerDetailView: View {
         return "\(yearsText) left at **\(formattedSalary)** — \(capPercentageText) of the cap."
     }
 
-    private var cutAction: DSActionBar.Action {
-        .init(
-            title: "Cut / Release",
-            caption: cutImpactPreviewText,
-            handler: { showCutConfirmation = true }
+    /// **Why the cut is closed, or nil** (#208 G1).
+    ///
+    /// QA released all three quarterbacks from THIS screen, one at a time, and
+    /// walked into the preseason with an empty QB room: the cut sheet's guard
+    /// never covered the per-player door. The rule is the engine's — this
+    /// screen only asks it, and asks it against the same league query the rest
+    /// of the page is drawn from.
+    private var cutBlockReason: String? {
+        guard let team = playerTeam else { return nil }
+        return CapManagementEngine.releaseBlockReason(
+            player: player,
+            team: team,
+            roster: allLeaguePlayers
         )
+    }
+
+    /// The destructive slot. Blocked, it is **disabled and says why** — the
+    /// caption swaps the dead-cap preview for the reason, so the button and the
+    /// explainer tell the same story rather than the reason hiding in a note
+    /// beside a live control (§2.12).
+    private var cutAction: DSActionBar.Action {
+        let blocked = cutBlockReason
+        return .init(
+            title: "Cut / Release",
+            caption: blocked ?? cutImpactPreviewText,
+            isEnabled: blocked == nil,
+            handler: { if blocked == nil { showCutConfirmation = true } }
+        )
+    }
+
+    /// **The release, actually booked** (#188).
+    ///
+    /// The confirmation alert's Release button used to run an empty closure
+    /// commented "Release action handled by parent" — no parent ever did. The
+    /// button was priced correctly (`cutImpactPreviewText` quotes
+    /// `releaseCapSplit`), showed a destructive confirmation, and then did
+    /// nothing at all: the man stayed on the roster and the cap never moved.
+    ///
+    /// Same shape as `PlayerContractView.cutPlayer` — the ONE authority
+    /// (`CapManagementEngine.applyRelease`), an explicit save, then out. The
+    /// engine is what deletes the `Contract` rows, drops the franchise tag and
+    /// stamps `cutByTeamID`, which is exactly why nothing here touches the
+    /// player's fields by hand.
+    private func releasePlayer() {
+        guard let team = playerTeam, let career = careers.first else { return }
+        // #208 G1: the roster this screen is already rendering IS the roster the
+        // floors are measured against, so the engine does not re-fetch one. A
+        // refused release writes nothing and leaves the man where he is; the
+        // screen deliberately does NOT dismiss on a refusal, so the user is left
+        // looking at the orange bar that says why.
+        let split = CapManagementEngine.applyRelease(
+            player: player,
+            team: team,
+            authority: .club(roster: allLeaguePlayers),
+            contract: playerContract,
+            capMode: career.capMode,
+            leagueYearRemaining: CapManagementEngine.leagueYearRemaining(
+                phase: career.currentPhase,
+                week: career.currentWeek
+            ),
+            careerID: career.id,
+            // #188: the engine files the receipt the Cap screen reads, so this
+            // cut shows up by name under Dead Money like a camp cut does.
+            reason: .rosterMove,
+            seasonYear: career.currentSeason,
+            modelContext: modelContext
+        )
+        guard !split.isRefused else { return }
+        try? modelContext.save()
+        dismiss()
     }
 
     /// **The one gold fill on this screen** (P5): whichever contract
@@ -2406,7 +2492,7 @@ struct PlayerDetailView: View {
                         // §5.3: this is a conversion programme, not just
                         // cross-training — say so before it fires.
                         Text("At \(VersatilityDevelopmentEngine.conversionCommitFamiliarity)% familiarity he converts to \(trainingPos.rawValue) PERMANENTLY and his ratings are rebuilt around it. Stop the programme first if you only want cover there.")
-                            .font(.system(size: DSType.Size.micro))
+                            .font(.system(size: DSType.Size.footnote))
                             .foregroundStyle(Color.textTertiary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -2470,7 +2556,7 @@ struct PlayerDetailView: View {
 
                             // Explanation of why this alternate position exists (#32)
                             Text(versatilityExplanation(from: player.position, to: pos, rating: rating))
-                                .font(.system(size: DSType.Size.micro))
+                                .font(.system(size: DSType.Size.footnote))
                                 .foregroundStyle(Color.textTertiary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }

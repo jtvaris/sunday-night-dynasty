@@ -37,6 +37,23 @@ enum ContractEngine {
     /// the smaller cap it was negotiated against.
     static let capGrowthPerSeason = (capGrowthRange.lowerBound + capGrowthRange.upperBound) / 2
 
+    /// **A club's cap `seasonsAhead` league years from now — the league's ONE
+    /// projection.**
+    ///
+    /// `Int(cap × (1 + capGrowthPerSeason)^n)` was hand-inlined in six places:
+    /// the cap-outlook grid, the contract timeline, the dashboard's three-year
+    /// tile, the tag screen, the roster evaluator and the negotiation composer.
+    /// Six copies of one formula is six futures the moment one of them is
+    /// edited, and #186 needed a seventh — inside the engine, where the cap gate
+    /// now lives — which is the point at which a copy stops being tolerable.
+    ///
+    /// `seasonsAhead <= 0` returns the cap unchanged, so a caller does not have
+    /// to branch on "is this year".
+    static func projectedCap(_ salaryCap: Int, seasonsAhead: Int) -> Int {
+        guard seasonsAhead > 0 else { return salaryCap }
+        return Int(Double(salaryCap) * pow(1.0 + capGrowthPerSeason, Double(seasonsAhead)))
+    }
+
     /// **The league minimum salary, in thousands.** `0.28 %` of the cap, never
     /// below `$750K`.
     ///
@@ -632,6 +649,73 @@ enum ContractEngine {
         }
     }
 
+    /// **The schedule a negotiated deal is actually written with** (#186).
+    ///
+    /// One function, because two things have to agree exactly or the gate is a
+    /// liar: ``applyNegotiatedDeal``, which persists the schedule onto the
+    /// `Contract` row, and `DealTargetYear.plan`, which reads year one off it to
+    /// decide whether the deal can be tabled at all. They call this; neither
+    /// builds a schedule of its own.
+    ///
+    /// - Parameter firstYearCeiling: the most year one may cost in BASE salary.
+    ///   Only the tag-and-extend passes one — see ``cappedFirstYear(_:ceiling:)``.
+    static func negotiatedBaseSalaries(
+        annualSalary: Int,
+        years: Int,
+        age: Int,
+        firstYearCeiling: Int? = nil
+    ) -> [Int] {
+        let schedule = age < 28
+            ? escalatingBaseSalaries(annualSalary: annualSalary, years: years)
+            : frontLoadedBaseSalaries(annualSalary: annualSalary, years: years)
+        guard let ceiling = firstYearCeiling else { return schedule }
+        return cappedFirstYear(schedule, ceiling: ceiling)
+    }
+
+    /// Pushes whatever year one costs above `ceiling` into the later years,
+    /// **preserving the schedule's total to the thousand**.
+    ///
+    /// This is how a real tag-and-extend is written. The club retires a franchise
+    /// tag in order to get under it; a first year that costs MORE than the tag it
+    /// replaced turns the mechanism upside down and no front office signs one.
+    /// The excess is redistributed across the remaining years in proportion to
+    /// what each already carried, so the shape of the deal survives and the money
+    /// is deferred rather than forgiven — the player is owed every thousand he
+    /// negotiated.
+    ///
+    /// The last year absorbs the rounding remainder, which is what makes the sum
+    /// exact rather than approximately exact.
+    ///
+    /// A one-year deal has nowhere to push to and is returned untouched: there is
+    /// no such thing as deferring money inside a single league year, and silently
+    /// cutting the man's pay to fit a ceiling would be a worse answer than letting
+    /// the gate refuse the deal.
+    static func cappedFirstYear(_ schedule: [Int], ceiling: Int) -> [Int] {
+        guard schedule.count > 1, let first = schedule.first else { return schedule }
+        let target = Swift.max(minimumBaseSalary, ceiling)
+        guard first > target else { return schedule }
+
+        let laterTotal = schedule.dropFirst().reduce(0, +)
+        guard laterTotal > 0 else { return schedule }
+
+        let excess = first - target
+        var out = schedule
+        out[0] = target
+        var distributed = 0
+        for index in 1..<out.count {
+            let share = index == out.count - 1
+                ? excess - distributed
+                : Int((Double(excess) * Double(schedule[index]) / Double(laterTotal)).rounded())
+            out[index] += share
+            distributed += share
+        }
+        return out
+    }
+
+    /// The floor both structure generators clamp a base salary to. Named here
+    /// so ``cappedFirstYear(_:ceiling:)`` cannot drift from them.
+    static let minimumBaseSalary = 500
+
     /// The signing-bonus band for a salary level, as a `(low, span)` pair.
     ///
     /// Split out of ``realisticSigningBonus`` so the same three bands can be
@@ -857,14 +941,63 @@ enum ContractEngine {
     /// projection in the meantime. Both are undone here, before the new deal is
     /// written, so the tag cannot outlive the signature.
     ///
+    /// **#186 — the deal is booked in the league year it charges.**
+    ///
+    /// The paragraph above describes what this used to be: whatever was agreed,
+    /// charged to the open year, because `Player.annualSalary` is one flat number
+    /// and there was nowhere else to put it. #127 documented that as residue and
+    /// `ContractNegotiationView` grew a current-year gate to compensate, which is
+    /// how the composer came to print *"Covers 2027–2030"* directly above
+    /// *"over this year's cap by $6.1M"*.
+    ///
+    /// `DealTargetYear.plan` now decides which year the money lands in and this
+    /// function books it there. Three shapes, three bookings:
+    ///
+    /// * **Tag replacement** — a settled franchise tag is retired and the deal's
+    ///   first year IS the tag year, so the tag's charge comes off the open year
+    ///   as the deal's goes on. The term does not stack on the tag either: a
+    ///   four-year deal retiring a one-year tag is four league years.
+    /// * **Deferred extension** — years added on top of a deal that is still
+    ///   running. **The open year is not touched at all**: not `annualSalary`,
+    ///   not `currentCapUsage`, not the `Contract` row, not the restructure
+    ///   receipt, because none of those describe money the club owes before the
+    ///   deal starts. The charge is parked on `CommittedCapLedger`'s forward
+    ///   table — the #127 machinery the franchise tag already uses — and the
+    ///   rollover that opens its binding season writes it onto the player
+    ///   (`FreeAgencyEngine.settleFranchiseTags`).
+    /// * **Current year** — a free agent, a re-sign, a reprice. Exactly what this
+    ///   function always did.
+    ///
+    /// The clock is the one thing written immediately in all three, and it has to
+    /// be: `contractYearsRemaining` is #89's single contract clock, it ticks once
+    /// per rollover and nothing else advances it, so a deferred deal's years must
+    /// be on it from the day it is signed or the rollovers between now and the
+    /// binding season would tick a term that is not there yet.
+    ///
     /// - Parameter existingContract: the player's detailed contract when the
     ///   caller already has it. Passing `nil` makes the function look one up
     ///   through `modelContext`; passing `nil` with no context means the deal is
     ///   booked on `annualSalary` alone, which is the simple-mode shape.
     /// - Parameter careerID: the save whose forward ledger a rescinded tag is
-    ///   released from. `career.id`, matching every reader of that table;
-    ///   `player.careerID` is only the fallback for a path with no `Career` in
-    ///   hand, and a nil there releases nothing at all.
+    ///   released from — and, for a deferred extension, whose forward ledger the
+    ///   new money is parked on. `career.id`, matching every reader of that
+    ///   table; `player.careerID` is only the fallback for a path with no
+    ///   `Career` in hand, and a nil there books nothing at all.
+    /// - Parameter currentSeason: `Career.currentSeason`, the year a deferred
+    ///   deal's binding season is counted from. Optional only so the four
+    ///   existing call sites keep compiling: when it is nil the function looks
+    ///   the career up through `modelContext`, and a save it cannot find at all
+    ///   falls back to charging the open year, which is the pre-#186 behaviour
+    ///   and never loses money.
+    /// - Parameter hasRolledOver: whether `executeNewLeagueYear` has already
+    ///   opened the next league year — `career.lastRolloverSeason >= career.currentSeason`.
+    ///   Read for you alongside the season when `currentSeason` is nil; only a
+    ///   caller that passes the season by hand has to pass this too, and one
+    ///   that passes neither gets the pre-rollover reading. It matters because
+    ///   `currentSeason` is one behind the open league year for six offseason
+    ///   phases, and a deferred extension planned off the stale number binds a
+    ///   year early — onto the last year of the deal it is extending. See
+    ///   ``DealTargetYear/openSeason(currentSeason:hasRolledOver:)``.
     @discardableResult
     static func applyNegotiatedDeal(
         player: Player,
@@ -873,6 +1006,8 @@ enum ContractEngine {
         application: DealApplication,
         capMode: CapMode,
         careerID: UUID? = nil,
+        currentSeason: Int? = nil,
+        hasRolledOver: Bool = false,
         existingContract: Contract? = nil,
         modelContext: ModelContext? = nil
     ) -> Int {
@@ -885,10 +1020,63 @@ enum ContractEngine {
             return try? modelContext.fetch(descriptor).first
         }()
 
+        // Not `resolvedCareerID` — that one asserts in DEBUG on a miss, which is
+        // right for a ledger WRITE and wrong for the reads below, which every
+        // shape performs and most saves answer with nothing to do.
+        let ledgerCareerID = careerID ?? player.careerID
+        // The season AND which side of the league-year rollover it is on: the
+        // two are one fact and are read together, because a binding year derived
+        // from the season alone is a year out for most of the offseason (see
+        // `DealTargetYear.openSeason`).
+        let resolved = resolvedLeagueYear(ledgerCareerID, modelContext: modelContext)
+        let season = currentSeason ?? resolved?.season
+        let rolledOver = currentSeason == nil ? (resolved?.hasRolledOver ?? false) : hasRolledOver
+
+        // **The plan, built before anything is written.** It reads the tag flag
+        // and the forward table, both of which the rescind below destroys, so
+        // the order is load-bearing rather than stylistic.
+        let plan = DealTargetYear.plan(
+            player: player,
+            offer: offer,
+            application: application,
+            capMode: capMode,
+            currentSeason: season ?? 0,
+            hasRolledOver: rolledOver,
+            careerID: ledgerCareerID,
+            existingContract: contract
+        )
+        // No career and no season means no forward ledger to park money on, so
+        // the deal is charged to the open year exactly as it was before #186.
+        // Losing a deferral costs the club room it did not have to give up yet;
+        // faking one would lose the money altogether, so the fallback is this way
+        // round and not the other.
+        let deferred = plan.booksForward && season != nil && ledgerCareerID != nil
+
         // What the club is carrying for this man RIGHT NOW, read with exactly
         // the precedence the cap screen reads it with, so the two can never
-        // disagree about what a signing changed.
-        let previousCharge = contract?.capHit ?? player.annualSalary
+        // disagree about what a signing changed. For a settled tag that is the
+        // TAG — `settleFranchiseTags` wrote it onto `annualSalary` and left the
+        // stale `Contract` row of his old deal alone — which is why the plan
+        // owns the choice rather than this line.
+        //
+        // A deferral that could not be booked forward is charged now, so it also
+        // has to net what the club is already carrying — the plan puts 0 there
+        // because in the binding year there would be nothing left to net.
+        //
+        // **A camp body is carrying nothing** (#205a, `OFFSEASON_ROSTER_PLAN.md`
+        // §3.1). His minimum salary sits on his row but deliberately not on
+        // `Team.currentCapUsage`, so netting against it would under-charge the
+        // club by exactly that minimum for a man it has just decided to keep.
+        // Signing a real deal is also what ends his camp: the flag clears here,
+        // which keeps `settleCampBodies` from charging the club a second time
+        // for him at cutdown.
+        let wasCampBody = CampRosterEngine.isCampBody(player)
+        CampRosterEngine.clearCampBodyStatus(player)
+        let previousCharge = wasCampBody
+            ? 0
+            : (plan.booksForward && !deferred
+                ? (contract?.capHit ?? player.annualSalary)
+                : plan.replacedCharge)
 
         // **The restructure receipt is settled here** (#102 F6).
         //
@@ -917,43 +1105,81 @@ enum ContractEngine {
         // exists, into `baseSalary[currentYear]` — see `executeRestructure`),
         // so removing the old charge and adding the acceleration nets the same
         // way a release does.
-        let restructureSettlement = max(0, player.restructureDeadMoney)
-        player.restructureReliefK = 0
-        player.restructureProrationK = 0
-        player.restructureCarryYears = 0
+        //
+        // **#186: a deferred extension settles nothing**, because it ends
+        // nothing. The receipt belongs to the deal that is still running and is
+        // still being paid off it; the new years do not start until that deal is
+        // over, by which point `executeNewLeagueYear`'s own carry tick has run
+        // the receipt down to zero on its normal schedule. Accelerating it here
+        // would charge the club dead money for a contract that has not been
+        // replaced and is not going anywhere.
+        let restructureSettlement = deferred ? 0 : max(0, player.restructureDeadMoney)
+        if !deferred {
+            player.restructureReliefK = 0
+            player.restructureProrationK = 0
+            player.restructureCarryYears = 0
+        }
 
         // The tag is retired by the signature — see the doc above. BEFORE the
         // clock is written, because rescinding restores the year of control the
         // tag floored it at and an extension must add its years to the contract
-        // the man actually had.
+        // the man actually had. The plan was built above it for the same reason
+        // in reverse: it has to see the tag.
         if player.isFranchiseTagged {
-            rescindFranchiseTagBooks(player: player, careerID: resolvedCareerID(careerID, player: player))
+            rescindFranchiseTagBooks(player: player, careerID: ledgerCareerID)
         }
 
-        let years: Int = {
-            switch application {
-            case .extendExisting: return max(0, player.contractYearsRemaining) + offer.years
-            case .replaceContract: return offer.years
-            }
-        }()
+        // Whatever he signs replaces the tag year he was playing out, so the
+        // marker that made this a `.tagReplacement` goes with it — otherwise the
+        // NEXT deal would be planned as one too and net a tag that is gone.
+        player.franchiseTagSeason = 0
 
-        player.contractYearsRemaining = years
+        // #89's one clock, written in every shape — see the doc above.
+        player.contractYearsRemaining = plan.contractYears
+
+        // **A deferred deal does not touch the open year.** `annualSalary` is
+        // what the rollover's cap true-up sums, so writing the new rate now
+        // would charge the club for a contract that has not started; the
+        // forward ledger holds it until its binding season and
+        // `settleFranchiseTags` writes it then.
+        guard !deferred else {
+            // The negotiated terms ride along, because the row is the only
+            // record of this deal until it binds: `settleFranchiseTags` rewrites
+            // the `Contract` from it, and a guarantee invented at settlement
+            // would be a term nobody agreed to.
+            CommittedCapLedger.commitForward(
+                playerID: player.id,
+                playerName: player.fullName,
+                annualCapHit: offer.annualCapHit,
+                baseSalary: offer.annualSalary,
+                years: max(1, offer.years),
+                bindingSeason: plan.startSeason,
+                kind: .deferredDeal,
+                guaranteedMoney: offer.guaranteedMoney,
+                noTradeClause: offer.noTradeClause,
+                careerID: ledgerCareerID
+            )
+            return 0
+        }
+
         player.annualSalary = offer.annualCapHit
 
         // Rewrite the detailed contract in place (realistic mode only — the
-        // other two modes have no `Contract` row to keep in step).
-        var newCharge = player.annualSalary
-        if capMode == .realistic, let team {
-            let baseSalaries = player.age < 28
-                ? escalatingBaseSalaries(annualSalary: offer.annualSalary, years: years)
-                : frontLoadedBaseSalaries(annualSalary: offer.annualSalary, years: years)
+        // other two modes have no `Contract` row to keep in step). The schedule
+        // is `negotiatedBaseSalaries`', taken off the plan so the number the cap
+        // gate refused or allowed is the number that gets written — including
+        // the tag-and-extend ceiling, which is the whole reason a tagged man's
+        // first year can land under the tag it retires.
+        var newCharge = plan.firstYearCapHit
+        if capMode == .realistic, let team, !plan.baseSalaries.isEmpty {
+            let baseSalaries = plan.baseSalaries
             // The NEGOTIATED structure, not a fresh random draw: the bonus, the
             // guarantee and the no-trade clause were terms both sides agreed to.
             let guaranteed = offer.guaranteedMoney
 
             if let contract {
                 contract.teamID = team.id
-                contract.totalYears = years
+                contract.totalYears = plan.contractYears
                 contract.currentYear = 0
                 contract.baseSalary = baseSalaries
                 contract.signingBonus = offer.signingBonus
@@ -964,7 +1190,7 @@ enum ContractEngine {
                 let created = Contract(
                     playerID: player.id,
                     teamID: team.id,
-                    totalYears: years,
+                    totalYears: plan.contractYears,
                     currentYear: 0,
                     baseSalary: baseSalaries,
                     signingBonus: offer.signingBonus,
@@ -977,6 +1203,17 @@ enum ContractEngine {
             }
         }
 
+        // The gate and the books have to agree to the thousand, or the composer
+        // is allowing deals the ledger then refuses to carry. They are built
+        // from one schedule, so this can only fire if somebody splits them again.
+        #if DEBUG
+        assert(
+            plan.booksForward || capMode != .realistic || plan.baseSalaries.isEmpty
+                || newCharge == plan.firstYearCapHit,
+            "Booked charge \(newCharge) diverged from the gated charge \(plan.firstYearCapHit)"
+        )
+        #endif
+
         // Sandbox deliberately keeps no ledger — see `signPlayerSandbox`. The
         // restructure acceleration rides on the same line for the same reason it
         // rides on `applyRelease`'s: sandbox never booked the relief, so it must
@@ -986,6 +1223,34 @@ enum ContractEngine {
         }
 
         return newCharge
+    }
+
+    /// `Career.currentSeason` **and its rollover stamp** for a save, when the
+    /// caller did not pass them.
+    ///
+    /// Both, in one fetch, because neither answers the question on its own: the
+    /// counter says which season the career is playing and the stamp says
+    /// whether the next league year's books are already open, and only the pair
+    /// names the year a contract charges. See
+    /// ``DealTargetYear/openSeason(currentSeason:hasRolledOver:)``.
+    ///
+    /// Deliberately silent about a miss: three of the four negotiation call
+    /// sites hold a `Career` and will pass the year explicitly, and the fourth
+    /// runs with a context that can find it. A save that can be found neither
+    /// way is a harness or a preview, where charging the open year is both the
+    /// old behaviour and the harmless one.
+    private static func resolvedLeagueYear(
+        _ careerID: UUID?,
+        modelContext: ModelContext?
+    ) -> (season: Int, hasRolledOver: Bool)? {
+        guard let careerID, let modelContext else { return nil }
+        let descriptor = FetchDescriptor<Career>(
+            predicate: #Predicate<Career> { $0.id == careerID }
+        )
+        guard let career = try? modelContext.fetch(descriptor).first else { return nil }
+        // The same test `WeekAdvancer` gates the compliance window with and
+        // `FranchiseTagView` gates its re-sign `+1` with.
+        return (career.currentSeason, career.lastRolloverSeason >= career.currentSeason)
     }
 
     // MARK: - Restructure (cap-compliance wave, REMEDIATION lever 2)
@@ -1690,12 +1955,23 @@ enum ContractEngine {
     }
 
     private static func rescindFranchiseTagBooks(player: Player, careerID: UUID?) {
-        let reservation = CommittedCapLedger.forwardCommitment(playerID: player.id, careerID: careerID)
+        // Tag rows only, both times. A man who also holds a deferred extension
+        // must not have its clock restored off a tag row, and must not have its
+        // money released with one.
+        let reservation = CommittedCapLedger.forwardCommitment(
+            playerID: player.id,
+            careerID: careerID,
+            kind: .franchiseTag
+        )
         player.isFranchiseTagged = false
         if let priorYears = reservation?.priorYears {
             player.contractYearsRemaining = priorYears
         }
-        CommittedCapLedger.releaseForward(playerID: player.id, careerID: careerID)
+        CommittedCapLedger.releaseForward(
+            playerID: player.id,
+            careerID: careerID,
+            kind: .franchiseTag
+        )
     }
 
     // MARK: - Natural Position Helpers

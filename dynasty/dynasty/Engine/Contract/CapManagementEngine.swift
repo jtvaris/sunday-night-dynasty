@@ -334,6 +334,30 @@ enum CapManagementEngine {
         /// This year's prorated bonus slice, i.e. the part of the cap hit that was
         /// bonus rather than salary.
         let proratedPerYear: Int
+        /// Set when the release door REFUSED the move (#208 G1): nothing was
+        /// written, no money moved, and this sentence is the reason to put in
+        /// front of the user. `nil` on every release that actually happened.
+        ///
+        /// A refusal is deliberately a value rather than a thrown error: every
+        /// caller of ``applyRelease`` already treats the split as the receipt
+        /// for what happened, and the ones that discard it get the safe
+        /// outcome (nothing at all) instead of a crash or a half-applied
+        /// release.
+        var refusalReason: String? = nil
+
+        /// The door said no — see ``refusalReason``.
+        var isRefused: Bool { refusalReason != nil }
+
+        /// A refusal: every column zero, because nothing was booked.
+        static func refused(_ reason: String) -> ReleaseCapSplit {
+            ReleaseCapSplit(
+                deadCap: 0,
+                salaryRelieved: 0,
+                salaryRetained: 0,
+                proratedPerYear: 0,
+                refusalReason: reason
+            )
+        }
 
         /// Cap space the release actually frees, in thousands. Negative when the
         /// acceleration outruns the salary relief — a bonus-heavy contract can
@@ -370,12 +394,28 @@ enum CapManagementEngine {
     /// `leagueYearRemaining` follows the same in-season rules as a trade (#26 /
     /// #44 / #45): a Week 12 release only relieves the game checks still to come,
     /// and every offseason phase relieves the whole base.
+    ///
+    /// **A camp cut is priced at zero, in both columns** (#205a,
+    /// `OFFSEASON_ROSTER_PLAN.md` §3.1). A camp body's minimum salary is
+    /// deliberately never added to `Team.currentCapUsage`, so releasing him
+    /// frees nothing and costs nothing — and that has to be the answer HERE, in
+    /// the shared pricing function, not only inside ``applyRelease``. Four
+    /// screens preview a release through this call (the cut ladder, the player
+    /// detail cut, the contract screen and the cap-compliance lever list); if it
+    /// answered `750` while the ledger moved `0`, the cut sheet would promise
+    /// savings that never arrive, and — worse — `complianceLevers` would offer
+    /// "release these camp bodies" as a way out of a cap violation it cannot fix.
     static func releaseCapSplit(
         player: Player,
         contract: Contract?,
         capMode: CapMode,
         leagueYearRemaining: Double = 1.0
     ) -> ReleaseCapSplit {
+        guard !CampRosterEngine.isCampBody(player) else {
+            return ReleaseCapSplit(
+                deadCap: 0, salaryRelieved: 0, salaryRetained: 0, proratedPerYear: 0
+            )
+        }
         let split = tradeCapSplit(
             player: player,
             contract: contract,
@@ -388,6 +428,112 @@ enum CapManagementEngine {
             salaryRetained: split.salaryRetained,
             proratedPerYear: split.proratedPerYear
         )
+    }
+
+    // MARK: - Positional integrity (#208 G1)
+    //
+    // The cut sheet learned this rule first (#208a, `RosterCutEvaluator`), and
+    // it held — on the cut sheet. QA then released all three quarterbacks one
+    // at a time from the PLAYER DETAIL screen, walked into the preseason with
+    // an empty QB room and a formation reading "EMPTY 0/1", because the guard
+    // lived in one view instead of behind the door every release goes through.
+    //
+    // So the rule moves here, to the one release authority, in two halves:
+    //
+    //   * ``releaseBlockReason`` — the sentence a screen shows and disables its
+    //     button with, BEFORE the user commits to anything.
+    //   * ``applyRelease`` — the same call, run again at the door, which
+    //     refuses the write when it comes back non-nil.
+    //
+    // Neither half owns the floors: both read `RosterCutEvaluator.minimumCount`,
+    // which reads `TradeValueEngine.starterSlots`. One table, three rules (the
+    // trade validator's positional integrity, the cut sheet, this door).
+
+    /// Who is asking for the release, and against which roster the positional
+    /// floors are measured.
+    ///
+    /// The default is the ENFORCING case, on purpose: a release path added
+    /// later is guarded before anyone remembers to guard it, and opting out
+    /// costs a visible `.leagueSweep` at the call site.
+    enum ReleaseAuthority {
+        /// A club decision, checked against the roster the caller already has
+        /// in hand. Cheapest and the one the four user screens use — they are
+        /// all rendering that roster anyway.
+        case club(roster: [Player])
+
+        /// A club decision whose roster the door fetches from the store itself.
+        /// The default. Needs a `modelContext`; without one there is no room to
+        /// count and the door cannot invent one, so it lets the release through
+        /// — which is exactly why the engine paths below name their case out
+        /// loud rather than leaning on this fallback.
+        case clubResolvingRoster
+
+        /// League churn: the AI cutdown and the practice-squad corresponding
+        /// move. These paths filter their OWN candidate lists through
+        /// ``releaseBlockReason`` before they get here (`WeekAdvancer.trimAIRosters`,
+        /// `PracticeSquadEngine.signToActiveRoster`), so the door must not
+        /// second-guess them — a sweep that stalls on a refusal would leave 31
+        /// clubs sitting over the 53-man ceiling for the rest of the save.
+        case leagueSweep
+    }
+
+    /// Why this club cannot release this man, or `nil` when the move is legal.
+    ///
+    /// **The one validator.** Every screen with a Release button asks this
+    /// before it enables the button, and ``applyRelease`` asks it again before
+    /// it writes — so a stale tap, a deep link or a roster that moved between
+    /// render and commit all land on the same answer.
+    ///
+    /// - Parameter roster: any array the club's men can be found in — a live
+    ///   `@Query`, a fetched club roster, the cut sheet's snapshot. It is
+    ///   filtered to the club's CURRENT, non-retired members here, which is
+    ///   what makes a sequence of releases safe: a man released a moment ago
+    ///   has `teamID == nil` and has already left the room being counted.
+    /// - Parameter alreadySelected: men the user has ticked on a cut sheet but
+    ///   not yet released. Rooms close one man at a time as the sheet fills.
+    static func releaseBlockReason(
+        player: Player,
+        team: Team,
+        roster: [Player],
+        alreadySelected: Set<UUID> = []
+    ) -> String? {
+        let teamID = team.id
+        let room = roster.filter { $0.teamID == teamID && !$0.isRetired }
+        // Not on this club's books (already cut, retired, traded): releasing him
+        // again is a no-op that empties nothing, and answering "last QB" here
+        // would block the re-tap for a reason that is not true.
+        guard room.contains(where: { $0.id == player.id }) else { return nil }
+        return RosterCutEvaluator.releaseBlockReason(
+            player: player,
+            roster: room,
+            alreadySelected: alreadySelected
+        )
+    }
+
+    /// The door's own check — resolves the roster the authority describes, then
+    /// asks the validator above.
+    private static func releaseRefusal(
+        player: Player,
+        team: Team,
+        authority: ReleaseAuthority,
+        modelContext: ModelContext?
+    ) -> String? {
+        let roster: [Player]
+        switch authority {
+        case .leagueSweep:
+            return nil
+        case .club(let supplied):
+            roster = supplied
+        case .clubResolvingRoster:
+            guard let modelContext else { return nil }
+            let teamID = team.id
+            let descriptor = FetchDescriptor<Player>(
+                predicate: #Predicate<Player> { $0.teamID == teamID }
+            )
+            guard let fetched = try? modelContext.fetch(descriptor) else { return nil }
+            roster = fetched
+        }
+        return releaseBlockReason(player: player, team: team, roster: roster)
     }
 
     /// Releases a player and books the release on the club's cap ledger.
@@ -438,22 +584,74 @@ enum CapManagementEngine {
     ///   franchise tag is dropped from. `career.id`, matching every reader of
     ///   that table; omitting it falls back to `Player.careerID`, which is
     ///   optional and releases nothing when nil.
+    /// - Parameter reason: what the receipt says happened (#188). Only reaches
+    ///   storage on the paths that pass a `modelContext`.
+    /// - Parameter seasonYear: the league year the receipt is filed under.
+    ///   Omitted, it is read off the `Career` the resolved `careerID` names —
+    ///   which is why a caller with a context but no career in reach still
+    ///   books nothing rather than filing the cut under year zero.
+    /// - Parameter authority: who is asking, and what roster the positional
+    ///   floors are checked against (#208 G1). Defaults to the enforcing case;
+    ///   a refused release writes NOTHING and comes back as
+    ///   ``ReleaseCapSplit/refused(_:)``.
     @discardableResult
     static func applyRelease(
         player: Player,
         team: Team,
+        authority: ReleaseAuthority = .clubResolvingRoster,
         contract: Contract? = nil,
         capMode: CapMode,
         leagueYearRemaining: Double = 1.0,
         careerID: UUID? = nil,
+        reason: ReleaseReason = .rosterMove,
+        seasonYear: Int? = nil,
         modelContext: ModelContext? = nil
     ) -> ReleaseCapSplit {
+        // **The positional floor, at the door** (#208 G1). Checked BEFORE a
+        // single field is written, because everything below this line is
+        // irreversible: the man's teamID, his salary, his contract rows and the
+        // club's ledger all move in one pass with no rollback.
+        //
+        // Every user-facing screen disables its Release button on the same
+        // sentence, so reaching this refusal means the roster moved between the
+        // render and the tap — which is precisely the case a view-side guard
+        // cannot cover, and the case QA walked through three times in a row.
+        if let refusal = releaseRefusal(
+            player: player,
+            team: team,
+            authority: authority,
+            modelContext: modelContext
+        ) {
+            return .refused(refusal)
+        }
+
+        // **A camp body was never charged** (#205a, `OFFSEASON_ROSTER_PLAN.md`
+        // §3.1). His minimum salary is written on his row but deliberately kept
+        // off `Team.currentCapUsage` for the four offseason phases he is carried
+        // — that exemption is how a 64-man club can carry 80 men through camp
+        // without the compliance window hard-gating all 32 of them.
+        //
+        // The exemption only holds if the refund path knows about it, and this
+        // is the one release door (#102 F8) every camp cut walks through. A
+        // credit here would walk the club's ledger down by his full salary on
+        // every one of the ~27 releases a cutdown makes — ~$12M a club, a camp,
+        // and it compounds every season. ``releaseCapSplit`` prices him at zero
+        // in both columns (no relief, and no dead money either — booking
+        // `0.15 × salary` against a charge that was never made would be the same
+        // leak with the sign flipped), so the line below moves nothing and the
+        // receipt says a camp cut cost nothing, which is the truth.
+        //
+        // `clearCampBodyStatus` is load-bearing, not tidiness: a man who kept
+        // the flag after his release would be exempted from the credit on his
+        // NEXT, fully charged release, and the club's usage would ratchet up by
+        // his salary every time.
         let split = releaseCapSplit(
             player: player,
             contract: contract,
             capMode: capMode,
             leagueYearRemaining: leagueYearRemaining
         )
+        CampRosterEngine.clearCampBodyStatus(player)
 
         if capMode != .sandbox {
             // `capSavings` is signed: a negative value (acceleration larger than
@@ -474,6 +672,10 @@ enum CapManagementEngine {
         player.restructureCarryYears = 0
         player.isHoldingOut = false
         player.isFranchiseTagged = false
+        // The tag year goes with the man. Left behind, it would make his next
+        // club's first extension of him a tag replacement — netting a charge
+        // nobody is carrying.
+        player.franchiseTagSeason = 0
         // #127: a released man's franchise tag is off the books with him. The
         // rollover's `consumeForward` would drop the orphaned row anyway, but a
         // release can happen months before that and every cap projection between
@@ -502,9 +704,94 @@ enum CapManagementEngine {
             for row in (try? modelContext.fetch(descriptor)) ?? [] {
                 modelContext.delete(row)
             }
+
+            recordReleaseReceipt(
+                player: player,
+                team: team,
+                split: split,
+                reason: reason,
+                seasonYear: seasonYear,
+                careerID: ContractEngine.resolvedCareerID(careerID, player: player),
+                modelContext: modelContext
+            )
         }
 
         return split
+    }
+
+    /// **The release receipt** (#188).
+    ///
+    /// `CapOverviewView.loadReleaseReceipts` names the dead money on the Cap
+    /// screen off `RosterCut` rows, and until now the camp cutdown screen was
+    /// the only place in the app that wrote one. Every other release — the
+    /// player detail cut, the contract screen, the cap-compliance flow — moved
+    /// real money and left the card saying nothing had happened. Writing the
+    /// row here, inside the one release authority, is what makes the charge
+    /// attributable to a name wherever the cut was made.
+    ///
+    /// Only the callers that hand over a `ModelContext` file a receipt: the AI
+    /// cutdown paths (`WeekAdvancer.trimAIRosters`, `PracticeSquadEngine`,
+    /// `ContractEngine.cutPlayer`) pass none, and a league's worth of AI churn
+    /// has no business in the user's Cap ledger — nor in the waiver pool that
+    /// reads these rows.
+    ///
+    /// The row is deliberately NOT a camp cut: `cutDayRaw` carries the reason,
+    /// not a `CutDay`, so `RosterCutView`'s ladder counts, the camp waiver
+    /// sweep and the practice-squad keeper list all skip it (each already
+    /// guards with `CutDay(rawValue:)` / `practiceSquadEligible`).
+    ///
+    /// Idempotent on the receipt key — player, club, league year and reason —
+    /// so a double tap, or a release re-run against a man already off the
+    /// books, books the charge once.
+    private static func recordReleaseReceipt(
+        player: Player,
+        team: Team,
+        split: ReleaseCapSplit,
+        reason: ReleaseReason,
+        seasonYear: Int?,
+        careerID: UUID?,
+        modelContext: ModelContext
+    ) {
+        guard let season = seasonYear ?? currentSeason(careerID: careerID, modelContext: modelContext) else {
+            // No league year in reach means no shelf to file the row on: every
+            // reader keys on `seasonYear`, so a guessed value would either
+            // vanish or land on the wrong season's card.
+            return
+        }
+
+        let playerID = player.id
+        let teamID = team.id
+        let descriptor = FetchDescriptor<RosterCut>(
+            predicate: #Predicate<RosterCut> {
+                $0.playerID == playerID && $0.teamID == teamID && $0.seasonYear == season
+            }
+        )
+        let existing = (try? modelContext.fetch(descriptor)) ?? []
+        guard !existing.contains(where: { $0.cutDayRaw == reason.rawValue }) else { return }
+
+        let cut = RosterCut(
+            playerID: playerID,
+            teamID: teamID,
+            seasonYear: season,
+            cutDayRaw: reason.rawValue,
+            capSavings: split.capSavings,
+            deadCap: split.deadCap,
+            practiceSquadEligible: false,
+            occurredAt: .now
+        )
+        cut.releaseReasonRaw = reason.rawValue
+        cut.careerID = careerID
+        modelContext.insert(cut)
+    }
+
+    /// The league year of the save the release belongs to, when the caller did
+    /// not state one.
+    private static func currentSeason(careerID: UUID?, modelContext: ModelContext) -> Int? {
+        guard let careerID else { return nil }
+        let descriptor = FetchDescriptor<Career>(
+            predicate: #Predicate<Career> { $0.id == careerID }
+        )
+        return (try? modelContext.fetch(descriptor).first)?.currentSeason
     }
 
     // MARK: - Cap Growth
@@ -738,26 +1025,53 @@ enum CapManagementEngine {
         var levers: [ComplianceLever] = []
         levers.reserveCapacity(players.count * 2)
 
+        // #208 G1 — the room every release lever below is measured against.
+        // `players` is one club's roster by contract (every caller fetches it on
+        // `teamID`), so the positional floors can be asked straight of the
+        // evaluator without a `Team` in hand.
+        //
+        // This is a DEADLOCK guard, not a cosmetic one: `canSelfHeal` reads this
+        // list to decide whether the week-advance gate may block the user at
+        // all. A lever he is forbidden to pull is not a key, and counting one
+        // would hold the save behind a door with nothing on the other side of
+        // it — the exact failure mode the camp-body exclusion below was written
+        // to avoid.
+        let room = players.filter { !$0.isRetired }
+
         for player in players {
+            // A camp body is not a lever (#205a §3.1). He was never charged, so
+            // releasing him frees nothing and restructuring him is meaningless —
+            // and during the camp phases he is up to a third of the roster, so
+            // listing him would bury the twenty rows that CAN move money under
+            // twenty-seven that cannot.
+            guard !CampRosterEngine.isCampBody(player) else { continue }
+
             let contract = contractsByPlayer[player.id]
 
-            let split = releaseCapSplit(
+            let releaseBlocked = RosterCutEvaluator.releaseBlockReason(
                 player: player,
-                contract: contract,
-                capMode: capMode,
-                leagueYearRemaining: leagueYearRemaining
-            )
-            levers.append(ComplianceLever(
-                playerID: player.id,
-                playerName: player.fullName,
-                position: player.position,
-                overall: player.overall,
-                kind: .release,
-                savings: split.capSavings,
-                deadMoney: split.deadCap,
-                futureAnnualCharge: 0,
-                futureYears: 0
-            ))
+                roster: room,
+                alreadySelected: []
+            ) != nil
+            if !releaseBlocked {
+                let split = releaseCapSplit(
+                    player: player,
+                    contract: contract,
+                    capMode: capMode,
+                    leagueYearRemaining: leagueYearRemaining
+                )
+                levers.append(ComplianceLever(
+                    playerID: player.id,
+                    playerName: player.fullName,
+                    position: player.position,
+                    overall: player.overall,
+                    kind: .release,
+                    savings: split.capSavings,
+                    deadMoney: split.deadCap,
+                    futureAnnualCharge: 0,
+                    futureYears: 0
+                ))
+            }
 
             if case .available(let quote) = ContractEngine.restructureQuote(
                 player: player,

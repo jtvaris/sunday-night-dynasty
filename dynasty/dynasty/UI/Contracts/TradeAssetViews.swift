@@ -104,7 +104,7 @@ struct TradeAssetColumn: View {
             ForEach(picks) { pick in
                 HStack(spacing: 6) {
                     Text("PICK")
-                        .font(.system(size: 9).weight(.bold))
+                        .font(.system(size: DSType.Size.caption).weight(.bold))
                         .foregroundStyle(Color.backgroundPrimary)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
@@ -128,7 +128,7 @@ struct TradeAssetColumn: View {
     private func playerRow(_ player: Player, chevron: Bool) -> some View {
         HStack(spacing: 6) {
             Text(player.position.rawValue)
-                .font(.system(size: 9).weight(.bold))
+                .font(.system(size: DSType.Size.caption).weight(.bold))
                 .foregroundStyle(Color.textPrimary)
                 .padding(.horizontal, 5)
                 .padding(.vertical, 2)
@@ -148,7 +148,7 @@ struct TradeAssetColumn: View {
             Spacer(minLength: 0)
             if chevron {
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 9))
+                    .font(.system(size: DSType.Size.caption))
                     .foregroundStyle(Color.textTertiary)
             }
         }
@@ -258,7 +258,7 @@ struct TradeAssetToggleRow: View {
 
                 if let blockedReason {
                     Text(blockedReason)
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.system(size: DSType.Size.caption, weight: .semibold))
                         .foregroundStyle(Color.warning)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.leading, 24)

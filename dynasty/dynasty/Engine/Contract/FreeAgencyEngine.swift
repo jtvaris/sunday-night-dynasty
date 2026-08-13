@@ -553,7 +553,22 @@ enum FreeAgencyEngine {
         //     commitment, so the club cannot also promise that money elsewhere;
         //   • BEFORE the expiry loop and the cap true-up, so the tag number is
         //     what the true-up sums for the new league year.
-        settleFranchiseTags(allPlayers: allPlayers, allTeams: allTeams, career: career)
+        //
+        // The contract map is built once here and used twice — the settlement
+        // below rewrites the row of every deferred extension that binds this
+        // year, and the compliance sweep at the bottom reads the same rows.
+        let contractDescriptor = FetchDescriptor<Contract>()
+        let allContracts = (try? modelContext.fetch(contractDescriptor)) ?? []
+        let contractsByPlayer = Dictionary(
+            allContracts.map { ($0.playerID, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        settleFranchiseTags(
+            allPlayers: allPlayers,
+            allTeams: allTeams,
+            career: career,
+            contractsByPlayer: contractsByPlayer
+        )
 
         // Task #90 — the fifth-year option deadline, and the first money
         // decision of the league year.
@@ -612,10 +627,17 @@ enum FreeAgencyEngine {
                     formerTeam: teamAbbr
                 ))
 
-                // Remove from team cap
-                if let team = formerTeam {
+                // Remove from team cap — unless he was a camp body, who was
+                // never on it (#205a, `OFFSEASON_ROSTER_PLAN.md` §3.1). Nothing
+                // should be able to reach this line still flagged (the flag
+                // clears at the cutdown two phases before any rollover), which
+                // is exactly why the guard is here: the invariant is "no path in
+                // the game credits a club for a camp body", and an invariant
+                // with one unguarded door is a bug waiting for a save file.
+                if let team = formerTeam, !CampRosterEngine.isCampBody(player) {
                     team.currentCapUsage -= player.annualSalary
                 }
+                CampRosterEngine.clearCampBodyStatus(player)
                 // Task #27 diagnostic: remember what the expiring deal paid
                 // before the number is destroyed, so the signing ledger can
                 // price this league year's wage-bill increase.
@@ -623,6 +645,10 @@ enum FreeAgencyEngine {
                 ChurnDiag.record(ChurnDiag.expire, player)
                 player.teamID = nil
                 player.annualSalary = 0
+                // A tag year that runs out is a tag year that is over: the man is
+                // a free agent, and his next deal is an ordinary signing rather
+                // than a replacement of a charge nobody is carrying.
+                player.franchiseTagSeason = 0
                 // The deal is over, so the restructure it carried is over too —
                 // the tick above already charged this league year's slice, and a
                 // free agent must not walk into his next contract with the
@@ -673,9 +699,20 @@ enum FreeAgencyEngine {
         // (rostered salaries) at the rollover — dead cap thus bites for the
         // league year it was incurred and then expires, and any incremental
         // drift the season accumulated is corrected in the same pass.
+        //
+        // Camp bodies are excluded (#205a, `OFFSEASON_ROSTER_PLAN.md` §3.1):
+        // their minimum salary is cap-exempt while they are carried, and this
+        // rebuild is the ledger's ground truth, so it must not be able to
+        // disagree with the exemption. Defensive rather than load-bearing —
+        // `CampRosterEngine.settleCampBodies` clears every flag at cutdown, four
+        // phases before the next rollover reaches this line — and kept for
+        // exactly that reason: if a leak ever does survive to here, the true-up
+        // should correct it, not ratify it.
         var salaryByTeam: [UUID: Int] = [:]
         for player in allPlayers {
-            guard let teamID = player.teamID, player.contractYearsRemaining > 0 else { continue }
+            guard let teamID = player.teamID,
+                  player.contractYearsRemaining > 0,
+                  !CampRosterEngine.isCampBody(player) else { continue }
             salaryByTeam[teamID, default: 0] += player.annualSalary
         }
         for team in allTeams {
@@ -709,12 +746,6 @@ enum FreeAgencyEngine {
                 guard let teamID = player.teamID, teamID != playerTeamID else { continue }
                 rosterByTeam[teamID, default: []].append(player)
             }
-            let contractDescriptor = FetchDescriptor<Contract>()
-            let allContracts = (try? modelContext.fetch(contractDescriptor)) ?? []
-            let contractsByPlayer = Dictionary(
-                allContracts.map { ($0.playerID, $0) },
-                uniquingKeysWith: { first, _ in first }
-            )
             for team in allTeams where team.id != playerTeamID {
                 CapManagementEngine.selfHealCapCompliance(
                     team: team,
@@ -1835,8 +1866,17 @@ enum FreeAgencyEngine {
 
     // MARK: - Franchise Tag Settlement (task #127)
 
-    /// **The one place a franchise tag becomes money**, and the other half of
+    /// **The one place forward money becomes real money**, and the other half of
     /// the fix `ContractEngine.applyFranchiseTag` starts.
+    ///
+    /// Two kinds of promise are collected here since #186 — the franchise tag it
+    /// was built for, and the deferred contract extension, whose money also binds
+    /// a league year that had not opened when it was agreed. They share this
+    /// function because they share the table and, critically, the single
+    /// read-and-delete `consumeForward` call: two sweeps of one ledger is how a
+    /// promise gets settled twice. They differ in exactly one thing, the contract
+    /// clock, and `CommittedCapLedger.Reservation.kind` is what tells them apart —
+    /// see the deferred branch in the body. Everything below describes the tag.
     ///
     /// The tag is decided in the offseason and binds the league year this
     /// function opens. Applying it therefore writes nothing to `annualSalary` and
@@ -1876,10 +1916,16 @@ enum FreeAgencyEngine {
     ///
     /// Returns how many tags were settled (0 = nobody was tagged).
     @discardableResult
+    ///
+    /// - Parameter contractsByPlayer: the save's `Contract` rows, so a settled
+    ///   deferred extension can be written onto the one it replaces (see
+    ///   ``settleDeferredContract(row:player:teamID:contract:)``). Empty is the
+    ///   simple/sandbox shape and costs nothing: those modes keep no rows.
     static func settleFranchiseTags(
         allPlayers: [Player],
         allTeams: [Team],
-        career: Career?
+        career: Career?,
+        contractsByPlayer: [UUID: Contract] = [:]
     ) -> Int {
         guard let career else { return 0 }
 
@@ -1900,8 +1946,50 @@ enum FreeAgencyEngine {
         let tagged = allPlayers.filter { $0.isFranchiseTagged && $0.teamID != nil && !$0.isRetired }
         guard !due.isEmpty || !tagged.isEmpty else { return 0 }
 
+        // #186 — the OTHER thing this table now holds.
+        //
+        // A contract extension signed for a man who is still under contract does
+        // not charge the open league year; `ContractEngine.applyNegotiatedDeal`
+        // parks it here, stamped with the season the new money starts, and this
+        // is the rollover that opens it. Settled in the same pass and off the
+        // same `consumeForward` because read-and-delete must not be split: two
+        // sweeps of one table is how a promise gets settled twice.
+        //
+        // What a deferred deal needs is exactly HALF of what a tag needs, which
+        // is why the row carries a kind. The salary is written — the true-up a
+        // few lines down sums `annualSalary`, so this is the moment the new rate
+        // goes on the books. The CLOCK is not: `contractYearsRemaining` was
+        // written the day the deal was signed and has been ticking down the old
+        // deal's years ever since (#89 — one clock, one tick per rollover), so
+        // touching it here would either erase the extension or hand out years
+        // nobody negotiated. The restructure receipt IS cleared, for the reason
+        // the tag branch clears it: the deal that receipt belonged to is the one
+        // that just ran out.
+        var deferredSettled = 0
+        for row in due where row.forwardKind == .deferredDeal {
+            guard let player = allPlayers.first(where: { $0.id == row.playerID }),
+                  let teamID = player.teamID,
+                  !player.isRetired,
+                  player.contractYearsRemaining > 0
+            else { continue }
+            player.annualSalary = row.annualCapHit
+            player.restructureReliefK = 0
+            player.restructureProrationK = 0
+            player.restructureCarryYears = 0
+            settleDeferredContract(
+                row: row,
+                teamID: teamID,
+                contract: contractsByPlayer[row.playerID]
+            )
+            deferredSettled += 1
+        }
+
+        // Tag rows only. A deferred deal's number is not a tag quote and must
+        // never become one for a man who happens to be carrying a flag as well.
         var quoteByPlayer: [UUID: Int] = [:]
-        for row in due { quoteByPlayer[row.playerID] = row.annualCapHit }
+        for row in due where row.forwardKind == .franchiseTag {
+            quoteByPlayer[row.playerID] = row.annualCapHit
+        }
 
         // Only built when somebody actually needs the fallback — a full sweep of
         // ~1 700 players is not worth doing for the overwhelmingly common case
@@ -1930,13 +2018,65 @@ enum FreeAgencyEngine {
 
             player.annualSalary = tag
             player.contractYearsRemaining = 1
+            // The one piece of state that outlives the flag. `executeNewLeagueYear`
+            // clears `isFranchiseTagged` a few dozen lines below — it has to, or
+            // the expiry loop would skip him forever — and from that moment
+            // nothing else in the save says this man is playing a tag year. The
+            // tag-and-extend shape is planned off this stamp; the expiry loop
+            // clears it when the tag year runs out. See `Player.franchiseTagSeason`.
+            player.franchiseTagSeason = bindingSeason
             player.restructureReliefK = 0
             player.restructureProrationK = 0
             player.restructureCarryYears = 0
             settled += 1
         }
 
-        return settled
+        return settled + deferredSettled
+    }
+
+    /// **Writes a settled deferred extension onto the `Contract` row**, so the
+    /// deal that just started is the deal every realistic-mode surface reads.
+    ///
+    /// Without this the row still describes the contract the extension replaced,
+    /// and `Contract.capHit` is the only number the cap screen, `applyRelease`'s
+    /// dead-money split and the NEXT negotiation's `previousCharge` have: the
+    /// club shows — and nets — the expired rate while the true-up charges the
+    /// new one, so `currentCapUsage` is overstated by the difference and the
+    /// screen's own ledger-variance warning fires against a figure that is right.
+    ///
+    /// The schedule written is FLAT, and deliberately: `annualSalary` is the flat
+    /// `annualCapHit` and the rollover's true-up sums exactly that, so a flat row
+    /// makes `capHit == annualSalary` in every year of the deal — the two ledgers
+    /// cannot disagree. The bonus is recovered the way the offer built it
+    /// (`annualCapHit = annualSalary + signingBonus / years`), which keeps a
+    /// release's acceleration honest, and the guarantee and no-trade clause come
+    /// off the row rather than being invented here.
+    private static func settleDeferredContract(
+        row: CommittedCapLedger.Reservation,
+        teamID: UUID,
+        contract: Contract?
+    ) {
+        // Simple and sandbox mode carry no `Contract` row at all, and neither
+        // does a save whose player was never given one; `annualSalary` is the
+        // whole of their books and it is already written.
+        guard let contract else { return }
+
+        let years = max(1, row.years)
+        let base = max(0, row.offeredSalary)
+        let prorated = max(0, row.annualCapHit - base)
+        let bonus = prorated * years
+        let schedule = Array(repeating: base, count: years)
+        let guaranteed = row.guaranteedMoney ?? bonus
+        let noTrade = row.noTradeClause ?? false
+
+        contract.teamID = teamID
+        contract.totalYears = years
+        contract.currentYear = 0
+        contract.baseSalary = schedule
+        contract.signingBonus = bonus
+        contract.guaranteedMoney = guaranteed
+        contract.noTradeClause = noTrade
+        contract.franchiseTagged = false
     }
 
     /// The fifth-year price for one man, in thousands.

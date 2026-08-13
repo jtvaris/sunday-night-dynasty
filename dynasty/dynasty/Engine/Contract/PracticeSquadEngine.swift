@@ -723,6 +723,18 @@ enum PracticeSquadEngine {
         if roster.count >= activeRosterCeiling {
             release = roster
                 .filter { !$0.isInjured }
+                // #208 G1 — the corresponding move may not empty a position
+                // room. Filtered into the CANDIDATE list rather than caught at
+                // the door, so a club whose worst body happens to be its backup
+                // quarterback releases the next man down instead of the poach
+                // failing outright.
+                .filter {
+                    CapManagementEngine.releaseBlockReason(
+                        player: $0,
+                        team: team,
+                        roster: roster
+                    ) == nil
+                }
                 .min(by: { RosterValue.keepScore($0) < RosterValue.keepScore($1) })
             guard release != nil else { return false }
         }
@@ -755,6 +767,10 @@ enum PracticeSquadEngine {
             CapManagementEngine.applyRelease(
                 player: release,
                 team: team,
+                // #208 G1 — the candidate above already cleared the floors; the
+                // door must not refuse a corresponding move the club has
+                // already been told it can make.
+                authority: .leagueSweep,
                 capMode: capMode,
                 leagueYearRemaining: leagueYearRemaining
             )

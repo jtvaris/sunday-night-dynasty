@@ -31,10 +31,26 @@ struct PlayerContractView: View {
     @State private var activeSheet: ContractSheet?
     @State private var showPayCutChat = false
     @State private var team: Team?
+    /// The club's roster, loaded alongside the club (#208 G1). The Cut button
+    /// is a release door, and a release door has to be able to count the room
+    /// it is about to empty — this screen had no roster in reach at all, which
+    /// is how it shipped as one of the four ways to cut the last quarterback.
+    @State private var roster: [Player] = []
     /// This player's detailed deal, when one exists. Realistic-mode signings
     /// mint a `Contract`; everyone else is priced off `annualSalary` by the
     /// engine's proxy.
     @State private var contract: Contract?
+
+    /// Why the cut is closed, or `nil`. The engine owns the rule; this screen
+    /// only renders its sentence.
+    private var cutBlockReason: String? {
+        guard let team else { return nil }
+        return CapManagementEngine.releaseBlockReason(
+            player: player,
+            team: team,
+            roster: roster
+        )
+    }
 
     var body: some View {
         ZStack {
@@ -60,9 +76,10 @@ struct PlayerContractView: View {
         .task { loadTeam() }
         .alert("Cut \(player.fullName)?", isPresented: $showCutAlert) {
             Button("Cut Player", role: .destructive) { cutPlayer() }
+                .disabled(cutBlockReason != nil)
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text(cutAlertMessage)
+            Text(cutBlockReason ?? cutAlertMessage)
         }
         // The one sheet — see `ContractSheet`.
         .sheet(item: $activeSheet) { sheet in
@@ -220,11 +237,22 @@ struct PlayerContractView: View {
                     }
                 }
 
+                // #208 G1 — disabled with its reason under it, never a live
+                // button beside a passive note. The reason is the engine's
+                // sentence and it names the way out (sign or trade first).
                 Button(role: .destructive) {
                     showCutAlert = true
                 } label: {
-                    Label("Cut Player", systemImage: "person.badge.minus")
+                    VStack(alignment: .leading, spacing: 2) {
+                        Label("Cut Player", systemImage: "person.badge.minus")
+                        if let reason = cutBlockReason {
+                            Text(reason)
+                                .font(.caption2)
+                                .foregroundStyle(Color.warning)
+                        }
+                    }
                 }
+                .disabled(cutBlockReason != nil)
             }
         }
         .listRowBackground(Color.backgroundSecondary)
@@ -447,6 +475,14 @@ struct PlayerContractView: View {
         let descriptor = FetchDescriptor<Team>(predicate: #Predicate { $0.id == teamID })
         team = try? modelContext.fetch(descriptor).first
 
+        // #208 G1 — the room the Cut button is about to thin. Keyed on `teamID`
+        // exactly like every other roster read in the app, so a man released
+        // anywhere else drops out of this count the moment his `teamID` clears.
+        let rosterDescriptor = FetchDescriptor<Player>(
+            predicate: #Predicate<Player> { $0.teamID == teamID }
+        )
+        roster = (try? modelContext.fetch(rosterDescriptor)) ?? []
+
         let playerID = player.id
         let contractDescriptor = FetchDescriptor<Contract>(
             predicate: #Predicate<Contract> { $0.playerID == playerID }
@@ -459,15 +495,26 @@ struct PlayerContractView: View {
         // ONE authority (#68). The two lines this replaced handed back the FULL
         // salary and booked no dead money, so an in-season release was free and
         // the club's ledger drifted every time one happened.
-        CapManagementEngine.applyRelease(
+        let split = CapManagementEngine.applyRelease(
             player: player,
             team: team,
+            // #208 G1 — the roster loaded with the club, so the door checks the
+            // same room this screen disabled its button on.
+            authority: .club(roster: roster),
             contract: contract,
             capMode: career.capMode,
             leagueYearRemaining: leagueYearRemaining,
             careerID: career.id,
+            // #188: the club walked away from a deal — the receipt says so on
+            // the Cap screen's Dead Money card.
+            reason: .contractRelease,
+            seasonYear: career.currentSeason,
             modelContext: modelContext
         )
+        // Refused: nothing was written, so there is nothing to save and no
+        // reason to leave the screen — the disabled button and its reason are
+        // still on it.
+        guard !split.isRefused else { return }
         try? modelContext.save()
         dismiss()
     }

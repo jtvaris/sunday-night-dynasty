@@ -16,8 +16,17 @@ final class RosterCut {
     var playerID: UUID
     var teamID: UUID
     var seasonYear: Int
-    /// Raw value of `CutDay`: cut90To75 / cut75To65 / cut65To53.
+    /// Raw value of `CutDay`: cut90To75 / cut75To65 / cut65To53 — OR, for a
+    /// release booked outside the camp ladder (#188), the raw value of
+    /// ``ReleaseReason``. Every camp-ladder reader already guards with
+    /// `CutDay(rawValue:)` and skips what it does not recognise, which is what
+    /// keeps an in-season cut out of the cutdown counts and out of waivers.
     var cutDayRaw: String
+    /// Why the man was let go, when the engine booked the receipt (#188).
+    /// `nil` on rows written by the camp cutdown screen, whose reason is the
+    /// cut day itself. Default-value stored property, never in `init` -> safe
+    /// lightweight migration.
+    var releaseReasonRaw: String? = nil
     /// Cap savings in thousands (e.g. 4500 = $4.5M).
     var capSavings: Int
     /// Dead cap (signing bonus acceleration) in thousands.
@@ -55,5 +64,42 @@ final class RosterCut {
     var cutDay: CutDay {
         get { CutDay(rawValue: cutDayRaw) ?? .cut90To75 }
         set { cutDayRaw = newValue.rawValue }
+    }
+
+    /// True when this row is one of the three camp cutdown days, i.e. the only
+    /// kind of release the waiver wire and the practice-squad "own cuts first"
+    /// rule are allowed to act on. An in-season or cap-compliance release is a
+    /// receipt for the Cap screen, nothing more.
+    var isCampCutdown: Bool { CutDay(rawValue: cutDayRaw) != nil }
+
+    /// The engine's reason, when one was recorded.
+    var releaseReason: ReleaseReason? {
+        releaseReasonRaw.flatMap(ReleaseReason.init(rawValue:))
+    }
+}
+
+/// Why a release was booked, for the receipts `CapManagementEngine.applyRelease`
+/// writes on every path that cuts a player with a `ModelContext` in hand (#188).
+///
+/// Kept out of `CutDay` on purpose: adding cases there would put in-season
+/// releases into the camp cutdown ladder, the waiver pool and the practice-squad
+/// keeper list, none of which they belong in.
+enum ReleaseReason: String, Codable, CaseIterable {
+    /// Cut from the player's own detail screen.
+    case rosterMove
+    /// Released from the contract screen (a deal the club walked away from).
+    case contractRelease
+    /// Cut to get back under the cap during the compliance flow.
+    case capCompliance
+    /// Booked by the camp cutdown screen through the engine.
+    case campCut
+
+    var label: String {
+        switch self {
+        case .rosterMove:      return "Roster move"
+        case .contractRelease: return "Contract release"
+        case .capCompliance:   return "Cap compliance"
+        case .campCut:         return "Camp cut"
+        }
     }
 }

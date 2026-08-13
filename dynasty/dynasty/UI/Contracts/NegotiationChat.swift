@@ -470,7 +470,7 @@ private struct NegotiationBubble: View {
         VStack(spacing: DSSpacing.xs) {
             HStack(spacing: DSSpacing.xs) {
                 Image(systemName: receipt.icon)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: DSType.Size.callout, weight: .semibold))
                     .foregroundStyle(receipt.color)
                 Text(receipt.title)
                     .font(DSType.display(14, .heavy))
@@ -632,7 +632,7 @@ extension View {
             ToolbarItem(placement: .topBarTrailing) {
                 Button(action: action) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 13, weight: .bold))
+                        .font(.system(size: DSType.Size.body, weight: .bold))
                         .foregroundStyle(Color.textSecondary)
                         .frame(width: 30, height: 30)
                         .background(Color.backgroundTertiary, in: Circle())

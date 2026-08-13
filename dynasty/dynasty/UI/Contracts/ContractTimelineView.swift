@@ -15,11 +15,32 @@ struct ContractTimelineView: View {
     @State private var team: Team?
     @State private var filter: ContractFilter = .all
 
+    // MARK: - The Open League Year
+
+    /// **The league year column 0 depicts.**
+    ///
+    /// `Career.currentSeason` is one behind it from proDays through rosterCuts:
+    /// `FreeAgencyEngine.executeNewLeagueYear` opens the new league year — the
+    /// contract clocks this screen draws bars from are decremented there — while
+    /// the counter is only bumped at the rosterCuts→regularSeason boundary. So
+    /// the bars, and the forward rows priced against them, belong to
+    /// `currentSeason + 1` for that whole stretch.
+    ///
+    /// Delegated to `DealTargetYear.openSeason` rather than re-tested here, so
+    /// this screen, `CapOverviewView` and the negotiation gate cannot end up
+    /// with three readings of which side of March it is.
+    private var openYear: Int {
+        DealTargetYear.openSeason(
+            currentSeason: career.currentSeason,
+            hasRolledOver: career.lastRolloverSeason >= career.currentSeason
+        )
+    }
+
     // MARK: - Season Columns
 
-    /// The five seasons shown in the timeline (current + next 4).
+    /// The five seasons shown in the timeline (open league year + next 4).
     private var seasons: [Int] {
-        (0..<5).map { career.currentSeason + $0 }
+        (0..<5).map { openYear + $0 }
     }
 
     // MARK: - Filtered Players
@@ -53,17 +74,41 @@ struct ContractTimelineView: View {
     /// year-0 bar is the live ledger: the club is paying his expiring deal
     /// through the season just played, and dropping it made the current-year
     /// column understate used cap by his whole salary. The forward row cannot
-    /// double-count him there — it binds `currentSeason + 1`, and
-    /// `forwardCommitted` returns 0 for a season before the binding year.
+    /// double-count him there — it binds the year after the open one, and
+    /// `forwardCoverage` is empty for a season before the binding year.
+    ///
+    /// #186: the forward read is the WHOLE roster, not the tagged men, and a
+    /// covered man is priced by his row INSTEAD of his salary. A deferred
+    /// extension (`ContractEngine.applyNegotiatedDeal`) writes the new clock at
+    /// signing, leaves `annualSalary` at the old rate until the binding
+    /// rollover, and never sets `isFranchiseTagged` — so a tags-only read
+    /// skipped the new money entirely while still charging the superseded
+    /// salary, and this screen quoted a future year the cap gate
+    /// (`CapOverviewView.committedCap`, `DealTargetYear.space`) priced
+    /// differently. Same rows, same netting, one future per season.
+    ///
+    /// The row lookup is keyed off ``openYear``, not `career.currentSeason`, for
+    /// the same reason the column headers are: offset 0 is the ledger as it
+    /// stands now, so during the offseason phases that follow the rollover a
+    /// raw-counter key asked for the year BEFORE the one the column draws, and
+    /// a deferred extension's money landed one column late.
     private func committedSalary(forOffset offset: Int) -> Int {
-        let contracts = players
-            .filter { $0.contractYearsRemaining > offset && (offset == 0 || !$0.isFranchiseTagged) }
-            .reduce(0) { $0 + $1.annualSalary }
-        return contracts + CommittedCapLedger.forwardCommitted(
-            playerIDs: players.filter(\.isFranchiseTagged).map(\.id),
+        // Player-scoped, not a blind sum of the table: an orphaned row (tagged
+        // or extended, then released) must not keep charging a club for a man it
+        // no longer employs.
+        let coverage = CommittedCapLedger.forwardCoverage(
+            playerIDs: players.map(\.id),
             careerID: career.id,
-            season: career.currentSeason + offset
+            season: openYear + offset
         )
+        let contracts = players
+            .filter {
+                coverage[$0.id] == nil
+                    && $0.contractYearsRemaining > offset
+                    && (offset == 0 || !$0.isFranchiseTagged)
+            }
+            .reduce(0) { $0 + $1.annualSalary }
+        return contracts + coverage.values.reduce(0, +)
     }
 
     /// Available cap for a given season offset.
@@ -287,7 +332,7 @@ struct ContractTimelineView: View {
         HStack(spacing: 8) {
             // Position badge
             Text(player.position.rawValue)
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: DSType.Size.caption, weight: .bold))
                 .foregroundStyle(Color.textPrimary)
                 .frame(width: 28)
                 .padding(.vertical, 3)

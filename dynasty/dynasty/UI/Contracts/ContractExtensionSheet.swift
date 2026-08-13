@@ -437,7 +437,7 @@ struct ContractExtensionSheet: View {
                     Image(systemName: "signature")
                         .font(.system(size: 16, weight: .semibold))
                     Text("Sign Contract")
-                        .font(.system(size: 17, weight: .bold))
+                        .font(.system(size: DSType.Size.title3, weight: .bold))
                 }
                 .foregroundStyle(Color.backgroundPrimary)
                 .frame(maxWidth: .infinity)

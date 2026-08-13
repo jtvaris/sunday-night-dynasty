@@ -69,6 +69,13 @@ struct FranchiseTagView: View {
                     player: player,
                     negotiationType: .extend,
                     teamCapSpace: max(0, team?.availableCap ?? 0),
+                    // #186 — the gate must plan the deal this screen BOOKS. It
+                    // replaces an expiring contract (see `onDealCompleted`
+                    // below), so the money starts in the league year that is
+                    // open; the default `.extendExisting` would have read the
+                    // expiring man's last year as "one more year to wait" and
+                    // quoted him against next season's projected cap.
+                    dealApplication: .replaceContract,
                     onDealCompleted: { offer in
                         // Re-sign: the expiring deal is REPLACED, not extended.
                         // Through the engine so the club's cap ledger, the
@@ -316,7 +323,7 @@ struct FranchiseTagView: View {
                     .font(.subheadline.weight(.semibold).monospacedDigit())
                     .foregroundStyle(Color.accentGold)
                 Text("\(seasonLabel(nextSeason)) Tag")
-                    .font(.system(size: 9).weight(.medium))
+                    .font(.system(size: DSType.Size.caption).weight(.medium))
                     .foregroundStyle(Color.textTertiary)
             }
 
@@ -398,7 +405,7 @@ struct FranchiseTagView: View {
                         .font(.subheadline.weight(.semibold).monospacedDigit())
                         .foregroundStyle(Color.accentGold)
                     Text("Tag Cost")
-                        .font(.system(size: 9).weight(.medium))
+                        .font(.system(size: DSType.Size.caption).weight(.medium))
                         .foregroundStyle(Color.textTertiary)
                 }
 
@@ -481,7 +488,7 @@ struct FranchiseTagView: View {
                     .font(.caption.weight(.semibold))
                 if let badge {
                     Text(badge)
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.system(size: DSType.Size.caption, weight: .bold))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(Color.accentBlue.opacity(0.18), in: Capsule())
@@ -546,7 +553,7 @@ struct FranchiseTagView: View {
             HStack(spacing: 10) {
                 Image(systemName: icon)
                     .foregroundStyle(Color.accentGold)
-                    .font(.system(size: 15))
+                    .font(.system(size: DSType.Size.callout))
                 Text(title)
                     .font(.headline)
                     .foregroundStyle(Color.accentGold)

@@ -135,7 +135,7 @@ struct TradeView: View {
     private var tradeClosedView: some View {
         VStack(spacing: 20) {
             Image(systemName: "lock.fill")
-                .font(.system(size: 56))
+                .font(.system(size: DSType.Size.hero))
                 .foregroundStyle(Color.textTertiary)
             Text("Trade Window Closed")
                 .font(.title2.weight(.bold))
@@ -261,7 +261,7 @@ struct TradeView: View {
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(Color.textPrimary)
                         Text(identity.archetypeLabel)
-                            .font(.system(size: 9, weight: .bold))
+                            .font(.system(size: DSType.Size.caption, weight: .bold))
                             .foregroundStyle(Color.textTertiary)
                     }
                     Spacer()
@@ -269,7 +269,7 @@ struct TradeView: View {
                         .font(.system(size: 10).weight(.bold).monospacedDigit())
                         .foregroundStyle(Color.textSecondary)
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 9))
+                        .font(.system(size: DSType.Size.caption))
                         .foregroundStyle(Color.textTertiary)
                 }
 
@@ -285,10 +285,10 @@ struct TradeView: View {
                     Text(TradeWindowRules.expiryNote(
                         phase: career.currentPhase, week: career.currentWeek
                     ))
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: DSType.Size.caption, weight: .semibold))
                     if thread.pendingCounter != nil {
                         Text("· their counter is on the table")
-                            .font(.system(size: 9, weight: .semibold))
+                            .font(.system(size: DSType.Size.caption, weight: .semibold))
                             .foregroundStyle(Color.success)
                     }
                     Spacer()
@@ -600,7 +600,7 @@ struct TradeView: View {
                 isBlocked ? "Trade Blocked" : "Propose Trade",
                 systemImage: isBlocked ? "exclamationmark.triangle.fill" : "bubble.left.and.bubble.right.fill"
             )
-                .font(.system(size: 15, weight: .bold))
+                .font(.system(size: DSType.Size.callout, weight: .bold))
                 .foregroundStyle(canPropose ? Color.backgroundPrimary : Color.textTertiary)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 14)
@@ -867,7 +867,7 @@ struct TradeView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(Color.textSecondary)
                 Text(hasAssets ? willingness.label : "Select assets to gauge interest")
-                    .font(.system(size: 13).weight(.bold))
+                    .font(.system(size: DSType.Size.body).weight(.bold))
                     .foregroundStyle(hasAssets ? willingness.color : Color.textTertiary)
                 if hasAssets, let ask = askingPriceHint(partner: partner) {
                     Text(ask)
@@ -1216,7 +1216,7 @@ struct TradeView: View {
                 Text(pickLabelShort(pick))
                     .font(.system(size: 11).weight(.bold))
                 Text("\(PickValueChart.points(forPick: pick.pickNumber)) pts")
-                    .font(.system(size: 9))
+                    .font(.system(size: DSType.Size.caption))
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
@@ -2076,7 +2076,7 @@ struct TradeView: View {
                         .font(.subheadline.weight(.heavy))
                         .foregroundStyle(rowGradeColor(targetGrade))
                     Text("Target")
-                        .font(.system(size: 9))
+                        .font(.system(size: DSType.Size.caption))
                         .foregroundStyle(Color.textTertiary)
                 }
                 .frame(maxWidth: .infinity)
@@ -2084,7 +2084,7 @@ struct TradeView: View {
                 // Comparison conclusion
                 VStack(spacing: 1) {
                     Text("vs")
-                        .font(.system(size: 9))
+                        .font(.system(size: DSType.Size.caption))
                         .foregroundStyle(Color.textTertiary)
                     Text(conclusion)
                         .font(.system(size: 10).weight(.heavy))
@@ -2102,7 +2102,7 @@ struct TradeView: View {
                         .font(.subheadline.weight(.heavy))
                         .foregroundStyle(rowGradeColor(starterGrade))
                     Text("Starter")
-                        .font(.system(size: 9))
+                        .font(.system(size: DSType.Size.caption))
                         .foregroundStyle(Color.textTertiary)
                 }
                 .frame(maxWidth: .infinity)

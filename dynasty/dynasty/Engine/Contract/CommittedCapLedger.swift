@@ -40,6 +40,17 @@ enum CommittedCapLedger {
 
     // MARK: - Reservation
 
+    /// What a FORWARD row promises. See ``Reservation/kind``.
+    enum Kind: String, Codable, Equatable {
+        /// A franchise tag: one league year, and the rollover writes both the
+        /// salary and the single year of club control.
+        case franchiseTag
+        /// A contract extension whose money starts in a future league year
+        /// (#186). The clock was written when it was signed; the rollover writes
+        /// only the salary.
+        case deferredDeal
+    }
+
     /// One outstanding user offer, in the unit `Team.currentCapUsage` is kept in
     /// (thousands per year).
     struct Reservation: Codable, Equatable, Identifiable {
@@ -85,6 +96,47 @@ enum CommittedCapLedger {
         /// case. (`Reservation` has no custom `CodingKeys`, so the synthesised
         /// decoder treats a missing optional as nil.)
         var priorYears: Int?
+
+        /// FORWARD rows only: **what kind of promise this is**, because the
+        /// rollover has to settle two of them differently now (#186).
+        ///
+        /// The table shipped holding exactly one thing, so `settleFranchiseTags`
+        /// could assume every row it consumed was a tag and write
+        /// `annualSalary = row.annualCapHit; contractYearsRemaining = 1` over the
+        /// lot. A deferred extension is money promised for a future league year
+        /// too, and belongs in the same table for the same reasons — it is
+        /// season-stamped, player-scoped and swept by the same rollover — but its
+        /// term was negotiated and its clock was written the day it was signed,
+        /// so settling it must NOT touch `contractYearsRemaining`. Without a
+        /// discriminator the two are indistinguishable and one of them is
+        /// silently wrong.
+        ///
+        /// Optional for the same reason `priorYears` is: the table is persisted
+        /// JSON and every row written before #186 was a tag, which is what
+        /// ``forwardKind`` reads a nil as.
+        var kind: Kind?
+
+        /// ``kind`` with the pre-#186 default applied.
+        var forwardKind: Kind { kind ?? .franchiseTag }
+
+        /// FORWARD `.deferredDeal` rows only: the guaranteed money the deal was
+        /// signed with, so the `Contract` row the rollover writes carries the
+        /// terms that were negotiated rather than terms invented at settlement.
+        /// Optional for the same reason every other forward-only field is —
+        /// the table is persisted JSON.
+        var guaranteedMoney: Int?
+
+        /// FORWARD `.deferredDeal` rows only: the no-trade clause, kept for the
+        /// same reason as ``guaranteedMoney``.
+        var noTradeClause: Bool?
+
+        /// The last league year a FORWARD row charges.
+        var lastSeason: Int { seasonYear + max(1, years) - 1 }
+
+        /// Whether this row charges `season`.
+        func covers(_ season: Int) -> Bool {
+            season >= seasonYear && season <= lastSeason
+        }
 
         /// League year the offer was made in — see the leak note in the type doc.
         var seasonYear: Int
@@ -289,7 +341,10 @@ enum CommittedCapLedger {
             annualCapHit: charge,
             baseSalary: baseSalary.map { max(0, $0) },
             years: max(1, years),
-            priorYears: nil,   // forward-only field; an offer touches no clock
+            priorYears: nil,        // forward-only field; an offer touches no clock
+            kind: nil,              // forward-only field; the offer table has one kind
+            guaranteedMoney: nil,   // forward-only field; settled at signing here
+            noTradeClause: nil,     // forward-only field; settled at signing here
             seasonYear: season,
             submittedAt: .now
         )
@@ -395,24 +450,63 @@ enum CommittedCapLedger {
     /// because nothing else sweeps a table stamped a year ahead. Summing the
     /// table would keep charging a club for a player it no longer employs, on a
     /// screen whose whole job is telling the user what he can afford. Callers
-    /// pass the ids they actually hold — normally `roster.filter(\.isFranchiseTagged)`
-    /// — so an orphan simply is not in the set.
+    /// pass the ids they actually hold — the whole roster is the right set now
+    /// that deferred deals live here too — so an orphan simply is not in the set.
     static func forwardCommitted(playerIDs: some Sequence<UUID>, careerID: UUID?, season: Int) -> Int {
-        guard let careerID else { return 0 }
-        let rows = forwardTable(careerID: careerID)
-        return playerIDs.reduce(0) { total, id in
-            guard let row = rows[id.uuidString],
-                  season >= row.seasonYear,
-                  season < row.seasonYear + max(1, row.years)
-            else { return total }
-            return total + row.annualCapHit
-        }
+        forwardCoverage(playerIDs: playerIDs, careerID: careerID, season: season)
+            .values
+            .reduce(0, +)
     }
 
-    /// This save's forward commitment for one player, if any.
-    static func forwardCommitment(playerID: UUID, careerID: UUID?) -> Reservation? {
-        guard let careerID else { return nil }
-        return forwardTable(careerID: careerID)[playerID.uuidString]
+    /// **Who owes forward money in `season`, and how much each** — the read a
+    /// projection needs when it also sums `Player.annualSalary`, because a man
+    /// with a forward row for that year must be counted from the ROW and not
+    /// from the stale salary his running deal still carries.
+    ///
+    /// `applyNegotiatedDeal` writes a deferred extension's clock immediately
+    /// (#89 — one clock) and deliberately leaves `annualSalary` at the old rate
+    /// until the binding rollover, so for exactly the years the row covers, a
+    /// naive projection sees BOTH and charges the club twice. Returning the map
+    /// rather than the sum is what lets the caller drop the salary it supersedes.
+    static func forwardCoverage(
+        playerIDs: some Sequence<UUID>,
+        careerID: UUID?,
+        season: Int
+    ) -> [UUID: Int] {
+        guard let careerID else { return [:] }
+        let rows = forwardTable(careerID: careerID).values
+        guard !rows.isEmpty else { return [:] }
+        let wanted = Set(playerIDs)
+        var coverage: [UUID: Int] = [:]
+        for row in rows where wanted.contains(row.playerID) && row.covers(season) {
+            coverage[row.playerID, default: 0] += row.annualCapHit
+        }
+        return coverage
+    }
+
+    /// Every forward row this save holds for one player, earliest binding year
+    /// first. A player can hold more than one — see ``commitForward``.
+    static func forwardCommitments(playerID: UUID, careerID: UUID?) -> [Reservation] {
+        guard let careerID else { return [] }
+        return forwardTable(careerID: careerID)
+            .values
+            .filter { $0.playerID == playerID }
+            .sorted { $0.seasonYear < $1.seasonYear }
+    }
+
+    /// This save's forward commitment for one player, if any — the earliest
+    /// binding one, optionally narrowed to a kind.
+    ///
+    /// The tag paths pass `.franchiseTag` explicitly: a man who also holds a
+    /// deferred deal must not have it mistaken for a tag quote, or rescinding
+    /// the tag would restore a contract clock off the wrong row.
+    static func forwardCommitment(
+        playerID: UUID,
+        careerID: UUID?,
+        kind: Kind? = nil
+    ) -> Reservation? {
+        forwardCommitments(playerID: playerID, careerID: careerID)
+            .first { kind == nil || $0.forwardKind == kind }
     }
 
     /// Records money promised for a future league year.
@@ -431,6 +525,29 @@ enum CommittedCapLedger {
     /// - Parameter priorYears: the contract clock as it stood before the caller
     ///   raised it, or nil when the caller changed nothing — see
     ///   ``Reservation/priorYears``.
+    /// - Parameter kind: what the promise is, which decides how the rollover
+    ///   settles it — see ``Reservation/kind``. Defaults to the tag, which is
+    ///   what every row in this table was before #186.
+    ///
+    /// **One row per player PER BINDING YEAR**, which is why the key carries the
+    /// year (`<uuid>#<season>`) and every read scans by `playerID`.
+    ///
+    /// The table shipped keyed by `playerID` alone, and that was right while a
+    /// tag was the only thing in it: a man holds one tag, and signing the deal
+    /// is what retires it. A deferred extension broke the assumption in silence.
+    /// Extend a man twice — the cap screen puts "Contact Agent" on every
+    /// contract row — and the second write landed on the first row's key and
+    /// DESTROYED it: the years it paid for were still on his contract clock, but
+    /// the money that was supposed to arrive in them was gone from the table, so
+    /// the rollover never wrote it onto `annualSalary` and the club's true-up
+    /// summed the expired rate for the rest of the deal. Money agreed by both
+    /// sides simply vanished.
+    ///
+    /// A second extension binds AFTER the first (its `remaining` is the clock the
+    /// first one already lengthened), so the rows never overlap; keying by year
+    /// keeps both. A write with the same player AND the same binding year still
+    /// replaces — re-signing the same deal twice is one promise, not two — and a
+    /// tag still replaces any tag the man is carrying, since he can only hold one.
     static func commitForward(
         playerID: UUID,
         playerName: String,
@@ -439,30 +556,60 @@ enum CommittedCapLedger {
         years: Int,
         priorYears: Int? = nil,
         bindingSeason: Int,
+        kind: Kind = .franchiseTag,
+        guaranteedMoney: Int? = nil,
+        noTradeClause: Bool? = nil,
         careerID: UUID?
     ) {
         guard let careerID else { return }
         var rows = forwardTable(careerID: careerID)
-        rows[playerID.uuidString] = Reservation(
+        // Drop what this promise supersedes: the same year's row for this man,
+        // and — for a tag — whatever tag he was already carrying, wherever a
+        // legacy row happened to be keyed.
+        rows = rows.filter { _, row in
+            guard row.playerID == playerID else { return true }
+            if row.seasonYear == bindingSeason { return false }
+            return !(kind == .franchiseTag && row.forwardKind == .franchiseTag)
+        }
+        rows[forwardKey(playerID, bindingSeason: bindingSeason)] = Reservation(
             playerID: playerID,
             playerName: playerName,
             annualCapHit: max(0, annualCapHit),
             baseSalary: baseSalary.map { max(0, $0) },
             years: max(1, years),
             priorYears: priorYears,
+            kind: kind,
+            guaranteedMoney: guaranteedMoney.map { max(0, $0) },
+            noTradeClause: noTradeClause,
             seasonYear: bindingSeason,
             submittedAt: .now
         )
         writeForward(rows, careerID: careerID)
     }
 
-    /// Takes one forward commitment back off the books — the symmetric undo of
-    /// ``commitForward``, which is what "Remove Tag" is.
-    static func releaseForward(playerID: UUID, careerID: UUID?) {
+    /// Takes forward commitments back off the books — the symmetric undo of
+    /// ``commitForward``, which is what "Remove Tag" and a release are.
+    ///
+    /// - Parameter kind: which promises to drop. Nil (the default) drops every
+    ///   row the man holds, which is what a release or a retirement means. The
+    ///   tag paths pass `.franchiseTag`: rescinding a tag must not take a
+    ///   deferred extension's money with it.
+    static func releaseForward(playerID: UUID, careerID: UUID?, kind: Kind? = nil) {
         guard let careerID else { return }
-        var rows = forwardTable(careerID: careerID)
-        guard rows.removeValue(forKey: playerID.uuidString) != nil else { return }
-        writeForward(rows, careerID: careerID)
+        let rows = forwardTable(careerID: careerID)
+        let kept = rows.filter { _, row in
+            row.playerID != playerID || !(kind == nil || row.forwardKind == kind)
+        }
+        guard kept.count != rows.count else { return }
+        writeForward(kept, careerID: careerID)
+    }
+
+    /// The storage key. Carries the binding year so a man can hold more than one
+    /// forward promise — see ``commitForward``. Rows written before the year was
+    /// in the key decode unchanged and are found by every read, because all of
+    /// them scan values by `playerID` rather than looking a key up.
+    private static func forwardKey(_ playerID: UUID, bindingSeason: Int) -> String {
+        "\(playerID.uuidString)#\(bindingSeason)"
     }
 
     /// **The rollover's read.** Returns every commitment that binds at or before

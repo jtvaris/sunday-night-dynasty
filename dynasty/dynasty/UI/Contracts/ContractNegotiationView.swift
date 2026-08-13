@@ -64,6 +64,26 @@ struct ContractNegotiationView: View {
     let player: Player
     let negotiationType: NegotiationType
     let teamCapSpace: Int
+
+    /// **What the host will do with a signature** (#186), declared by the host
+    /// because only the host knows.
+    ///
+    /// The gate cannot infer it, and the difference is a whole league year.
+    /// `PlayerDetailView` and `CapOverviewView` ADD years to a running deal
+    /// (`.extendExisting`), so the money starts when that deal runs out.
+    /// `FranchiseTagView` and `FinalPushView` REPLACE an expiring one
+    /// (`.replaceContract`), so it starts in the year that is open. Both open
+    /// the same `.extend` conversation with the same man, and an expiring
+    /// contract reads `contractYearsRemaining == 1` right up to the rollover —
+    /// so from inside this screen the two are indistinguishable, and guessing
+    /// would quote a Final Push re-sign against next year's cap while the
+    /// booking charged it to this one. `DealTargetYear.plan` takes the
+    /// application for exactly that reason; this passes the host's answer to it.
+    ///
+    /// Defaulted so the extension hosts need say nothing, and ignored outside an
+    /// `.extend` talk: a pay cut reprices the year that is running, always.
+    var dealApplication: ContractEngine.DealApplication = .extendExisting
+
     var onDealCompleted: ((NegotiationOffer) -> Void)?
 
     /// **The pay-cut payoff** (#102). Called with the agreed per-year salary and
@@ -97,11 +117,20 @@ struct ContractNegotiationView: View {
     @State private var team: Team?
     @State private var career: Career?
     /// The club's roster, fetched once when the thread opens. Its only job is
-    /// ``committedStartYear`` (#127) — projecting what the club already owes in
-    /// the league year the deal being negotiated actually starts charging.
-    /// Empty for a free agent (no club to project) and never touched on the
-    /// current-year path, so nothing pays for it that does not use it.
+    /// `DealTargetYear.space` (#127/#186) — projecting what the club already
+    /// owes in the league year the deal being negotiated actually starts
+    /// charging. Empty for a free agent (no club to project) and never read on
+    /// the current-year path, so nothing pays for it that does not use it.
     @State private var teamRoster: [Player] = []
+    /// The man's detailed contract in realistic mode, if he has one.
+    ///
+    /// Fetched so the gate nets against the SAME running charge the booking
+    /// nets against: `ContractEngine.applyNegotiatedDeal` reads
+    /// `existingContract?.capHit ?? player.annualSalary`, and a gate that only
+    /// ever read `annualSalary` priced a structured deal's replacement wrong by
+    /// the prorated bonus. `nil` in simple/sandbox, where no `Contract` row is
+    /// written at all.
+    @State private var existingContract: Contract?
     /// `DraftReputation.ownerTrust` — a separate row, so it is fetched
     /// separately and defaults to the neutral 70 the row is created with.
     @State private var ownerTrust: Int = 70
@@ -153,11 +182,16 @@ struct ContractNegotiationView: View {
     /// `onDealCompleted` / `onPayCutAgreed` fire BEFORE `commit`, and both hosts
     /// write the new salary onto the player inside them — so by the time the
     /// sheet asks "what did this cost", `player.annualSalary` is the number the
-    /// deal produced and `capCharge(for:)` reads back ≈ $0. Snapshotting the two
-    /// values at the moment of the handshake is the only honest way to state the
-    /// before and the after.
+    /// deal produced and a freshly planned deal reads back ≈ $0. Snapshotting
+    /// the values at the moment of the handshake is the only honest way to state
+    /// the before and the after.
     @State private var salaryBeforeClose: Int = 0
     @State private var capChargeAtClose: Int?
+    /// The plan the deal was signed under (#186), snapshotted for the same
+    /// reason: the shape is read off the player, and the signature changes the
+    /// player. Re-planning after the host has written the contract would tell a
+    /// tag-and-extend it was an ordinary re-sign.
+    @State private var planAtClose: DealTargetYear.Plan?
 
     private let salaryStep = 500
     private let bonusStep = 500
@@ -332,7 +366,7 @@ struct ContractNegotiationView: View {
         )
     }
 
-    // MARK: - Cap Gate
+    // MARK: - Cap Gate (#127 → #186)
 
     /// The offer as the composer currently has it.
     private var builderOffer: NegotiationOffer {
@@ -346,131 +380,119 @@ struct ContractNegotiationView: View {
         )
     }
 
-    /// What signing THIS deal would cost the club against the cap, net of what
-    /// it is already carrying for the man. An extension replaces a salary that
-    /// is already on the books; a free agent is a new charge in full.
+    // MARK: - Which League Year This Deal Charges (#127 → #186)
+
+    /// ``dealApplication``, narrowed by the conversation.
     ///
-    /// The net only applies while the old deal is still being paid, i.e. in the
-    /// CURRENT year. From ``dealStartSeason`` onwards the expiring contract is
-    /// worth nothing and the club carries the whole `annualCapHit` — see
-    /// ``startYearOverage(_:)``.
-    private func capCharge(for offer: NegotiationOffer) -> Int {
-        negotiationType == .extend
-            ? offer.annualCapHit - player.annualSalary
-            : offer.annualCapHit
+    /// A pay cut is deliberately never an extension whatever the host declares:
+    /// it reprices the deal that is running, in the year that is running, so it
+    /// must not be planned as deferred. That is the work `dealStartOffset`'s
+    /// `negotiationType == .extend` guard used to do, and losing it would have
+    /// moved every pay-cut quote into a season the club is not in.
+    private var plannedApplication: ContractEngine.DealApplication {
+        negotiationType == .extend ? dealApplication : .replaceContract
     }
 
-    // MARK: - Which League Year This Deal Charges (#127)
-
-    /// **League years between today and the first year this deal is on the
-    /// books.**
+    /// **What this offer is, in the engine's words** — which year it charges,
+    /// what it costs there, and what it takes off the books when it lands.
     ///
-    /// A man with three years left is not being offered money for next season —
-    /// he is already under contract for it. New money starts when the old deal
-    /// runs out, so a deal negotiated now for a player with `N` years remaining
-    /// first charges the cap `N` league years from here. A free agent signs into
-    /// the year that is open right now, and a pay cut reprices the deal that is
-    /// running, so both are offset 0.
+    /// The screen no longer works any of that out. It used to own seven private
+    /// derivations (`dealStartOffset`, `projectedStartYearCap`,
+    /// `committedStartYear`, `currentYearOverage`, `startYearOverage`, …), and
+    /// they disagreed with `ContractEngine.applyNegotiatedDeal` in the way #186
+    /// describes: the composer printed *"Covers 2027–2030"* and the gate under
+    /// it refused the deal on 2026's bank balance. One of those two sentences
+    /// had to be a lie because two different pieces of arithmetic wrote them.
+    /// Now the label and the gate are the same `Plan`, so they cannot differ.
     ///
-    /// This is what makes the quote at the bottom of the composer honest. It used
-    /// to say "Charges $40.3M of your $27.2M in room" to a GM re-signing an
-    /// expiring quarterback in the offseason — a sentence in which the charge was
-    /// next year's and the room was the year just played.
-    private var dealStartOffset: Int {
-        guard negotiationType == .extend else { return 0 }
-        return max(0, player.contractYearsRemaining)
-    }
-
-    /// The first league year this deal charges. `season` (i.e.
-    /// `Career.currentSeason`) does not move across the offseason, so during the
-    /// offseason this is the year that opens in March.
-    private var dealStartSeason: Int { season + dealStartOffset }
-
-    /// `"2027"` for a one-year deal, `"2027–2029"` for three. A league year is a
-    /// name rather than a quantity, so `String(_:)` and not a grouped format.
-    private var dealYearSpan: String {
-        let last = dealStartSeason + max(1, offerYears) - 1
-        return last == dealStartSeason
-            ? String(dealStartSeason)
-            : "\(String(dealStartSeason))\u{2013}\(String(last))"
-    }
-
-    /// The club's cap in ``dealStartSeason``, rolled forward at the engine's own
-    /// growth midpoint. Identical arithmetic to `CapOverviewView.projectedCap`,
-    /// `ContractTimelineView.projectedCap` and the dashboard's 3-Year Cap tile —
-    /// one projection, so no two screens can show two futures.
-    private var projectedStartYearCap: Int {
-        guard dealStartOffset > 0 else { return salaryCap }
-        return Int(Double(salaryCap) * pow(1.0 + ContractEngine.capGrowthPerSeason, Double(dealStartOffset)))
-    }
-
-    /// Salary the club already owes in ``dealStartSeason``, in thousands.
-    ///
-    /// `contractYearsRemaining > offset` is "still under contract that year" —
-    /// the same test `ContractTimelineView.committedSalary(forOffset:)` and
-    /// `CapOverviewView.committedCap(team:yearOffset:)` project a future year
-    /// with. Franchise tags (and anything else `CommittedCapLedger` books for a
-    /// year that has not opened) are added on top, because a tagged man's row
-    /// still carries his EXPIRING salary until the March rollover settles it.
-    private var committedStartYear: Int {
-        guard dealStartOffset > 0 else { return team?.currentCapUsage ?? 0 }
-        let underContract = teamRoster
-            .filter { $0.contractYearsRemaining > dealStartOffset && !$0.isFranchiseTagged }
-            .reduce(0) { $0 + $1.annualSalary }
-        // Player-scoped, not a blind sum off the ledger: an orphaned row (tagged,
-        // then cut) must not keep charging a club for a man it no longer employs.
-        let tags = CommittedCapLedger.forwardCommitted(
-            playerIDs: teamRoster.filter(\.isFranchiseTagged).map(\.id),
+    /// One of the seven was also simply wrong. `committedStartYear` added the
+    /// tagged men's forward rows to the projected year WITHOUT excluding the man
+    /// being negotiated, so a tag-and-extend was charged against its own tag
+    /// before it existed. `DealTargetYear.space` excludes him by construction.
+    private func dealPlan(for offer: NegotiationOffer) -> DealTargetYear.Plan {
+        DealTargetYear.plan(
+            player: player,
+            offer: offer,
+            application: plannedApplication,
+            capMode: capMode,
+            currentSeason: season,
+            hasRolledOver: hasRolledOver,
             careerID: career?.id,
-            season: dealStartSeason
+            existingContract: existingContract
         )
-        return underContract + tags
     }
 
-    /// What is left to spend in ``dealStartSeason`` before this offer.
-    private var projectedStartYearSpace: Int { projectedStartYearCap - committedStartYear }
+    /// Whether the new league year is already open — the six offseason phases
+    /// between `executeNewLeagueYear` and the season counter's bump, where
+    /// `season` is one BEHIND the year the club's books are in. Without it an
+    /// extension talked in, say, the draft binds a year early, onto the last
+    /// year of the deal it is extending. The same test `WeekAdvancer` and
+    /// `FranchiseTagView` use; see `DealTargetYear.openSeason`.
+    private var hasRolledOver: Bool {
+        guard let career else { return false }
+        return career.lastRolloverSeason >= career.currentSeason
+    }
 
-    /// What this offer would put the club over by in the CURRENT league year, or
-    /// 0 if it fits.
+    /// The room the plan has to fit into, in the year it binds.
     ///
-    /// The game carries one `annualSalary` per contract, not a per-year
-    /// schedule, so `ContractEngine.applyNegotiatedDeal` books the new rate the
-    /// moment the deal is signed — the same documented flat-salary
-    /// approximation `FreeAgencyEngine.exerciseFifthYearOption` calls out. A
-    /// raise agreed today therefore hits today's ledger whatever year the deal
-    /// nominally covers, which is why this constraint survives #127 rather than
-    /// being replaced by the start-year one.
-    private func currentYearOverage(_ offer: NegotiationOffer) -> Int {
-        max(0, capCharge(for: offer) - teamCapSpace)
+    /// A free agent has no `Team` on this screen — `team` is loaded off
+    /// `player.teamID` and he has none — so the host's `teamCapSpace` is the
+    /// only club number in hand. That is not a loss: a free agent signs into the
+    /// year that is open, which is the year `teamCapSpace` describes.
+    private func capSpace(for plan: DealTargetYear.Plan) -> DealTargetYear.Space {
+        guard let team else {
+            return DealTargetYear.Space(
+                season: DealTargetYear.openSeason(
+                    currentSeason: season,
+                    hasRolledOver: hasRolledOver
+                ),
+                seasonsAhead: 0,
+                cap: teamCapSpace,
+                committed: 0
+            )
+        }
+        return DealTargetYear.space(
+            for: plan,
+            player: player,
+            team: team,
+            roster: teamRoster,
+            currentSeason: season,
+            hasRolledOver: hasRolledOver,
+            careerID: career?.id
+        )
     }
 
-    /// What this offer would put the club over by in the year it STARTS
-    /// charging, or 0 (always 0 for a deal that starts now — that is the
-    /// current-year test above).
-    private func startYearOverage(_ offer: NegotiationOffer) -> Int {
-        guard dealStartOffset > 0 else { return 0 }
-        return max(0, offer.annualCapHit - projectedStartYearSpace)
+    /// Plan, room and verdict in one read — the whole gate, for one offer.
+    private func capGate(for offer: NegotiationOffer) -> DealGate {
+        let plan = dealPlan(for: offer)
+        let space = capSpace(for: plan)
+        return DealGate(
+            plan: plan,
+            space: space,
+            verdict: DealTargetYear.verdict(plan: plan, space: space, capMode: capMode)
+        )
     }
 
-    /// Whether the club can actually fit a deal. **This is the cap gate the
-    /// chat never had** — `teamCapSpace` used to be threaded through four call
-    /// sites into an engine parameter whose body ignored it, so a club with
-    /// $2M of room could sign a $75M/yr quarterback in the composer.
-    ///
-    /// #127 added the second half. The old gate measured a 2027 contract against
-    /// 2026's bank balance and nothing else, which is wrong in both directions:
-    /// it refused extensions a club could comfortably afford (a club at the cap
-    /// today routinely has $60M of room the moment its expiring deals come off
-    /// the books), and it never once asked whether the year the money actually
-    /// lands in could carry it. **Both years now have to clear**, because under
-    /// the flat-salary model both are real: the raise is booked immediately, and
-    /// the deal runs in a year the club has to be legal in too.
+    /// Named rather than a tuple because the composer, the action bar and the
+    /// belt-and-braces guards all pass it around.
+    private struct DealGate {
+        let plan: DealTargetYear.Plan
+        let space: DealTargetYear.Space
+        let verdict: DealTargetYear.Verdict
+    }
+
+    /// **Whether the club can actually fit a deal.** One year is tested — the
+    /// one the money lands in — because that is the one year the booking will
+    /// charge. Sandbox short-circuits inside `DealTargetYear.verdict`, so this
+    /// screen no longer keeps its own copy of that rule either.
     private func exceedsCap(_ offer: NegotiationOffer) -> Bool {
-        guard capMode != .sandbox else { return false }
-        return currentYearOverage(offer) > 0 || startYearOverage(offer) > 0
+        capGate(for: offer).verdict.isBlocked
     }
 
-    private var builderExceedsCap: Bool { exceedsCap(builderOffer) }
+    /// The gate for what is in the composer right now.
+    private var builderGate: DealGate { capGate(for: builderOffer) }
+
+    private var builderExceedsCap: Bool { builderGate.verdict.isBlocked }
 
     private var pendingOfferExceedsCap: Bool {
         guard let snapshot = thread?.pendingAgentOffer else { return false }
@@ -673,15 +695,15 @@ struct ContractNegotiationView: View {
                     ForEach(offer.incentives) { incentive in
                         HStack(spacing: 4) {
                             Image(systemName: "target")
-                                .font(.system(size: 8))
+                                .font(.system(size: DSType.Size.caption))
                                 .foregroundStyle(Color.accentGold)
                             Text(incentive.summary)
-                                .font(.system(size: 9))
+                                .font(.system(size: DSType.Size.caption))
                                 .foregroundStyle(Color.textSecondary)
                         }
                     }
                     Text("Max \(formatMillions(offer.maxValue))")
-                        .font(.system(size: 9, weight: .semibold).monospacedDigit())
+                        .font(.system(size: DSType.Size.caption, weight: .semibold).monospacedDigit())
                         .foregroundStyle(Color.textTertiary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -700,7 +722,7 @@ struct ContractNegotiationView: View {
                 .font(.caption.weight(.bold).monospacedDigit())
                 .foregroundStyle(Color.textPrimary)
             Text(label)
-                .font(.system(size: 9))
+                .font(.system(size: DSType.Size.caption))
                 .foregroundStyle(Color.textTertiary)
         }
     }
@@ -1088,9 +1110,14 @@ struct ContractNegotiationView: View {
     ///
     /// A deal that starts THIS year — every free agency signing, every pay cut —
     /// keeps the original sentence verbatim, because for those it was right.
+    ///
+    /// #186 gave the line a third case. A long-term deal that retires a SETTLED
+    /// franchise tag starts in the tag year, not after it, and saying so out
+    /// loud is the difference between "why is this refusing me" and a mechanic
+    /// the user can use: year one replaces the tag rather than stacking on it.
     private var capPreview: some View {
         let offer = builderOffer
-        let startsLater = dealStartOffset > 0
+        let plan = builderGate.plan
 
         return VStack(spacing: 4) {
             HStack {
@@ -1103,12 +1130,12 @@ struct ContractNegotiationView: View {
                     .foregroundStyle(Color.textSecondary)
             }
 
-            if startsLater {
+            if let span = coverageLine(for: plan) {
                 HStack(spacing: 6) {
                     Image(systemName: "calendar")
                         .font(.system(size: 10))
                         .foregroundStyle(Color.textTertiary)
-                    Text("Covers \(dealYearSpan) — his current deal runs through \(String(dealStartSeason - 1)).")
+                    Text(span)
                         .font(.system(size: 10))
                         .foregroundStyle(Color.textTertiary)
                     Spacer()
@@ -1123,6 +1150,21 @@ struct ContractNegotiationView: View {
         .padding(.horizontal, DSSpacing.xxs)
     }
 
+    /// The span line under the composer, or `nil` for an ordinary deal that
+    /// starts in the year that is open — there is nothing to explain about that
+    /// one, and a line saying "Covers 2026" would be noise on every free-agent
+    /// signing in the game.
+    private func coverageLine(for plan: DealTargetYear.Plan) -> String? {
+        switch plan.shape {
+        case .deferredExtension:
+            return "Covers \(DealTargetYear.yearSpan(plan)) — his current deal runs through \(String(plan.startSeason - 1))."
+        case .tagReplacement:
+            return "Covers \(DealTargetYear.yearSpan(plan)) — year one replaces his \(String(plan.startSeason)) franchise tag."
+        case .currentYear:
+            return nil
+        }
+    }
+
     /// What tabling this offer does, in the action bar's explainer slot.
     ///
     /// Sandbox keeps its own sentence rather than borrowing the cap one: with
@@ -1133,31 +1175,49 @@ struct ContractNegotiationView: View {
         guard capMode != .sandbox else {
             return "Sends this package to \(thread?.agentName ?? agentName). **Sandbox cap** — no offer is blocked by room."
         }
-        return capPreviewSentence(for: builderOffer, startsLater: dealStartOffset > 0)
+        return capSentence(for: builderGate)
     }
 
-    /// One sentence, and it always names the year it is talking about.
+    /// One sentence, and it always names the year it is talking about — the same
+    /// year the gate tested and the booking will charge, because all three read
+    /// one `Plan`.
     ///
-    /// The refusal branches are ordered so the sentence reports the constraint
-    /// that actually bites: this year first, because a raise the club cannot
-    /// absorb TODAY is the more urgent of the two and the one the compliance
-    /// gate will stop the week advance over.
-    private func capPreviewSentence(for offer: NegotiationOffer, startsLater: Bool) -> String {
-        let nowOver = currentYearOverage(offer)
-        if nowOver > 0 {
-            return startsLater
-                ? "Over this year's cap by \(formatMillions(nowOver)) — the new rate goes on the books as soon as he signs, not in \(String(dealStartSeason))."
-                : "Over the cap by \(formatMillions(nowOver)) — free up room before you offer this."
+    /// The refusal is not written here at all: `DealTargetYear.Block.message`
+    /// owns it, so the composer, the pending-offer bar and any future surface
+    /// refuse in identical words with the identical number. Writing it locally
+    /// is precisely how this screen came to refuse a 2027 deal with a 2026
+    /// figure.
+    private func capSentence(for gate: DealGate) -> String {
+        if let block = gate.verdict.block { return block.message }
+
+        let plan = gate.plan
+        let space = gate.space
+        let net = plan.netChargeInStartYear
+        let year = String(space.season)
+
+        // A tag-and-extend that lands under the tag it retires FREES room, and
+        // the whole commercial point of one is that it does. Reporting it as a
+        // charge of "$0" (the old `max(0, …)`) hid the mechanic the user needs
+        // to see to reach for it.
+        if net < 0 {
+            let freed = formatMillions(-net)
+            let after = formatMillions(space.available - net)
+            return plan.shape == .tagReplacement
+                ? "Frees \(freed) in \(year) — year one lands under the \(formatMillions(plan.replacedCharge)) tag it retires, leaving \(after)."
+                : "Frees \(freed) in \(year) — it comes in under the \(formatMillions(plan.replacedCharge)) already on his row, leaving \(after)."
         }
-        let laterOver = startYearOverage(offer)
-        if laterOver > 0 {
-            return "Over the projected \(String(dealStartSeason)) cap by \(formatMillions(laterOver)) — free up room in that year before you offer this."
+
+        if space.isProjected {
+            return "Charges \(formatMillions(net)) against the projected \(year) cap of "
+                + "\(formatMillions(space.cap)) — est. \(formatMillions(space.available - net)) free that year."
         }
-        if startsLater {
-            return "Charges \(formatMillions(max(0, offer.annualCapHit))) against the projected \(String(dealStartSeason)) cap of "
-                + "\(formatMillions(projectedStartYearCap)) — est. \(formatMillions(projectedStartYearSpace)) free that year."
+
+        if plan.shape == .tagReplacement {
+            return "Charges \(formatMillions(net)) of your \(formatMillions(space.available)) in room, "
+                + "net of the \(formatMillions(plan.replacedCharge)) tag it retires."
         }
-        return "Charges \(formatMillions(max(0, capCharge(for: offer)))) of your \(formatMillions(teamCapSpace)) in room."
+
+        return "Charges \(formatMillions(net)) of your \(formatMillions(space.available)) in room."
     }
 
     // MARK: - Incentive Section (TODO §5.5)
@@ -1191,7 +1251,7 @@ struct ContractNegotiationView: View {
                         .foregroundStyle(Color.textSecondary)
                     if !activeIncentives.isEmpty {
                         Text("\(activeIncentives.count)")
-                            .font(.system(size: 9, weight: .bold))
+                            .font(.system(size: DSType.Size.caption, weight: .bold))
                             .foregroundStyle(Color.backgroundPrimary)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
@@ -1238,7 +1298,7 @@ struct ContractNegotiationView: View {
                     toggleIncentive(incentive)
                 } label: {
                     Image(systemName: isOn ? "checkmark.circle.fill" : "circle")
-                        .font(.system(size: 15))
+                        .font(.system(size: DSType.Size.callout))
                         .foregroundStyle(isOn ? Color.accentGold : Color.textTertiary)
                 }
                 .buttonStyle(.plain)
@@ -1259,7 +1319,7 @@ struct ContractNegotiationView: View {
             // tune, so it shows its odds instead of a stepper.
             HStack(spacing: 10) {
                 Text(incentive.category.isBinary ? "Reach the postseason" : "Tier")
-                    .font(.system(size: 9))
+                    .font(.system(size: DSType.Size.caption))
                     .foregroundStyle(Color.textTertiary)
 
                 Spacer()
@@ -1276,7 +1336,7 @@ struct ContractNegotiationView: View {
                 }
 
                 Text(likelihoodLabel(for: incentive))
-                    .font(.system(size: 9, weight: .semibold).monospacedDigit())
+                    .font(.system(size: DSType.Size.caption, weight: .semibold).monospacedDigit())
                     .foregroundStyle(Color.textSecondary)
                     .frame(minWidth: 56, alignment: .trailing)
             }
@@ -1298,7 +1358,7 @@ struct ContractNegotiationView: View {
             }
             // Says the rule out loud so the cap treatment is never a surprise.
             Text("Charged to the cap only when earned, at season end.")
-                .font(.system(size: 9))
+                .font(.system(size: DSType.Size.caption))
                 .foregroundStyle(Color.textTertiary)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -1400,7 +1460,7 @@ struct ContractNegotiationView: View {
                         Text("Dead Cap")
                             .frame(maxWidth: .infinity, alignment: .trailing)
                     }
-                    .font(.system(size: 9).weight(.bold))
+                    .font(.system(size: DSType.Size.caption).weight(.bold))
                     .foregroundStyle(Color.textTertiary)
                     .padding(.vertical, 4)
                     .padding(.horizontal, 8)
@@ -1594,16 +1654,32 @@ struct ContractNegotiationView: View {
         if let teamID = player.teamID {
             team = (try? modelContext.fetch(FetchDescriptor<Team>()))?
                 .first(where: { $0.id == teamID && $0.careerID == careerID })
-            // #127 — the club's forward payroll. Only fetched when the deal
-            // being negotiated starts in a LATER league year, which is the only
-            // case that projects one; a free agent signing or a pay cut is
-            // priced against `teamCapSpace` exactly as before.
-            if dealStartOffset > 0 {
+            // #127/#186 — the club's forward payroll, for the projection
+            // `DealTargetYear.space` builds when the deal binds in a later year.
+            // Fetched for every own-club extension talk rather than only when
+            // `contractYearsRemaining > 0`: the shape is the ENGINE's to decide
+            // now, and it reads a pending tag's stashed `priorYears` in
+            // preference to the clock the tag inflated, so the screen cannot
+            // know from the clock alone whether a projection is coming. A free
+            // agent (no club) and a pay cut (this year, by definition) still
+            // pay for nothing.
+            if negotiationType == .extend {
                 let rosterDescriptor = FetchDescriptor<Player>(
                     predicate: #Predicate<Player> { $0.teamID == teamID }
                 )
                 teamRoster = (try? modelContext.fetch(rosterDescriptor)) ?? []
             }
+        }
+        // The detailed contract, so the gate nets against the same running
+        // charge the booking nets against. Realistic mode only — the other two
+        // write no `Contract` row, and `player.annualSalary` is the whole truth
+        // there.
+        if career?.capMode == .realistic {
+            let playerID = player.id
+            let contractDescriptor = FetchDescriptor<Contract>(
+                predicate: #Predicate<Contract> { $0.playerID == playerID }
+            )
+            existingContract = try? modelContext.fetch(contractDescriptor).first
         }
         // Owner trust lives on its own row; the most recent one wins, and its
         // absence means the owner has never reacted to anything — which must
@@ -2364,7 +2440,9 @@ struct ContractNegotiationView: View {
         // Presentation-only snapshot (#105 Wave 3c) — see `capChargeAtClose`.
         // Taken before the host's contract write moves `player.annualSalary`.
         salaryBeforeClose = player.annualSalary
-        capChargeAtClose = capCharge(for: offer)
+        let signedPlan = dealPlan(for: offer)
+        planAtClose = signedPlan
+        capChargeAtClose = signedPlan.netChargeInStartYear
 
         onDealCompleted?(offer)
     }
@@ -2581,14 +2659,38 @@ struct ContractNegotiationView: View {
     /// turns, and the opener is round 0.
     private var roundsSpoken: Int { max(1, thread?.round ?? 1) }
 
+    /// What the signature just did to the books.
+    ///
+    /// It reads `planAtClose`, not a fresh plan: by the time this sheet renders,
+    /// the host has already written the deal onto the player, so re-planning
+    /// would describe the contract as it now stands rather than the transaction
+    /// that produced it.
+    ///
+    /// The deferred line used to end *"and the new rate goes on this year's
+    /// books the moment he signs"*. That was true of the old booking and is a
+    /// lie about the new one — #186 parks a deferred extension on the forward
+    /// ledger and leaves the open year alone — so it says what actually
+    /// happened.
     private func signedCostLine(_ offer: NegotiationOffer) -> String {
         guard capMode != .sandbox else {
             return "**Sandbox cap** — the deal is on the roster and charges nothing you have to fit."
         }
-        if dealStartOffset > 0 {
-            return "Charges **\(formatMillions(offer.annualCapHit))** from \(String(dealStartSeason)), and the new rate goes on this year's books the moment he signs."
+        let plan = planAtClose ?? dealPlan(for: offer)
+
+        if plan.booksForward {
+            return "Charges **\(formatMillions(plan.flatCapHit))** from \(String(plan.startSeason)) — this year's books are untouched until then."
         }
-        return "Charges **\(formatMillions(max(0, capChargeAtClose ?? offer.annualCapHit)))** of your \(formatMillions(teamCapSpace)) in room."
+
+        let net = capChargeAtClose ?? plan.netChargeInStartYear
+        if net < 0 {
+            return plan.shape == .tagReplacement
+                ? "**Frees \(formatMillions(-net))** this year — the \(formatMillions(plan.replacedCharge)) tag comes off as the deal goes on."
+                : "**Frees \(formatMillions(-net))** this year against what he was already carrying."
+        }
+        if plan.shape == .tagReplacement {
+            return "Charges **\(formatMillions(net))** this year, net of the \(formatMillions(plan.replacedCharge)) tag it retires."
+        }
+        return "Charges **\(formatMillions(net))** of your \(formatMillions(teamCapSpace)) in room."
     }
 
     // MARK: - Helpers
@@ -2613,7 +2715,7 @@ struct ContractNegotiationView: View {
     private func stepperButton(systemImage: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: DSType.Size.body, weight: .semibold))
                 .foregroundStyle(Color.textPrimary)
                 .frame(width: 28, height: 28)
                 .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 6))

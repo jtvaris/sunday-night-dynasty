@@ -225,11 +225,28 @@ enum TradeEngine {
             leagueYearRemaining: leagueYearRemaining
         )
 
-        oldTeam.currentCapUsage =
-            max(0, oldTeam.currentCapUsage - player.annualSalary)
-            + split.deadCap
-            + split.salaryRetained
-        newTeam.currentCapUsage += split.salaryAssumed
+        // **A camp body was never on the seller's ledger** (#205a,
+        // `OFFSEASON_ROSTER_PLAN.md` §3.1). The offseason trade market runs in
+        // every phase this exemption is live in and the rosters it works are now
+        // ten men under the ceiling rather than thirty, so a minimum-salary camp
+        // arm going the other way in a package is a real possibility — and the
+        // line above would credit `oldTeam` for a salary it was never charged.
+        //
+        // He joins the buyer as an ordinary man on an ordinary charge: a club
+        // that trades FOR somebody has decided he is worth a roster spot, so the
+        // camp exemption (which exists for bodies a club is only looking at) has
+        // no claim on him. Seller untouched, buyer charged, flag cleared — which
+        // also keeps him out of `settleCampBodies`, so the charge lands once.
+        if CampRosterEngine.isCampBody(player) {
+            CampRosterEngine.clearCampBodyStatus(player)
+            newTeam.currentCapUsage += split.salaryAssumed
+        } else {
+            oldTeam.currentCapUsage =
+                max(0, oldTeam.currentCapUsage - player.annualSalary)
+                + split.deadCap
+                + split.salaryRetained
+            newTeam.currentCapUsage += split.salaryAssumed
+        }
 
         // Task #45: a midseason deal charges the buyer only the checks still to
         // come, so `annualSalary` drops below the real base. Keep the full number
