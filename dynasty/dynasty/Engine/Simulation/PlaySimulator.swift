@@ -2750,37 +2750,73 @@ enum PlaySimulator {
     // matchup, deep, INT, drops, contested, run block, carrier, stuff, breakaway,
     // fumble — comprehensive, because the talent signal is spread across all of them).
     //
-    // SHAPE — a monotone-DECREASING ramp, NOT a saturating soft-knee. Measured surface
-    // (constant-edgeScale sweep, N=800/cell, joint with P0-1's de-inflated base):
-    //   • the whole tier ladder lands on target at a floor scale ≈ 0.085 (1-tier
-    //     69-75% / +6-7, 2-tier 86-89% / +11-13, 3-tier 93% / +15 — never 100%);
-    //   • BUT single-unit signatures live at small team gaps — a shutdown-CB pair
-    //     moves the team mean only ≈3 pts, an elite OL (5 of 12) ≈7 — so the scale
-    //     must stay ≈1 there. A soft-knee is structurally unable to do both: it is
-    //     monotone-INCREASING, so it cannot give scale≈0.9 at gap 3 AND ≈0.08 at
-    //     gap 9. A smoothstep ramp (1.0 below `teamEdgeFull`, floor above
-    //     `teamEdgeCrush`) can: parity + shutdown-CB + every per-play tier-matrix
-    //     cell (only 1-2 units elevated ⇒ gap ≤ ~4) sit in the flat 1.0 zone and
-    //     are byte-untouched; a whole-roster mismatch sits at the floor and is
-    //     crushed. (The elite-OL fullgame at gap ≈7 straddles the ramp and is
-    //     partially damped — an inherent limit of keying on the team aggregate.)
-    // The scale is a positive multiplier, so it preserves the SIGN and RANK of every
-    // edge ⇒ per-play monotonicity and tier ORDERING survive; only the magnitude bends.
+    // SHAPE — a saturating knee on the EFFECTIVE edge (#214). The predecessor was a
+    // monotone-DECREASING multiplier ramp (1.0 below `teamEdgeFull`, a 0.085 floor
+    // above a 9.0 crush point). It was calibrated against the NAMED tier bands, whose
+    // midpoints sit 9 / 21 / 29.5 points apart, and it hit those targets — but a
+    // multiplier that falls faster than the gap rises makes the product `gap × scale`
+    // — the edge actually deployed — NON-MONOTONE, and the tier ladder never sampled
+    // the region where that bites. It peaked at gap ≈4.9 (effective 4.18) and did not
+    // recover that value until gap ≈49; the floor put gap 9 at 0.77, i.e. a FIFTH of
+    // the edge a 5-point mismatch deployed.
+    //
+    // Measured before the fix (fullgame, away tier 78, N=800/cell, home win %):
+    //   gap  2    3    4    5    6    7    8   10   13   17
+    //        73   84   88   89   86   81   71   71   72   82
+    // An 88-overall roster beat a 78 as often as an 80-overall one did. The shipped
+    // league's own spread is 6.6 points (74.9 → 81.5), so the whole product lives on
+    // the descending limb: building a great team stopped paying at 83.
+    //
+    // WHICH END WAS RIGHT: the small-gap end. A 6.6-point team gap is this league's
+    // best-vs-worst matchup, and at ~85% it matches the real one (a 13-4 club against
+    // a 3-14 club). The floor end was the miscalibrated half — a 9-12 point gap is
+    // WIDER than any real-league pairing and cannot be a 70% coin-flip.
+    //
+    // The replacement keeps the flat zone that protects single-unit signatures (a
+    // shutdown-CB pair moves the team mean only ≈3 pts) and, above it, bends the
+    // effective edge onto a slow monotone ramp instead of collapsing it:
+    //
+    //     effEdge(g) = full + knee·(1−tail)·(1 − e^−x/knee) + tail·x,   x = g − full
+    //
+    // Its derivative is `tail + (1−tail)·e^−x/knee` — strictly positive everywhere, so
+    // a better roster is ALWAYS at least as good on the field, and exactly 1.0 at
+    // x = 0, so the curve leaves the flat zone smoothly. `knee` sets how quickly the
+    // slope decays toward `tail`; both were chosen so the rising limb is preserved
+    // (effective edge 3.86 at gap 4 vs 3.92 before) and the curve then plateaus near
+    // 4.2-4.7 instead of collapsing to 0.77. The function still RETURNS a multiplier,
+    // so every call site and the garbage-time damp compose exactly as before.
+    //
+    // Measured after (same rig, same cells):
+    //   gap  2    3    4    5    6    8   10   13   17
+    //        73   83   86   89   89   89   91   91   95
+    // Monotone non-decreasing, and the region the shipped league actually occupies
+    // (gap ≤ 6.6) is within Monte-Carlo noise of where it was.
+    //
+    // THE PRICE, stated plainly: the 3-tier ladder cell (elite vs weak, a 29.5-point
+    // mismatch no real league contains) moves from 93.2% / +15.0 to 96.0% / +20.5.
+    // That is not a regression to tune away — it is arithmetic. Some talent channels
+    // do not route through this scale, so they keep rising with the raw gap; the old
+    // 93% was reachable ONLY because the compression fell fast enough to cancel them,
+    // and that same cancellation is what made an 88-overall roster beat a 78 no more
+    // often than an 80-overall one did. Monotonicity and a 93% ceiling at gap 29.5
+    // cannot both hold. Decisive-not-deterministic survives: 4% of those games are
+    // still upsets.
     private static let teamEdgeFull  = 3.5     // |team gap| at/below which scale = 1.0 (single-unit + matrix-cell safe zone)
-    private static let teamEdgeCrush = 9.0     // |team gap| at/above which scale = floor (uniform-tier zone)
-    private static let teamEdgeFloor = 0.085   // residual edge deployed on a full-team mismatch
-    /// Talent-curve compression scale (∈ [floor, 1]) on the per-play composite edges,
-    /// from the team-aggregate offense−defense overall gap. 1.0 at parity / single-unit
-    /// (small gap); ramps down to `teamEdgeFloor` as the whole roster out-classes the
-    /// opponent. Symmetric in the sign of the gap (weak-offense penalties compress too).
+    private static let teamEdgeKnee  = 0.7     // how fast the marginal return on extra gap decays past `teamEdgeFull`
+    private static let teamEdgeTail  = 0.02    // residual marginal return on gap once the knee is spent
+    /// Talent-curve compression scale (∈ (0, 1]) on the per-play composite edges, from
+    /// the team-aggregate offense−defense overall gap. 1.0 at parity / single-unit
+    /// (small gap); below 1 once the whole roster out-classes the opponent, but never
+    /// so far below that the EFFECTIVE edge (`gap × scale`) falls — see the shape note
+    /// above. Symmetric in the sign of the gap (weak-offense penalties compress too).
     static func edgeCompressionScale(offense: [SimPlayer], defense: [SimPlayer]) -> Double {
         let a = abs(averageAttribute(offense, extractor: { Double($0.overall) })
                   - averageAttribute(defense, extractor: { Double($0.overall) }))
-        if a <= teamEdgeFull  { return 1.0 }
-        if a >= teamEdgeCrush { return teamEdgeFloor }
-        let t = (a - teamEdgeFull) / (teamEdgeCrush - teamEdgeFull)
-        let s = t * t * (3.0 - 2.0 * t)                  // smoothstep (C¹, monotone)
-        return 1.0 - (1.0 - teamEdgeFloor) * s
+        if a <= teamEdgeFull { return 1.0 }
+        let x = a - teamEdgeFull
+        let saturating = teamEdgeKnee * (1.0 - teamEdgeTail) * (1.0 - exp(-x / teamEdgeKnee))
+        let effectiveEdge = teamEdgeFull + saturating + teamEdgeTail * x
+        return effectiveEdge / a                          // return the multiplier, not the edge
     }
 
     // ---- ROUND-6 WEAK-FLOOR TAPER: talent-scaled relief for the P0-1 de-inflation ----
