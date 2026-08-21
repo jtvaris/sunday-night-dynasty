@@ -1291,17 +1291,36 @@ struct CareerShellView: View {
         for p in roster {
             marketValues[p.id] = ContractEngine.estimateMarketValue(player: p, salaryCap: cap)
         }
-        let candidates = HoldoutEngine.detectStarHoldoutCandidates(roster: roster, marketValues: marketValues)
+        // D4-C — the club's season is now part of the read. A star on a losing
+        // team applied exactly the same pressure as one on a winner; he now
+        // becomes a candidate on the losing alone (`fedUp`) and his agent pulls
+        // the trigger more readily (`walkoutChance`). Passing the record here is
+        // the whole of the wiring: the magnitudes are all in `HoldoutEngine`.
+        let record = (wins: team?.wins ?? 0, losses: team?.losses ?? 0)
+        let candidates = HoldoutEngine.detectStarHoldoutCandidates(
+            roster: roster,
+            marketValues: marketValues,
+            teamRecord: record
+        )
 
         // Agent persona decides who actually walks out: hardliner 65%,
-        // loyalist 30%, cooperative 15%. First candidate to pass rolls in.
+        // loyalist 30%, cooperative 15%, each scaled by how bad the season and
+        // the mood have got. First candidate to pass rolls in.
         let star: Player? = candidates.first { candidate in
-            let chance: Int
+            let base: Int
             switch AgentPersona.forPlayer(id: candidate.id) {
-            case .hardliner:   chance = 65
-            case .loyalist:    chance = 30
-            case .cooperative: chance = 15
+            case .hardliner:   base = 65
+            case .loyalist:    base = 30
+            case .cooperative: base = 15
             }
+            let chance = HoldoutEngine.walkoutChance(
+                basePercent: base,
+                frustration: HoldoutEngine.frustration(
+                    wins: record.wins,
+                    losses: record.losses,
+                    morale: candidate.morale
+                )
+            )
             return Int.random(in: 1...100) <= chance
         }
         guard let first = star else { return }

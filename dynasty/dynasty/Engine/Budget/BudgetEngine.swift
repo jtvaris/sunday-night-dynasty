@@ -4,6 +4,55 @@ import Foundation
 /// media market size, and season performance.
 enum BudgetEngine {
 
+    // MARK: - Coach Contracts (F-64)
+
+    /// **What it costs to fire a man under contract.**
+    ///
+    /// `Coach.contractYearsRemaining` was a decorative field: nothing in the
+    /// engine decremented it and nothing charged it, so firing a coach was
+    /// FREE. `REBUILD_VIABILITY_ANALYSIS.md` §1.5 calls coaching "the single
+    /// most underpriced lever in the game" — the role maxima outside the
+    /// head-coach seat total $37.3M against a ~$35M pot, eight elite position
+    /// coaches (the heaviest development weight in the game) cost ~$8.8M
+    /// together, and none of it touches the salary cap. A club could churn its
+    /// whole staff every January at no cost and buy a near-elite one on day one.
+    ///
+    /// Half the remaining money, capped at one year — the shape the fire-flow
+    /// alert has been *previewing* since it shipped, now the shape that is
+    /// actually charged. Defined here rather than in the view because two
+    /// definitions of the same number is how a preview starts lying about an
+    /// outcome; `CoachDetailView` reads this one.
+    ///
+    /// Deliberately not a full buyout: real settlements are offset by the man's
+    /// next job and are routinely negotiated down, and a full-freight charge on
+    /// a 4-year deal would exceed the entire coaching pot for a single firing.
+    /// - Returns: severance owed in $K, 0 for a coach with nothing left to owe.
+    static func coachSeverance(salary: Int, contractYearsRemaining: Int) -> Int {
+        let years = max(0, contractYearsRemaining)
+        guard years > 0, salary > 0 else { return 0 }
+        return min(salary * years / 2, salary)
+    }
+
+    /// New term a club hands a coach whose deal has run out.
+    ///
+    /// Without a renewal the decrement is a one-way ratchet: every coach in the
+    /// league reaches 0 within four seasons, firing is free again, and the field
+    /// is decorative for a second time. A real club with a coach it means to
+    /// keep extends him quietly, which is why a fired coach almost always has
+    /// years left to pay — the whole reason firing costs anything.
+    static let coachRenewalTerm = 2...4
+
+    /// Chance a club re-ups a coach whose deal expired after a losing season.
+    ///
+    /// A winning club (9+) always extends. A losing one usually does not, which
+    /// leaves the man on a lame-duck year — free to fire, and the carousel's
+    /// most likely candidate anyway. That asymmetry is the whole point: the cost
+    /// of firing a coach is highest exactly when you have least cause.
+    static let coachRenewalChanceAfterLosing = 0.35
+
+    /// Wins at or above which a club always extends an expiring coach.
+    static let coachRenewalWinFloor = 9
+
     /// Recalculate coaching budget for a new season.
     ///
     /// Budget formula:

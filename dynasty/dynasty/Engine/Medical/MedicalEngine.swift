@@ -4,6 +4,55 @@ import Foundation
 /// based on medical staff (Doctor and Physio) quality.
 enum MedicalEngine {
 
+    // MARK: - Availability (F-18)
+
+    /// **Who suits up.** The one definition of a dressed roster, for every
+    /// simulator in the game.
+    ///
+    /// ## What this replaced
+    ///
+    /// `GameSimulator` and `LiveGameEngine` both filtered `isHoldingOut` and
+    /// **not** `isInjured`, `SimPlayer` carried no injury field, and the play
+    /// simulator picks its quarterback with `max by overall` — so an 88-OVR
+    /// quarterback with a torn knee and eleven weeks remaining started, took
+    /// every snap and threw for 300 yards. `docs/AI_SEASON_LIFECYCLE_ANALYSIS.md`
+    /// Part 3 traces the injury-to-lineup chain through eight links and it broke
+    /// at link 5, **for every club in the league, user included** — which is why
+    /// no injury in this game has ever changed a result.
+    ///
+    /// It also produced two ledgers that disagreed about the same afternoon:
+    /// `WeekAdvancer`'s attendance tally builds `available` with exactly this
+    /// filter and credited the BACKUP with a start, while the box score credited
+    /// the injured man with the yards. Filtering here closes that by
+    /// construction — a man who never enters the snapshot cannot appear in
+    /// `result.playerStats`, so there is no second ledger left to disagree with.
+    ///
+    /// ## Why the filter and not a `SimPlayer` field
+    ///
+    /// The alternative was to carry `isInjured` through the snapshot and teach
+    /// every selection site to skip it — `PlaySimulator.findQB`,
+    /// `findRB`, `findWR`, `FieldUnit.offense`/`defense`,
+    /// `GameSimulator.startingPlayer`, and the fatigue-rotation and
+    /// substitution paths in the live engine. Six files, every one of them
+    /// somebody else's this wave, against two lines here. `PreseasonEngine`
+    /// already does it this way (`!$0.isInjured && !$0.isHoldingOut`) and has
+    /// been the correct path for two audit cycles; this makes the regular
+    /// season agree with the preseason rather than inventing a third rule.
+    ///
+    /// ## The empty guard
+    ///
+    /// `PlaySimulator.findQB` ends in `players.first!` and `FieldUnit`'s
+    /// back-fill ends in `roster[0]`, so an empty dressed roster is a crash, not
+    /// a forfeit. It cannot arise from injuries alone — 2.5 per club per season
+    /// against 53 men — but a sandbox roster, an import mid-repair or a
+    /// league-wide holdout could produce one, and a club that cannot dress
+    /// anybody has to dress somebody. Falling back to the unfiltered roster is
+    /// the old behaviour, which is the right thing to fall back to.
+    static func dressed(_ roster: [Player]) -> [Player] {
+        let available = roster.filter { !$0.isInjured && !$0.isHoldingOut }
+        return available.isEmpty ? roster : available
+    }
+
     /// Calculate injury risk for a play. Returns an injury type if one occurs, nil otherwise.
     ///
     /// Base risk is 0.5% per play, modified by:

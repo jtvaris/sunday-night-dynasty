@@ -20,6 +20,74 @@ enum HoldoutEngine {
     /// Mediation success probability (0.0...1.0).
     static let mediationSuccessRate: Double = 0.75
 
+    // MARK: - Losing Costs You Players (D4-C / F-59)
+
+    /// **The term this file did not have.**
+    ///
+    /// There was no wins term, no morale term and no losing-culture term
+    /// anywhere in the holdout model: a star on a 2-15 club applied exactly the
+    /// same pressure as the same star on a 15-2 one, and the only way he ever
+    /// left was if the user shipped him. `REBUILD_VIABILITY_ANALYSIS.md` §2.6
+    /// names it as the missing half of the rebuild's downside — the fast rebuild
+    /// currently has **no** cost at all, which is the whole of D4-C.
+    ///
+    /// `frustration` is the [0, 1] read the walk-out turns on. Two inputs,
+    /// because they are the two things a player actually experiences:
+    ///
+    /// * **the record**, zero at .500 and 1.0 at winless — a man on an 8-9 club
+    ///   is not unhappy about the standings;
+    /// * **his morale**, zero at ``moraleFloor`` and above — `LockerRoomEngine`
+    ///   damps the weekly move to ±3 with a point of reversion to a 70 baseline
+    ///   and its own file records that a 4-13 season bleeds only ~−10 over the
+    ///   whole year, so morale is a slow, honest signal here rather than a
+    ///   second copy of the record.
+    ///
+    /// Weighted toward the record because the record is the thing the user
+    /// controls and the thing the mechanic is supposed to price.
+    static func frustration(wins: Int, losses: Int, morale: Int) -> Double {
+        let played = max(1, wins + losses)
+        let winPct = Double(wins) / Double(played)
+        let losingTerm = min(1.0, max(0.0, (0.5 - winPct) * 2.0))
+        let moraleTerm = min(1.0, max(0.0, Double(moraleFloor - morale) / Double(moraleFloor)))
+        return losingTerm * 0.6 + moraleTerm * 0.4
+    }
+
+    /// Morale at or above which a player contributes nothing to `frustration`.
+    /// Below the league's 70 baseline: a man at 68 after a bad month is not
+    /// asking to be traded.
+    static let moraleFloor = 60
+
+    /// Frustration at which a star becomes a holdout candidate on the strength
+    /// of the LOSING alone, with nothing wrong with his contract.
+    ///
+    /// 0.55 needs roughly a 4-13 season with morale already sagging, or a truly
+    /// dismal record on its own. That is the "star on a bad team asks out"
+    /// story at about the frequency the real league tells it — a handful across
+    /// 32 clubs a year, not one per club.
+    static let frustratedCandidateThreshold = 0.55
+
+    /// How much a frustrated man's agent multiplies the walk-out roll by, at
+    /// full frustration.
+    ///
+    /// The agent persona still decides who actually walks (hardliner 65 %,
+    /// loyalist 30 %, cooperative 15 %) — this scales that draw rather than
+    /// replacing it, so the character model stays the thing in charge and
+    /// losing is the pressure on it. At `frustration` 1.0 a loyalist's 30 %
+    /// becomes 51 %; at 0.0 nothing changes at all, which is what keeps the
+    /// average-play line (`REBUILD_VIABILITY_ANALYSIS.md` §3.3, correct today)
+    /// where it is: a .500 club sees the identical behaviour it saw before.
+    static let frustrationWalkoutScale = 0.7
+
+    /// The chance this player's agent pulls the trigger, given the club's
+    /// season. `basePercent` is the persona's own number.
+    ///
+    /// Lives here and not in the view for the reason every magnitude in this
+    /// wave does: a number the UI invents is a number no later audit can find.
+    static func walkoutChance(basePercent: Int, frustration: Double) -> Int {
+        let scaled = Double(basePercent) * (1.0 + frustration * frustrationWalkoutScale)
+        return min(95, max(0, Int(scaled.rounded())))
+    }
+
     /// Holdout resolution path requested by the front office.
     enum Resolution {
         case extend
@@ -54,9 +122,21 @@ enum HoldoutEngine {
     ///   years as a pro (players still on rookie deals accept them).
     /// Franchise-tagged players never hold out (the tag binds them) and a
     /// player already holding out is not detected twice.
+    ///
+    /// D4-C adds a THIRD door alongside the two contract ones: **the club is
+    /// losing and he has had enough.** A man on a real deal with real years left
+    /// on a 3-14 team asks out, and until now the game had no way for him to.
+    /// It is gated on `yearsPro >= 3` like the underpaid door — a rookie on his
+    /// first deal has no standing to make demands and does not make them — and
+    /// on `contractYearsRemaining > 0`, because a man in his last year simply
+    /// leaves in March and does not need a standoff to do it.
+    ///
+    /// - Parameter teamRecord: the club's season so far. `nil` — every caller
+    ///   that existed before D4-C — leaves behaviour byte-for-byte unchanged.
     static func detectStarHoldoutCandidates(
         roster: [Player],
-        marketValues: [UUID: Int]
+        marketValues: [UUID: Int],
+        teamRecord: (wins: Int, losses: Int)? = nil
     ) -> [Player] {
         let topThreeIDs = Set(
             roster.sorted { $0.overall > $1.overall }.prefix(3).map(\.id)
@@ -73,7 +153,16 @@ enum HoldoutEngine {
                 let underpaid = player.yearsPro >= 3
                     && player.contractYearsRemaining > 0
                     && Double(player.annualSalary) < Double(market) * subMarketThreshold
-                return expiring || underpaid
+                let fedUp = teamRecord.map { record in
+                    player.yearsPro >= 3
+                        && player.contractYearsRemaining > 0
+                        && frustration(
+                            wins: record.wins,
+                            losses: record.losses,
+                            morale: player.morale
+                        ) >= frustratedCandidateThreshold
+                } ?? false
+                return expiring || underpaid || fedUp
             }
             // Biggest pay gap first — the angriest star leads the drama.
             .sorted {

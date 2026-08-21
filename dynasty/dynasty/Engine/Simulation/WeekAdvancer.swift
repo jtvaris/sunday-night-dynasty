@@ -2355,6 +2355,22 @@ enum WeekAdvancer {
                 dateString: InboxEngine.dateLabel(week: week, season: season, phase: .regularSeason)
             ))
         }
+        // D4-A — the street. Runs immediately after the practice-squad pass and
+        // deliberately last of the three in-season roster doors: a club that
+        // reaches it has already looked at its own squad (`runElevationPass`)
+        // and at everybody else's (`runWeeklyPass`'s poach loop) and still has a
+        // room below strength. Before this there was no `FreeAgencyEngine` call
+        // anywhere in the regular season at all, for any club, in any week.
+        let streetSignings = InSeasonMarketEngine.runWeeklyPass(
+            career: career,
+            teams: teams,
+            allPlayers: allPlayers
+        )
+        if !streetSignings.isEmpty || !squadWeek.elevations.isEmpty {
+            print("[InSeason] week \(week): \(squadWeek.elevations.count) own-squad elevation(s), "
+                  + "\(squadWeek.squadBackfills) squad backfill(s), "
+                  + "\(streetSignings.count) street signing(s)")
+        }
         perf.lap("practice_squad")
 
         // Advance the week counter.
@@ -3373,6 +3389,44 @@ enum WeekAdvancer {
                     CoachingEngine.developCoach(coach, teamWins: team.wins, headCoach: hc, assistantHC: ahc)
                 }
             }
+            // --- F-64: coach contracts tick, league-wide ---
+            //
+            // `Coach.contractYearsRemaining` was written at hire and never
+            // touched again by anything in the engine, which is what made
+            // firing a coach free and coaching "the single most underpriced
+            // lever in the game". One decrement a league year turns it into a
+            // live number; ``BudgetEngine.coachSeverance`` is what it buys.
+            //
+            // Placed here — after this season's development, BEFORE the Black
+            // Monday carousel — so a man is fired on the deal he actually
+            // finished the season under, not on next year's.
+            //
+            // Applied to all 32 clubs on the same rule. The user is not
+            // exempted: an exemption would mean his staff drifts to zero years
+            // while the league's does not, and firing would be free again for
+            // precisely the club the underpricing was measured on.
+            for team in teams {
+                for coach in allCoaches where coach.teamID == team.id && !coach.isRetired {
+                    coach.contractYearsRemaining = max(0, coach.contractYearsRemaining - 1)
+                    guard coach.contractYearsRemaining == 0 else { continue }
+                    let extends = team.wins >= BudgetEngine.coachRenewalWinFloor
+                        || Double.random(in: 0..<1) < BudgetEngine.coachRenewalChanceAfterLosing
+                    guard extends else { continue }
+                    coach.contractYearsRemaining = Int.random(in: BudgetEngine.coachRenewalTerm)
+                    guard team.id == career.teamID else { continue }
+                    newMessages.append(InboxMessage(
+                        sender: .owner(name: team.owner?.name ?? "Ownership"),
+                        subject: "\(coach.fullName) extended",
+                        body: "\(coach.fullName)'s deal was up. We've put another "
+                            + "\(coach.contractYearsRemaining) years on it at $"
+                            + "\(coach.salary / 1000)M a season. If you want him gone before that "
+                            + "runs out, the severance comes out of your coaching budget.",
+                        date: "Offseason - Coaching Changes, Season \(career.currentSeason)",
+                        category: .staffUpdate
+                    ))
+                }
+            }
+
             // Develop unattached coaches with neutral win total.
             //
             // `!isRetired` because "unattached" and "gone" are the same `teamID`:
@@ -6905,11 +6959,29 @@ enum WeekAdvancer {
     /// contract for this path (AI cutdown), and `leagueYearRemaining` is the
     /// league's, so a cutdown-day release relieves the whole base the way an
     /// offseason release should.
+    /// **The league's cutdown pool, held for the waiver window.** (F-46)
+    ///
+    /// `trimAIRosters` releases ~34 men per AI club on one afternoon and files
+    /// no `RosterCut` row — `applyRelease` is called without a `ModelContext`
+    /// on purpose, because a league's worth of AI churn has no business in the
+    /// user's cap ledger, and the camp-cutdown filter at the waiver door would
+    /// drop those rows anyway. So the ~1 000 best players available all year
+    /// never reached the wire, and the wire ran over one club's cuts.
+    ///
+    /// Handing the pool forward in memory keeps both of those decisions intact
+    /// and still gets the men in front of the league. Set in the `.rosterCuts`
+    /// phase and consumed in the same `advancePhase` call at the
+    /// `.rosterCuts` → `.regularSeason` boundary a few hundred lines below, so
+    /// it is never read across an advance; ``processCampWaivers`` clears it
+    /// whether or not it claims anybody.
+    private static var pendingLeagueCutdownPool: [Player] = []
+
     private static func trimAIRosters(
         career: Career,
         teams: [Team],
         allPlayers: [Player]
     ) {
+        pendingLeagueCutdownPool = []
         let rosterCeiling = 53
         let capMode = career.capMode
         let leagueYearRemaining = CapManagementEngine.leagueYearRemaining(
@@ -6951,6 +7023,7 @@ enum WeekAdvancer {
                     leagueYearRemaining: leagueYearRemaining,
                     careerID: career.id
                 )
+                pendingLeagueCutdownPool.append(player)
                 overflow -= 1
             }
         }
@@ -8639,13 +8712,25 @@ enum WeekAdvancer {
         }
     }
 
-    /// Runs the 24h waiver window for every cut made this season for the user's
-    /// team. Worst-record teams get higher claim priority.
+    /// Runs the 24h waiver window over the whole league's cutdown.
+    ///
+    /// F-46: two pools, one window. The user's cuts come from the filed
+    /// `RosterCut` rows (which also carry the claim banner the UI reads); the
+    /// other 31 clubs' come from ``pendingLeagueCutdownPool``, handed over in
+    /// memory by `trimAIRosters` earlier in this same advance. Before this the
+    /// wire saw one club's cuts and moved nobody at all.
+    ///
+    /// The user's cuts go FIRST, deliberately: he cuts on the same afternoon,
+    /// and a league that has already spent its roster spots on AI cutdown
+    /// bodies would leave his men unclaimed for a reason that is an artefact of
+    /// iteration order.
     private static func processCampWaivers(
         career: Career,
         teams: [Team],
         modelContext: ModelContext
     ) {
+        let leaguePool = pendingLeagueCutdownPool
+        pendingLeagueCutdownPool = []
         let season = career.currentSeason
         let cid = career.id
         let cutsDescriptor = FetchDescriptor<RosterCut>(
@@ -8659,14 +8744,37 @@ enum WeekAdvancer {
         // hitting the camp waiver wire, and claiming one would hand a rival a
         // player who has long since signed somewhere else.
         let cuts = ((try? modelContext.fetch(cutsDescriptor)) ?? []).filter(\.isCampCutdown)
-        guard !cuts.isEmpty else { return }
+        guard !cuts.isEmpty || !leaguePool.isEmpty else { return }
 
-        let teamRecords = teams.map { (teamID: $0.id, wins: $0.wins, losses: $0.losses) }
-        _ = WaiverWireEngine.processWaivers(
-            cuts: cuts,
-            teamRecords: teamRecords,
-            modelContext: modelContext
-        )
+        let allPlayers = fetchAllPlayers(modelContext: modelContext)
+        var claimed = 0
+        if !cuts.isEmpty {
+            claimed += WaiverWireEngine.processWaivers(
+                cuts: cuts,
+                teams: teams,
+                capMode: career.capMode,
+                allPlayers: allPlayers,
+                modelContext: modelContext
+            ).count
+        }
+        if !leaguePool.isEmpty {
+            // Best first, so the men the league would actually fight over are
+            // offered while roster spots still exist. `keepScore` is the same
+            // key `trimAIRosters` released them in the reverse of.
+            let ranked = leaguePool
+                .sorted { RosterValue.keepScore($0) > RosterValue.keepScore($1) }
+                .map { (player: $0, cutBy: $0.cutByTeamID) }
+            claimed += WaiverWireEngine.runWindow(
+                candidates: ranked,
+                teams: teams,
+                capMode: career.capMode,
+                allPlayers: allPlayers
+            ).count
+        }
+        if claimed > 0 {
+            print("[Waivers] \(claimed) claim(s) moved a player "
+                  + "(\(cuts.count) user cut(s), \(leaguePool.count) league cut(s) on the wire)")
+        }
     }
 
     /// Applies the long-term attribute drift penalty when the user has prepped
