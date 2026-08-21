@@ -315,6 +315,92 @@ enum CareerScope {
         return counts
     }
 
+    // MARK: - Delete everything (#201b)
+
+    /// Deletes **all** save data: every career through `cascadeDelete`, then a
+    /// blanket sweep of whatever is left in every table.
+    ///
+    /// This exists because Settings' "Delete All Save Data" used to wipe
+    /// `UserDefaults` only. The careers stayed in the store, the main menu kept
+    /// listing them, and the promise on the button ("removes every career …")
+    /// was false. The button now calls this, and the wipe is in the ENGINE
+    /// rather than in the view so a second call site cannot get a different —
+    /// and quieter — definition of "everything".
+    ///
+    /// Two passes on purpose:
+    ///
+    /// 1. `cascadeDelete` per career, because that is the one function that also
+    ///    purges the career's `UserDefaults` namespace (roster notes, prospect
+    ///    board, negotiation ledgers, …) and reports per-model counts.
+    /// 2. A blanket `delete(model:)` per table afterwards. With no `Career` row
+    ///    left, anything still in the store is by definition unowned: a legacy
+    ///    row that never got a `careerID` stamp, or an orphan pointing at a
+    ///    career deleted by an older build that did not cascade. Those rows are
+    ///    invisible to every scoped fetch, so leaving them behind would mean the
+    ///    button still lies — just about bytes instead of about careers.
+    ///
+    /// Preferences are NOT touched here; that is the caller's job (the app's
+    /// `UserDefaults` domain is not save data and not this type's business).
+    ///
+    /// - Returns: a one-line summary for the log / the caller.
+    @discardableResult
+    static func deleteAllSaveData(context: ModelContext) -> String {
+        let careers = (try? context.fetch(FetchDescriptor<Career>())) ?? []
+        var cascaded = 0
+        for career in careers {
+            cascaded += cascadeDelete(career: career, context: context).reduce(0) { $0 + $1.1 }
+        }
+
+        // Pass 2: sweep the residue. Every type in the schema, `Career`
+        // included — a career that somehow survived pass 1 must not survive this.
+        var swept: [(String, Int)] = []
+        func wipe<T: PersistentModel>(_ type: T.Type, _ label: String) {
+            let n = (try? context.fetchCount(FetchDescriptor<T>())) ?? 0
+            guard n > 0 else { return }
+            swept.append((label, n))
+            try? context.delete(model: type)
+        }
+
+        wipe(League.self, "League")
+        wipe(Team.self, "Team")
+        wipe(Player.self, "Player")
+        wipe(Owner.self, "Owner")
+        wipe(Coach.self, "Coach")
+        wipe(Game.self, "Game")
+        wipe(Contract.self, "Contract")
+        wipe(Scout.self, "Scout")
+        wipe(CollegeProspect.self, "CollegeProspect")
+        wipe(DraftPick.self, "DraftPick")
+        wipe(DraftEvent.self, "DraftEvent")
+        wipe(DraftPickGrade.self, "DraftPickGrade")
+        wipe(DraftReputation.self, "DraftReputation")
+        wipe(CareerArcState.self, "CareerArcState")
+        wipe(PlayerSeasonHistory.self, "PlayerSeasonHistory")
+        wipe(FABid.self, "FABid")
+        wipe(FAVisit.self, "FAVisit")
+        wipe(FAStorylineEvent.self, "FAStorylineEvent")
+        wipe(Holdout.self, "Holdout")
+        wipe(TrainingPlan.self, "TrainingPlan")
+        wipe(WorkloadEvent.self, "WorkloadEvent")
+        wipe(PositionBattle.self, "PositionBattle")
+        wipe(RosterCut.self, "RosterCut")
+        wipe(OpponentPrepWeek.self, "OpponentPrepWeek")
+        wipe(VoluntaryWorkout.self, "VoluntaryWorkout")
+        wipe(HardKnocksEvent.self, "HardKnocksEvent")
+        wipe(TradeRecord.self, "TradeRecord")
+        wipe(TeamSeasonArchive.self, "TeamSeasonArchive")
+        wipe(Career.self, "Career")
+
+        try? context.save()
+
+        let residue = swept.isEmpty
+            ? "no residue"
+            : "residue " + swept.map { "\($0.0)=\($0.1)" }.joined(separator: " ")
+        let summary = "deleteAllSaveData: \(careers.count) career(s), \(cascaded) cascaded row(s), \(residue)"
+        print("[CareerScope] \(summary)")
+        return summary
+    }
+
     /// Human-readable preview of what a cascade delete will remove, for the
     /// confirmation dialog.
     static func deletionSummary(career: Career, context: ModelContext) -> String {
