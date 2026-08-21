@@ -953,7 +953,7 @@ enum MultiSeasonSmokeTest {
         var misses: [String] = []
         func check(_ ok: Bool, _ msg: String) { if !ok { misses.append(msg) } }
         check(winSD >= 2.4 && winSD <= 4.0,
-              String(format: "winSD=%.2f outside 2.4-4.0 (real NFL ~3.0-3.2 over 17 games)", winSD))
+              String(format: "winSD=%.2f outside 2.4-4.0 (real league ~3.0-3.2 over 17 games)", winSD))
         check(qualityCorr >= 0.30 && qualityCorr <= 0.90,
               String(format: "corr(starterOVR,wins)=%.2f outside 0.30-0.90 — 0 means the roster does not decide games, 1 means nothing else does", qualityCorr))
         if !yoy.isNaN {

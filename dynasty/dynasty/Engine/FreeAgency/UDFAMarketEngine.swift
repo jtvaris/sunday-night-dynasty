@@ -1061,16 +1061,35 @@ enum UDFAMarketEngine {
                 uniqueKeysWithValues: needs.enumerated().map { ($0.element, $0.offset) }
             )
 
-            // This club's own board: true value, plus what it needs, plus the
-            // disagreement every scouting department has about undrafted men.
+            // This club's own board: what it BELIEVES this man is, plus what it
+            // needs.
+            //
+            // F-35: the belief used to be `true value + a ±2 uniform draw from a
+            // local FNV hash`, which was a second, incompatible fog model living
+            // three files away from the real one. Two spellings of "clubs
+            // disagree about a prospect" is the exact drift this repo keeps
+            // finding, and the undrafted market is the LAST place a separate one
+            // belongs: these are the men front offices are most wrong about.
+            //
+            // It now reads through `AIDraftPerception`, the same lens
+            // `aiMakePick` uses, so a club that is bad at evaluating talent in
+            // April is bad at it on Saturday too — an old-school GM carries σ
+            // 3.5 here exactly as he does on the draft board, and the fat tail
+            // that produces a genuine miss is the same tail. The lens is hoisted
+            // out of the pool loop for the same reason the draft hoists it.
+            let lens = AIDraftPerception.lens(forTeam: team.id)
             let scored = openPool.map { prospect -> (prospect: CollegeProspect, score: Double) in
-                var score = Double(entryOverall[prospect.id] ?? 0)
+                let entry = entryOverall[prospect.id] ?? 0
+                var score = AIDraftPerception.read(
+                    teamID: team.id,
+                    prospectID: prospect.id,
+                    trueOverall: entry,
+                    truePotential: entry,        // the undrafted board is a NOW board
+                    lens: lens
+                ).overall
                 if let rank = needRank[prospect.position] {
                     score += Double(10 - rank * 2)      // 10 down to 2 across the five holes
                 }
-                score += Double(boardNoise(
-                    teamID: team.id, prospectID: prospect.id, season: state.season
-                ))
                 return (prospect: prospect, score: score)
             }
             .sorted { lhs, rhs in
@@ -1145,24 +1164,6 @@ enum UDFAMarketEngine {
             status: .pending,
             submittedAt: bid.submittedAt
         )
-    }
-
-    /// Deterministic ±``aiBoardNoise`` disagreement, seeded on (club, man,
-    /// season). Deterministic so a save reloads into the same market instead of
-    /// re-rolling every club's board on every launch.
-    private static func boardNoise(teamID: UUID, prospectID: UUID, season: Int) -> Int {
-        var hash: UInt64 = 1469598103934665603        // FNV-1a offset basis
-        func mix(_ bytes: [UInt8]) {
-            for byte in bytes {
-                hash ^= UInt64(byte)
-                hash = hash &* 1099511628211
-            }
-        }
-        mix(withUnsafeBytes(of: teamID.uuid) { Array($0) })
-        mix(withUnsafeBytes(of: prospectID.uuid) { Array($0) })
-        mix(withUnsafeBytes(of: UInt64(bitPattern: Int64(season))) { Array($0) })
-        let span = aiBoardNoise * 2 + 1
-        return Int(hash % UInt64(span)) - aiBoardNoise
     }
 
     // MARK: - Receipts
