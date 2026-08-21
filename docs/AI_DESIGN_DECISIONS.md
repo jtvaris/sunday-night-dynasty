@@ -1,0 +1,262 @@
+# AI Design Decisions — the six choices behind 38 queue entries
+
+`docs/AI_FIX_QUEUE.md` flags 38 entries as **Needs user decision**. They are not 38 independent
+questions. They are six, and the rest follow: settle D1–D6 and 34 of the 38 stop being open.
+
+Every number below is measured, and the source is named. Nothing here is a guess dressed as a
+finding. Where two audits disagreed, both figures are given.
+
+**How to read an option.** Each carries what it changes, what it settles, what it costs to build,
+and — where it is knowable — what it does to a number that is already being tracked. The
+recommendation at the end of each decision is mine; the trade-off above it is the real content, and
+a different taste reads the same table differently.
+
+**One rule runs through all six.** It comes from the roster audit and it is worth stating once
+rather than six times:
+
+> Fogging only the AI is a gift. Making the AI worse is not the same as making it human.
+
+Every option that adds AI error is paired with either a matching user-side cost or an explicit note
+that the asymmetry is deliberate and bounded.
+
+---
+
+## D1 — Does the user keep his structural advantages?
+
+**At stake.** Three edges are wired into the engine rather than earned at the desk:
+
+| edge | measured size | where |
+|---|---|---|
+| Opponent prep | ×1.10 own score, ×0.925 opponent's, applied **after the game is over** — ≈ +4.2 pts/game ≈ **+2.1 wins a season** | `GameSimulator.swift:528-538` |
+| Free-agency bid | structural ×1.10 / ×1.15 / ×1.25 against a maximum 12.4 % losing-team penalty — a **2-15 user outbids a 14-3 AI club at 79 cents on the dollar** | `scoreBid` |
+| Trade volume | AI clubs are capped at 1–2 executed trades per window. The user has **no cap at all** | `WeekAdvancer` counters |
+
+These are the reason a rebuild lands a season early, and they are invisible to the player, which is
+the part that matters: an advantage he cannot see is one he cannot enjoy.
+
+**Option A — Remove them; the user wins by playing better.**
+Opponent prep threads through the simulator as real per-play modifiers (or is deleted); the flat FA
+multiplier is gated on team success; the user gets the same 2/week, 8/year trade cap the AI lives
+under. Settles F-08, F-14, F-16, F-53, F-56.
+*Cost:* threading prep through `PlaySimulator` is the expensive item — the original comment says it
+was avoided deliberately. *Consequence:* rebuild slows by roughly a season. *Risk:* a player who has
+been winning partly on invisible subsidy will feel the game got harder without being told why. That
+is a patch-notes problem, not a design problem.
+
+**Option B — Keep them, but make them visible and earned.**
+Prep keeps its magnitude but is shown as an explicit pre-game modifier the user spends a limited
+resource on; the FA bonus is renamed in the UI as the hometown/pitch advantage it is pretending to
+be; the trade cap stays off but every executed trade prints its value delta.
+*Cost:* low, mostly UI. *Consequence:* the numbers do not move; the fiction stops lying.
+*Risk:* the fast rebuild survives intact, and D4's frozen table gets no help from here.
+
+**Option C — Give all 32 clubs the same tools.**
+AI clubs get prep, a bid personality and the same trade freedom. Settles F-16(c) and F-17 together.
+*Cost:* medium. *Consequence:* the subsidy becomes a mechanic. *Risk:* raises AI competence
+everywhere at once, and the user loses ground on three fronts in one patch.
+
+**Recommendation: A for prep and trades, B for the FA multiplier.** The prep multiplier is the one
+edge with no defence — it edits the scoreboard after the whistle, and its designed counterweight
+writes to a field no simulator file reads. The FA bonus, by contrast, models something real: players
+do sign for less to go somewhere they want. Keep it, cap it, and say so on screen.
+
+---
+
+## D2 — Is the salary cap a constraint or an inconvenience?
+
+**At stake.** No AI club can ever be in cap trouble, by four independent mechanisms. The decisive
+one is the annual true-up at `FreeAgencyEngine.swift:718-720`, which rebuilds `currentCapUsage` from
+rostered salary and therefore **erases every dollar of dead money each league year**. On top of it: a
+15 % reserve enforced at every signing door, unconditional 5–8 % cap growth, and a salary floor at
+`CapManagementEngine.swift:857` with **zero callers**.
+
+Measured: league cap room 30.3 → 39.2 → 32.3 → 23.1 %, 31–32 of 32 clubs compliant every season,
+payroll 64.5–79.8 % of the cap. The CBA mandates 89 % cash spend, and in March 2025 several real
+clubs opened the league year tens of millions **over** the cap.
+
+**This is the strongest brake on the fast rebuild that exists anywhere in the codebase**, and it is
+currently disengaged.
+
+**Option A — Full bind (all four sub-parts).**
+Per-year dead-cap ledger replacing the wipe; salary floor enforced in the FA mop-up (a club under
+89 % must spend whether or not it has a need); per-club reserve replacing the flat 15 %; a release
+lever so a club in trouble can act. Settles F-11 entirely, and most of F-12 follows for free.
+*Consequence:* every March, clubs are forced to cut good players into the market — the veteran
+opportunity a real GM lives on, and the one the user has never had. Expect league payroll to move
+into the 85–92 % band and cap room to fall toward 8–15 %.
+*Risk:* the largest single behaviour change on this list. It interacts with everything, so it must
+land alone and be measured alone.
+
+**Option B — Dead money only.**
+Just the ledger: bad contracts follow a club into the next year. Half the cost, most of the
+narrative effect, and no forced-spending mechanics.
+*Consequence:* AI clubs start making mistakes that persist, which is most of what "the cap binds"
+means to a player. Payroll shifts only slightly.
+*Risk:* clubs still never get desperate, so the veteran market stays thin.
+
+**Option C — Leave it.**
+The cap remains a one-year inconvenience. *Consequence:* rebuild stays fast, veteran market stays
+thin, and D4 loses its most powerful lever.
+
+**Recommendation: A, and land it by itself.** This is the decision with the largest realism return
+per line changed. But it deserves its own wave with the `diag capRoom` and `diag balance` bands read
+before and after — not bundled with anything else.
+
+---
+
+## D3 — What kind of wrong should the AI be?
+
+**At stake.** Your explicit design goal. Current state:
+
+- **The draft is already right.** `AIDraftPerception` is live and wired (`DraftEngine.swift:236`):
+  mean absolute error 3.96 OVR, fat tail 6.99 %, old-school GMs 5.25 vs analytics 3.01. The user is
+  *sharper* on men he scouts; the asymmetry is coverage — 25 evaluations against a 350-man class.
+  This is the correct shape and should be the template.
+- **Free agency has no perception model at all.** Every AI club reads true `overall` and true
+  `truePotential`.
+- **The development desk reads `truePotential`** — the number `DevelopmentReportView.swift:9`
+  explicitly denies the user.
+- **No club has a house preference.** 32 boards differ only by zero-mean symmetric Gaussian noise.
+- **Gameday has exactly one modelled decision error** — `DCPersona.misreadChance`, coached games
+  only, and exactly `0.0` for `balanced` and `conservative` (≈40 % of coordinators) and for every AI
+  offense in the league.
+
+**Option A — Structured taste (the report's "single highest-value addition").**
+Each club draws 2 of 6 permanent biases from its UUID: traits-over-tape `+0.4 × (physical − 70)`,
+scheme fit `+2.5`, position bias `+3.0` / `−1.5`, small-school aversion `−2.0`, character hawk, age
+hawk. Plus round-scaled need (R1 ×2.0, R2–3 ×1.0, day 3 ×0.6), position-run panic, and a veteran
+perception σ 2.0–3.5 by GM archetype. Settles F-23, F-26, F-27, F-29, F-31, F-62.
+*Consequence:* the success test is that you can learn *"Denver always overpays for size"* and that
+exploiting it costs you somewhere else. That is the difference between an opponent and a dice roll.
+*Cost:* medium, and the plumbing for the draft half already exists.
+*Pairing required:* a veteran fog on the AI alone is a gift. Either a small user-side fog (±1–2 on
+free agents outside your division, narrowing with a scouting spend) or cap the AI σ at 2.0.
+
+**Option B — Uniform noise, turned up.**
+Widen the existing Gaussians. *Cost:* trivial. *Consequence:* AI clubs get worse without getting
+different. Nothing becomes learnable, and the user's edge grows. **This is the option that looks
+like the goal and is not.**
+
+**Option C — Gameday errors only.**
+Floor `conservative`/`balanced` misread at 0.05, scale by coordinator grade
+(`+max(0, (70 − grade)/100 × 0.15)`, so good coaches buy *fewer* mistakes), add an OC channel.
+Settles F-38. *Cost:* small. *Consequence:* the mistakes become visible during the one game the user
+watches, which is where they land emotionally.
+
+**Recommendation: A and C together, B never.** They are the same idea at two timescales — a club
+that misjudges in March and a coordinator who guesses wrong on 3rd-and-6. Fog the development desk
+(F-24) as part of A, since it reads a number the user is denied.
+
+---
+
+## D4 — Should the league table unfreeze?
+
+**At stake.** This one is new — it became measurable only after #213, and the first reading is bad:
+
+| | measured | real NFL |
+|---|---|---|
+| year-over-year win correlation | **0.67–0.74** | 0.32 |
+| last season's bottom four reaching the playoff field | **0 %** | common (1.29 worst-to-first seasons/yr) |
+| AI roster moves per season | **≈1.4** | well over 100 |
+| R1 washout rate | 6.4 % | 17–57 % by pick range |
+| inherited-roster potential headroom | 1.6 | 12.0 in the draft pipeline |
+
+A frozen table costs the rebuild fantasy twice: rivals never fall to you, and your own climb has no
+one to pass.
+
+**Option A — Churn the rosters.**
+AI clubs elevate their own practice-squad men (currently **0 per club per season** — one clause,
+`leagueSquad(excluding: suitor.id)`), react to injuries in the deadline need model, sign street free
+agents, and use the franchise tag. Settles F-37, F-54, F-63, and most of the season-lifecycle audit.
+*Consequence:* directly attacks the 1.4 moves/season figure. *Cost:* medium, spread over many small
+sites.
+
+**Option B — Churn the outcomes.**
+Raise R1 bust risk toward the real range, let quality and contract status affect retirement, raise
+draft-weekend swaps (R1 0.15→0.22, R2–3 0.10→0.15, R4+ 0.06→0.10 ≈ 20 swaps), tighten the future-pick
+discount to ×0.6/yr. Settles F-10, F-45, F-48, F-55.
+*Consequence:* more variance in who is good next year, without new systems.
+*Risk:* variance without agency reads as unfairness if overdone.
+
+**Option C — Churn the consequences.**
+Losing costs the user players: a record/morale term in holdout detection, `.losingCulture` reaching
+free-agent negotiation. Settles F-59 and half of F-14.
+*Consequence:* the rebuild acquires a downside, which it currently has none of.
+
+**Recommendation: A first, then C, then B.** A fixes a bug-shaped gap (clubs that cannot use their
+own players), C adds the missing stake, and B is a tuning pass best done last, when the first two
+have already moved the number. Re-read `diag balance` after each.
+
+---
+
+## D5 — How competent should the AI be on gameday?
+
+**At stake.** `gamePlan` is hard-coded `nil` for all 31 clubs (`WeekAdvancer.swift:1372-1373`,
+`:7296-7297` — the comment admits it), so `fourthDownAggressiveness` and `runPassRatio` are
+structurally user-only. Timeouts, kneel-downs and onside kicks are user-only too. Coach quality
+moves execution (±0.07 completion, ±0.75 ypc) but **not one situational decision**.
+
+**Option A — Head-coach persona (fully specified, no migration).**
+Derive `HCPersona ∈ { riverboat, modern, orthodox, punter }` from `adaptability` + `playCalling`,
+tie-broken deterministically by coach id. Three fields: `fourthDownAggressiveness`
+0.85/0.60/0.40/0.15, `twoPointBias` +1/0/0/−1, `clockErrorRate` 0.10/…
+Settles F-17, and F-39's error-rate hook comes with it.
+*Consequence:* AI clubs start making recognisably different decisions, and a punter-archetype coach
+becomes a thing you can play against. *Cost:* small — the slot already exists.
+
+**Option B — Endgame capability parity.**
+Timeouts, kneels and the onside kick for the AI, with a persona-scaled failure rate. Lower onside
+recovery from 0.12 to ~0.08 first (real: 8.7 % 2018-23). Settles F-39.
+*Consequence:* late-game situations stop being free for the user.
+
+**Option C — Situational fidelity.**
+Red zone starting at the 20 for both play selection and defence, kicker-dependent field-goal range
+(real spread 8–12 yards), the four named clock gaps. Settles F-42, F-44, F-66, and F-25's retune
+must land *after* these or it is invalidated immediately.
+
+**Recommendation: A, then B, then C, in that order, and F-25 last.** A gives the largest character
+return for the smallest change. Note the ordering constraint is real: every one of these moves the
+play mix, and F-25 is a retune against the play mix.
+
+**Explicitly out of scope until asked:** F-60 (AI remembering your tendencies across weeks). The
+reports name the gap and propose no mechanism, and by rule B it would require a symmetric channel
+for the user. Do not start it without a design.
+
+---
+
+## D6 — What should the user be able to see?
+
+Cheap, low-risk, and all of it turns existing data into something readable.
+
+- **F-51 Transactions screen** over `TradeRecord` — the ledger is written and no UI reads it. The
+  reports call it "the cheapest high-value item on this list".
+- **F-57 post-trade roster holes** — run `needProfile` before and after, name any position that
+  crossed 0.30 severity. Turns *"cap adjustments have been processed"* into a consequence.
+- **F-58 shop-your-own-player and a trade block** — specified in Wave 3, never shipped.
+- **F-65 scheme-change cost preview** — show the install curve before the user commits.
+- **F-71 fantasy-draft AI** — either fold `FantasyDraftEngine.aiPickIndex` into the one draft brain
+  or leave a comment on each naming the other, so the next audit knows the divergence is deliberate.
+
+**Recommendation: take all of D6 as one small wave.** No decision here is load-bearing, and the
+whole group is a day's work that makes four other decisions legible to the player.
+
+---
+
+## Ordering, if all six are approved
+
+1. **D2** alone, measured alone — it moves every other number.
+2. **D4-A** (roster churn), then re-read `diag balance`.
+3. **D1** (remove the prep multiplier, cap user trades).
+4. **D3-A + D3-C** (taste and misreads) — the imperfection wave.
+5. **D5-A/B/C** in order, then F-25's retune.
+6. **D6** whenever there is a gap.
+
+D4-B and D4-C fold into step 5's measurement pass rather than getting their own.
+
+## What NOT to touch
+
+Named by the audits as correct and well-built: the retirement age-wall, the coaching carousel
+(0.145 firings/club vs a real ~0.20), UDFA, comp picks, `TeamStance`, the practice-squad system's
+symmetry and injury-awareness, the adaptive play-calling brain's fairness caps, rejection copy
+(engine strings, not decorative prose), the trade deadline's week-9-of-18 placement and its
+back-loading, and the draft perception model's shape.
