@@ -349,20 +349,38 @@ values, so a negotiation resolves to an arithmetic comparison rather than a read
 **Cost:** A is medium and self-contained. B is the larger one and is the only item on this page with
 no proposed mechanism in any report.
 
-**No ruling yet — this needs your call.**
+**DECISION — Option C: both, A first.** The AI is fogged about organisations as well as players,
+which is the refinement's first property. A lands inside systems that already exist and makes
+*reputation* possible in both directions. B is committed to but needs a mechanism designed from
+nothing — no report proposes one — and by the pairing rule it needs a symmetric user channel, so it
+is scheduled after A and after a written design, not bundled with it.
 
-## Still open after D1-D6
+## Decided alongside D7
 
-* **D7** above — the biggest of the four, and new.
-* **F-56 — the user's own hidden GM persona.** Surface it in the UI as a franchise identity, or
-  exclude his club from persona assignment and price his side neutrally? D1 settles the *pricing*
-  half; this is the remaining half. Either is better than the status quo, where he has a persona he
-  cannot see and cannot use.
-* **F-61 — guarantees and contract term as AI negotiating levers.** Should a negotiation have more
-  than one dimension (money) — can the AI trade term for guarantees the way real agents do? No
-  magnitudes are specified anywhere; this is a genuine design question, not a tuning one.
-* **F-66 — clock fidelity.** Four named gaps, no proposed design. How much clock detail is wanted
-  is a taste question about how much of a real broadcast the sim should reproduce.
+**F-56 — the user's GM persona is surfaced as a franchise identity.** He has a taste like every
+other organisation, and he can see it. This is the ruling D7 makes coherent: once other GMs form a
+read on *him*, that read has to have a real object, and reputation becomes two-directional — "Varis
+always overpays for the deep ball" is a sentence the league can learn about the user.
+
+**F-61 — contract negotiation gets two more dimensions: guaranteed money and term.** A player can
+buy a lower annual number by conceding guarantees or length, and the AI does the same. This is
+coupled to D2 in both directions: guarantees are the mechanism that *produces* dead money, so a
+binding cap turns the lever into a real decision, and it is how the refinement's "big blunders"
+become something the user and the AI DO rather than something that happens to them. Too much
+guaranteed money on the wrong man is precisely how real clubs wreck themselves.
+
+**F-66 — endgame clock only.** Three fixes that decide games: the two-minute warning stops the
+clock, a completion out of bounds stops the clock, and a trailing team runs hurry-up tempo. The
+flat per-play duration draw is deliberately left alone — making it situational would recalibrate
+plays-per-game, which is a banded harness number (58-68). Note the ordering: this is a
+**precondition for D5-B**, because an AI timeout is worth nothing if the clock does not otherwise
+behave.
+
+## Still open after D1-D7
+
+* **D7-B's mechanism** — tendency fog is committed to, but nothing anywhere proposes how a club
+  learns an opposing coach's habits, or what the user's symmetric channel is. It needs a written
+  design before it can be scheduled. This is the only remaining open item.
 
 **Not decisions — tuning I will propose and measure rather than ask about:** F-42 (kicker-dependent
 field-goal range mapping), F-45 (retirement magnitudes), F-47 (intake headroom target), F-48 (R1
@@ -379,7 +397,10 @@ lever moves first.
 5. **D5-A/B/C** in order, then F-25's retune.
 6. **D4-C** (losing costs players) — placed here rather than earlier because F-14 and F-59 are the
    same gap from the pricing and the roster side, and D1 settles the pricing half.
-7. **D6** whenever there is a gap.
+7. **D6** whenever there is a gap, with F-56's franchise identity folded into it.
+8. **D7-A** (valuation fog) after D2 and D3, since it prices against a market both of them move.
+9. **F-61** (guarantees and term) with or immediately after D2 — they are the same subject.
+10. **F-66** before D5-B, which depends on it.
 
 **D4-B is deferred, not cancelled.** Re-read `diag balance` after steps 1-2; if year-over-year
 correlation is still far above 0.32 with the mechanisms in place, revisit it then — with causes
