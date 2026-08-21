@@ -3,7 +3,7 @@ import SwiftData
 
 // MARK: - CampRosterEngine
 
-/// #205a — the camp-invite wave: the 80-man offseason roster, assembled from
+/// #205a — the camp-invite wave: the 87-man offseason roster, assembled from
 /// men the league already produced (`OFFSEASON_ROSTER_PLAN.md` §3.3).
 ///
 /// ## What this fixes
@@ -11,7 +11,8 @@ import SwiftData
 /// The 90 → 53 ladder shipped with its rungs in place — `CutDay.rung(dueIn:)`
 /// puts "Cut to 75" on the `.trainingCamp` exit and "Cut to 65" on the
 /// `.preseason` exit, and `WeekAdvancer.userRosterLimitViolation` gates both —
-/// but nothing ever put 80 men in a camp. QA measured the roster settling at
+/// but nothing ever put a camp's worth of men in a camp. QA measured the roster
+/// settling at
 /// **64** (53 survivors + the draft class + the UDFA market), so both upper
 /// rungs were satisfied on arrival and auto-skipped: two required tasks that
 /// could never be due, and a cutdown story that started at the last chapter.
@@ -19,21 +20,22 @@ import SwiftData
 ///
 /// ## Three rules, and the reason for each
 ///
-/// 1. **Target 80, ceiling 90.** `TradeValueEngine.offseasonRosterCeiling` is
+/// 1. **Target 87, ceiling 90.** `TradeValueEngine.offseasonRosterCeiling` is
 ///    already 90 and its doc comment already claims the league carries 80-90
 ///    between the draft and cutdown day; this is the pass that finally makes
 ///    that true. Filling *to* the ceiling would make every offseason
 ///    acquisition illegal on the body count and kill the AI trade market in
-///    exactly the windows it is supposed to be open, so the target leaves ten
-///    slots of headroom (§1, risk B9).
+///    exactly the windows it is supposed to be open, so the target keeps a
+///    little headroom (§1, risk B9) — see ``campRosterTarget`` for why the
+///    headroom shrank from ten slots to three.
 ///
 /// 2. **NEVER generate a player.** There is no generation path in this file at
 ///    all — not a bounded one, not a fallback. `PracticeSquadEngine`'s
 ///    ``PracticeSquadEngine/squadGenerationFloor`` records what the unbounded
 ///    version of this idea cost when `fillSquads` last had one: **417 / 250 /
 ///    212 / 244 minted players a season**, the inflow half of task #99's shadow
-///    pool. The arithmetic here is worse — 32 clubs × ~16 open camp slots is
-///    ~512 bodies a season — so the door is not narrowed, it is absent. A club
+///    pool. The arithmetic here is worse — 32 clubs × ~23 open camp slots is
+///    ~730 bodies a season — so the door is not narrowed, it is absent. A club
 ///    that cannot find bodies carries fewer men; the target is a **ceiling, not
 ///    a quota**, and a short camp is the honest reading of an empty market.
 ///
@@ -86,11 +88,23 @@ enum CampRosterEngine {
     /// Men a club carries out of this pass. **A ceiling, not a quota** — see
     /// rule 2 in the type doc.
     ///
-    /// 80 and not 90: `TradeValueEngine.offseasonRosterCeiling` is 90 and the
-    /// offseason trade market vetoes any deal that would breach it, so filling
-    /// to the ceiling would close the market for the four phases §5 of the trade
-    /// plan expects business in. Ten slots of headroom is the difference.
-    static let campRosterTarget = 80
+    /// Not 90: `TradeValueEngine.offseasonRosterCeiling` is 90 and the offseason
+    /// trade market vetoes any deal that would breach it, so filling to the
+    /// ceiling would close the market for the four phases §5 of the trade plan
+    /// expects business in. The headroom is the difference.
+    ///
+    /// **80 → 87 (#199).** The first shipped number left the headroom at ten
+    /// slots, and the review found the cost of that generosity on the only rung
+    /// that is *named* after a number: `CutDay.cut90To75` asked for five cuts
+    /// instead of fifteen, so the loudest chapter of the cutdown story — the
+    /// first one — read as a formality. Three slots is enough headroom for the
+    /// market that actually needs it: a 1-for-1 swap is body-count neutral, a
+    /// 2-for-1 acquisition needs one slot, and in the two windows where the AI
+    /// market is busiest the AI clubs sit **well below** the target anyway,
+    /// because PHASE A serves the user's camp out of the same inventory first.
+    /// It is also what a real August looks like — a club at the limit cuts
+    /// before it signs, which is a decision, not a veto.
+    static let campRosterTarget = 87
 
     /// The hard ceiling this pass may never breach — shared with the trade
     /// market so the two cannot disagree about what a legal offseason roster is.
@@ -105,7 +119,7 @@ enum CampRosterEngine {
     /// so the ledger does not move in either direction when the man is cut.
     static let campContractYears = 1
 
-    /// The shape of an 80-man camp: the most bodies a club may carry at each
+    /// The shape of an 87-man camp: the most bodies a club may carry at each
     /// position.
     ///
     /// **Why a table and not a need model.** The obvious authority here is
@@ -123,14 +137,23 @@ enum CampRosterEngine {
     /// 90-man August roster looks like. It is `LeagueGenerator.rosterBlueprint`
     /// (the 53) opened up where a camp actually works — receivers, corners, the
     /// two lines — and held nearly shut at the three positions where a camp body
-    /// is pure waste (QB, K, P). The sum is 86, comfortably above
+    /// is pure waste (QB, K, P). The sum is 94, comfortably above
     /// ``campRosterTarget`` so no club is shape-locked short of its target, and
     /// comfortably under ``rosterCeiling``.
+    ///
+    /// **86 → 94 (#199).** The shape is a per-position ceiling, so the *sum*
+    /// minus a club's existing roster is the reachable headroom, and the old sum
+    /// of 86 left only six slots above the old target of 80 — raise the target to
+    /// 87 against an 86-man shape and every club is shape-locked one man short
+    /// of the number before the market is even consulted. The eight extra slots
+    /// go where a camp body is actually plausible (WR, TE, CB, the two interior
+    /// guard spots, DE, DT, OLB); QB, K, P and the pivot are untouched, which is
+    /// the whole point of having a shape rather than a body count.
     static let campShape: [Position: Int] = [
-        .QB: 4, .RB: 5, .FB: 2, .WR: 10, .TE: 5,
-        .LT: 3, .LG: 3, .C: 3, .RG: 3, .RT: 3,
-        .DE: 7, .DT: 6, .OLB: 6, .MLB: 5,
-        .CB: 9, .FS: 4, .SS: 4,
+        .QB: 4, .RB: 5, .FB: 2, .WR: 11, .TE: 6,
+        .LT: 3, .LG: 4, .C: 3, .RG: 4, .RT: 3,
+        .DE: 8, .DT: 7, .OLB: 7, .MLB: 5,
+        .CB: 10, .FS: 4, .SS: 4,
         .K: 2, .P: 2
     ]
 
@@ -264,7 +287,8 @@ enum CampRosterEngine {
     /// otherwise not exist. In an established league (#99's ~900-man pool) that
     /// is almost never; in the league's first two offseasons — where the pool
     /// has not accumulated yet and QA measured clubs settling at **64** — it is
-    /// what makes 80 reachable at all. `FillSummary` reports the split, and it
+    /// what makes ``campRosterTarget`` reachable at all. `FillSummary` reports
+    /// the split, and it
     /// is expected to fall towards `fromPool` as a career ages.
     ///
     /// Face duplication is accepted, not worked around: `FaceLibrary` reports

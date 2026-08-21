@@ -654,7 +654,7 @@ struct FAWeeklyView: View {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: DSSpacing.xxs + 2) {
                     Image(systemName: "megaphone.fill")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(DSType.text(DSType.Size.caption, .semibold))
                         .foregroundStyle(Color.textSecondary)
                     Text("BIDDING UPDATES")
                         .font(DSType.display(11, .heavy))
@@ -1056,36 +1056,48 @@ struct FAWeeklyView: View {
     /// informational (P7) — the screen's one gold belongs to the action bar's
     /// commit (P5). Three different paints for one fact was the reason a user
     /// could not tell the pending bar from the primary button.
+    ///
+    /// #199: the third hand-built list on this screen, and the one the #177 pass
+    /// stopped short of. Its head spoke in `Font.caption` while the sibling bar
+    /// three lines above it spoke in the tracked display voice (§2.10 allows two
+    /// voices, and "whatever `Font.caption` resolves to" is a third), and its
+    /// withdraw control was an 11 pt glyph — the same sub-target defect the
+    /// bidding bar's "Dismiss" had before it was measured to 44.
     @ViewBuilder
     private var pendingOffersBar: some View {
         if !myOffers.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: DSSpacing.xxs) {
+                // The same head anatomy as `biddingUpdatesBar`: glyph, tracked
+                // ident, the reading on the right. §2.9 — a section head is
+                // tracked `textSecondary`, not a second accent competing with
+                // the chips it introduces.
+                HStack(spacing: DSSpacing.xs) {
                     Image(systemName: "doc.text.fill")
-                        .font(.caption)
-                        .foregroundStyle(Color.accentBlue)
-                    Text("\(myOffers.count) pending offer\(myOffers.count == 1 ? "" : "s")")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.accentBlue)
-                    Spacer()
+                        .font(DSType.text(DSType.Size.caption, .semibold))
+                        .foregroundStyle(Color.textSecondary)
+                    Text("\(myOffers.count) PENDING OFFER\(myOffers.count == 1 ? "" : "S")")
+                        .font(DSType.display(DSType.Size.caption, .heavy))
+                        .tracking(0.7)
+                        .foregroundStyle(Color.textSecondary)
+                    Spacer(minLength: DSSpacing.xs)
                     let totalCost = myOffers.values.reduce(0) { $0 + $1.salary }
                     Text(reservesCap
                          ? "Reserving \(formatMillions(totalCost))/yr"
                          : "Total: \(formatMillions(totalCost))/yr")
-                        .font(.caption.monospacedDigit())
+                        .font(DSType.display(DSType.Size.caption, .semibold))
                         .foregroundStyle(Color.textSecondary)
                 }
 
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
+                    HStack(spacing: DSSpacing.xxs) {
                         ForEach(pendingOfferRows, id: \.offer.id) { row in
                             pendingOfferChip(name: row.name, offer: row.offer)
                         }
                     }
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
+            .padding(.horizontal, DSSpacing.md)
+            .padding(.vertical, DSSpacing.xs)
             .background(Color.accentBlue.opacity(0.08))
         }
     }
@@ -1103,28 +1115,42 @@ struct FAWeeklyView: View {
             .sorted { $0.offer.salary > $1.offer.salary }
     }
 
+    /// One outstanding offer as a chip: who, what it costs, and the one control
+    /// that hands the reserved room back.
+    ///
+    /// The withdraw target is **44 pt, measured** (§2.12) — the same treatment
+    /// the bidding bar's "Dismiss" got, and it is what sets the chip's height, so
+    /// the vertical padding lives on the button rather than on the capsule.
+    ///
+    /// The money stays on plain `textTertiary`: the token doc for
+    /// `textTertiaryReadable` is explicit that it is the *darker* of the two and
+    /// is only for sites shedding an opacity modifier, and this one never had one.
     private func pendingOfferChip(name: String, offer: ContractOffer) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: DSSpacing.xxs) {
+            // One size across the chip. `DSType.display` clamps to its 11 pt
+            // floor, so a 10 pt name beside it would have read as two sizes.
             Text(name)
-                .font(.system(size: 10, weight: .semibold))
+                .font(DSType.text(DSType.Size.caption, .semibold, prose: true))
                 .foregroundStyle(Color.textPrimary)
                 .lineLimit(1)
             Text("\(formatMillions(offer.salary))/yr × \(offer.years)")
-                .font(.system(size: 10).monospacedDigit())
+                .font(DSType.display(DSType.Size.caption, .semibold))
                 .foregroundStyle(Color.textTertiary)
             Button {
                 dropOffer(offer.playerID)
             } label: {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 11))
+                    .font(DSType.text(DSType.Size.caption, .semibold))
                     .foregroundStyle(Color.danger)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Withdraw offer to \(name)")
             .accessibilityHint("Releases \(formatMillions(offer.salary)) of reserved cap.")
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        // Leading only: the 44 pt target owns the trailing edge.
+        .padding(.leading, DSSpacing.sm)
         .background(Color.backgroundSecondary, in: Capsule())
         .overlay(Capsule().strokeBorder(Color.surfaceBorder, lineWidth: 1))
     }
@@ -1452,7 +1478,7 @@ struct FAWeeklyView: View {
                     if let rumor = rumorText(for: fa) {
                         HStack(spacing: 3) {
                             Image(systemName: rumor.icon)
-                                .font(.system(size: 11))
+                                .font(DSType.text(DSType.Size.caption))
                             Text(rumor.text)
                                 .font(DSType.text(11, .regular))
                                 .lineLimit(1)
@@ -1576,7 +1602,7 @@ struct FAWeeklyView: View {
             } label: {
                 HStack(spacing: DSSpacing.xxs) {
                     Image(systemName: "building.2")
-                        .font(.system(size: 11))
+                        .font(DSType.text(DSType.Size.caption))
                     Text("Host Visit")
                         .font(DSType.text(11, .semibold))
                 }
@@ -1616,7 +1642,7 @@ struct FAWeeklyView: View {
             // working.
             HStack(spacing: 3) {
                 Image(systemName: breakdown.tier.icon)
-                    .font(.system(size: 11))
+                    .font(DSType.text(DSType.Size.caption))
                 Text("Interest: \(breakdown.tier.rawValue)")
                     .font(DSType.display(11, .heavy))
             }
@@ -1724,7 +1750,7 @@ struct FAWeeklyView: View {
         return AnyView(
             HStack(spacing: 3) {
                 Image(systemName: "flame.fill")
-                    .font(.system(size: 11))
+                    .font(DSType.text(DSType.Size.caption))
                 Text(text)
                     .font(DSType.text(11, .regular))
                     .lineLimit(1)

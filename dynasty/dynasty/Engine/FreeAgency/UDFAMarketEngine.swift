@@ -20,7 +20,7 @@ import SwiftData
 /// ``UDFAMarketEngine/heat(prospectID:career:)``, which projects these into
 /// transient `FABid` values so there is exactly one definition of what "six
 /// clubs are in on him" means.
-struct UDFABid: Codable, Equatable {
+nonisolated struct UDFABid: Codable, Equatable {
     var prospectID: UUID
     var teamID: UUID
     /// Thousands per year.
@@ -49,7 +49,7 @@ struct UDFABid: Codable, Equatable {
 
 /// A completed UDFA signing — the receipt, kept so a round summary can be
 /// rebuilt after a cold launch.
-struct UDFASigning: Codable, Equatable {
+nonisolated struct UDFASigning: Codable, Equatable {
     var prospectID: UUID
     var teamID: UUID
     var salary: Int
@@ -58,7 +58,7 @@ struct UDFASigning: Codable, Equatable {
 }
 
 /// The whole market, as one decodable blob.
-struct UDFAMarketState: Codable {
+nonisolated struct UDFAMarketState: Codable {
     /// The season whose undrafted class this market is for. The idempotency
     /// stamp: `openMarket` refuses to re-seed a season it has already opened,
     /// which is what makes a re-entered `.otas` phase — or a cold launch in the
@@ -221,15 +221,49 @@ enum UDFAMarketEngine {
     /// Rounds the market runs before it settles. Three, matching the FA market's
     /// round shape (`Career.freeAgencyRound`) — long enough that being outbid in
     /// round 1 is a setback rather than the end, short enough to be three taps.
-    static let roundCount = 3
+    nonisolated static let roundCount = 3
 
     /// Most UDFAs any one club may sign, the user's club included. The real
     /// number is 15-20; this league's undrafted remainder is ~100-126 men against
     /// 32 clubs, so 15 apiece is arithmetically impossible and would leave the
     /// user no market to compete in. Six is what the pool supports.
     ///
-    /// **No privileged quota**: the user's ceiling is the same 6.
+    /// **No privileged quota**: the user's ceiling is the same 6 — but read
+    /// ``draftNightUserWindow`` before believing that of the shipped build.
     static let clubSigningQuota = 6
+
+    /// What the user's ONE interactive UDFA door should let him sign.
+    ///
+    /// ### The audit (#199)
+    ///
+    /// The user never bids in this market: `postAIOffers` builds its club list as
+    /// `teams.filter { $0.id != career.teamID }`, deliberately, because his
+    /// undrafted business happens earlier — on draft night, in the Draft Day
+    /// panel, before ``openMarket`` seeds a round. His draft-night signings go
+    /// through `DraftEngine.convertUDFAToPlayer` and are therefore **invisible to
+    /// `UDFAMarketState.signings`**, so ``clubSigningQuota`` — the guard that
+    /// makes the ceiling real for the 31 AI clubs, checked at both bid time and
+    /// settle time — cannot see or bind them. The user's real ceiling is whatever
+    /// that panel says, and it says **5** (`UI/Draft/DraftDayCoordinator.swift`,
+    /// `maxUDFASignings`), which makes the "no privileged quota" line above one
+    /// man short of true in the other direction.
+    ///
+    /// ### Why the number here is 6 and not 5
+    ///
+    /// Parity is the rule the market was designed around, so the number belongs
+    /// in the engine next to the quota it is supposed to equal rather than as a
+    /// literal in a view — that literal is exactly how the two drifted apart. It
+    /// is expressed as ``clubSigningQuota`` rather than as its own `6` so a
+    /// future tuning pass cannot move one without the other.
+    ///
+    /// **Effective volume is not the same question, and there the user is ahead.**
+    /// The declared class is ~285-350 men and `generateDeclarations` targets 224
+    /// picks, so the remainder the undrafted market runs on is ~60-126. The user
+    /// takes his men FIRST, unopposed, off the top of an untouched pool; the 31
+    /// AI clubs then split what is left, which is ~2-4 apiece against a ceiling
+    /// of 6. So this is an invariant repair, not a competitive one — nobody is
+    /// being out-signed.
+    static var draftNightUserWindow: Int { clubSigningQuota }
 
     /// Offers one AI club puts out per round. Sets market throughput: 31 clubs ×
     /// 4 is ~124 offers a round chasing a ~110-man pool, which is a market that
