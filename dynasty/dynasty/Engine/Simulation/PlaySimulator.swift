@@ -100,7 +100,14 @@ enum PlaySimulator {
         // no trailing-leverage contribution, which (with composure 70 / heat 0)
         // is mean-neutral everywhere — a nil-argument / quick-sim snap is
         // byte-for-byte identical to today.
-        scoreDifferential: Int = 0
+        scoreDifferential: Int = 0,
+        // F-42 / F-39: situational inputs the AI play-caller needs and the
+        // player-called path never uses. All three carry the pre-change values as
+        // defaults, so any caller that does not supply them decides plays exactly
+        // as it did before.
+        kickerRangeYards: Int = 45,
+        clockErrorRate: Double = 0,
+        defenseTimeoutsRemaining: Int = 3
     ) -> PlayResult {
         let playCall: PlayType
         if let forced = forcedPlayType {
@@ -117,7 +124,10 @@ enum PlaySimulator {
                 offensiveScheme: offensiveScheme,
                 gamePlan: gamePlan,
                 weather: weather,
-                scoreDifferential: scoreDifferential
+                scoreDifferential: scoreDifferential,
+                kickerRangeYards: kickerRangeYards,
+                clockErrorRate: clockErrorRate,
+                defenseTimeoutsRemaining: defenseTimeoutsRemaining
             )
         }
 
@@ -308,6 +318,44 @@ enum PlaySimulator {
     private static let gameMgmtLeadPts  = 7      // one-score-plus trigger
     private static let gameMgmtBiasSlope = 0.030 // pass-bias shift per point past the trigger
     private static let gameMgmtBiasCap   = 0.40  // max run-lean (leader) / pass-lean (trailer)
+
+    // MARK: Red zone (F-44)
+
+    /// Where the red zone starts, in yards to the end zone. The engine used the
+    /// **10** for both the defensive call sheet and the pass-depth clamp; the
+    /// real red zone starts at the 20 and reshapes both the play mix and the
+    /// defence from there. Threshold and scope were both wrong.
+    static let redZoneYards = 20
+
+    /// Run lean applied to the base pass weights inside the red zone. Real
+    /// offenses run more as the field shortens — the end zone removes the deep
+    /// third of the route tree, so the same call sheet is worth less.
+    ///
+    /// Trades against: red-zone touchdown rate, and therefore points per team.
+    /// Held at a modest −0.08 (about half the strongest scheme lean) because the
+    /// defensive side of F-44 is tightening at the same time and stacking two
+    /// full-sized nudges on the same 20 yards would double-count.
+    private static let redZoneRunLean = -0.08
+
+    // MARK: Victory formation (F-39)
+
+    /// Seconds a single kneel burns — the same 40 s `DriveSimulator` charges for
+    /// the `.kneel` outcome, named here so the two cannot drift.
+    private static let kneelClockSeconds = 40
+
+    /// Seconds the offense can bleed by kneeling from `down`, allowing the
+    /// defence to stop the clock with what it has left. 40 s per remaining down
+    /// before the ball would have to be given up on fourth, minus 40 s for every
+    /// timeout the defence can still call.
+    ///
+    /// A first down with 1:20 left and no defensive timeouts ends the game; the
+    /// same first down with two timeouts left does not, and the offense has to
+    /// keep playing — which is exactly the calculation a real staff makes on the
+    /// sideline.
+    private static func kneelOutSeconds(down: Int, defenseTimeouts: Int) -> Int {
+        max(0, (4 - down) - max(0, defenseTimeouts)) * kneelClockSeconds
+    }
+
     static func decidePlayCall(
         down: Int,
         distance: Int,
@@ -320,7 +368,20 @@ enum PlaySimulator {
         // P0-2: offense-relative score margin (+ = offense leading). 0 → every
         // score-aware term below is inert, so quick sim / early-game / competitive
         // snaps are byte-identical to today.
-        scoreDifferential: Int = 0
+        scoreDifferential: Int = 0,
+        // F-42: the longest attempt this club's kicker will be sent out for, in
+        // yards to the end zone. 45 — a 62-yarder — is what every club in the
+        // league used before the range depended on the leg taking the kick.
+        kickerRangeYards: Int = 45,
+        // F-39: the offense head coach's `HCPersona.clockErrorRate`. 0 — every
+        // caller that existed before the persona — means the coach never botches
+        // the victory formation, which is the old behaviour once the kneel itself
+        // is available.
+        clockErrorRate: Double = 0,
+        // F-39: timeouts the DEFENCE can still use to stop the clock. Decides
+        // whether a lead can actually be knelt out. 3 (a full complement) is the
+        // conservative default: it makes kneeling harder, never easier.
+        defenseTimeoutsRemaining: Int = 3
     ) -> PlayType {
         let yardsToEndzone = 100 - yardLine
         // P0-2 GAME MANAGEMENT (garbage time / comeback). The single biggest driver
@@ -344,11 +405,64 @@ enum PlaySimulator {
             if d <= -trig { return  min(gameMgmtBiasCap, gameMgmtBiasSlope * (-d - trig + 1)) }
             return 0
         }()
-        // A comfortable late lead suppresses the hurry-up: bleed the clock, don't
-        // trade snaps. The drill still fires for a tied/trailing/one-score offense.
-        let isTwoMinuteDrill = quarter == 4 && timeRemaining <= 120
-            && scoreDifferential < gameMgmtLeadPts
-        let fieldGoalRange = yardsToEndzone <= 45
+        // F-40, two defects in one line.
+        //
+        // (1) The leading-team gate was `scoreDifferential < gameMgmtLeadPts` (7)
+        // while the game-management bias above requires `|margin| >= 7`, so
+        // between +1 and +6 a LEADING team got the TRAILING team's behaviour: up
+        // 3 with 2:00 left it ran an 85 %-pass hurry-up instead of bleeding the
+        // clock. The replacement is possession-aware rather than margin-aware —
+        // a team that has the ball and any lead at all late is trying to end the
+        // game, which is the actual decision, and it no longer has to agree with
+        // a threshold owned by a different mechanic.
+        //
+        // (2) The gate was `quarter == 4` only, so the end-of-FIRST-half drill
+        // did not exist. It is a standard, high-value part of every real game and
+        // both teams run it regardless of score, because there is no clock worth
+        // protecting going into halftime — hence the lead test applies to Q4
+        // alone.
+        let protectingLateLead = quarter == 4 && scoreDifferential > 0
+        // A first-half drill is only run when it can actually produce points. A
+        // team that takes over on its own 12 with 0:34 left does not open it up
+        // in its own end to chase a field goal it cannot reach — it runs the ball
+        // and goes in at the half. Real coaches make this call every week, and
+        // without it the end-of-half drill fires on every possession that touches
+        // two minutes and inflates both snaps and dropbacks league-wide. Q4 has
+        // no such let-out: there is no next half to go into.
+        // Two conditions, and both are things every real staff says out loud on
+        // the headset: there has to be enough time (or enough field already
+        // gained) to reach scoring range, and you do not open it up backed up
+        // inside your own 20 before the half — the downside of a strip-sack or a
+        // pick there is a score against you, not a punt.
+        let endOfHalfWorthChasing = yardsToEndzone <= 80
+            && (timeRemaining >= 45 || yardsToEndzone <= 55)
+        let isTwoMinuteDrill = timeRemaining <= 120
+            && ((quarter == 4 && !protectingLateLead)
+                || (quarter == 2 && endOfHalfWorthChasing))
+        // F-42: the range is the kicker's, not the league's.
+        let fieldGoalRange = yardsToEndzone <= kickerRangeYards
+
+        // F-39 VICTORY FORMATION. The AI could not end a game it had won: with a
+        // lead and 1:20 on the clock it kept calling live plays, and three
+        // dropbacks at ~2.3 % INT each is a ~7 % chance of handing the game back,
+        // every single time. `.kneel` resolved fine in the simulator — nothing
+        // ever asked for it.
+        //
+        // The failure to kneel is where the imperfection lives, and it is a
+        // planned one: it comes from the head coach's `clockErrorRate`, scaled by
+        // the leverage of the moment, so a `punter` archetype in a one-score
+        // fourth quarter bleeds it wrong about half the time and a `riverboat`
+        // almost never does. That is an error with a cause and an author, not a
+        // die rolled at the whistle (D3 refinement, property 2).
+        if quarter >= 4, scoreDifferential > 0, down <= 3,
+           timeRemaining <= kneelOutSeconds(down: down, defenseTimeouts: defenseTimeoutsRemaining) {
+            let leverage = leverageIndex(down: down, distance: distance, quarter: quarter,
+                                         timeRemaining: timeRemaining, yardLine: yardLine,
+                                         scoreDifferential: scoreDifferential)
+            if Double.random(in: 0..<1) >= clockErrorRate * (1.0 + leverage) {
+                return .kneel
+            }
+        }
 
         // Scheme pass bias: shifts pass probability up (pass-heavy) or down (run-heavy)
         let schemeOnlyPassBias: Double = {
@@ -391,7 +505,16 @@ enum PlaySimulator {
         // Weather run bias: in snow both AI coordinators lean on the ground
         // game — the pass probability drops by 0.08 across every situation.
         let weatherPassBias: Double = weather == .snow ? -0.08 : 0.0
-        let schemePassBias = schemeOnlyPassBias + planPassBias + weatherPassBias + mgmtPassBias
+        // F-44: `decidePlayCall` had no red-zone branch at all — the play mix
+        // from the opponent's 19 was the play mix from midfield. Inside the 20
+        // the deep third of the route tree stops existing, so the same sheet is
+        // worth less and real offenses lean on the ground. Excluded from the
+        // two-minute drill below, which sets its own weights and where a trailing
+        // offense throws regardless of where it is standing.
+        let redZonePassBias: Double =
+            (yardsToEndzone <= redZoneYards && !isTwoMinuteDrill) ? redZoneRunLean : 0.0
+        let schemePassBias = schemeOnlyPassBias + planPassBias + weatherPassBias
+            + mgmtPassBias + redZonePassBias
 
         // 4th down decisions
         if down == 4 {
@@ -1974,8 +2097,26 @@ enum PlaySimulator {
         playNumber: Int
     ) -> PlayResult {
         let punter = offensePlayers.first(where: { $0.position == .P }) ?? offensePlayers.first!
-        let puntDistance = Int.random(in: 35...55)
-        let netYards = min(puntDistance, 100 - yardLine) // Can't punt past the endzone
+        // F-41: the punter was fetched for the description string and nothing
+        // else — every club in the league kicked the same flat 35-55 draw, so the
+        // position group was cosmetic. The draw is now centred on the punter's own
+        // leg.
+        //
+        // The number produced here is a NET, which is why it is centred on the
+        // real net average of ~41.5 rather than the ~46-47 gross: the engine has
+        // no return man, so the returned yards have to be inside this figure or
+        // they exist nowhere. The 0.12 slope puts a 95-power leg about 5 yards
+        // ahead of a 55-power one, which is the real spread between the best and
+        // worst net punters in a season.
+        //
+        // Trades against: field position on every punt, and therefore scoring.
+        // The ±7 spread is the variance a real punt has (a shank and a coffin
+        // corner are the same play); flattening it would make the special-teams
+        // roster spot pointless again.
+        let puntPower = kickerPowerRating(for: punter)
+        let netCentre = 41.5 + Double(puntPower - 70) * 0.12
+        let puntDistance = Int(netCentre.rounded()) + Int.random(in: -7...7)
+        let netYards = min(max(puntDistance, 20), 100 - yardLine) // Can't punt past the endzone
 
         let isTouchback = yardLine + netYards >= 100
 
@@ -2037,18 +2178,28 @@ enum PlaySimulator {
         }
 
         // Base accuracy drops with distance
+        // F-41: the table was 10-20 pp below the modern NFL at every band from 41
+        // yards out. The league has made 84-85 % of ALL attempts every year since
+        // 2015; 30-49 yards is above 85 %, and 50+ has run 58-64 %. The old
+        // 41-50 band at 0.70 and 51-55 at 0.50 were 1990s numbers on a 2020s
+        // schedule, and they are the reason a drive that stalled at the opponent's
+        // 30 was worth so much less here than it is in a real game.
+        //
+        // Trades against: points per team. Raising the long bands is worth roughly
+        // half a point a game on its own, which is why it lands in the same wave
+        // as F-44's red-zone tightening rather than alone.
         let baseMakeChance: Double
         switch fgDistance {
         case 0...30:
-            baseMakeChance = 0.95
+            baseMakeChance = 0.97   // real: ~98 % — a chip shot is not a coin toss
         case 31...40:
-            baseMakeChance = 0.85
+            baseMakeChance = 0.91   // real: ~90-92 %
         case 41...50:
-            baseMakeChance = 0.70
+            baseMakeChance = 0.82   // real: ~82-85 %, was 0.70
         case 51...55:
-            baseMakeChance = 0.50
+            baseMakeChance = 0.64   // real 50+: 58-64 %, was 0.50
         default:
-            baseMakeChance = 0.30
+            baseMakeChance = 0.42   // 56+ is the genuine long shot, was 0.30
         }
 
         let accuracyModifier = (Double(kickerAccuracy) - 70.0) / 200.0
@@ -2212,7 +2363,11 @@ enum PlaySimulator {
     ) -> PlayResult {
         let kicker = offensePlayers.first(where: { $0.position == .K }) ?? offensePlayers.first!
         let accuracy = kickerAccuracyRating(for: kicker)
-        let makeChance = clamp(0.90 + Double(accuracy - 70) / 300.0, min: 0.80, max: 0.99)
+        // F-41: the base was 0.90, about 4 pp below the real ~94 % the league has
+        // kicked since the snap moved back to the 33 in 2015. The slope and the
+        // clamp are unchanged — only the centre moves, so the spread between the
+        // best and worst kicker is exactly what it was.
+        let makeChance = clamp(0.94 + Double(accuracy - 70) / 300.0, min: 0.86, max: 0.99)
         let isGood = randomChance(makeChance)
 
         return PlayResult(
@@ -2493,6 +2648,46 @@ enum PlaySimulator {
         return 70
     }
 
+    /// F-42: the kicker's leg, as a rating. `kickPower` is a real attribute on
+    /// `KickingAttributes` that **no simulator file read** before this — every
+    /// club's field-goal range was the same fixed 45 yards to the end zone, i.e.
+    /// a 62-yarder, whether it employed the strongest leg in the league or the
+    /// weakest.
+    private static func kickerPowerRating(for player: SimPlayer?) -> Int {
+        if let player, case .kicking(let attrs) = player.positionAttributes {
+            return attrs.kickPower
+        }
+        return 70
+    }
+
+    /// The longest field goal this club will attempt, as yards to the end zone
+    /// (add 17 for the kick distance: 45 here is a 62-yard attempt).
+    ///
+    /// The report is explicit that the kicker-BLIND range is the defect, not the
+    /// number, so the league median is deliberately left exactly where it was:
+    /// a power-70 leg still gets sent out from the 45. Real range varies 8-12
+    /// yards between the best and worst legs, and the slope here (one yard per
+    /// five rating points, clamped 40-50) produces an 8-yard spread across the
+    /// 55-95 band the roster generator actually draws from.
+    ///
+    /// Trades against: long-FG attempts versus punts. A weak-legged club now
+    /// punts from the opponent's 43 instead of trying a 60-yarder it would miss
+    /// ~70 % of the time, which is worth field position; a strong-legged one
+    /// gains a real, visible edge from a position group that previously did
+    /// nothing but hold a roster spot. Note the interaction with F-17: a
+    /// `riverboat` head coach with a weak leg goes for it rather than kicking,
+    /// which is the correct call and falls out of the two changes without either
+    /// knowing about the other.
+    static func fieldGoalRangeYards(for kicker: SimPlayer?) -> Int {
+        let power = kickerPowerRating(for: kicker)
+        return Swift.max(40, Swift.min(50, 45 + (power - 70) / 5))
+    }
+
+    /// The club's kicker, or `nil` if none dressed.
+    static func findKicker(in players: [SimPlayer]) -> SimPlayer? {
+        players.first(where: { $0.position == .K })
+    }
+
     // MARK: - Pass Helpers
 
     private enum PassDistance {
@@ -2504,8 +2699,18 @@ enum PlaySimulator {
     private static func choosePassDistance(distance: Int, yardLine: Int) -> PassDistance {
         let yardsToEndzone = 100 - yardLine
 
-        // If close to the endzone, favor shorter passes
+        // If close to the endzone, favor shorter passes.
+        //
+        // F-44: the clamp fired at the 10; the red zone starts at the 20. Between
+        // the two it is not a preference but geometry — `.deep` means 21+ air
+        // yards, and from the opponent's 20 there is nowhere for that ball to
+        // land. Inside 10 stays a hard `.short`; the 11-20 band drops only the
+        // deep bucket and keeps the mid game, which is where the fade, the slant
+        // and the back-shoulder throw actually live.
         if yardsToEndzone <= 10 { return .short }
+        if yardsToEndzone <= redZoneYards {
+            return Double.random(in: 0...1) < 0.62 ? .short : .mid
+        }
 
         // P0-1 (secondary): pull the realized deep-shot share from ~24% down to
         // ~12% (NFL is ~10-12%). The old mix fired a bomb on nearly a quarter of

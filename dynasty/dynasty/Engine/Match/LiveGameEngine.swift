@@ -1075,6 +1075,12 @@ final class LiveGameEngine: ObservableObject {
     private let opponentDCPersona: DCPersona
     private let opponentOCPersona: OCPersona
 
+    /// F-17: the opposing HEAD coach's risk persona. Supplies the `gamePlan`
+    /// the AI offense calls 4th downs off — the slot that used to be a literal
+    /// `nil` in a coached game exactly as it was in the quick sim — and the
+    /// `clockErrorRate` its endgame decisions are gated on.
+    private let opponentHCPersona: HCPersona
+
     /// Persona-shaded base defense pre-rolled for the NEXT snap (same
     /// once-per-snap contract as the counters, so every `aiDefensivePackage`
     /// call this snap agrees). `nil` = unshaded base.
@@ -1349,6 +1355,13 @@ final class LiveGameEngine: ObservableObject {
         opponentOCPersona = opponentCoaches.first { $0.role == .offensiveCoordinator }
             .map(OCPersona.derive(for:)) ?? .balanced
 
+        // F-17: the opponent's head coach. Derived from the same staff list and
+        // the same id-hash helper, so Week Prep, the broadcast intro and the
+        // call the AI actually makes on 4th-and-2 all come from one place.
+        opponentHCPersona = HCPersona.derive(
+            headCoach: opponentCoaches.first { $0.role == .headCoach },
+            teamID: playerTeamIsHome ? awayTeam.id : homeTeam.id)
+
         // Layer B: configure the category read's TIMING off the AI DC's persona
         // + grade. Persona/grade move only WHEN (catPivot) and HOW FAST
         // (catAlpha) the read arms — never the bite ceiling — so an elite,
@@ -1399,6 +1412,7 @@ final class LiveGameEngine: ObservableObject {
         // R33: pre-kickoff booth intel on the opponent's coordinators —
         // feed-only lines (playNumber 0), fixed strings, no RNG, so both
         // auto-sim parity and the once-per-snap counter contract hold.
+        postFeedNote(opponentHCPersona.broadcastIntro(abbr: opponentAbbreviation))
         postFeedNote(opponentDCPersona.broadcastIntro(abbr: opponentAbbreviation))
         postFeedNote(opponentOCPersona.broadcastIntro(abbr: opponentAbbreviation))
     }
@@ -1537,7 +1551,7 @@ final class LiveGameEngine: ObservableObject {
             offensiveCall: offensiveCall,
             forcedPlayType: forcedPlayType,
             defensivePackage: defensivePackage,
-            gamePlan: playerIsOnOffense ? playerGamePlan : nil,
+            gamePlan: playerIsOnOffense ? playerGamePlan : opponentHCPersona.gamePlan,
             weather: weather,
             // R40 coaching edge (both teams, every play) combined with the
             // halftime adjustment (player's team offense only, second half only).
@@ -1716,12 +1730,27 @@ final class LiveGameEngine: ObservableObject {
 
         // --- Consume clock (mirrors DriveSimulator.simulateDrive) ---
         // A pending timeout freezes the clock: this play's runoff is zeroed.
-        var elapsed = DriveSimulator.clockConsumption(for: result)
+        //
+        // F-66: the endgame context goes in here too, so the coached game gets
+        // the same two-minute warning, out-of-bounds stoppage and hurry-up tempo
+        // the quick sim does. The clock is the one model a player can watch tick,
+        // and letting the two engines disagree about it would be visible in a way
+        // no aggregate ever is.
+        let offenseMargin = homeHasPossession ? homeScore - awayScore : awayScore - homeScore
+        var elapsed = DriveSimulator.clockConsumption(
+            for: result,
+            context: DriveSimulator.ClockContext(
+                quarter: quarter,
+                timeRemaining: timeRemaining,
+                scoreDifferential: offenseMargin
+            )
+        )
         if timeoutClockStopPending {
             elapsed = 0
             timeoutClockStopPending = false
         }
-        timeRemaining -= elapsed
+        timeRemaining = DriveSimulator.applyClock(
+            elapsed: elapsed, to: timeRemaining, quarter: quarter)
 
         if timeRemaining <= 0 {
             let overflow = abs(timeRemaining)
@@ -1791,8 +1820,18 @@ final class LiveGameEngine: ObservableObject {
             quarter: quarter,
             timeRemaining: timeRemaining,
             offensiveScheme: homeHasPossession ? homeOffScheme : awayOffScheme,
-            gamePlan: playerIsOnOffense ? playerGamePlan : nil,
-            weather: weather
+            gamePlan: playerIsOnOffense ? playerGamePlan : opponentHCPersona.gamePlan,
+            weather: weather,
+            scoreDifferential: homeHasPossession ? homeScore - awayScore : awayScore - homeScore,
+            // F-42: the club with the ball kicks with its own leg.
+            kickerRangeYards: PlaySimulator.fieldGoalRangeYards(
+                for: PlaySimulator.findKicker(
+                    in: homeHasPossession ? homePlayers : awayPlayers)),
+            // F-39: only the AI head coach can botch the victory formation. The
+            // player takes his own knee — or does not — and the engine must never
+            // decide that for him, so his side passes 0.
+            clockErrorRate: playerIsOnOffense ? 0 : opponentHCPersona.clockErrorRate,
+            defenseTimeoutsRemaining: homeHasPossession ? awayTimeouts : homeTimeouts
         )
     }
 
@@ -1979,9 +2018,14 @@ final class LiveGameEngine: ObservableObject {
                 // R33 over-reaction: an aggressive DC sometimes counters a
                 // tendency that isn't the real one — the wrong package's
                 // modifiers then work FOR the player.
+                // F-38(a)(b): the rate now has a floor for the careful personas
+                // and is scaled by the coordinator's grade, so a weaker DC is
+                // wrong more often and a better one is wrong less.
                 var counterRead = read
-                if opponentDCPersona.misreadChance > 0,
-                   Double.random(in: 0..<1) < opponentDCPersona.misreadChance,
+                let dcMisread = DCPersona.effectiveMisread(
+                    base: opponentDCPersona.misreadChance, grade: opponentDCGrade)
+                if dcMisread > 0,
+                   Double.random(in: 0..<1) < dcMisread,
                    let wrong = AdaptiveOpponentAI.OffenseTendency.allCases
                        .filter({ $0 != read }).randomElement() {
                     counterRead = wrong
@@ -2020,9 +2064,22 @@ final class LiveGameEngine: ObservableObject {
                 max(0.10, AdaptiveOpponentAI.counterShare(coordinatorGrade: opponentOCGrade)
                         * opponentOCPersona.counterShareMultiplier)
             )
+            // F-38(c): the AI offense can now misread the player's defensive
+            // tendency, exactly as the DC misreads his offensive one above — the
+            // OC previously had no error channel at all, so the AI could be wrong
+            // on defence and never on offence.
+            var counterRead = read
+            let ocMisread = DCPersona.effectiveMisread(
+                base: opponentOCPersona.misreadChance, grade: opponentOCGrade)
+            if ocMisread > 0,
+               Double.random(in: 0..<1) < ocMisread,
+               let wrong = AdaptiveOpponentAI.DefenseTendency.allCases
+                   .filter({ $0 != read }).randomElement() {
+                counterRead = wrong
+            }
             pendingOffenseCounter = Double.random(in: 0..<1) < share
                 ? AdaptiveOpponentAI.offensiveCounter(
-                    for: read,
+                    for: counterRead,
                     scheme: playerTeamIsHome ? awayOffScheme : homeOffScheme,
                     distance: distance,
                     yardsToEndzone: 100 - yardLine

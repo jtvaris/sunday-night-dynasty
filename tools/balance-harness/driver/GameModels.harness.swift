@@ -46,6 +46,12 @@ enum CoachRole {
 /// coaching effect (each mechanic is centered at 70 / 50), so neutral coaches can
 /// carry a scheme without moving the balance.
 final class Coach {
+    /// `Coach.id` in the app. Read by the persona derivations
+    /// (`HCPersona.derive`, and `DCPersona`/`OCPersona` in the coached game) to
+    /// break their two-way buckets deterministically, so the stub needs a real
+    /// stable UUID rather than a placeholder.
+    var id = UUID()
+
     /// Phase 4 face library (written by the synced `CoachingEngine`).
     var faceID: String? = nil
 

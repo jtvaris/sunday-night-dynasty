@@ -25,14 +25,12 @@ import Foundation
 // at least one explicit live call (nil-argument games consume no RNG).
 
 // MARK: - Deterministic pick helper
-
-/// Stable pick from `options` driven by the coach's UUID — same coach, same
-/// persona, every game and every screen.
-private func stablePersonaPick<T>(_ options: [T], id: UUID) -> T {
-    let hash = id.uuidString.unicodeScalars.reduce(0) { ($0 &* 31) &+ Int($1.value) }
-    let index = ((hash % options.count) + options.count) % options.count
-    return options[index]
-}
+//
+// `stablePersonaPick` lives on `HCPersona.swift` (Domain/Models/Coach) because
+// the head-coach persona is reachable from the quick sim and therefore from the
+// balance harness, which stages `GameSimulator.swift` verbatim and does not —
+// and should not — carry this file's playbook/call-sheet dependency graph. One
+// hash helper, one definition, used by all three personas.
 
 // MARK: - Defensive Coordinator Persona
 
@@ -85,12 +83,53 @@ enum DCPersona: String, CaseIterable {
 
     /// Over-reaction: chance a rolled counter targets the WRONG tendency —
     /// the aggressive DC sells out against a read that isn't there.
+    ///
+    /// F-38(a): `.conservative` and `.balanced` were **0.0**, and `derive` maps
+    /// `base43 → {balanced, conservative}`, `tampa2 → conservative` and
+    /// `cover3 → {conservative, balanced}` — so three of the seven scheme
+    /// buckets, covering the most common defensive systems in football, produced
+    /// a coordinator with a literally zero error rate. This was the shipped
+    /// game's ONLY modelled AI decision error, and 40 % of coordinators were
+    /// exempt from it.
+    ///
+    /// The floor is 0.05, not the aggressive DC's 0.18, because the two errors
+    /// are different animals: the aggressive DC's is over-commitment, and it is
+    /// supposed to be his defining flaw. A careful coordinator still guesses
+    /// wrong about one snap in twenty, and that is what 0.05 buys.
+    ///
+    /// Trades against: how often the AI defence hands the player a free window.
+    /// Because the counter acts purely through modifiers that already exist
+    /// (`AdaptiveOpponentAI`'s package biases), a wrong counter is automatically
+    /// a bad-but-legal call — it opens no new balance surface, which is why the
+    /// floor could be added without a new fairness cap.
     var misreadChance: Double {
         switch self {
         case .aggressive: return 0.18
         case .exotic:     return 0.08
-        case .conservative, .balanced: return 0.0
+        case .conservative, .balanced: return 0.05
         }
+    }
+
+    /// F-38(b): the misread rate for a coordinator of a given grade.
+    ///
+    /// `basePersonaMisread + max(0, (70 − grade) / 100 × 0.15)` — +0.045 at grade
+    /// 40, +0 at grade 90. The sign is the whole point: **coach quality buys
+    /// FEWER mistakes**, which is what coach quality actually buys. Every other
+    /// coaching channel in the engine already works this way (`CoachingModifiers`
+    /// is centred at 70 and symmetric), and an error model in which a better
+    /// coordinator errs more would be an imperfection model pointing backwards.
+    ///
+    /// One-sided by design: `max(0, …)` means a grade-90 DC gets the persona's
+    /// own rate and no discount below it. A coordinator who never guesses wrong
+    /// is not a better coach, he is a different game.
+    ///
+    /// Trades against: the aggregate error budget. §4.3.6's guardrail is ~2
+    /// decision errors per coach per game; at ~28 defensive snaps where a counter
+    /// is even rolled, a floored-and-scaled balanced DC at grade 40 lands near
+    /// 0.095, i.e. under three — and roughly half of those errors are
+    /// over-aggression that sometimes helps the AI anyway.
+    static func effectiveMisread(base: Double, grade: Int) -> Double {
+        base + max(0, Double(70 - grade) / 100.0 * 0.15)
     }
 
     // MARK: Base-call shading (live AI defense only)
@@ -374,6 +413,33 @@ enum OCPersona: String, CaseIterable {
         case .groundAndPound: return 0.85
         case .airRaid:        return 1.1
         case .westCoast, .balanced: return 1.0
+        }
+    }
+
+    /// F-38(c): chance a rolled offensive counter attacks the WRONG defensive
+    /// tendency. `OCPersona` had **no misread field at all**, so the AI offense
+    /// never once misread the player's defensive tendency anywhere in the game —
+    /// the DC could be wrong, the OC could not.
+    ///
+    /// The rates track how much each identity is guessing in the first place.
+    /// The Air Raid is a system built on pre-snap reads and one-on-one bets, so
+    /// it is wrong most often; ground-and-pound barely reads at all, because it
+    /// intends to run the same play regardless, and a call that ignores the
+    /// defence cannot misread it.
+    ///
+    /// Applied exactly as the DC's is, through `AdaptiveOpponentAI`'s existing
+    /// package modifiers — so a wrong counter is a bad-but-legal call and adds
+    /// no new balance surface.
+    ///
+    /// Trades against: the AI offense's efficiency against a player who has
+    /// shown a tendency. Kept at or below the DC's floor-to-0.15 range so the
+    /// combined per-game error budget stays inside §4.3.6's ~2-per-coach cap.
+    var misreadChance: Double {
+        switch self {
+        case .airRaid:        return 0.15
+        case .westCoast:      return 0.08
+        case .groundAndPound: return 0.05
+        case .balanced:       return 0.05
         }
     }
 

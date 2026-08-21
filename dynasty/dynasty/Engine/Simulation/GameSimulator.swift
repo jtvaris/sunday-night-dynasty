@@ -26,7 +26,10 @@ enum GameSimulator {
     static let overtimeDuration = 600  // 10 minutes
     static let touchbackYardLine = 25
     private static let averagePuntDistance = 40
-    private static let twoMinuteWarning = 120
+    // The two-minute warning now lives on `DriveSimulator.twoMinuteWarning`,
+    // next to the clock loop that finally reads it. It sat here for the life of
+    // the engine, declared and read by nothing, standing in for a stoppage that
+    // was not modelled (F-40).
 
     // Kickoff constants (2024 dynamic-kickoff rule: touchbacks come out to the 30).
     static let kickoffTouchbackYardLine = 30
@@ -34,8 +37,21 @@ enum GameSimulator {
     private static let kickoffReturnTouchdownChance = 0.02
     private static let kickoffReturnStartRange = 20...35
 
-    // Onside kick constants (live-game player choice only; quick sim never onsides).
-    static let onsideKickRecoveryChance = 0.12
+    // Onside kick constants. F-39 made the quick sim onside too, so this rate is
+    // no longer a player-only number.
+    //
+    /// Recovery rate on an onside kick. Was 0.12 — roughly **twice** the real
+    /// league figure, which ran 8.7 % across 2018-2023 and has fallen since the
+    /// alignment rules tightened (4.23 % in 2023, 6.45 % in 2024). Lowered to
+    /// 0.08 BEFORE giving the AI the capability, so the AI is not handed a
+    /// mechanic that pays double what it should.
+    ///
+    /// Trades against: how often a trailing team steals a possession, and
+    /// therefore comeback frequency. At 0.12 a two-score deficit inside two
+    /// minutes was a live proposition; at 0.08 it is the long shot it is in
+    /// reality, and the decision to try one costs field position ~92 % of the
+    /// time.
+    static let onsideKickRecoveryChance = 0.08
     /// Where the kicking team takes over after a recovered onside kick.
     static let onsideKickRecoveryYardLine = 48
     /// Where the receiving team starts after a failed onside attempt (short field).
@@ -48,6 +64,17 @@ enum GameSimulator {
     private static let momentumTurnover: Double = 0.20
     private static let momentumBigPlay: Double = 0.10
     private static let momentumSack: Double = 0.05
+
+    /// Timeouts each club gets per half (F-39). The real number, and the reason
+    /// it is per HALF rather than per game: an unused first-half timeout does not
+    /// carry, so a trailing team's endgame budget is always three regardless of
+    /// what it spent before the break.
+    static let timeoutsPerHalf = 3
+
+    /// Timeouts a club gets in overtime — two, not three. The real rule, and it
+    /// matters here because the period is short enough that a third would let a
+    /// trailing team stop the clock on almost every snap it faced.
+    static let overtimeTimeouts = 2
 
     // Fatigue constants
     static let fatiguePerDriveStarter: Int = 3
@@ -81,8 +108,10 @@ enum GameSimulator {
     ///     Pass `nil` to disable boosts entirely.
     ///   - homeGamePlan: Optional coaching game plan applied to the HOME team's
     ///     offensive play-calling (run/pass mix, 4th-down aggressiveness).
-    ///     `nil` = today's exact AI behavior. Typically only the user's team
-    ///     gets a non-nil plan.
+    ///     Typically only the user's team gets a non-nil plan; F-17 fills `nil`
+    ///     with the club head coach's ``HCPersona/gamePlan``, so an AI club now
+    ///     brings its own 4th-down tolerance instead of the structural `nil`
+    ///     that made `decidePlayCall`'s plan branches unreachable for all 31.
     ///   - awayGamePlan: Same, for the AWAY team.
     ///   - weather: Optional game weather (see ``GameWeather/forGame(id:week:)``).
     ///     The SAME condition is applied to both teams on every play, so the
@@ -150,6 +179,20 @@ enum GameSimulator {
         let awayOffScheme = awayOC?.offensiveScheme
         let awayDefScheme = awayDC?.defensiveScheme
 
+        // F-17: the head coach's persona fills the `gamePlan` slot for any club
+        // the caller did not supply a plan for — i.e. every AI club, which until
+        // now went into every game with `nil` and therefore could not reach
+        // either of `decidePlayCall`'s two 4th-down plan branches. A caller-
+        // supplied plan (the user's saved Game Plan) always wins: the persona is
+        // the AI's substitute for a man at the Week Prep screen, not an override
+        // of one.
+        let homeHC = HCPersona.derive(
+            headCoach: homeCoaches.first { $0.role == .headCoach }, teamID: homeTeam.id)
+        let awayHC = HCPersona.derive(
+            headCoach: awayCoaches.first { $0.role == .headCoach }, teamID: awayTeam.id)
+        let homePlan = homeGamePlan ?? homeHC.gamePlan
+        let awayPlan = awayGamePlan ?? awayHC.gamePlan
+
         // R40: coaching staffs turn into small, bounded efficiency nudges via
         // the shared `CoachingModifiers` helper — the identical path the live
         // engine uses, so quick sim and the 3D game never diverge. A team with
@@ -201,6 +244,12 @@ enum GameSimulator {
         var homeOffenseRunKey = AdaptiveOpponentAI.RunKeyState()
         var awayOffenseRunKey = AdaptiveOpponentAI.RunKeyState()
 
+        // F-39: three timeouts a side, reset at the half exactly as the rules
+        // say. Owned here because a timeout survives a change of possession and
+        // `DriveSimulator` only ever sees one drive at a time.
+        var homeTimeouts = timeoutsPerHalf
+        var awayTimeouts = timeoutsPerHalf
+
         // Round 4 (mental states): per-game hot/cold FORM, the SAME `HeatState`
         // component the live engine runs — here fed coarsely, once per drive,
         // from the returned `PlayResult` stream (§1b). Threaded across the whole
@@ -240,6 +289,10 @@ enum GameSimulator {
             // can't take `&` of a ternary, so copy the value struct out, thread
             // it, and write it back — the read persists across drives.
             var driveRunKey = homeHasPossession ? homeOffenseRunKey : awayOffenseRunKey
+            // F-39: the DEFENDING club's timeouts are the ones this drive can
+            // spend. Same copy-thread-write-back shape as the run-key state above,
+            // and for the same reason — Swift cannot take `&` of a ternary.
+            var driveDefenseTimeouts = homeHasPossession ? awayTimeouts : homeTimeouts
             let driveResult = DriveSimulator.simulateDrive(
                 offensePlayers: offensePlayers,
                 defensePlayers: defensePlayers,
@@ -251,17 +304,23 @@ enum GameSimulator {
                 teamID: offenseTeamID,
                 offensiveScheme: homeHasPossession ? homeOffScheme : awayOffScheme,
                 defensiveScheme: homeHasPossession ? awayDefScheme : homeDefScheme,
-                gamePlan: homeHasPossession ? homeGamePlan : awayGamePlan,
+                gamePlan: homeHasPossession ? homePlan : awayPlan,
                 weather: weather,
                 offenseIsAway: !homeHasPossession,
                 adjustments: homeHasPossession ? homeOffenseAdj : awayOffenseAdj,
                 // Round 4: offense-relative margin at drive start (running score,
                 // before this drive's points) for the leverage index.
                 scoreDifferential: homeHasPossession ? homeScore - awayScore : awayScore - homeScore,
-                runKeyState: &driveRunKey
+                runKeyState: &driveRunKey,
+                // F-17/F-39: the head coach with the ball is the one who has to
+                // remember to take the knee.
+                clockErrorRate: (homeHasPossession ? homeHC : awayHC).clockErrorRate,
+                defenseTimeouts: &driveDefenseTimeouts
             )
             if homeHasPossession { homeOffenseRunKey = driveRunKey }
             else { awayOffenseRunKey = driveRunKey }
+            if homeHasPossession { awayTimeouts = driveDefenseTimeouts }
+            else { homeTimeouts = driveDefenseTimeouts }
 
             var drive = driveResult.drive
             quarter = driveResult.endQuarter
@@ -397,6 +456,9 @@ enum GameSimulator {
             if quarter == 3 && allDrives.last?.plays.last.map({ $0.quarter <= 2 }) == true {
                 applyHalftimeRecovery(players: &homePlayers)
                 applyHalftimeRecovery(players: &awayPlayers)
+                // F-39: timeouts do not carry across the half.
+                homeTimeouts = timeoutsPerHalf
+                awayTimeouts = timeoutsPerHalf
                 // Home team receives second-half kickoff
                 homeHasPossession = true
                 startingYardLine = kickoffStartYardLine()
@@ -406,6 +468,7 @@ enum GameSimulator {
             // -----------------------------------------------------------------
             // Next possession setup
             // -----------------------------------------------------------------
+            let kickingTeamIsHome = homeHasPossession
             let nextPossessionInfo = determineNextPossession(
                 afterDrive: drive,
                 homeHasPossession: homeHasPossession
@@ -413,12 +476,43 @@ enum GameSimulator {
             homeHasPossession = nextPossessionInfo.homeHasPossession
             startingYardLine = nextPossessionInfo.startingYardLine
 
+            // F-39 ONSIDE KICK. The club that just scored and is STILL behind
+            // late tries to keep the ball. Handled here rather than inside
+            // `determineNextPossession` because that helper is shared with the
+            // live engine and knows nothing about the score or the clock, and
+            // teaching it both would couple two engines through a third concern.
+            //
+            // The failure to try is the persona's, not a coin flip: a `punter`
+            // head coach kicks it deep and takes his chances on a stop about a
+            // third of the time, which is a real and recognisable way to lose a
+            // football game.
+            var onsideAttempted = false
+            if nextPossessionInfo.kickoff != nil, timeRemaining > 0 {
+                let kickingHC = kickingTeamIsHome ? homeHC : awayHC
+                let kickingMargin = kickingTeamIsHome ? homeScore - awayScore : awayScore - homeScore
+                if shouldAttemptOnside(margin: kickingMargin, quarter: quarter,
+                                       timeRemaining: timeRemaining),
+                   Double.random(in: 0..<1) >= kickingHC.clockErrorRate {
+                    onsideAttempted = true
+                    if Double.random(in: 0..<1) < onsideKickRecoveryChance {
+                        homeHasPossession = kickingTeamIsHome
+                        startingYardLine = onsideKickRecoveryYardLine
+                    } else {
+                        homeHasPossession = !kickingTeamIsHome
+                        startingYardLine = onsideKickFailStartYardLine
+                    }
+                }
+            }
+
             // -----------------------------------------------------------------
             // Kickoff return touchdown (~2% of post-score kicks): the receiving
             // team houses it. Only while the half is still alive — a kick can't
             // happen after the clock has expired.
             // -----------------------------------------------------------------
-            if let kick = nextPossessionInfo.kickoff, kick.isReturnTouchdown, timeRemaining > 0 {
+            // An onside kick that has already been resolved cannot also be housed
+            // by the deep-return draw, hence the `!onsideAttempted` guard.
+            if let kick = nextPossessionInfo.kickoff, kick.isReturnTouchdown,
+               timeRemaining > 0, !onsideAttempted {
                 driveNumber += 1
                 let returnTeamIsHome = homeHasPossession
                 let returnPlay = kickoffReturnTouchdownPlay(
@@ -508,11 +602,15 @@ enum GameSimulator {
                 homeDefScheme: homeDefScheme,
                 awayOffScheme: awayOffScheme,
                 awayDefScheme: awayDefScheme,
-                homeGamePlan: homeGamePlan,
-                awayGamePlan: awayGamePlan,
+                homeGamePlan: homePlan,
+                awayGamePlan: awayPlan,
                 weather: weather,
                 homeOffenseAdj: homeOffenseAdj,
-                awayOffenseAdj: awayOffenseAdj
+                awayOffenseAdj: awayOffenseAdj,
+                homeScoreAtRegulation: homeScore,
+                awayScoreAtRegulation: awayScore,
+                homeClockErrorRate: homeHC.clockErrorRate,
+                awayClockErrorRate: awayHC.clockErrorRate
             )
             homeScore += otResult.homeOTPoints
             awayScore += otResult.awayOTPoints
@@ -1119,7 +1217,21 @@ enum GameSimulator {
         awayGamePlan: GamePlan? = nil,
         weather: GameWeather? = nil,
         homeOffenseAdj: PlaySimulator.Adjustments? = nil,
-        awayOffenseAdj: PlaySimulator.Adjustments? = nil
+        awayOffenseAdj: PlaySimulator.Adjustments? = nil,
+        // F-43: the score at the end of regulation. Overtime called
+        // `simulateDrive` with no `scoreDifferential` at all, so every
+        // game-management branch in `decidePlayCall` — the mgmt pass bias, the
+        // two-minute gate, the 4th-down late-lead return — and `leverageIndex`'s
+        // trailing term were ALL inert for the whole period. A team that had just
+        // conceded a field goal on the opening possession played the next drive
+        // as though the game were still tied, which is the one situation in
+        // football where the margin decides literally every call.
+        homeScoreAtRegulation: Int = 0,
+        awayScoreAtRegulation: Int = 0,
+        // F-17/F-39: the two head coaches' clock-error rates, so the victory
+        // formation is available in overtime too.
+        homeClockErrorRate: Double = 0,
+        awayClockErrorRate: Double = 0
     ) -> OvertimeResult {
         var homeOTPoints = 0
         var awayOTPoints = 0
@@ -1132,6 +1244,10 @@ enum GameSimulator {
         // Layer A: run-key state per offense for the overtime period.
         var homeOffenseRunKey = AdaptiveOpponentAI.RunKeyState()
         var awayOffenseRunKey = AdaptiveOpponentAI.RunKeyState()
+        // F-39: overtime gets its own two timeouts a side (the real rule), not a
+        // third full set.
+        var homeOTTimeouts = overtimeTimeouts
+        var awayOTTimeouts = overtimeTimeouts
 
         while otTimeRemaining > 0 {
             driveNumber += 1
@@ -1141,6 +1257,8 @@ enum GameSimulator {
 
             let otOffenseTeamID = homeHasPossession ? homeTeam.id : awayTeam.id
             var driveRunKey = homeHasPossession ? homeOffenseRunKey : awayOffenseRunKey
+            // F-39: a fresh set of timeouts for the overtime period, per the rules.
+            var driveDefenseTimeouts = homeHasPossession ? awayOTTimeouts : homeOTTimeouts
             let driveResult = DriveSimulator.simulateDrive(
                 offensePlayers: offensePlayers,
                 defensePlayers: defensePlayers,
@@ -1156,10 +1274,19 @@ enum GameSimulator {
                 weather: weather,
                 offenseIsAway: !homeHasPossession,
                 adjustments: homeHasPossession ? homeOffenseAdj : awayOffenseAdj,
-                runKeyState: &driveRunKey
+                // F-43: the LIVE margin, recomputed each drive from the
+                // regulation score plus whatever overtime has already produced.
+                scoreDifferential: homeHasPossession
+                    ? (homeScoreAtRegulation + homeOTPoints) - (awayScoreAtRegulation + awayOTPoints)
+                    : (awayScoreAtRegulation + awayOTPoints) - (homeScoreAtRegulation + homeOTPoints),
+                runKeyState: &driveRunKey,
+                clockErrorRate: homeHasPossession ? homeClockErrorRate : awayClockErrorRate,
+                defenseTimeouts: &driveDefenseTimeouts
             )
             if homeHasPossession { homeOffenseRunKey = driveRunKey }
             else { awayOffenseRunKey = driveRunKey }
+            if homeHasPossession { awayOTTimeouts = driveDefenseTimeouts }
+            else { homeOTTimeouts = driveDefenseTimeouts }
 
             let drive = driveResult.drive
             otTimeRemaining = driveResult.endTime
@@ -1303,6 +1430,22 @@ enum GameSimulator {
         rollKickoff(allowReturnTouchdown: false).startingYardLine
     }
 
+    /// F-39: whether the club that just scored should try to keep the ball.
+    ///
+    /// The quick sim never onsided — the constant's own comment said so — which
+    /// meant a trailing AI down 5 with 0:40 left ALWAYS kicked deep and handed
+    /// the game over. This is the real decision rule and nothing more: a
+    /// one-possession deficit inside two minutes, or any deficit at all once
+    /// there is no time to get a stop and a drive.
+    ///
+    /// - Parameter margin: the KICKING team's score margin, after its own score.
+    ///   Negative means it is still behind, which is the only case that matters.
+    static func shouldAttemptOnside(margin: Int, quarter: Int, timeRemaining: Int) -> Bool {
+        guard quarter >= 4, margin < 0 else { return false }
+        if timeRemaining <= 30 { return true }
+        return timeRemaining <= 120 && margin >= -8
+    }
+
     /// Synthetic play describing a kickoff returned for a touchdown. Return
     /// yards are intentionally NOT counted as offensive yards (yardsGained 0)
     /// so team total-yardage stays a scrimmage stat. The TD is worth 6; the
@@ -1426,14 +1569,35 @@ enum GameSimulator {
             )
 
         case .punt:
-            // Opponent receives the punt ~40 yards downfield from where the punter kicked
+            // F-41. Two defects met here, and the second is the worse one.
+            //
+            // (1) `PlaySimulator.simulatePunt` resolves a real punt with a real
+            // net distance, and this site threw it away and substituted a flat
+            // `averagePuntDistance = 40` — so every punt in every quick-sim game
+            // was worth exactly 40 yards of field position no matter who kicked
+            // it or what the play said happened. Punter rating could not matter
+            // because the number it produced was discarded one function later.
+            //
+            // (2) The old floor was `max(opponentYardLine, touchbackYardLine)`,
+            // which handed the receiving team the 25 as a MINIMUM. A punt could
+            // therefore never pin anyone inside their own 25 — the entire point
+            // of a good punt, and the reason field position is a phase of the
+            // game. The touchback floor now applies only when the play actually
+            // was a touchback, which is a state the punt already reports.
             let lastPlay = drive.plays.last
             let puntFrom = lastPlay?.yardLine ?? 30
-            // Punt lands ~40 yards downfield; clamp to valid range
-            let opponentYardLine = max(100 - (puntFrom + averagePuntDistance), 20)
+            if lastPlay?.outcome == .touchback {
+                return NextPossession(
+                    homeHasPossession: switchPossession,
+                    startingYardLine: touchbackYardLine
+                )
+            }
+            let net = (lastPlay?.playType == .punt) ? (lastPlay?.yardsGained ?? averagePuntDistance)
+                                                    : averagePuntDistance
+            let opponentYardLine = 100 - (puntFrom + net)
             return NextPossession(
                 homeHasPossession: switchPossession,
-                startingYardLine: max(opponentYardLine, touchbackYardLine)
+                startingYardLine: max(1, min(99, opponentYardLine))
             )
 
         case .turnover, .turnoverOnDowns:

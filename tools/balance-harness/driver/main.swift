@@ -1470,10 +1470,16 @@ func scenarioAttribution() {
     let tid = UUID()
     for i in 0..<drives {
         var rk = AdaptiveOpponentAI.RunKeyState()
+        // F-39 threaded a defensive timeout budget through `simulateDrive`.
+        // `inout` cannot carry a default, so the scenario supplies its own. This
+        // attribution run is Q1 at 15:00 on every drive, so the endgame window
+        // never opens and no timeout is ever spent — the budget is inert here and
+        // the measurement stays PURE play-selection, which is its whole point.
+        var timeouts = GameSimulator.timeoutsPerHalf
         let r = DriveSimulator.simulateDrive(
             offensePlayers: off, defensePlayers: def, startingYardLine: 25,
             driveNumber: i + 1, quarter: 1, timeRemaining: 900, momentum: 0,
-            teamID: tid, runKeyState: &rk)
+            teamID: tid, runKeyState: &rk, defenseTimeouts: &timeouts)
         for p in r.drive.plays {
             let bi = bandIdx(p.distance)
             let dn = min(max(p.down, 1), 4)
