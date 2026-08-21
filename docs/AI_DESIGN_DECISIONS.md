@@ -1,5 +1,11 @@
 # AI Design Decisions — the six choices behind 38 queue entries
 
+> **DECIDED 2026-08-21 by the user.** Brief: *move toward realism, stay playable and interesting,
+> the AI makes mistakes, and losing costs you something.* The rulings are recorded per decision
+> below under **DECISION**, and the implementation order is at the bottom. Where the ruling departs
+> from the queue's own proposal, the reason is realism and it is stated.
+
+
 `docs/AI_FIX_QUEUE.md` flags 38 entries as **Needs user decision**. They are not 38 independent
 questions. They are six, and the rest follow: settle D1–D6 and 34 of the 38 stop being open.
 
@@ -22,6 +28,22 @@ that the asymmetry is deliberate and bounded.
 ---
 
 ## D1 — Does the user keep his structural advantages?
+
+**DECISION — remove the impossible numbers, keep the real phenomenon, and reject the artificial cap.**
+* **Opponent prep**: thread it through the simulator as real per-play modifiers AND give it to all
+  32 clubs, with the magnitude cut to roughly a fifth. Reason: the phenomenon is real, but +2.1 wins
+  a season is more than an entire head coach is worth in the NFL (best-to-worst spread ≈1.5-2.5
+  wins), and modelling a real thing accurately for one team out of 32 makes the unrealism sharper,
+  not smaller.
+* **Free-agency multiplier**: the sign is wrong, not just the size. Real free agents demand MORE to
+  join a bad club — the loser tax — while the game lets a 2-15 user outbid a 14-3 AI at 79 cents.
+  Invert it: a losing club pays a premium. The hometown/contender discount stays, at the few percent
+  it is worth in reality rather than 21 %.
+* **Trade cap**: NOT adopted, against the queue's own proposal (F-08). A real GM is not limited by a
+  rule; he is limited by counterparties who stop taking his calls. The mechanism already exists
+  (`TradeTalkRegistry`) and only started working when F-06 made it survive a relaunch. Make refusal
+  bite and price it visibly instead of imposing 2/week.
+
 
 **At stake.** Three edges are wired into the engine rather than earned at the desk:
 
@@ -64,6 +86,15 @@ do sign for less to go somewhere they want. Keep it, cap it, and say so on scree
 
 ## D2 — Is the salary cap a constraint or an inconvenience?
 
+**DECISION — Option A, all four sub-parts, landed alone and measured alone.**
+The defining constraint of the job, currently disengaged. Dead money is the most characteristic
+feature of real cap work (Denver carried ≈$85M of it on one contract in 2024); a league that erases
+it annually has removed what makes a contract decision a decision. The 89 % cash floor is a real CBA
+rule and is the specific mechanism that forces bad clubs to spend, which is where a veteran market
+comes from — there is no other way to produce one. The release lever ships with it so AI clubs can
+act rather than spiral.
+
+
 **At stake.** No AI club can ever be in cap trouble, by four independent mechanisms. The decisive
 one is the annual true-up at `FreeAgencyEngine.swift:718-720`, which rebuilds `currentCapUsage` from
 rostered salary and therefore **erases every dollar of dead money each league year**. On top of it: a
@@ -105,6 +136,17 @@ before and after — not bundled with anything else.
 ---
 
 ## D3 — What kind of wrong should the AI be?
+
+**DECISION — Option A and Option C together; uniform noise explicitly rejected.**
+Real organisations err in correlated, persistent ways because a scouting department has a
+philosophy. Uniform noise is realistic per decision and false in cause: it produces 32 clubs that
+are all slightly worse than the user and indistinguishable from each other, which is both unrealistic
+and unlearnable, and it grows the user's edge because he is the only actor with a consistent plan.
+House tastes bounded at 2-4 OVR points — readable, never certain. The user-side pairing is
+mandatory: he misjudges veterans he has not seen (his own division sharp, the rest fogged, narrowing
+with a scouting spend). The development desk's `truePotential` read is closed as pure information
+unrealism.
+
 
 **At stake.** Your explicit design goal. Current state:
 
@@ -151,6 +193,17 @@ that misjudges in March and a coordinator who guesses wrong on 3rd-and-6. Fog th
 
 ## D4 — Should the league table unfreeze?
 
+**DECISION — A first, then C. B is not adopted as a starting move.**
+Real parity comes from mechanisms — the cap, injuries, free agency, draft order, coaching churn —
+and the AI club currently participates in none of them at 1.4 roster moves a season. B (more bust
+variance, looser retirement) would hit the 0.32 target statistically while faking it causally, and
+it would cost the user something real: a table that moves without anyone acting makes his own work
+invisible inside the noise. Do A and D2 first, re-read `diag balance`, and only then decide whether
+B is still needed.
+**C is explicitly in scope** on the user's brief that losing must cost something: a record/morale
+term in holdout detection and `.losingCulture` reaching free-agent negotiation.
+
+
 **At stake.** This one is new — it became measurable only after #213, and the first reading is bad:
 
 | | measured | real NFL |
@@ -191,6 +244,13 @@ have already moved the number. Re-read `diag balance` after each.
 
 ## D5 — How competent should the AI be on gameday?
 
+**DECISION — A, then B, then C, with F-25's retune last.**
+The goal is not a better AI but a DIFFERENT one. Real head coaches vary about threefold in
+fourth-down aggression and most are measurably too conservative, so an AI that always makes the
+EV-optimal call is less realistic than one that punts too much. The persona model is therefore
+realism, not a difficulty setting.
+
+
 **At stake.** `gamePlan` is hard-coded `nil` for all 31 clubs (`WeekAdvancer.swift:1372-1373`,
 `:7296-7297` — the comment admits it), so `fourthDownAggressiveness` and `runPassRatio` are
 structurally user-only. Timeouts, kneel-downs and onside kicks are user-only too. Coach quality
@@ -226,6 +286,11 @@ for the user. Do not start it without a design.
 
 ## D6 — What should the user be able to see?
 
+**DECISION — adopted as one small wave, scheduled whenever there is a gap.**
+Pure information realism: a real GM reads the league transaction wire, and this one is written to
+the database with no screen reading it.
+
+
 Cheap, low-risk, and all of it turns existing data into something readable.
 
 - **F-51 Transactions screen** over `TradeRecord` — the ledger is written and no UI reads it. The
@@ -242,16 +307,21 @@ whole group is a day's work that makes four other decisions legible to the playe
 
 ---
 
-## Ordering, if all six are approved
+## Ordering — APPROVED 2026-08-21
 
 1. **D2** alone, measured alone — it moves every other number.
 2. **D4-A** (roster churn), then re-read `diag balance`.
-3. **D1** (remove the prep multiplier, cap user trades).
-4. **D3-A + D3-C** (taste and misreads) — the imperfection wave.
+3. **D3-A + D3-C** (house taste, veteran fog with its user-side pairing, gameday misreads).
+4. **D1** (prep threaded and shared at a fifth of its size; the FA multiplier inverted for a losing
+   club; refusal priced instead of a trade cap).
 5. **D5-A/B/C** in order, then F-25's retune.
-6. **D6** whenever there is a gap.
+6. **D4-C** (losing costs players) — placed here rather than earlier because F-14 and F-59 are the
+   same gap from the pricing and the roster side, and D1 settles the pricing half.
+7. **D6** whenever there is a gap.
 
-D4-B and D4-C fold into step 5's measurement pass rather than getting their own.
+**D4-B is deferred, not cancelled.** Re-read `diag balance` after steps 1-2; if year-over-year
+correlation is still far above 0.32 with the mechanisms in place, revisit it then — with causes
+exhausted first.
 
 ## What NOT to touch
 
