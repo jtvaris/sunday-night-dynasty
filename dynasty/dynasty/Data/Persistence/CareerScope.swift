@@ -552,6 +552,14 @@ enum CareerScopedDefaults {
         // pity floor and the deadline catch-up all read them, and as process
         // statics they were wiped on every cold launch.
         "tradeAIOffersThisSeason",
+        // D7-A. The dossier a club has built on other organisations, the league's
+        // read on how the user trades, and the identity he declared at career
+        // creation. All three are save state in the strongest sense — they are a
+        // record of what this save DID — and a deleted career must not hand its
+        // reputation to the next one.
+        "scoutingDossierContacts",
+        "tradeReputation",
+        "franchiseIdentity",
         "tradeAIOffersThisOffseason",
         "tradeLeagueTradesThisSeason",
         "tradeLeagueTradesThisOffseason",
