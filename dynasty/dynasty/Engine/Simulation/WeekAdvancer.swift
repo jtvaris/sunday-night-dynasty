@@ -982,8 +982,13 @@ enum WeekAdvancer {
 
         // Ensure no accidental tie outside the 1 % path.
         if homeScore == awayScore {
-            // Break tie by giving home team one extra point (safety).
-            return (homeScore + 1, awayScore)
+            // Break it on a coin flip, with a field goal rather than a point.
+            // Both halves of that used to be wrong: every accidental tie went to
+            // the HOME team, and because both scores are sums of 7s and 3s those
+            // collisions land in roughly 4 % of games — enough to carry the home
+            // win rate from 55.2 % to 58.8 % against a real 53.2 %. A one-point
+            // margin is also not a football score; an overtime field goal is.
+            return Bool.random() ? (homeScore + 3, awayScore) : (homeScore, awayScore + 3)
         }
 
         return (homeScore, awayScore)
@@ -1317,9 +1322,21 @@ enum WeekAdvancer {
             modelContext: modelContext
         )
 
-        // Simulate every unplayed game.
-        // Player's team game uses full play-by-play simulation;
-        // all other games use the fast random score generator.
+        // Simulate every unplayed game through the SAME engine (#213).
+        //
+        // Until this change only the user's game reached `GameSimulator`; the
+        // other fifteen went to `simulateGameScore()`, whose `randomTeamScore`
+        // takes one `Int` and has never heard of a roster, a coach, an injury or
+        // a scheme. The consequence was not a rounding error: the correlation
+        // between roster quality and wins was exactly ZERO for all 31 AI clubs,
+        // the spread of team season wins was 2.06 against a real ~3.0, and every
+        // front-office system in the game — the draft, free agency, trades,
+        // development — was unfalsifiable, because a club that drafted brilliantly
+        // and a club that drafted disastrously produced the same standings.
+        //
+        // The engine costs ~1.8 ms per game (measured, -O), so the fifteen extra
+        // games are ~27 ms of a week advance. There was never a performance
+        // reason for the dice; the fast path simply outlived its excuse.
         var playerGameResult: GameSimulator.GameResult?
 
         for game in unplayedGames {
@@ -1379,7 +1396,44 @@ enum WeekAdvancer {
                 game.homeScore = result.homeScore
                 game.awayScore = result.awayScore
                 playerGameResult = result
+            } else if let homeTeam = teamsByID[game.homeTeamID],
+                      let awayTeam = teamsByID[game.awayTeamID] {
+                // #213 — an AI-vs-AI game, simulated exactly like the user's,
+                // minus the two things that are the user's alone: his saved game
+                // plan and his opponent-prep boost. Both stay `nil`/0 here so
+                // this change moves ONLY the source of the score. (Giving AI
+                // clubs a game plan of their own is a separate design decision,
+                // deliberately not smuggled in here.)
+                //
+                // The roster overrides are a lookup, not a policy: `playersByTeam`
+                // is `fetchAllPlayers` (career-scoped) grouped by `teamID`, which
+                // is the same set `Team.currentRoster()` fetches with its own
+                // `teamID` predicate. Passing it avoids 30 extra SwiftData fetches
+                // a week — the O(n) rescan class this file's R39 pass removed —
+                // without changing who dresses.
+                let result = GameSimulator.simulate(
+                    homeTeam: homeTeam,
+                    awayTeam: awayTeam,
+                    homeCoaches: coachesByTeam[homeTeam.id] ?? [],
+                    awayCoaches: coachesByTeam[awayTeam.id] ?? [],
+                    weather: GameWeather.forGame(id: game.id, week: game.week, homeTeamAbbreviation: homeTeam.abbreviation),
+                    homeRosterOverride: playersByTeam[homeTeam.id],
+                    awayRosterOverride: playersByTeam[awayTeam.id]
+                )
+                game.homeScore = result.homeScore
+                game.awayScore = result.awayScore
+                // NOTE: `result.playerStats` is deliberately dropped for now.
+                // Season lines for non-user players are still drawn by
+                // `SeasonStatSynthesizer` at archival, and that path skips any
+                // player who already has a non-empty line — so feeding real box
+                // scores in here would silently retire the synthesizer for the
+                // whole league in the same commit that changes the scores. That
+                // is a bigger, separately measurable change (league leaders,
+                // records, awards all move), and it belongs in its own wave.
             } else {
+                // Only reachable if a scheduled game names a team the career
+                // scope cannot resolve. Keep the old generator rather than
+                // leaving the game unplayed.
                 let score = simulateGameScore()
                 game.homeScore = score.home
                 game.awayScore = score.away
@@ -7268,7 +7322,7 @@ enum WeekAdvancer {
     ) -> GameSimulator.GameResult? {
         guard !games.isEmpty else { return nil }
         var userResult: GameSimulator.GameResult?
-        // Coaches are needed for the user's game alone — fetched at most once.
+        // Coaches are needed by every game since #213 — fetched at most once.
         var coachesCache: [Coach]?
 
         for game in games {
@@ -7319,6 +7373,39 @@ enum WeekAdvancer {
                 }
                 // Fall through: a bracket that cannot name a winner is worse than
                 // a round without a box score.
+            }
+
+            // #213 — an AI-vs-AI playoff game runs the same engine as the user's.
+            // This is where a rebuild's actual reward is decided, and it used to be
+            // decided by two dice that had never seen either roster: the club that
+            // spent four years assembling a champion advanced as often as the club
+            // that backed in at 9-8.
+            if let homeTeam = teamsByID[game.homeTeamID],
+               let awayTeam = teamsByID[game.awayTeamID] {
+                let coaches = coachesCache ?? fetchAllCoaches(modelContext: modelContext)
+                coachesCache = coaches
+                var decided: GameSimulator.GameResult?
+                for _ in 0..<playoffTieRetryLimit {
+                    let attempt = GameSimulator.simulate(
+                        homeTeam: homeTeam,
+                        awayTeam: awayTeam,
+                        homeCoaches: coaches.filter { $0.teamID == homeTeam.id },
+                        awayCoaches: coaches.filter { $0.teamID == awayTeam.id },
+                        weather: GameWeather.forGame(id: game.id, week: game.week,
+                                                     homeTeamAbbreviation: homeTeam.abbreviation)
+                    )
+                    if attempt.homeScore != attempt.awayScore {
+                        decided = attempt
+                        break
+                    }
+                }
+                if let decided {
+                    game.homeScore = decided.homeScore
+                    game.awayScore = decided.awayScore
+                    continue
+                }
+                // Fall through on the same terms as the user's game: a bracket
+                // that cannot name a winner is worse than one without a box score.
             }
 
             var score = simulateGameScore()
