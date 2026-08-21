@@ -2456,7 +2456,10 @@ struct FAWeeklyView: View {
 
 // MARK: - FreeAgent Identifiable conformance
 
-extension FreeAgencyEngine.FreeAgent: @retroactive Identifiable {
+// No `@retroactive`: `FreeAgent` is declared in this module, so the attribute
+// does not apply — a warning in Swift 5 mode and an error in Swift 6 mode. The
+// conformance itself stays here because it exists for this screen's `ForEach`.
+extension FreeAgencyEngine.FreeAgent: Identifiable {
     var id: UUID { player.id }
 }
 

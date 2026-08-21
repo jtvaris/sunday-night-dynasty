@@ -318,7 +318,7 @@ struct PlayChoreographer {
         var lbSpots: [(x: Float, depth: Float)] = [(-5, 5), (0, 5), (5, 5)]
         // Secondary baseline (cover 3 shell).
         var cbDepth: Float = 7
-        var cbSplit: Float = 15
+        let cbSplit: Float = 15
         var sSpots: [(x: Float, depth: Float)] = [(-6, 12), (6, 12)]
 
         switch package?.front {

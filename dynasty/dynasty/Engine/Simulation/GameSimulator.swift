@@ -482,9 +482,9 @@ enum GameSimulator {
         // -----------------------------------------------------------------
         // 6. Overtime (if tied)
         // -----------------------------------------------------------------
-        var overtimePlayed = false
+        // Overtime needs no flag of its own: the fifth `quarterScores` entry
+        // appended here IS the record of it (`BoxScore.quarterScores`).
         if homeScore == awayScore {
-            overtimePlayed = true
             homeQuarterScores.append(0)
             awayQuarterScores.append(0)
 
@@ -1426,7 +1426,6 @@ enum GameSimulator {
             let lastPlay = drive.plays.last
             let puntFrom = lastPlay?.yardLine ?? 30
             // Punt lands ~40 yards downfield; clamp to valid range
-            let landingSpot = min(100 - puntFrom + averagePuntDistance, 80)
             let opponentYardLine = max(100 - (puntFrom + averagePuntDistance), 20)
             return NextPossession(
                 homeHasPossession: switchPossession,

@@ -324,7 +324,7 @@ struct CoachingTreeView: View {
             let c = Career(playerName: "Warren Ellsworth", role: .gmAndHeadCoach, capMode: .simple)
 
             // Seed some tree entries for the preview
-            var entry1 = CoachRelationshipEngine.CoachingTreeEntry(
+            let entry1 = CoachRelationshipEngine.CoachingTreeEntry(
                 coachName: "Gordon Reinhardt",
                 role: .offensiveCoordinator,
                 yearHired: 2020,

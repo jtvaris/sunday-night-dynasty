@@ -145,7 +145,13 @@ enum ReactionsEngine {
             switch pick.grade {
             case .solid:
                 safeCount += 1
-            case .stealAPlus, .hofTrack, .smartA where pick.isGem:
+            // Split deliberately: a `where` on a multi-pattern case binds only
+            // to the LAST pattern, which is what this used to read as. The two
+            // top grades are big swings on their own; a smart A counts only
+            // when it was a gem.
+            case .stealAPlus, .hofTrack:
+                bigSwingCount += 1
+            case .smartA where pick.isGem:
                 bigSwingCount += 1
             case .reach, .bigReach:
                 reachCount += 1

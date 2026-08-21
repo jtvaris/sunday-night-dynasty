@@ -92,7 +92,10 @@ enum VersatilityEngine {
         case (.LT, .C), (.RT, .C):
             return strength > 70 && awareness > 70 ? .competent : .unconvincing
 
-        case (.LT, .RG), (.LT, .LG) where strength < 70:
+        // `(.LT, .LG)` is answered by the OL-interop case above, so the
+        // strength gate that used to trail this line was dead: LT-to-RG is the
+        // only pair that reaches here, and it is unconvincing on its own.
+        case (.LT, .RG):
             return .unconvincing
 
         // --- WR <-> TE ---

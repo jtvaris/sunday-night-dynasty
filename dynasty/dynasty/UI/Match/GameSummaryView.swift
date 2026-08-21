@@ -197,8 +197,6 @@ struct GameSummaryView: View {
             boxScore.away.quarterScores.count,
             boxScore.home.quarterScores.count
         )
-        let hasOT = quarters > 4
-
         return HStack(spacing: 0) {
             // Header column
             VStack(alignment: .trailing, spacing: 6) {
@@ -497,9 +495,10 @@ struct GameSummaryView: View {
         .cardBackground()
     }
 
+    /// Third down as the ratio a box score prints — "5/13", never a percentage.
+    /// The rate lives in `thirdDownRaw`, which is what the comparison bar reads.
     private func thirdDownPct(_ team: TeamBoxScore) -> String {
-        guard team.thirdDownAttempts > 0 else { return "0%" }
-        let pct = Int(round(Double(team.thirdDownConversions) / Double(team.thirdDownAttempts) * 100))
+        guard team.thirdDownAttempts > 0 else { return "0/0" }
         return "\(team.thirdDownConversions)/\(team.thirdDownAttempts)"
     }
 

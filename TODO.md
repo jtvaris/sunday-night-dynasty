@@ -4090,13 +4090,15 @@ merkitty alkuun `[TEHTY …]`.
 9. **UUSI #211 — [ANALYYSI TEHTY 2026-08-14]** Loukkaantumis- ja parantumisjärjestelmän realismianalyysi: **docs/INJURY_SYSTEM_ANALYSIS.md** (1029 r, benchmarkit sitattu). Kovin löydös: vammat eivät vaikuta yhdenkään pelin lopputulokseen (SimPlayerilla ei injury-kenttää; vain !isHoldingOut suodattaa) + frekvenssi ~10× ala (2.5 vs 27-30 vammaa/joukkue-kausi) + 16 vk katto = ei ACL/akillesta + durability ±14% eikä "injury-prone" ole edes tuettu mekanismi (tyyppikohtainen muisti on: RR 2.7→4.8) + positiomalli 0/10 (oikea hajonta 6.2×) + MedicalEngine EI ole harness-syncissä (= #97-luokan kalibrointibugi).
 10. **UUSI #212: Injury-overhaul** analyysin §3.3-ohjelman mukaan (R1 availability-kytkentä kenttäsimuun, R2 positio+rooli+muistipainotettu rate 0.029/pelaaja-vko + durability pow(0.6,(dur−72)/22), R3 kaksivaiheinen vakavuus 64% ≤2 peliä + 5-7% aito 6-12 kk häntä, R4 IR/designaatiot + Questionable-fog (73% pelaa), R5 camp-vammat + workload-splitti strains-vs-ruptures, R6 harness-metriikat + 4 bugia [Injuries:Off, playoff-quick-sim, freakInjury-proosa, camp], R7 fog). **W0 JAETTU #210:n kanssa: PlayerAvailability ensin.** Balanssiriski iso → oma aalto porttien kanssa; EI schedule-modifiereja (tutkimus: null).
 
-**#199-jäännökset joita tämä aalto EI ottanut (omistus toisella agentilla / eri tiedosto):**
-- `UI/Draft/DraftDayCoordinator.swift:183` `let maxUDFASignings = 5` → `UDFAMarketEngine.draftNightUserWindow`
-  (= `clubSigningQuota`, 6). Yhden rivin adoptio; `UI/Draft/**` oli tämän aallon aikana toisen
-  agentin omistuksessa. Auditti ja perustelu ovat engine-puolen doc-kommentissa.
-- Vanhentuneet "80-man camp" / "80 → 75 → 65 → 53" -prosanumerot: `UI/Camp/PreseasonRecapSheet.swift:177`,
-  `UI/Camp/PreseasonFlowBand.swift:17`, `UI/Camp/RosterCutView.swift:6,536,576`. Kommenttitekstiä,
-  ei logiikkaa — luku on nyt 87.
+**#199-jäännökset joita tämä aalto EI ottanut — [KAIKKI TEHTY 2026-08-21, ks. ledger `## PÄIVÄ 2026-08-21`]:**
+- ~~`UI/Draft/DraftDayCoordinator.swift:183` `let maxUDFASignings = 5`~~ → nyt
+  `var maxUDFASignings: Int { UDFAMarketEngine.draftNightUserWindow }` (= `clubSigningQuota`, 6).
+  Johdettu eikä toistettu, jotta luvut eivät voi erkaantua uudelleen; engine-puolen auditti-doc
+  päivitetty kertomaan että näkymä lukee sen nyt täältä.
+- ~~Vanhentuneet "80-man camp" / "80 → 75 → 65 → 53" -prosanumerot~~ — korjattu kuudesta paikasta:
+  `UI/Camp/PreseasonRecapSheet.swift`, `UI/Camp/PreseasonFlowBand.swift`,
+  `UI/Camp/RosterCutView.swift` (×2), sekä katselmuksen ohittamat `Domain/Models/Career.swift:193`
+  ja `Domain/Models/Player/Player.swift:671`. Kommenttitekstiä, ei logiikkaa.
 
 1. **[TEHTY 2026-08-14, aalto 1 — mittaus sulki, ei vipua]** **#157-jäännös**: upsidePremium TODISTETTU loppuunkäytetyksi vipuna (0.45→0.30 rikkoo 6.1a:n, R1-washout 7.5→4.9% väärään suuntaan) — rigiin peilattiin ilmainen voitto (#98:n agePenaltyCap keepScoreen). VARSINAINEN jatko: practice-squad-diagnostiikka (startingCalibreOverall / accruedSeasonsLimit / 90-man camp -rosterilla nolla rig-altistusta) → oma pieni aalto kun diag-linja on olemassa.
 2. **[TEHTY 2026-08-14, aalto 1]** **#167-LOW-jäännökset** (katselmus löysi, ei korjattu): 6 audiotiedostoa yhä nfl_*-nimisiä (binääriliteraalit, pelkkä rename+viittaukset); league_2026_publish.json kantaa "Won/Lost Super Bowl LX" -stringejä (vaatii template-regenin tai täsmäeditin); LeagueHistoryView'n Canton/HoF-viittaukset. Uusi vahti: tools/lint/trademark_guard.sh estää "Super Bowl" -regressiot.
@@ -4122,6 +4124,70 @@ merkitty alkuun `[TEHTY …]`.
 18. **[TEHTY — ledger: `## PÄIVÄ 2026-08-11 MAALISSA`]** **UUSI #196 (käyttäjä 2026-08-11): draft-huoneessa YKSI board, ei kahta listaa — ja rivin tap avaa TÄYDEN prospektikortin.** (a) Vasen Big Board -raili + oikea Best Available -lista yhdistetään yhdeksi boardiksi (käyttäjän board-järjestys, BB-rank, needs-badget, fog-arvosanat; pikatut yliviivataan/poistuvat) — #194-analyysi arvioi jo tätä duplikaatiota, käyttäjän päätös lukitsee suunnan. (b) Pelaajan tap avaa TÄYDEN ProspectDetailView'n (cover kellonauha näkyvissä / paluu draftiin selvästi), EI nykyistä suppeaa mini-sheetiä (Close-kortti) — mini-sheet pois tai korkeintaan long-press-preview. Toteutus #194:n valmistuttua (sama DraftDayView työn alla).
 19a. **[TEHTY 2026-08-14, aalto 1 — kuvatuomari ACCEPT 10/10]** **UUSI #198 (#194-analyysin P1-backlog — EI tämän päivän scopessa, käyttäjän poimittavaksi):** (1) DraftRoomChatterLog — broadcast-railin kuluttamat reaktiot talteen rullaavaksi war room -feediksi (nyt railin 1.6-2.6s flash on reaktioiden ainoa koti; WarRoomPanelin scoutChatterCard on yksi kovakoodattu lause); (2) round-rollover strukturaalisena beattina + RoundRecapSheet → DSResultSheet; (3) DraftTickerPanelin typografia+kulta-passi (1 DSType vs 28 raw-literaalia, 11 draftStealGoldia); (4) "board pressure" -mittari needs-strippiin (montako oman tarpeen miestä top-20:ssä jäljellä — luku joka ratkaisee trade-up vs sit); (5) P2-ideat output-tiedostossa (mm. 32 fiktiivistä helmet-merkkiä glyyfikokoon). Analyysin avainhavainto dokumentiksi: huoneen kolme beatia (kello sulkeutuu, kortti jätetään, oma vuoro lähestyy) renderöityvät kaikki taulukkorivin painoarvolla — tähden pitää KIERTÄÄ tilan mukana. DraftAnimation.pickReveal on ollut olemassa ilman yhtään kuluttajaa.
 19. **[TEHTY — ledger: `## PÄIVÄ 2026-08-11 MAALISSA`]** **UUSI #197 (käyttäjä 2026-08-11): "Make Your Pick" -modaali pois — valinta tapahtuu BOARDILTA, toiminnot YLÖS.** Nykyinen on-the-clock-modaali on kolmas rinnakkainen pelaajalista (Best available by position + Board/My Board -haku) joka peittää war roomin. FIX: kun olet kellossa, yhdistetty board (#196) muuttuu pickaavaksi — rivitason Draft-toiminto + täyden kortin kultainen Pick-CTA; Trade Down / Call About Moving Up siirtyvät YLÄPALKIN kontekstuaaliseen action-alueeseen (#194B:n CTA-logiikka: omalla kellolla molemmat + Pick). Modaali poistuu kokonaan. Toteutus #194/#196:n kanssa samassa jatkoaallossa.
+
+## PÄIVÄ 2026-08-21 — 14.8. työpuu committoitu + pushattu, #199-jäännökset kiinni, varoitusvelka NOLLAAN
+
+**Lähtötilanne: viikon vanha valmis työ oli committoimatta.** 14.8. aallot 1-2 + #199-kasa istuivat
+työpuussa 66 muokattuna ja 7 uutena tiedostona (~2 400 riviä) `3423d35`:n päällä. Jaettu kahdeksaan
+committiin aiheittain ja pushattu:
+
+| committi | sisältö |
+|---|---|
+| `517a763` | #209 Swift 6 -concurrency, 86 → 19 uniikkia varoitusta |
+| `36bee36` | **#171 SwiftData: versioitu skeema + `StoreBackup` + `StoreOpenFailure`** (+ #201b:n moottoripuoli `CareerScope.deleteAllSaveData`) |
+| `08f5f6f` | #201a Replay Tutorial, #201b Delete All Save Data |
+| `a21617c` | #198 draft room — chatter-loki, round-beat, board pressure |
+| `7a1fa09` | #167 aalto 1:n LOW-jäännökset + laajennettu trademark_guard |
+| `630e7c8` | #199 camp-täyttö 87, UDFA-kattoauditti, FA:n pending-palkki |
+| `7ff5cf3` | #157 practice squad -diagnostiikka (suljettu mittauksella) |
+| `ab9da93` | #210/#211-dokumentit + 14.8. ledger |
+
+**Ledgerin oma aukko, joka löytyi committoidessa: #171/#201 ei ollut kirjattu mihinkään.** Koko
+SwiftData-migraatiopohja (`DynastySchema.swift`, `StoreBackup.swift`, `StoreOpenFailure.swift`,
+`DataContainer`in ei-fataali boot) oli toteutettu 14.8. mutta ei näy 14.8. ledgerin riveissä — se on
+kasan riskialttein osa, koska se koskee tallennusten avaamista. Nyt committoitu ja dokumentoitu.
+
+**#199-jäännökset (molemmat AUKI NYT -osiosta) TEHTY:**
+- `DraftDayCoordinator.maxUDFASignings` **johdettu** engine-luvusta:
+  `var maxUDFASignings: Int { UDFAMarketEngine.draftNightUserWindow }` (= `clubSigningQuota`, 6).
+  Ei toistettu literaalina — literaali oli juuri se mekanismi jolla luvut erkanivat. Engine-puolen
+  auditti-doc päivitetty: se väitti yhä että näkymä sanoo 5.
+- Vanhentuneet camp-luvut korjattu **kuudesta** paikasta (katselmus nimesi neljä):
+  `PreseasonRecapSheet`, `PreseasonFlowBand`, `RosterCutView` x2 + katselmuksen ohittamat
+  `Domain/Models/Career.swift` ja `Domain/Models/Player/Player.swift`. Kommenttitekstiä, ei logiikkaa.
+
+**#209:n "tarkoituksella koskematon" 19 varoituksen häntä käyty läpi — 19 -> 0.** Jokainen luettiin
+ennen korjausta, eikä yksikään korjaus muuta käyttäytymistä. Häntä ei ollut pelkkää nukkaa:
+- `FAWeeklyView:2459` `@retroactive` `FreeAgent`ille joka on **tässä modulissa** — Swift 6 -moodissa
+  virhe, ei varoitus. Attribuutti pois.
+- `PositionVersatilityView:95` `case (.LT, .RG), (.LT, .LG) where strength < 70` — `where` sitoutuu
+  vain VIIMEISEEN patterniin, ja `(.LT, .LG)` on jo vastattu ylempänä OL-interop-casessa: koko
+  strength-portti oli **kuollutta koodia**, LT->RG on ainoa pari joka rivin tavoittaa.
+- `MatchupResolver:203` `case .completion, .touchdown where play.playType == .pass` — sama sitoutumis-
+  ansa. Portti kirjoitettu molempiin; todennettu vaarattomaksi: `.completion`illa on yksi ainoa
+  tuottaja (`PlaySimulator:1199`) ja se asettaa `playType: .pass`.
+- `MatchupResolver:108` `default` oli saavuttamaton (kaikki 19 Positionia katettu) -> poistettu, jotta
+  uusi positio on **käännösvirhe** juuri siinä kohdassa jossa pelinumeroväli pitää päättää.
+- `CoachingStaffView:3562` `@ViewBuilder` **String-propertyn** päällä (buildaaja oli jo pois päältä
+  eksplisiittisen returnin takia) -> attribuutti pois.
+- `GameSummaryView.thirdDownPct` palautti nolla-yrityksellä `"0%"` ja muuten `"5/13"` — kaksi eri
+  formaattia samasta funktiosta. Nyt `"0/0"`; prosenttiluku oli laskettu muuttujaan jota ei luettu.
+- Loput: 8 lukematta jäänyttä arvoa (mm. `overtimePlayed`, jonka korvaa `quarterScores`in viides
+  merkintä), `withAnimation`in nielemätön `Set.insert`-tulos, `Text + Text` -> interpolaatio
+  (deprekoitu iOS 26:ssa), preview-makron `var`.
+
+**Portit (kaikki ajettu tämän aallon jälkeen):**
+- `xcodebuild` täysi puhdas käännös (derived data poistettu ensin): **BUILD SUCCEEDED, 0 virhettä,
+  0 uniikkia varoitusta.**
+- `tools/lint/trademark_guard.sh`: clean.
+- `tools/lint/design_tokens.py`: No regression (font 0, ratingfn 0, legibility-lattia 0).
+- `tools/balance-harness`: sync + `swiftc -O` läpi, eli verbatim-SHA-portit hyväksyivät muokatut
+  engine-lähteet. Monte-Carlo-skenaarioita EI ajettu: yksikään tämän päivän muutos ei ole
+  käyttäytymismuutos, joten mitattavaa deltaa ei ole.
+
+**Avoinna tämän jälkeen:** 5e (käyttäjän silmätarkistus: Position Skills -rivin ELU B/A), käyttäjän
+omat rivit (#5 iPad-katselmus, #74 musiikit, IP-juristi, privacy policyn hostaus), sekä #210 ja #212
+jotka odottavat käyttäjän katselmusta ja päätöstä ennen toteutusta.
 
 ## #199 SIIVOUSKASA — 2026-08-14 (camp-täyttö, UDFA-kattoauditti, LOW-rivit, lint-baseline)
 

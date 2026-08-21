@@ -3070,7 +3070,7 @@ enum WeekAdvancer {
             // Generate All-Star selections — top-rated players from each conference
             var proBowlSelections: [String] = []
             if let playerTeamID = career.teamID,
-               let playerTeam = teamsByID[playerTeamID] {
+               teamsByID[playerTeamID] != nil {
                 let teamPlayers = allPlayers.filter { $0.teamID == playerTeamID }
                 let proBowlers = teamPlayers
                     .sorted { $0.overall > $1.overall }

@@ -1032,7 +1032,6 @@ enum DraftEngine {
         let grade = gradeScale[gradeIndex]
 
         // Generate headline and comment.
-        let teamAbbr = prospect.mockDraftTeam ?? "Team"
         let name = prospect.lastName
         let pos = prospect.position.rawValue
         let roundLabel = roundName(actualRound)

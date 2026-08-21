@@ -454,8 +454,6 @@ enum ScoutingEngine {
 
     /// Aggregates grade data from all reports into progressive GradeRange fields.
     private static func applyGradeBasedFields(report: ScoutingReport, to prospect: CollegeProspect) {
-        let reportCount = prospect.scoutingReports.count
-
         // Overall grade — narrow with each report
         if let letterGrade = report.overallLetterGrade {
             if var existing = prospect.scoutedOverallGrade {

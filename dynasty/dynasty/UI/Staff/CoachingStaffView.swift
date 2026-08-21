@@ -1648,7 +1648,7 @@ struct CoachingStaffView: View {
             season: career.currentSeason
         )
         withAnimation(.easeInOut(duration: 0.2)) {
-            confirmedTaskKeys.insert(key)
+            _ = confirmedTaskKeys.insert(key)
         }
     }
 
@@ -3559,8 +3559,10 @@ struct CoachingStaffView: View {
         }
     }
 
-    @ViewBuilder
     /// R27/R31: names the pot(s) that are overspent now that the budgets are split.
+    ///
+    /// No `@ViewBuilder`: this returns a String, and the attribute it used to
+    /// carry was disabled by the explicit return anyway.
     private var overBudgetMessage: String {
         var overs: [String] = []
         if remainingBudget < 0 {

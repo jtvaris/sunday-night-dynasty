@@ -503,12 +503,13 @@ struct LiveBigBoardPanel: View {
             return Text("You are on the clock. PICK hands him in; tap a name for his full card and draft him from there.")
         }
         let legend = Text(" \(Image(systemName: "sparkle")) = your scouts are ahead of the market; arrows are stock. A struck-through name is gone \u{2014} the club and slot that took him are on the right.")
+        // Interpolated rather than concatenated: `Text` + `Text` is deprecated
+        // from iOS 26, and a `Text` interpolates into a `Text` unchanged — the
+        // legend keeps its own `Image` run either way.
         if sortMode.isMyBoard {
-            return Text("Your board, in the order you left it \u{2014} MY #N is the slot the Big Board prints. Tap a name for his card; the phone calls about moving up.")
-                + legend
+            return Text("Your board, in the order you left it \u{2014} MY #N is the slot the Big Board prints. Tap a name for his card; the phone calls about moving up.\(legend)")
         }
-        return Text("#N is the media's consensus slot. Gold bands are your scouts, grey the media's projection. Tap a name for his card; the phone calls about moving up.")
-            + legend
+        return Text("#N is the media's consensus slot. Gold bands are your scouts, grey the media's projection. Tap a name for his card; the phone calls about moving up.\(legend)")
     }
 
     // MARK: - The table

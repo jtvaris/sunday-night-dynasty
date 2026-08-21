@@ -105,7 +105,6 @@ extension SimPlayer {
         case .DE, .DT:         range = 90...99
         case .OLB, .MLB:       range = 50...59
         case .CB, .FS, .SS:    range = 20...39
-        default:               range = 1...99
         }
         return range.lowerBound + seed % (range.upperBound - range.lowerBound + 1)
     }
@@ -200,7 +199,8 @@ enum MatchupResolver {
             resolveSack(&m, offense: offense, defense: defense)
         case .safety where play.playType == .pass:
             resolveSack(&m, offense: offense, defense: defense)
-        case .completion, .touchdown where play.playType == .pass:
+        case .completion where play.playType == .pass,
+             .touchdown where play.playType == .pass:
             resolveCompletion(&m, play: play, offense: offense, defense: defense)
         case .incompletion:
             resolveIncompletion(&m, play: play, offense: offense, defense: defense,

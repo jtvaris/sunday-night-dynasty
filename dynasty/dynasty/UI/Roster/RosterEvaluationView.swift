@@ -2352,8 +2352,9 @@ struct RosterEvaluationView: View {
         let scenASpace = cap - scenAUsage
         let scenAPct = cap > 0 ? Double(scenAUsage) / Double(cap) : 0
 
-        // Scenario B: Re-sign top 3, release rest
-        let otherExpiringCap = expiringPlayers.dropFirst(3).reduce(0) { $0 + $1.annualSalary }
+        // Scenario B: Re-sign top 3, release rest. The released men need no
+        // term of their own — `totalExpiringCap` already takes every expiring
+        // salary off the books before the top three are added back.
         let scenBUsage = currentUsage - totalExpiringCap + top3ReSignCost
         let scenBSpace = cap - scenBUsage
         let scenBPct = cap > 0 ? Double(scenBUsage) / Double(cap) : 0
