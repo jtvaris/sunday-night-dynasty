@@ -1476,33 +1476,71 @@ private struct PickRevealCard: View {
 
     // MARK: The call
 
-    /// `PICK #33 · CLE SELECTS`, full width, nothing allowed to wrap.
+    /// `PICK #33 · CLE SELECTS … A SMART PICK`, full width, nothing allowed to
+    /// wrap.
     ///
     /// This used to live in the narrow details column, which is why the user's
     /// screenshot said "SELE / CTS": a 12 pt display string with 1.6 of tracking
     /// wants ~78 pt and had ~60. `fixedSize(horizontal:)` is the part that makes
     /// the promise — `lineLimit(1)` alone would truncate instead of wrapping,
     /// which is a quieter version of the same defect.
+    ///
+    /// ## The verdict rides the call line now (v3.3 leftover B)
+    ///
+    /// The residual note the v3.3 judge left open was "portrait card's small
+    /// top-right void", and it is exactly this row's trailing half: the call
+    /// occupies ~240 pt of a ~330 pt portrait card and then stops, with the
+    /// stacked words column under its leading end and nothing at all under its
+    /// trailing one. A broadcast lower-third does not have that hole because it
+    /// puts the verdict there — so the grade chip moved out of ``nameBlock``
+    /// and onto the trailing edge of the call.
+    ///
+    /// Two things fall out of the move and both are wanted:
+    ///
+    ///   * the top-right corner carries the one fact the row was missing, and
+    ///   * the stacked column loses a row, which is ~32 pt of card handed
+    ///     straight to ``boardRoll`` — the block whose whole job is to fill the
+    ///     bottom of this card with names.
+    ///
+    /// The row is a `ViewThatFits` because it is a row of `fixedSize` chips, and
+    /// this file's own rule is that such a row must carry a smaller variant or
+    /// it overruns the card rather than truncating (the "SELE / CTS" lesson).
+    /// Every variant carries the grade, so no arrangement can print it twice or
+    /// lose it: the ladder gives up the qualifier first (`A SMART PICK` → `A`)
+    /// and the two connective words second (`PICK … SELECTS`), because the
+    /// numeral, the club and the verdict are the call and the rest is grammar.
     private var callLine: some View {
+        ViewThatFits(in: .horizontal) {
+            callLineRow(showsConnectives: true, showsGradeQualifier: true)
+            callLineRow(showsConnectives: true, showsGradeQualifier: false)
+            callLineRow(showsConnectives: false, showsGradeQualifier: false)
+        }
+    }
+
+    private func callLineRow(showsConnectives: Bool, showsGradeQualifier: Bool) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: DSSpacing.xs) {
-            Text("PICK")
-                .font(DSType.display(DSType.Size.footnote, .heavy))
-                .tracking(1.6)
-                .foregroundStyle(Color.textTertiary)
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
+            if showsConnectives {
+                Text("PICK")
+                    .font(DSType.display(DSType.Size.footnote, .heavy))
+                    .tracking(1.6)
+                    .foregroundStyle(Color.textTertiary)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
             Text("#\(result.pickNumber)")
                 .font(DSType.display(DSType.Size.title1, .black))
                 .foregroundStyle(Color.textPrimary)
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
             TickerClubChip(abbreviation: result.teamAbbrev, minWidth: 52)
-            Text("SELECTS")
-                .font(DSType.display(DSType.Size.footnote, .heavy))
-                .tracking(1.6)
-                .foregroundStyle(Color.textSecondary)
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
+            if showsConnectives {
+                Text("SELECTS")
+                    .font(DSType.display(DSType.Size.footnote, .heavy))
+                    .tracking(1.6)
+                    .foregroundStyle(Color.textSecondary)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
             // `isAutoPick` is a card of the USER's that the user did not make,
             // so it wears the same YOURS pill: the club is still his and the
             // rookie still counts against his cap. What it is *not* is a call
@@ -1511,7 +1549,12 @@ private struct PickRevealCard: View {
                 DSStatusPill(label: "YOURS", tone: .warn, showsDot: false,
                              spokenLabel: "Your pick")
             }
-            Spacer(minLength: 0)
+            // The trailing member, and the reason the row exists in three
+            // widths. `minLength` is what makes the fit test honest: a
+            // `Spacer` with no floor has an ideal width of zero, so every
+            // variant would "fit" and the widest one would always win.
+            Spacer(minLength: DSSpacing.sm)
+            gradeChip(showsQualifier: showsGradeQualifier)
         }
     }
 
@@ -1665,15 +1708,21 @@ private struct PickRevealCard: View {
     private static let markBannerHeight: CGFloat = 40
 
     /// The words beside the plate **when they are stacked in one column**: the
-    /// given name, the surname, the position chip, the grade chip, the
-    /// dossier's two lines and the gaps between them.
+    /// given name, the surname, the position chip, the dossier's two lines and
+    /// the gaps between them.
+    ///
+    /// **102, down from 134** (v3.3 leftover B): the grade chip and its gap are
+    /// no longer in this column — they are the trailing member of ``callLine``
+    /// — so the stack is one row shorter and the constant has to say so, or the
+    /// ladder reserves height for a row nobody draws and the card keeps a
+    /// residual it could have given to ``boardRoll``.
     ///
     /// There is no matching constant for the side-by-side arrangement, and
     /// deliberately so: it is ~112 pt, which is under a `.large` plate's 150,
     /// so on every stage that can hold the plate at all the plate is the tall
     /// member and the words cost nothing. ``composition`` therefore tests the
     /// plate alone on that rung.
-    private static let minDetailsHeight: CGFloat = 134 + dossierHeight
+    private static let minDetailsHeight: CGFloat = 102 + dossierHeight
 
     /// **How the portrait row is put together on THIS stage** (v3.3 judge, fix
     /// A).
@@ -1691,16 +1740,25 @@ private struct PickRevealCard: View {
     ///     it. The landscape stage's card, unchanged.
     ///   * ``largePlate`` — the same column beside a 96 pt portrait. The
     ///     portrait iPad's card, unchanged.
-    ///   * ``largePlateWide`` — **new.** The portrait survives on a stage that
-    ///     cannot pay for the stacked column beside it, because the words go
-    ///     side by side instead and the row is then only as tall as the plate.
-    ///     Width is what this card has spare (the plate costs 128 pt of it and
-    ///     the stage is 450); height is what it does not.
+    ///   * ``largePlateWide`` — the 96 pt portrait with the words **beside each
+    ///     other** rather than stacked: name block leading, dossier trailing, on
+    ///     the same rows. Since v3.3 leftover A this is tried BEFORE the stacked
+    ///     column rather than after it, because a card wide enough for two
+    ///     columns that stacks them anyway leaves the difference as a hole —
+    ///     see ``composition``.
     ///   * ``wide`` — no portrait, and the name block and the dossier share
     ///     the rows across the whole card.
     ///
     /// The order is a preference, not a fallback chain: each case states the
     /// budget it needs and the first one that can be paid for wins.
+    ///
+    /// **`heroPlate` is currently unreachable**, and that is a statement about
+    /// the stage rather than about this ladder: `DraftTickerPanel.stageMaxHeight`
+    /// caps the block at 380 pt (v3.3 fix C, deliberately — the verdict measured
+    /// a 505 pt card running at 7 % ink in its bottom half), and 380 less
+    /// ``chromeHeight`` cannot reach the 222 pt a hero plate needs. The case is
+    /// kept rather than deleted because the ceiling is a tuning constant and the
+    /// arrangement is the one this card would want if it ever rose.
     private enum Composition {
         case heroPlate
         case largePlate
@@ -1716,6 +1774,31 @@ private struct PickRevealCard: View {
            residual >= max(Self.plateHeight(for: .hero), Self.minDetailsHeight) {
             return .heroPlate
         }
+        // **WIDTH IS SPENT BEFORE HEIGHT IS RATIONED** (v3.3 leftover A).
+        //
+        // This test used to come after `.largePlate`, i.e. the side-by-side
+        // arrangement was a fallback for cards too SHORT to stack. That reading
+        // of it is what the landscape verdict measured: on a ~450 pt stage the
+        // stacked column is laid out for its own words (~155 pt) inside a
+        // ~285 pt frame, and the 130 × 180 pt strip of card beside it — a
+        // rectangle with no ink in it at all — came out at **15 % of the card**,
+        // which is where the leftover note "landscape card LER exactly 15 %"
+        // came from. Height was never the binding constraint there; the card
+        // simply declined to use width it had already been given.
+        //
+        // So the preference order is now: stack only when the card cannot
+        // afford two columns. Where it can, the dossier takes the trailing edge
+        // on the same rows as the name — which closes the strip, and takes
+        // about two rows off the portrait row's height as a side effect, which
+        // ``boardRoll`` immediately spends on more names.
+        //
+        // Nothing changes on the room's portrait iPad: 330 pt of interior less
+        // a 128 pt plate leaves 185 for the words, under ``minWideDetailsWidth``,
+        // so that card still stacks exactly as it did.
+        if wordsWidth(beside: .large) >= Self.minWideDetailsWidth,
+           residual >= Self.plateHeight(for: .large) {
+            return .largePlateWide
+        }
         if residual >= max(Self.plateHeight(for: .large), Self.minDetailsHeight) {
             return .largePlate
         }
@@ -1724,20 +1807,17 @@ private struct PickRevealCard: View {
         // Round 4 wrote the rule the other way — "the medallion is the best
         // part of this card and it is still the part that yields" — because
         // the row is as tall as its tallest member and the WORDS were the
-        // tall member (``minDetailsHeight``, 180 pt, against a 150 pt plate).
-        // That reasoning is sound and its conclusion was still wrong, because
+        // tall member (``minDetailsHeight``, against a 150 pt plate). That
+        // reasoning is sound and its conclusion was still wrong, because
         // dropping the plate did not make the words any shorter: the card lost
-        // the face AND kept the 180 pt column.
+        // the face AND kept the tall column.
         //
-        // Now that the side-by-side arrangement exists, the trade is the one
-        // round 4 thought it was making. A plate is 150 pt tall and the wide
-        // words are ~120, so on a stage between the two thresholds the face
-        // costs the roll nothing it can spend anyway, and the card that keeps
-        // it is strictly the better card.
-        if residual >= Self.plateHeight(for: .large),
-           wordsWidth(beside: .large) >= Self.minWideDetailsWidth {
-            return .largePlateWide
-        }
+        // The side-by-side test that used to sit HERE is the one hoisted above
+        // `.largePlate` — same condition, same case, earlier — so a card that
+        // can afford two columns never stacks in the first place and the
+        // portrait only yields on a stage that can hold neither. `.wide` is
+        // therefore what is left: too narrow for two columns beside a plate,
+        // too short for a stacked one under it.
         return .wide
     }
 
@@ -1870,8 +1950,10 @@ private struct PickRevealCard: View {
                     .foregroundStyle(Color.textSecondary)
                 if result.isGem { gemMark }
             }
-
-            gradeChip
+            // THE GRADE IS NOT HERE ANY MORE (v3.3 leftover B). It is the
+            // trailing member of ``callLine``, where it fills the card's
+            // top-right corner and costs this column a row — see the call
+            // line's own note. Nothing else moved.
         }
         // NO VERTICAL SLACK IN THIS COLUMN, AND NO TRAILING `Spacer` EITHER.
         //
@@ -2125,6 +2207,12 @@ private struct PickRevealCard: View {
     /// position list — where POS would be the same three letters eight times —
     /// keeps rank / name / band. Three columns either way, and the name is the
     /// flexible one in both.
+    ///
+    /// …**unless the column can pay for four** (v3.3 leftover A). "Half a card"
+    /// was measured on the portrait stage; the landscape one is wide enough to
+    /// print all four without squeezing the name, and there the dropped band
+    /// leaves the trailing third of every row with nothing in it. See
+    /// ``showsBand(isBoard:)``.
     private func rollRow(_ entry: StageName, isBoard: Bool) -> some View {
         HStack(spacing: DSSpacing.xxs) {
             Text("\(entry.rank)")
@@ -2145,7 +2233,7 @@ private struct PickRevealCard: View {
                 .minimumScaleFactor(0.75)
                 .truncationMode(.tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            if !isBoard, let read = entry.read {
+            if showsBand(isBoard: isBoard), let read = entry.read {
                 Text(read)
                     .font(DSType.display(DSType.Size.caption, .heavy))
                     .foregroundStyle(Color.textSecondary)
@@ -2197,6 +2285,34 @@ private struct PickRevealCard: View {
         }
         return (Array(context.boardTop.prefix(wanted)), true)
     }
+
+    /// **Does this row print the fogged band?** (v3.3 leftover A.)
+    ///
+    /// A position list always does — it is the row's third column and the whole
+    /// reason to read the list. A BOARD list dropped it, because "four columns
+    /// do not fit in half a card" (rank / position / name / band) and the
+    /// position is the one a mixed list cannot do without. That measurement was
+    /// taken on the portrait card, where half the interior is ~160 pt.
+    ///
+    /// On the landscape card the same half is over 200 pt, and the three columns
+    /// it does print leave the trailing third of every row empty — the same
+    /// gutter fault, one column narrower. So the band comes back exactly where
+    /// there is room for it, off the measured column width rather than off the
+    /// orientation, and the row is still three columns wherever there is not.
+    private func showsBand(isBoard: Bool) -> Bool {
+        guard isBoard else { return true }
+        return rollColumnWidth >= Self.bandColumnFloor
+    }
+
+    /// Half the card's interior, less the gutter between the two roll columns.
+    private var rollColumnWidth: CGFloat {
+        max(0, (interiorWidth - DSSpacing.sm) / 2)
+    }
+
+    /// What a four-column roll row needs: 22 pt of rank, 26 of position, a name
+    /// column that can still print `R. Lovegrove` without scaling, and ~48 for
+    /// the band and its step in from the gutter.
+    private static let bandColumnFloor: CGFloat = 200
 
     /// One `footnote` line with a little air around it — the row's FLOOR since
     /// v3.3 fix B, not its height. Pinned rather than intrinsic so that
@@ -2829,16 +2945,22 @@ private struct PickRevealCard: View {
     /// line. `lineLimit(1)` on both halves says the words are words;
     /// `fixedSize(horizontal:)` on the chip says the chip is entitled to the
     /// width they need, rather than being squeezed by whatever shares its row.
-    private var gradeChip: some View {
+    ///
+    /// `showsQualifier` is the ladder ``callLine`` climbs down when the row is
+    /// too narrow for the whole verdict: the letter is the fact, the qualifier
+    /// is the gloss, and a `D` alone is still unambiguous next to `A`.
+    private func gradeChip(showsQualifier: Bool) -> some View {
         let color = Color.forGrade(result.grade.rawValue)
         return HStack(spacing: 4) {
             Text(result.grade.rawValue)
                 .font(DSType.display(DSType.Size.footnote, .heavy))
                 .lineLimit(1)
-            Text(result.grade.qualifier)
-                .font(DSType.display(DSType.Size.caption, .heavy))
-                .tracking(0.6)
-                .lineLimit(1)
+            if showsQualifier {
+                Text(result.grade.qualifier)
+                    .font(DSType.display(DSType.Size.caption, .heavy))
+                    .tracking(0.6)
+                    .lineLimit(1)
+            }
         }
         .fixedSize(horizontal: true, vertical: false)
         .padding(.horizontal, 8)

@@ -140,6 +140,14 @@ enum DraftCapital {
 struct WarRoomPanel: View {
     @ObservedObject var coordinator: DraftDayCoordinator
 
+    /// **What the room has actually said tonight** (#198 (1)).
+    ///
+    /// Written by `DraftBroadcastRail` as it retires each beat, read by
+    /// ``scoutChatterCard``. Injected by `DraftDayView` — the panel's two homes
+    /// are both inside that view's environment, the drawer included (a sheet
+    /// inherits the presenter's environment).
+    @EnvironmentObject private var chatterLog: DraftRoomChatterLog
+
     /// Where this panel is being drawn.
     ///
     /// ## #202 — the rail became a drawer
@@ -538,17 +546,92 @@ struct WarRoomPanel: View {
 
     // MARK: - Scout chatter
 
+    /// **The room's transcript, not one sentence** (#198 (1)).
+    ///
+    /// This card used to be a single computed string — `scoutChatter`, rewritten
+    /// in place on every card handed in — while the four voices that actually
+    /// say something about a pick (the owner, the media, the locker room, the
+    /// fans) existed for 1.6–2.6 s on `DraftBroadcastRail` and then for ever
+    /// after nowhere. Two defects in one card: the war room had no history, and
+    /// the best writing in the room had no home.
+    ///
+    /// ``DraftRoomChatterLog`` is the join. The rail appends every beat it
+    /// retires; this card prints the newest
+    /// ``DraftRoomChatterLog/visibleCount`` of them, newest first, each with
+    /// the actor's own SF Symbol and the rail's own tint — so a line reads the
+    /// same here as it did when it flashed over the board.
+    ///
+    /// `scoutChatter` survives as the OPENING state and nothing else: before
+    /// the first card of the night nobody has said anything, and an empty card
+    /// under a section header is worse than a scout's read on the room.
     private var scoutChatterCard: some View {
         VStack(alignment: .leading, spacing: DSSpacing.xxs) {
-            SectionHeaderText(title: "Scout Chatter")
-            Text(scoutChatter)
-                .font(DSType.text(DSType.Size.footnote, .regular, prose: true))
-                .foregroundStyle(Color.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: DSSpacing.xs) {
+                SectionHeaderText(title: "Scout Chatter")
+                Spacer(minLength: 0)
+                if !chatterLog.isEmpty {
+                    Text("THE ROOM, LATEST FIRST")
+                        .font(DSType.display(DSType.Size.caption, .heavy))
+                        .tracking(0.7)
+                        .foregroundStyle(Color.textTertiary)
+                        .lineLimit(1)
+                }
+            }
+
+            if chatterLog.isEmpty {
+                Text(scoutChatter)
+                    .font(DSType.text(DSType.Size.footnote, .regular, prose: true))
+                    .foregroundStyle(Color.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                VStack(alignment: .leading, spacing: DSSpacing.xxs) {
+                    ForEach(chatterLog.visibleLines) { line in
+                        chatterRow(line)
+                    }
+                }
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(DSSpacing.xs)
         .warRoomCard(presentation)
+    }
+
+    /// One filed line: the voice's symbol, who said it, what they said, and the
+    /// needle it moved.
+    ///
+    /// The voice label is printed rather than folded into the sentence because
+    /// the feed mixes the four actors with the broadcast's own beats ("Steal of
+    /// the draft", "We have a trade") — without an attribution column a
+    /// transcript of six lines from five speakers is a paragraph.
+    private func chatterRow(_ line: DraftRoomChatterLog.Line) -> some View {
+        HStack(alignment: .top, spacing: DSSpacing.xs) {
+            Image(systemName: line.icon)
+                .font(DSType.display(DSType.Size.caption, .heavy))
+                .foregroundStyle(line.tint)
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(line.voice.uppercased())
+                    .font(DSType.display(DSType.Size.caption, .heavy))
+                    .tracking(0.6)
+                    .foregroundStyle(line.tint)
+                    .lineLimit(1)
+                Text(line.message)
+                    .font(DSType.text(DSType.Size.footnote, .regular, prose: true))
+                    .foregroundStyle(Color.textSecondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: DSSpacing.xxs)
+            if let delta = line.delta, delta != 0 {
+                Text(delta > 0 ? "+\(delta)" : "\(delta)")
+                    .font(DSType.display(DSType.Size.caption, .heavy))
+                    .foregroundStyle(delta > 0 ? Color.success : Color.dangerText)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(line.voice). \(line.message)")
     }
 
     private var scoutChatter: String {

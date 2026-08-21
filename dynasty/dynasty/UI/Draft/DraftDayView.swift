@@ -11,6 +11,18 @@ struct DraftDayView: View {
     /// It goes through the room's ONE `.sheet(item:)` — see `DraftModal`.
     @State private var isWarRoomOpen = false
 
+    /// **The room's transcript** (#198 (1)).
+    ///
+    /// `DraftBroadcastRail` writes to it as each beat's dwell expires;
+    /// `WarRoomPanel`'s chatter card reads it. Owned HERE rather than by either
+    /// of them because the rail is torn down and rebuilt as the table relays
+    /// out and the drawer does not exist until it is opened — a log owned by
+    /// either would lose the night's chatter to a layout pass.
+    ///
+    /// Presentation only: nothing in it is engine state, nothing is persisted,
+    /// and it dies with the room. See ``DraftRoomChatterLog``.
+    @StateObject private var chatterLog = DraftRoomChatterLog()
+
     /// The drawer's fitted height, derived from the panel's own measurement, and
     /// the detent currently showing. Together they make the sheet the size of
     /// what is in it — see ``warRoomDetents`` (v3.1 judge P2).
@@ -297,6 +309,13 @@ struct DraftDayView: View {
         .background {
             DraftRoomBackdrop()
         }
+        // ONE LOG, BOTH ENDS OF IT (#198 (1)). The rail is inside this view and
+        // writes; the war room drawer is presented from it and reads. A sheet
+        // inherits the presenter's environment, so this one modifier reaches
+        // both — and the drawer's own `.environmentObject` below is belt and
+        // braces for the one thing an `@EnvironmentObject` does on a miss,
+        // which is trap.
+        .environmentObject(chatterLog)
         // ONE sheet for the whole room (task #153a). Three `.sheet` modifiers
         // used to be stacked on this ZStack — the exact trap their own comments
         // warned about — and two of them drove their presentation off a computed
@@ -362,6 +381,7 @@ struct DraftDayView: View {
                 }
             }
         }
+        .environmentObject(chatterLog)
         .presentationDetents(warRoomDetents, selection: $warRoomDetent)
     }
 

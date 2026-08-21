@@ -129,6 +129,15 @@ struct DraftBoardRowsTopKey: PreferenceKey {
 struct DraftBroadcastRail: View {
     @ObservedObject var coordinator: DraftDayCoordinator
 
+    /// **Where a beat goes when its dwell is over** (#198 (1)).
+    ///
+    /// The rail's card lives 1.6–2.6 s and then the most personal writing in the
+    /// game was gone for good — see ``DraftRoomChatterLog``, which is the war
+    /// room's transcript of exactly the lines this view retires. Injected by
+    /// `DraftDayView` through `.environmentObject`, so the rail writes and the
+    /// war room reads without either one owning the other.
+    @EnvironmentObject private var chatterLog: DraftRoomChatterLog
+
     /// The measured top of the board's scrolling rows, from
     /// ``DraftBoardRowsTopKey``. `nil` until the board has laid out once.
     var boardRowsTop: CGFloat? = nil
@@ -217,6 +226,14 @@ struct DraftBroadcastRail: View {
             // that replaced it is still showing, and the rail would start
             // eating other beats' cards.
             guard mine == generation else { return }
+            // THE BEAT IS FILED ON ITS WAY OUT (#198 (1)). Here rather than at
+            // `shown = next`, because "retired" is the fact the transcript
+            // records — a beat that is superseded mid-dwell
+            // (`retireStaleCountdown`) was never true long enough to be
+            // remembered, and it is the one beat kind with an expiry date on
+            // it. The append happens before the queue is drained so the two
+            // cannot disagree about what was shown.
+            record(next)
             shown = nil
             switch next.source {
             case .drama:    coordinator.consumeOldestDrama()
@@ -230,6 +247,51 @@ struct DraftBroadcastRail: View {
             isPumping = false
             pump()
         }
+    }
+
+    /// **The transcript** (#198 (1)).
+    ///
+    /// A reactions beat is a CLUSTER — one card, up to four voices — so it files
+    /// one line per voice, in the order the room spoke, with each actor's own
+    /// symbol, tint and mechanical delta. Every other beat is one line: its
+    /// eyebrow is the voice ("Steal of the draft", "We have a trade"), its
+    /// headline and detail are what was said.
+    ///
+    /// Two beat kinds are deliberately NOT filed:
+    ///
+    ///   * **the countdown.** `.userPickIncoming` is true until the user's slot
+    ///     opens and false forever after, which is why the rail already takes it
+    ///     off the screen early (``retireStaleCountdown()``). A transcript line
+    ///     reading "Your pick is 2 cards away" is a lie the moment it is
+    ///     scrollable.
+    ///   * **the round curtain.** Dropped before it is ever drawn — see
+    ///     `nextBeat()` — so it never reaches this function at all.
+    private func record(_ beat: Beat) {
+        guard !beat.isUserPickCountdown else { return }
+        if case .reactions = beat.style, !beat.lines.isEmpty {
+            for line in beat.lines {
+                chatterLog.append(
+                    icon: line.icon,
+                    voice: line.actor,
+                    message: line.message,
+                    delta: line.delta,
+                    tint: line.accent
+                )
+            }
+            return
+        }
+        // The broadcast's own voice. `detail` carries the arithmetic ("14 slots
+        // past where the board had him"), which is the half of a steal beat
+        // worth keeping, so it is appended to the sentence rather than dropped.
+        let detail = beat.detail.flatMap { $0.isEmpty ? nil : $0 }
+        let message = detail.map { "\(beat.headline) \u{2014} \($0)" } ?? beat.headline
+        chatterLog.append(
+            icon: beat.icon ?? "dot.radiowaves.left.and.right",
+            voice: beat.eyebrow,
+            message: message,
+            delta: beat.delta,
+            tint: beat.accent
+        )
     }
 
     /// **"Your pick is 2 cards away" may not outlive the wait** (v3.2 judge P0).
@@ -1031,7 +1093,7 @@ extension Beat {
             headline: lines.first?.message ?? "",
             detail: nil,
             icon: nil,
-            accent: worst.map(Beat.sentimentAccent) ?? .textSecondary,
+            accent: worst.map({ Beat.sentimentAccent($0) }) ?? .textSecondary,
             delta: nil,
             lines: lines,
             pickContext: context,

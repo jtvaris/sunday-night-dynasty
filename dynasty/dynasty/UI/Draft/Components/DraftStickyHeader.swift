@@ -93,6 +93,18 @@ import UIKit
 struct DraftStickyHeader: View {
     @ObservedObject var coordinator: DraftDayCoordinator
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// **The round that just turned over, while its plate is up** (#198 (2)).
+    /// `nil` the rest of the night. See ``roundRolloverPlate(_:)``.
+    @State private var rolloverRound: Int?
+    /// A rollover that has happened but has not been SHOWN yet, because the
+    /// round recap sheet was covering the room when it did.
+    @State private var armedRolloverRound: Int?
+    /// Bumped whenever a plate's dwell is superseded, so an orphaned timer
+    /// cannot take a later round's plate off the screen early.
+    @State private var rolloverToken = 0
+
     var body: some View {
         VStack(alignment: .leading, spacing: DSSpacing.xs) {
             HStack(alignment: .center, spacing: DSSpacing.sm) {
@@ -127,12 +139,65 @@ struct DraftStickyHeader: View {
                 )
             }
 
-            // The pick band. `.equatable()` is load-bearing, not tidy:
-            // `clockSeconds` republishes once a second, and without the gate the
-            // ribbon's `GeometryReader` + `ScrollViewReader` + nine
-            // parallelograms are re-laid-out on every tick. See `DraftPickBand`.
-            DraftPickBand(model: DraftPickBand.Model(coordinator: coordinator))
-                .equatable()
+            // THE RIBBON ROLLS OVER, AND IT SAYS SO (#198 (2)).
+            //
+            // `DraftBroadcastRail`'s header records why the full-screen gold
+            // "ROUND 2 BEGINS" curtain was deleted: it fired ~7 times a night,
+            // carried no information, and arrived in the same instant as the
+            // round recap sheet — two interruptions for one event. Its
+            // replacement was supposed to be structural ("the ribbon rolls over
+            // and its head reads ROUND 3 · PICK 1 OF 32"), and the head does
+            // read that — but a headline changing while nine slats slide by one
+            // position is not a beat, it is a diff. Seven rounds went past with
+            // nothing marking any of them.
+            //
+            // This is the structural version: the ribbon dims and slides out
+            // from under a plate that names the round that just finished and
+            // the one now on the clock, for ``rolloverDwell`` seconds, INSIDE
+            // the band's own height. Three properties keep it from becoming the
+            // curtain again:
+            //
+            //   * **It never covers a deadline.** The plate is confined to the
+            //     band, so the clock row above it and the needs row below stay
+            //     visible — the exact rule the rail's placement obeys.
+            //   * **It never doubles the recap.** A round boundary raises
+            //     `pendingRoundRecap` in the same instant, and a plate drawn
+            //     behind a sheet is a beat nobody sees. It is ARMED instead and
+            //     shown when the room comes back (``presentArmedRollover()``).
+            //   * **It is not a modal.** Nothing waits for it, nothing is
+            //     hidden behind it, and Reduce Motion gets the same plate with
+            //     no animation at all.
+            // `.leading` — vertically centred on the band, so the plate lands on
+            // the RIBBON rather than on the band's own head, which is the line
+            // that already states the count the plate is punctuating.
+            ZStack(alignment: .leading) {
+                // The pick band. `.equatable()` is load-bearing, not tidy:
+                // `clockSeconds` republishes once a second, and without the
+                // gate the ribbon's `GeometryReader` + `ScrollViewReader` +
+                // nine parallelograms are re-laid-out on every tick. See
+                // `DraftPickBand`.
+                DraftPickBand(model: DraftPickBand.Model(coordinator: coordinator))
+                    .equatable()
+                    // The ROLL. Both channels are non-layout-affecting, so the
+                    // ribbon cannot resize the header on its way past — the
+                    // lesson `PickRevealCard`'s entrance learned the hard way
+                    // (a scale re-paints a card's box inside a clipping panel).
+                    .opacity(rolloverRound == nil ? 1 : 0.22)
+                    .offset(x: rolloverRound == nil ? 0 : 28)
+
+                if let round = rolloverRound {
+                    roundRolloverPlate(round)
+                }
+            }
+            .onChange(of: coordinator.currentPick?.round) { old, new in
+                roundDidChange(from: old, to: new)
+            }
+            // The recap sheet coming down is the cue for an armed plate. A
+            // Bool rather than the value itself: `RoundRecapData` is not
+            // `Equatable`, and "is the room visible" is all this needs.
+            .onChange(of: coordinator.pendingRoundRecap == nil) { _, isClear in
+                if isClear { presentArmedRollover() }
+            }
 
             HStack(alignment: .center, spacing: DSSpacing.sm) {
                 userNextPickInfo
@@ -601,6 +666,109 @@ struct DraftStickyHeader: View {
         max(coordinator.clockSeconds, coordinator.isUserOnClock ? 120 : 60)
     }
 
+    // MARK: - The round rollover (#198 (2))
+
+    /// How long the plate stays up. Long enough to read two lines, short enough
+    /// that the ribbon it is standing on is back before the next card lands —
+    /// an AI clock is 60 s at 1× and the room skips through it faster than that,
+    /// so this is deliberately under the shortest gap between two picks the
+    /// room can produce.
+    private static let rolloverDwell: Double = 1.9
+
+    /// The plate itself: what just finished, and what is now on the clock.
+    ///
+    /// **No gold.** The band's current-slat rule and the clock badge are the
+    /// two gold marks the header is allowed (P5), and a third one on a plate
+    /// that covers the first would read as the clock having moved. The eyebrow
+    /// takes `accentBlue`, which is this room's information hue everywhere else
+    /// (`DraftBroadcastRail`'s trade and target beats).
+    private func roundRolloverPlate(_ round: Int) -> some View {
+        HStack(spacing: DSSpacing.sm) {
+            Image(systemName: "flag.checkered")
+                .font(DSType.display(DSType.Size.title3, .black))
+                .foregroundStyle(Color.accentBlue)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("ROUND \(max(1, round - 1)) IS IN THE BOOKS")
+                    .font(DSType.display(DSType.Size.caption, .heavy))
+                    .tracking(1.0)
+                    .foregroundStyle(Color.accentBlue)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                Text("ROUND \(round) ON THE CLOCK")
+                    .font(DSType.display(DSType.Size.title3, .black))
+                    .tracking(1.4)
+                    .foregroundStyle(Color.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, DSSpacing.sm)
+        .padding(.vertical, DSSpacing.xs)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: DSCornerRadius.card, style: .continuous)
+                .fill(Color.backgroundPlate.opacity(0.92))
+                .overlay(
+                    RoundedRectangle(cornerRadius: DSCornerRadius.card, style: .continuous)
+                        .strokeBorder(Color.accentBlue.opacity(0.45), lineWidth: 1)
+                )
+        )
+        // The plate slides in over the ribbon from the leading edge and fades
+        // out where it stands: an entrance says "this is new", and an exit that
+        // travels would pull the eye off the board the room is handing back.
+        .transition(
+            .asymmetric(
+                insertion: .move(edge: .leading).combined(with: .opacity),
+                removal: .opacity
+            )
+        )
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Round \(max(1, round - 1)) complete. Round \(round) is on the clock.")
+    }
+
+    /// The band's round changed. A rollover is a round going UP — the cursor
+    /// also moves backwards when the room is rewound to a completed draft, and
+    /// that is not a beat.
+    private func roundDidChange(from old: Int?, to new: Int?) {
+        guard let new, let old, new > old else { return }
+        armedRolloverRound = new
+        presentArmedRollover()
+    }
+
+    /// Shows an armed plate, if the room is actually visible to show it in.
+    ///
+    /// Called from the round change itself and from the recap sheet clearing,
+    /// so a rollover that happened under a sheet is not lost — it is simply
+    /// late, which is the honest reading of "the ribbon rolled over while you
+    /// were looking at the recap".
+    private func presentArmedRollover() {
+        guard let round = armedRolloverRound,
+              coordinator.pendingRoundRecap == nil else { return }
+        armedRolloverRound = nil
+        setRolloverPlate(round)
+        rolloverToken &+= 1
+        let mine = rolloverToken
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(Self.rolloverDwell * 1_000_000_000))
+            guard mine == rolloverToken else { return }
+            setRolloverPlate(nil)
+        }
+    }
+
+    /// One animation, honoured or skipped in one place. Reduce Motion gets the
+    /// plate and the dwell with no travel and no cross-fade — the words, the
+    /// hue and the dimmed ribbon carry the beat without them.
+    private func setRolloverPlate(_ round: Int?) {
+        guard !reduceMotion else {
+            rolloverRound = round
+            return
+        }
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
+            rolloverRound = round
+        }
+    }
+
     // MARK: - Needs
 
     /// Five positions, **in order of need**, as `DSStatusPill`s at stated
@@ -615,22 +783,90 @@ struct DraftStickyHeader: View {
         let needs = coordinator.teamNeedScores
             .sorted { $0.value > $1.value }
             .prefix(5)
+        let pressure = showsBoardPressure ? boardPressure : [:]
         return HStack(spacing: DSSpacing.xxs) {
-            Text("NEEDS")
+            Text(showsBoardPressure ? "NEEDS \u{00B7} MY TOP \(Self.pressureDepth)" : "NEEDS")
                 .font(DSType.display(DSType.Size.caption, .heavy))
                 .tracking(0.7)
                 .foregroundStyle(Color.textSecondary)
+                .lineLimit(1)
                 .padding(.trailing, DSSpacing.xxs)
             ForEach(Array(needs), id: \.key) { entry in
+                let left = pressure[entry.key]
                 DSStatusPill(
                     label: entry.key.rawValue,
                     tone: tone(for: entry.value),
+                    value: showsBoardPressure ? "\(left ?? 0)" : nil,
                     showsDot: false,
-                    spokenLabel: "\(entry.key.rawValue), \(spokenNeed(entry.value)) need"
+                    spokenLabel: spokenPill(
+                        position: entry.key.rawValue,
+                        score: entry.value,
+                        left: showsBoardPressure ? (left ?? 0) : nil
+                    )
                 )
             }
         }
         .fixedSize(horizontal: true, vertical: false)
+    }
+
+    // MARK: - Board pressure (#198 (4))
+
+    /// **How deep "the top of my board" is.** Twenty is the read that decides
+    /// trade-up versus sit: inside twenty slots a man is somebody the user's own
+    /// building filed a real opinion on, and past it the arithmetic of moving up
+    /// stops paying for itself.
+    private static let pressureDepth = 20
+
+    /// **Per position of need, how many men are LEFT inside the top
+    /// ``pressureDepth`` of the user's own board** (#198 (4)).
+    ///
+    /// This is the one number the needs strip was missing and the only number on
+    /// this screen that answers "do I move up or do I sit": three tackles inside
+    /// his top twenty means the run can come to him, one means the phone is the
+    /// only way to get him, and zero means the need is not solvable tonight at
+    /// any price and the strip is telling him to stop planning around it.
+    ///
+    /// ## Fog discipline
+    ///
+    /// `userBoardRanks` is the user's OWN board — `UserDraftBoard.slotMap`, the
+    /// order he left it in, over the declared class — and it is the identical
+    /// map the Big Board prints `MY #N` from. It is an annotation, not an
+    /// evaluation: the fog never covered it, and nothing here reads
+    /// `trueOverall`, `scoutedOverall` or any other rating. A man the user never
+    /// scouted has no slot at all and is therefore counted by nobody, which is
+    /// the correct answer — the board cannot be under pressure over a name it
+    /// has never heard.
+    private var boardPressure: [Position: Int] {
+        var counts: [Position: Int] = [:]
+        for prospect in coordinator.availableProspects {
+            guard let rank = coordinator.userBoardRanks[prospect.id],
+                  rank <= Self.pressureDepth else { continue }
+            counts[prospect.position, default: 0] += 1
+        }
+        return counts
+    }
+
+    /// **A top twenty needs twenty men in it.**
+    ///
+    /// `UserDraftBoard.order` ranks the men the user's building has actually
+    /// filed on — his stored board order plus every scouted man behind it — so a
+    /// club that scouted nobody has an EMPTY board, and a pressure column of
+    /// five zeroes on that save would read as "no help at any position", which
+    /// is the opposite of the truth (the class is untouched; he simply has no
+    /// opinion about it). Below the threshold the strip prints the needs alone,
+    /// exactly as it did before this pass.
+    private var showsBoardPressure: Bool {
+        coordinator.userBoardRanks.count >= Self.pressureDepth
+    }
+
+    private func spokenPill(position: String, score: Double, left: Int?) -> String {
+        let need = "\(position), \(spokenNeed(score)) need"
+        guard let left else { return need }
+        switch left {
+        case 0:  return need + ", none left in your top \(Self.pressureDepth)"
+        case 1:  return need + ", 1 man left in your top \(Self.pressureDepth)"
+        default: return need + ", \(left) men left in your top \(Self.pressureDepth)"
+        }
     }
 
     /// The thresholds, stated once. `teamNeedScores` runs roughly 0.2…1.0.

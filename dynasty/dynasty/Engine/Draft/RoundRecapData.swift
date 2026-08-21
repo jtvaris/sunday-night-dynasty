@@ -97,7 +97,7 @@ enum RoundRecapBuilder {
         //    PickResult, so we fall back to the gem flag for a stable sort.
         let leagueSteals: [RoundRecapData.LeagueStealRow] = allPickResults
             .filter { $0.grade == .stealAPlus || $0.grade == .hofTrack || $0.isGem }
-            .sorted(by: stealSort)
+            .sorted(by: { stealSort($0, $1) })
             .prefix(3)
             .map { result in
                 RoundRecapData.LeagueStealRow(

@@ -61,7 +61,7 @@ enum DraftIntel {
     /// `refreshConsensusBoard(for:)` is now the ONE writer.
     @discardableResult
     static func publicBoardRanks(for prospects: [CollegeProspect]) -> [UUID: Int] {
-        let sorted = prospects.sorted(by: mediaConsensusOrder)
+        let sorted = prospects.sorted(by: { mediaConsensusOrder($0, $1) })
         var result: [UUID: Int] = [:]
         for (idx, prospect) in sorted.enumerated() {
             result[prospect.id] = idx + 1
@@ -209,7 +209,7 @@ enum DraftIntel {
     /// of the top 100" counted a different hundred men than the ones the room
     /// was ranking.)
     static func consensusTop(_ prospects: [CollegeProspect], count: Int) -> [CollegeProspect] {
-        Array(prospects.sorted(by: mediaConsensusOrder).prefix(count))
+        Array(prospects.sorted(by: { mediaConsensusOrder($0, $1) }).prefix(count))
     }
 
     // MARK: - Where the media put him
