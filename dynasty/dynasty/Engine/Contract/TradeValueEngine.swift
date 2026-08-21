@@ -983,8 +983,12 @@ enum TradeValueEngine {
 
         private static let prefix = "tradeTalkStrikes"
 
+        /// Career-scoped (F-06): two saves open in one install kept one pile of
+        /// strikes before this, so a GM who had hung up on career A started career
+        /// B already annoyed. `scopedKey` reads the bound career at every access,
+        /// so a switch mid-launch needs no notification.
         private static func key(season: Int, teamID: UUID) -> String {
-            "\(prefix).\(season).\(teamID.uuidString)"
+            CareerScopedDefaults.scopedKey("\(prefix).\(season).\(teamID.uuidString)")
         }
 
         static func strikes(season: Int, teamID: UUID) -> Int {
@@ -1001,9 +1005,25 @@ enum TradeValueEngine {
         /// Clears every stored strike. Called from `WeekAdvancer.startNewSeason`
         /// so a new league year is a clean slate (and UserDefaults does not grow
         /// a row per team per season forever).
+        ///
+        /// It is deliberately NOT called on a career switch any more (F-06): doing
+        /// that on every cold launch is what let a user talk all 31 GMs into
+        /// hanging up and then get a fresh league by quitting the app.
+        ///
+        /// The sweep is scoped to the OPEN career. A scoped key is
+        /// `base.careerID`, so the prefix still leads and the career id trails;
+        /// matching on the prefix alone would have one save's new league year wipe
+        /// another save's strikes. Unbound (previews, pre-`bind`) falls back to
+        /// clearing the unscoped keys, which is what gets written in that state.
         static func reset() {
-            let stale = UserDefaults.standard.dictionaryRepresentation().keys
+            let all = UserDefaults.standard.dictionaryRepresentation().keys
                 .filter { $0.hasPrefix(prefix) }
+            let stale: [String]
+            if let careerID = WeekAdvancer.activeCareerID {
+                stale = all.filter { $0.hasSuffix(careerID.uuidString) }
+            } else {
+                stale = all.filter { $0.components(separatedBy: ".").count == 3 }
+            }
             for key in stale { UserDefaults.standard.removeObject(forKey: key) }
         }
     }

@@ -548,6 +548,13 @@ enum CareerScopedDefaults {
 
     /// Career state, not settings. Order is irrelevant; the set is the contract.
     static let keys: [String] = [
+        // Per-cycle trade counters (F-06). Save state: the offer ceilings, the
+        // pity floor and the deadline catch-up all read them, and as process
+        // statics they were wiped on every cold launch.
+        "tradeAIOffersThisSeason",
+        "tradeAIOffersThisOffseason",
+        "tradeLeagueTradesThisSeason",
+        "tradeLeagueTradesThisOffseason",
         "scoutsSentToCombine",
         "combineResultsReviewed",
         // Scouting budget already committed to this cycle's combine trip, in

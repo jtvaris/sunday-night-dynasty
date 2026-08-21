@@ -124,7 +124,7 @@ because nothing measures it.
 > F-02. Line numbers quoted for those two files come from the reports and are **stale**; navigate by
 > symbol name. Do not start F-03 until F-02 lands.
 
-### F-01 — Make AI-vs-AI game results depend on the rosters
+### F-01 — Make AI-vs-AI game results depend on the rosters — **DONE** (`2c70d51`, #213)
 - **Class**: design-change (with a bug-fix sub-item: the tie-break)
 - **Priority**: P0 — **IN PROGRESS** (ledger #213, another agent is editing `WeekAdvancer.swift`)
 - **Where**: `Engine/Simulation/WeekAdvancer.swift` — `randomTeamScore(homeAdvantage:)` (reported
@@ -155,7 +155,7 @@ because nothing measures it.
   `REBUILD_VIABILITY_ANALYSIS.md` §4.1 (year-to-year win correlation 0.63 vs a real 0.32; the AI
   "churns players, not team strength"). Ledger `TODO.md:4137`.
 
-### F-02 — Make the roster-quality → win-probability curve monotone
+### F-02 — Make the roster-quality → win-probability curve monotone — **DONE** (`e04dac4`, #214)
 - **Class**: bug-fix
 - **Priority**: P0 — **IN PROGRESS** (ledger #214, another agent is editing `PlaySimulator.swift`)
 - **Where**: `Engine/Simulation/PlaySimulator.swift` — `edgeCompressionScale` (reported
@@ -185,7 +185,7 @@ because nothing measures it.
 - **Source**: `REBUILD_VIABILITY_ANALYSIS.md` §1.7, §4.2, §4.6 and recommendation 1 ("what to fix
   first, if only one thing"). Ledger `TODO.md:4146`.
 
-### F-03 — Stop underdog relief stacking inside the compression floor
+### F-03 — Stop underdog relief stacking inside the compression floor — **CLOSED, no change** (its premise was removed by F-02)
 - **Class**: bug-fix
 - **Priority**: P0
 - **Where**: `Engine/Simulation/PlaySimulator.swift` — `underdogReliefCompletion` (reported
@@ -205,8 +205,19 @@ because nothing measures it.
 - **Depends on**: F-02
 - **Source**: `REBUILD_VIABILITY_ANALYSIS.md` recommendation 5 and §1.7; cross-referenced in
   `TODO.md:4155`.
+- **RESOLUTION (measured, no code change)**: the entry's own instruction was to pick the remedy
+  *after* F-02 landed, because the right choice depends on the new compression shape. It landed, and
+  the finding it describes no longer exists. The pathology was **simultaneity** — the favourite
+  crushed to a 0.085 floor while the underdog was subsidised in the same band — and F-02 removed the
+  crush. The post-F-02 `fullgame` sweep is monotone *with the relief still in place*
+  (73/83/86/89/89/89/91/91/95 across gaps 2-17), so the relief is not producing a reversal.
+  It is now the only remaining softener at the top of the curve and is holding `elite`-vs-`weak` at
+  96.0% rather than higher; narrowing the trapezoid to [4, 8] would push the top UP, which is the
+  opposite of this entry's own acceptance criterion. The relief also exists for a reason unrelated
+  to the gap — it corrects P0-1's flat de-inflation over-cooling a below-average offense — and that
+  reason is untouched by F-02. Leave it alone.
 
-### F-04 — Instrument competitive dispersion in the smoke test
+### F-04 — Instrument competitive dispersion in the smoke test — **DONE** (`674527a`)
 - **Class**: measurement-gap
 - **Priority**: P0
 - **Where**: `Engine/Simulation/MultiSeasonSmokeTest.swift:159`, `:251`, `:306`, `:855-933`

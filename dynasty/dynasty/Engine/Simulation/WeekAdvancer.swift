@@ -105,25 +105,71 @@ enum WeekAdvancer {
     /// separate them. Wave 2.
     static var aiTradeOffersOffseasonGenerated: Int = 0
 
+    // ---- Per-cycle trade counters: SAVE state, not process state (F-06) ----
+    //
+    // These four were `static var`s, and `activeCareerID` is nil on every cold
+    // launch, so `bind(to:)` → `resetProcessStateForCareerSwitch()` zeroed all of
+    // them before the save was even open. Everything they are supposed to bound
+    // came off with them: the 8-offer in-season and 5-offer offseason ceilings
+    // stopped being ceilings, the pity floor became a guaranteed-offer farm, and
+    // `deficit = max(0, 7 − leagueTradesThisSeason)` pinned the deadline target at
+    // its maximum of 15 every single time. Quit and relaunch and the market started
+    // over — the one place in the trade system a player could farm deliberately.
+    //
+    // They now live in career-scoped `UserDefaults`, which is where this file's own
+    // `TradeTalkRegistry` already keeps the rejection strikes. Read through
+    // `scopedKey` at every access, so a career switch inside one launch changes
+    // namespace with nobody having to remember to notify, and `CareerScopedDefaults`
+    // purges them with the rest of a deleted save. No schema change.
+
+    private static func tradeCounter(_ base: String) -> Int {
+        UserDefaults.standard.integer(forKey: CareerScopedDefaults.scopedKey(base))
+    }
+
+    private static func setTradeCounter(_ base: String, _ value: Int) {
+        UserDefaults.standard.set(value, forKey: CareerScopedDefaults.scopedKey(base))
+    }
+
     /// In-season AI offers that have reached the user THIS season. Drives the
     /// hazard ramp's cap and pity floor (`TradeValueEngine.userOfferHazard`);
     /// reset in `startNewSeason`.
-    static var aiOffersThisSeason: Int = 0
+    static var aiOffersThisSeason: Int {
+        get { tradeCounter(TradeCounterKey.offersSeason) }
+        set { setTradeCounter(TradeCounterKey.offersSeason, newValue) }
+    }
 
     /// AI offers that have reached the user in the CURRENT offseason cycle.
     /// Reset in `startNewSeason`, which fires immediately after the offseason
     /// ends — so between two kickoffs this counter sees exactly one offseason.
-    static var aiOffersThisOffseason: Int = 0
+    static var aiOffersThisOffseason: Int {
+        get { tradeCounter(TradeCounterKey.offersOffseason) }
+        set { setTradeCounter(TradeCounterKey.offersOffseason, newValue) }
+    }
 
     /// AI-vs-AI league trades completed this season between kickoff and the
     /// deadline. Feeds the deadline-week catch-up (a quiet October makes deadline
     /// day louder, which is also what the real league does) and the §5 in-season
     /// ceiling. Wave 2.
-    static var leagueTradesThisSeason: Int = 0
+    static var leagueTradesThisSeason: Int {
+        get { tradeCounter(TradeCounterKey.leagueSeason) }
+        set { setTradeCounter(TradeCounterKey.leagueSeason, newValue) }
+    }
 
     /// AI-vs-AI league trades completed in the current offseason cycle — the
     /// per-window catch-up and the §5 offseason ceiling read it.
-    static var leagueTradesThisOffseason: Int = 0
+    static var leagueTradesThisOffseason: Int {
+        get { tradeCounter(TradeCounterKey.leagueOffseason) }
+        set { setTradeCounter(TradeCounterKey.leagueOffseason, newValue) }
+    }
+
+    /// The four base keys, named once so `CareerScopedDefaults.keys` and the
+    /// accessors above cannot drift apart.
+    enum TradeCounterKey {
+        static let offersSeason      = "tradeAIOffersThisSeason"
+        static let offersOffseason   = "tradeAIOffersThisOffseason"
+        static let leagueSeason      = "tradeLeagueTradesThisSeason"
+        static let leagueOffseason   = "tradeLeagueTradesThisOffseason"
+    }
 
     /// §5 ceilings, enforced here rather than inside the market so the bands are
     /// visible next to the calendar they apply to: 8-25 in-season player trades
@@ -197,17 +243,20 @@ enum WeekAdvancer {
         // belonged to the save being left.
         DraftIntel.resetProcessState()
 
-        // Trade counters: the monotonic pair the per-season diff reads, plus the
-        // per-cycle pair `startNewSeason` maintains (season 1 never calls it, so a
-        // second career in the same process would inherit the first one's totals
-        // and start with the market's volume caps already spent).
+        // Only the MONOTONIC instrumentation pair is process state — the smoke
+        // test diffs them per season and a second career in the same process
+        // would inherit the first one's totals.
+        //
+        // The four per-cycle counters are NOT reset here any more (F-06). They are
+        // career-scoped save state now, so a career switch changes their namespace
+        // by itself; zeroing them here is what erased them on every cold launch.
+        // `TradeTalkRegistry.reset()` is gone from this path for the same reason —
+        // the strikes are already persisted per season and per team, and wiping
+        // them on launch handed a user who had talked all 31 GMs into hanging up a
+        // fresh league by quitting. `startNewSeason` still clears them, which is
+        // the one place a clean slate is correct.
         aiTradeOffersGenerated = 0
         aiTradeOffersOffseasonGenerated = 0
-        aiOffersThisSeason = 0
-        aiOffersThisOffseason = 0
-        leagueTradesThisSeason = 0
-        leagueTradesThisOffseason = 0
-        TradeValueEngine.TradeTalkRegistry.reset()
         TradeValueEngine.funnel = TradeValueEngine.MarketFunnel()
 
         // Per-career ledgers held outside SwiftData — keyed by player/team ids
