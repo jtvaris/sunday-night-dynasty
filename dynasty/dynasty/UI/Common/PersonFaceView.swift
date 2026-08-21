@@ -1,5 +1,6 @@
 import SwiftUI
 import ImageIO
+import os
 
 // MARK: - Placeholder identity
 
@@ -300,14 +301,23 @@ nonisolated final class FaceImageCache: @unchecked Sendable {
     private static let byteLimit = 16 * 1024 * 1024
 
     private let cache = NSCache<NSString, UIImage>()
-    private let lock = NSLock()
-    /// Ids proven not to be in the bundle. A packaging fact, so it never expires.
-    private var misses: Set<String> = []
-    /// Ids whose file EXISTS but whose decode failed, and how often. A decode
-    /// can fail for reasons that are not about the file — memory pressure above
-    /// all — so one failure must not blank a face for the rest of the launch,
-    /// which is what a single shared miss set used to do.
-    private var decodeFailures: [String: Int] = [:]
+
+    /// The two negative-result tables, together under one lock — exactly the
+    /// pairing the old `NSLock` guarded. They live *inside* the lock rather
+    /// than beside it because `NSLock.lock()`/`unlock()` are unavailable from
+    /// async contexts (`loadImage` reads this ledger), and a scoped
+    /// `withLock` is the async-safe equivalent of the same critical section.
+    private nonisolated struct MissLedger: Sendable {
+        /// Ids proven not to be in the bundle. A packaging fact, so it never expires.
+        var misses: Set<String> = []
+        /// Ids whose file EXISTS but whose decode failed, and how often. A decode
+        /// can fail for reasons that are not about the file — memory pressure above
+        /// all — so one failure must not blank a face for the rest of the launch,
+        /// which is what a single shared miss set used to do.
+        var decodeFailures: [String: Int] = [:]
+    }
+
+    private let ledger = OSAllocatedUnfairLock(initialState: MissLedger())
 
     /// Decode attempts a present-but-unreadable file gets before it is written
     /// off. Three is enough to ride out a transient; small enough that a genuinely
@@ -340,10 +350,10 @@ nonisolated final class FaceImageCache: @unchecked Sendable {
         guard !faceID.isEmpty else { return nil }
         if let cached = cachedImage(for: faceID) { return cached }
 
-        lock.lock()
-        let knownMiss = misses.contains(faceID)
-            || (decodeFailures[faceID] ?? 0) >= Self.maxDecodeAttempts
-        lock.unlock()
+        let knownMiss = ledger.withLock {
+            $0.misses.contains(faceID)
+                || ($0.decodeFailures[faceID] ?? 0) >= Self.maxDecodeAttempts
+        }
         if knownMiss { return nil }
 
         guard let url = Self.bundleURL(for: faceID) else {
@@ -391,17 +401,13 @@ nonisolated final class FaceImageCache: @unchecked Sendable {
     /// The file is not in the bundle. Permanent for this launch — packaging
     /// does not change while the app runs.
     private func noteMiss(_ faceID: String) {
-        lock.lock()
-        misses.insert(faceID)
-        lock.unlock()
+        ledger.withLock { _ = $0.misses.insert(faceID) }
     }
 
     /// The file is there but would not decode. Counted, not blacklisted, so a
     /// transient failure costs one retry instead of the whole session.
     private func noteDecodeFailure(_ faceID: String) {
-        lock.lock()
-        decodeFailures[faceID, default: 0] += 1
-        lock.unlock()
+        ledger.withLock { $0.decodeFailures[faceID, default: 0] += 1 }
     }
 
     /// Fully decodes a bundled portrait at a bounded size, on whatever thread
@@ -422,10 +428,10 @@ nonisolated final class FaceImageCache: @unchecked Sendable {
     /// later build/download are picked up without a relaunch.
     func purge() {
         cache.removeAllObjects()
-        lock.lock()
-        misses.removeAll()
-        decodeFailures.removeAll()
-        lock.unlock()
+        ledger.withLock {
+            $0.misses.removeAll()
+            $0.decodeFailures.removeAll()
+        }
     }
 
     /// Where a face's image resolves in the bundle. Deliberately not private:

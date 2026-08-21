@@ -1663,7 +1663,7 @@ enum InboxEngine {
         // film study — while the Scouting Hub header and the dashboard's
         // "% scouted" (both on `ProspectFog.hasOwnReport`) said 0%. Same
         // predicate here, so the three counters cannot disagree.
-        let reported = declared.filter(ProspectFog.hasOwnReport).count
+        let reported = declared.filter({ ProspectFog.hasOwnReport($0) }).count
         let interviewed = declared.filter(\.interviewCompleted).count
         let flagged = declared.filter { !($0.medicalConcerns ?? []).isEmpty }.count
 

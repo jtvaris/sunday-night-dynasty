@@ -57,7 +57,7 @@ enum CoachCarouselEngine {
     /// A pending request from an AI team to interview one of the user's
     /// coordinators for their head-coach vacancy. Resolved by the user in
     /// the Staff view (allow / block); expires at the Combine if ignored.
-    struct CoordinatorInterviewRequest: Codable {
+    nonisolated struct CoordinatorInterviewRequest: Codable {
         let id: UUID
         let coachID: UUID
         let coachName: String

@@ -1,6 +1,6 @@
 import Foundation
 
-struct PlayerGameStats: Codable, Identifiable {
+nonisolated struct PlayerGameStats: Codable, Identifiable {
     var id: UUID { playerID }
 
     var playerID: UUID

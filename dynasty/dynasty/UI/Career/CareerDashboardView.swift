@@ -4322,7 +4322,7 @@ struct CareerDashboardView: View {
     private func computeDraftClassScoutedPercent() -> Int {
         let draftClass = WeekAdvancer.currentDraftClass.filter { $0.isDeclaringForDraft }
         guard !draftClass.isEmpty else { return 0 }
-        let scouted = draftClass.filter(ProspectFog.hasOwnReport).count
+        let scouted = draftClass.filter({ ProspectFog.hasOwnReport($0) }).count
         return Int((Double(scouted) / Double(draftClass.count) * 100).rounded())
     }
 

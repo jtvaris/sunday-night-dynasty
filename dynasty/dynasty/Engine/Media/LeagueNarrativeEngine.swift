@@ -8,7 +8,7 @@ import SwiftData
 /// race, and "already reported" markers that keep the news cycle from
 /// repeating the same story week after week.
 /// JSON-encoded onto the career (`Career.leagueNarrativeData`).
-struct LeagueNarrativeState: Codable {
+nonisolated struct LeagueNarrativeState: Codable {
     var season: Int
     /// The regular-season week these rankings were computed after.
     var week: Int
@@ -55,7 +55,7 @@ struct LeagueNarrativeState: Codable {
 
 /// One row of the weekly power rankings. Team display fields are snapshotted
 /// at generation time so the UI card can render without model fetches.
-struct PowerRankingEntry: Codable, Identifiable {
+nonisolated struct PowerRankingEntry: Codable, Identifiable {
     var id: UUID { teamID }
     let teamID: UUID
     let rank: Int
@@ -72,7 +72,7 @@ struct PowerRankingEntry: Codable, Identifiable {
 }
 
 /// One MVP-race candidate (snapshot for UI + presser).
-struct MVPCandidate: Codable, Identifiable {
+nonisolated struct MVPCandidate: Codable, Identifiable {
     var id: UUID { playerID }
     let playerID: UUID
     let playerName: String

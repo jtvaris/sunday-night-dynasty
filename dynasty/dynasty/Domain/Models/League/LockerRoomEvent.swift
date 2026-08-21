@@ -6,7 +6,7 @@ import Foundation
 /// player personalities, morale, and recent results. Persisted as JSON on
 /// `Career` — a rolling log of resolved events plus (at most) one pending
 /// choice event awaiting the coach's response in the Locker Room screen.
-struct LockerRoomEvent: Codable, Identifiable {
+nonisolated struct LockerRoomEvent: Codable, Identifiable {
 
     enum Kind: String, Codable {
         /// A frustrated hothead blows up after a loss (choice event).
@@ -71,7 +71,7 @@ struct LockerRoomEvent: Codable, Identifiable {
 /// One way the coach can respond to a pending locker-room event.
 /// Morale deltas are intentionally small (within ±5) — locker-room drama
 /// nudges the season, it never decides it.
-struct LockerRoomEventOption: Codable, Identifiable {
+nonisolated struct LockerRoomEventOption: Codable, Identifiable {
     let id: UUID
     let label: String
     let detail: String

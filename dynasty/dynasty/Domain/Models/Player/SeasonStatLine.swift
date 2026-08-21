@@ -20,7 +20,7 @@ import Foundation
 /// `Codable` and **decode-lenient**: `init(from:)` reads every key with
 /// `decodeIfPresent`, so a line encoded by an older build (or a future one with
 /// extra keys) keeps decoding after a category is added or dropped.
-struct SeasonStatLine: Codable, Equatable {
+nonisolated struct SeasonStatLine: Codable, Equatable {
 
     // MARK: - Passing
 
@@ -79,7 +79,7 @@ extension SeasonStatLine {
         case snapsPlayed
     }
 
-    init(from decoder: Decoder) throws {
+    nonisolated init(from decoder: Decoder) throws {
         self.init()
         let container = try decoder.container(keyedBy: CodingKeys.self)
         // Double-unwrap: `try?` wraps the already-optional `decodeIfPresent`,

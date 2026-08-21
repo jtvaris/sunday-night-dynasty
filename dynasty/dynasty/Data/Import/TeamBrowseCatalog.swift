@@ -200,7 +200,7 @@ struct TeamBrowseCatalog {
             spendingWillingness: base?.spendingWillingness ?? 50,
             lastSeasonWins: record.wins,
             lastSeasonLosses: record.losses,
-            startingQBName: qb.map(shortName) ?? "—",
+            startingQBName: qb.map({ shortName($0) }) ?? "—",
             startingQBOverall: qb?.ratingTarget ?? 0,
             isLocked: base?.isLocked ?? false
         )

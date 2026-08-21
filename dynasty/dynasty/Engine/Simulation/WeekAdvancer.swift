@@ -4839,7 +4839,7 @@ enum WeekAdvancer {
         }
         let blob = MockHistoryBlob(
             season: career.currentSeason,
-            snapshots: mockDraftHistory.mapValues { $0.map(MockPickRecord.init) }
+            snapshots: mockDraftHistory.mapValues { records in records.map({ MockPickRecord($0) }) }
         )
         career.mockDraftHistoryData = try? JSONEncoder().encode(blob)
     }

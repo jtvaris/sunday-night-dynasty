@@ -2189,10 +2189,10 @@ struct CareerShellView: View {
                 let oppCoaches = (try? modelContext.fetch(oppCoachDescriptor)) ?? []
                 ctx.opponentDCPersona = oppCoaches
                     .first { $0.role == .defensiveCoordinator }
-                    .map(DCPersona.derive(for:))
+                    .map({ DCPersona.derive(for: $0) })
                 ctx.opponentOCPersona = oppCoaches
                     .first { $0.role == .offensiveCoordinator }
-                    .map(OCPersona.derive(for:))
+                    .map({ OCPersona.derive(for: $0) })
             }
         }
 

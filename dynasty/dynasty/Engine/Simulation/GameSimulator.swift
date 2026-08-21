@@ -129,8 +129,8 @@ enum GameSimulator {
         // the `teamID` query as the only source of a roster.
         let homeRoster = (homeRosterOverride ?? homeTeam.currentRoster()).filter { !$0.isHoldingOut }
         let awayRoster = (awayRosterOverride ?? awayTeam.currentRoster()).filter { !$0.isHoldingOut }
-        var homePlayers = homeRoster.map(SimPlayer.init(from:))
-        var awayPlayers = awayRoster.map(SimPlayer.init(from:))
+        var homePlayers = homeRoster.map({ SimPlayer(from: $0) })
+        var awayPlayers = awayRoster.map({ SimPlayer(from: $0) })
         var livePlayerByID: [UUID: Player] = [:]
         for player in homeRoster { livePlayerByID[player.id] = player }
         for player in awayRoster { livePlayerByID[player.id] = player }
@@ -681,8 +681,8 @@ enum GameSimulator {
         // (it needs an explicit live call), so its gate is measured directly:
         // repeated 1st-and-10 playActionDeep snaps, bite roll OFF vs ON,
         // same two rosters. The relative effect must stay inside ±10%.
-        let paOffense = homeRoster.filter { !$0.isHoldingOut }.map(SimPlayer.init(from:))
-        let paDefense = awayRoster.filter { !$0.isHoldingOut }.map(SimPlayer.init(from:))
+        let paOffense = homeRoster.filter { !$0.isHoldingOut }.map({ SimPlayer(from: $0) })
+        let paDefense = awayRoster.filter { !$0.isHoldingOut }.map({ SimPlayer(from: $0) })
         func measurePlayAction(label: String, snaps: Int = 4000) {
             var totalYards = 0
             var completions = 0
@@ -770,8 +770,8 @@ enum GameSimulator {
         // Mech 4: WR release vs DB press — live-only (needs a man-press
         // package, which the quick sim never sends), so measured directly:
         // repeated SHORT snaps vs a Man-Press look, off vs on. Near-zero mean.
-        let pressOffense = homeRoster.filter { !$0.isHoldingOut }.map(SimPlayer.init(from:))
-        let pressDefense = awayRoster.filter { !$0.isHoldingOut }.map(SimPlayer.init(from:))
+        let pressOffense = homeRoster.filter { !$0.isHoldingOut }.map({ SimPlayer(from: $0) })
+        let pressDefense = awayRoster.filter { !$0.isHoldingOut }.map({ SimPlayer(from: $0) })
         let manPress = DefensiveCall.manPress.package
         func measurePress(label: String, snaps: Int = 6000) {
             var completions = 0

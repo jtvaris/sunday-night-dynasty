@@ -18,7 +18,7 @@ import Foundation
 /// 2. **Source level.** Everything that can name the dev profile is inside
 ///    `#if DEBUG`, so a Release binary contains no code path that could load
 ///    it even if a file somehow appeared next to the executable.
-enum LeagueTemplateLoader {
+nonisolated enum LeagueTemplateLoader {
 
     // MARK: - Errors
 

@@ -47,7 +47,7 @@ enum FacePersonGender: String {
 /// * `cooldown` — face id → the season the face was freed. A freed face stays
 ///   out of circulation for `FaceLibrary.cooldownSeasons` further seasons so a
 ///   retiring legend is not immediately re-skinned onto a rookie.
-struct FaceAssignmentRegistry: Codable {
+nonisolated struct FaceAssignmentRegistry: Codable {
     var inUse: [String: UUID] = [:]
     var cooldown: [String: Int] = [:]
 
@@ -208,7 +208,7 @@ final class FaceLibrary {
     private func install(_ newEntries: [FaceEntry]) {
         entries = newEntries.sorted { $0.id < $1.id }
         entriesByID = Dictionary(uniqueKeysWithValues: entries.map { ($0.id, $0) })
-        reserveIDs = Set(entries.map(\.id).filter(FaceGeneratorConstants.isReserve))
+        reserveIDs = Set(entries.map(\.id).filter({ FaceGeneratorConstants.isReserve($0) }))
         byRole = Dictionary(grouping: entries) { $0.bucket.role }
         byRoleAge = Dictionary(grouping: entries) { Self.key($0.bucket.role, $0.bucket.ageBand) }
         byRoleAgeBuild = Dictionary(grouping: entries) {
@@ -724,13 +724,13 @@ final class FaceLibrary {
                 return true
             }
 
-            for player in players.filter({ !$0.isRetired }).sorted(by: Self.byID) {
+            for player in players.filter({ !$0.isRetired }).sorted(by: { Self.byID($0, $1) }) {
                 if !claimRebuilt(player.faceID, personID: player.id, onTeam: player.teamID != nil),
                    player.faceID != nil {
                     player.faceID = nil
                 }
             }
-            for coach in coaches.filter({ !$0.isRetired }).sorted(by: Self.byID) {
+            for coach in coaches.filter({ !$0.isRetired }).sorted(by: { Self.byID($0, $1) }) {
                 // A coach wearing a face of the wrong gender — a save written
                 // before the female range existed, or a row whose gender was
                 // set after the portrait was — is repaired in THIS pass, not in

@@ -195,7 +195,7 @@ enum FaceGeneratorConstants {
     ]
 
     /// Bundle-relative folder the packaged HEICs land in.
-    static let facesFolder = "Faces"
+    nonisolated static let facesFolder = "Faces"
 
     /// Bundle resource name of the packaged manifest.
     static let manifestResource = "faces_manifest"

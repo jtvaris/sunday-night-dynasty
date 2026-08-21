@@ -674,10 +674,10 @@ enum ProspectFog {
     /// interview slot, because the room cannot answer any of them.
     static func mentalUnlockHint(forUnread keys: [String]) -> String {
         let prefix = "Dark cells are work you have not bought \u{2014} "
-        if keys.allSatisfy(interviewReads) {
+        if keys.allSatisfy({ interviewReads($0) }) {
             return prefix + "a scouting report or an interview opens them."
         }
-        if keys.contains(where: interviewReads) {
+        if keys.contains(where: { interviewReads($0) }) {
             return prefix + "a report grades all eight; an interview reads AWR, LRN, CMP, LDR and WRK."
         }
         return prefix + "decision-making, clutch and coachability are tape questions, so only a scouting report opens them."

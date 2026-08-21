@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - Physical Attributes
 
-struct PhysicalAttributes: Codable, Equatable {
+nonisolated struct PhysicalAttributes: Codable, Equatable {
     var speed: Int
     var acceleration: Int
     var strength: Int
@@ -28,7 +28,7 @@ struct PhysicalAttributes: Codable, Equatable {
 
 // MARK: - Mental Attributes
 
-struct MentalAttributes: Codable, Equatable {
+nonisolated struct MentalAttributes: Codable, Equatable {
     var awareness: Int
     var decisionMaking: Int
     var clutch: Int
@@ -54,7 +54,7 @@ struct MentalAttributes: Codable, Equatable {
 
 // MARK: - Position-Specific Attributes
 
-struct QBAttributes: Codable, Equatable {
+nonisolated struct QBAttributes: Codable, Equatable {
     var armStrength: Int
     var accuracyShort: Int
     var accuracyMid: Int
@@ -67,7 +67,7 @@ struct QBAttributes: Codable, Equatable {
     }
 }
 
-struct WRAttributes: Codable, Equatable {
+nonisolated struct WRAttributes: Codable, Equatable {
     var routeRunning: Int
     var catching: Int
     var release: Int
@@ -78,7 +78,7 @@ struct WRAttributes: Codable, Equatable {
     }
 }
 
-struct RBAttributes: Codable, Equatable {
+nonisolated struct RBAttributes: Codable, Equatable {
     var vision: Int
     var elusiveness: Int
     var breakTackle: Int
@@ -89,7 +89,7 @@ struct RBAttributes: Codable, Equatable {
     }
 }
 
-struct TEAttributes: Codable, Equatable {
+nonisolated struct TEAttributes: Codable, Equatable {
     var blocking: Int
     var catching: Int
     var routeRunning: Int
@@ -100,7 +100,7 @@ struct TEAttributes: Codable, Equatable {
     }
 }
 
-struct OLAttributes: Codable, Equatable {
+nonisolated struct OLAttributes: Codable, Equatable {
     var runBlock: Int
     var passBlock: Int
     var pull: Int
@@ -111,7 +111,7 @@ struct OLAttributes: Codable, Equatable {
     }
 }
 
-struct DLAttributes: Codable, Equatable {
+nonisolated struct DLAttributes: Codable, Equatable {
     var passRush: Int
     var blockShedding: Int
     var powerMoves: Int
@@ -122,7 +122,7 @@ struct DLAttributes: Codable, Equatable {
     }
 }
 
-struct LBAttributes: Codable, Equatable {
+nonisolated struct LBAttributes: Codable, Equatable {
     var tackling: Int
     var zoneCoverage: Int
     var manCoverage: Int
@@ -133,7 +133,7 @@ struct LBAttributes: Codable, Equatable {
     }
 }
 
-struct DBAttributes: Codable, Equatable {
+nonisolated struct DBAttributes: Codable, Equatable {
     var manCoverage: Int
     var zoneCoverage: Int
     var press: Int
@@ -144,7 +144,7 @@ struct DBAttributes: Codable, Equatable {
     }
 }
 
-struct KickingAttributes: Codable, Equatable {
+nonisolated struct KickingAttributes: Codable, Equatable {
     var kickPower: Int
     var kickAccuracy: Int
 
@@ -155,7 +155,7 @@ struct KickingAttributes: Codable, Equatable {
 
 // MARK: - Position Attributes Enum
 
-enum PositionAttributes: Codable, Equatable {
+nonisolated enum PositionAttributes: Codable, Equatable {
     case quarterback(QBAttributes)
     case wideReceiver(WRAttributes)
     case runningBack(RBAttributes)

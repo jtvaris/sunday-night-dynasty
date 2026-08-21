@@ -85,7 +85,7 @@ enum PreseasonPolicy: String, Codable, CaseIterable, Identifiable {
 /// Encoded as `kind` + `gameIndex` rather than as an enum with associated
 /// values: this is persisted JSON, and a flat rawValue pair is stable against
 /// every future compiler-synthesised-Codable change.
-struct PreseasonStep: Codable, Equatable {
+nonisolated struct PreseasonStep: Codable, Equatable {
 
     enum Kind: String, Codable {
         /// Pick a policy for game `gameIndex`, then sim it.
@@ -116,7 +116,7 @@ struct PreseasonStep: Codable, Equatable {
 /// without needing a seeded RNG. `id` is a stable per-game identity for the
 /// UI's `ForEach` and for anything that later wants a deterministic per-game
 /// draw off it.
-struct PreseasonMatchup: Codable, Identifiable, Equatable {
+nonisolated struct PreseasonMatchup: Codable, Identifiable, Equatable {
     var id: UUID
     /// 1-based.
     var gameIndex: Int
@@ -150,7 +150,7 @@ struct PreseasonMatchup: Codable, Identifiable, Equatable {
 ///
 /// Name and position are snapshotted because the recap has to be able to name a
 /// man the user cut two screens later.
-struct PreseasonInjury: Codable, Identifiable, Equatable {
+nonisolated struct PreseasonInjury: Codable, Identifiable, Equatable {
     var playerID: UUID
     var playerName: String
     var position: Position
@@ -167,7 +167,7 @@ struct PreseasonInjury: Codable, Identifiable, Equatable {
 /// dictionary with non-`String` keys as an object, so it silently degrades to a
 /// flat alternating array. Being explicit about the shape keeps the persisted
 /// JSON readable and stable.
-struct PreseasonFamiliarityGain: Codable, Identifiable, Equatable {
+nonisolated struct PreseasonFamiliarityGain: Codable, Identifiable, Equatable {
     var playerID: UUID
     var playerName: String
     var position: Position
@@ -178,7 +178,7 @@ struct PreseasonFamiliarityGain: Codable, Identifiable, Equatable {
 }
 
 /// One score-only line from the rest of the league's exhibition slate.
-struct PreseasonScoreLine: Codable, Identifiable, Equatable {
+nonisolated struct PreseasonScoreLine: Codable, Identifiable, Equatable {
     var id: UUID
     var homeTeamID: UUID
     var awayTeamID: UUID
@@ -216,7 +216,7 @@ struct PreseasonScoreLine: Codable, Identifiable, Equatable {
 /// offseason for numbers nobody box-scores (plan §4.3, risk R5).
 /// (Not `Equatable`: `PlayerGameStats` is not, and a box score has no useful
 /// equality anyway — identity is `gameIndex`.)
-struct PreseasonResult: Codable, Identifiable {
+nonisolated struct PreseasonResult: Codable, Identifiable {
     /// 1-based.
     var gameIndex: Int
     var matchup: PreseasonMatchup
@@ -302,7 +302,7 @@ struct PreseasonResult: Codable, Identifiable {
 // MARK: - State
 
 /// The whole `.preseason` phase, in one decodable value.
-struct PreseasonState: Codable {
+nonisolated struct PreseasonState: Codable {
 
     /// Invariant (6): every piece of new data is career-stamped.
     var careerID: UUID

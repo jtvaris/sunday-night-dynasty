@@ -177,7 +177,7 @@ enum DCPersona: String, CaseIterable {
     )
 
     static func mix(for scheme: DefensiveScheme?) -> Playbook.DefensiveMix {
-        scheme.map(Playbook.mix(for:)) ?? neutralMix
+        scheme.map({ Playbook.mix(for: $0) }) ?? neutralMix
     }
 
     /// Chance the aggressive DC adds pressure to a standard down: the old flat
@@ -453,7 +453,7 @@ enum OCPersona: String, CaseIterable {
         yardsToEndzone: Int,
         scheme: OffensiveScheme?
     ) -> OffensivePlayCall? {
-        let share = scheme.map(Playbook.signatureShare(for:)) ?? signatureChance
+        let share = scheme.map({ Playbook.signatureShare(for: $0) }) ?? signatureChance
         guard share > 0, Double.random(in: 0..<1) < share else { return nil }
         var pool = scheme.map { Playbook.signaturePool(for: $0, distance: distance) }
             ?? personaPool(distance: distance)

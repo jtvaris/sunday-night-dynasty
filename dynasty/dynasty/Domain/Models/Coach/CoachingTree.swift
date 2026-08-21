@@ -6,7 +6,7 @@ import Foundation
 ///
 /// Stored as a transformable property on `Career` so it persists across seasons.
 /// Use `CoachRelationshipEngine` to mutate the `entries` array.
-struct CoachingTreeData: Codable {
+nonisolated struct CoachingTreeData: Codable {
 
     /// All coaches who have worked under the player during their career.
     /// Includes both current staff members and departed/retired alumni.

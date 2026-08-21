@@ -253,7 +253,7 @@ enum OwnerPersonaEngine {
 
     /// The owner's end-of-season evaluation: goals vs results, a verdict, and
     /// the consequences that follow (bonus budget, warning, or firing).
-    struct OwnerSeasonReview: Codable, Equatable, Identifiable {
+    nonisolated struct OwnerSeasonReview: Codable, Equatable, Identifiable {
         enum Verdict: String, Codable {
             case bonus, praise, neutral, warning, fired
 

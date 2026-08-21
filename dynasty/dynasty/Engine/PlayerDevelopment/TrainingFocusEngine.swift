@@ -122,7 +122,7 @@ enum TrainingFocusEngine {
     /// treats it as empty and overwrites — a new season therefore starts
     /// from zero automatically, with no explicit `startNewSeason` hook
     /// (covers the R32 season-reset audit for this counter).
-    struct SeasonBreakoutCounts: Codable {
+    nonisolated struct SeasonBreakoutCounts: Codable {
         /// Season year the counts belong to; any other season reads as empty.
         var season: Int
         /// `teamID.uuidString` → breakouts consumed this season.

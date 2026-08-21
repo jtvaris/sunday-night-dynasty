@@ -133,7 +133,7 @@ struct FantasyDraftView: View {
     private func setUpDraft() {
         guard pool.isEmpty, !poolPlayers.isEmpty else { return }
         pool = poolPlayers
-            .map(FantasyDraftEngine.PoolEntry.init(player:))
+            .map({ FantasyDraftEngine.PoolEntry(player: $0) })
             .sorted { $0.overall > $1.overall }
         rosters = Dictionary(uniqueKeysWithValues: teams.map { ($0.id, []) })
         baseOrder = teams.map(\.id).shuffled()

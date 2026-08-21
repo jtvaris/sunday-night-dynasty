@@ -13,7 +13,7 @@ enum CoachRelationshipEngine {
     ///
     /// Harmony represents how well the two align on roster construction, scheme philosophy,
     /// and day-to-day decision-making. Low harmony surfaces as media stories and owner concern.
-    struct HCGMRelationship: Codable {
+    nonisolated struct HCGMRelationship: Codable {
         /// Overall relationship health on a 0–100 scale.
         /// 80–100: Strong alignment. 50–79: Workable tension. 0–49: Fractured relationship.
         var harmony: Int
@@ -164,7 +164,7 @@ enum CoachRelationshipEngine {
     // MARK: - Coaching Tree
 
     /// A record of one coach who worked under the player during their career.
-    struct CoachingTreeEntry: Codable, Identifiable {
+    nonisolated struct CoachingTreeEntry: Codable, Identifiable {
         let id: UUID
         /// Full name of the coach (snapshot at time of entry).
         let coachName: String
@@ -300,7 +300,7 @@ enum CoachRelationshipEngine {
     ///
     /// - Parameter tree: The full coaching tree history.
     /// - Returns: Legacy score clamped to `0...100`.
-    static func legacyScore(for tree: [CoachingTreeEntry]) -> Int {
+    nonisolated static func legacyScore(for tree: [CoachingTreeEntry]) -> Int {
         guard !tree.isEmpty else { return 0 }
 
         let departed = tree.filter { $0.yearLeft != nil }

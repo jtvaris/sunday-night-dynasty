@@ -1,6 +1,6 @@
 import Foundation
 
-struct PlayerPersonality: Codable, Equatable {
+nonisolated struct PlayerPersonality: Codable, Equatable {
     var archetype: PersonalityArchetype
     var motivation: Motivation
 

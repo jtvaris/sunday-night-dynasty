@@ -1,6 +1,6 @@
 import Foundation
 
-struct LegacyTracker: Codable, Equatable {
+nonisolated struct LegacyTracker: Codable, Equatable {
 
     var totalPoints: Int
     var pressPromises: [PressPromise]
@@ -23,7 +23,7 @@ struct LegacyTracker: Codable, Equatable {
 
     // MARK: - Press Promise
 
-    struct PressPromise: Codable, Identifiable, Equatable {
+    nonisolated struct PressPromise: Codable, Identifiable, Equatable {
         let id: UUID
         let statement: String
         let season: Int
@@ -44,7 +44,7 @@ struct LegacyTracker: Codable, Equatable {
 
     // MARK: - Legacy Achievement
 
-    struct LegacyAchievement: Codable, Identifiable, Equatable {
+    nonisolated struct LegacyAchievement: Codable, Identifiable, Equatable {
         let id: UUID
         let title: String
         let description: String

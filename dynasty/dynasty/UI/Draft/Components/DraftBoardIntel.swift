@@ -40,7 +40,7 @@ enum UserDraftBoard {
         let known = Set(stored)
         let missing = prospects
             .filter { !known.contains($0.id) && $0.scoutedOverall != nil }
-            .sorted(by: consensusOrder)
+            .sorted(by: { consensusOrder($0, $1) })
             .map(\.id)
         return stored + missing
     }
@@ -177,9 +177,9 @@ enum UserDraftBoard {
         if let best = ranked.min(by: boardOrder) { return best }
         // 3) The fogged media consensus — best player available, publicly.
         let unvetoed = pool.filter { $0.userMark != .avoid }
-        if let best = unvetoed.min(by: consensusOrder) { return best }
+        if let best = unvetoed.min(by: { consensusOrder($0, $1) }) { return best }
         // 4) Nothing left but men he crossed off. Still better than a forfeit.
-        return pool.min(by: consensusOrder)
+        return pool.min(by: { consensusOrder($0, $1) })
     }
 
     /// Media consensus, preferring the shared board rank when one has been

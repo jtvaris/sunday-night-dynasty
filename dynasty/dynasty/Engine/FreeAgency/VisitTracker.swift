@@ -12,7 +12,7 @@ import SwiftData
 enum VisitTracker {
 
     /// Default visit duration in hours.
-    static let defaultDurationHours: Int = 24
+    nonisolated static let defaultDurationHours: Int = 24
     /// Maximum visits per week per team.
     static let weeklyVisitLimit: Int = 3
 

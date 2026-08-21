@@ -2,7 +2,7 @@ import Foundation
 
 /// A plain Codable value type that stores coaching philosophy sliders for a single game or season.
 /// All values are normalised to the [0.0, 1.0] range.
-struct GamePlan: Codable, Equatable {
+nonisolated struct GamePlan: Codable, Equatable {
 
     // MARK: - Settings
 

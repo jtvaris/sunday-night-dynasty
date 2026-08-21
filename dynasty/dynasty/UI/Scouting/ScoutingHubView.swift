@@ -542,7 +542,7 @@ struct ScoutingHubView: View {
     /// "scouted" before the user had hired a scout, which is the exact opposite
     /// of what a coverage number is for.
     private var scoutedCount: Int {
-        prospects.filter(ProspectFog.hasOwnReport).count
+        prospects.filter({ ProspectFog.hasOwnReport($0) }).count
     }
 
     /// Filed reports and their share of the class, walked ONCE per chrome pass.
