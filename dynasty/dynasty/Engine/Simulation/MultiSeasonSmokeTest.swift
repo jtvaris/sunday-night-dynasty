@@ -169,6 +169,9 @@ enum MultiSeasonSmokeTest {
         var seenRetiredIDs = Set<UUID>()      // OVR-drift diag: newly retired per cycle
         var offersGeneratedPrev = 0           // Wave 0 trade diag: per-season delta
         var offseasonOffersPrev = 0           // Wave 2: the offseason half of that delta
+        var previousSeasonWins: [UUID: Int] = [:]   // F-04: last season's table, for stickiness
+        var finalTable: [BalanceRow] = []           // F-04: newest live reading of this season's table
+        var gamesInTable = 0
         var hcSnapshot = headCoachByTeam(context: context)
         let maxAdvances = seasons * 60 + 60   // watchdog: infinite-loop guard
 
@@ -189,6 +192,18 @@ enum MultiSeasonSmokeTest {
                 slowestAdvanceLabel = "\(phaseBefore) wk\(career.currentWeek) s\(seasonBefore)"
             }
             advances += 1
+
+            // F-04: hold on to the league table while it still exists. Records are
+            // wiped by `startNewSeason`, so the last reading in which more games had
+            // been played than in the previous one is the season's final standing.
+            if career.currentSeason == seasonBefore {
+                let snapshot = captureLeagueTable(context: context)
+                let played = snapshot.reduce(0) { $0 + $1.wins + $1.losses }
+                if played > gamesInTable {
+                    gamesInTable = played
+                    finalTable = snapshot
+                }
+            }
 
             if WeekAdvancer.wasFired {
                 firedNotes += 1
@@ -286,6 +301,18 @@ enum MultiSeasonSmokeTest {
                     offseasonOffersPrev: &offseasonOffersPrev,
                     context: context
                 )
+
+                // Does the league table still look like one, and does the
+                // roster decide it (F-04)?
+                printCompetitiveBalance(
+                    seasonLabel: finishedSeason,
+                    seasonIndex: seasonsCompleted,
+                    table: finalTable,
+                    previousWins: &previousSeasonWins,
+                    context: context
+                )
+                finalTable = []
+                gamesInTable = 0
 
                 // OVR-drift diagnostics: who left, who arrived, and how the
                 // yearsPro cohorts are trending.
@@ -793,6 +820,153 @@ enum MultiSeasonSmokeTest {
             print("SMOKE: warn trades season=\(seasonLabel) \(detail) — season-1 league has no prior-year records (expected, hard from season 2)")
         } else {
             print("SMOKE: ANOMALY season=\(seasonLabel) trade bands missed: \(detail) \(hint)")
+        }
+    }
+
+    // MARK: - Competitive balance (F-04)
+
+    /// One club's finished season: what it did, and how good it was while doing it.
+    struct BalanceRow {
+        let id: UUID
+        let wins: Int
+        let losses: Int
+        /// Mean `overall` of the club's best 22 — a proxy for the starting lineup,
+        /// stated as one. Captured WITH the record, because by the time the season
+        /// summary prints, free agency and the draft have already rebuilt the roster
+        /// that earned it.
+        let starterOVR: Double
+    }
+
+    /// Snapshots the live league table.
+    ///
+    /// `startNewSeason` resets every club's record, so by the time the smoke test
+    /// notices a season is over, the table that season produced is already gone.
+    /// The loop therefore keeps the newest reading in which any game had been
+    /// played; that reading IS the final table.
+    private static func captureLeagueTable(context: ModelContext) -> [BalanceRow] {
+        let teams = (try? context.fetch(FetchDescriptor<Team>())) ?? []
+        guard !teams.isEmpty else { return [] }
+        let players = (try? context.fetch(FetchDescriptor<Player>())) ?? []
+        let byTeam = Dictionary(grouping: players.filter { $0.teamID != nil }, by: { $0.teamID! })
+        return teams.map { team in
+            let best = (byTeam[team.id] ?? []).map { Double($0.overall) }.sorted(by: >).prefix(22)
+            let ovr = best.isEmpty ? 0 : best.reduce(0, +) / Double(best.count)
+            return BalanceRow(id: team.id, wins: team.wins, losses: team.losses, starterOVR: ovr)
+        }
+    }
+
+
+    /// One `SMOKE: diag balance` line per completed season: does the league table
+    /// still look like a league table, and does roster quality decide it?
+    ///
+    /// WHY this exists: the smoke test tracked league OVR, retirements, draftees,
+    /// coach churn, cap room, salary shape, age pyramids and trade funnels — and
+    /// **nothing anywhere in the repo measured whether the standings stay
+    /// competitive.** That blind spot is what let #213 live: for as long as
+    /// AI-vs-AI games were decided by `simulateGameScore`, `corr(roster, wins)`
+    /// was exactly 0 for 31 of 32 clubs and no gate could see it. Every constant
+    /// #214 touches is likewise invisible without these numbers.
+    ///
+    /// Four readings, and what each is for:
+    /// * **winSD** — the spread of the table. A real league runs ≈3.0-3.2 wins of
+    ///   standard deviation over 17 games; dice-generated records ran 2.06,
+    ///   because independent coin flips cannot produce a 14-3 club.
+    /// * **corr(starterOVR, wins)** — the one #213 exists to move off zero. Not a
+    ///   band to maximise: a league where it is 1.0 has no upsets left.
+    /// * **yoyCorr** — year-over-year win correlation, the league's stickiness.
+    ///   The real NFL sits near 0.32; a much higher number means last year's
+    ///   table is this year's table and a rebuild cannot be felt.
+    /// * **turnover** — the share of last season's bottom four that reach this
+    ///   season's top fourteen. The real league does this constantly.
+    ///
+    /// `starterOVR` is the mean of a club's best 22 by `overall` — a proxy, stated
+    /// as one. It is deliberately local to this diagnostic rather than promoted to
+    /// an engine helper: a second league-wide "team strength" definition is exactly
+    /// the drift this repo keeps finding, and the simulator's own answer to
+    /// "who is better" is the game it plays.
+    private static func printCompetitiveBalance(
+        seasonLabel: Int,
+        seasonIndex: Int,
+        table: [BalanceRow],
+        previousWins: inout [UUID: Int],
+        context: ModelContext
+    ) {
+        guard table.count >= 8 else { return }
+
+        func mean(_ xs: [Double]) -> Double { xs.isEmpty ? 0 : xs.reduce(0, +) / Double(xs.count) }
+        func corr(_ xs: [Double], _ ys: [Double]) -> Double {
+            guard xs.count == ys.count, xs.count > 2 else { return 0 }
+            let mx = mean(xs), my = mean(ys)
+            let cov = zip(xs, ys).reduce(0.0) { $0 + ($1.0 - mx) * ($1.1 - my) }
+            let vx = xs.reduce(0.0) { $0 + ($1 - mx) * ($1 - mx) }
+            let vy = ys.reduce(0.0) { $0 + ($1 - my) * ($1 - my) }
+            guard vx > 0, vy > 0 else { return 0 }
+            return cov / (vx * vy).squareRoot()
+        }
+
+        let wins = table.map { Double($0.wins) }
+        let mw = mean(wins)
+        let winSD = (table.count > 1
+                     ? (wins.reduce(0.0) { $0 + ($1 - mw) * ($1 - mw) } / Double(wins.count)).squareRoot()
+                     : 0)
+        let qualityCorr = corr(table.map(\.starterOVR), wins)
+
+        // Year-over-year: only the clubs that existed in both seasons.
+        var yoy = Double.nan
+        var turnover = Double.nan
+        if !previousWins.isEmpty {
+            let paired = table.compactMap { row -> (Double, Double)? in
+                guard let prev = previousWins[row.id] else { return nil }
+                return (Double(prev), Double(row.wins))
+            }
+            if paired.count > 2 {
+                yoy = corr(paired.map(\.0), paired.map(\.1))
+            }
+            // Bottom four last season, top fourteen (the playoff field) this one.
+            let worst = previousWins.sorted { $0.value < $1.value }.prefix(4).map(\.key)
+            let fieldSize = min(14, table.count)
+            let field = Set(table.sorted { $0.wins > $1.wins }.prefix(fieldSize).map(\.id))
+            if !worst.isEmpty {
+                turnover = Double(worst.filter { field.contains($0) }.count) / Double(worst.count) * 100
+            }
+        }
+
+        print(String(
+            format: "SMOKE: diag balance season=%d winSD=%.2f corr(starterOVR,wins)=%.2f "
+                  + "yoyCorr=%@ worstToField=%@ bestRec=%d-%d worstRec=%d-%d",
+            seasonLabel, winSD, qualityCorr,
+            yoy.isNaN ? "n/a" : String(format: "%.2f", yoy),
+            turnover.isNaN ? "n/a" : String(format: "%.0f%%", turnover),
+            table.map(\.wins).max() ?? 0, table.map(\.losses).min() ?? 0,
+            table.map(\.wins).min() ?? 0, table.map(\.losses).max() ?? 0
+        ))
+
+        previousWins = Dictionary(uniqueKeysWithValues: table.map { ($0.id, $0.wins) })
+
+        // --- balance bands ---
+        //
+        // Deliberately wide, and deliberately two-sided. Both failure modes are
+        // real and neither is worse than the other: a table that is too flat means
+        // roster work does not pay, and a table that is too sharp means the season
+        // is decided in March and no game is worth watching. The quality
+        // correlation has an UPPER bound for that reason.
+        var misses: [String] = []
+        func check(_ ok: Bool, _ msg: String) { if !ok { misses.append(msg) } }
+        check(winSD >= 2.4 && winSD <= 4.0,
+              String(format: "winSD=%.2f outside 2.4-4.0 (real NFL ~3.0-3.2 over 17 games)", winSD))
+        check(qualityCorr >= 0.30 && qualityCorr <= 0.90,
+              String(format: "corr(starterOVR,wins)=%.2f outside 0.30-0.90 — 0 means the roster does not decide games, 1 means nothing else does", qualityCorr))
+        if !yoy.isNaN {
+            check(yoy <= 0.75,
+                  String(format: "yoyCorr=%.2f above 0.75 — last season's table is this season's table", yoy))
+        }
+
+        guard !misses.isEmpty else { return }
+        let detail = misses.joined(separator: "; ")
+        if seasonIndex <= 1 {
+            print("SMOKE: warn balance season=\(seasonLabel) \(detail) — season 1 has no prior table (hard from season 2)")
+        } else {
+            print("SMOKE: ANOMALY season=\(seasonLabel) balance bands missed: \(detail)")
         }
     }
 
