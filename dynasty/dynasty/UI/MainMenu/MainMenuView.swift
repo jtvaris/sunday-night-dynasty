@@ -107,6 +107,12 @@ struct MainMenuView: View {
             // while a career is open and hands it back on dismiss, so this is
             // both the app's first music state and its fallback.
             MusicDirector.shared.setBaseContext(.menu)
+            // #201a — Settings' "Replay Tutorial" sets this flag; the menu is
+            // the one place with the tutorial sheet, so it honors it here.
+            if UserDefaults.standard.bool(forKey: "pendingTutorialReplay") {
+                UserDefaults.standard.set(false, forKey: "pendingTutorialReplay")
+                activeSheet = .tutorial
+            }
         }
         // §2.8 — one presentation point for the three peer side-tasks, and the
         // hand-off to the career process happens in `onDismiss`, which is what
@@ -142,6 +148,13 @@ struct MainMenuView: View {
 
     /// Opens the career the slot picker chose, once its sheet is off screen.
     private func openPendingCareer() {
+        // #201a — Settings' "Replay Tutorial" sets the flag and dismisses;
+        // this onDismiss hook is where the menu can present the next sheet.
+        if UserDefaults.standard.bool(forKey: "pendingTutorialReplay") {
+            UserDefaults.standard.set(false, forKey: "pendingTutorialReplay")
+            activeSheet = .tutorial
+            return
+        }
         guard let career = pendingCareer else { return }
         pendingCareer = nil
         PerfLog.mark("career_open")   // R39 (b): slot-picker path

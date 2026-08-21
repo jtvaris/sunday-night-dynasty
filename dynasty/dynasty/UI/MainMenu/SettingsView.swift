@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 
 // MARK: - Play Clock Setting
 
@@ -40,6 +41,9 @@ struct SettingsView: View {
     var context: Context = .mainMenu
 
     @Environment(\.dismiss) private var dismiss
+    /// #201b — "Delete All Save Data" deletes the SwiftData careers, not just
+    /// the preferences, so the reset needs the store.
+    @Environment(\.modelContext) private var modelContext
 
     // Audio
     @AppStorage("soundEnabled") private var soundEnabled = true
@@ -65,6 +69,9 @@ struct SettingsView: View {
     // Local UI state
     @State private var showResetConfirm = false
     @State private var showResetSuccess = false
+    /// #201b — the store failed to open this launch, so the reset cannot reach
+    /// the saves it promises to delete. Say that instead of claiming success.
+    @State private var showResetBlocked = false
     @State private var showChangelog = false
     /// R37: confirmation that first-run tips were re-armed.
     @State private var showTipsResetSuccess = false
@@ -131,6 +138,11 @@ struct SettingsView: View {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text("All Dynasty data has been removed from this device.")
+            }
+            .alert("Save data could not be reached", isPresented: $showResetBlocked) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("Your saves could not be opened this session, so nothing was deleted. Your careers are still on this device. Restart the app and try again.")
             }
             .alert("Tips reset", isPresented: $showTipsResetSuccess) {
                 Button("OK", role: .cancel) {}
@@ -384,11 +396,48 @@ struct SettingsView: View {
             .foregroundStyle(Color.accentGold)
     }
 
-    /// Wipes every key from the app's UserDefaults suite.
+    /// Deletes every save in the store, then wipes the app's UserDefaults suite.
+    ///
+    /// #201b: this used to do the second half only. Every career, league, roster
+    /// and season archive stayed in SwiftData — the main menu went on listing
+    /// them and "Continue Career" went on working — while the dialog promised
+    /// "This permanently clears every career". The button lied about the one
+    /// thing it existed to do.
+    ///
+    /// The deletion itself lives in `CareerScope.deleteAllSaveData` (engine, not
+    /// view): it cascades every career, sweeps any unowned residue, and purges
+    /// the per-career defaults namespaces. The domain wipe below then takes the
+    /// app-level preferences, which is all this view ever handled.
+    ///
+    /// Order matters. The store pass runs FIRST because `cascadeDelete` reads
+    /// `Career` rows to know what to purge; a defaults wipe cannot undo it, and
+    /// if the store pass somehow threw, the preferences would still be intact
+    /// rather than orphaned from the saves they belong to.
     private func performReset() {
+        // Degraded launch: the on-disk store never opened, so `modelContext` is
+        // a throwaway in-memory container. Running the reset here would delete
+        // nothing the user can see, destroy the pre-migration backup that is the
+        // only readable copy of their careers, and then claim success — the same
+        // class of lie #201b exists to remove. Refuse and say so. (`StoreBackup`
+        // refuses the purge on its own too; this is the honest message.)
+        guard !StoreOpenFailure.isDegraded else {
+            showResetBlocked = true
+            return
+        }
+
+        CareerScope.deleteAllSaveData(context: modelContext)
+        // The schema-bump safety copy is save data too: leaving it behind would
+        // mean a byte-for-byte copy of the deleted careers outlives the delete.
+        StoreBackup.purgeAll(storeURL: DataContainer.storeURL)
+
         if let bundleID = Bundle.main.bundleIdentifier {
             UserDefaults.standard.removePersistentDomain(forName: bundleID)
         }
+        // The domain wipe took the schema stamp with it. Without re-stamping,
+        // the next launch reads "unversioned", decides the schema moved, and
+        // copies the just-emptied store into a new `default.store.backup-v0`
+        // set — a backup reappearing right after a full wipe.
+        StoreBackup.stampCurrentVersion(DataContainer.currentVersion)
         // Re-seed defaults so the UI reflects fresh state immediately.
         soundEnabled = true
         soundVolume = AudioSettings.soundVolumeDefault
@@ -481,5 +530,8 @@ private struct ChangelogSheet: View {
 }
 
 #Preview {
+    // Full schema, in memory: the Data section's reset now goes through the
+    // store, so the preview needs a container it can actually talk to.
     SettingsView()
+        .modelContainer(DataContainer.inMemory())
 }
