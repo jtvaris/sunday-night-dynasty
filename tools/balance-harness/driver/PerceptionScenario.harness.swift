@@ -9,7 +9,14 @@
 //     the same intake the `draftclass` scenario validates;
 //   • `AIDraftPerception.read` (verbatim source) — the per-(team, prospect) fog;
 //   • `DraftEngine.aiMakePick` (keep-list slice) — the AI scorer itself,
-//     including `evaluateTeamNeeds` and the R24 top-4 weighted-random pick.
+//     including `evaluateTeamNeeds`, the derived positional-value table and
+//     the round-scaled need weighting;
+//   • `GMTaste` (verbatim source) — the two permanent house preferences each
+//     club draws from its UUID (F-26).
+//
+// The R24 top-4 weighted-random pick is GONE (F-62): the scorer is a deterministic
+// argmax over its own board, and every source of disagreement in the league is now
+// either information (`AIDraftPerception`) or philosophy (`GMTaste`).
 //
 // Nothing about the draft is re-implemented here. The scenario only supplies
 // what the app supplies: 32 clubs with rosters, a board, and a pick order.
@@ -26,8 +33,12 @@
 //   BPA>5   the true board's #1 prospect was still on it after pick 5;
 //   |err|   mean |perceived − true| on the current-level read, by GM persona.
 //
-// Both arms are run: `fog on` (shipped) and `fog off` (`perceptionEnabled:
-// false`, the pre-Track-C behaviour) so every number has its own control.
+// Three arms are run, so every number has two controls:
+//   fog ON    the shipped board — `AIDraftPerception` and `GMTaste` both live;
+//   no taste  the same fog, house preferences switched off (F-26's control);
+//   fog off   `perceptionEnabled: false`, the pre-Track-C true board.
+// `fog ON` minus `no taste` is philosophy; `no taste` minus `fog off` is
+// information. Keeping them apart is the only way to attribute a change to one.
 
 import Foundation
 
@@ -146,6 +157,14 @@ private struct PXDraftResult {
     var publicSignedR13: [Double] = []
     /// Position of every round-1 pick, to expose the premium-position skew.
     var round1Positions: [Position] = []
+    /// F-27: quarterbacks taken in round 1. The audit's target is a MEAN that
+    /// stays near the measured 2.9 with a fat RIGHT TAIL — the real 15-year
+    /// range is 1 (2022) to 6 (2024) and the game's variance was ~0.
+    var round1QBs = 0
+    /// F-26: every club's whole 7-round positional census, so BETWEEN-club
+    /// variance can be separated from league-wide share. A house taste that
+    /// works raises the second without moving the first.
+    var positionsByClub: [UUID: [Position: Int]] = [:]
 }
 
 private func pxRunDraft(
@@ -153,7 +172,8 @@ private func pxRunDraft(
     board: [CollegeProspect],
     clubs: [Team],
     baseRosters: [UUID: [Player]],
-    fog: Bool
+    fog: Bool,
+    taste: Bool = true
 ) -> PXDraftResult {
     // True-board rank, 1-based.
     let ranked = board.sorted { pxTrueValue($0) > pxTrueValue($1) }
@@ -174,15 +194,22 @@ private func pxRunDraft(
     var round1Pot: [Double] = []
 
     var pick = 0
+    /// Every position taken so far, in pick order — the run model's input.
+    var taken: [Position] = []
     while pick < cfg.picks, !available.isEmpty {
         let club = clubs[pick % clubs.count]
+        let pickNumber = pick + 1
         let chosen = DraftEngine.aiMakePick(
             team: club,
             availableProspects: available,
             teamRoster: rosters[club.id] ?? [],
-            perceptionEnabled: fog
+            pickNumber: pickNumber,
+            // F-27: the league's pick history, most recent last. Deeper than
+            // either engine window so a widened window is not starved here.
+            recentPositions: Array(taken.suffix(12)),
+            perceptionEnabled: fog,
+            tasteEnabled: taste
         )
-        let pickNumber = pick + 1
         let rank = trueRank[chosen.id] ?? cfg.picks
 
         if pickNumber == 6, let bestID, available.contains(where: { $0.id == bestID }) {
@@ -203,6 +230,10 @@ private func pxRunDraft(
             result.publicGapByRound[round].append(Double(abs(pickNumber - pub)))
             result.publicSignedR13.append(Double(pickNumber - pub))
         }
+
+        taken.append(chosen.position)
+        if pickNumber <= 32, chosen.position == .QB { result.round1QBs += 1 }
+        result.positionsByClub[club.id, default: [:]][chosen.position, default: 0] += 1
 
         let player = pxPlayer(from: chosen, teamID: club.id)
         if pickNumber <= 32 { round1OVR.append(Double(player.overall)) }
@@ -281,11 +312,18 @@ func scenarioPerception(_ flags: [String: String]) {
     var fatTailPairs = 0
     var armOn: [PXDraftResult] = []
     var armOff: [PXDraftResult] = []
+    var armNoTaste: [PXDraftResult] = []
     var absErrAll: [Double] = []
 
     for _ in 0..<cfg.drafts {
         var prospects = DraftClassBuilder.buildOrdered(count: cfg.classSize).prospects
         ScoutingEngine.generateCombineResults(for: &prospects, scoutingAbility: 50)
+        // `GMTaste.characterHawk` reads `redFlags`, which the app fills at
+        // generation through the risk-profile roll (~6 % of a class). Without
+        // this the taste would be structurally inert in the one scenario that
+        // can see it — the class-of-stale-defaults failure this harness exists
+        // to prevent, in miniature.
+        for i in prospects.indices { ScoutingEngine.generateRiskProfile(for: &prospects[i]) }
         _ = ScoutingEngine.generateDeclarations(prospects: &prospects)
         let board = prospects.filter { $0.isDeclaringForDraft }
         guard board.count > 40 else { continue }
@@ -308,6 +346,11 @@ func scenarioPerception(_ flags: [String: String]) {
 
         armOn.append(pxRunDraft(cfg: cfg, board: board, clubs: clubs, baseRosters: baseRosters, fog: true))
         armOff.append(pxRunDraft(cfg: cfg, board: board, clubs: clubs, baseRosters: baseRosters, fog: false))
+        // F-26's own control: the same league, the same boards, the same fog —
+        // with the two house tastes switched off. Everything that differs
+        // between this arm and `fog ON` is philosophy rather than information.
+        armNoTaste.append(pxRunDraft(cfg: cfg, board: board, clubs: clubs,
+                                     baseRosters: baseRosters, fog: true, taste: false))
     }
 
     func mean(_ xs: [Double]) -> Double { xs.isEmpty ? 0 : xs.reduce(0, +) / Double(xs.count) }
@@ -328,6 +371,7 @@ func scenarioPerception(_ flags: [String: String]) {
     print("")
     print("--- DRAFT OUTCOMES (both arms, identical boards + rosters) --------------------")
     summarize(armOff, label: "fog off")
+    summarize(armNoTaste, label: "no taste")
     summarize(armOn, label: "fog ON")
 
     // --- #155: AI board vs the PUBLIC board ----------------------------------
@@ -370,7 +414,74 @@ func scenarioPerception(_ flags: [String: String]) {
     print("")
     print("--- vs THE PUBLIC BOARD (task #155) ------------------------------------------")
     publicReport(armOff, label: "fog off")
+    publicReport(armNoTaste, label: "no taste")
     publicReport(armOn, label: "fog ON")
+
+    // --- F-26 / F-27: is the league DIFFERENT, not just wrong? ---------------
+    //
+    // Two numbers the fog alone cannot move. `QB/R1` is F-27's gate: the mean
+    // must stay near 2.9 while the spread opens up. `between-club spread` is
+    // F-26's: the mean over positions of the standard deviation, ACROSS the 32
+    // clubs, of that club's share of its own draft spent at the position. Zero
+    // house taste and 32 identical philosophies put it at the level pure
+    // sampling noise produces; a readable house raises it.
+    func identityReport(_ arm: [PXDraftResult], label: String) {
+        let qbs = arm.map { Double($0.round1QBs) }
+        let qbMean = mean(qbs)
+        let qbSD = qbs.isEmpty ? 0 : (qbs.reduce(0.0) { $0 + ($1 - qbMean) * ($1 - qbMean) }
+            / Double(qbs.count)).squareRoot()
+
+        // Pool every club's census across the drafts, then measure the spread
+        // of shares between clubs.
+        var byClub: [UUID: [Position: Int]] = [:]
+        for d in arm {
+            for (club, census) in d.positionsByClub {
+                for (pos, n) in census { byClub[club, default: [:]][pos, default: 0] += n }
+            }
+        }
+        var perPositionSD: [Double] = []
+        for pos in Position.allCases {
+            let shares = byClub.values.map { census -> Double in
+                let total = census.values.reduce(0, +)
+                return total == 0 ? 0 : Double(census[pos] ?? 0) / Double(total)
+            }
+            guard shares.count > 1 else { continue }
+            let m = shares.reduce(0, +) / Double(shares.count)
+            let v = shares.reduce(0.0) { $0 + ($1 - m) * ($1 - m) } / Double(shares.count)
+            perPositionSD.append(v.squareRoot())
+        }
+        print(String(format: "  %-8@ QB/R1 mean %.2f  sd %.2f  min %.0f  max %.0f   |   between-club position-share spread %.4f",
+                     label, qbMean, qbSD,
+                     qbs.min() ?? 0, qbs.max() ?? 0,
+                     mean(perPositionSD)))
+    }
+
+    print("")
+    print("--- HOUSE IDENTITY (F-26) AND THE QB RUN (F-27) ------------------------------")
+    identityReport(armOff, label: "fog off")
+    identityReport(armNoTaste, label: "no taste")
+    identityReport(armOn, label: "fog ON")
+
+    // The two tastes each club drew, so a reader can check a share against a
+    // stated preference rather than inferring one.
+    var tasteCount: [String: Int] = [:]
+    for id in clubIDs {
+        for t in GMTaste.house(forTeam: id).tastes { tasteCount[t.rawValue, default: 0] += 1 }
+    }
+    let tasteCensus = GMTaste.Taste.allCases
+        .map { "\($0.rawValue) \(tasteCount[$0.rawValue] ?? 0)" }
+        .joined(separator: " | ")
+    print("  house tastes drawn (2 per club, 64 slots): \(tasteCensus)")
+    // Four houses spelled out, so a reader can check a club's positional share
+    // against a STATED preference instead of inferring one from the census.
+    for id in clubIDs.prefix(4) {
+        let h = GMTaste.house(forTeam: id)
+        print("    club \(id.uuidString.prefix(8)): \(h.blurb)")
+    }
+    print(String(format: "  house cap %.1f OVR | traits %.1f/sigma | production %.1f/sigma | position bias %+.1f/%+.1f",
+                 GMTaste.houseCap, GMTaste.traitsPointsPerSigma,
+                 GMTaste.productionPointsPerSigma,
+                 GMTaste.positionBiasFor, GMTaste.positionBiasAgainst))
 
     print("")
     print("--- READ ERROR ---------------------------------------------------------------")

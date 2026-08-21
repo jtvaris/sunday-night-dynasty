@@ -107,6 +107,13 @@ VERBATIM_SOURCES=(
   # overall/potential. Copied VERBATIM so the diagnostic measures the shipped
   # sigma/fat-tail model, never a re-typed one.
   "Engine/Draft/AIDraftPerception.swift"
+  # --- House taste (F-26; scenario `perception`) ---------------------------------
+  # Deterministic per-club draft preferences. Pure Foundation + `Position` +
+  # `CollegeProspect` + the combine drill table already staged below, so it
+  # copies VERBATIM: the whole point of the file is that its magnitudes are
+  # bounded at 4.0 OVR, and a re-typed bound is exactly the drift this script
+  # exists to prevent.
+  "Engine/Draft/GMTaste.swift"
 )
 AI_SOURCE="$ENGINE/Engine/Match/AdaptiveOpponentAI.swift"
 SIM_SOURCE="$ENGINE/Engine/Simulation/SimPlayer.swift"
@@ -745,6 +752,7 @@ static func initializeRookieFamiliarity\(
 static func aiMakePick\(
 private static func evaluateTeamNeeds\(
 private static func teamNeedComponents\(
+static func draftPositionalWeight\(
 static func topTeamNeeds\(
 EOF
 keeplist_slice "$DRAFTENGINE_SOURCE" "$DEVANCHORS" "$DEVSLICE"
@@ -752,8 +760,17 @@ verbatim_guard "$DRAFTENGINE_SOURCE" "$DEVSLICE"
 # Track C: the AI scorer itself comes across so the `perception` diagnostic
 # measures the SHIPPED board, need model and top-4 weighted-random pick.
 grep -q 'AIDraftPerception.read(' "$DEVSLICE" || die "DraftEngine slice lost the AI perceived-value read (Track C)."
-grep -q 'let weights: \[Double\] = \[0.65, 0.20, 0.10, 0.05\]' "$DEVSLICE" || die "DraftEngine slice lost the R24 top-4 pick weights."
-DRAFTENGINE_CONSTS="$(grep -E '^[[:space:]]*(private )?static let (attributeFloor|rawnessPivot|veteranMinimumCapPercent|rookieFamiliarity[A-Za-z]*) =' "$DRAFTENGINE_SOURCE")"
+# F-62 retired the R24 top-4 weighted-random draw; the guard now pins the terms
+# that replaced it, so the `perception` diagnostic can never quietly measure a
+# board without house taste, the position run or round-scaled need.
+grep -q 'GMTaste.boardAdjustment(' "$DEVSLICE" || die "DraftEngine slice lost the GMTaste house term (F-26)."
+grep -q 'quarterbackRunPremium' "$DEVSLICE"    || die "DraftEngine slice lost the position-run QB jump (F-27)."
+grep -q 'let roundScale: Double' "$DEVSLICE"   || die "DraftEngine slice lost the round-scaled need weighting (F-29)."
+grep -q 'static func draftPositionalWeight(' "$DEVSLICE" \
+  || die "DraftEngine slice lost the derived positional-value table (F-30)."
+grep -q 'let weights: \[Double\] = \[0.65, 0.20, 0.10, 0.05\]' "$DEVSLICE" \
+  && die "DraftEngine slice still carries the R24 top-4 draw — F-62 removed it."
+DRAFTENGINE_CONSTS="$(grep -E '^[[:space:]]*(private )?static let (attributeFloor|rawnessPivot|veteranMinimumCapPercent|rookieFamiliarity[A-Za-z]*|replacementLevelBump|belowAverageBump|positionalWeight(Divisor|Ceiling|Floor)) =' "$DRAFTENGINE_SOURCE")"
 echo "$DRAFTENGINE_CONSTS" | grep -q attributeFloor || die "DraftEngine attributeFloor constant not found in the repo file."
 echo "$DRAFTENGINE_CONSTS" | grep -q rawnessPivot  || die "DraftEngine rawnessPivot constant not found in the repo file."
 # Task #89 follow-up: the rookie slot curve now extrapolates past the last
@@ -764,6 +781,13 @@ echo "$DRAFTENGINE_CONSTS" | grep -q veteranMinimumCapPercent \
 grep -q 'max(veteranMinimumCapPercent, extrapolated)' "$DEVSLICE" \
   || die "DraftEngine slice lost the post-224 rookie slot extrapolation."
 for k in rookieFamiliarityFloor rookieFamiliarityReadinessWeight rookieFamiliarityLearningWeight rookieFamiliarityUDFAPenalty; do
+  echo "$DRAFTENGINE_CONSTS" | grep -q "$k" || die "DraftEngine constant $k not found in the repo file."
+done
+# F-28 / F-30: the need model's quality bumps and the derived positional-value
+# table's clamp. Grepped straight out of the repo rather than sliced (they are
+# brace-free one-liners) and asserted, so the `perception` scenario can never
+# measure a board with a hand-typed weight ladder.
+for k in replacementLevelBump belowAverageBump positionalWeightDivisor positionalWeightCeiling positionalWeightFloor; do
   echo "$DRAFTENGINE_CONSTS" | grep -q "$k" || die "DraftEngine constant $k not found in the repo file."
 done
 grep -q 'skill: .*readinessShare \*' "$DEVSLICE" || die "DraftEngine slice lost the rookie skill-scaling term."

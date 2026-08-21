@@ -122,14 +122,33 @@ enum PlayerDevelopmentEngine {
         }
     }
 
+    /// - Parameter seasonsCompleted: `yearsPro` as it stood BEFORE this
+    ///   offseason's ``applyAgeRegression`` bumped it — i.e. the number of NFL
+    ///   seasons the man has actually finished. `nil` reads `player.yearsPro`,
+    ///   which is correct for any caller that has not aged him yet.
+    ///
+    ///   ## Why this is a parameter and not just `player.yearsPro` (F-22)
+    ///
+    ///   `processOffseason` calls `applyAgeRegression` BEFORE this function, and
+    ///   that is where `yearsPro` is incremented. So a man who had just finished
+    ///   his rookie season always arrived here reading `1`, and the entire
+    ///   rookie ladder below was **off by one rung for every player in the
+    ///   league, every year**: a first-year man got the second-year multiplier
+    ///   (1.8 instead of 2.5), and — the defect the audit names — the
+    ///   `yearsPro == 0` gate on the boom/bust roll could never be true, so the
+    ///   **5 % ×3.0 breakout and the 5 % zero-development struggle have never
+    ///   fired in the shipped game**. Two of the very few sources of draft
+    ///   variance the game has, unreachable since they were written.
     static func developPlayer(
         _ player: Player,
         coaches: [Coach],
         playingTimeShare: Double,
         health: Double = 1.0,
         realizationBoost: Double = 1.0,
-        environment: TeamEnvironment = TeamEnvironment()
+        environment: TeamEnvironment = TeamEnvironment(),
+        seasonsCompleted: Int? = nil
     ) {
+        let seasonsPro = seasonsCompleted ?? player.yearsPro
         let peakRange = player.position.peakAgeRange
 
         // Players past their peak receive no development -- only regression (handled elsewhere).
@@ -241,7 +260,7 @@ enum PlayerDevelopmentEngine {
         // Rookies start at 60-90% of true attributes (Phase 4 scaling) so they
         // have significant room to grow toward their ceiling in their first years.
         let rookieMultiplier: Double
-        switch player.yearsPro {
+        switch seasonsPro {
         case 0:  rookieMultiplier = 2.5  // First offseason — massive college-to-NFL growth
         case 1:  rookieMultiplier = 1.8  // Second year leap
         case 2:  rookieMultiplier = 1.3  // Still improving
@@ -254,7 +273,7 @@ enum PlayerDevelopmentEngine {
         // their first-year trajectory — breakout stars or year-1 struggles.
         enum RookieOutcome { case breakout, struggle, normal }
         let rookieOutcome: RookieOutcome
-        if player.yearsPro == 0 {
+        if seasonsPro == 0 {
             let roll = Double.random(in: 0.0..<1.0)
             if roll < 0.05 {
                 rookieOutcome = .breakout
@@ -1905,6 +1924,10 @@ enum PlayerDevelopmentEngine {
                 events.append("\(player.fullName) has finally put it together — a late-career leap.")
             }
 
+            // F-22: captured BEFORE the bump, because `applyAgeRegression` is
+            // what increments `yearsPro` and `developPlayer`'s whole rookie
+            // ladder — including the boom/bust roll — keys off it.
+            let seasonsCompleted = player.yearsPro
             applyAgeRegression(player)
 
             // 4. Environment nudges the ceiling a little (plan §2.6) — after
@@ -1921,7 +1944,8 @@ enum PlayerDevelopmentEngine {
                 playingTimeShare: playingTimeShare,
                 health: health,
                 realizationBoost: realizationBoost,
-                environment: environment
+                environment: environment,
+                seasonsCompleted: seasonsCompleted
             )
 
             // 5. The staff's yearly read on his ceiling (plan §2.9.4, fixes

@@ -75,15 +75,55 @@ enum FantasyDraftEngine {
 
     /// Positional draft-value weighting: QBs and premium positions rise,
     /// specialists and fullbacks sink toward the late rounds.
+    ///
+    /// ## A FOURTH copy of the positional-value table, now derived (F-30/F-71)
+    ///
+    /// This was a hand-written five-branch table — the fourth independent
+    /// spelling of one idea, after `ContractEngine.positionMultiplier` (the
+    /// authoritative one), `DraftEngine.teamNeedComponents` and
+    /// `FreeAgencyEngine.holePriority`. Its own drift was the same shape as the
+    /// two F-30 caught: it paid a corner the same 1.05 as a left tackle and put
+    /// a right tackle at 1.00, flat with a guard.
+    ///
+    /// It now reads `DraftEngine.draftPositionalWeight`, so there is one source
+    /// of truth and the inversion cannot come back. The shape is preserved
+    /// rather than adopted wholesale: this scorer MULTIPLIES a 40-99 rating,
+    /// where the draft board ADDS rating points, so a 0.3...1.6 weight applied
+    /// as a factor would not tilt a pool, it would replace it (the mistake
+    /// `DraftEngine.aiMakePick`'s own "why the score is a SUM" note records).
+    /// ``positionValueTilt`` compresses the shared weight around 1.0 to the
+    /// same ±15 % span the hand-written table had.
     static func positionValueMultiplier(_ position: Position) -> Double {
-        switch position {
-        case .QB:                return 1.15
-        case .DE, .LT, .WR, .CB: return 1.05
-        case .K, .P:             return 0.50
-        case .FB:                return 0.60
-        default:                 return 1.00
-        }
+        // The specialist discount survives as a NAMED carve-out, exactly as it
+        // does in `aiMakePick`. `ContractEngine` pays a kicker and a fullback
+        // the same 0.25, so the shared table cannot tell them apart — and in a
+        // 53-round snake that matters, because a kicker is not competing with a
+        // guard for a roster spot and must not be taken like one.
+        guard position != .K, position != .P else { return specialistMultiplier }
+        let weight = DraftEngine.draftPositionalWeight(position)
+        return 1.0 + (weight - positionValuePivot) * positionValueTilt
     }
+
+    /// What a kicker or a punter is worth on the fantasy board. Unchanged from
+    /// the hand-written table it replaces — it trades "every club fields a
+    /// specialist" against "no club spends a useful round on one", and 0.50 has
+    /// always put both in the last handful of rounds.
+    private static let specialistMultiplier = 0.50
+
+    /// The weight that maps to a neutral ×1.0 here — the league's modal
+    /// position on `DraftEngine.draftPositionalWeight`'s scale, and the same
+    /// pivot `aiMakePick` subtracts.
+    private static let positionValuePivot = 0.8
+
+    /// How much of the shared positional table this scorer expresses.
+    ///
+    /// Trades positional realism against the fantasy pool staying a *pool*: the
+    /// shared weight spans 0.3...1.6, so at 0.19 a quarterback comes out at
+    /// ×1.15 and a fullback at ×0.90 — the span the hand-written table had, and
+    /// the span 53 snake rounds can absorb. A full-strength tilt here would have
+    /// all 32 clubs spending their first four rounds on the same five positions
+    /// and nobody able to field a kicker.
+    private static let positionValueTilt = 0.19
 
     /// Need multiplier from the blueprint deficit: unfilled positions score
     /// up to +40%; positions already at target are heavily discounted so a
@@ -98,6 +138,41 @@ enum FantasyDraftEngine {
     /// Picks the pool index for an AI selection using need+value scoring and
     /// R24-style weighted randomness (board-topper ~65% of the time).
     /// Returns `nil` only for an empty pool.
+    ///
+    /// ## THE SECOND DRAFT BRAIN, AND WHY IT STAYS SECOND (F-71)
+    ///
+    /// The other one is `DraftEngine.aiMakePick`. The audit asks whether these
+    /// should be folded together, because a second scorer "modeled on" the first
+    /// is a second scorer that can drift — and it had already drifted, in the
+    /// positional table above.
+    ///
+    /// They stay separate, deliberately, and here is the reason so the next
+    /// audit does not re-open it:
+    ///
+    /// - **Different population.** `aiMakePick` scores `CollegeProspect`s —
+    ///   men nobody has seen play a professional snap. This scores `Player`s
+    ///   with league tape behind them. That is why there is no fog here and
+    ///   must not be: `AIDraftPerception` models a *scouting* error, and there
+    ///   is nothing to scout about a man every club in the league has played
+    ///   against.
+    /// - **No public board.** `aiMakePick`'s single largest term is the media
+    ///   consensus anchor (`consensusPullPoints`), and a fantasy re-draft has
+    ///   no mock, no projected round and no media. Half the scorer would be
+    ///   dead weight.
+    /// - **Different shape of decision.** Seven rounds against fifty-three.
+    ///   Round 40 of a snake is roster construction, not talent evaluation,
+    ///   which is why `needMultiplier` here discounts a filled position to 0.2
+    ///   — something that would be badly wrong on a draft board.
+    ///
+    /// What IS shared is the one thing that was genuinely duplicated: the
+    /// positional-value table, now derived from
+    /// `DraftEngine.draftPositionalWeight` by ``positionValueMultiplier``. The
+    /// F-26 through F-31 wave therefore reaches this brain where it should (the
+    /// value ladder) and not where it should not (fog, consensus, round scale).
+    ///
+    /// House taste (`GMTaste`) is also deliberately absent: it is drawn from a
+    /// team UUID, and a fantasy draft runs at CAREER CREATION, before the user
+    /// has a franchise identity to be read against or a league to learn one in.
     static func aiPickIndex(
         pool: [PoolEntry],
         rosterCounts: [Position: Int],

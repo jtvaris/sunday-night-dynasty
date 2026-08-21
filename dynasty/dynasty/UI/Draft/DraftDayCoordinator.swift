@@ -1211,15 +1211,29 @@ final class DraftDayCoordinator: ObservableObject {
         }
     }
 
+    /// How far back `aiMakePick`'s position-run model can see.
+    ///
+    /// Trades work against reach: the engine reads only its own `runWindow`
+    /// (6) and `quarterbackRunWindow` (5) off the tail, so anything past the
+    /// last dozen cards is copied for nothing. Kept deliberately larger than
+    /// either so a widened window in the engine does not silently starve here.
+    private static let runHistoryDepth = 12
+
     private func aiMakePickForCurrent() {
         guard let pick = currentPick,
               let team = teamsByID[pick.currentTeamID],
               !availableProspects.isEmpty else { return }
         let roster = rosters[pick.currentTeamID] ?? []
+        // F-27: the two inputs the AI scorer never had. `allPickResults` is
+        // appended inside `completePick`, so at this instant it holds exactly
+        // the cards already read out — the league's pick history, in order,
+        // most recent last, which is what the run model wants.
         let chosen = DraftEngine.aiMakePick(
             team: team,
             availableProspects: availableProspects,
-            teamRoster: roster
+            teamRoster: roster,
+            pickNumber: pick.pickNumber,
+            recentPositions: allPickResults.suffix(Self.runHistoryDepth).map(\.position)
         )
         completePick(pick: pick, prospect: chosen, isUserPick: false)
     }
