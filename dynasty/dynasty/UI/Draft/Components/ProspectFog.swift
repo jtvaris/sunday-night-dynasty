@@ -21,9 +21,32 @@ import SwiftUI
 ///   prospect carries out of `DraftClassBuilder`. Public information, and
 ///   deliberately blunt: a whole round maps to one very wide band.
 ///
-/// `trueOverall` never reaches a view again. The AI keeps drafting on the true
-/// values internally (`DraftEngine.aiMakePick`, `DraftDayCoordinator`'s pick
-/// grades) — this is a user-information change, not a nerf to pick quality.
+/// `trueOverall` never reaches a view again.
+///
+/// ## What the AI sees, corrected
+///
+/// This used to end "the AI keeps drafting on the true values internally
+/// (`DraftEngine.aiMakePick`, `DraftDayCoordinator`'s pick grades) — this is a
+/// user-information change, not a nerf to pick quality". Both halves of that
+/// have since stopped being true and the sentence was left standing, which is
+/// worse than saying nothing:
+///
+/// * `aiMakePick` reads every rating through `AIDraftPerception`, a per-`(club,
+///   prospect)` fog with a league mean absolute error of **3.96 OVR** and a 7 %
+///   fat tail. No AI club sees `trueOverall` either.
+/// * The pick grades come from `PickGradeCalculator` off
+///   `DraftIntel.publicOVREstimate` — the user's own scouted read, or the media
+///   band for a man nobody has filed on. The last `trueOverall` in a grade path
+///   was `DraftEngine.generateMediaGrade`'s letter bump, closed by F-36.
+///
+/// The asymmetry that remains is COVERAGE, not accuracy, and it favours the
+/// user: on a man he has actually paid to scout his read is *sharper* than any
+/// AI club's (mean |error| 0.67-3.5 against the league's 3.96). He simply
+/// cannot afford 350 of them.
+///
+/// What no club's board is fogged about is TASTE — see `GMTaste`. A house
+/// preference is an opinion about visible evidence, and it is meant to be
+/// learnable by watching a club draft.
 enum ProspectFog {
 
     // MARK: - Source
