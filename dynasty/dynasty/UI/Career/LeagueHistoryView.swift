@@ -60,7 +60,10 @@ struct LeagueHistoryView: View {
                     if inductees.isEmpty {
                         emptyCard(
                             icon: "building.columns.fill",
-                            text: "No inductees yet. Retiring legends — elite careers or sustained greatness — earn a bust in Canton."
+                            // The game's Hall is its own institution: no real
+                            // shrine and no real city, so the copy says "the
+                            // Hall", matching the section header above it.
+                            text: "No inductees yet. Retiring legends — elite careers or sustained greatness — earn a bust in the Hall."
                         )
                     } else {
                         VStack(spacing: DSSpacing.xs) {

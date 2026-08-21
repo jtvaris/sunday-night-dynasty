@@ -13,7 +13,7 @@ import UIKit
 enum MusicContext: String, CaseIterable {
 
     /// Title screen. Two slow, grand synth-lead anthems plus three
-    /// NFL-broadcast-style brass anthems.
+    /// broadcast-style brass anthems.
     case menu
     /// The career shell in ordinary weeks — front office background. Five
     /// short ambient loops, three dark downtempo mid-length pieces, and three
@@ -41,18 +41,18 @@ enum MusicContext: String, CaseIterable {
         switch self {
         case .menu:
             // Two grand synth-lead anthems (round 3) plus three from the
-            // NFL-broadcast round: a full orchestral fanfare, a brass/synth
+            // broadcast round: a full orchestral fanfare, a brass/synth
             // hybrid and an uptempo drumline march. All five are 90-105 s
             // through-composed builds, so each plays once — the title screen
             // is the shortest-dwell context in the game and a slow build is
             // not something you want interrupted to get to the next track.
             return [("music_menu_theme_a", 1),
                     ("music_menu_theme_b", 1),
-                    ("nfl_menu_orch_fanfare", 1),
-                    ("nfl_menu_hybrid_gleam", 1),
-                    ("nfl_menu_march_drive", 1)]
+                    ("menu_orch_fanfare", 1),
+                    ("menu_hybrid_gleam", 1),
+                    ("menu_march_drive", 1)]
         case .dashboard:
-            // The three `nfl_dash_*` entries are the broadcast round's
+            // The three `dash_*` entries are the broadcast round's
             // underscore lane: same dark, level, no-build brief as the `bed_*`
             // pieces, played once each because they are 2-2.5 min cues rather
             // than 45 s loops.
@@ -64,9 +64,9 @@ enum MusicContext: String, CaseIterable {
                     ("music_dashboard_bed_a", 1),
                     ("music_dashboard_bed_b", 1),
                     ("music_dashboard_bed_c", 1),
-                    ("nfl_dash_ambient_a", 1),
-                    ("nfl_dash_ambient_b", 1),
-                    ("nfl_dash_strings_a", 1)]
+                    ("dash_ambient_a", 1),
+                    ("dash_ambient_b", 1),
+                    ("dash_strings_a", 1)]
         case .draft:
             return [("music_draft_a", 1),
                     ("music_draft_b", 1),

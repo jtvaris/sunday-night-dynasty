@@ -1459,6 +1459,37 @@ def map_to_reference(rank_frac: float, pool: list) -> float:
     return pool[lo] * (1.0 - t) + pool[hi] * t
 
 
+# The shipped fiction has no "Super Bowl": the title game is "the Championship"
+# (`SeasonPhase.superBowl` renders as "The Championship" everywhere in the UI —
+# see MainMenuView / InboxEngine). The raw snapshot carries the real trademark,
+# so the transform renames it on its way into BOTH templates. The rounds below
+# the title game ("Lost Conference Championship", "Lost Divisional round",
+# "Lost Wild Card round") are generic football terms and pass through unchanged.
+#
+# The mapping is deliberately a closed table plus an assertion rather than a
+# regex: a raw snapshot that starts saying "Super Bowl LXI" must fail the build
+# loudly instead of leaking a new trademark into the bundle.
+TITLE_GAME_RESULTS = {
+    "Won Super Bowl LX":     "Won the Championship",
+    "Lost Super Bowl LX":    "Lost the Championship",
+    "Reached Super Bowl LX": "Reached the Championship",
+}
+
+
+def fictional_record(record: dict) -> dict:
+    """A team's 2025 record with the title game named the way the game names it."""
+    out = dict(record)
+    result = out.get("playoffResult")
+    if result in TITLE_GAME_RESULTS:
+        out["playoffResult"] = TITLE_GAME_RESULTS[result]
+    elif result and "super bowl" in result.lower():
+        raise SystemExit(
+            f"make_templates: unmapped title-game string {result!r} in the raw "
+            f"snapshot — add it to TITLE_GAME_RESULTS before it reaches a bundle."
+        )
+    return out
+
+
 def strength_index(raw: dict, scores: dict) -> dict:
     """Real-2025 team strength, the thing the template's team-to-team spread has
     to follow. 65 % record (wins + how deep the playoff run went), 35 % the
@@ -2651,7 +2682,7 @@ def build_templates(raw: dict, log: list):
             plist.sort(key=lambda q: (POSITIONS.index(q["pos"]), q["depthRank"]))
 
         common = {
-            "record2025": dict(team["record2025"]),
+            "record2025": fictional_record(team["record2025"]),
             "conference": team["conference"],
             "division": team["division"],
             "baseDefense": team.get("baseDefense"),
@@ -2709,10 +2740,15 @@ def build_templates(raw: dict, log: list):
         "divisions": raw["divisions"],
         "draftOrder2026": raw["draft"]["draftOrder2026"],
         "calibration": {
+            # This note is the only free text in the template that ships inside
+            # the app bundle, so it names no real league: the repo document it
+            # used to cite by filename (`DEVELOPMENT_NFL_REFERENCE.md` §8) is
+            # referenced in the module comment above instead, where it cannot
+            # reach a product string scan.
             "decision": "Match the random LeagueGenerator level and spread "
                         "(league mean OVR ~76.4, its starter/backup/depth tier "
-                        "structure). NOT the DEVELOPMENT_NFL_REFERENCE section-8 "
-                        "absolute bands — that is a separate deferred wave.",
+                        "structure). NOT the section-8 absolute reference bands "
+                        "— that is a separate deferred wave.",
             "referenceSimReps": REF_SIM_REPS,
             "teamSpreadTarget": TEAM_SPREAD_TARGET,
             "teamOffsets": {k: round(v, 3) for k, v in offsets.items()},
