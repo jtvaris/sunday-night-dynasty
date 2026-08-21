@@ -1280,8 +1280,13 @@ final class LiveGameEngine: ObservableObject {
         // fetches per GAME, here in the init, outside every play path.
         let homeSquad = homeTeam.currentRoster()
         let awaySquad = awayTeam.currentRoster()
-        let homeRoster = homeSquad.filter { !$0.isHoldingOut }
-        let awayRoster = awaySquad.filter { !$0.isHoldingOut }
+        // F-18: the coached path dresses the same men the quick sim does.
+        // `sidelinedIDs` only ever knew about injuries suffered DURING this
+        // game (`injuredPlayerIDs` starts empty), so a man hurt last Sunday
+        // played this Sunday — the comment further down promising that "the
+        // replacement genuinely plays" was true of nothing else.
+        let homeRoster = MedicalEngine.dressed(homeSquad)
+        let awayRoster = MedicalEngine.dressed(awaySquad)
         // The Coaches Board lists the men who did NOT report, so the holdouts
         // are kept from that same single fetch (see `playerTeamHoldouts`).
         playerTeamHoldouts = (playerTeamIsHome ? homeSquad : awaySquad).filter(\.isHoldingOut)

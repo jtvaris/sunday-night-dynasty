@@ -249,10 +249,31 @@ enum ChurnDiag {
     /// Generated on the spot because the pool was dry — inflow from nowhere.
     static let street = "street"
 
+    // MARK: - In-season stages (D4-A)
+    //
+    // The four columns the season-lifecycle audit had to derive analytically
+    // because nothing counted them. An AI club made ≈1.4 roster moves a season
+    // — 0.81 poaches and ~0.6 trades — and every other door was either
+    // structurally shut or a notification. These stages are how the next
+    // `diag balance` read can say so rather than infer it.
+
+    /// A club promoted a man off its OWN practice squad (F-63). Was
+    /// structurally impossible: `leagueSquad(excluding: suitor.id)`.
+    static let elevate = "elevate"
+    /// A man stashed on a practice squad mid-season to replace an elevated one.
+    static let squadFill = "squadFill"
+    /// A street free agent signed to a 53 DURING the season (D4-A). Was 0 —
+    /// no code path existed in `advanceRegularSeasonWeek` at all.
+    static let inSeasonFA = "inSeasonFA"
+    /// A waiver claim that actually moved a player (F-46). Was 0: the wire
+    /// wrote `claimedByTeamID` and never `teamID`.
+    static let claim = "claim"
+
 #if DEBUG
 
     private static let stageOrder = [
         expire, resign, option5, retire, washout, cut, faSign, refill, street,
+        elevate, squadFill, inSeasonFA, claim,
     ]
 
     /// Master switch. `record` is a no-op while this is false.

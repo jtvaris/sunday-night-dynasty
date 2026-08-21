@@ -676,9 +676,15 @@ enum ContractNegotiationEngine {
         // for. The refusal model is therefore an extension-only gate, and living
         // here rather than at the call site is what stops one surface from
         // asking a question another surface answers differently.
-        let refusal = negotiationType.isOwnClub
+        // D4-C: one stance is NOT extension-only, and treating it as one is why
+        // there was no "won't sign with a loser" gate in the market where it
+        // matters most. `.benched`, `.wantsOut` and `.ridingIntoRetirement` are
+        // all statements about the club he is ALREADY at, and a free agent has
+        // none of them to make. `.losingCulture` is a statement about the club
+        // doing the asking, and it is the oldest sentence in free agency.
+        let refusal: AgentRefusalReason? = negotiationType.isOwnClub
             ? refusalVerdict(player: player, situation: situation, gm: gm)
-            : nil
+            : freeAgentRefusalVerdict(player: player, situation: situation)
         let proveIt = wantsProveItDeal(player: player, situation: situation)
         let stance = self.stance(
             player: player, situation: situation, refusal: refusal, isProveIt: proveIt
@@ -1076,6 +1082,99 @@ enum ContractNegotiationEngine {
         let salt = 0xA7 ^ (UInt64(bitPattern: Int64(situation.season)) &* 0x9E37_79B9_7F4A_7C15)
         return unitDraw(player.id, salt: salt) < threshold ? .losingCulture : nil
     }
+
+    // MARK: - The Loser Tax (D4-C / F-59)
+
+    /// **Whether a free agent will take the call from a club that loses.**
+    ///
+    /// The extension-side refusal model has had a `.losingCulture` stance since
+    /// it shipped, and it was structurally unreachable for a stranger:
+    /// `demand` gated the whole verdict on `negotiationType.isOwnClub`. So the
+    /// game shipped a losing-culture mechanic that could only ever fire on a
+    /// club's own players, i.e. on the men who had already chosen to be there.
+    /// D4-C is the other half — the fast rebuild has no downside today, and this
+    /// is one of the two places to put one.
+    ///
+    /// ## The gates, and why each one
+    ///
+    /// * **The record has to exist.** `weeksPlayed >= 8` — the same evidence bar
+    ///   `AgentRefusalReason.evaluate` uses, so the two models cannot disagree
+    ///   about when a record starts meaning something. In March this reads last
+    ///   season's completed 18, which is exactly the season a free agent is
+    ///   judging a club on.
+    /// * **The club has to be genuinely bad.** `wins * 3 <= played` — again the
+    ///   stance model's own definition, so "a losing club" is one thing in this
+    ///   file.
+    /// * **He has to have a choice.** ``losingCultureFloorOverall``: a fringe
+    ///   player takes the job that is offered. Only a man the market wants can
+    ///   afford an opinion, which is also what keeps this from thinning the
+    ///   bottom of the market, where the AI refill and the practice squad live.
+    ///
+    /// ## The magnitude
+    ///
+    /// ``losingCultureRefusalChance`` at 0.18, drawn deterministically on the
+    /// player. On a 3-14 club roughly one good free agent in six will not
+    /// engage; the other five will, at a price the loser tax (D1) sets. That is
+    /// a real cost with a visible cause, and it is deliberately not large enough
+    /// to make a rebuild unplayable: the men who say no are named, and there is
+    /// always somebody who says yes.
+    ///
+    /// ## The salt is `yearsPro`, not the season, and that is load-bearing
+    ///
+    /// A stance verdict that is a pure function of a fixed UUID never changes,
+    /// so a man who once drew "won't sign for a loser" would refuse for the rest
+    /// of his career — the failure `refusalVerdict` salts the season against.
+    /// The season is not reachable from every surface that has to ask this
+    /// question, though: the bid-resolution path in `FreeAgencyEngine` carries
+    /// bids and a roster and no league year, and threading one through it would
+    /// mean a new parameter on a call chain the lead is rewriting this wave.
+    /// `player.yearsPro` ticks exactly once per league year at the rollover, so
+    /// it is the same clock with none of the plumbing — and because BOTH entry
+    /// points salt on it, the negotiation screen and the bid resolver can never
+    /// give the same man two different answers about the same club.
+    ///
+    /// **Neutral by construction.** `NegotiationSituation.neutral` carries
+    /// `weeksPlayed == 0`, and `FreeAgencyEngine.agentDemand` — the pricing call
+    /// behind `projectedAskingPrice`, the tampering rumour mill and the whole
+    /// bulk market — passes exactly that. So this changes no price anywhere; it
+    /// only answers a suitor who has said who he is.
+    static func freeAgentRefusalVerdict(
+        player: Player,
+        situation: NegotiationSituation
+    ) -> AgentRefusalReason? {
+        guard situation.weeksPlayed >= 8 else { return nil }
+        guard refusesLosingSuitor(
+            player: player,
+            record: (wins: situation.teamWins, losses: situation.teamLosses)
+        ) else { return nil }
+        return .losingCulture
+    }
+
+    /// The same verdict as a plain yes/no, for the surfaces that hold a club's
+    /// record but no `NegotiationSituation` — `FreeAgencyEngine`'s bid
+    /// resolution, where a refused club's offer simply is not on the table.
+    ///
+    /// - Parameter record: the suitor's season. `nil` means "no record on file",
+    ///   which is never a refusal — a club nobody can evaluate gets the benefit
+    ///   of the doubt.
+    static func refusesLosingSuitor(
+        player: Player,
+        record: (wins: Int, losses: Int)?
+    ) -> Bool {
+        guard let record else { return false }
+        let played = record.wins + record.losses
+        guard played >= 8, record.wins * 3 <= played else { return false }
+        guard player.overall >= losingCultureFloorOverall else { return false }
+
+        let salt = 0x5C ^ (UInt64(player.yearsPro) &* 0x9E37_79B9_7F4A_7C15)
+        return unitDraw(player.id, salt: salt) < losingCultureRefusalChance
+    }
+
+    /// Rating below which a free agent takes whatever job is offered.
+    static let losingCultureFloorOverall = 78
+
+    /// Chance a free agent good enough to choose refuses a losing club outright.
+    static let losingCultureRefusalChance = 0.18
 
     // MARK: - The Ring-Chaser (never-sign)
 

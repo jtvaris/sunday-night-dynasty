@@ -3282,6 +3282,22 @@ enum FreeAgencyEngine {
             ))
         }
 
+        // D4-C SEAM (F-59) — losing costs you players. A good free agent will
+        // not take the call from a club that loses; the magnitude, the gates
+        // and the draw all live in `ContractNegotiationEngine
+        // .refusesLosingSuitor`, and this is the whole of the wiring. Deliberately
+        // a filter over the assembled bids rather than a term inside `scoreBid`:
+        // a refusal is not a price, and the loser tax that IS a price is D1's,
+        // in `scoreBid`, where it will not collide with this.
+        //
+        // The empty-result fallback is load-bearing. `scoreBid`'s consumer force
+        // -unwraps `max(by:)`, and a market in which every bidder is a losing
+        // club is a market that still has to settle — the man signs somewhere.
+        let willingBids = allBids.filter {
+            !ContractNegotiationEngine.refusesLosingSuitor(player: player, record: $0.teamRecord)
+        }
+        if !willingBids.isEmpty { allBids = willingBids }
+
         guard !allBids.isEmpty else {
             return PlayerDecision(
                 accepted: false,
