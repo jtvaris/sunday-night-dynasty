@@ -875,6 +875,7 @@ struct TradeView: View {
                         .foregroundStyle(Color.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                dossierLine(partner: partner)
             }
             Spacer()
         }
@@ -883,6 +884,55 @@ struct TradeView: View {
             RoundedRectangle(cornerRadius: 10)
                 .fill(willingness.color.opacity(hasAssets ? 0.10 : 0.0))
         )
+    }
+
+    /// D7-A / D1, made visible.
+    ///
+    /// Two facts the user could not previously discover, and both of them price
+    /// his trades:
+    ///
+    /// * **How well his organisation reads this GM.** The fog is symmetric — the
+    ///   club on the other end has the same kind of file on him — so showing him
+    ///   his own side of it is what stops the model from being a private
+    ///   advantage handed to the AI. It also gives "trade with the same club
+    ///   twice" a legible payoff.
+    /// * **What the league has decided about HIM.** D1's ruling is that refusal
+    ///   must bite and be visibly priced rather than capped by a rule. A
+    ///   surcharge nobody can see is just a number that makes the game feel
+    ///   arbitrary; this is the sentence that turns it into a consequence he can
+    ///   trace back to the lowballs he sent in September.
+    ///
+    /// It stays out of the hidden half: no chart lean, no accept bar, no asking
+    /// noise. Confidence and reputation are things a front office genuinely
+    /// knows about itself.
+    @ViewBuilder
+    private func dossierLine(partner: Team) -> some View {
+        let identity = TradeValueEngine.gmIdentity(
+            team: partner, season: career.currentSeason, userTeamID: career.teamID
+        )
+        VStack(alignment: .leading, spacing: DSSpacing.xxs) {
+            HStack(spacing: DSSpacing.xxs) {
+                Image(systemName: "eye.trianglebadge.exclamationmark")
+                    .font(.system(size: DSType.Size.micro))
+                Text(identity.dossierContacts > 0
+                     ? "\(identity.dossierLabel) — \(identity.dossierContacts) deal\(identity.dossierContacts == 1 ? "" : "s") on file"
+                     : identity.dossierLabel)
+                    .font(.system(size: DSType.Size.micro))
+            }
+            .foregroundStyle(Color.textTertiary)
+
+            if let read = identity.leagueRead {
+                HStack(spacing: DSSpacing.xxs) {
+                    Image(systemName: "quote.bubble")
+                        .font(.system(size: DSType.Size.micro))
+                    Text("Around the league: \(read)")
+                        .font(.system(size: DSType.Size.micro))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .foregroundStyle(Color.textTertiary)
+            }
+        }
+        .padding(.top, DSSpacing.xxs)
     }
 
     /// What the other GM is asking for, in words instead of point totals.
@@ -894,7 +944,7 @@ struct TradeView: View {
     /// weekly asking noise and the chart lean are still nowhere on screen.
     private func askingPriceHint(partner: Team) -> String? {
         let identity = TradeValueEngine.gmIdentity(
-            team: partner, season: career.currentSeason
+            team: partner, season: career.currentSeason, userTeamID: career.teamID
         )
         let opener = "\(identity.name) (\(identity.archetypeLabel)) opens about \(identity.askingPremiumPercent)% over what he sends."
 
@@ -937,6 +987,19 @@ struct TradeView: View {
             sendingPicks: Array(mySelectedPicks),
             receivingPicks: Array(theirSelectedPicks)
         )
+        // F-07 has a third reason to hang up and it is not about this GM at all:
+        // the league office's own chart band. Preview ≡ outcome means the hint
+        // has to say so in the same words `respond` will, or the user reads
+        // "his ask is above the table" and then gets refused for a rule.
+        if let unfair = TradeValueEngine.chartFairnessBlocker(
+            proposal: proposal,
+            allPlayers: allPlayers,
+            allPicks: allPicks,
+            currentSeason: career.currentSeason,
+            betweenAIClubs: false
+        ) {
+            return unfair
+        }
         let raw = TradeValueEngine.proposalValues(
             proposal: proposal,
             allPlayers: allPlayers,
@@ -1475,6 +1538,53 @@ struct TradeView: View {
         Color.forGrade(grade)
     }
 
+    /// Loads this season's completed trades from the LEDGER (F-50).
+    ///
+    /// The card was titled "Trade History (2029)" and backed by view-instance
+    /// `@State` populated only during this instance's lifetime: close the Trade
+    /// Center, reopen it, and a season of trading read "No trades completed yet
+    /// this season" — while the real archive sat unread three files away.
+    /// `TradeRecord` has been written at every execution site since Wave 0 and
+    /// its only reader in the whole binary was the DEBUG-only smoke test, which
+    /// also left `TradeRecordKind.label` ("Your proposal" / "Incoming offer" /
+    /// "League deal") as dead copy.
+    ///
+    /// The rows carry everything `CompletedTrade` holds, from the user's chair:
+    /// he is the row's INITIATOR when he built the deal and the PARTNER when a
+    /// club called him, and the sent/received summaries flip with him.
+    private func loadTradeHistory() {
+        let cid = career.id
+        let season = career.currentSeason
+        let userTeamID = career.teamID
+        let descriptor = FetchDescriptor<TradeRecord>(
+            predicate: #Predicate { $0.careerID == cid && $0.season == season },
+            sortBy: [SortDescriptor(\TradeRecord.week, order: .reverse)]
+        )
+        let rows = (try? modelContext.fetch(descriptor)) ?? []
+        let abbrByID = Dictionary(uniqueKeysWithValues: allTeams.map { ($0.id, $0.abbreviation) })
+
+        tradeHistory = rows.compactMap { row -> CompletedTrade? in
+            guard let userTeamID else { return nil }
+            let userInitiated = row.initiatorTeamID == userTeamID
+            let userInvolved = userInitiated || row.partnerTeamID == userTeamID
+            guard userInvolved else { return nil }
+
+            let counterpartyID = userInitiated ? row.partnerTeamID : row.initiatorTeamID
+            let sent = userInitiated ? row.sentValue : row.receivedValue
+            let received = userInitiated ? row.receivedValue : row.sentValue
+            let sentText = userInitiated ? row.sentSummary : row.receivedSummary
+            let gotText = userInitiated ? row.receivedSummary : row.sentSummary
+
+            return CompletedTrade(
+                counterpartyAbbr: abbrByID[counterpartyID] ?? "???",
+                sentValue: sent,
+                receivedValue: received,
+                grade: gradeForTrade(sent: sent, received: received),
+                headline: "\(row.kind.label) · Sent: \(sentText.isEmpty ? "—" : sentText)  |  Got: \(gotText.isEmpty ? "—" : gotText)"
+            )
+        }
+    }
+
     private func recordCompletedTrade(
         proposal: TradeProposal,
         counterpartyAbbr: String,
@@ -1514,6 +1624,9 @@ struct TradeView: View {
             grade: gradeForTrade(sent: userSent, received: userReceived),
             headline: headline
         )
+        // Optimistic insert so the card updates before the fetch: `loadData()`
+        // re-reads the ledger a moment later (F-50) and the row is replaced by
+        // its persisted twin.
         tradeHistory.insert(entry, at: 0)
     }
 
@@ -1684,6 +1797,12 @@ struct TradeView: View {
             counterpartyAbbr: counterparty.abbreviation,
             userIsOfferingTeam: userIsOfferingTeam
         )
+        // F-57: the depth chart BEFORE the deal, so the receipt can name what
+        // the deal stripped. It has to be measured here, before `executeTrade`
+        // moves anybody.
+        let needsBefore = TradeValueEngine.needProfile(
+            roster: allPlayers.filter { $0.teamID == career.teamID && !$0.isRetired }
+        )
         // Wave 0 ledger: `.userProposal` when the user built the deal, and
         // `.aiWeeklyOffer` when the user accepted an AI-initiated offer — the
         // two are counted separately so "does the phone ever ring?" (finding
@@ -1708,6 +1827,8 @@ struct TradeView: View {
         }
         try? modelContext.save()
 
+        let holesOpened = rosterHolesOpened(before: needsBefore)
+
         // Wave 2: the league hears about it. `TradeNewsFactory` reads the ledger
         // row `executeTrade` just wrote, so a deal the user made and a deal two
         // AI teams made read identically in the feed. The factory's inbox
@@ -1716,14 +1837,14 @@ struct TradeView: View {
         announceExecutedTrade(record: capOutcome.record)
 
         // Surface the completed deal in the inbox, dead money included — the
-        // user needs to see the bill for the players he just shipped out.
+        // user needs to see the bill for the players he just shipped out — and
+        // now the depth holes it opened (F-57).
         let receipt = completedTradeInboxMessage(
             proposal: proposal,
             counterparty: counterparty,
             userIsOfferingTeam: userIsOfferingTeam,
-            deadCapRetained: userIsOfferingTeam
-                ? capOutcome.offeringDeadCap
-                : capOutcome.receivingDeadCap
+            deadCapLine: capOutcome.deadCapLine(userIsOfferingTeam: userIsOfferingTeam),
+            holesLine: holesOpened
         )
         // Presented outside the shell (league roster browser, player detail),
         // `deliver` stages the receipt on the `WeekAdvancer` channel the shell
@@ -1733,6 +1854,40 @@ struct TradeView: View {
         clearSelections()
         selectedPartner = nil
         loadData()
+    }
+
+    /// Severity at which a position group stops being thin and starts being a
+    /// hole worth putting in a receipt.
+    ///
+    /// Trades against: a receipt that names something real, versus one that
+    /// cries wolf every time a backup changes address. 0.30 is the same number
+    /// `buildPayment`'s needs-swap uses for "a starter slot he is currently
+    /// covering below replacement level", so the line the user reads and the
+    /// hole the AI market is willing to pay a premium to fill are the same hole.
+    private static let holeSeverity = 0.30
+
+    /// F-57: names any position the executed deal pushed past `holeSeverity`.
+    ///
+    /// No message, tile, badge or news item ever told the user a trade opened a
+    /// depth hole. `validationErrors` refuses the extreme case — a squad left
+    /// without a single centre — and said nothing at all about going from three
+    /// corners to two. This is the missing middle, and it is what turns "cap
+    /// adjustments have been processed" into a consequence.
+    private func rosterHolesOpened(before: TradeValueEngine.NeedProfile) -> String? {
+        let after = TradeValueEngine.needProfile(
+            roster: allPlayers.filter { $0.teamID == career.teamID && !$0.isRetired }
+        )
+        let crossed = Position.allCases.filter { position in
+            before.severity(position) < Self.holeSeverity
+                && after.severity(position) >= Self.holeSeverity
+        }
+        guard !crossed.isEmpty else { return nil }
+        let named = crossed
+            .sorted { after.severity($0) > after.severity($1) }
+            .map { "\($0.rawValue) (now starting \(after.starterOVR[$0] ?? 0) OVR)" }
+        return named.count == 1
+            ? "That deal left us thin at \(named[0]). Expect the question at the podium."
+            : "That deal left us thin at \(named.joined(separator: ", ")). Expect the question at the podium."
     }
 
     /// Writes the league news item for a trade that just executed.
@@ -1823,11 +1978,19 @@ struct TradeView: View {
 
     /// Inbox notice for a completed trade (both user-initiated and accepted
     /// incoming offers).
+    ///
+    /// F-49: the dead-money sentence is no longer written here. It comes from
+    /// `TradeEngine.TradeCapOutcome.deadCapLine`, in the engine layer that
+    /// computes the number, so the draft room quotes the identical line instead
+    /// of the silent "roster and cap adjustments have been processed" the shared
+    /// factory used to hand it.
     private func completedTradeInboxMessage(
         proposal: TradeProposal,
         counterparty: Team,
         userIsOfferingTeam: Bool,
-        deadCapRetained: Int
+        deadCapLine: String?,
+        /// F-57: positions the deal pushed past `holeSeverity`, or `nil`.
+        holesLine: String?
     ) -> InboxMessage {
         let playerLookup = Dictionary(uniqueKeysWithValues: allPlayers.map { ($0.id, $0) })
         let pickLookup   = Dictionary(uniqueKeysWithValues: allPicks.map   { ($0.id, $0) })
@@ -1850,7 +2013,7 @@ struct TradeView: View {
 
             You receive: \(inNames.isEmpty ? "—" : inNames.joined(separator: ", "))
             You send: \(outNames.isEmpty ? "—" : outNames.joined(separator: ", "))
-            \(deadCapRetained > 0 ? "Dead money retained: \(formatMillions(deadCapRetained)) — the signing-bonus proration stays on our cap.\n" : "")
+            \(deadCapLine.map { $0 + "\n" } ?? "")\(holesLine.map { $0 + "\n" } ?? "")
             All roster and cap adjustments have been processed.
             """,
             date: "Week \(career.currentWeek), Season \(career.currentSeason)",
@@ -1895,6 +2058,7 @@ struct TradeView: View {
         }
         incomingOffers = valid
 
+        loadTradeHistory()
         loadThreads()
         applyPrefillIfNeeded()
     }

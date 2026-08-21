@@ -84,8 +84,44 @@ enum TradeValueEngine {
             * positionMultiplier(player.position)
             * ageMultiplier(age: player.age, position: player.position)
             * contractMultiplier(player: player)
+            * injuryMultiplier(player: player)
         return max(3, Int(value))
     }
+
+    /// Discount on a man who cannot play yet (F-54).
+    ///
+    /// Replaces a flat VETO. Trading an injured player is routine real business
+    /// — that is what a failed-physical clause is for — and the blanket rule
+    /// removed roughly 7 % of the league from the market at any moment for no
+    /// modelled reason, in exactly the weeks (the deadline) when a hurt starter
+    /// is the reason a club is on the phone at all.
+    ///
+    /// Trades against: keeping hurt men in the market versus handing the user a
+    /// free arbitrage. The dependency the queue names is real and is now met —
+    /// injured players no longer dress, so a discounted star is genuinely
+    /// unavailable for the weeks he is out rather than a full-price starter at a
+    /// markdown. The curve is linear in weeks and floors at 0.55 rather than
+    /// going to zero, because a man out for the season still has next season and
+    /// a contract, which is precisely what a rebuilding club is buying.
+    ///
+    /// 1 week ×0.96 · 4 weeks ×0.84 · 8 weeks ×0.68 · 12+ weeks ×0.55.
+    static func injuryMultiplier(player: Player) -> Double {
+        guard player.isInjured else { return 1.0 }
+        let weeks = Double(max(1, min(12, player.injuryWeeksRemaining)))
+        return max(0.55, 1.0 - 0.0375 * weeks)
+    }
+
+    /// How long a man can be out and still be somebody an AI club builds a
+    /// phone call AROUND (F-54).
+    ///
+    /// This is taste, not law: `validationErrors` will execute a deal for a man
+    /// out for the season if the user builds one, and the discount prices it.
+    /// What this gates is whether a front office picks up the phone about him
+    /// unprompted, and six weeks is the honest line — inside it he is back for
+    /// the run-in, outside it a contender is buying next season and would rather
+    /// have the pick. Trades against: market inventory versus calls the user
+    /// reads as absurd ("they want to give us a man who is out until March").
+    static let shoppableInjuryWeeks = 6
 
     /// Premium positions carry more trade value at the same OVR.
     static func positionMultiplier(_ position: Position) -> Double {
@@ -165,12 +201,39 @@ enum TradeValueEngine {
 
     // MARK: - Pick Value Curve
 
-    /// Jimmy Johnson chart value with a 20 %/year discount for future picks.
+    /// Per-year discount applied to a pick in a LATER league year (F-10).
+    ///
+    /// Trades against: how cheap the currency AI clubs pay with is, versus how
+    /// alive the future-pick market stays. The §5 volume bands lean on future
+    /// picks (a measured 100 % of five league years' AI-vs-AI deals returned
+    /// nothing but them), so gutting them empties the market — but at the
+    /// shipped ×0.8 the game was 1.5-1.9× too generous against every published
+    /// reference. Massey-Thaler's implied rate is ~×0.42/yr and the
+    /// practitioner "one full round down" rule is ×0.45-0.55; ×0.6 is the point
+    /// that lands inside the practitioner band without emptying the market.
+    ///
+    /// The decisive number is what a REBUILDER pays. At ×0.8 his stance
+    /// multipliers cancelled the discount outright — `0.8 × 1.15 × 1.08 = 0.99`,
+    /// so a rebuilding club valued a 2028 second at **99 % of a 2027 second**
+    /// where the real market values it at roughly half. At ×0.6 the same product
+    /// is 0.745, which is a real preference for the future rather than a no-op,
+    /// and that is why `TeamStance.futurePickMultiplier` can stay at 1.15
+    /// instead of being cut alongside it.
+    static let futurePickDiscountPerYear = 0.6
+
+    /// Jimmy Johnson chart value with `futurePickDiscountPerYear` compounding
+    /// for each league year the pick is out.
+    ///
+    /// Prices through `PickValueChart.value`, not `points`: after F-09 the tail
+    /// steps in 0.4s and rounding it before the discount would flatten round 6
+    /// back into ties. The result is rounded rather than truncated for the same
+    /// reason — truncation is a systematic markdown that falls hardest on
+    /// exactly the small picks F-09 exists to make usable.
     static func pickTradeValue(pick: DraftPick, currentSeason: Int) -> Int {
-        let base = PickValueChart.points(forPick: pick.pickNumber)
+        let base = PickValueChart.value(forPick: pick.pickNumber)
         let yearsOut = max(0, pick.seasonYear - currentSeason)
-        let discounted = Double(base) * pow(0.8, Double(yearsOut))
-        return max(1, Int(discounted))
+        let discounted = base * pow(futurePickDiscountPerYear, Double(yearsOut))
+        return max(1, Int(discounted.rounded()))
     }
 
     // MARK: - GM Persona (Wave 2 — plan §6 Wave 2.3, decision §7.1)
@@ -350,14 +413,14 @@ enum TradeValueEngine {
         let name: String
         /// `archetype.askingPremium` ± up to 4 points, clamped to the plan's
         /// 1.05-1.25 band, so two old-school GMs are not interchangeable.
-        let askingPremium: Double
+        var askingPremium: Double
         let concessionRate: Double
         /// `GMArchetype.concessionCap` — the pressure-free ceiling on the total
         /// concession a conversation can extract (task #36).
         let concessionCap: Double
         let maxRounds: Int
         let insultCutoff: Double
-        let pickLean: Double
+        var pickLean: Double
         let packageDecay: Double
         let initiateWeight: Double
 
@@ -388,13 +451,24 @@ enum TradeValueEngine {
         /// `buildSellOffer`) deliberately keeps the full retail premium.
         var leagueAskingPremium: Double { 1.0 + (askingPremium - 1.0) * 0.4 }
 
-        static func forTeam(id: UUID) -> GMPersona {
+        /// `declaredIdentity` is F-56's seam: when a front office has DECLARED
+        /// what it is (only the user's can, today), the declaration replaces the
+        /// UUID draw as the archetype while the per-club jitter and the GM's
+        /// name still come from the club id — so two clubs that declare the same
+        /// identity are still not interchangeable. `nil` is every AI club and
+        /// every career started before the picker existed, and it reproduces the
+        /// old behaviour exactly.
+        static func forTeam(id: UUID, declaredIdentity: FranchiseIdentity? = nil) -> GMPersona {
             let archetype: GMArchetype
-            switch Int(uuidDice(id, byteOffset: 8) % 100) {
-            case ..<26:  archetype = .oldSchool
-            case ..<60:  archetype = .balanced
-            case ..<80:  archetype = .analytics
-            default:     archetype = .aggressive
+            if let declaredIdentity {
+                archetype = declaredIdentity.archetype
+            } else {
+                switch Int(uuidDice(id, byteOffset: 8) % 100) {
+                case ..<26:  archetype = .oldSchool
+                case ..<60:  archetype = .balanced
+                case ..<80:  archetype = .analytics
+                default:     archetype = .aggressive
+                }
             }
 
             // Jitter: −0.04 … +0.04 in 0.01 steps, from a different byte window.
@@ -465,6 +539,526 @@ enum TradeValueEngine {
         return 0.955 + step
     }
 
+
+    // MARK: - D7-A — the scouting dossier (valuation fog)
+
+    /// One organisation's accumulated read on ONE person in another
+    /// organisation, filled in by contact and by nothing else.
+    ///
+    /// # Why this exists (design ruling D7, option C, part A)
+    ///
+    /// Until this landed, every club in the league evaluated trades against
+    /// **shared truth about the other 31 organisations**. An AI club knew
+    /// exactly what a rival's GM valued — his hidden chart lean, his opening
+    /// premium — so a negotiation resolved to an arithmetic comparison rather
+    /// than a read on a person. D3's refinement names the missing property
+    /// first: *the AI lives in fog too, and not only about players*.
+    ///
+    /// # The shape: one dossier per (observer → person), two disciplines
+    ///
+    /// The record is keyed on the **person**, not the club. A GM or a head coach
+    /// who moves takes his file with him and a club that hires a new one resets
+    /// to unknown, which is what makes the coaching carousel matter to the user
+    /// — and it is free only if the key is right from the start, which is why it
+    /// is right from the start.
+    ///
+    /// Each dossier carries two disciplines, filled by two kinds of contact:
+    ///
+    /// | discipline | what it knows | what fills it | status |
+    /// |---|---|---|---|
+    /// | `.frontOffice` | what that GM VALUES — his hidden chart lean and his opening premium | negotiating with him | **live (D7-A)** |
+    /// | `.sideline` | how that coach BEHAVES — his tendencies | playing him | **seam only (D7-B)** |
+    ///
+    /// The consequence the design is after falls out of the mechanism instead of
+    /// being special-cased: a divisional opponent is met twice a season and is
+    /// read clearly, while a cross-conference club is met once every four years
+    /// and stays foggy. That is why divisional games feel different in reality.
+    ///
+    /// # Storage
+    ///
+    /// One career-scoped `UserDefaults` dictionary, the same deliberate
+    /// trade-off `TradeTalkRegistry` and `TradeRequestRegistry` already make:
+    /// this is accumulated organisational scar tissue, not roster state, and
+    /// putting it on `Career` would mean a schema migration for a counter.
+    /// Reads are memoised behind a generation counter because the league market
+    /// pass prices several hundred club pairs in one advance and a
+    /// `UserDefaults.dictionary` call per pair is the pass's whole cost.
+    ///
+    /// **Known gap, deliberately left:** the key base is not on
+    /// `CareerScopedDefaults.keys`, so deleting a save does not purge it — the
+    /// same gap `tradeRequestSeasons` and `tradeTalkStrikes` already have. Adding
+    /// the base there is a one-line follow-up in a file this wave does not own.
+    enum ScoutingDossier {
+
+        /// Which half of an organisation a dossier line is about.
+        enum Discipline: String {
+            /// The general manager: what he values, what he opens at. **Live.**
+            case frontOffice
+            /// The head coach: what he calls, when he goes for it. **D7-B.**
+            case sideline
+        }
+
+        /// The person a dossier line is about. Keyed on the man, so he takes his
+        /// file with him when he changes clubs.
+        struct Subject: Hashable {
+            let discipline: Discipline
+            let personID: UUID
+        }
+
+        /// The GM of a franchise, as a dossier subject.
+        static func generalManager(_ personID: UUID) -> Subject {
+            Subject(discipline: .frontOffice, personID: personID)
+        }
+
+        /// The head coach of a franchise, as a dossier subject.
+        ///
+        /// **D7-B SEAM — nothing calls this yet, and that is deliberate.** The
+        /// gameday wave attaches here: call `recordContact` once per played game
+        /// with the opposing head coach's `Coach.id`, then read `confidence` to
+        /// decide how much of that coach's tendencies (fourth-down appetite,
+        /// run/pass lean, blitz rate) the observing club is allowed to see. The
+        /// storage, the confidence curve, the person-keying and the reset are
+        /// already here and already shared with the front-office half; the
+        /// tendency model itself is what has to be designed, and the ruling is
+        /// explicit that it is not to be started without one.
+        ///
+        /// The pairing rule is satisfied the same way the front-office half
+        /// satisfies it: the user's own dossier is displayed to him, and the
+        /// clubs he plays accumulate the mirror record on his coach.
+        static func headCoach(_ personID: UUID) -> Subject {
+            Subject(discipline: .sideline, personID: personID)
+        }
+
+        /// How many separate contacts `observer` has had with `subject`.
+        static func contacts(observer: UUID, subject: Subject) -> Int {
+            table()[key(observer: observer, subject: subject)] ?? 0
+        }
+
+        /// Logs one contact. Negotiating with a club is a front-office contact;
+        /// playing one is a sideline contact (D7-B).
+        static func recordContact(observer: UUID, subject: Subject) {
+            var t = table()
+            let k = key(observer: observer, subject: subject)
+            t[k] = (t[k] ?? 0) + 1
+            write(t)
+        }
+
+        /// Logs the contact in BOTH directions. A phone call teaches both front
+        /// offices something, which is the property that keeps the user inside
+        /// the model rather than outside it.
+        static func recordMutualContact(_ a: UUID, _ b: UUID, discipline: Discipline) {
+            recordContact(
+                observer: a,
+                subject: Subject(discipline: discipline, personID: personID(forTeam: b))
+            )
+            recordContact(
+                observer: b,
+                subject: Subject(discipline: discipline, personID: personID(forTeam: a))
+            )
+        }
+
+        /// 0 (never met him) … 1 (knows exactly what he wants).
+        ///
+        /// `1 − decay^contacts`, so the first meeting teaches the most and the
+        /// tenth teaches almost nothing — which is how learning a person
+        /// actually goes, and it is what makes a divisional rival (two contacts
+        /// a season) legible inside one year while a cross-conference club stays
+        /// a stranger.
+        static func confidence(observer: UUID, subject: Subject) -> Double {
+            let n = contacts(observer: observer, subject: subject)
+            guard n > 0 else { return 0 }
+            return 1.0 - pow(confidenceDecayPerContact, Double(n))
+        }
+
+        /// Share of the remaining unknown that ONE contact removes.
+        ///
+        /// Trades against: how long a GM stays a stranger versus how quickly the
+        /// fog stops mattering at all. At 0.72 the confidence ladder runs
+        /// 0 → 0.28 → 0.48 → 0.63 → 0.73 → 0.80, so a club the user has traded
+        /// with twice is read to within about half the initial error and one he
+        /// has never called is priced blind. Rejected: 0.5, which made a single
+        /// trade wipe out most of the fog and turned the whole model into a
+        /// first-deal formality.
+        static let confidenceDecayPerContact = 0.72
+
+        /// Clears every dossier line. Called from nothing today on purpose — a
+        /// read on a person is not a per-season counter and must survive the
+        /// league-year rollover that resets `TradeTalkRegistry`. It exists for
+        /// the career-switch and save-deletion paths to reach when the key base
+        /// joins `CareerScopedDefaults.keys`.
+        static func reset() {
+            UserDefaults.standard.removeObject(forKey: scopedKey)
+            generation &+= 1
+        }
+
+        /// The dossier subject id for the GM of a franchise.
+        ///
+        /// **The single seam for GM turnover.** A general manager is not an
+        /// entity in this game yet — `GMPersona` is derived from `Team.id` and
+        /// never changes — so today the person id is a deterministic remix of
+        /// the club's id. It is a REMIX rather than the club id itself so that
+        /// nothing downstream can quietly conflate "this club" with "the man who
+        /// runs it": when GMs become entities and start moving, this function
+        /// returns his own id and every dossier line follows him without another
+        /// line changing anywhere.
+        static func personID(forTeam teamID: UUID) -> UUID {
+            let raw = teamID.uuid
+            let source = [raw.0, raw.1, raw.2, raw.3, raw.4, raw.5, raw.6, raw.7,
+                          raw.8, raw.9, raw.10, raw.11, raw.12, raw.13, raw.14, raw.15]
+            // Fixed salt: any constant works, it only has to be stable across
+            // launches and different from the club's own id.
+            let salt: [UInt8] = [0x47, 0x4D, 0x2D, 0x44, 0x37, 0x41, 0x21, 0x00,
+                                 0x9E, 0x37, 0x79, 0xB9, 0x7F, 0x4A, 0x7C, 0x15]
+            var bytes = [UInt8](repeating: 0, count: 16)
+            for index in 0..<16 { bytes[index] = source[index] ^ salt[index] }
+            return UUID(uuid: (bytes[0], bytes[1], bytes[2], bytes[3],
+                               bytes[4], bytes[5], bytes[6], bytes[7],
+                               bytes[8], bytes[9], bytes[10], bytes[11],
+                               bytes[12], bytes[13], bytes[14], bytes[15]))
+        }
+
+        // MARK: Storage
+
+        private static let defaultsKey = "scoutingDossierContacts"
+        private static var scopedKey: String { CareerScopedDefaults.scopedKey(defaultsKey) }
+
+        private static func key(observer: UUID, subject: Subject) -> String {
+            "\(observer.uuidString)|\(subject.discipline.rawValue)|\(subject.personID.uuidString)"
+        }
+
+        /// Memoised copy of the stored table plus the generation it was read at.
+        /// The league market pass asks this question a few hundred times per
+        /// advance; a `UserDefaults` round trip per question is measurable.
+        private nonisolated(unsafe) static var cache: [String: Int]?
+        private nonisolated(unsafe) static var cacheGeneration: UInt64 = 0
+        private nonisolated(unsafe) static var generation: UInt64 = 0
+        private nonisolated(unsafe) static var cacheScope: String = ""
+
+        private static func table() -> [String: Int] {
+            let scope = scopedKey
+            if let cache, cacheGeneration == generation, cacheScope == scope { return cache }
+            let loaded = UserDefaults.standard.dictionary(forKey: scope) as? [String: Int] ?? [:]
+            cache = loaded
+            cacheGeneration = generation
+            cacheScope = scope
+            return loaded
+        }
+
+        private static func write(_ table: [String: Int]) {
+            UserDefaults.standard.set(table, forKey: scopedKey)
+            cache = table
+            cacheScope = scopedKey
+            generation &+= 1
+            cacheGeneration = generation
+        }
+    }
+
+    // MARK: - F-56 — the franchise identity the user declares
+
+    /// The identity a user declares for his own front office at career creation.
+    ///
+    /// D7's ruling on F-56: the user does not have a hidden persona drawn from
+    /// his club's UUID — he **picks** one, and that declaration is the object the
+    /// other 31 clubs form a read on. Two consequences the ruling makes
+    /// mandatory, and both are built here rather than in the picker:
+    ///
+    /// 1. **The declaration is a PRIOR, not a fact.** It seeds what the league
+    ///    believes about him; `TradeReputationRegistry` corrects it from what he
+    ///    actually does. Declare yourself a value hunter, then outbid the market
+    ///    twice, and the league prices you as a spender — otherwise the choice is
+    ///    a free disguise, and a costless disguise is exactly the kind of
+    ///    advantage D1 exists to remove.
+    /// 2. **No identity may be strictly best.** Each buys something and costs
+    ///    something, the way the AI archetypes already do. The three levers are
+    ///    `askingPremium` (what he can charge for his own men — higher is better
+    ///    for him), `pickLean` (how generously the league credits the picks it
+    ///    sends him — higher is WORSE for him, because a club that respects his
+    ///    picks needs fewer of them to meet his ask) and `contactAppetite` (how
+    ///    often the phone rings at all). They point in different directions
+    ///    inside the four archetypes, so the choice is a trade rather than a
+    ///    ladder: `analytics` charges the most and is called the least,
+    ///    `aggressive` charges the least and is called the most, and `oldSchool`
+    ///    charges well while having his own picks discounted.
+    ///
+    /// **The seam.** The picker UI is another agent's. Until it exists,
+    /// `FranchiseIdentityRegistry.identity(for:)` returns `nil` and every caller
+    /// falls back to today's UUID draw, so behaviour is unchanged. When the
+    /// picker ships it calls `set(_:for:)` once at career creation and nothing
+    /// else in the market layer changes.
+    enum FranchiseIdentity: String, CaseIterable {
+        case oldSchool
+        case balanced
+        case analytics
+        case aggressive
+
+        /// The GM archetype this declaration seeds. One-to-one today because the
+        /// four archetypes already span the market's levers; a fifth identity
+        /// would map onto the nearest archetype rather than needing a fifth set
+        /// of constants.
+        var archetype: GMArchetype {
+            switch self {
+            case .oldSchool:  return .oldSchool
+            case .balanced:   return .balanced
+            case .analytics:  return .analytics
+            case .aggressive: return .aggressive
+            }
+        }
+
+        var label: String { archetype.label }
+
+        /// What declaring this identity says to the league, in the user's own
+        /// words. Shown at the picker and quoted back in the Trade Center.
+        var declaration: String {
+            switch self {
+            case .oldSchool:
+                return "We trust our board. Picks are currency and we spend them on football players."
+            case .balanced:
+                return "Fair value, both ways. We'll talk about anyone and we don't play games."
+            case .analytics:
+                return "Draft capital is undervalued. We charge retail for our own men and never pay to move up."
+            case .aggressive:
+                return "We call first and we call often. If the man wins us games, we pay for him."
+            }
+        }
+
+        /// How hard the rest of the league works the phones on this front
+        /// office, before reputation moves it.
+        ///
+        /// Trades against: how many calls a declared identity buys, against how
+        /// good each one is. It is the paired COST that stops a high asking
+        /// premium from being free — a club known to charge retail gets phoned
+        /// less, which is the ordinary way a reputation for being expensive
+        /// works. Bounded at ±15 % so no identity can miss §5's 3-8 in-season
+        /// offer band on its own; the pity floors sit underneath it untouched.
+        var contactAppetite: Double {
+            switch self {
+            case .oldSchool:  return 1.00
+            case .balanced:   return 1.05
+            case .analytics:  return 0.88
+            case .aggressive: return 1.15
+            }
+        }
+    }
+
+    /// Where the user's declared identity is stored until the picker owns it.
+    ///
+    /// Career-scoped `UserDefaults`, one row, same trade-off as every other
+    /// registry in this file. If the picker's owner would rather this were a
+    /// stored `Career` field, the move is confined to these two function bodies
+    /// — nothing else in the market layer reads the store directly.
+    enum FranchiseIdentityRegistry {
+        private static let defaultsKey = "franchiseIdentity"
+        private static var scopedKey: String { CareerScopedDefaults.scopedKey(defaultsKey) }
+
+        /// The declared identity for a club, or `nil` when nobody declared one
+        /// (every AI club, and any career started before the picker existed).
+        static func identity(for teamID: UUID) -> FranchiseIdentity? {
+            guard let table = UserDefaults.standard.dictionary(forKey: scopedKey) as? [String: String],
+                  let raw = table[teamID.uuidString] else { return nil }
+            return FranchiseIdentity(rawValue: raw)
+        }
+
+        /// Records the declaration. Called once, at career creation.
+        static func set(_ identity: FranchiseIdentity, for teamID: UUID) {
+            var table = UserDefaults.standard.dictionary(forKey: scopedKey) as? [String: String] ?? [:]
+            table[teamID.uuidString] = identity.rawValue
+            UserDefaults.standard.set(table, forKey: scopedKey)
+        }
+
+        static func reset() {
+            UserDefaults.standard.removeObject(forKey: scopedKey)
+        }
+    }
+
+    // MARK: - D7-A — reputation: what the league learns from what you DO
+
+    /// The league's running read on one front office's actual behaviour.
+    ///
+    /// This is the half of D7-A that makes a **reputation** possible rather than
+    /// merely making offers noisy, and it is what stops F-56's declared identity
+    /// from being a costless disguise. Two signals, both from things the league
+    /// can actually observe:
+    ///
+    /// * **`lean`** — an exponentially-weighted mean of the chart ratio
+    ///   (points received ÷ points sent) of his executed trades. Above 1 he
+    ///   extracts surplus; below 1 he overpays. Both extremes cost him, which is
+    ///   the point: a GM known to fleece people stops getting calls, and a GM
+    ///   known to overpay gets plenty of calls at a worse price.
+    /// * **`lowballs`** — insulting proposals he has sent anyone. This is D1's
+    ///   replacement for the REJECTED per-week trade cap (F-08): a real GM is not
+    ///   limited by a rule, he is limited by counterparties who stop taking his
+    ///   calls. `TradeTalkRegistry` already ends one relationship at that GM's
+    ///   patience limit; this is the part that leaks across the league, so
+    ///   working through all 31 clubs with lowballs prices the 31st call worse
+    ///   than the first instead of costing nothing at all.
+    ///
+    /// **Only the user's club is recorded, and that is principled rather than
+    /// lazy.** An AI club's archetype *is* its behaviour — it never declares one
+    /// thing and does another — so its prior needs no correction. The user is the
+    /// only actor in the league who can say he is a value hunter and then behave
+    /// like a spender. Generalising to 32 rows is a change of key, not of model,
+    /// if AI clubs ever acquire a taste they can betray.
+    ///
+    /// It deliberately does NOT reset at the league-year rollover: a reputation
+    /// that evaporates every February is not a reputation.
+    enum TradeReputationRegistry {
+
+        private static let defaultsKey = "tradeReputation"
+        private static var scopedKey: String { CareerScopedDefaults.scopedKey(defaultsKey) }
+
+        /// Weight one new deal carries against the accumulated read.
+        ///
+        /// Trades against: how fast the league changes its mind. At 0.35 three
+        /// consecutive overpays move the read most of the way and one does not,
+        /// which is roughly how long it takes a front office to acquire a
+        /// nickname. Rejected: a plain mean, which makes the twentieth deal of a
+        /// career unable to change anything.
+        static let leanLearningRate = 0.35
+
+        /// A club with no record reads as exactly average.
+        static let neutralLean = 1.0
+
+        /// Records one executed deal from `teamID`'s point of view.
+        static func recordDeal(teamID: UUID, pointsSent: Int, pointsReceived: Int) {
+            guard pointsSent > 0, pointsReceived > 0 else { return }
+            // Clamped before it is blended: one lopsided salary dump must not be
+            // able to define a front office for the rest of the career.
+            let ratio = min(2.0, max(0.5, Double(pointsReceived) / Double(pointsSent)))
+            var row = load(teamID: teamID)
+            row.samples += 1
+            row.lean = row.samples == 1
+                ? ratio
+                : row.lean + (ratio - row.lean) * leanLearningRate
+            save(row, teamID: teamID)
+        }
+
+        /// Records one insulting proposal sent by `teamID`.
+        static func recordLowball(teamID: UUID) {
+            var row = load(teamID: teamID)
+            row.lowballs += 1
+            save(row, teamID: teamID)
+        }
+
+        /// How the rest of the league prices doing business with this club:
+        /// 0.88 (nobody wants to deal with you) … 1.12 (a pleasure to do business
+        /// with), and exactly 1.0 for a club nobody has a read on.
+        ///
+        /// Applied DIRECTIONALLY, never as one multiplier on "the price": a club
+        /// in poor standing is marked down when the league prices what it is
+        /// selling and marked up when the league prices what it is buying. That
+        /// is what a bad reputation does, and folding it into a single ask
+        /// multiplier would have made a lowballer's own players *cheaper* for him
+        /// to keep and *dearer* for others to buy, which is backwards.
+        ///
+        /// The lean term is an inverted U on purpose. `|lean − 1|` is what
+        /// costs, so the sharp operator and the soft touch are both penalised —
+        /// the first because clubs stop wanting the call, the second because
+        /// they price him as a mark. Only a GM who trades near chart value keeps
+        /// full standing, which is the same shape the real market has.
+        static func standing(teamID: UUID) -> Double {
+            let row = load(teamID: teamID)
+            guard row.samples > 0 || row.lowballs > 0 else { return 1.0 }
+            let leanPenalty = row.samples > 0
+                ? min(0.10, abs(row.lean - neutralLean) * 0.40)
+                : 0.0
+            let lowballPenalty = min(0.14, Double(row.lowballs) * 0.035)
+            return max(0.88, min(1.12, 1.0 - leanPenalty - lowballPenalty))
+        }
+
+        /// Multiplier on how often the phone rings for this front office,
+        /// 0.75 … 1.20.
+        ///
+        /// The other half of the inverted U, pointing the opposite way: a club
+        /// the league has learned OVERPAYS gets called MORE (everyone wants that
+        /// business) and a club that has been fleecing people or sending insults
+        /// gets called less. Bounded so that no reputation can push §5's 3-8
+        /// in-season offer band out of reach on its own, and the pity floors in
+        /// `userOfferHazard` sit underneath it untouched.
+        static func contactAppetite(teamID: UUID) -> Double {
+            let row = load(teamID: teamID)
+            guard row.samples > 0 || row.lowballs > 0 else { return 1.0 }
+            // Below 1.0 means he overpays — clubs like calling him.
+            let generosity = row.samples > 0 ? (neutralLean - row.lean) : 0.0
+            let appetite = 1.0
+                + min(0.20, max(-0.15, generosity * 0.60))
+                - min(0.20, Double(row.lowballs) * 0.045)
+            return max(0.75, min(1.20, appetite))
+        }
+
+        /// A one-line, honest description of the league's read, for the Trade
+        /// Center. Refusal has to be VISIBLY priced (D1) or it is just a number
+        /// the player never learns about.
+        static func summary(teamID: UUID) -> String? {
+            let row = load(teamID: teamID)
+            guard row.samples > 0 || row.lowballs > 0 else { return nil }
+            var parts: [String] = []
+            if row.samples > 0 {
+                if row.lean >= 1.10 {
+                    parts.append("they think you win your trades")
+                } else if row.lean <= 0.92 {
+                    parts.append("they think you pay up")
+                } else {
+                    parts.append("you deal near chart value")
+                }
+            }
+            if row.lowballs >= 2 {
+                parts.append("\(row.lowballs) lowballs on the record")
+            }
+            let surcharge = Int((((1.0 / standing(teamID: teamID)) - 1.0) * 100.0).rounded())
+            if surcharge >= 2 {
+                parts.append("clubs are asking you ~\(surcharge) % more")
+            }
+            return parts.isEmpty ? nil : parts.joined(separator: " · ")
+        }
+
+        static func reset() {
+            UserDefaults.standard.removeObject(forKey: scopedKey)
+        }
+
+        // MARK: Storage
+
+        private struct Row {
+            var samples: Int = 0
+            var lean: Double = TradeReputationRegistry.neutralLean
+            var lowballs: Int = 0
+        }
+
+        private static func load(teamID: UUID) -> Row {
+            guard let table = UserDefaults.standard.dictionary(forKey: scopedKey) as? [String: [String: Double]],
+                  let raw = table[teamID.uuidString] else { return Row() }
+            return Row(
+                samples: Int(raw["n"] ?? 0),
+                lean: raw["lean"] ?? neutralLean,
+                lowballs: Int(raw["lowballs"] ?? 0)
+            )
+        }
+
+        private static func save(_ row: Row, teamID: UUID) {
+            var table = UserDefaults.standard.dictionary(forKey: scopedKey) as? [String: [String: Double]] ?? [:]
+            table[teamID.uuidString] = [
+                "n": Double(row.samples),
+                "lean": row.lean,
+                "lowballs": Double(row.lowballs)
+            ]
+            UserDefaults.standard.set(table, forKey: scopedKey)
+        }
+    }
+
+    /// How hard the rest of the league works the phones on one front office,
+    /// 0.70 … 1.25, combining what it DECLARED (`FranchiseIdentity`) with what
+    /// it has since been seen to DO (`TradeReputationRegistry`).
+    ///
+    /// This is D1's replacement for the rejected per-week trade cap, on the
+    /// volume side: nothing stops the user closing a deal with all 31 clubs in a
+    /// week, but a front office the league has learned to distrust finds fewer
+    /// of them willing to pick up. 1.0 — today's behaviour exactly — until an
+    /// identity is declared or a reputation is earned.
+    static func marketAppetite(for teamID: UUID) -> Double {
+        let declared = FranchiseIdentityRegistry.identity(for: teamID)?.contactAppetite ?? 1.0
+        let earned = TradeReputationRegistry.contactAppetite(teamID: teamID)
+        return max(0.70, min(1.25, declared * earned))
+    }
+
     // MARK: - Negotiation Surface (Wave 3 — read-only persona exposure)
 
     /// Everything the Wave 3 negotiation screen is allowed to know about the GM
@@ -499,22 +1093,69 @@ enum TradeValueEngine {
         /// stays hidden.
         let askingPremiumPercent: Int
 
+        /// How well the user's front office knows this man, 0 … 1
+        /// (`ScoutingDossier.confidence`).
+        ///
+        /// D7-A's user-facing half, and the reason the fog is not a private
+        /// advantage handed to the AI: the user can SEE how well he reads a GM,
+        /// the same way that GM's own dossier tells him how well he reads the
+        /// user. It is what his organisation has learned by doing business, and
+        /// it is the same number that decides how badly the club on the other
+        /// end can misprice him.
+        let dossierConfidence: Double
+
+        /// How many times the two front offices have actually done business.
+        let dossierContacts: Int
+
+        /// One line describing what the league has decided about the USER's
+        /// front office, or `nil` before it has decided anything
+        /// (`TradeReputationRegistry.summary`).
+        let leagueRead: String?
+
         /// True while he still answers the user's calls.
         var talksOpen: Bool { strikes < patience }
         /// Lowballs left before the freeze-out.
         var roundsLeft: Int { max(0, patience - strikes) }
+
+        /// Plain-language read on how well this GM is known, for the header.
+        var dossierLabel: String {
+            switch dossierConfidence {
+            case ..<0.01: return "Never done business"
+            case ..<0.30: return "Barely know him"
+            case ..<0.55: return "Getting a read"
+            case ..<0.75: return "Know how he prices"
+            default:      return "Know exactly what he wants"
+            }
+        }
     }
 
     /// The negotiation-facing view of one franchise's GM.
-    static func gmIdentity(team: Team, season: Int) -> GMIdentity {
-        let persona = GMPersona.forTeam(id: team.id)
+    ///
+    /// `userTeamID` is optional only so existing preview/utility callers that do
+    /// not have it keep compiling; supplying it is what fills in the D7-A
+    /// dossier line and the league's read on the user.
+    static func gmIdentity(team: Team, season: Int, userTeamID: UUID? = nil) -> GMIdentity {
+        let persona = GMPersona.forTeam(
+            id: team.id,
+            declaredIdentity: FranchiseIdentityRegistry.identity(for: team.id)
+        )
+        let subject = ScoutingDossier.generalManager(
+            ScoutingDossier.personID(forTeam: team.id)
+        )
         return GMIdentity(
             teamID: team.id,
             name: persona.name,
             archetype: persona.archetype,
             patience: persona.maxRounds,
             strikes: TradeTalkRegistry.strikes(season: season, teamID: team.id),
-            askingPremiumPercent: Int(((persona.askingPremium - 1.0) * 100.0).rounded())
+            askingPremiumPercent: Int(((persona.askingPremium - 1.0) * 100.0).rounded()),
+            dossierConfidence: userTeamID.map {
+                ScoutingDossier.confidence(observer: $0, subject: subject)
+            } ?? 0,
+            dossierContacts: userTeamID.map {
+                ScoutingDossier.contacts(observer: $0, subject: subject)
+            } ?? 0,
+            leagueRead: userTeamID.flatMap { TradeReputationRegistry.summary(teamID: $0) }
         )
     }
 
@@ -743,9 +1384,22 @@ enum TradeValueEngine {
     static let solidStarterOVR = 70.5
 
     /// Grades every position on a roster by the quality of who would start.
+    ///
+    /// **Availability, not membership.** The model used to count everyone on the
+    /// roster who was not retired, which meant a club whose starting quarterback
+    /// tore a knee in week 8 read as SET at quarterback and therefore never
+    /// traded for one — the single most characteristic deadline move in the
+    /// sport, structurally unavailable. Two other things in the codebase answer
+    /// the same question about the same roster and both filter:
+    /// `PracticeSquadEngine.shorthandedPositions` and, since injured men stopped
+    /// dressing, the depth chart the simulator actually reads. Three models of
+    /// "we are short here" cannot disagree.
+    ///
+    /// Holdouts are excluded for the same reason: a man refusing to report is
+    /// not covering a starter slot on Sunday, whatever the roster says.
     static func needProfile(roster: [Player]) -> NeedProfile {
         var byPosition: [Position: [Player]] = [:]
-        for player in roster where !player.isRetired {
+        for player in roster where !player.isRetired && !player.isInjured && !player.isHoldingOut {
             byPosition[player.position, default: []].append(player)
         }
 
@@ -821,6 +1475,128 @@ enum TradeValueEngine {
 
         /// True while this GM still answers the user's calls.
         var talksOpen: Bool { strikes < persona.maxRounds }
+
+
+        // MARK: D7-A — what this GM looks like from another chair
+
+        /// This club's pricing chair as ANOTHER club reads it.
+        ///
+        /// # What is fogged, and why exactly this
+        ///
+        /// The fog covers what is hidden from the league and **nothing that is
+        /// on the standings page**. A club's stance is public — everyone can see
+        /// a 2-7 record and a 31-year-old core — and so are its needs, because
+        /// a depth chart is a depth chart. What no rival can see is the two
+        /// numbers this file has always documented as HIDDEN: the GM's chart
+        /// lean (`pickLean`) and how far above value he opens
+        /// (`askingPremium`). Those are the read, and they are what a
+        /// negotiation is actually about.
+        ///
+        /// # Which way the error runs
+        ///
+        /// The observer builds a package against his READ of the subject and
+        /// the subject then decides with his TRUE numbers. So:
+        ///
+        /// * over-estimate the man's price and the package closes anyway — the
+        ///   observer has overpaid, visibly, and the ledger records it;
+        /// * under-estimate it and the deal dies at his bar, which is what a
+        ///   lowball born of a bad read looks like from the outside.
+        ///
+        /// Both directions are therefore live, which is the ruling's
+        /// requirement, and the asymmetry in their CONSEQUENCE is correct: an
+        /// offer that is too small simply does not get done.
+        ///
+        /// # Why this cannot break preview ≡ outcome (G7)
+        ///
+        /// The fog is applied in exactly one place — package CONSTRUCTION — and
+        /// never in `respond`, `partnerVerdict` or `hardBlocker`. A GM prices
+        /// his own chair truthfully at every decision point, so the Trade
+        /// Center's verdict and the executed outcome still come from the same
+        /// arithmetic. Nothing the user reads is fogged; what is fogged is what
+        /// the other club thought before it dialled.
+        func asReadBy(_ observer: GMMarketView) -> GMMarketView {
+            // A club does not need a dossier on itself.
+            guard observer.team.id != team.id else { return self }
+
+            let subject = ScoutingDossier.generalManager(
+                ScoutingDossier.personID(forTeam: team.id)
+            )
+            let confidence = ScoutingDossier.confidence(
+                observer: observer.team.id, subject: subject
+            )
+            let sigma = Self.valuationFogSigma * (1.0 - confidence)
+
+            // Deterministic, mean-zero, and stable for as long as the calendar
+            // slot is — same reasoning as `askNoise`, and for the same reason: a
+            // read that re-rolled on every redraw would make the same club worth
+            // two different things inside one advance.
+            let leanDraw = readDraw(observer: observer.team.id, subject: team.id, salt: 0x11)
+            let premiumDraw = readDraw(observer: observer.team.id, subject: team.id, salt: 0x22)
+
+            var read = persona
+            read.pickLean = max(0.75, min(1.30, persona.pickLean * (1.0 + leanDraw * sigma)))
+            // The premium's EXCESS is what moves, not the premium: 1.16 opening
+            // above value is a 16 % excess, and a 20 % error on the read is 3
+            // points of ask, which is the right order of magnitude for "I think
+            // he wants a bit more than he does".
+            let excess = persona.askingPremium - 1.0
+            let readExcess = excess * (1.0 + premiumDraw * sigma * Self.premiumFogSensitivity)
+            read.askingPremium = max(1.0, min(1.32, 1.0 + readExcess))
+
+            return GMMarketView(
+                team: team,
+                persona: read,
+                stance: stance,
+                needs: needs,
+                roster: roster,
+                season: season,
+                week: week
+            )
+        }
+
+        /// Spread of the read on a GM nobody has met, as a share of the number
+        /// being read.
+        ///
+        /// Trades against: how much of a negotiation is a read on a person,
+        /// versus how many deals the fog kills outright. The archetype spread on
+        /// `pickLean` is 0.87…1.14, so ±7 % at zero contact is about half the
+        /// whole between-GM spread — enough that a stranger is genuinely hard to
+        /// price, not so much that the observer's guess is unrelated to the man.
+        /// Rejected: 0.15, which put the read outside the archetype spread
+        /// entirely and made the whole model indistinguishable from D3's
+        /// explicitly-rejected "uniform noise, turned up".
+        static let valuationFogSigma = 0.07
+
+        /// How much harder the fog bites on the opening premium than on the
+        /// chart lean. Trades against: the two channels' relative loudness. The
+        /// premium excess is a small number (0.05…0.25) and the lean multiplies
+        /// every pick in a package, so an equal share would have made the
+        /// premium channel invisible; 3× makes a strange GM's opening ask feel
+        /// genuinely unpredictable while the lean stays the dominant term.
+        static let premiumFogSensitivity = 3.0
+
+        /// Deterministic mean-zero draw in −1…1 for one (observer, subject,
+        /// calendar slot, channel).
+        private func readDraw(observer: UUID, subject: UUID, salt: UInt64) -> Double {
+            var x = TradeValueEngine.uuidDice(observer, byteOffset: 5)
+            x ^= TradeValueEngine.uuidDice(subject, byteOffset: 12) &* 0x9E37_79B9_7F4A_7C15
+            x ^= UInt64(bitPattern: Int64(season)) &* 0xBF58_476D_1CE4_E5B9
+            x ^= UInt64(bitPattern: Int64(week + 1)) &* 0x94D0_49BB_1331_11EB
+            x ^= salt &* 0xD6E8_FEB8_6659_FD93
+            x = (x ^ (x >> 30)) &* 0xBF58_476D_1CE4_E5B9
+            x = (x ^ (x >> 27)) &* 0x94D0_49BB_1331_11EB
+            x = x ^ (x >> 31)
+            return Double(x % 2001) / 1000.0 - 1.0
+        }
+
+        /// The directional reputation multiplier the league applies to THIS
+        /// club's side of a deal (`TradeReputationRegistry.standing`).
+        ///
+        /// Poor standing marks down what he is selling and marks up what he is
+        /// buying, which is what a bad reputation costs. 1.0 for every club the
+        /// league has no read on, which is every AI club and any user who has
+        /// not traded yet — so this term is inert until behaviour creates it.
+        var standing: Double { TradeReputationRegistry.standing(teamID: team.id) }
 
         func isStarter(_ player: Player) -> Bool { needs.starterIDs.contains(player.id) }
 
@@ -954,7 +1730,14 @@ enum TradeValueEngine {
         let roster = allPlayers.filter { $0.teamID == team.id && !$0.isRetired }
         return GMMarketView(
             team: team,
-            persona: GMPersona.forTeam(id: team.id),
+            // F-56: a club that DECLARED an identity is priced against the
+            // declaration; every other club keeps the UUID draw. This is the one
+            // place the declaration enters the market, so nothing downstream has
+            // to know the difference between a chosen persona and a drawn one.
+            persona: GMPersona.forTeam(
+                id: team.id,
+                declaredIdentity: FranchiseIdentityRegistry.identity(for: team.id)
+            ),
             stance: stance(
                 for: team,
                 roster: roster,
@@ -1127,6 +1910,16 @@ enum TradeValueEngine {
         if let standingCounter, sameAssets(proposal, standingCounter) {
             return .likeIt
         }
+        // F-07: the same chart-neutral band `dealIsCoherent` runs on every offer
+        // the AI assembles. It sits AFTER the compliance check on purpose — a GM
+        // signs the package he himself demanded, and his own counter is his own
+        // price by construction.
+        if chartFairnessBlocker(
+            proposal: proposal, allPlayers: allPlayers, allPicks: allPicks,
+            currentSeason: currentSeason, betweenAIClubs: false
+        ) != nil {
+            return .hangUp
+        }
 
         let (gives, gets) = aiPerspectiveValues(
             proposal: proposal, view: view, allPlayers: allPlayers, allPicks: allPicks
@@ -1259,6 +2052,23 @@ enum TradeValueEngine {
             return .accepted
         }
 
+        // F-07: the chart-neutral band, the rule the AI's own offers have always
+        // been held to and the user's never were. It runs BEFORE the value test
+        // and before the insult test, because it is a league-office rule rather
+        // than this GM's opinion — and it carries no strike, for the same
+        // reason: a deal refused by the chart is not an insult to anybody.
+        //
+        // Note the deliberate ordering against the compliance check above. A GM
+        // signs what he asked for, so his own standing counter is never measured
+        // against the chart; the counter always runs HIS way, so there is no
+        // exploit hiding in that exemption.
+        if let unfair = chartFairnessBlocker(
+            proposal: proposal, allPlayers: allPlayers, allPicks: allPicks,
+            currentSeason: currentSeason, betweenAIClubs: false
+        ) {
+            return .rejected(reason: unfair)
+        }
+
         let (gives, gets) = aiPerspectiveValues(
             proposal: proposal, view: view, allPlayers: allPlayers, allPicks: allPicks
         )
@@ -1293,6 +2103,15 @@ enum TradeValueEngine {
                 let strikes = TradeTalkRegistry.addStrike(
                     season: currentSeason, teamID: aiTeam.id
                 )
+                // D1: refusal has to BITE beyond the one relationship. The
+                // strike ends THIS conversation at this GM's patience limit; the
+                // reputation row is the part that leaks across the league, so
+                // working through all 31 clubs with lowballs makes the 31st call
+                // measurably worse than the first. That is the replacement for
+                // the per-week trade cap the ruling rejected — a real GM is
+                // limited by counterparties who stop taking his calls, not by a
+                // rule that counts his deals.
+                TradeReputationRegistry.recordLowball(teamID: proposal.offeringTeamID)
                 if strikes >= view.persona.maxRounds {
                     return .rejected(reason: "\(view.persona.name) has heard enough. \(view.abbreviation) are done talking trade with you this league year.")
                 }
@@ -1316,6 +2135,20 @@ enum TradeValueEngine {
             allPlayers: allPlayers,
             allPicks: allPicks
         ) {
+            // D7-A: a counter is CONTACT. The man has just told the proposer
+            // what he actually wants, which is the single most informative thing
+            // that can happen in a negotiation, so the proposer's dossier on him
+            // fills in. One-directional and only for proposals a human really
+            // sent (`rememberLowballs`) — engine probes ask a dozen clubs the
+            // same question in one loop and must not teach anybody anything.
+            if rememberLowballs {
+                ScoutingDossier.recordContact(
+                    observer: proposal.offeringTeamID,
+                    subject: ScoutingDossier.generalManager(
+                        ScoutingDossier.personID(forTeam: aiTeam.id)
+                    )
+                )
+            }
             return .countered(counter.proposal, message: counter.message)
         }
         return .rejected(reason: "\(view.abbreviation) want more than you can offer right now.")
@@ -1830,14 +2663,21 @@ enum TradeValueEngine {
             errors.append(blocker)
         }
 
-        // Injured players cannot be traded — the same rule that voids a stored
-        // AI offer the moment one of its assets goes down.
-        for player in sendingPlayers where player.isInjured {
-            errors.append("\(player.fullName) is injured — \(offering.abbreviation) can't trade him until he's cleared.")
-        }
-        for player in receivingPlayers where player.isInjured {
-            errors.append("\(player.fullName) is injured — \(receiving.abbreviation) won't move him until he's cleared.")
-        }
+        // F-54: injured men are TRADEABLE, at a price. The flat veto that used
+        // to live here took ~7 % of the league off the market at any moment,
+        // including in the deadline week where a hurt starter is the whole
+        // reason a club picks up the phone; real deals for injured players are
+        // ordinary business with a failed-physical clause attached. The rule is
+        // now a discount rather than a refusal — see `injuryMultiplier`, which
+        // prices both sides of the deal identically — and the only thing left
+        // here is the league's own paperwork: a man who cannot pass a physical
+        // this week does not change hands this week.
+        //
+        // Deliberately NOT reinstated as a soft veto in the offer builders'
+        // taste. `shoppingTarget` and `saleCandidates` decide separately whether
+        // an AI club would build a call around a hurt player; this layer decides
+        // only what is legal, and legality is symmetric between the user and the
+        // 31 clubs (finding S5f / G7).
 
         // A franchise-tagged man is not a tradeable asset here (#132 review F6).
         // The tag is a forward commitment in `CommittedCapLedger`, keyed by
@@ -2170,11 +3010,20 @@ enum TradeValueEngine {
         switch window {
         case .week(let week):
             guard offersSoFar < maxInSeasonOffers else { return (0, 0) }
-            if week >= 6 && offersSoFar < 2 { return (1, 100) }
-            let chance = min(94, 22 + 9 * max(0, week - 1))
             // From week 7 the market gets a second look at the user's roster —
-            // this is the back-loaded shape §5 asks for.
-            return (week >= 7 ? 2 : 1, chance)
+            // this is the back-loaded shape §5 asks for. The roll count is
+            // decided FIRST and the pity floor then lifts the CHANCE only.
+            //
+            // F-52: it used to be the other way round. `week >= 6 && offersSoFar
+            // < 2` returned `(1, 100)` and short-circuited before the second
+            // roll, so a quiet season got 1.00 + 1.00 = 3.00 expected attempts
+            // in weeks 6-8 while a season already going well got 1.52 + 1.70 =
+            // 3.89. The branch written to protect a quiet league year was the
+            // branch suppressing it — 23 % FEWER expected attempts than a loud
+            // one, doing the exact opposite of what its own comment claimed.
+            let rolls = week >= 7 ? 2 : 1
+            if week >= 6 && offersSoFar < 2 { return (rolls, 100) }
+            return (rolls, min(94, 22 + 9 * max(0, week - 1)))
 
         case .deadline:
             guard offersSoFar < maxInSeasonOffers else { return (0, 0) }
@@ -2263,6 +3112,14 @@ enum TradeValueEngine {
         // dominating) rather than any deal being refused. Twenty keeps the
         // weighting meaningful (a third of the league is still never called in a
         // given window) while making a silent league year much less likely.
+        //
+        // D7-A / D1: the depth of that list is where a REPUTATION costs volume.
+        // Twenty is a neutral front office; a club the league has learned to
+        // distrust gets fifteen of the thirty-one willing to pick up, and one
+        // everybody wants to do business with gets twenty-four. It is a soft
+        // lever on purpose — the hard one is the price (`standing`), and stacking
+        // two hard levers is how a reputation system turns into a punishment.
+        let callDepth = max(12, min(26, Int((20.0 * marketAppetite(for: userTeam.id)).rounded())))
         let candidates = allTeams
             .filter { $0.id != userTeam.id && !excludingTeamIDs.contains($0.id) }
             .map { team -> (team: Team, roll: Double) in
@@ -2270,7 +3127,7 @@ enum TradeValueEngine {
                 return (team, Double.random(in: 0..<1) * weight)
             }
             .sorted { $0.roll > $1.roll }
-            .prefix(20)
+            .prefix(callDepth)
             .map(\.team)
 
         for aiTeam in candidates {
@@ -2320,55 +3177,116 @@ enum TradeValueEngine {
         // The ask is the SELLER's price (need premium + stance retention), lifted
         // by the seller's asking premium and hidden noise — this is where the
         // "why did they want so much for him?" texture comes from.
-        let ask = seller.outgoingPlayerValue(target)
-            * seller.persona.askingPremium
-            * seller.noise
-
+        //
+        // D7-A: the buyer does not KNOW the seller's premium, he has a read on
+        // it, and the read narrows every time these two front offices do
+        // business (`GMMarketView.asReadBy`). This is the whole mispricing
+        // channel for offers aimed at the user: a club that has never traded
+        // with him opens ~20 % off its own true number in either direction, and
+        // one he has dealt with three times opens close to it.
+        //
+        // `standing` is the reputation term (D1 / F-56). It is 1.0 until the
+        // league has watched this front office do something, and after that it
+        // marks DOWN what a club in poor standing is selling — an offer for your
+        // man is worth less when the league has decided you overpay, or that you
+        // spend your afternoons sending insults.
         let buyerPicks = allPicks.filter { $0.currentTeamID == buyer.team.id && !$0.isComplete }
         // No room for the contract? Then the package opens with salary going the
         // other way, which is what makes the call possible at all.
         let needsRelief = !canAbsorbExactly(
             buyer: buyer.team, players: [target], contracts: contracts, capMode: capMode
         )
-        guard let payment = buildPayment(
-            payer: buyer,
-            seller: seller,
-            picks: buyerPicks,
-            ask: ask,
-            maxPicks: 3,
-            allowFiller: true,
-            preferFuture: seller.stance != .contend,
-            contracts: contracts,
-            capReliefSalary: needsRelief ? target.annualSalary : 0
-        ) else {
-            funnel.offerBuyPay += 1
-            return nil
+
+        // Two attempts, in the order the phone call actually goes: the buyer's
+        // READ of this GM first, then — if the package his read produced is one
+        // he would not himself sign, or one the league office's chart band would
+        // refuse — the seller's own number.
+        //
+        // The second attempt is the same concession `attemptLeagueDeal`'s shape
+        // 3 makes, and it is here for the same two reasons. It is true (the man
+        // tells you what he wants; a phone call IS contact) and it is what keeps
+        // the fog from costing VOLUME. Without it, roughly half of all fog draws
+        // would kill an offer outright — a read that ran high makes the buyer
+        // over-assemble until his own bar fails, a read that ran low makes the
+        // package fall under the chart floor — and §5's 3-8 in-season offer band
+        // would have been paid for by a design feature. With it, the fog decides
+        // WHICH package the user is offered, never whether he is called at all,
+        // and the mispricing survives where it belongs: in the occasional
+        // conspicuously generous offer that the ledger then remembers.
+        let sellerAsRead = seller.asReadBy(buyer)
+        let attempts: [GMMarketView] = [sellerAsRead, seller]
+        var chosen: (payment: (players: [Player], picks: [DraftPick]), proposal: TradeProposal)?
+        // Kept so the funnel still tells "he could not assemble a package at all"
+        // apart from "he assembled one nobody would sign" — the distinction is
+        // the whole reason `printTradeDiagnostics` is worth reading.
+        var assembledAnything = false
+
+        for priced in attempts {
+            // The ask is the SELLER's price (need premium + stance retention),
+            // lifted by his asking premium and hidden noise — this is where the
+            // "why did they want so much for him?" texture comes from.
+            //
+            // `standing` is the reputation term (D1 / F-56). It is 1.0 until the
+            // league has watched this front office do something, and after that
+            // it marks DOWN what a club in poor standing is selling: an offer
+            // for your man is worth less once the league has decided you overpay,
+            // or that you spend your afternoons sending insults.
+            let ask = priced.outgoingPlayerValue(target)
+                * priced.persona.askingPremium
+                * priced.noise
+                * seller.standing
+
+            guard let payment = buildPayment(
+                payer: buyer,
+                // The package is assembled against the same chair the ask came
+                // from: the buyer is guessing how generously this GM credits a
+                // fourth-rounder, and guessing wrong is what an overpay is made
+                // of.
+                seller: priced,
+                picks: buyerPicks,
+                ask: ask,
+                maxPicks: 3,
+                allowFiller: true,
+                preferFuture: seller.stance != .contend,
+                contracts: contracts,
+                capReliefSalary: needsRelief ? target.annualSalary : 0
+            ) else { continue }
+            assembledAnything = true
+
+            let candidate = TradeProposal(
+                offeringTeamID: buyer.team.id,
+                receivingTeamID: seller.team.id,
+                sendingPlayers: payment.players.map(\.id),
+                receivingPlayers: [target.id],
+                sendingPicks: payment.picks.map(\.id),
+                receivingPicks: []
+            )
+
+            guard dealIsCoherent(
+                proposal: candidate,
+                offering: buyer,
+                receiving: seller,
+                offeringSends: (payment.players, payment.picks),
+                receivingSends: ([target], []),
+                allPlayers: allPlayers,
+                allPicks: allPicks,
+                allTeams: allTeams,
+                capMode: capMode,
+                contracts: contracts,
+                requireReceivingBar: false,
+                rosterBounds: rosterBounds(for: window)
+            ) else { continue }
+
+            chosen = (payment, candidate)
+            break
         }
 
-        let proposal = TradeProposal(
-            offeringTeamID: buyer.team.id,
-            receivingTeamID: seller.team.id,
-            sendingPlayers: payment.players.map(\.id),
-            receivingPlayers: [target.id],
-            sendingPicks: payment.picks.map(\.id),
-            receivingPicks: []
-        )
-
-        guard dealIsCoherent(
-            proposal: proposal,
-            offering: buyer,
-            receiving: seller,
-            offeringSends: (payment.players, payment.picks),
-            receivingSends: ([target], []),
-            allPlayers: allPlayers,
-            allPicks: allPicks,
-            allTeams: allTeams,
-            capMode: capMode,
-            contracts: contracts,
-            requireReceivingBar: false,
-            rosterBounds: rosterBounds(for: window)
-        ) else {
-            funnel.offerBuyIncoherent += 1
+        guard let (payment, proposal) = chosen else {
+            if assembledAnything {
+                funnel.offerBuyIncoherent += 1
+            } else {
+                funnel.offerBuyPay += 1
+            }
             return nil
         }
 
@@ -2405,9 +3323,20 @@ enum TradeValueEngine {
             return nil
         }
 
+        // No fog on this line and that is deliberate: a GM does not need a read
+        // on anybody to know what his OWN man is worth to him. What the read
+        // would cover — will this buyer pay it? — is not the seller's decision
+        // here, because the offer goes to the user and the user decides.
+        //
+        // `standing` divides rather than multiplies, which is the directional
+        // half of the reputation model: a club in poor standing is marked down
+        // when the league prices what it SELLS (see `buildBuyOffer`) and marked
+        // up when the league prices what it BUYS. Same read, opposite sign, and
+        // together they are what a bad reputation costs per round trip.
         let ask = seller.outgoingPlayerValue(vet)
             * seller.persona.askingPremium
             * seller.noise
+            / max(0.5, buyer.standing)
 
         let buyerPicks = allPicks.filter { $0.currentTeamID == buyer.team.id && !$0.isComplete }
         guard let payment = buildPayment(
@@ -2481,17 +3410,51 @@ enum TradeValueEngine {
         contracts: [Contract],
         capMode: CapMode
     ) -> Player? {
+        // F-53: a public trade demand is the one thing that overrides the
+        // buyer's shopping list, exactly as it already does on the AI SELLER's
+        // side (`saleCandidates`). Before this the registry was the only one in
+        // the codebase whose meaning was unavailable to the player who owned the
+        // asset: the user's star could go public asking out and nothing in the
+        // market changed — no extra calls, no discount, no premium.
+        //
+        // It raises both the NUMBER of calls (the interest gate drops from a
+        // starter-quality hole to a passing interest, so far more clubs qualify)
+        // and their AGGRESSIVENESS (a man who has asked out is the call that gets
+        // made, ahead of whoever happened to be the most valuable body).
+        func hasAskedOut(_ player: Player) -> Bool {
+            TradeRequestRegistry.hasStandingRequest(player.id, season: seller.season)
+        }
         let candidates = seller.roster.filter { player in
             // #30: 72 → 66, the same percentile floor in the calibrated league.
             // `isFranchiseTagged` is a hard league rule here, not a preference —
             // `validationErrors` vetoes the deal, so shopping one only produces
             // a call that cannot be closed (#132 review F6).
-            guard player.overall >= 66, !player.isInjured, !player.isHoldingOut,
+            // F-54: hurt men stay on the board while they are close to
+            // returning. The value they are priced at already carries the
+            // discount, so the buyer is not being fooled — he is doing what a
+            // deadline buyer does.
+            guard player.overall >= 66, !player.isHoldingOut,
                   !player.isFranchiseTagged else { return false }
-            guard buyer.needs.severity(player.position) >= 0.18 else { return false }
+            guard !player.isInjured || player.injuryWeeksRemaining <= shoppableInjuryWeeks
+            else { return false }
+            // Trades against: how loud a trade demand is, versus a market that
+            // starts phoning about men nobody needs. 0.06 is "we could find him
+            // snaps", which is the right bar for a player the league already
+            // knows is available; 0.18 stays the bar for everyone else.
+            let interestGate = hasAskedOut(player) ? 0.06 : 0.18
+            guard buyer.needs.severity(player.position) >= interestGate else { return false }
             guard seller.lastManReason(player) == nil else { return false }
             guard !hasActiveNoTradeClause(player: player, contracts: contracts) else { return false }
             return true
+        }
+        // The man who asked out IS the call. No sampling, no five-deep shortlist:
+        // when a star has gone public, that is the phone call a rival front
+        // office makes, and making it the most valuable such man is what stops a
+        // demand from being drowned out by an ordinary depth piece.
+        if let requested = candidates
+            .filter(hasAskedOut)
+            .max(by: { playerTradeValue(player: $0) < playerTradeValue(player: $1) }) {
+            return requested
         }
         // Cap-affordable targets first (`canAbsorbExactly`) — a GM does not phone
         // about a player he cannot fit, and an offer the Trade Center would veto on
@@ -2538,8 +3501,13 @@ enum TradeValueEngine {
                 // The tag is a hard veto in `validationErrors`, so it belongs
                 // with the other hard gates rather than with the stance rules —
                 // even a standing trade request cannot move a tagged man.
-                guard !player.isInjured, !player.isHoldingOut, player.overall >= 66,
+                // F-54: mirror of `shoppingTarget`'s gate — a seller shops a
+                // man who will be back for the run-in, and lets the discount do
+                // the rest.
+                guard !player.isHoldingOut, player.overall >= 66,
                       !player.isFranchiseTagged else { return false }
+                guard !player.isInjured || player.injuryWeeksRemaining <= shoppableInjuryWeeks
+                else { return false }
                 guard seller.lastManReason(player) == nil else { return false }
                 guard !hasActiveNoTradeClause(player: player, contracts: contracts) else { return false }
                 if TradeRequestRegistry.hasStandingRequest(player.id, season: season) { return true }
@@ -2649,6 +3617,12 @@ enum TradeValueEngine {
         let ceiling = ask * 1.45
 
         /// Everyone the payer is allowed to put in a package.
+        ///
+        /// Still healthy-only after F-54, deliberately. A throw-in is a body the
+        /// other club is being asked to accept sight unseen to close a gap; the
+        /// headline asset of a deal can be a man with a knee, a make-weight
+        /// cannot, and allowing it would let a package quietly become three
+        /// discounted injuries wearing the value of one starter.
         func fillerPool() -> [Player] {
             payer.roster.filter { player in
                 guard !player.isInjured, !player.isHoldingOut, !player.isFranchiseTagged else { return false }
@@ -2830,18 +3804,13 @@ enum TradeValueEngine {
         // 0.72-1.70 admits it while still refusing the absurd (a seller has to
         // recover ≥59 % of the chart value of what he ships), and both GMs' own
         // bars plus `hardBlocker` have already had their say.
-        let neutralFloor = requireReceivingBar ? 0.72 : 0.82
-        let neutralCeiling = requireReceivingBar ? 1.70 : 1.45
-        let neutral = proposalValues(
-            proposal: proposal, allPlayers: allPlayers, allPicks: allPicks,
-            currentSeason: offering.season
-        )
-        guard neutral.receivingValue > 0 else {
-            if requireReceivingBar { funnel.neutral += 1 }
-            return false
-        }
-        let neutralRatio = Double(neutral.sendingValue) / Double(neutral.receivingValue)
-        guard neutralRatio >= neutralFloor, neutralRatio <= neutralCeiling else {
+        guard chartFairnessBlocker(
+            proposal: proposal,
+            allPlayers: allPlayers,
+            allPicks: allPicks,
+            currentSeason: offering.season,
+            betweenAIClubs: requireReceivingBar
+        ) == nil else {
             if requireReceivingBar { funnel.neutral += 1 }
             return false
         }
@@ -3564,10 +4533,10 @@ enum TradeValueEngine {
 
         for asset in shopping {
             funnel.assets += 1
-            let ask = seller.outgoingPlayerValue(asset)
-                * seller.persona.leagueAskingPremium
-                * seller.noise
-                * urgency
+            // D7-A moved the ask INSIDE the buyer loop. It used to be computed
+            // once per asset because every club priced the seller identically;
+            // now what a package has to cover is a property of the PAIR — of
+            // what this buyer believes this GM wants — so it cannot be hoisted.
 
             let ranked = buyers
                 .filter { $0.needs.severity(asset.position) >= interestGate }
@@ -3598,6 +4567,15 @@ enum TradeValueEngine {
 
             for buyer in interested {
                 funnel.pairs += 1
+                // D7-A: this buyer's read of this seller. The dossier is keyed
+                // on the man and fills up through contact, so two clubs that
+                // trade with each other every deadline price each other almost
+                // exactly while two that have never spoken are guessing.
+                let sellerAsRead = seller.asReadBy(buyer)
+                let ask = sellerAsRead.outgoingPlayerValue(asset)
+                    * sellerAsRead.persona.leagueAskingPremium
+                    * sellerAsRead.noise
+                    * urgency
                 let buyerPicks = picksByTeam[buyer.team.id] ?? []
                 let sellerPicks = picksByTeam[seller.team.id] ?? []
                 let needsRelief = !canAbsorb(
@@ -3621,6 +4599,16 @@ enum TradeValueEngine {
                 // deal. `askFloor` is the same call made at the seller's walk-away
                 // number instead of his opening ask (the concession a phone call
                 // makes and a one-shot builder cannot).
+                // Deliberately NOT priced through the read. Shape 3 is the
+                // concession a phone call makes — the seller naming his real
+                // walk-away number out loud — and a phone call IS contact, so
+                // there is nothing left to be foggy about. Keeping the floor
+                // truthful is also what protects the §5 volume bands from the
+                // fog: a buyer whose read ran low fails shapes 1-2 and is caught
+                // here, so the market clears at the seller's floor instead of
+                // simply not clearing. A buyer whose read ran HIGH has already
+                // closed at shape 2, having overpaid — which is the other half
+                // of "mispriced in both directions".
                 let askFloor = seller.outgoingPlayerValue(asset)
                     * seller.persona.leagueAcceptRatio
                     * 0.99
@@ -3633,7 +4621,7 @@ enum TradeValueEngine {
                 //    for it. Football back for football — and because the rosters
                 //    net out, the buyer pays no roster-spot penalty either.
                 if let payment = buildPayment(
-                    payer: buyer, seller: seller, picks: buyerPicks, ask: ask,
+                    payer: buyer, seller: sellerAsRead, picks: buyerPicks, ask: ask,
                     maxPicks: 2, allowFiller: true, preferFuture: wantsFuture,
                     contracts: contracts,
                     capReliefSalary: needsRelief ? asset.annualSalary : 0,
@@ -3645,7 +4633,7 @@ enum TradeValueEngine {
 
                 // 2. THE RENTAL, at the asking price. The classic deadline deal.
                 if let payment = buildPayment(
-                    payer: buyer, seller: seller, picks: buyerPicks, ask: ask,
+                    payer: buyer, seller: sellerAsRead, picks: buyerPicks, ask: ask,
                     maxPicks: 3, allowFiller: true, preferFuture: wantsFuture,
                     contracts: contracts,
                     capReliefSalary: needsRelief ? asset.annualSalary : 0,
@@ -3763,6 +4751,79 @@ enum TradeValueEngine {
                 )
                 return (record, summary, buyer.team.id)
             }
+        }
+        return nil
+    }
+
+
+    /// The chart-neutral fairness band, in the plain Jimmy Johnson points every
+    /// screen in the game quotes. Returns the refusal string, or `nil` when the
+    /// deal is inside the band.
+    ///
+    /// # F-07 — this ran on every AI-built offer and no user-built one
+    ///
+    /// Before this was extracted, the guard lived inside `dealIsCoherent`, which
+    /// governs the offers the AI ASSEMBLES and nothing the user proposes. A
+    /// user-built package was judged solely against one GM's leaned,
+    /// need-inflated ratio, with no reference to the public chart he was looking
+    /// at while he built it. Combined with the persona × stance spread on an
+    /// identical asset (measured at 1.5×, and at 1.97× if the future-pick
+    /// multiplier is folded in) that was a value pump: buy a 30-year-old 85-OVR
+    /// from a rebuilding analytics club, sell him to a needy old-school
+    /// contender, repeat across 31 counterparties. The two audits priced the
+    /// round trip at +60-80 % and at +531 chart points per flip respectively;
+    /// the conservative figure is the acceptance target and the aggressive one
+    /// is the failure case this guard has to make impossible.
+    ///
+    /// The band caps each LEG, which is what closes the loop. Buying, the user
+    /// sends `P` for a player worth `V` and needs `P/V >= 0.82`, so the best he
+    /// can do is pay 82 % of chart. Selling, he sends `V` for picks worth `P'`
+    /// and needs `V/P' >= 0.82`, so the most he can extract is 122 %. The best
+    /// available round trip is therefore **1.49× gross** — before the GM's own
+    /// bar, his asking premium and the package decay have each taken their cut —
+    /// where it was previously unbounded and measured at +128 % per flip.
+    ///
+    /// # Why the band is wider between two AI clubs
+    ///
+    /// Unchanged from where this code used to live, and it matters. For anything
+    /// the user sees, the band is his protection: nobody gets phoned with an
+    /// insult and nobody is offered a star for a snack, so it stays at
+    /// 0.82-1.45 — the number the Trade Center's verdict is calibrated against.
+    /// Between two AI clubs the JJ chart is a public language, not the rule both
+    /// GMs are pricing in: a rebuilder discounts his own 30-year-old (retention
+    /// ×0.82) AND marks up a future pick (stance ×1.08 × future ×1.15), and the
+    /// product lands the canonical deadline trade at a neutral ratio near 1.5.
+    /// The measured funnel: 91 % of packages that cleared BOTH GMs' value bars
+    /// were then vetoed here. 0.72-1.70 admits that trade while still refusing
+    /// the absurd, and both GMs' own bars plus `hardBlocker` have already spoken.
+    static func chartFairnessBlocker(
+        proposal: TradeProposal,
+        allPlayers: [Player],
+        allPicks: [DraftPick],
+        currentSeason: Int,
+        /// True for AI-vs-AI business, false for anything the user proposes or
+        /// is offered. Selects which of the two bands applies.
+        betweenAIClubs: Bool
+    ) -> String? {
+        let floor = betweenAIClubs ? 0.72 : 0.82
+        let ceiling = betweenAIClubs ? 1.70 : 1.45
+        let neutral = proposalValues(
+            proposal: proposal, allPlayers: allPlayers, allPicks: allPicks,
+            currentSeason: currentSeason
+        )
+        guard neutral.receivingValue > 0 else {
+            return "There's nothing on their side of the table the chart can price."
+        }
+        let ratio = Double(neutral.sendingValue) / Double(neutral.receivingValue)
+        if ratio < floor {
+            // He is taking far more than he is sending. The string names the
+            // CHART, because the repo's standard is that the reason the user
+            // reads is the reason the engine decided on — and this rule is the
+            // public chart, not the GM's opinion of the deal.
+            return "The league office won't rubber-stamp that one. On the draft-value chart you're taking \(neutral.receivingValue) points and sending \(neutral.sendingValue) — no front office signs a gap that size, whatever the GM said on the phone."
+        }
+        if ratio > ceiling {
+            return "That's lopsided in their favour on the draft-value chart — \(neutral.sendingValue) points out for \(neutral.receivingValue) back. Nobody in this building will let you sign it."
         }
         return nil
     }

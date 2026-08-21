@@ -74,6 +74,32 @@ enum TradeEngine {
         var record: TradeRecord?
 
         var totalDeadCap: Int { offeringDeadCap + receivingDeadCap }
+
+        /// Dead cap the USER's club is left holding, given which side of the
+        /// proposal he was on.
+        func deadCap(userIsOfferingTeam: Bool) -> Int {
+            userIsOfferingTeam ? offeringDeadCap : receivingDeadCap
+        }
+
+        /// The one dead-money sentence every user-facing receipt quotes, or `nil`
+        /// when the deal left nothing behind.
+        ///
+        /// F-49: there were two receipts for the same event and which one the
+        /// user got depended on which SCREEN he executed from — the Trade Center
+        /// quoted the dead money and the shared factory said only "roster and cap
+        /// adjustments have been processed", so the draft room and the holdout
+        /// path got the silent one. This is the line itself, in the engine layer
+        /// that computes the number, so no surface can disclose a different
+        /// amount or forget to disclose it at all.
+        func deadCapLine(userIsOfferingTeam: Bool) -> String? {
+            let dead = deadCap(userIsOfferingTeam: userIsOfferingTeam)
+            guard dead > 0 else { return nil }
+            let millions = Double(dead) / 1000.0
+            let formatted = millions >= 10
+                ? String(format: "$%.0fM", millions)
+                : String(format: "$%.1fM", millions)
+            return "Dead money retained: \(formatted) — the signing-bonus proration stays on our cap."
+        }
     }
 
     /// Applies a trade proposal to the data store:
@@ -197,7 +223,64 @@ enum TradeEngine {
             pick.currentTeamID = offeringTeamID
         }
 
+        recordOrganisationalLearning(record: record, kind: ledger.kind)
+
         return outcome
+    }
+
+    /// D7-A: what the two front offices learned by doing this deal.
+    ///
+    /// It lives inside `executeTrade` for the same reason the ledger row does —
+    /// this is the ONE primitive that moves trade assets, so putting the learning
+    /// here means no execution path can move players without both clubs coming
+    /// away knowing each other a little better. The Trade Center, the draft room,
+    /// the deadline pass and the holdout capitulation all get it for free.
+    ///
+    /// Two separate things are recorded and they are not the same thing:
+    ///
+    /// * **Contact** fills the `ScoutingDossier`, in BOTH directions and for every
+    ///   pair including two AI clubs. It is what narrows the valuation fog: a
+    ///   club you deal with every deadline becomes legible, a club you have never
+    ///   phoned stays a stranger.
+    /// * **Reputation** is recorded only when the USER is one of the two clubs,
+    ///   because he is the only actor who can declare one identity and behave
+    ///   like another (see `TradeReputationRegistry`). Which side he was on comes
+    ///   from the ledger kind rather than from a new parameter: `.userProposal`
+    ///   means he built the deal and is the row's initiator, `.aiWeeklyOffer`
+    ///   means a club called him and he is the partner.
+    ///
+    /// Draft-weekend swaps are deliberately NOT scored for reputation: they are
+    /// pick-for-pick business priced off the same public chart both sides are
+    /// reading, so they say almost nothing about how a GM values things. They
+    /// still count as contact.
+    private static func recordOrganisationalLearning(
+        record: TradeRecord?,
+        kind: TradeRecordKind
+    ) {
+        guard let record else { return }
+
+        TradeValueEngine.ScoutingDossier.recordMutualContact(
+            record.initiatorTeamID,
+            record.partnerTeamID,
+            discipline: .frontOffice
+        )
+
+        switch kind {
+        case .userProposal:
+            TradeValueEngine.TradeReputationRegistry.recordDeal(
+                teamID: record.initiatorTeamID,
+                pointsSent: record.sentValue,
+                pointsReceived: record.receivedValue
+            )
+        case .aiWeeklyOffer:
+            TradeValueEngine.TradeReputationRegistry.recordDeal(
+                teamID: record.partnerTeamID,
+                pointsSent: record.receivedValue,
+                pointsReceived: record.sentValue
+            )
+        case .aiMarket, .aiDeadline, .aiOffseason, .draftDay, .holdoutForced:
+            break
+        }
     }
 
     /// Moves one player between teams with NFL cap consequences and returns the

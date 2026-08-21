@@ -279,7 +279,10 @@ enum DraftDayTradeEngine {
         season: Int,
         week: Int
     ) -> Int {
-        let base = Double(PickValueChart.points(forPick: targetPickNumber))
+        // F-09: the precise chart, not the rounded display value — a Day-3
+        // slot now steps in 0.4s and rounding before the premium multiplies the
+        // rounding error rather than the price.
+        let base = PickValueChart.value(forPick: targetPickNumber)
         guard let sellerTeamID else { return Int(base.rounded()) }
         let persona = TradeValueEngine.GMPersona.forTeam(id: sellerTeamID)
         let noise = TradeValueEngine.askNoise(teamID: sellerTeamID, season: season, week: week)
@@ -704,16 +707,36 @@ enum DraftDayTradeEngine {
 
     /// Per-pick probability that any AI club even picks up the phone.
     ///
-    /// Calibrated against §5's "12-35 draft-weekend pick swaps league-wide,
-    /// ≥ 3 in Round 1": 32 × 0.15 + 64 × 0.10 + 128 × 0.06 ≈ 19 attempts a
-    /// draft, of which roughly two thirds find a willing counterparty — call it
-    /// 12-14 swaps, ~4-5 of them in the first round, before the user's own
-    /// deals are counted.
+    /// Trades against: draft-weekend volume versus a war room that turns into a
+    /// switchboard. The band is §5's "12-35 draft-weekend pick swaps
+    /// league-wide, ≥ 3 in Round 1"; reality is 43 trades and 142 picks moved.
+    ///
+    /// F-55 raises the rates from 0.15 / 0.10 / 0.06, which produced
+    /// `32 × 0.15 + 64 × 0.10 + 128 × 0.06 ≈ 19` attempts a draft and a measured
+    /// 12-14 swaps — roughly a third of the real league, and the low end of a
+    /// band it was supposed to sit inside. The new rates give
+    /// `32 × 0.22 + 64 × 0.15 + 138 × 0.10 ≈ 30` attempts.
+    ///
+    /// **Why 30 attempts is safe without an instrument.** The conversion rate is
+    /// the unknown — it was ~⅔ before F-09 and should rise now that a Day-3 pick
+    /// is worth 15-27 points instead of 1-9, because small swaps are
+    /// constructible at all for the first time. The reason this number is
+    /// defensible anyway is that even at a conversion of **1.0** it lands at 30,
+    /// which is still inside the band's 35 ceiling; the floor is covered because
+    /// 30 attempts at the old ⅔ is 20. Both ends of the uncertainty stay in
+    /// band, which is the property that made this the right size to pick blind.
+    ///
+    /// **NOT verified against F-05's assert, because F-05 has not landed.** The
+    /// headless draft (`MultiSeasonSmokeTest.runAIDraft`) still contains no
+    /// trade code, so the printed `draftSwaps` field is structurally `0` and no
+    /// band checks it. The queue is explicit that this is to be verified by that
+    /// assert and not by eye; until it exists, the arithmetic above is the whole
+    /// argument.
     static func aiSwapChance(round: Int) -> Double {
         switch round {
-        case 1:    return 0.15
-        case 2, 3: return 0.10
-        default:   return 0.06
+        case 1:    return 0.22
+        case 2, 3: return 0.15
+        default:   return 0.10
         }
     }
 
@@ -874,7 +897,7 @@ enum DraftDayTradeEngine {
     private static func anchorFloor(required: Double) -> Double {
         min(
             required * anchorShare,
-            Double(PickValueChart.points(forPick: anchorCeilingPick))
+            PickValueChart.value(forPick: anchorCeilingPick)
         )
     }
 
