@@ -357,10 +357,22 @@ is scheduled after A and after a written design, not bundled with it.
 
 ## Decided alongside D7
 
-**F-56 — the user's GM persona is surfaced as a franchise identity.** He has a taste like every
-other organisation, and he can see it. This is the ruling D7 makes coherent: once other GMs form a
-read on *him*, that read has to have a real object, and reputation becomes two-directional — "Varis
-always overpays for the deep ball" is a sentence the league can learn about the user.
+**F-56 — the user CHOOSES his franchise identity at career creation, and that identity is what the
+league reads.** Amended by the user immediately after the first ruling: not surfaced, *picked*. He
+has a taste like every other organisation, he declares it, and it is the object other GMs form a
+read on. Reputation becomes two-directional — "Varis always overpays for the deep ball" is a
+sentence the league can learn about the user.
+
+Two consequences that have to be built in, or the choice is a label:
+
+* **The declared identity is a PRIOR, not a fact.** D7-A's clubs start from what the user says he
+  is and update from what he actually does. Declare yourself a value-hunter and then outbid the
+  market twice and the league should price you as a spender — otherwise the choice is a free
+  disguise, and a disguise is exactly the kind of costless advantage D1 exists to remove.
+* **No identity may be strictly best.** Each has to buy something and cost something, the way the
+  AI archetypes already do (the analytics GM misjudges least but reserves most cap; the aggressive
+  one runs out of money in November). This is the balancing surface the "let me choose" option is
+  priced at, and it is the reason this is more work than surfacing a roll.
 
 **F-61 — contract negotiation gets two more dimensions: guaranteed money and term.** A player can
 buy a lower annual number by conceding guarantees or length, and the AI does the same. This is
