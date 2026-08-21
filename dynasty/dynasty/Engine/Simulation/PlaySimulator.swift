@@ -3006,22 +3006,64 @@ enum PlaySimulator {
     // often than an 80-overall one did. Monotonicity and a 93% ceiling at gap 29.5
     // cannot both hold. Decisive-not-deterministic survives: 4% of those games are
     // still upsets.
-    private static let teamEdgeFull  = 3.5     // |team gap| at/below which scale = 1.0 (single-unit + matrix-cell safe zone)
-    private static let teamEdgeKnee  = 0.7     // how fast the marginal return on extra gap decays past `teamEdgeFull`
-    private static let teamEdgeTail  = 0.02    // residual marginal return on gap once the knee is spent
+    private static let teamEdgeCeiling = 5.5   // effective edge a fully-broad mismatch approaches
+    private static let teamEdgeKnee    = 8.0   // how fast it approaches it
+    private static let teamEdgeTail    = 0.03  // residual marginal return once the knee is spent
     /// Talent-curve compression scale (∈ (0, 1]) on the per-play composite edges, from
     /// the team-aggregate offense−defense overall gap. 1.0 at parity / single-unit
     /// (small gap); below 1 once the whole roster out-classes the opponent, but never
     /// so far below that the EFFECTIVE edge (`gap × scale`) falls — see the shape note
     /// above. Symmetric in the sign of the gap (weak-offense penalties compress too).
     static func edgeCompressionScale(offense: [SimPlayer], defense: [SimPlayer]) -> Double {
-        let a = abs(averageAttribute(offense, extractor: { Double($0.overall) })
-                  - averageAttribute(defense, extractor: { Double($0.overall) }))
-        if a <= teamEdgeFull { return 1.0 }
-        let x = a - teamEdgeFull
-        let saturating = teamEdgeKnee * (1.0 - teamEdgeTail) * (1.0 - exp(-x / teamEdgeKnee))
-        let effectiveEdge = teamEdgeFull + saturating + teamEdgeTail * x
-        return effectiveEdge / a                          // return the multiplier, not the edge
+        func mean(_ xs: [SimPlayer]) -> Double { averageAttribute(xs, extractor: { Double($0.overall) }) }
+        func median(_ xs: [SimPlayer]) -> Double {
+            guard !xs.isEmpty else { return 0 }
+            let v = xs.map { Double($0.overall) }.sorted()
+            let m = v.count / 2
+            return v.count % 2 == 1 ? v[m] : (v[m - 1] + v[m]) / 2
+        }
+
+        let meanGap = mean(offense) - mean(defense)
+        let a = abs(meanGap)
+        guard a > 0.001 else { return 1.0 }
+
+        // BREADTH — the variable the team mean alone cannot see.
+        //
+        // The predecessor keyed compression on the mean gap and kept a flat
+        // scale = 1.0 below 3.5, to protect "single-unit signatures": a shutdown
+        // corner pair moves a team mean about 3 points, and crushing that would
+        // flatten the corner while barely denting a blowout. The file's own
+        // comment admitted the limit — *keying on the team aggregate cannot tell
+        // the two apart* — and chose to protect the concentrated case.
+        //
+        // Measured, the price of that choice was the whole league. A 2-point
+        // team gap won 74.9 % of its games and a 4-point gap 86.2 %; the shipped
+        // league's ENTIRE spread is 6.6 points, so every ordinary matchup was
+        // being decided by roster mean. `corr(starterOVR, wins)` reached 0.86,
+        // year-over-year win correlation 0.88 against a real 0.32, and the
+        // smoke produced a 17-0 club.
+        //
+        // The median separates them. A concentrated advantage — two stars —
+        // moves the mean and leaves the median where it was; a broad advantage
+        // moves both. So `breadth` is how much of the mean gap survives in the
+        // median, and it is the thing compression should key on:
+        //   * shutdown CB pair  → median gap ≈ 0 → breadth ≈ 0 → scale 1.0,
+        //     byte-identical to the old flat zone, which is what it was for;
+        //   * uniform tier gap  → median gap ≈ mean gap → breadth ≈ 1 → full
+        //     compression, at ANY size, including the small ones a real league
+        //     is made of.
+        // Compression can now be aggressive where it needs to be, because it no
+        // longer has to buy that with a blanket exemption for everything small.
+        let medianGap = median(offense) - median(defense)
+        let breadth = min(1.0, max(0.0, (medianGap / meanGap)))   // same sign ⇒ 0…1
+
+        // Effective edge for a fully broad mismatch: saturating, monotone, and
+        // never zero — a better roster is always at least as good on the field.
+        let broadEdge = teamEdgeCeiling * (1.0 - exp(-a / teamEdgeKnee)) + teamEdgeTail * a
+        let broadScale = broadEdge / a
+
+        // Blend by breadth: concentrated advantages keep their full edge.
+        return broadScale + (1.0 - broadScale) * (1.0 - breadth)
     }
 
     // ---- ROUND-6 WEAK-FLOOR TAPER: talent-scaled relief for the P0-1 de-inflation ----
