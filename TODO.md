@@ -4125,6 +4125,135 @@ merkitty alkuun `[TEHTY …]`.
 19a. **[TEHTY 2026-08-14, aalto 1 — kuvatuomari ACCEPT 10/10]** **UUSI #198 (#194-analyysin P1-backlog — EI tämän päivän scopessa, käyttäjän poimittavaksi):** (1) DraftRoomChatterLog — broadcast-railin kuluttamat reaktiot talteen rullaavaksi war room -feediksi (nyt railin 1.6-2.6s flash on reaktioiden ainoa koti; WarRoomPanelin scoutChatterCard on yksi kovakoodattu lause); (2) round-rollover strukturaalisena beattina + RoundRecapSheet → DSResultSheet; (3) DraftTickerPanelin typografia+kulta-passi (1 DSType vs 28 raw-literaalia, 11 draftStealGoldia); (4) "board pressure" -mittari needs-strippiin (montako oman tarpeen miestä top-20:ssä jäljellä — luku joka ratkaisee trade-up vs sit); (5) P2-ideat output-tiedostossa (mm. 32 fiktiivistä helmet-merkkiä glyyfikokoon). Analyysin avainhavainto dokumentiksi: huoneen kolme beatia (kello sulkeutuu, kortti jätetään, oma vuoro lähestyy) renderöityvät kaikki taulukkorivin painoarvolla — tähden pitää KIERTÄÄ tilan mukana. DraftAnimation.pickReveal on ollut olemassa ilman yhtään kuluttajaa.
 19. **[TEHTY — ledger: `## PÄIVÄ 2026-08-11 MAALISSA`]** **UUSI #197 (käyttäjä 2026-08-11): "Make Your Pick" -modaali pois — valinta tapahtuu BOARDILTA, toiminnot YLÖS.** Nykyinen on-the-clock-modaali on kolmas rinnakkainen pelaajalista (Best available by position + Board/My Board -haku) joka peittää war roomin. FIX: kun olet kellossa, yhdistetty board (#196) muuttuu pickaavaksi — rivitason Draft-toiminto + täyden kortin kultainen Pick-CTA; Trade Down / Call About Moving Up siirtyvät YLÄPALKIN kontekstuaaliseen action-alueeseen (#194B:n CTA-logiikka: omalla kellolla molemmat + Pick). Modaali poistuu kokonaan. Toteutus #194/#196:n kanssa samassa jatkoaallossa.
 
+## AUDITTIAALTO 2026-08-21 — AI-päätöksenteko, treidit ja rebuild-polku (#213-#225, käyttäjän tilaus)
+
+Neljä rinnakkaista analyysia, kaikki ANALYYSI ONLY (ei yhtään Swift-muutosta). Raportit:
+`docs/AI_GAMEDAY_DECISIONS_ANALYSIS.md` (488 r), `docs/REBUILD_VIABILITY_ANALYSIS.md` (1243 r),
+`docs/AI_TRADE_ANALYSIS.md` (415 r), `docs/AI_ROSTER_DECISIONS_ANALYSIS.md` (450 r). Jokainen väite
+on sitattu `tiedosto:rivi`-tasolla ja benchmarkattu oikean NFL:n lukuihin. **Alla olevat pääväitteet
+on erikseen todennettu koodista tämän session pääagentin toimesta** (ei pelkkä agenttiraportti).
+
+**P0 — nämä kaksi tekevät muusta auditista falsifioimattoman. Kumpikaan ei ole viritys vaan rakenne.**
+
+213. **AI-vastaan-AI-pelit eivät koskaan aja simulaattoria.** `WeekAdvancer.swift:1382-1385` ohjaa
+     jokaisen pelin jossa käyttäjä ei ole mukana `simulateGameScore()`iin → `randomTeamScore(homeAdvantage: Int)`
+     (`:8186`), joka ottaa **yhden Int-parametrin**: ei joukkuetta, ei rosteria, ei valmentajaa, ei
+     vammoja. Ratkaisee 15/16 peliä joka viikko + playoffit (`:7324`) + Pro Bowlin + preseasonin.
+     `corr(rosterin laatu, voitot)` = **0** kaikille 31 AI-seuralle; kausivoittojen SD 2,06 vs NFL ~3,0.
+     Seuraus: jokainen AI-front office -järjestelmä (draft, FA, treidit, kehitys) on mittaamaton — sen
+     laatu ei näy missään. **Tämä on korjattava ennen kuin yhtäkään muuta AI-löydöstä kannattaa virittää.**
+     Sivubugi samassa funktiossa: pisteet ovat 7:n ja 3:n summia → tasapelit osuvat ~4 %:ssa, ja
+     `:984-986` antaa jokaisen kotijoukkueelle (`homeScore + 1`) → HFA 55,2 % → 58,8 % vs oikea 53,2 %.
+
+214. **`edgeCompressionScale` on ei-monotoninen: parempi rosteri voittaa VÄHEMMÄN kun ero kasvaa yli 5:n.**
+     `PlaySimulator.swift:2769-2785`: skaala 1,0 kun |gap| ≤ 3,5, smoothstep alas lattiaan
+     `teamEdgeFloor = 0,085` kun |gap| ≥ 9,0. Efektiivinen etu = `gap × scale`, ja se **huipentuu
+     gapissa ~4,9 (arvo 4,18) eikä palaa samaan ennen gapia ~49** (9 × 0,085 = 0,77). Todennettu
+     aritmeettisesti. Harness-mittaus ~110 000 pelistä: voitto-% gapeilla 0-5 = 50/60/71/80/86/88,
+     sitten **85 (gap 6), 69 (gap 8), 64 (gap 10)**. Liigan oikeilla joukkueilla voitot huipentuvat
+     starter-OVR 83:ssa (14-3), ja **88-OVR rosteri voittaa 11,4-5,6 — saman kuin 80-OVR**.
+     Koodin oma kommentti perustelee skaalan sillä että se "preserves the SIGN and RANK of every edge":
+     se pitää paikkansa *kiinteällä* gapilla, mutta tulo `gap × scale` ei ole monotoninen gapin yli —
+     juuri se derivaatta jää perustelussa tarkastelematta. `underdogReliefCompletion` (`:2896-2910`)
+     pinoaa +4,5pp completion-lahjan heikommalle hyökkäykselle samaan bändiin.
+     **Suoraan käyttäjän kysymykseen "voiko huonon tiimin nostaa loistavaksi": loistava tiimi on
+     rangaistu. Rebuildin maali ei palkitse.**
+
+**P1 — rebuild on liian helppo, ja väärästä syystä**
+
+215. **Yksikään AI-seura ei voi joutua cap-pulaan.** Vuosittainen true-up `FreeAgencyEngine.swift:718-720`
+     (`team.currentCapUsage = salaryByTeam[team.id] ?? 0`) **pyyhkii kaiken dead moneyn joka liigavuosi**;
+     päälle 15 %:n pakollinen reservi jokaisella allekirjoitusovella, ehdoton 5-8 % cap-kasvu, ja
+     palkkalattia `CapManagementEngine.swift:857` jolla on **nolla kutsujaa** (todennettu). Mitattu:
+     liigan cap room 30,3 → 39,2 → 32,3 → 23,1 %, 31-32/32 compliant joka kausi. Vertailu: CBA vaatii
+     89 % käteiskulutuksen, ja 2025 maaliskuussa useat seurat avasivat vuoden kymmeniä miljoonia yli
+     $279,2M katon. Seuraus: veteraanimarkkina on pysyvästi ohut — pelaaja ei koskaan saa sitä
+     mahdollisuutta jonka oikea liiga tarjoaa joka maaliskuu.
+
+216. **FA:n kierros 1 on käytännössä kilpailematon + käyttäjällä rakenteellinen etu.** AI:n
+     sisääntulokynnys `marketAppeal ≥ 85` (`FreeAgencyEngine.swift:2770-2779`) on **korkeammalla kuin
+     sen oma auto-retain-kynnys** `ownCoreStarAppeal = 80` (`:1426`). Käyttäjän tarjouksissa
+     ×1,10/×1,15/×1,25 kertoimet vs enintään 12,4 % häviäjärangaistus → **2-15 käyttäjä ylittää 14-3
+     AI:n tarjouksen 79 sentillä dollarista**. Lisäksi: tarjoussodat ovat aritmeettisesti mahdottomia
+     kierroksilla 4-6, ja `FARoundSummaryView.swift:127` printtaa "price escalated to ~$XM" diileistä
+     joita kukaan ei allekirjoittanut (kuitti tapahtumasta jota ei tapahtunut).
+
+217. **Rebuildin lähtöpiste puuttuu satunnaisliigasta.** Shipatun liigan hajonta on vain **6,5
+     starter-OVR-pistettä** (74,9 → 81,5). Satunnaisliigassa hajontaa ei ole lainkaan: `generatePlayer`
+     ei katso joukkueen identiteettiä → `corr(mainostettu OVR, todellinen)` = 0,14. Premissi "ota huono
+     joukkue" ei siis ole saatavilla. Peritty rosteri kantaa **1,6 pistettä potentiaalivaraa** vs
+     draft-putken 12,0 → kausina 1-2 ei ole mitään kehitettävää.
+     Mallin lopputulos: optimipelillä 8-9 voittoa kaudella 1, playoffit kaudella 2, maksimi kaudella 3;
+     keskitasoisella pelillä playoffit kaudella 4 (**tämä osa on juuri oikein**).
+
+**P2 — treidit**
+
+218. **Jokainen treidijärjestelmän exploit-suoja nollautuu uudelleenkäynnistyksessä.** Kuusi laskuria
+     `WeekAdvancer.swift:100-127` ovat `static var`, ja `resetProcessStateForCareerSwitch()` (`:204-210`)
+     nollaa ne + kutsuu `TradeTalkRegistry.reset()`in (todennettu). Lowballaa 31 GM:ää, force-quit,
+     ja liiga vastaa perushintaan ilman strikeä; 8/kausi- ja 5/offseason-katot lakkaavat kattamasta;
+     `leagueTradesThisSeason == 0` naulaa deadline-tavoitteen kattoonsa 15.
+219. **Pick-arvokäyrä romahtaa kierroksilla 5-7 → markkinaa ei ole alle 4. kierroksen.** Johnson-käyrä
+     on uskollinen pickkiin 129 asti; sen jälkeen pick 200 = 1 ja pick 224 = 1 (oikeat 11,4 ja 2,
+     todennettu taulukosta). Kierrokset 6-7 = 29 % inventaarista = 174 pistettä yhteensä. Noin puolet
+     oikeista kesken kauden tehdyistä treideistä ratkeaa juuri siellä.
+220. **`TradeRecord` on write-only** (yksikään UI ei hae sitä, todennettu), ja `TradeView`n kortti
+     otsikolla "Trade History (YYYY)" on `@State` → ruudun uudelleenavaus näyttää kokonaisen kauden
+     jälkeen "No trades completed yet this season". Auki `TODO.md:2451` asti; aalto 3 lupasi korjata.
+     Draft-viikonlopun treidivolyymi on ~1/3 oikeasta eikä mikään portti mittaa sitä (`draftSwaps` on
+     rakenteellisesti 0 smoke-testissä ja se on ainoa printattu kenttä ilman bändiassertia).
+
+**P3 — epätäydellisyys: käyttäjän eksplisiittinen designtavoite, jota ei ole toteutettu**
+
+221. **Pelissä on tasan YKSI mallinnettu AI-päätösvirhe.** `DCPersona.misreadChance`
+     (`CoordinatorPersona.swift:88-94`), vain valmennetuissa peleissä, pahimmillaan 10,8 % snapeista,
+     ja **0,0 sekä `balanced`- että `conservative`-persoonalle** (~40 % koordinaattoreista) ja
+     **jokaiselle AI-hyökkäykselle** (`OCPersona`lla ei ole misread-kenttää). Valmentajan laatu
+     liikuttaa suoritusta (±0,07 comp%, ±0,75 ypc) mutta **ei yhtäkään tilannepäätöstä**.
+222. **AI on kaikkitietävä siellä missä ei pitäisi.** FA:ssa ei ole perception-mallia lainkaan: jokainen
+     AI-seura lukee todellisen `overall`in ja `truePotential`in (`marketAppeal:1238`,
+     `RosterNeedIndex:952-1030`, `resignAIOwnCore:1666`). `autoAssignFocus` lajittelee
+     `truePotential`illa (`:296-300`) — luvulla jonka `DevelopmentReportView.swift:9` nimenomaan
+     kieltää käyttäjältä. **Draftissa tilanne on päinvastoin kunnossa**: `AIDraftPerception` on elossa
+     ja kytketty (`DraftEngine.swift:236`), mitattu keskivirhe 3,96 OVR ja häntä 6,99 % — mutta
+     `ProspectFog.swift:24-26` väittää yhä että AI draftaa sisäisesti oikeilla arvoilla (dokumentti
+     on väärässä, koodi oikeassa).
+223. **Yhdelläkään seuralla ei ole talon makua.** 32 boardia eroavat vain nollakeskiarvoisella
+     symmetrisellä gaussilla — ei mieltymystä athletic-mittauksiin, ei oman schemen yliarvostusta, ei
+     pikkukoulukammoa, ei R1-need-vinoumaa, ei position run -paniikkia. Tasainen kohina EI ole sama
+     asia kuin rakenteellinen virhe: oikeat GM:t ovat väärässä toistuvilla, tunnistettavilla tavoilla.
+     Raporttien PART 4:t esittävät konkreettisen mallin (`VeteranPerception` σ 2,0-3,5, per-seura
+     `GMTaste`-biasvektori 2-4 OVR-pistettä, valmentaja-arkkityyppien tilannepäätösvinoumat).
+
+**P4 — symmetria**
+
+224. **Opponent prep on käyttäjän oma pistelisä, joka kirjoitetaan pelin JÄLKEEN.**
+     `GameSimulator.swift:528-538` kertoo valmiin lopputuloksen: käyttäjän ×1,10, vastustajan ×0,925.
+     Yksikään pelisuoritus ei muutu — koodin oma kommentti myöntää sen ("applied as a final-score nudge
+     rather than threading multipliers through every PlaySimulator call"). Arvo ≈ +4,2 pistettä/peli
+     ≈ **+2,1 voittoa kaudessa, ilmaiseksi**. Sen suunniteltu vastapaino kirjoittaa `physical.staminaan`
+     (`:8560-8567`), jota **yksikään simulaattoritiedosto ei lue** — sama bugiluokka kuin vamma-analyysin
+     päälöydös, peilikuvana.
+225. **Kahdeksasta viikkojärjestelmästä neljällä ei ole AI-toteutusta.** GamePlan on kovakoodattu `nil`
+     kaikille 31 seuralle (`WeekAdvancer.swift:1372-1373`, `:7296-7297` — kommentti myöntää sen), joten
+     `fourthDownAggressiveness` ja `runPassRatio` ovat rakenteellisesti vain käyttäjän; timeoutit,
+     kneelit ja onside kickit samoin. `offensiveAggression`ia ei lue kukaan, mutta
+     `GameSummaryView.swift:386` kertoo sen vaikutuksesta. **Training focus ja practice squad ovat
+     aidosti symmetrisiä** — se on merkitty raporttiin ansiona.
+
+**Mikä on aidosti hyvin (älä korjaa näitä):** hylkäystekstit ovat enginen omia merkkijonoja eivätkä
+koristeproosaa; treidideadline on viikko 9/18 ja kesken kauden volyymi 17-21 + takapainotus vastaavat
+oikeaa liigaa; adaptiivinen playcall-aivo toimii (toistetut kutsut romahtavat 43 %:iin ensikutsun
+arvosta); voittojen SD 3,24 vs NFL 3,10; HFA-perusluku 53 %; QB-vipu ~6× vs PFF:n 5,8×;
+draftin perception-malli on oikean muotoinen (käyttäjä on tarkempi niistä miehistä jotka skouttaa,
+epäsymmetria on kattavuudessa: 25 arviota vs 350 miehen luokka).
+
+**Toteutusjärjestys jos tähän tartutaan:** #213 → #214 ensin ja erikseen, koska ne muuttavat kaikkia
+mittalukuja joita muiden korjausten arviointi käyttää; vasta sitten #215-#217 (rebuild-talous),
+#218-#220 (treidit), ja viimeisenä #221-#225 (epätäydellisyys + symmetria), jotka ovat suunnittelutyötä
+eivätkä bugikorjauksia. Kaikki neljä raporttia päättyvät omaan priorisoituun suosituslistaansa
+`tiedosto:rivi`-kohteineen, ja jokainen suositus on merkitty joko bugikorjaukseksi tai designmuutokseksi.
+
 ## PÄIVÄ 2026-08-21 — 14.8. työpuu committoitu + pushattu, #199-jäännökset kiinni, varoitusvelka NOLLAAN
 
 **Lähtötilanne: viikon vanha valmis työ oli committoimatta.** 14.8. aallot 1-2 + #199-kasa istuivat
