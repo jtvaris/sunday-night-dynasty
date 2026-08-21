@@ -865,14 +865,17 @@ struct CoachDetailView: View {
 
     // MARK: - Severance Preview (fire flow polish)
 
-    /// Estimated severance owed if the coach is fired now (in $K).
-    /// Roughly 50% of remaining contract value, capped at one full year.
+    /// Severance owed if the coach is fired now (in $K).
+    ///
+    /// F-64: this used to be an *estimate* in the strict sense — the alert
+    /// quoted a number and `fireCoach()` charged nothing at all. It now reads
+    /// the same `BudgetEngine` function the charge books, so the preview and
+    /// the outcome cannot disagree.
     private var estimatedSeveranceK: Int {
-        let remainingYears = max(0, coach.contractYearsRemaining)
-        guard remainingYears > 0 else { return 0 }
-        let totalRemaining = coach.salary * remainingYears
-        let half = totalRemaining / 2
-        return min(half, coach.salary) // cap at one year salary
+        BudgetEngine.coachSeverance(
+            salary: coach.salary,
+            contractYearsRemaining: coach.contractYearsRemaining
+        )
     }
 
     /// Formatted severance string for display.
@@ -889,12 +892,19 @@ struct CoachDetailView: View {
     }
 
     /// Full message for the fire confirmation alert with severance preview.
+    ///
+    /// F-64: the branch on years used to say "Contract expires after this
+    /// season" for a man with one year left, which read as "this is free" — and
+    /// was, because nothing was charged. It is now charged, so the copy names
+    /// the bill whenever there is one and says so plainly when there is not.
     private var fireConfirmationMessage: String {
         let years = coach.contractYearsRemaining
         let yearsText: String
-        switch years {
-        case 0, 1:  yearsText = "Contract expires after this season."
-        default:    yearsText = "\(years) years remain on contract — \(severanceDisplay)."
+        if years <= 0 {
+            yearsText = "His deal is already up — no severance owed."
+        } else {
+            let termText = years == 1 ? "1 year remains" : "\(years) years remain"
+            yearsText = "\(termText) on contract — \(severanceDisplay), charged to your coaching budget."
         }
         return "This will remove \(coach.firstName) from your coaching staff. \(yearsText) This action cannot be undone."
     }
@@ -1008,9 +1018,41 @@ struct CoachDetailView: View {
         )
     }
 
+    /// F-64 — firing a man under contract costs the owner's coaching pot.
+    ///
+    /// The severance is charged against `Owner.coachingBudget` and not against
+    /// the salary cap, because coaching money never touches the cap in this game
+    /// or in the real one. It is charged for the current league year only: the
+    /// pot is recomputed every offseason (`BudgetEngine.calculateBudget` at
+    /// `startNewSeason`), so the bill lands on the season the decision was made
+    /// in and is not carried forward — the coaching equivalent of a one-year
+    /// dead-money hit, and the reason a January purge of four assistants now
+    /// costs you the man you wanted to replace them with.
+    ///
+    /// AI firings are deliberately NOT charged here: the Black Monday carousel
+    /// is on the DO NOT TOUCH list, its 0.145 firings per club per season is the
+    /// best-calibrated league-wide number in the audit, and pricing it would
+    /// change how well-staffed 3-6 clubs are every January for a lever nobody
+    /// exploits. The underpricing this fix is about is the user's.
     private func fireCoach() {
+        let severance = estimatedSeveranceK
+        if severance > 0,
+           let teamID = coach.teamID,
+           let owner = fetchOwner(teamID: teamID) {
+            owner.coachingBudget = max(0, owner.coachingBudget - severance)
+        }
         coach.teamID = nil
+        coach.contractYearsRemaining = 0
+        try? modelContext.save()
         dismiss()
+    }
+
+    /// The owner whose pot pays the severance.
+    private func fetchOwner(teamID: UUID) -> Owner? {
+        let descriptor = FetchDescriptor<Team>(
+            predicate: #Predicate<Team> { $0.id == teamID }
+        )
+        return (try? modelContext.fetch(descriptor))?.first?.owner
     }
 
     /// Extend the coach's contract by 2 years.

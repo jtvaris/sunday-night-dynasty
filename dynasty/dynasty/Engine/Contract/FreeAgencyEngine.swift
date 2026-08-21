@@ -688,17 +688,34 @@ enum FreeAgencyEngine {
             team.salaryCap = Int(Double(team.salaryCap) * (1.0 + capGrowth))
         }
 
-        // League-year cap TRUE-UP (task #27). `currentCapUsage` is an
-        // incrementally maintained ledger, and the increments leak: dead money
-        // from every cut and trade stays on the books FOREVER, so a busy trade
-        // market strangles itself — measured over one smoke career, league cap
-        // room fell 22% → 3.7% → 0.8% in three seasons and the in-season
-        // market died with it. Real dead money ages off within a league year
-        // or two; until a per-year dead-cap ledger exists, the honest model is
-        // to rebuild each club's usage from its actual current liabilities
-        // (rostered salaries) at the rollover — dead cap thus bites for the
-        // league year it was incurred and then expires, and any incremental
-        // drift the season accumulated is corrected in the same pass.
+        // League-year cap TRUE-UP (task #27, ledger added by D2).
+        //
+        // `currentCapUsage` is an incrementally maintained ledger and the
+        // increments leak, so the rollover rebuilds each club's usage from its
+        // actual current liabilities and any drift the season accumulated is
+        // corrected in the same pass. That half is unchanged and is why this
+        // exists at all: before it, dead money stayed on the books FOREVER and a
+        // busy trade market strangled itself — measured over one smoke career,
+        // league cap room fell 22 % → 3.7 % → 0.8 % in three seasons and the
+        // in-season market died with it.
+        //
+        // What CHANGED (D2): the rebuild used to be `rostered salaries` and
+        // nothing else, which erased every dollar of dead money at every
+        // rollover. The comment that used to sit here called that a placeholder
+        // "until a per-year dead-cap ledger exists" — it exists now
+        // (`Team.deadCapCurrentYear` / `deadCapNextYear`), so the rebuild is
+        // `rostered salaries + what the club still owes`. Dead money now ages
+        // over one or two league years by the June 1-shaped split
+        // `CapManagementEngine.bookDeadMoney` applies, and then expires. It
+        // cannot accumulate forever — nothing is ever carried more than one
+        // year past the year it was booked — so the leak this true-up was
+        // written to stop stays stopped.
+        //
+        // Why it matters beyond accounting: a catastrophic cap sheet used to
+        // self-clear in a single offseason, which made `.capHell` a starting
+        // condition rather than a state and meant no contract decision could
+        // follow a club for two years. A blunder with no lasting cost is not a
+        // blunder.
         //
         // Camp bodies are excluded (#205a, `OFFSEASON_ROSTER_PLAN.md` §3.1):
         // their minimum salary is cap-exempt while they are carried, and this
@@ -716,7 +733,10 @@ enum FreeAgencyEngine {
             salaryByTeam[teamID, default: 0] += player.annualSalary
         }
         for team in allTeams {
-            team.currentCapUsage = salaryByTeam[team.id] ?? 0
+            // Age the ledger one year FIRST — what was owed next year is owed
+            // now — then rebuild usage on top of what is genuinely still owed.
+            let carried = CapManagementEngine.rollDeadMoneyForward(on: team)
+            team.currentCapUsage = (salaryByTeam[team.id] ?? 0) + carried
         }
 
         // TODO §5.5 — the earned half of the settlement computed at the top of
@@ -2485,7 +2505,7 @@ enum FreeAgencyEngine {
         ///   already stocked at this man's position must still be able to afford
         ///   its own unmanned starter slot after signing him. Released on the
         ///   mop-up wave so the money can never sit dead.
-        func attemptSigning(_ agent: FreeAgent, holdHoleReserves: Bool) {
+        func attemptSigning(_ agent: FreeAgent, holdHoleReserves: Bool, floorWave: Bool = false) {
             // Skip players who were already signed this cycle
             guard agent.player.teamID == nil else { return }
             let agentPosition = agent.player.position
@@ -2515,7 +2535,18 @@ enum FreeAgencyEngine {
                         // roster test only applies when a roster snapshot exists;
                         // without one the market falls back to the old cap-only
                         // rule rather than silently signing nobody.
-                        let reserve = Int(Double(team.salaryCap) * capReservePercent)
+                        // D2(b): a club under the CBA's 89 % cash floor spends its
+                        // reserve. The floor is the mechanism that produces a
+                        // veteran market at all — a club that is legally required
+                        // to spend will sign a man it does not need, which is
+                        // exactly what real clubs do every March and what this
+                        // league has never done. `amountBelowFloor` has modelled
+                        // the rule since it was written and had ZERO callers.
+                        let underFloor = floorWave
+                            && CapManagementEngine.amountBelowFloor(team: team, capMode: capMode) > 0
+                        let reserve = underFloor
+                            ? 0
+                            : Int(Double(team.salaryCap) * capReservePercent)
                         let hole = holeReserve(for: team)
                         guard team.availableCap - reserve - hole >= agent.askingPrice else { return false }
                         guard let needIndex else { return true }
@@ -2599,7 +2630,30 @@ enum FreeAgencyEngine {
             // league constant. See `settlementLean` for the bound.
             let lean = settlementLeanByTeam[winningTeam.id] ?? 1.0
             let draw = pow(Double.random(in: 0...1), 1.0 / lean)
-            let settlement = Double(floor) + Double(agent.askingPrice - floor) * draw
+            var settlement = Double(floor) + Double(agent.askingPrice - floor) * draw
+            // D2(b) — the FLOOR PREMIUM: a club under the CBA's 89 % cash floor
+            // pays ABOVE the ask.
+            //
+            // The floor was first modelled as an extra signing wave, and it did
+            // nothing measurable: payroll went 71.6 → 64.3 → 73.9 → 81.7 % with
+            // the wave against 71.8 → 65.0 → 76.5 → 83.9 % without it. The reason
+            // is structural and worth writing down — **the roster ceiling binds
+            // before the money does.** A club with cap room and no open seats
+            // cannot spend its way to the floor by signing MORE men, and that is
+            // not how real clubs do it either: the floor is a CASH requirement,
+            // so it is met by paying more per player, by extending your own, and
+            // by absorbing salary in trades. Volume was the wrong lever.
+            //
+            // Premium scales with the shortfall, capped at +25 %: a club a
+            // rounding error under the line nudges, a club 20 % under it bids
+            // like it means it. This is also the honest half of the "loser tax" —
+            // a bad club paying over the odds is exactly what the free-agency
+            // audit found the game doing BACKWARDS.
+            let shortfall = CapManagementEngine.amountBelowFloor(team: winningTeam, capMode: capMode)
+            if shortfall > 0, winningTeam.salaryCap > 0 {
+                let gap = Double(shortfall) / Double(winningTeam.salaryCap)   // 0…~0.25 in practice
+                settlement *= 1.0 + min(0.25, gap * 1.5)
+            }
             let agreedSalary = max(Int(settlement), minimum)
             // Task #89: the club gets a say in the TERM as well as the price.
             // `desiredYears` is the player's wish; `contractYearsCeiling` is what
@@ -2651,6 +2705,25 @@ enum FreeAgencyEngine {
         // exhaustion are unchanged by this pass (both only ever tightened above).
         for agent in sortedAgents where agent.player.teamID == nil {
             attemptSigning(agent, holdHoleReserves: false)
+        }
+
+        // D2(b) — the FLOOR wave, last, on whoever is still unsigned.
+        //
+        // The two waves above are need-driven: a club bids because it wants the
+        // man. This one is law-driven — the CBA requires 89 % of the cap to be
+        // spent in cash, and a club below that line has to write a cheque whether
+        // or not it has a hole. Measured before this existed: league payroll
+        // 64.5-79.8 % of the cap and 31-32 of 32 clubs comfortably compliant
+        // every season, which is why the veteran market was permanently thin and
+        // why nothing ever fell to the user in March.
+        //
+        // It cannot inflate the market's contract count beyond the men available:
+        // like the mop-up it only reaches agents both earlier waves left unsigned.
+        // What it changes is WHO can reach them — only a club actually under the
+        // floor gets its reserve waived, so a healthy club is unaffected and the
+        // reserve keeps meaning what it means everywhere else.
+        for agent in sortedAgents where agent.player.teamID == nil {
+            attemptSigning(agent, holdHoleReserves: false, floorWave: true)
         }
     }
 
@@ -3281,6 +3354,22 @@ enum FreeAgencyEngine {
                 rosterTeamID: userTeamID
             ))
         }
+
+        // D4-C SEAM (F-59) — losing costs you players. A good free agent will
+        // not take the call from a club that loses; the magnitude, the gates
+        // and the draw all live in `ContractNegotiationEngine
+        // .refusesLosingSuitor`, and this is the whole of the wiring. Deliberately
+        // a filter over the assembled bids rather than a term inside `scoreBid`:
+        // a refusal is not a price, and the loser tax that IS a price is D1's,
+        // in `scoreBid`, where it will not collide with this.
+        //
+        // The empty-result fallback is load-bearing. `scoreBid`'s consumer force
+        // -unwraps `max(by:)`, and a market in which every bidder is a losing
+        // club is a market that still has to settle — the man signs somewhere.
+        let willingBids = allBids.filter {
+            !ContractNegotiationEngine.refusesLosingSuitor(player: player, record: $0.teamRecord)
+        }
+        if !willingBids.isEmpty { allBids = willingBids }
 
         guard !allBids.isEmpty else {
             return PlayerDecision(

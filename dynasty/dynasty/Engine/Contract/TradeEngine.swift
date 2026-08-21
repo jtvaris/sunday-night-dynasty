@@ -329,6 +329,14 @@ enum TradeEngine {
                 + split.deadCap
                 + split.salaryRetained
             newTeam.currentCapUsage += split.salaryAssumed
+            // D2: the acceleration the SELLER keeps is remembered, so the March
+            // true-up carries it instead of erasing it. Same call the release
+            // path makes, for the same reason and with the same two-year shape —
+            // one spelling of dead money, not two.
+            CapManagementEngine.bookDeadMoney(
+                split.deadCap, on: oldTeam,
+                contractYearsRemaining: player.contractYearsRemaining
+            )
         }
 
         // Task #45: a midseason deal charges the buyer only the checks still to

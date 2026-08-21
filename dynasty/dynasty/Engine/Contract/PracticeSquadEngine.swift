@@ -182,6 +182,55 @@ enum PracticeSquadEngine {
     /// decision moment every week is noise.
     static let userPoachInterestChance = 0.18
 
+    // MARK: - Own-Squad Elevation (F-63 / D4-A)
+
+    /// **The clause that made a club unable to use its own players.**
+    ///
+    /// `runWeeklyPass` built its board with `leagueSquad(excluding: suitor.id)`,
+    /// so the one injury-driven roster routine in the game could sign anybody's
+    /// squad corner except the one sitting in its own building. Own-squad
+    /// elevations per AI club per season were exactly **0**
+    /// (`docs/AI_SEASON_LIFECYCLE_ANALYSIS.md` finding #1) against a real league
+    /// where the standard elevation is the DEFAULT answer to an injury, and
+    /// against a user who has had the button since day one
+    /// (`PracticeSquadView`). It was the sharpest single asymmetry in the audit
+    /// and it is one board.
+    ///
+    /// ## Why this is a second pass and not a wider poach budget
+    ///
+    /// ``weeklyPoachTarget`` is a LEAGUE-WIDE transaction budget for taking
+    /// another club's man — a scarce, adversarial event, measured at 1.40/week
+    /// and deliberately kept there. An elevation is neither scarce nor
+    /// adversarial: it costs the league nothing, no rival is deprived, and every
+    /// club does it the moment it is short. Spending elevation out of the poach
+    /// budget would have moved moves around rather than adding any, which is the
+    /// exact failure the 1.4-moves-a-season finding is about. So the two passes
+    /// have separate budgets, and elevation runs FIRST — a club with the answer
+    /// in-house does not phone a rival, which also means the poach budget is now
+    /// spent by the clubs that genuinely have no answer.
+    ///
+    /// ## Rate
+    ///
+    /// One per club per week, gated on ``shorthandedPositions`` — the same
+    /// availability read the poach board uses, so "we need a corner" still means
+    /// one thing in this file. The gate is what sizes it: the position-group
+    /// ideals sum to 39 against a 53-man roster, so a healthy club is short at
+    /// nothing and an injured one is short at exactly the room it lost. Expect
+    /// low single digits per club per season, each one a promotion AND a
+    /// corresponding release (``signToActiveRoster``) — the transaction pair a
+    /// real wire is made of.
+    static let maxElevationsPerClubPerWeek = 1
+
+    /// Squad men a club will not go below by elevating.
+    ///
+    /// Without a floor a club that is short at the same room for six weeks
+    /// running would strip its own squad to nothing and then have no answer at
+    /// all — the failure mode the elevation is supposed to remove. Set at
+    /// ``squadGenerationFloor`` so the two numbers that say "a squad this thin
+    /// is not a squad" are the same number. The backfill below normally keeps a
+    /// club well clear of it.
+    static let elevationSquadFloor = squadGenerationFloor
+
     // MARK: - Pending Poaches (the user's warning window)
 
     /// A rival has filed interest in one of the user's squad players; the
@@ -236,6 +285,13 @@ enum PracticeSquadEngine {
         var userLosses: [PoachResult] = []
         var warnings: [PoachWarning] = []
         var developed: Int = 0
+        /// F-63 — AI clubs promoting their OWN squad players. `fromTeamID` and
+        /// `toTeamID` are the same club, which is what distinguishes an
+        /// elevation from a poach on the same wire.
+        var elevations: [PoachResult] = []
+        /// Street free agents stashed to replace an elevated man, so a club
+        /// that promotes does not quietly run its own squad down to nothing.
+        var squadBackfills: Int = 0
     }
 
     /// What one cutdown-day fill did.
@@ -899,7 +955,22 @@ enum PracticeSquadEngine {
         )
         outcome.poaches.append(contentsOf: outcome.userLosses)
 
-        // 2. This week's league-wide churn. AI clubs sign from AI squads
+        // 2. F-63 — a club looks IN-HOUSE first. Runs before the poach loop
+        //    because that is the real order of operations: the man on your own
+        //    squad has been in your building all week, and only a club with
+        //    nobody at the position picks up the phone. See
+        //    ``maxElevationsPerClubPerWeek`` for why this does not spend the
+        //    poach budget.
+        outcome.elevations = runElevationPass(
+            career: career,
+            teams: teams,
+            allPlayers: allPlayers,
+            leagueYearRemaining: leagueYearRemaining,
+            backfills: &outcome.squadBackfills
+        )
+        outcome.poaches.append(contentsOf: outcome.elevations)
+
+        // 3. This week's league-wide churn. AI clubs sign from AI squads
         //    immediately; the user's squad is only ever WARNED here.
         var budget = max(0, weeklyPoachTarget() - outcome.userLosses.count)
         var suitors = teams
@@ -953,6 +1024,100 @@ enum PracticeSquadEngine {
         }
 
         return outcome
+    }
+
+    /// **Next man up, in-house.** One elevation pass over the 31 AI clubs.
+    ///
+    /// The user is excluded on purpose and it is not an oversight: he already
+    /// has this button (`PracticeSquadView` -> ``signToActiveRoster``), and
+    /// promoting for him would take the decision he is here to make. Before
+    /// this pass the asymmetry ran the other way — he was the only club in the
+    /// league that COULD do it.
+    ///
+    /// Every club is scanned every week rather than a random handful, because
+    /// the gate is a fact (``shorthandedPositions`` reads availability), not a
+    /// budget: a club that is short does not wait for its name to come up.
+    ///
+    /// - Parameter backfills: incremented once per street man stashed to keep
+    ///   the promoting club's squad from draining.
+    private static func runElevationPass(
+        career: Career,
+        teams: [Team],
+        allPlayers: [Player],
+        leagueYearRemaining: Double,
+        backfills: inout Int
+    ) -> [PoachResult] {
+        var landed: [PoachResult] = []
+        // One shared pool for the whole pass: two clubs must not stash the same
+        // man on the same advance, which is the collision `fillSquads`'
+        // round-robin already guards against with its own claimed set.
+        var street = backfillPool(allPlayers: allPlayers)
+
+        for club in teams where club.id != career.teamID {
+            let roster = activeRoster(of: club.id, in: allPlayers)
+            let needs = Set(shorthandedPositions(roster: roster))
+            guard !needs.isEmpty else { continue }
+
+            let own = squad(of: club.id, in: allPlayers)
+            guard own.count > elevationSquadFloor else { continue }
+
+            var promoted = 0
+            // `squad(of:)` is already keep-score ordered, so the first man who
+            // covers a hole IS the best man who covers a hole — the same key the
+            // cutdown ladder and the poach board rank with.
+            for candidate in own where promoted < maxElevationsPerClubPerWeek {
+                guard needs.contains(candidate.position), !isWarned(candidate.id) else { continue }
+                guard signToActiveRoster(
+                    candidate,
+                    to: club,
+                    allPlayers: allPlayers,
+                    capMode: career.capMode,
+                    leagueYearRemaining: leagueYearRemaining
+                ) else { continue }
+
+                ChurnDiag.record(ChurnDiag.elevate, candidate)
+                landed.append(result(player: candidate, from: club, to: club))
+                promoted += 1
+
+                // The seat he vacated is filled off the street the same week.
+                // Real squads turn over continuously; without this the only
+                // inflow in the whole calendar is one August pass, and a club
+                // that promotes four men in November opens next August four
+                // short.
+                if !street.isEmpty {
+                    let man = street.removeFirst()
+                    stash(man, on: club.id)
+                    ChurnDiag.record(ChurnDiag.squadFill, man)
+                    backfills += 1
+                }
+            }
+        }
+        return landed
+    }
+
+    /// Unsigned men a club may stash mid-season, best first.
+    ///
+    /// Deliberately the NARROW half of ``isSquadEligible``: the unrestricted
+    /// early-career seat only, never one of the six ``veteranSlots``. The
+    /// veteran rule turns on accrued seasons, which costs a
+    /// `PlayerSeasonHistory` fetch (``accruedSeasonsByPlayer``), and
+    /// ``runWeeklyPass`` deliberately holds no `ModelContext` — it runs 18 times
+    /// a season across 31 clubs. Requiring the `yearsPro` branch alone is a
+    /// strict subset of the shipped rule, so nothing this pass signs could have
+    /// been refused by cutdown day's gate; the cost is that a mid-season
+    /// backfill never spends a veteran slot, which is the conservative
+    /// direction.
+    private static func backfillPool(allPlayers: [Player]) -> [Player] {
+        allPlayers
+            .filter {
+                $0.teamID == nil
+                    && !$0.isOnPracticeSquad
+                    && !$0.isRetired
+                    && $0.contractYearsRemaining == 0
+                    && $0.yearsPro <= youngPlayerYearsPro
+                    && $0.overall < startingCalibreOverall
+            }
+            .sorted { RosterValue.keepScore($0) > RosterValue.keepScore($1) }
     }
 
     /// Executes the poaches the user was warned about a week ago.

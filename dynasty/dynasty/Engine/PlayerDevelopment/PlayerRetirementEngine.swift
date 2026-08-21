@@ -153,6 +153,26 @@ enum PlayerRetirementEngine {
 
             // Body breaking down.
             if player.physical.durability < 50 { chance += 0.08 }
+
+            // **Contract status** (F-45). Half of "why do you keep playing" is
+            // whether anyone is currently paying you to. A 34-year-old with two
+            // years left on a real deal reports to camp; the same man whose
+            // contract ran out at week 18 spends the winter deciding, and often
+            // decides not to. Both terms are inside the past-peak gate because
+            // an expiring 26-year-old is not thinking about retirement — he is
+            // thinking about his next deal.
+            //
+            // `contractYearsRemaining` is the only contract fact reachable here:
+            // this pass runs in `.coachingChanges`, three phases before free
+            // agency opens, so `teamID == nil` still means "his deal expired at
+            // week 18" and not "the phone stopped ringing". The man nobody signs
+            // is the WASHOUT pass's business (`evaluateWashouts`), which is why
+            // this is a nudge and not the whole story.
+            if player.contractYearsRemaining <= 0 {
+                chance += unsignedRetirementBump
+            } else if player.contractYearsRemaining >= 2 {
+                chance -= moneyOnTheTableCredit
+            }
         }
 
         // The mid-thirties wall: careers end for reasons the peak-age window
@@ -201,6 +221,26 @@ enum PlayerRetirementEngine {
         // only to the past-peak block it used to sit in (task #98).
         if specialist { chance *= specialistHazardScale }
 
+        // **Quality** (F-45), applied the same way and for the same reason.
+        //
+        // The `overall` term above contributes at most +0.20 and only BELOW 60,
+        // so the model had a penalty for being finished and no credit at all for
+        // being great: a 34-year-old 90-OVR quarterback retired at exactly the
+        // same 18 % as a 34-year-old 55-OVR one. Every calendar term — the wall
+        // included — was quality-blind, which is the opposite of how careers
+        // actually end. Great players play until they are not great; the league
+        // keeps offering, and they keep saying yes.
+        //
+        // A multiplier and not another additive term, deliberately: the age wall
+        // is on the DO NOT TOUCH list and its steps (+0.18/+0.25/+0.30, in
+        // practice 18 % / 43 % / 73 %) must keep their shape. Scaling the
+        // assembled hazard is exactly what `specialistHazardScale` two lines up
+        // already does, so this adds a second instance of a pattern rather than
+        // a second kind of term — and it sits BEFORE the 40+/41 override, so the
+        // hard ceiling is untouched: a 41-year-old still retires whatever he
+        // rates.
+        chance *= qualityHazardScale(overall: player.overall)
+
         // Age wall: 40+ almost always retires, 41 is the hard ceiling — shifted
         // with everything else for specialists, so a kicker's hard ceiling is 45.
         if player.age >= 41 + wallShift {
@@ -209,8 +249,59 @@ enum PlayerRetirementEngine {
             chance = max(chance, 0.85)
         }
 
-        return min(1.0, chance)
+        // F-45's `moneyOnTheTableCredit` is the first term in this function that
+        // can SUBTRACT, so the floor is new and defensive: a man one year into
+        // his decline window with two years owed reads 0.04 − 0.03 = 0.01, and
+        // a future credit could take it under zero. A negative probability never
+        // fires, but it would print as one in a diagnostic, and this file's
+        // numbers are read.
+        return min(1.0, max(0.0, chance))
     }
+
+    // MARK: - Quality and Contract (F-45)
+
+    /// Rating at and below which quality changes nothing. A league-average
+    /// veteran's decision is the calendar's, not his agent's.
+    static let qualityScaleFloorOverall = 80
+
+    /// Rating at which the discount is at full size.
+    static let qualityScaleCeilingOverall = 92
+
+    /// How much of the hazard a genuinely elite veteran keeps.
+    ///
+    /// 0.55 at 92+, sliding linearly from 1.0 at 80. Concretely: the 34-year-old
+    /// 90-OVR quarterback who faced 18 %/yr now faces ~11 %, which leaves him
+    /// close to two extra seasons, while the 55-OVR man beside him is untouched.
+    ///
+    /// Sized against the number this is meant to move. The measured 33+ roster
+    /// share is **0.8 %** against a real 7-8 % at 31+, and
+    /// `AI_ROSTER_DECISIONS_ANALYSIS.md` flags the league as too young; F-45's
+    /// verification note says that share should move UP, not down. A deeper
+    /// discount would do it faster and would also make the age pyramid a
+    /// function of one rating band, which is how §8's pyramid got broken the
+    /// last two times somebody tuned this file. 0.55 is the shallowest value
+    /// that is visible in a 30-season run.
+    static let qualityHazardFloor = 0.55
+
+    /// The multiplier itself.
+    static func qualityHazardScale(overall: Int) -> Double {
+        guard overall > qualityScaleFloorOverall else { return 1.0 }
+        let span = Double(qualityScaleCeilingOverall - qualityScaleFloorOverall)
+        let above = Double(min(overall, qualityScaleCeilingOverall) - qualityScaleFloorOverall)
+        return 1.0 - (1.0 - qualityHazardFloor) * (above / span)
+    }
+
+    /// Added hazard for a past-peak man whose contract expired at week 18.
+    ///
+    /// Deliberately smaller than the OVR-below-60 term (+0.20): an expired deal
+    /// is a prompt to decide, not a verdict. The verdict is the washout pass,
+    /// which runs after the market has actually spoken.
+    static let unsignedRetirementBump = 0.10
+
+    /// Hazard removed for a past-peak man with two or more years still owed.
+    /// Small on purpose — money keeps a man in the building for one more camp;
+    /// it does not keep him there at 39.
+    static let moneyOnTheTableCredit = 0.03
 
     // MARK: - Washout (plan §5 stage 6 — the turnover gate)
 

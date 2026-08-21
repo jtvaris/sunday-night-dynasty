@@ -127,8 +127,12 @@ enum GameSimulator {
         // #205b: `homeRosterOverride` / `awayRosterOverride` name exactly who
         // dresses. `nil` — every caller that existed before preseason — keeps
         // the `teamID` query as the only source of a roster.
-        let homeRoster = (homeRosterOverride ?? homeTeam.currentRoster()).filter { !$0.isHoldingOut }
-        let awayRoster = (awayRosterOverride ?? awayTeam.currentRoster()).filter { !$0.isHoldingOut }
+        // F-18: `MedicalEngine.dressed` is the ONE definition of who suits up —
+        // holdouts and the injured alike. This line used to filter holdouts
+        // only, which is why an injured starter took every snap; see that
+        // helper for the full chain and why the fix lives there.
+        let homeRoster = MedicalEngine.dressed(homeRosterOverride ?? homeTeam.currentRoster())
+        let awayRoster = MedicalEngine.dressed(awayRosterOverride ?? awayTeam.currentRoster())
         var homePlayers = homeRoster.map({ SimPlayer(from: $0) })
         var awayPlayers = awayRoster.map({ SimPlayer(from: $0) })
         var livePlayerByID: [UUID: Player] = [:]
