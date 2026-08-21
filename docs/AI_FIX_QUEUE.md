@@ -559,7 +559,7 @@ contracts where the number matters most.
 
 ---
 
-### QA-03 — The week band and the dashboard's game card disagree, and the week will not advance — **UNDIAGNOSED**
+### QA-03 — The week band read BYE while the card named an opponent — **NARROWED; the "will not advance" half was MY TOOLING**
 - **Class**: bug-fix
 - **Priority**: P1
 - **Where**: `UI/Career/CareerShellView.swift` `reloadSeasonFixtures` (`:3178`),
@@ -572,9 +572,18 @@ contracts where the number matters most.
   every advance, via `loadShellData`; and the state was reached by the DEBUG skip, which loops the
   real `WeekAdvancer.advanceWeek` rather than shortcutting it — so it is not a debug-only shortcut
   artefact, though it may still be specific to a career that skipped its offseason tasks.
-- **What to do**: reproduce on a career played through the offseason normally before changing
-  anything. If it does not reproduce, the bug is in what the skipped path leaves behind, and the
-  skip is a developer tool that should refuse rather than leave a season unplayable.
+- **CORRECTION (same day, second career)**: the "will not advance" half is **not an app defect**. A
+  fresh career, played normally with no debug skip, reproduced the symptom — and then a coordinate
+  tap through `idb` actuated the same button immediately and opened its sheet. **XcodeBuildMCP's
+  semantic `tap` does not actuate this control**, the same way its `swipe` silently fails on this
+  app's Lists (already documented in the QA skill). Two careers' worth of "the button does nothing"
+  was my tooling, and it is withdrawn.
+- **What survives**: only the display half — the week strip read BYE for every week while the hero
+  card named a Week 1 opponent. That was observed once, on the debug-skipped career, and was NOT
+  re-checked on the normal career because the run stopped at the offseason. It needs one clean look
+  at a career that has reached its regular season before anyone spends time on it.
+- **What to do**: reach a regular season on a normally-played career and look at the strip. If it is
+  correct there, close this.
 - **Depends on**: none
 - **Source**: live QA, 2026-08-21.
 

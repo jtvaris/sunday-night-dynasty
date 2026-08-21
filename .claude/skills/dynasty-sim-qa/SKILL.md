@@ -15,7 +15,23 @@ metadata:
 Playbook for driving **Sunday Night Dynasty** (`com.brewcrow.dynasty`) on the iPad simulator for
 verification / visual QA. **Verified 2026-07-23** on the live app.
 
-## VERDICT: semantic automation WORKS on this app — use it, drop the pixel math
+## VERDICT: semantic automation MOSTLY works — but it does not actuate every control
+
+> **AMENDMENT 2026-08-21.** `snapshot-ui` remains excellent for READING the tree, and semantic `tap`
+> works on most controls. It does **not** work on all of them. Verified this session: the career
+> hub's **"Advance to …" button** is present in the snapshot with a ref, reports as an enabled
+> button, and **swallows `ui-automation tap` silently** — 26 consecutive taps produced no state
+> change and no error. An `idb ui tap` at the same location actuated it on the first try.
+>
+> This is the same failure shape as the `swipe` limitation documented at the bottom of this file,
+> and it is dangerous in the same way: **it looks like an app bug.** A QA run this session recorded
+> "the week will not advance" as a defect on two separate careers before the coordinate fallback
+> disproved it.
+>
+> **Rule: before reporting that a control does nothing, retry it with `idb ui tap`.** A semantic tap
+> that produces no state change is a tooling result, not a finding.
+
+## Semantic automation for reading and most tapping
 
 For years the only option was `idb` pixel taps scaled by ×0.688, because `idb ui describe-all`
 returns ~1 element for this SwiftUI app. **That limitation does not apply to XcodeBuildMCP.**
