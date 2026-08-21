@@ -67,6 +67,12 @@ VERBATIM_SOURCES=(
   "Domain/Models/League/PlayResult.swift"
   "Domain/Models/Player/PlayerAttributes.swift"
   "Domain/Models/Team/GamePlan.swift"
+  # F-17: the head-coach persona that fills the `gamePlan` slot for every AI club.
+  # `GameSimulator.simulate` derives it, so the full-game pipeline cannot compile
+  # without it. Deliberately its own file rather than part of
+  # `Engine/Match/CoordinatorPersona.swift`, whose DC/OC personas drag in the
+  # whole playbook / call-sheet graph and are unreachable from the quick sim.
+  "Domain/Models/Coach/HCPersona.swift"
   "Engine/Simulation/PlaySimulator.swift"
   "Engine/Match/HeatState.swift"
   # --- round-5 full-game pipeline (sha-verified verbatim; zero hand-typed math) ---
