@@ -2630,7 +2630,30 @@ enum FreeAgencyEngine {
             // league constant. See `settlementLean` for the bound.
             let lean = settlementLeanByTeam[winningTeam.id] ?? 1.0
             let draw = pow(Double.random(in: 0...1), 1.0 / lean)
-            let settlement = Double(floor) + Double(agent.askingPrice - floor) * draw
+            var settlement = Double(floor) + Double(agent.askingPrice - floor) * draw
+            // D2(b) — the FLOOR PREMIUM: a club under the CBA's 89 % cash floor
+            // pays ABOVE the ask.
+            //
+            // The floor was first modelled as an extra signing wave, and it did
+            // nothing measurable: payroll went 71.6 → 64.3 → 73.9 → 81.7 % with
+            // the wave against 71.8 → 65.0 → 76.5 → 83.9 % without it. The reason
+            // is structural and worth writing down — **the roster ceiling binds
+            // before the money does.** A club with cap room and no open seats
+            // cannot spend its way to the floor by signing MORE men, and that is
+            // not how real clubs do it either: the floor is a CASH requirement,
+            // so it is met by paying more per player, by extending your own, and
+            // by absorbing salary in trades. Volume was the wrong lever.
+            //
+            // Premium scales with the shortfall, capped at +25 %: a club a
+            // rounding error under the line nudges, a club 20 % under it bids
+            // like it means it. This is also the honest half of the "loser tax" —
+            // a bad club paying over the odds is exactly what the free-agency
+            // audit found the game doing BACKWARDS.
+            let shortfall = CapManagementEngine.amountBelowFloor(team: winningTeam, capMode: capMode)
+            if shortfall > 0, winningTeam.salaryCap > 0 {
+                let gap = Double(shortfall) / Double(winningTeam.salaryCap)   // 0…~0.25 in practice
+                settlement *= 1.0 + min(0.25, gap * 1.5)
+            }
             let agreedSalary = max(Int(settlement), minimum)
             // Task #89: the club gets a say in the TERM as well as the price.
             // `desiredYears` is the player's wish; `contractYearsCeiling` is what
