@@ -97,6 +97,56 @@ enum CapManagementEngine {
     // one league year and silently emptied rosters.
 
     /// Calculates dead cap charge when a player is cut mid-contract.
+    // MARK: - Dead-money ledger (D2)
+
+    /// Contract length at which a club would take the June 1 designation, and
+    /// therefore the length above which dead money spans two league years.
+    ///
+    /// Three, because that is where the real decision sits: a club designates
+    /// when the acceleration is large enough that carrying all of it in one year
+    /// is worse than carrying half of it twice, and on a one- or two-year deal
+    /// there is not enough left to be worth the wait. Below this, the whole
+    /// charge lands in the year of the cut, which is what acceleration does.
+    static let juneFirstSplitYears = 3
+
+    /// Books a dead-money charge on the club that incurred it.
+    ///
+    /// This is the ONLY place dead money enters the ledger, so the two-year shape
+    /// cannot be spelled differently by the release path and the trade path — the
+    /// exact class of drift this repo keeps finding. `currentCapUsage` is NOT
+    /// touched here: both callers already move it through their own cap split,
+    /// and this ledger exists to tell the rollover what to CARRY, not to charge
+    /// the club twice.
+    ///
+    /// - Parameters:
+    ///   - amount: the acceleration, in thousands. Zero and negative are no-ops.
+    ///   - team: the club that ate it.
+    ///   - contractYearsRemaining: years left on the deal at the moment it ended.
+    ///     At or above ``juneFirstSplitYears`` the charge splits evenly across
+    ///     this league year and the next; below it, all of it lands now.
+    static func bookDeadMoney(_ amount: Int, on team: Team, contractYearsRemaining: Int) {
+        guard amount > 0 else { return }
+        if contractYearsRemaining >= juneFirstSplitYears {
+            let thisYear = amount / 2
+            team.deadCapCurrentYear += thisYear
+            team.deadCapNextYear += amount - thisYear   // the odd thousand stays with next year
+        } else {
+            team.deadCapCurrentYear += amount
+        }
+    }
+
+    /// Ages the ledger one league year: what was owed next year is owed now, and
+    /// what was owed this year is gone.
+    ///
+    /// - Returns: the dead money the club carries into the year now opening,
+    ///   which the rollover adds to its rebuilt usage.
+    @discardableResult
+    static func rollDeadMoneyForward(on team: Team) -> Int {
+        team.deadCapCurrentYear = team.deadCapNextYear
+        team.deadCapNextYear = 0
+        return team.deadCapCurrentYear
+    }
+
     /// Dead cap = remaining prorated signing bonus + any guaranteed base salaries.
     ///
     /// - Parameters:
@@ -657,6 +707,12 @@ enum CapManagementEngine {
             // `capSavings` is signed: a negative value (acceleration larger than
             // the relief) correctly RAISES the club's usage.
             team.currentCapUsage = max(0, team.currentCapUsage - split.capSavings)
+            // D2: and the acceleration is REMEMBERED, so the March true-up can
+            // carry it instead of erasing it. Read before the contract fields
+            // below are cleared — `contractYearsRemaining` is what decides
+            // whether this is a one-year charge or a June 1-shaped two-year one.
+            bookDeadMoney(split.deadCap, on: team,
+                          contractYearsRemaining: player.contractYearsRemaining)
         }
 
         player.teamID = nil

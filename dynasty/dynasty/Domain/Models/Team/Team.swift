@@ -108,6 +108,35 @@ final class Team {
     /// Current cap usage in thousands of dollars.
     var currentCapUsage: Int
 
+    // MARK: - Dead money (D2)
+    //
+    // Dead money used to be IMPLICIT — the difference between `currentCapUsage`
+    // and the sum of rostered salaries — and the March true-up in
+    // `FreeAgencyEngine.executeNewLeagueYear` rebuilt usage from those salaries
+    // unconditionally, so every dollar of it vanished at the rollover. That made
+    // a catastrophic cap sheet a STARTING CONDITION rather than a state: the
+    // `.capHell` scenario self-cleared in one offseason, and no contract decision
+    // could follow a club for two years. The true-up's own comment admitted it
+    // and asked for exactly this ledger.
+    //
+    // Two years, not more. Real acceleration puts the whole remaining bonus into
+    // the year of the cut unless the club takes a June 1 designation, which is
+    // what splits a big deal across two. Modelling the two-year shape is what
+    // makes a bad contract a lasting cost; modelling more would re-create the
+    // forever-leak the true-up was written to stop (measured then: league cap
+    // room 22 % → 3.7 % → 0.8 % in three seasons, and the market died with it).
+    //
+    // Inline defaults, no init parameter — the house convention that keeps a
+    // schema addition free (`docs/SWIFTDATA_MIGRATION_PLAN.md` §4).
+
+    /// Dead money charged against THIS league year, in thousands.
+    var deadCapCurrentYear: Int = 0
+
+    /// Dead money already committed to NEXT league year, in thousands. Filled by
+    /// a June 1-shaped split on a long contract; becomes
+    /// ``deadCapCurrentYear`` at the rollover.
+    var deadCapNextYear: Int = 0
+
     // MARK: - Computed Properties
 
     /// Full franchise name combining city and team name (e.g. "Kansas City Stockyards").

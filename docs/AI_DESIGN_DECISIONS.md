@@ -355,6 +355,37 @@ which is the refinement's first property. A lands inside systems that already ex
 nothing — no report proposes one — and by the pairing rule it needs a symmetric user channel, so it
 is scheduled after A and after a written design, not bundled with it.
 
+## The dossier — D7's mechanism (user, 2026-08-21)
+
+The missing piece, and it merges D7-A and D7-B into ONE system instead of two.
+
+**A per-observer record.** For each ordered pair *(observer club → observed club)* there is a single
+dossier that fills in through **contact**, carrying both kinds of knowledge: what that club's GM
+values, and how its coach behaves.
+
+**Contact is the only thing that fills it.** Negotiating with a club teaches you its GM; playing a
+club teaches you its coach. The consequence falls out of the mechanism rather than being
+special-cased: a divisional opponent is met twice a season and is read clearly, a cross-conference
+club is met once every four years and stays foggy. That is exactly why divisional games feel
+different in reality.
+
+**It is shown** — before a game, and inside a negotiation. That display is not a convenience, it is
+the **symmetric channel the pairing rule demands**: the AI is not handed a private advantage,
+because both sides accumulate the same kind of knowledge through the same kind of contact. It also
+solves the presentation problem D3's house tastes would otherwise have, which is that a bias nobody
+can perceive is indistinguishable from noise.
+
+**Two properties, cheap now and expensive later:**
+1. **The dossier keys on the PERSON, not the club.** A GM or coach who moves takes his record with
+   him; a club that hires a new one resets to unknown. This makes the coaching carousel — which the
+   audits list as well-built and on the DO NOT TOUCH list — suddenly matter to the user, at no cost
+   beyond keying it correctly from the start.
+2. **The user is inside the model.** Other clubs hold a dossier on him, seeded from the franchise
+   identity he declares at career creation and updated by what he actually does.
+
+Delivery: the valuation half ships with D7-A. The tendency half attaches to a named, empty seam left
+by the same work, so D5's coach personas can feed it later without a redesign.
+
 ## Decided alongside D7
 
 **F-56 — the user CHOOSES his franchise identity at career creation, and that identity is what the
@@ -390,9 +421,8 @@ behave.
 
 ## Still open after D1-D7
 
-* **D7-B's mechanism** — tendency fog is committed to, but nothing anywhere proposes how a club
-  learns an opposing coach's habits, or what the user's symmetric channel is. It needs a written
-  design before it can be scheduled. This is the only remaining open item.
+* ~~**D7-B's mechanism**~~ — **CLOSED 2026-08-21 by the user.** See "The dossier" below. Nothing in
+  the programme is open any more.
 
 **Not decisions — tuning I will propose and measure rather than ask about:** F-42 (kicker-dependent
 field-goal range mapping), F-45 (retirement magnitudes), F-47 (intake headroom target), F-48 (R1
