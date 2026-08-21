@@ -138,6 +138,27 @@ before and after — not bundled with anything else.
 ## D3 — What kind of wrong should the AI be?
 
 **DECISION — Option A and Option C together; uniform noise explicitly rejected.**
+
+**REFINEMENT (user, 2026-08-21) — three properties the error model must have.** These are not a
+softening of Option A, they are its specification:
+
+1. **The AI lives in fog too, and not only about players.** It does not know the opposing GM's
+   valuations, the opposing coach's tendencies, or what a rival is willing to pay. Today it does:
+   trade valuation, free-agency pricing and the draft board all read shared truth. Organisational
+   fog is what makes a negotiation a negotiation rather than an arithmetic check.
+2. **It does not guess randomly — it plans, and the plan can be wrong.** An AI club should have an
+   intention (this is a rebuild; we need a tackle; we believe in athletic corners) and pursue it
+   coherently across a season. Errors then come from bad information or a bad philosophy, not from
+   a die rolled at the moment of decision. This is the difference between a GM who is mistaken and
+   a GM who is incoherent, and only the first is recognisable as an opponent.
+3. **Big blunders are allowed.** Not just a wide-ish Gaussian: the occasional franchise-altering
+   mistake — the contract that eats a club for three years, the trade-up that costs two firsts for a
+   bust. Real front offices do this every season somewhere in the league. The fat tail belongs in
+   the model, and D2 is what makes it *matter*: a blunder with no lasting cap consequence is not a
+   blunder, it is a bad afternoon.
+
+Note the coupling: (3) is only real once D2 lands, and (1) is what D7 below is about.
+
 Real organisations err in correlated, persistent ways because a scouting department has a
 philosophy. Uniform noise is realistic per decision and false in cause: it produces 32 clubs that
 are all slightly worse than the user and indistinguishable from each other, which is both unrealistic
@@ -306,6 +327,47 @@ Cheap, low-risk, and all of it turns existing data into something readable.
 whole group is a day's work that makes four other decisions legible to the player.
 
 ---
+
+## D7 — What does an AI club know about the other 31? *(OPEN — new, raised by the refinement above)*
+
+**At stake.** Property (1) of the refinement is not covered anywhere in the queue's 38, because no
+audit thought to ask it. Today every AI club evaluates trades, prices free agents and ranks
+prospects against **shared truth about the other organisations**: it knows exactly what a rival
+values, so a negotiation resolves to an arithmetic comparison rather than a read on a person.
+
+**Options.**
+* **A — Valuation fog.** Each club carries a noisy estimate of what every other club will pay,
+  narrowing with contact (you learn a GM by trading with him). Makes offers occasionally mispriced
+  in both directions, and makes a *reputation* possible.
+* **B — Tendency fog.** Clubs do not know an opposing coach's habits until they have played him;
+  scouting a division rival twice a year is why divisional games feel different. This is F-60 with
+  a mechanism, and by the pairing rule it needs a symmetric user channel.
+* **C — Both, staged.** A first, because it lands inside systems that already exist (trade
+  valuation, bid pricing); B second, because it needs a new per-matchup memory.
+* **D — Neither.** Keep shared truth between organisations; fog stays a player-evaluation concept.
+
+**Cost:** A is medium and self-contained. B is the larger one and is the only item on this page with
+no proposed mechanism in any report.
+
+**No ruling yet — this needs your call.**
+
+## Still open after D1-D6
+
+* **D7** above — the biggest of the four, and new.
+* **F-56 — the user's own hidden GM persona.** Surface it in the UI as a franchise identity, or
+  exclude his club from persona assignment and price his side neutrally? D1 settles the *pricing*
+  half; this is the remaining half. Either is better than the status quo, where he has a persona he
+  cannot see and cannot use.
+* **F-61 — guarantees and contract term as AI negotiating levers.** Should a negotiation have more
+  than one dimension (money) — can the AI trade term for guarantees the way real agents do? No
+  magnitudes are specified anywhere; this is a genuine design question, not a tuning one.
+* **F-66 — clock fidelity.** Four named gaps, no proposed design. How much clock detail is wanted
+  is a taste question about how much of a real broadcast the sim should reproduce.
+
+**Not decisions — tuning I will propose and measure rather than ask about:** F-42 (kicker-dependent
+field-goal range mapping), F-45 (retirement magnitudes), F-47 (intake headroom target), F-48 (R1
+bust distribution, and it is deferred with D4-B anyway), and F-25's choice of which play-selection
+lever moves first.
 
 ## Ordering — APPROVED 2026-08-21
 
