@@ -152,7 +152,15 @@ struct CapComplianceView: View {
                     // One number, from the engine that books the release (#68) —
                     // simple mode used to be told it got the whole salary back.
                     let split = releaseSplit(for: player)
-                    Text("Releasing \(player.fullName) frees \(formatMillions(split.capSavings)) of cap space and leaves \(formatMillions(split.deadCap)) of dead money on your books this year.")
+                    // "This year" is only the whole story on a short deal. D2's
+                    // ledger splits a release with three or more years left
+                    // across two league years, June 1 style, so the copy has to
+                    // say which — the number a GM plans against is next year's.
+                    Text(
+                        player.contractYearsRemaining >= CapManagementEngine.juneFirstSplitYears
+                        ? "Releasing \(player.fullName) frees \(formatMillions(split.capSavings)) of cap space and leaves \(formatMillions(split.deadCap)) of dead money on your books, split across this league year and the next."
+                        : "Releasing \(player.fullName) frees \(formatMillions(split.capSavings)) of cap space and leaves \(formatMillions(split.deadCap)) of dead money on your books this year."
+                    )
                 }
             }
         }

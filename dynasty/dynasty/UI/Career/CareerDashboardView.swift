@@ -4601,14 +4601,20 @@ struct CareerDashboardView: View {
     /// `nil` — and the row is dropped — when the club has no expiring contracts
     /// at all, because "76 → 76" is a row that says nothing.
     private var rosterOVRProjection: String? {
-        guard !players.isEmpty else { return nil }
-        let current = players.reduce(0) { $0 + $1.overall } / players.count
+        // Starter average, not the whole-roster mean (QA 2026-08-21). This card
+        // used to print the mean of every man under contract, which on an
+        // offseason roster of up to 87 includes forty bodies who will never take
+        // a snap — it read 68 on a club the team picker had just called 76, the
+        // same label eight points apart on two screens of one save.
+        // `RosterStrength` is now the single definition; see its doc comment.
+        guard let current = RosterStrength.starterAverage(players) else { return nil }
         // Franchise-tagged men are NOT leaving: the tag is one more year of club
         // control and the rollover keeps them on the roster (#127).
         let retained = players.filter { $0.contractYearsRemaining > 1 || $0.isFranchiseTagged }
         guard retained.count < players.count else { return nil }
-        guard !retained.isEmpty else { return "\(current) → — (whole roster expiring)" }
-        let projected = retained.reduce(0) { $0 + $1.overall } / retained.count
+        guard let projected = RosterStrength.starterAverage(retained) else {
+            return "\(current) → — (whole roster expiring)"
+        }
         return "\(current) → \(projected) if none re-signed"
     }
 

@@ -801,7 +801,11 @@ struct FACompleteView: View {
         let preOVR = FASigningTracker.getPreFARosterOVR()
         let preCap = FASigningTracker.getPreFACapUsage()
         let preGaps = FASigningTracker.getPreFAStarterGaps()
-        let currentOVR = myPlayers.isEmpty ? 0 : myPlayers.reduce(0) { $0 + $1.overall } / myPlayers.count
+        // Starter average, matching the dashboard and the team picker — see
+        // `RosterStrength`. The whole-roster mean this used to take reads eight
+        // points lower on an offseason roster, because it averages in the camp
+        // tail, and it made one label mean two things across three screens.
+        let currentOVR = RosterStrength.starterAverage(myPlayers) ?? 0
         let idealCounts = PositionGradeCalculator.idealStarterCounts
         var currentGaps = 0
         for (pos, needed) in idealCounts {

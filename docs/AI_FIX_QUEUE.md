@@ -492,6 +492,94 @@ because nothing measures it.
 - **Source**: `REBUILD_VIABILITY_ANALYSIS.md` recommendation 3, §1.1, §2.8 asymmetry 1;
   `AI_ROSTER_DECISIONS_ANALYSIS.md` §2.5. Ledger `TODO.md:4179`.
 
+### QA-01 — Live QA findings, 2026-08-21 (one career, Fixed 2026, Las Vegas)
+
+A full career was driven on the simulator to the start of the 2027 regular season.
+Five findings were fixed in the same pass; two are recorded here because they are
+not yet diagnosed to a cause.
+
+**Fixed in `RosterStrength` + three call sites.** The team picker said Roster OVR
+**76** and the career dashboard said **68** for the same club on the same save —
+one label, two definitions, eight points apart. The picker was right: it averages
+starters, which is what `DepthChart.teamOverall` reports once the career runs. The
+dashboard, the FA recap and the pre-FA snapshot took the whole-roster mean, which
+on an offseason roster of up to 87 averages in forty men who will never take a
+snap. All three now read one shared definition. This is F-20, confirmed live.
+
+**Fixed in `NewCareerView`.** "Choose Your Team" is `.disabled` until a name is
+entered, and a disabled `NavigationLink` drops out of the accessibility tree
+entirely — the button looked normal, did nothing, and explained nothing. A
+standing hint now says why.
+
+**Fixed in `NewCareerView`.** The portrait picker said "Cosmetic only — does not
+affect gameplay" while offering twenty GM archetypes by name. The disclaimer was
+misleading in its own right: the career's coaching STYLE carries +10 play-calling
+(visible on the staff screen) and the introductory press conference builds a media
+read whose own recap says it "shapes free-agent interest".
+
+**Fixed in `CoachingStaffView`.** Auto-hire promised "the best affordable
+candidate who fits your staff" and produced an offensive coordinator with
+**play-calling 47** — because it ranked on the twelve-attribute mean, which gives
+a coordinator's defining skill one twelfth of the vote. Ranking is role-weighted
+now.
+
+**Fixed in `CapComplianceView`.** The release dialog said the dead money lands "on
+your books this year" for every contract. D2's ledger splits a release with three
+or more years left across two league years, so the copy was wrong for exactly the
+contracts where the number matters most.
+
+---
+
+### QA-02 — Free agency: the binding constraint is the ROSTER CEILING, not the appeal bars — **corrects F-12**
+- **Class**: design-change
+- **Priority**: P1
+- **Where**: `Engine/Contract/FreeAgencyEngine.swift` — `faRosterCeiling = 46` (reported `:1144`),
+  `simulateAIFreeAgency`'s eligibility filter, reached from `simulateRemainingFA`.
+- **What is wrong**: F-12 blames the AI's entry bar (`targetMinOVR` 85 in round 1) sitting above its
+  own retain bar (`ownCoreStarAppeal` 80). A live career says the mechanism is different, and the
+  observation is unambiguous in both directions at once: **199 players hit the market**, the
+  tampering board carried **eight men at 91-96 OVR** (a 96 OVR outside linebacker does not reach free
+  agency in a real league), and after the whole league's market ran, **all six** of the user's
+  expiring players went **unsigned** — including a **78 OVR** defensive tackle, with league cap room
+  around 30 %.
+  `targetMinOVR` is a per-round FLOOR (85 / 80 / 75 / 70 / 65 / 60), so a 78 OVR man is eligible from
+  round 3 onward and the bars alone cannot explain him going unsigned. The eligibility filter also
+  requires `rosterSize < faRosterCeiling`, and **46 is below what a club carries in March**. Clubs
+  are full before the money is spent, which is the same wall that made D2(b)'s first attempt at a
+  spending floor measure as a no-op: volume cannot be the lever when there are no seats.
+- **What to do**: NOT a blind retune. `faRosterCeiling` carries a measured justification (task #53
+  tried 42 and measured the opposite of its hypothesis), so this needs the same treatment: measure
+  what the ceiling does to the unsigned pool and to the 80+ band before moving it. The question to
+  answer first is whether the market should fill to 46 and leave the rest to the roster floor's
+  refill, or whether the ceiling belongs nearer a real March roster.
+- **Risk / how to verify**: `SMOKE: diag churn`'s `poolLeft` and `faSign` columns, and the §8 age
+  pyramid, which is what #53 moved.
+- **Depends on**: none
+- **Source**: live QA, 2026-08-21.
+
+---
+
+### QA-03 — The week band and the dashboard's game card disagree, and the week will not advance — **UNDIAGNOSED**
+- **Class**: bug-fix
+- **Priority**: P1
+- **Where**: `UI/Career/CareerShellView.swift` `reloadSeasonFixtures` (`:3178`),
+  `UI/Career/SeasonWeekBand.swift`, `UI/Career/CareerDashboardView.swift`'s hero card.
+- **What is wrong**: On the first regular-season week of a career, the week strip read
+  **"1 BYE · 2 BYE · 3 BYE …"** with "No game this week" while the hero card on the same screen read
+  **"Week 1 · vs LAC (Home)"**, and "Advance to Week 2" did nothing across six taps.
+- **What is NOT the cause** (checked): both fetches filter `careerID` AND `seasonYear ==
+  career.currentSeason`, so they are querying the same set; `reloadSeasonFixtures` IS called after
+  every advance, via `loadShellData`; and the state was reached by the DEBUG skip, which loops the
+  real `WeekAdvancer.advanceWeek` rather than shortcutting it — so it is not a debug-only shortcut
+  artefact, though it may still be specific to a career that skipped its offseason tasks.
+- **What to do**: reproduce on a career played through the offseason normally before changing
+  anything. If it does not reproduce, the bug is in what the skipped path leaves behind, and the
+  skip is a developer tool that should refuse rather than leave a season unplayable.
+- **Depends on**: none
+- **Source**: live QA, 2026-08-21.
+
+---
+
 ### F-13 — Fix the loyalty branch in `scoreBid`
 - **Class**: bug-fix
 - **Priority**: P1

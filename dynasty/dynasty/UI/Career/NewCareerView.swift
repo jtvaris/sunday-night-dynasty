@@ -518,7 +518,14 @@ struct NewCareerView: View {
         cardSection(icon: "person.crop.circle.fill", title: "Your Portrait") {
             VStack(spacing: 8) {
                 // #108: Clarify the portrait is cosmetic
-                Text("Cosmetic only — does not affect gameplay")
+                // NOT "cosmetic only" any more, and it never quite was: the
+                // career's coaching STYLE carries a real modifier (the Tactician's
+                // +10 play-calling shows on the staff screen), and the
+                // introductory press conference builds a media read that its own
+                // recap says "shapes free-agent interest". Naming these portraits
+                // after archetypes while disclaiming any effect was the misleading
+                // half. The picture itself is still just a picture.
+                Text("The portrait is yours alone — your coaching style and your press answers are what the league reads.")
                     .font(.caption.weight(.medium))
                     .foregroundStyle(Color.textTertiary)
 
@@ -771,6 +778,28 @@ struct NewCareerView: View {
         .buttonStyle(.dsPrimary)
         .disabled(!isNameValid)
         .padding(.top, 4)
+        .overlay(alignment: .bottom) { nameGateHint.offset(y: 22) }
+    }
+
+    /// Why the commit button will not move (QA 2026-08-21).
+    ///
+    /// `.disabled` on a `NavigationLink` does not just stop the push — it drops
+    /// the control out of the accessibility tree entirely, so the button looked
+    /// identical to a working one, did nothing when tapped, and said nothing
+    /// about why. The Custom League path already had `showNameError` for this,
+    /// but Quick Start never sets it, because a NavigationLink has no action to
+    /// hang it on. A standing hint is the honest fix for a gate the user cannot
+    /// otherwise see.
+    @ViewBuilder
+    private var nameGateHint: some View {
+        if !isNameValid {
+            Text("Enter your name above to choose a team.")
+                .font(DSType.text(DSType.Size.footnote))
+                .foregroundStyle(Color.textSecondary)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.top, DSSpacing.xxs)
+                .accessibilityHint("The Choose Your Team button stays disabled until a name is entered.")
+        }
     }
 
     private var chooseTeamButton: some View {

@@ -218,7 +218,10 @@ struct NewLeagueYearView: View {
         let myTeam = allTeams.first { $0.id == teamID }
         let myRoster = allPlayers.filter { $0.teamID == teamID }
         let preCapUsage = myTeam?.currentCapUsage ?? 0
-        let preOVR = myRoster.isEmpty ? 0 : myRoster.reduce(0) { $0 + $1.overall } / myRoster.count
+        // Starter average — the same definition the dashboard, the FA recap and
+        // the team picker use (`RosterStrength`). Taking the whole-roster mean
+        // here made the before/after pair compare two different measurements.
+        let preOVR = RosterStrength.starterAverage(myRoster) ?? 0
         let idealCounts = PositionGradeCalculator.idealStarterCounts
         var starterGaps = 0
         for (pos, needed) in idealCounts {

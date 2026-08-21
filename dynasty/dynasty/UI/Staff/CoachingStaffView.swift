@@ -861,7 +861,9 @@ struct CoachingStaffView: View {
                     teamWins: team?.wins ?? 8,
                     teamReputation: career.reputation
                 )
-            guard let pick = bestAffordableCoach(in: pool, cap: cap, hcPersonality: hcPersonality) else {
+            guard let pick = bestAffordableCoach(
+                in: pool, cap: cap, role: role, hcPersonality: hcPersonality
+            ) else {
                 return nil
             }
             hire(coach: pick.coach, teamID: teamID)
@@ -924,13 +926,46 @@ struct CoachingStaffView: View {
     /// a REFUSAL, applied in `bestAffordableCoach` before this ranking runs.
     /// Budget is untouched: the cap filter still runs first and nothing here can
     /// raise a bid.
-    private func autoHireRank(_ coach: Coach, hcPersonality: PersonalityArchetype?) -> Int {
+    private func autoHireRank(
+        _ coach: Coach,
+        role: CoachRole?,
+        hcPersonality: PersonalityArchetype?
+    ) -> Int {
+        // ROLE-WEIGHTED, not flat overall (QA 2026-08-21). A live run auto-hired
+        // an offensive coordinator with play-calling 47 and called him "the best
+        // affordable candidate": he WAS the best on the twelve-attribute mean,
+        // and the mean gives a coordinator's defining skill one twelfth of the
+        // say. A coordinator who cannot call plays is not a good coordinator at
+        // any price. Blend rather than replace — the mean still carries the rest
+        // of the man, and the specialty is only the loudest voice, not the only
+        // one.
         let ovr = coachOverall(coach)
+        let specialty = autoHireSpecialty(coach, role: role)
+        let base = specialty.map { (ovr + $0 * 2) / 3 } ?? ovr
         switch autoHireBand(coach, hcPersonality: hcPersonality) {
-        case .good:     return ovr + 2
-        case .tension:  return ovr - 4
-        case .conflict: return ovr - 9
-        case nil:       return ovr
+        case .good:     return base + 2
+        case .tension:  return base - 4
+        case .conflict: return base - 9
+        case nil:       return base
+        }
+    }
+
+    /// The attribute a role is actually hired for, or `nil` where the twelve-way
+    /// mean is already the right answer (an assistant head coach has no single
+    /// defining skill; a scout is ranked by its own pass).
+    private func autoHireSpecialty(_ coach: Coach, role: CoachRole?) -> Int? {
+        switch role {
+        case .offensiveCoordinator, .defensiveCoordinator:
+            // Play-calling first, game-planning second: the two halves of a
+            // coordinator's week.
+            return (coach.playCalling * 2 + coach.gamePlanning) / 3
+        case .qbCoach, .rbCoach, .wrCoach, .olCoach, .dlCoach, .lbCoach, .dbCoach:
+            // A position coach is hired to make his group better.
+            return coach.playerDevelopment
+        case .specialTeamsCoordinator:
+            return (coach.playCalling + coach.discipline) / 2
+        default:
+            return nil
         }
     }
 
@@ -949,6 +984,7 @@ struct CoachingStaffView: View {
     private func bestAffordableCoach(
         in pool: [Coach],
         cap: Int,
+        role: CoachRole?,
         hcPersonality: PersonalityArchetype?
     ) -> (coach: Coach, wasConflict: Bool)? {
         let affordable = pool.filter { $0.salary <= cap }
@@ -957,8 +993,8 @@ struct CoachingStaffView: View {
         func best(_ candidates: [Coach]) -> Coach? {
             candidates.max { a, b in
                 let (ra, rb) = (
-                    autoHireRank(a, hcPersonality: hcPersonality),
-                    autoHireRank(b, hcPersonality: hcPersonality)
+                    autoHireRank(a, role: role, hcPersonality: hcPersonality),
+                    autoHireRank(b, role: role, hcPersonality: hcPersonality)
                 )
                 if ra != rb { return ra < rb }
                 return a.salary > b.salary
