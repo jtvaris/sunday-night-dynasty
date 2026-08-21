@@ -184,6 +184,85 @@ let crUDFAsPerTeam = 16
 /// Weeks of rehab between the season finale and the first camp practice.
 let crOffseasonRehabWeeks = 18
 
+// MARK: - Practice squad + camp roster (task #157 diagnostic)
+
+/// The cutdown ladder's three rungs, in order.
+///
+/// Transcribed, and deliberately: `CutDay.target` lives in
+/// `UI/Camp/RosterCutView.swift` — a SwiftUI file the harness cannot sync —
+/// while the two numbers ABOVE the ladder (`CampRosterEngine.campRosterTarget`
+/// 80 and `TradeValueEngine.offseasonRosterCeiling` 90) do come across through
+/// `sync_sources.sh`. Nothing here moves a rating: the rungs are read only to
+/// report where the rig's own camp roster sits on the shipped ladder, which is
+/// the question "does the 80/90-man camp path have any rig exposure at all"
+/// (task #157) in numbers.
+let crCutRungs: [Int] = [75, 65, 53]
+
+/// One man the shadow practice-squad fill signed.
+struct CRSquadSignee {
+    let overall: Int
+    let keepScore: Double
+    let age: Int
+    let yearsPro: Int
+    let accruedSeasons: Int
+    let usedVeteranSlot: Bool
+    let ownCut: Bool
+    let round: Int
+}
+
+/// One measured cutdown day: the camp rosters that walked in, the squad the
+/// SHIPPED rules would have assembled out of the men cut, and why every man
+/// left over was left over.
+///
+/// Measurement only — the shadow fill mutates nobody (see
+/// `CRLeague.measureSquadShadow`), so every gate in this scenario reads exactly
+/// the league it read before this block existed.
+struct CRCutdownSample {
+    let season: Int
+    /// Bodies each club carried INTO the cut, i.e. the rig's camp roster.
+    var campSizes: [Int] = []
+    /// The engine's own summary type, filled by the shadow allocation.
+    var summary = PracticeSquadEngine.FillSummary()
+    var signees: [CRSquadSignee] = []
+    /// Clubs left under `squadGenerationFloor` — in the app these are the clubs
+    /// that INVENT bodies (`fillSquads`' last pass). The rig never mints; it
+    /// counts.
+    var clubsUnderGenerationFloor = 0
+
+    // --- why the leftovers were left over ---------------------------------
+    /// OVR of men who cleared every gate EXCEPT the starting-calibre one.
+    var blockedByCalibre: [Double] = []
+    /// Men inside the OVR gate who needed a veteran slot and found none free.
+    var blockedByVeteranSlots = 0
+    /// Eligible men nobody could fit under `maxPerPosition` / `maxQuarterbacks`.
+    var blockedByPositionCap = 0
+    /// Eligible, unblocked, and simply not wanted — the squads filled up first.
+    var leftOverWithSquadsFull = 0
+
+    // --- the service window ------------------------------------------------
+    /// Accrued seasons of every man in the cutdown pool.
+    var poolAccrued: [Int] = []
+    /// Pool men past `youngPlayerYearsPro` whom the ACCRUED rule still keeps in
+    /// an unrestricted seat — the #144 fix, counted.
+    var savedByAccruedRule = 0
+    /// Pool men who need one of the six THIS cutdown and did not last one.
+    var agedOutNow = 0
+    var agedOutYearsPro: [Double] = []
+    var agedOutAge: [Double] = []
+    /// Sensitivity: pool men who would take an UNRESTRICTED seat if the OVR gate
+    /// were 70 (shipped) / 72 / 75.
+    var calibreSweep: [Int: Int] = [:]
+    /// Sensitivity: pool men who need a veteran slot at an accrued limit of
+    /// 2 (shipped) / 3 / 4.
+    var accruedSweep: [Int: Int] = [:]
+    /// Men the rig RETIRES at this cutdown (everyone unsigned) — the denominator
+    /// for "what would a squad have kept alive".
+    var retiringPool = 0
+    /// Largest disagreement seen between the rig's assembled ranking and the
+    /// shipped `PracticeSquadEngine.squadSigningScore` on the man it picked.
+    var maxScoreDelta = 0.0
+}
+
 // MARK: - Money (task #87 / F6-F8)
 
 /// The share of its cap a club will commit to salary before it stops writing
@@ -455,6 +534,9 @@ final class CRLeague {
     var activeFamiliarityByYearsPro: [Int: [Double]] = [:]
     var majorInjuryThisSeason: Set<UUID> = []
     var draftRoundByPlayer: [UUID: Int] = [:]
+    /// One row per MEASURED cutdown day: the camp rosters that walked in and the
+    /// practice squad the shipped rules would have built (task #157).
+    var cutdowns: [CRCutdownSample] = []
 
     // --- collectors --------------------------------------------------------
     var measuredCareers: [CRCareer] = []
@@ -992,7 +1074,17 @@ final class CRLeague {
     /// Cut to the template at every position, then fill the holes from the pool
     /// of released players. Anyone left unsigned is out of the league for good —
     /// the washout path that makes "out of the league in 3-4 years" real.
-    func reshapeRosters() {
+    ///
+    /// This is the rig's CUTDOWN DAY, and the practice-squad diagnostic (task
+    /// #157) hangs off it at the same point the app runs `fillSquads`: after the
+    /// 53s are refilled out of the pool, before anybody is written off. See
+    /// `measureSquadShadow`.
+    func reshapeRosters(season: Int) {
+        // Camp rosters, as they walk in — the number the shipped ladder is
+        // written against (`CampRosterEngine.campRosterTarget` 80,
+        // `TradeValueEngine.offseasonRosterCeiling` 90, rungs 75/65/53).
+        let campSizes = clubs.map { $0.roster.filter { !$0.isRetired }.count }
+
         var released: [Player] = []
         for club in clubs {
             var byPosition: [Position: [Player]] = [:]
@@ -1002,7 +1094,15 @@ final class CRLeague {
                 let group = (byPosition[slot.position] ?? [])
                     .sorted { keepScore($0) > keepScore($1) }
                 keep.append(contentsOf: group.prefix(slot.roster))
-                released.append(contentsOf: group.dropFirst(slot.roster))
+                for cut in group.dropFirst(slot.roster) {
+                    // The release stamp the shipped squad fill ranks own cuts
+                    // by (`PracticeSquadEngine.squadSigningScore`). Written here
+                    // because this loop IS the rig's cutdown; nothing else in
+                    // the harness or in any synced source reads the field, so it
+                    // moves no rating and no gate.
+                    cut.cutByTeamID = club.id
+                    released.append(cut)
+                }
             }
             club.roster = keep
         }
@@ -1024,6 +1124,16 @@ final class CRLeague {
                 signedIDs.insert(p.id)
             }
         }
+        let unsigned = pool.filter { !signedIDs.contains($0.id) }
+
+        // The practice-squad path, measured on the pool the rig is about to
+        // write off (task #157). Runs BEFORE the retirements below for the same
+        // reason `fillSquads` runs after `refillAIRosters` in the app: the squad
+        // is assembled out of what the 53s did not want, and only out of that.
+        if season > cfg.burnIn {
+            measureSquadShadow(season: season, unsigned: unsigned, campSizes: campSizes)
+        }
+
         // Unsigned → out of the league.
         for p in pool where !signedIDs.contains(p.id) {
             p.isRetired = true
@@ -1031,6 +1141,256 @@ final class CRLeague {
             careers[p.id]?.active = false
         }
         freeAgents = []
+    }
+
+    // MARK: Practice-squad + camp diagnostic (task #157)
+
+    /// Accrued seasons, by the SHIPPED rule: seasons with
+    /// `PracticeSquadEngine.accruedSeasonGames`+ games on an active roster.
+    ///
+    /// `history` is this scenario's stand-in for `PlayerSeasonHistory` and
+    /// `CRSeasonRow.gamesPlayed` is only ever written for a man on a 53, so a
+    /// season spent unsigned lands as no row at all and correctly accrues
+    /// nothing — the same arithmetic
+    /// `PracticeSquadEngine.accruedSeasonsByPlayer` does over the store.
+    private func accruedSeasons(_ player: Player) -> Int {
+        (history[player.id] ?? [])
+            .filter { $0.gamesPlayed >= PracticeSquadEngine.accruedSeasonGames }
+            .count
+    }
+
+    /// Assembles the practice squad the SHIPPED rules would build out of this
+    /// cutdown's leftovers, and records what it cost and what it left standing.
+    ///
+    /// ## Why a shadow and not a real squad
+    ///
+    /// A real squad in this scenario would keep men in the league who currently
+    /// wash out, which moves career length, the age pyramid and the §8 quality
+    /// shares — i.e. it would change the very equilibrium the 36 gates measure.
+    /// That is a BALANCE change and it needs the numbers below before it can be
+    /// argued for, so this pass mutates nothing: it reads `overall`, `age`,
+    /// `yearsPro`, `truePotential` and `cutByTeamID`, and writes only into
+    /// `cutdowns`.
+    ///
+    /// ## What is shipped here and what is scaffolding
+    ///
+    /// SHIPPED (sliced by `sync_sources.sh`): `isSquadEligible` — both seats and
+    /// both gates; `needsVeteranSlot`; `squadSigningScore` — the own-cuts-first
+    /// ranking; `DraftEngine.topTeamNeeds` — the thin-position tilt;
+    /// `RosterValue.keepScore`; and every constant (`squadSize`, `veteranSlots`,
+    /// `maxPerPosition`, `maxQuarterbacks`, `startingCalibreOverall`,
+    /// `accruedSeasonsLimit`, `squadGenerationFloor`).
+    ///
+    /// SCAFFOLDING (this function): the round-robin loop itself — one man per
+    /// club per round, own club first — which `fillSquads` cannot lend because
+    /// it is wired to `Career`, `ModelContext` and `InboxEngine`.
+    ///
+    /// ## Two performance shortcuts, and why they are exact
+    ///
+    /// 1. **Eligibility is evaluated once per man, not once per (man, club).**
+    ///    `isSquadEligible`'s only club-dependent term is `usedVeteranSlots <
+    ///    veteranSlots`, and it is reached only on the veteran branch, so
+    ///    "eligible for an unrestricted seat" is a property of the player alone
+    ///    and "eligible for one of the six" is that property AND the club having
+    ///    a slot free. Both are read off one call per man with
+    ///    `usedVeteranSlots: 0`.
+    /// 2. **The ranking is assembled from `keepScore` plus the two SHIPPED
+    ///    bonus constants** instead of calling `squadSigningScore` for all
+    ///    ~500 candidates × 512 club-turns. The assembly is then CHECKED against
+    ///    the shipped function for the man actually signed, every single
+    ///    signing, and the largest disagreement is printed
+    ///    (`maxScoreDelta`) — measured, not asserted.
+    private func measureSquadShadow(season: Int, unsigned: [Player], campSizes: [Int]) {
+        var sample = CRCutdownSample(season: season)
+        sample.campSizes = campSizes
+        sample.retiringPool = unsigned.count
+
+        let limit = PracticeSquadEngine.accruedSeasonsLimit
+        let calibre = PracticeSquadEngine.startingCalibreOverall
+
+        // --- the pool, priced once ------------------------------------------
+        struct Candidate {
+            let player: Player
+            let keep: Double
+            let accrued: Int
+            let needsSlot: Bool
+            let eligibleUnrestricted: Bool
+            let eligibleVeteran: Bool
+        }
+        var candidates: [Candidate] = []
+        candidates.reserveCapacity(unsigned.count)
+        for p in unsigned where !p.isRetired {
+            let accrued = accruedSeasons(p)
+            let needsSlot = PracticeSquadEngine.needsVeteranSlot(p, accruedSeasons: accrued)
+            let eligible = PracticeSquadEngine.isSquadEligible(
+                p, usedVeteranSlots: 0, accruedSeasons: accrued
+            )
+            let keep = RosterValue.keepScore(p)
+            candidates.append(Candidate(
+                player: p, keep: keep, accrued: accrued, needsSlot: needsSlot,
+                eligibleUnrestricted: eligible && !needsSlot,
+                eligibleVeteran: eligible && needsSlot
+            ))
+
+            // --- the service window, measured -----------------------------
+            sample.poolAccrued.append(accrued)
+            if p.yearsPro > PracticeSquadEngine.youngPlayerYearsPro && !needsSlot {
+                sample.savedByAccruedRule += 1
+            }
+            if needsSlot {
+                // Did the CURRENT season push him over? His most recent row is
+                // this season's; drop it and re-ask both halves of the rule.
+                let lastRowAccrued = (history[p.id] ?? []).last.map {
+                    $0.season == season && $0.gamesPlayed >= PracticeSquadEngine.accruedSeasonGames
+                } ?? false
+                let neededBefore = (p.yearsPro - 1) > PracticeSquadEngine.youngPlayerYearsPro
+                    && (accrued - (lastRowAccrued ? 1 : 0)) > limit
+                if !neededBefore {
+                    sample.agedOutNow += 1
+                    sample.agedOutYearsPro.append(Double(p.yearsPro))
+                    sample.agedOutAge.append(Double(p.age))
+                }
+            }
+            // --- sensitivity sweeps ---------------------------------------
+            // The OVR gate, on the side of the gate each man is actually judged
+            // on: raw OVR for an unrestricted seat, keepScore for one of the six.
+            for bar in [calibre, calibre + 2, calibre + 5] {
+                let inside = needsSlot ? keep < Double(bar) : Double(p.overall) < Double(bar)
+                if inside { sample.calibreSweep[bar, default: 0] += 1 }
+            }
+            // The service window: who still needs one of the six at a looser
+            // limit. Only the calendar half can save a man here, so the count is
+            // over men past `youngPlayerYearsPro`.
+            for lim in [limit, limit + 1, limit + 2] {
+                if p.yearsPro > PracticeSquadEngine.youngPlayerYearsPro && accrued > lim {
+                    sample.accruedSweep[lim, default: 0] += 1
+                }
+            }
+        }
+        sample.summary.poolSize = candidates.count
+        sample.summary.poolYoung = candidates.filter { !$0.needsSlot }.count
+        sample.summary.poolCut = candidates.filter { $0.player.cutByTeamID != nil }.count
+
+        // Sorted once, best keep-score first. The two shipped bonuses are
+        // constants, so a descending base order plus the prune below finds the
+        // same argmax `fillSquads`' linear scan does.
+        candidates.sort { $0.keep > $1.keep }
+        let maxBonus = PracticeSquadEngine.ownCutSigningBonus
+            + PracticeSquadEngine.thinPositionSigningBonus
+
+        // --- the round-robin -------------------------------------------------
+        struct ClubFill {
+            let club: CRClub
+            var squad: [Player] = []
+            var veteransUsed = 0
+            var countByPosition: [Position: Int] = [:]
+            var isDone = false
+        }
+        var states = clubs.shuffled().map { ClubFill(club: $0) }
+        var taken = Set<UUID>()
+
+        for _ in 0..<PracticeSquadEngine.squadSize {
+            var signedThisRound = 0
+            for index in states.indices where !states[index].isDone {
+                guard states[index].squad.count < PracticeSquadEngine.squadSize else {
+                    states[index].isDone = true
+                    continue
+                }
+                let clubID = states[index].club.id
+                let veteransUsed = states[index].veteransUsed
+                let counts = states[index].countByPosition
+                let thin = Set(DraftEngine.topTeamNeeds(
+                    roster: states[index].club.roster + states[index].squad, limit: 6
+                ))
+
+                var best: Candidate?
+                var bestScore = -Double.greatestFiniteMagnitude
+                for c in candidates {
+                    // Prune: nothing further down the base-score order can beat
+                    // the leader once even both bonuses cannot close the gap.
+                    if best != nil, c.keep + maxBonus < bestScore { break }
+                    guard !taken.contains(c.player.id) else { continue }
+                    let eligible = c.eligibleUnrestricted
+                        || (c.eligibleVeteran && veteransUsed < PracticeSquadEngine.veteranSlots)
+                    guard eligible else { continue }
+                    let cap = c.player.position == .QB
+                        ? PracticeSquadEngine.maxQuarterbacks
+                        : PracticeSquadEngine.maxPerPosition
+                    guard (counts[c.player.position] ?? 0) < cap else { continue }
+                    var score = c.keep
+                    if c.player.cutByTeamID == clubID { score += PracticeSquadEngine.ownCutSigningBonus }
+                    if thin.contains(c.player.position) { score += PracticeSquadEngine.thinPositionSigningBonus }
+                    if score > bestScore { bestScore = score; best = c }
+                }
+                guard let pick = best else {
+                    states[index].isDone = true
+                    continue
+                }
+                // The shipped key, on the man the assembled key chose. Any
+                // disagreement is a drift report, not a crash.
+                let shipped = PracticeSquadEngine.squadSigningScore(
+                    pick.player, clubID: clubID, thinPositions: thin
+                )
+                sample.maxScoreDelta = max(sample.maxScoreDelta, abs(shipped - bestScore))
+
+                taken.insert(pick.player.id)
+                states[index].squad.append(pick.player)
+                states[index].countByPosition[pick.player.position, default: 0] += 1
+                if pick.needsSlot { states[index].veteransUsed += 1 }
+                if pick.player.cutByTeamID == clubID {
+                    sample.summary.fromOwnCuts += 1
+                } else {
+                    sample.summary.fromStreetFreeAgents += 1
+                }
+                sample.signees.append(CRSquadSignee(
+                    overall: pick.player.overall,
+                    keepScore: pick.keep,
+                    age: pick.player.age,
+                    yearsPro: pick.player.yearsPro,
+                    accruedSeasons: pick.accrued,
+                    usedVeteranSlot: pick.needsSlot,
+                    ownCut: pick.player.cutByTeamID == clubID,
+                    round: draftRoundByPlayer[pick.player.id] ?? 8
+                ))
+                signedThisRound += 1
+            }
+            candidates.removeAll { taken.contains($0.player.id) }
+            if signedThisRound == 0 { break }
+        }
+
+        for index in states.indices {
+            if !states[index].squad.isEmpty { sample.summary.clubsFilled += 1 }
+            sample.summary.squadDepths.append(states[index].squad.count)
+            sample.summary.veteranSlotsUsed += states[index].veteransUsed
+            if states[index].squad.count < PracticeSquadEngine.squadGenerationFloor {
+                sample.clubsUnderGenerationFloor += 1
+            }
+        }
+
+        // --- the leftovers, attributed ---------------------------------------
+        let squadsFull = sample.summary.squadDepths.allSatisfy { $0 >= PracticeSquadEngine.squadSize }
+        let vetSlotsFull = states.allSatisfy { $0.veteransUsed >= PracticeSquadEngine.veteranSlots }
+        for c in candidates where !taken.contains(c.player.id) {
+            if c.eligibleUnrestricted || c.eligibleVeteran {
+                if c.eligibleVeteran && vetSlotsFull {
+                    sample.blockedByVeteranSlots += 1
+                } else if squadsFull {
+                    sample.leftOverWithSquadsFull += 1
+                } else {
+                    // Squads had room and the man was eligible, so the only gate
+                    // left standing between them is the position cap.
+                    sample.blockedByPositionCap += 1
+                }
+            } else if !c.needsSlot {
+                // Failed the unrestricted seat on OVR alone (the only other gate
+                // on that branch is `teamID == nil`, true for the whole pool).
+                sample.blockedByCalibre.append(Double(c.player.overall))
+            } else {
+                sample.blockedByCalibre.append(c.keep)
+            }
+        }
+
+        cutdowns.append(sample)
     }
 
     /// The ~18 weeks between the last snap and the first camp practice: the
@@ -1586,7 +1946,7 @@ final class CRLeague {
             runRetirements(season: season)
             tickContracts()
             runDraft(season: season)
-            reshapeRosters()
+            reshapeRosters(season: season)
             runCoachingChanges()
             runTrainingCamp(season: season)
             runSeason(season: season)
@@ -2496,6 +2856,148 @@ func crReport(leagues: [CRLeague], elapsed: TimeInterval) {
         A.check("6.11d", worstGroup <= 30.0,
                 String(format: "no position group takes >30%% of league payroll (fattest: %@) — the star-vs-depth crowding the audit could not see",
                        fattest))
+    }
+
+    // ======================================================================
+    // PRACTICE SQUAD + CAMP ROSTER (task #157) — DIAGNOSTIC, NO GATE
+    // ======================================================================
+    // Read this block as an answer to one question: is there a practice-squad
+    // LEVER in here? Every number is measured off the shipped rules
+    // (`PracticeSquadEngine`, sliced) applied to the rig's own cutdown pool. It
+    // asserts nothing, on purpose — the shadow fill changes no player, so
+    // there is no claim about the league to gate, only evidence to read.
+    let cuts = leagues.flatMap { $0.cutdowns }
+    if !cuts.isEmpty {
+        print("")
+        print("--- PRACTICE SQUAD + CAMP ROSTER (task #157, diagnostic) -------------------")
+        let nCuts = Double(cuts.count)
+        print(String(format: "  rules: squadSize %d  veteranSlots %d  startingCalibre %d  accruedSeasonsLimit %d (%d+ games)  maxPos %d/QB %d  genFloor %d",
+                     PracticeSquadEngine.squadSize, PracticeSquadEngine.veteranSlots,
+                     PracticeSquadEngine.startingCalibreOverall,
+                     PracticeSquadEngine.accruedSeasonsLimit,
+                     PracticeSquadEngine.accruedSeasonGames,
+                     PracticeSquadEngine.maxPerPosition, PracticeSquadEngine.maxQuarterbacks,
+                     PracticeSquadEngine.squadGenerationFloor))
+
+        // --- 1) the camp roster the rig actually carries -------------------
+        let camps = cuts.flatMap { $0.campSizes }.map(Double.init)
+        let campN = Double(camps.count)
+        func campOver(_ n: Int) -> Double {
+            Double(camps.filter { $0 > Double(n) }.count) / max(1, campN) * 100
+        }
+        print(String(format: "  CAMP: rig carries mean %.1f  min %.0f  max %.0f men into the cut   (shipped: campRosterTarget %d, offseasonRosterCeiling %d)",
+                     crMean(camps), camps.min() ?? 0, camps.max() ?? 0,
+                     CampRosterEngine.campRosterTarget, TradeValueEngine.offseasonRosterCeiling))
+        print(String(format: "    clubs over each shipped rung at cutdown:  >%d %5.1f%%   >%d %5.1f%%   >%d %5.1f%%   over target(%d) %5.1f%%",
+                     crCutRungs[0], campOver(crCutRungs[0]),
+                     crCutRungs[1], campOver(crCutRungs[1]),
+                     crCutRungs[2], campOver(crCutRungs[2]),
+                     CampRosterEngine.campRosterTarget, campOver(CampRosterEngine.campRosterTarget)))
+
+        // --- 2) the engine's own line, over the pooled sample --------------
+        var pooled = PracticeSquadEngine.FillSummary()
+        for c in cuts {
+            pooled.clubsFilled += c.summary.clubsFilled
+            pooled.fromOwnCuts += c.summary.fromOwnCuts
+            pooled.fromStreetFreeAgents += c.summary.fromStreetFreeAgents
+            pooled.generated += c.summary.generated
+            pooled.poolSize += c.summary.poolSize
+            pooled.poolYoung += c.summary.poolYoung
+            pooled.poolCut += c.summary.poolCut
+            pooled.veteranSlotsUsed += c.summary.veteranSlotsUsed
+            pooled.squadDepths.append(contentsOf: c.summary.squadDepths)
+        }
+        // Per-CUTDOWN means, which is the shape the app prints one of.
+        print(String(format: "  FILL (per cutdown, mean of %d): pool %.0f (unrestricted %.0f, cut-stamped %.0f)  signings %.1f (own %.1f / street %.1f)  vetSlots %.1f of %d",
+                     cuts.count, Double(pooled.poolSize) / nCuts,
+                     Double(pooled.poolYoung) / nCuts, Double(pooled.poolCut) / nCuts,
+                     Double(pooled.totalSignings) / nCuts,
+                     Double(pooled.fromOwnCuts) / nCuts, Double(pooled.fromStreetFreeAgents) / nCuts,
+                     Double(pooled.veteranSlotsUsed) / nCuts,
+                     32 * PracticeSquadEngine.veteranSlots))
+        let depthMins = cuts.map { Double($0.summary.squadDepths.min() ?? 0) }
+        let depthMaxs = cuts.map { Double($0.summary.squadDepths.max() ?? 0) }
+        let atCeiling = Double(pooled.squadDepths.filter { $0 >= PracticeSquadEngine.squadSize }.count)
+            / Double(max(1, pooled.squadDepths.count)) * 100
+        print(String(format: "  DEPTH: club mean %.1f of %d   per-cutdown min %.1f  max %.1f   clubs at ceiling %.1f%%   under genFloor %.2f clubs/cutdown",
+                     pooled.averageDepth, PracticeSquadEngine.squadSize,
+                     crMean(depthMins), crMean(depthMaxs), atCeiling,
+                     Double(cuts.reduce(0) { $0 + $1.clubsUnderGenerationFloor }) / nCuts))
+        print("    engine's own line, pooled: " + pooled.diagnosticLine)
+
+        // --- 3) who the squad signs (the startingCalibreOverall question) ---
+        let signees = cuts.flatMap { $0.signees }
+        if !signees.isEmpty {
+            let ovr = signees.map { Double($0.overall) }
+            let keeps = signees.map(\.keepScore)
+            let vetShare = crShare(signees.filter(\.usedVeteranSlot).count, signees.count)
+            let ownShare = crShare(signees.filter(\.ownCut).count, signees.count)
+            let udfaShare = crShare(signees.filter { $0.round == 8 }.count, signees.count)
+            print(String(format: "  SIGNEES (n=%d): OVR p10 %.0f  p25 %.0f  p50 %.0f  p75 %.0f  p90 %.0f  max %.0f  mean %.1f   (gate: OVR < %d)",
+                         signees.count, crPct(ovr, 0.10), crPct(ovr, 0.25), crPct(ovr, 0.50),
+                         crPct(ovr, 0.75), crPct(ovr, 0.90), ovr.max() ?? 0, crMean(ovr),
+                         PracticeSquadEngine.startingCalibreOverall))
+            print(String(format: "    keepScore p50 %.1f  p90 %.1f   age mean %.1f   yearsPro mean %.2f   accrued mean %.2f   vetSlot %.1f%%  own-cut %.1f%%  UDFA %.1f%%",
+                         crPct(keeps, 0.50), crPct(keeps, 0.90),
+                         crMean(signees.map { Double($0.age) }),
+                         crMean(signees.map { Double($0.yearsPro) }),
+                         crMean(signees.map { Double($0.accruedSeasons) }),
+                         vetShare, ownShare, udfaShare))
+            // How close the signees sit to the gate: if the top of the squad is
+            // pinned against 69 the gate is BINDING; if the best man a squad can
+            // find is a 64 the gate is not the constraint, the market is.
+            let withinTwo = crShare(
+                signees.filter { $0.overall >= PracticeSquadEngine.startingCalibreOverall - 2 }.count,
+                signees.count)
+            print(String(format: "    signees within 2 OVR of the gate: %.1f%%   (a squad pinned against the gate is a squad the gate is choosing)",
+                         withinTwo))
+        }
+
+        // --- 4) why the leftovers were left over ---------------------------
+        let blocked = cuts.flatMap { $0.blockedByCalibre }
+        print(String(format: "  LEFTOVERS per cutdown: over the calibre gate %.0f (p50 %.1f, p90 %.1f, max %.1f)   no veteran slot %.1f   position-capped %.1f   squads already full %.0f",
+                     Double(blocked.count) / nCuts, crPct(blocked, 0.50), crPct(blocked, 0.90),
+                     blocked.max() ?? 0,
+                     Double(cuts.reduce(0) { $0 + $1.blockedByVeteranSlots }) / nCuts,
+                     Double(cuts.reduce(0) { $0 + $1.blockedByPositionCap }) / nCuts,
+                     Double(cuts.reduce(0) { $0 + $1.leftOverWithSquadsFull }) / nCuts))
+
+        // --- 5) the service window (accruedSeasonsLimit) -------------------
+        let accrued = cuts.flatMap { $0.poolAccrued }
+        func accShare(_ k: Int) -> Double { crShare(accrued.filter { $0 == k }.count, accrued.count) }
+        let overLimit = crShare(accrued.filter { $0 > PracticeSquadEngine.accruedSeasonsLimit }.count,
+                                accrued.count)
+        print(String(format: "  SERVICE WINDOW: pool accrued 0 %.1f%%  1 %.1f%%  2 %.1f%%  3+ %.1f%%   past the limit %.1f%%   saved by the accrued rule (yearsPro>%d but accrued<=%d) %.1f/cutdown",
+                     accShare(0), accShare(1), accShare(2),
+                     crShare(accrued.filter { $0 >= 3 }.count, accrued.count), overLimit,
+                     PracticeSquadEngine.youngPlayerYearsPro, PracticeSquadEngine.accruedSeasonsLimit,
+                     Double(cuts.reduce(0) { $0 + $1.savedByAccruedRule }) / nCuts))
+        let agedYP = cuts.flatMap { $0.agedOutYearsPro }
+        let agedAge = cuts.flatMap { $0.agedOutAge }
+        print(String(format: "    AGES OUT this cutdown: %.1f men/cutdown   yearsPro mean %.2f (p50 %.0f)   age mean %.1f (p50 %.0f)",
+                     Double(cuts.reduce(0) { $0 + $1.agedOutNow }) / nCuts,
+                     crMean(agedYP), crPct(agedYP, 0.50), crMean(agedAge), crPct(agedAge, 0.50)))
+
+        // --- 6) the two levers, swept before either is touched -------------
+        let cal = PracticeSquadEngine.startingCalibreOverall
+        let lim = PracticeSquadEngine.accruedSeasonsLimit
+        func sweepCal(_ bar: Int) -> Double {
+            Double(cuts.reduce(0) { $0 + ($1.calibreSweep[bar] ?? 0) }) / nCuts
+        }
+        func sweepAcc(_ l: Int) -> Double {
+            Double(cuts.reduce(0) { $0 + ($1.accruedSweep[l] ?? 0) }) / nCuts
+        }
+        print(String(format: "  LEVER SWEEP (men/cutdown inside the gate): calibre %d -> %.0f | %d -> %.0f | %d -> %.0f      accrued limit %d -> %.0f need a slot | %d -> %.0f | %d -> %.0f",
+                     cal, sweepCal(cal), cal + 2, sweepCal(cal + 2), cal + 5, sweepCal(cal + 5),
+                     lim, sweepAcc(lim), lim + 1, sweepAcc(lim + 1), lim + 2, sweepAcc(lim + 2)))
+
+        // --- 7) what the path would be worth --------------------------------
+        let retiring = Double(cuts.reduce(0) { $0 + $1.retiringPool })
+        print(String(format: "  WORTH: the rig writes off %.0f men/cutdown; the shipped squad rules would keep %.0f of them (%.1f%%) in the league on a 2-year squad deal",
+                     retiring / nCuts, Double(pooled.totalSignings) / nCuts,
+                     crShare(pooled.totalSignings, Int(retiring))))
+        print(String(format: "  MIRROR CHECK: max |assembled ranking - PracticeSquadEngine.squadSigningScore| over every signing = %.6f",
+                     cuts.map(\.maxScoreDelta).max() ?? 0))
     }
 
     A.report()

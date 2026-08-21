@@ -345,6 +345,47 @@ enum PracticeSquadEngine {
         player.yearsPro > youngPlayerYearsPro && accruedSeasons > accruedSeasonsLimit
     }
 
+    /// Bonus a club puts on a man it released itself — see the call site in
+    /// ``fillSquads``. Large enough to dominate `keepScore` outright: "our own
+    /// cut" is a category, not a tie-break.
+    static let ownCutSigningBonus = 1_000.0
+
+    /// Bonus for a man who covers one of the club's thinnest position groups.
+    /// Below ``ownCutSigningBonus`` and above any `keepScore` spread, so it
+    /// orders WITHIN the own-cut group and within the street group, never
+    /// across them.
+    static let thinPositionSigningBonus = 500.0
+
+    /// The ranking one club applies to one available man on cutdown day.
+    ///
+    /// Extracted from ``fillSquads``' inner loop so the balance rig can rank
+    /// with the shipped key instead of a re-typed one (`career` scenario's
+    /// practice-squad diagnostic, task #157): the eligibility gates were
+    /// already pure and sliceable, the ORDER was not, and an order the rig
+    /// invented for itself would have made every composition number it prints
+    /// — signee OVR, age, own-cut share — a property of the rig.
+    ///
+    /// - Parameters:
+    ///   - clubID: The club doing the signing; `player.cutByTeamID == clubID`
+    ///     is what "our own cut" means.
+    ///   - thinPositions: The club's thinnest position groups, from
+    ///     `DraftEngine.topTeamNeeds` over its active roster PLUS the squad it
+    ///     has assembled so far.
+    static func squadSigningScore(
+        _ player: Player,
+        clubID: UUID,
+        thinPositions: Set<Position>
+    ) -> Double {
+        var score = RosterValue.keepScore(player)
+        // Own cuts first — the club knows these bodies, and every real squad is
+        // built out of the men it just released. `cutByTeamID` is stamped by the
+        // user's cut flow (`WaiverWireEngine`) and by the AI cutdown
+        // (`WeekAdvancer.trimAIRosters`).
+        if player.cutByTeamID == clubID { score += ownCutSigningBonus }
+        if thinPositions.contains(player.position) { score += thinPositionSigningBonus }
+        return score
+    }
+
     /// OVR at which a free agent would rather wait for an active-roster offer
     /// than take squad money. Set just below the league's starter band so the
     /// squad fills with fringe bodies rather than with players the 53 wants.
@@ -583,14 +624,12 @@ enum PracticeSquadEngine {
                     let cap = player.position == .QB ? maxQuarterbacks : maxPerPosition
                     guard (counts[player.position] ?? 0) < cap else { continue }
 
-                    // Own cuts first — the club knows these bodies, and every
-                    // real squad is built out of the men it just released.
-                    // `cutByTeamID` is stamped by the user's cut flow
-                    // (`WaiverWireEngine`) and by the AI cutdown
-                    // (`WeekAdvancer.trimAIRosters`).
-                    var score = RosterValue.keepScore(player)
-                    if player.cutByTeamID == teamID { score += 1_000 }
-                    if needs.contains(player.position) { score += 500 }
+                    // Own cuts first, then thin position groups — the whole key
+                    // lives in `squadSigningScore` so the balance rig ranks with
+                    // it rather than with a copy of it.
+                    let score = squadSigningScore(
+                        player, clubID: teamID, thinPositions: needs
+                    )
                     if score > bestRank { bestRank = score; best = player }
                 }
 

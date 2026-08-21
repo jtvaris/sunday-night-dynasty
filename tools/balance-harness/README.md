@@ -181,11 +181,12 @@ the 78 per-position drill constants (`forty: timed(4.83, 0.12, …)` …) must
 
 The realization model itself is copied **verbatim**: `PlayerDevelopmentEngine`,
 `PlayerRetirementEngine`, `MotivationState`, `InjuryRecord`, `CampEnums`,
-`InjuryType`. The motivation state machine, the R factor, the catch-up table,
-the position-shaped regression, potential drift and the retirement curve are
-therefore the shipped bytes, sha-verified like everything else above.
+`InjuryType`, `RosterValue`. The motivation state machine, the R factor, the
+catch-up table, the position-shaped regression, potential drift, the retirement
+curve and the cutdown-day sort key are therefore the shipped bytes, sha-verified
+like everything else above.
 
-Five more files are reached into by that stack but cannot compile standalone, so
+Seven more files are reached into by that stack but cannot compile standalone, so
 each is reduced by the same mechanical **KEEP-LIST slice** the `ScoutingEngine`
 extract uses, then guarded twice — every non-blank line of the slice must appear
 byte-identically in the repo file, and the named single-line tuning constants are
@@ -197,7 +198,9 @@ grepped straight out of the repo rather than transcribed:
 | `VersatilityExtract.swift` | `learnScheme`, `decayUnusedSchemes`, the install/decay constants | `extension VersatilityDevelopmentEngine` |
 | `ContractEngineExtract.swift` | `estimateMarketValue` + its two position helpers — the only thing the post-payday complacency trigger reads | `enum ContractEngine` |
 | `TrainingFocusExtract.swift` | `TrainingFocusArea` (top level, verbatim) + `applyWeeklyFocusTick` / `weeklyGainChance` / `autoAssignFocus` / `potentialCeiling` / `applyFocusPoint` / `bump` | `enum TrainingFocusEngine` |
-| `DraftEngineExtract.swift` | `rookieScaleFactors` + `scaleAttribute`/`scalePhysical`/`scaleMental`/`scalePositionAttributes` + `initializeRookieFamiliarity` + `roundForPick` | `enum DraftEngine` |
+| `DraftEngineExtract.swift` | `rookieScaleFactors` + `scaleAttribute`/`scalePhysical`/`scaleMental`/`scalePositionAttributes` + `initializeRookieFamiliarity` + `roundForPick` + `topTeamNeeds` | `enum DraftEngine` |
+| `PracticeSquadExtract.swift` | `isSquadEligible` + `needsVeteranSlot` + `squadSigningScore` + `FillSummary` (the engine's own diagnostic line), plus the ten squad constants by grep | `enum PracticeSquadEngine` |
+| `CampRosterConstantsExtract.swift` | `campRosterTarget` / `campContractYears` by grep, plus `TradeValueEngine.offseasonRosterCeiling` — the ladder the camp diagnostic measures against | `enum CampRosterEngine` + `extension TradeValueEngine` |
 
 `GameModels.swift` also gains one repo splice: the stub `Player` needs the
 SHIPPED `Player.overall` blend, because the career scenario develops attributes
@@ -476,6 +479,36 @@ career window) = 30 seasons each, 7 680 drafted careers per round bucket plus
 ordering RB/CB < standard < QB/OL · `6.5` R mean 0.45-0.55, p10 ≤ 0.30,
 p90 ≥ 0.85 and the four-state motivation mix · `6.6` career length ·
 `6.7` growth shape · `6.8` split-half stability.
+
+### The practice-squad / camp block (task #157, diagnostic — no gate)
+
+Printed after `SALARY BY POSITION`. At every measured cutdown the scenario
+assembles the practice squad the **shipped rules** would build out of the men it
+is about to write off — `PracticeSquadEngine.isSquadEligible`,
+`needsVeteranSlot`, `squadSigningScore`, `RosterValue.keepScore` and
+`DraftEngine.topTeamNeeds`, all sliced by `sync_sources.sh`; only the
+round-robin loop is scaffolding, because `fillSquads` is wired to `Career` /
+`ModelContext` / `InboxEngine`.
+
+It is a **shadow**: no player is mutated, so all 36 asserts read exactly the
+league they read before the block existed. That is deliberate — a real squad
+path would keep men in the league who currently wash out, which moves career
+length, the age pyramid and the §8 shares, i.e. it is a balance change and needs
+these numbers *first*.
+
+What it answers: how deep squads run and **why** they stop (pool exhausted vs
+calibre gate vs veteran slots vs position caps), the OVR/keepScore distribution
+of who gets signed against `startingCalibreOverall`, who ages out of the
+`accruedSeasonsLimit` window and at what `yearsPro`, a sweep of both gates
+(calibre 70/72/75, accrued limit 2/3/4) so a lever can be argued from a number,
+and where the rig's camp roster sits on the shipped ladder
+(`CampRosterEngine.campRosterTarget`, `TradeValueEngine.offseasonRosterCeiling`,
+rungs 75/65/53) — the camp path had **zero** rig exposure before this block.
+
+The last line is a mirror check: the rig assembles its ranking from
+`keepScore` + the two shipped bonus constants for speed, then compares it with
+`PracticeSquadEngine.squadSigningScore` on every man it signs and prints the
+largest disagreement. It is 0.000000 or the slice has drifted.
 
 ### The one fitted parameter
 

@@ -108,6 +108,17 @@ final class Coach {
     func expertise(for scheme: String) -> Int { schemeExpertise[scheme] ?? 20 }
 }
 
+/// Which roster a player occupies. Stub of the shipped `RosterStatus`, which
+/// lives in `Domain/Models/Player/Player.swift` — a `@Model` file the harness
+/// cannot compile, so only its `overall` body is spliced (below). The three
+/// cases and their raw values are the shipped ones because they are PERSISTED
+/// raw values in the app; the display strings are left behind.
+enum RosterStatus: String, Codable, CaseIterable {
+    case active
+    case practiceSquad
+    case campBody
+}
+
 /// Carrier for the SHIPPED `Player.overall` blend, spliced VERBATIM from the repo
 /// `Domain/Models/Player/Player.swift` on every sync.
 ///
@@ -185,6 +196,15 @@ final class Player {
     var positionFamiliarity: [String: Int] = [:]
     var trainingPosition: Position? = nil
     var teamID: UUID? = nil
+    /// --- Roster status (task #157: the practice-squad diagnostic) -----------
+    /// The three fields `PracticeSquadEngine.isSquadEligible` and
+    /// `squadSigningScore` read, with the shipped spellings and the shipped
+    /// meanings: a squad man carries `teamID == nil` and
+    /// `practiceSquadTeamID == <club>`, and `cutByTeamID` is the release stamp
+    /// the own-cuts-first ranking turns on.
+    var rosterStatusRaw: String = RosterStatus.active.rawValue
+    var practiceSquadTeamID: UUID? = nil
+    var cutByTeamID: UUID? = nil
     var contractYearsRemaining: Int = 4
     var annualSalary: Int = 750
     var isFranchiseTagged: Bool = false
@@ -207,6 +227,15 @@ final class Player {
 
     // MARK: Typed accessors (same spellings as the shipped model)
 
+    /// Both halves are checked, exactly as the shipped model does it, so a
+    /// half-written row never reads as a squad member.
+    var rosterStatus: RosterStatus {
+        get { RosterStatus(rawValue: rosterStatusRaw) ?? .active }
+        set { rosterStatusRaw = newValue.rawValue }
+    }
+    var isOnPracticeSquad: Bool {
+        rosterStatus == .practiceSquad && practiceSquadTeamID != nil
+    }
     var motivationState: MotivationState {
         get { motivationStateRaw.flatMap(MotivationState.init(rawValue:)) ?? .default }
         set { motivationStateRaw = newValue.rawValue }
