@@ -959,6 +959,12 @@ final class DraftDayCoordinator: ObservableObject {
 
     /// The one call that moves assets. Everything else in this file goes
     /// through it so no draft-night deal can skip the cap split or the ledger.
+    ///
+    /// F-49: it used to throw away the dead-money half of the outcome, which is
+    /// why a draft-weekend deal that shipped a veteran out disclosed nothing
+    /// about the bill it left on the cap. `lastTradeCapOutcome` carries it as
+    /// far as `settleAfterTrade`, which is the one place a user-facing receipt
+    /// is built on this screen.
     private func applyTrade(proposal: TradeProposal) -> TradeRecord? {
         let outcome = TradeEngine.executeTrade(
             proposal: proposal,
@@ -973,8 +979,14 @@ final class DraftDayCoordinator: ObservableObject {
             ),
             modelContext: modelContext
         )
+        lastTradeCapOutcome = outcome
         return outcome.record
     }
+
+    /// Dead-money outcome of the deal `applyTrade` most recently executed.
+    /// Read once by `settleAfterTrade` and never persisted — the durable record
+    /// is the `TradeRecord` row.
+    private var lastTradeCapOutcome: TradeEngine.TradeCapOutcome?
 
     /// News + inbox + local caches after a trade has been applied.
     private func settleAfterTrade(
@@ -995,8 +1007,31 @@ final class DraftDayCoordinator: ObservableObject {
         )
         career.newsLog = [announcement.news] + career.newsLog
         if let inbox = announcement.inbox {
-            WeekAdvancer.lastInboxMessages.append(inbox)
+            // F-49: the shared factory's receipt says only "roster and cap
+            // adjustments have been processed", so the war room used to be the
+            // one place a user could ship a veteran out and never be told what
+            // it cost him. The line comes from `TradeCapOutcome` — the same
+            // sentence the Trade Center prints, from the engine that computed
+            // the number — rather than a second copy written here.
+            let userIsOffering = proposal.offeringTeamID == userTeamID
+            let line = lastTradeCapOutcome?.deadCapLine(userIsOfferingTeam: userIsOffering)
+            let disclosed = line.map { dead in
+                InboxMessage(
+                    id: inbox.id,
+                    sender: inbox.sender,
+                    subject: inbox.subject,
+                    body: inbox.body + "\n\n" + dead,
+                    date: inbox.date,
+                    category: inbox.category,
+                    actionRequired: inbox.actionRequired,
+                    actionDestination: inbox.actionDestination,
+                    isRead: inbox.isRead,
+                    attachments: inbox.attachments
+                )
+            } ?? inbox
+            WeekAdvancer.lastInboxMessages.append(disclosed)
         }
+        lastTradeCapOutcome = nil
 
         // `executeTrade` moves ownership but not the denormalised abbreviation
         // the ticker renders, and the local roster map has to follow the
