@@ -180,7 +180,18 @@ final class DraftDayCoordinator: ObservableObject {
     @Published private(set) var signedUDFAProspectIDs: [UUID] = []
     @Published private(set) var udfaStageFinished = false
     @Published private(set) var udfaAISummary: String?
-    let maxUDFASignings = 5
+    /// How many undrafted men the user may sign on draft night.
+    ///
+    /// Reads the engine (#199): this used to be a literal `5` against
+    /// `UDFAMarketEngine.clubSigningQuota`'s 6, which made the market's own
+    /// parity rule — the user's ceiling is the same ceiling every AI club has —
+    /// one man short in the user's disfavour. The quota cannot bind this door
+    /// itself, because draft-night signings go through
+    /// `DraftEngine.convertUDFAToPlayer` and never appear in
+    /// `UDFAMarketState.signings`; see ``UDFAMarketEngine/draftNightUserWindow``
+    /// for the audit. Deriving the number instead of restating it is what stops
+    /// the two drifting apart again.
+    var maxUDFASignings: Int { UDFAMarketEngine.draftNightUserWindow }
 
     /// One trade-down search per pick — prevents re-rolling the dice.
     private var tradeDownSearchedPickNumber: Int?
@@ -1541,7 +1552,8 @@ final class DraftDayCoordinator: ObservableObject {
         }
     }
 
-    /// Signs one UDFA to the user's team on a three-year minimum-tier deal (max 5).
+    /// Signs one UDFA to the user's team on a three-year minimum-tier deal,
+    /// up to ``maxUDFASignings``.
     func signUDFA(_ prospect: CollegeProspect) {
         guard mode == .complete, !udfaStageFinished,
               let teamID = userTeamID,

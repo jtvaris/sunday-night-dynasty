@@ -14,7 +14,7 @@ import SwiftUI
 // "GAME 2 OF 3" and no screen underneath repeats it. The band is the only
 // component allowed to say where in the slate the club stands.
 //
-// **The cut ladder is deliberately NOT on this band.** 80 → 75 → 65 → 53 is
+// **The cut ladder is deliberately NOT on this band.** 87 → 75 → 65 → 53 is
 // `CutDay`'s ladder and `RosterCutView` already mounts it as its own
 // `DSSlatBand`. Printing "Cut to 65" as a fourth slat here would be the same
 // ladder drawn twice, in two places that could disagree — the exact defect

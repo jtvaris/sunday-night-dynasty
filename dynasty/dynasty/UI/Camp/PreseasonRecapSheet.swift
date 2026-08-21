@@ -174,7 +174,7 @@ struct PreseasonRecap: Identifiable {
     /// Where a man stands on the roster, which is the whole reason the recap
     /// exists: the cut ladder is about everyone who is not a starter.
     enum Tier {
-        /// Signed to fill the 80-man camp roster (`RosterStatus.campBody`).
+        /// Signed to fill the camp roster (`RosterStatus.campBody`).
         case campBody
         /// First year in the league.
         case rookie

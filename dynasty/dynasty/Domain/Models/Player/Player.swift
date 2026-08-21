@@ -668,7 +668,7 @@ enum RosterStatus: String, Codable, CaseIterable {
     /// develops on the depth rung, cannot dress, is cap-exempt, and can be
     /// signed away by any OTHER club at any time during the season.
     case practiceSquad
-    /// One of the extra bodies signed to fill the 80-man CAMP roster — under
+    /// One of the extra bodies signed to fill the CAMP roster — under
     /// contract, dresses in the exhibitions, and has no active-roster spot to
     /// lose. Read by the preseason recap's tier ladder
     /// (`PreseasonRecap.Tier.campBody`).

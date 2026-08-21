@@ -190,7 +190,7 @@ final class Career {
     var udfaMarketData: Data? = nil
 
     // MARK: - Camp Roster (#205a)
-    /// The season whose 80-man camp rosters have already been assembled
+    /// The season whose camp rosters have already been assembled
     /// (`CampRosterEngine.fillCampRosters`, `OFFSEASON_ROSTER_PLAN.md` §3.3).
     ///
     /// The idempotency stamp for the camp-invite wave, in the same shape as

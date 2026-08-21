@@ -3,7 +3,7 @@ import SwiftData
 
 // MARK: - Roster Cut View
 //
-// The three-stage cutdown — 80 → 75 → 65 → 53 — on the wave-3 standard:
+// The three-stage cutdown — 87 → 75 → 65 → 53 — on the wave-3 standard:
 // `DSSlatBand` for the ladder, `DSActionBar` for the commit, `DSResultSheet` for
 // the ending (UI_REDESIGN_VISION §2.1 / §2.5 / §2.6).
 //
@@ -1003,8 +1003,9 @@ extension CutDay {
     ///
     /// All three rungs used to be emitted into `.rosterCuts`, where a club that
     /// had never carried more than 60 men found two of them already satisfied
-    /// and the third the only one that meant anything. With an 80-man camp the
-    /// rungs are real work, and each falls due at a different point on the
+    /// and the third the only one that meant anything. With camp filling to
+    /// `CampRosterEngine.campRosterTarget` (87, ceiling 90) the rungs are real
+    /// work, and each falls due at a different point on the
     /// calendar:
     ///
     /// * `.cut90To75` — camp breaks at 75.

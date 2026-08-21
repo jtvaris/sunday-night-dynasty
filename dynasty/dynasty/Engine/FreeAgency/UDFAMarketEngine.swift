@@ -228,8 +228,9 @@ enum UDFAMarketEngine {
     /// 32 clubs, so 15 apiece is arithmetically impossible and would leave the
     /// user no market to compete in. Six is what the pool supports.
     ///
-    /// **No privileged quota**: the user's ceiling is the same 6 — but read
-    /// ``draftNightUserWindow`` before believing that of the shipped build.
+    /// **No privileged quota**: the user's ceiling is the same 6, through
+    /// ``draftNightUserWindow`` — read it for why the ceiling has to be stated
+    /// twice and derived once.
     static let clubSigningQuota = 6
 
     /// What the user's ONE interactive UDFA door should let him sign.
@@ -244,9 +245,11 @@ enum UDFAMarketEngine {
     /// `UDFAMarketState.signings`**, so ``clubSigningQuota`` — the guard that
     /// makes the ceiling real for the 31 AI clubs, checked at both bid time and
     /// settle time — cannot see or bind them. The user's real ceiling is whatever
-    /// that panel says, and it says **5** (`UI/Draft/DraftDayCoordinator.swift`,
-    /// `maxUDFASignings`), which makes the "no privileged quota" line above one
-    /// man short of true in the other direction.
+    /// that panel says, and when this audit was written it said **5**
+    /// (`UI/Draft/DraftDayCoordinator.swift`, `maxUDFASignings`), which made the
+    /// "no privileged quota" line above one man short of true in the other
+    /// direction. That view now derives its number from here, so the two cannot
+    /// disagree again.
     ///
     /// ### Why the number here is 6 and not 5
     ///
