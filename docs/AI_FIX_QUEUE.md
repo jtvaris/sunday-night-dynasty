@@ -1,5 +1,30 @@
 # AI_FIX_QUEUE — the consolidated, deduplicated fix queue
 
+## STATUS — verified against the code, 2026-08-22
+
+This list is a description of PROBLEMS, and forty of them are now fixed. Before
+implementing any entry, check the stamp on its heading, and if it is unstamped
+**grep the code anyway** — a stale queue is how the same work gets done twice, and
+it already cost one agent a wasted assignment this week.
+
+| state | count | what it means |
+|---|---:|---|
+| **DONE** | 40 | verified present in the source on this branch, not taken from a report |
+| **CLOSED / REJECTED** | 2 | F-03 closed by measurement, F-08 rejected by the D1 ruling |
+| **IN PROGRESS** | 9 | a wave is implementing it right now |
+| open | 20 | genuinely unstarted |
+
+The four waves of 2026-08-22 (lifecycle, draft brain, trades + reputation,
+gameday) plus D2's four sub-parts account for nearly all of the DONE column;
+`TODO.md`'s `## PÄIVÄ 2026-08-22` section is the narrative record.
+
+**Three entries had their diagnosis corrected rather than implemented as written**,
+and each correction is inside the entry: F-12 (the roster ceiling binds before the
+appeal bars), F-25 (the run model is in band; the loss is in ordinary early-down
+carries) and QA-03 (half of it was my own tooling). An entry that rests on a false
+premise is closed by measurement, not built.
+
+
 **Sources (read in full, all dated 2026-08-21, branch `feat/skeletal-mocap-players` @ `3423d35`):**
 `docs/AI_GAMEDAY_DECISIONS_ANALYSIS.md` (488 l) · `docs/REBUILD_VIABILITY_ANALYSIS.md` (1243 l) ·
 `docs/AI_TRADE_ANALYSIS.md` (415 l) · `docs/AI_ROSTER_DECISIONS_ANALYSIS.md` (450 l).
@@ -273,7 +298,7 @@ because nothing measures it.
 
 # P1 — the economy that decides the user's game
 
-### F-06 — Persist the trade anti-exploit counters on `Career`
+### F-06 — Persist the trade anti-exploit counters on `Career` — **DONE** (`ca3d03b` — career-scoped counters + strike registry)
 - **Class**: bug-fix
 - **Priority**: P1
 - **Where**: `Engine/Simulation/WeekAdvancer.swift` — the six `static var` counters (reported
@@ -306,7 +331,7 @@ because nothing measures it.
 - **Source**: `AI_TRADE_ANALYSIS.md` §1.7, §3.2 item 1, recommendations B1 and B2. Ledger
   `TODO.md:4212`.
 
-### F-07 — Run the trade fairness band on user proposals
+### F-07 — Run the trade fairness band on user proposals — **DONE** (trade wave — `chartFairnessBlocker` on user proposals)
 - **Class**: bug-fix
 - **Priority**: P1
 - **Where**: `Engine/Contract/TradeValueEngine.swift` — `dealIsCoherent` (`:2729`, band 0.82–1.45;
@@ -336,7 +361,7 @@ because nothing measures it.
 - **Source**: `REBUILD_VIABILITY_ANALYSIS.md` recommendation 4, §1.2 and §2.8 asymmetry 5;
   `AI_TRADE_ANALYSIS.md` §1.4 item 3 and §3.2 item 5. Ledger `TODO.md:4212` (adjacent).
 
-### F-08 — Give the user a per-window trade cap
+### F-08 — Give the user a per-window trade cap — **REJECTED by the D1 ruling** (a real GM is limited by counterparties, not by a rule; refusal is priced instead)
 - **Class**: design-change
 - **Priority**: P1
 - **Needs user decision**: *Should the user be limited to N executed trades per week and M per
@@ -360,7 +385,7 @@ because nothing measures it.
 - **Source**: `AI_TRADE_ANALYSIS.md` §1.4 item 2, §3.2 item 5, recommendation D2;
   `REBUILD_VIABILITY_ANALYSIS.md` §1.2 ("No per-season cap on user trades").
 
-### F-09 — Repair the pick-value chart tail (picks 130–224)
+### F-09 — Repair the pick-value chart tail (picks 130–224) — **DONE** (trade wave — Johnson tail rebuilt, chart is `Double`)
 - **Class**: bug-fix
 - **Priority**: P1
 - **Where**: `Engine/Draft/PickValueChart.swift:44-57` (table), used by both the trade centre and the
@@ -387,7 +412,7 @@ because nothing measures it.
   `REBUILD_VIABILITY_ANALYSIS.md` §1.2 (same chart, cited as the trade-value base). Ledger
   `TODO.md:4219`.
 
-### F-10 — Tighten the future-pick discount from ×0.8 to ×0.6/yr
+### F-10 — Tighten the future-pick discount from ×0.8 to ×0.6/yr — **DONE** (trade wave — future-pick discount ×0.6)
 - **Class**: design-change
 - **Priority**: P1
 - **Needs user decision**: *How aggressively should a future pick be discounted?* Massey–Thaler's
@@ -413,7 +438,7 @@ because nothing measures it.
 - **Source**: `AI_TRADE_ANALYSIS.md` §2.4, §3.1 row 12, §3.2 item 6, recommendation D1;
   `REBUILD_VIABILITY_ANALYSIS.md` §1.2 (states the same ×0.8 constant).
 
-### F-11 — Make the salary cap bind across league years
+### F-11 — Make the salary cap bind across league years — **D2 (a)+(b) `ebf23f8`/`409899c`, (c)+(d) `55199ec` — ALL FOUR SUB-PARTS LANDED**
 - **Class**: design-change
 - **Priority**: P1
 - **Needs user decision**: *Is the salary cap supposed to be a persistent constraint or a one-year
@@ -606,7 +631,7 @@ contracts where the number matters most.
 - **Source**: `REBUILD_VIABILITY_ANALYSIS.md` recommendation 6 (the second half, explicitly flagged
   as "mis-implemented against its own comment").
 
-### F-14 — Rebalance `scoreBid`'s structural user multipliers
+### F-14 — Rebalance `scoreBid`'s structural user multipliers — **IN PROGRESS (D1 wave)**
 - **Class**: design-change
 - **Priority**: P1
 - **Needs user decision**: *Should the user keep a flat structural bonus in free agency, and how
@@ -632,7 +657,7 @@ contracts where the number matters most.
 - **Depends on**: F-13
 - **Source**: `REBUILD_VIABILITY_ANALYSIS.md` recommendation 6, §1.1, §4.6. Ledger `TODO.md:4179`.
 
-### F-15 — Route the opponent-prep drift penalty into a field the simulator reads
+### F-15 — Route the opponent-prep drift penalty into a field the simulator reads — **IN PROGRESS (D1 wave)**
 - **Class**: bug-fix
 - **Priority**: P1
 - **Where**: `Engine/Camp/OpponentPrepEngine.swift:26-30` (`driftPenalty`, −1…−3 after 3+
@@ -657,7 +682,7 @@ contracts where the number matters most.
 - **Source**: `AI_GAMEDAY_DECISIONS_ANALYSIS.md` §2.2 and PART 5 item 2 (the bug half). Ledger
   `TODO.md:4237`.
 
-### F-16 — Replace the opponent-prep post-game score multiplier
+### F-16 — Replace the opponent-prep post-game score multiplier — **IN PROGRESS (D1 wave)**
 - **Class**: design-change
 - **Priority**: P1
 - **Needs user decision**: *Should opponent prep (a) thread through the simulator as real per-play
@@ -687,7 +712,7 @@ contracts where the number matters most.
 - **Source**: `AI_GAMEDAY_DECISIONS_ANALYSIS.md` §2.2, §2.6, PART 5 item 2. Ledger `TODO.md:4237`
   (#224).
 
-### F-17 — Give AI clubs a head-coach persona in the `gamePlan` slot
+### F-17 — Give AI clubs a head-coach persona in the `gamePlan` slot — **DONE** (gameday wave — `HCPersona` fills the `gamePlan` slot)
 - **Class**: design-change
 - **Priority**: P1
 - **Needs user decision**: *Should AI head coaches have a derived risk-tolerance persona that drives
@@ -726,7 +751,7 @@ contracts where the number matters most.
 - **Source**: `AI_GAMEDAY_DECISIONS_ANALYSIS.md` §2.1, §4.3.1, PART 3 rows 1–2, PART 5 items 3 & 4.
   Ledger `TODO.md:4243` (#225).
 
-### F-18 — Stop injured players dressing; wire the depth chart to the engine
+### F-18 — Stop injured players dressing; wire the depth chart to the engine — **DONE** (lifecycle wave — `MedicalEngine.dressed` before the roster snapshot)
 - **Class**: bug-fix
 - **Priority**: P1
 - **Where**: `Engine/Simulation/GameSimulator.swift:130-131` (the `!$0.isHoldingOut` filter),
@@ -782,7 +807,7 @@ contracts where the number matters most.
 - **Depends on**: none
 - **Source**: `REBUILD_VIABILITY_ANALYSIS.md` recommendation 2, §0.2. Ledger `TODO.md:4186` (#217).
 
-### F-20 — Rebase the UI ladders and owner goals onto the starter average
+### F-20 — Rebase the UI ladders and owner goals onto the starter average — **DONE** (`296e793` — `RosterStrength`, one starter-average definition)
 - **Class**: bug-fix
 - **Priority**: P1
 - **Where**: `UI/Roster/RosterSummaryBar.swift:172-190` (`rosterStrength`), pool at `:29-32`;
@@ -832,7 +857,7 @@ contracts where the number matters most.
 - **Depends on**: F-02 (both edit `PlaySimulator` consumers; sequence to avoid conflicting edits)
 - **Source**: `REBUILD_VIABILITY_ANALYSIS.md` recommendation 10, §1.6.
 
-### F-22 — Make the rookie boom/bust roll reachable
+### F-22 — Make the rookie boom/bust roll reachable — **DONE** (draft wave — the boom/bust roll is reachable)
 - **Class**: bug-fix
 - **Priority**: P1
 - **Where**: `Engine/PlayerDevelopment/PlayerDevelopmentEngine.swift:1908` (`applyAgeRegression`,
@@ -956,7 +981,7 @@ contracts where the number matters most.
 > `clockErrorRate` outcomes *over*-aggression that sometimes helps the AI — otherwise "imperfection"
 > is a difficulty slider wearing a costume.
 
-### F-26 — Give AI clubs house preferences (`GMTaste`)
+### F-26 — Give AI clubs house preferences (`GMTaste`) — **DONE** (draft wave — `GMTaste`, +42 % between-club spread vs control)
 - **Class**: design-change
 - **Priority**: P2
 - **Needs user decision**: *Should each club carry a permanent, deterministic 2-of-6 bias vector on
@@ -988,7 +1013,7 @@ contracts where the number matters most.
 - **Source**: `AI_ROSTER_DECISIONS_ANALYSIS.md` §4.2 P3, PART 5 item 3, recommendation R2. Ledger
   `TODO.md:4234` (#223).
 
-### F-27 — Model position runs and clock panic in the draft
+### F-27 — Model position runs and clock panic in the draft — **DONE** (draft wave — run tax + QB premium jump)
 - **Class**: design-change
 - **Priority**: P2
 - **Needs user decision**: *Should AI clubs chase position runs?* Specifically the QB rule: if a club
@@ -1014,7 +1039,7 @@ contracts where the number matters most.
 - **Depends on**: F-26 (same signature change to `aiMakePick`)
 - **Source**: `AI_ROSTER_DECISIONS_ANALYSIS.md` §1.5, §4.2 P4, PART 5 item 11, recommendation R4.
 
-### F-28 — Fix the inverted magnitude in the need model's quality term
+### F-28 — Fix the inverted magnitude in the need model's quality term — **DONE** (draft wave — quality term magnitude corrected)
 - **Class**: bug-fix
 - **Priority**: P2
 - **Where**: `Engine/Draft/DraftEngine.swift:1395-1407` (specifically `:1401-1403`,
@@ -1037,7 +1062,7 @@ contracts where the number matters most.
 - **Depends on**: none
 - **Source**: `AI_ROSTER_DECISIONS_ANALYSIS.md` §1.2, PART 5 item 9, recommendation R3 (second half).
 
-### F-29 — Scale draft need-weighting by round
+### F-29 — Scale draft need-weighting by round — **DONE** (draft wave — round-scaled need)
 - **Class**: design-change
 - **Priority**: P2
 - **Needs user decision**: *Should AI clubs draft for need in round 1 and for value on day 3?* The
@@ -1053,7 +1078,7 @@ contracts where the number matters most.
 - **Depends on**: F-27 (shares the `pickNumber` plumbing), F-28
 - **Source**: `AI_ROSTER_DECISIONS_ANALYSIS.md` recommendation R3 (first half).
 
-### F-30 — Unify the three positional-value tables and fix the RT/FB inversions
+### F-30 — Unify the three positional-value tables and fix the RT/FB inversions — **DONE** (draft wave — `draftPositionalWeight`, one derived ladder)
 - **Class**: bug-fix
 - **Priority**: P2
 - **Where**: `Engine/Draft/DraftEngine.swift:1413-1420` (`teamNeedComponents`'
@@ -1076,7 +1101,7 @@ contracts where the number matters most.
 - **Depends on**: none
 - **Source**: `AI_ROSTER_DECISIONS_ANALYSIS.md` §1.4, PART 5 item 8, recommendation R8 (first half).
 
-### F-31 — Widen the draft board's positional-value spread
+### F-31 — Widen the draft board's positional-value spread — **DONE** (draft wave — spread widened on the unified table)
 - **Class**: design-change
 - **Priority**: P2
 - **Needs user decision**: *How much should position matter on an AI draft board?* The report
@@ -1166,7 +1191,7 @@ contracts where the number matters most.
 - **Depends on**: none
 - **Source**: `AI_ROSTER_DECISIONS_ANALYSIS.md` §4.1 item 6, PART 5 item 15.
 
-### F-35 — Merge the UDFA fog into `AIDraftPerception`
+### F-35 — Merge the UDFA fog into `AIDraftPerception` — **DONE** (`296e793` — UDFA reads `AIDraftPerception`, local hash deleted)
 - **Class**: bug-fix
 - **Priority**: P2
 - **Where**: `Engine/FreeAgency/UDFAMarketEngine.swift:283-287`, `:1071` (uniform integer ±6,
@@ -1187,7 +1212,7 @@ contracts where the number matters most.
 - **Depends on**: none
 - **Source**: `AI_ROSTER_DECISIONS_ANALYSIS.md` §4.1 item 10, PART 5 item 13, recommendation R9.
 
-### F-36 — Close the `draftGrade` fog breach
+### F-36 — Close the `draftGrade` fog breach — **DONE** (draft wave — `publicOVREstimate` replaces the `trueOverall` read)
 - **Class**: bug-fix
 - **Priority**: P2
 - **Where**: `Engine/Draft/DraftEngine.swift:1026` (`draftGrade` boosts the published pick grade by a
@@ -1223,7 +1248,7 @@ contracts where the number matters most.
 - **Depends on**: F-12 (they move the same market in the same direction)
 - **Source**: `AI_ROSTER_DECISIONS_ANALYSIS.md` §2.5, §4.2 P6, PART 3, PART 5 item 12.
 
-### F-38 — Give the coordinator misread model a floor, a grade scale, and an OC channel
+### F-38 — Give the coordinator misread model a floor, a grade scale, and an OC channel — **DONE** (gameday wave — misread floor, grade scale, OC channel)
 - **Class**: design-change
 - **Priority**: P2
 - **Needs user decision**: *Should `balanced` and `conservative` coordinators be allowed to guess
@@ -1256,7 +1281,7 @@ contracts where the number matters most.
 - **Source**: `AI_GAMEDAY_DECISIONS_ANALYSIS.md` §4.1, §4.3.3, §4.3.4, PART 5 item 6. Ledger
   `TODO.md:4224` (#221).
 
-### F-39 — Give the AI kneel, timeouts and the onside kick
+### F-39 — Give the AI kneel, timeouts and the onside kick — **DONE** (gameday wave — AI timeouts, kneels, onside at 0.08)
 - **Class**: design-change
 - **Priority**: P2
 - **Needs user decision**: *Should the AI get the three endgame capabilities the user already has,
@@ -1290,7 +1315,7 @@ contracts where the number matters most.
 - **Source**: `AI_GAMEDAY_DECISIONS_ANALYSIS.md` §2.6, §4.3.2, §4.3.5, PART 3 rows 9, 11, 12,
   PART 5 item 5. Ledger `TODO.md:4243`.
 
-### F-40 — Fix the two-minute gates and the dead two-minute warning
+### F-40 — Fix the two-minute gates and the dead two-minute warning — **DONE** (gameday wave — two-minute gates)
 - **Class**: bug-fix
 - **Priority**: P2
 - **Where**: `Engine/Simulation/PlaySimulator.swift` — `isTwoMinuteDrill` (reported `:349-350`:
@@ -1314,7 +1339,7 @@ contracts where the number matters most.
 - **Depends on**: F-02 (same file being edited)
 - **Source**: `AI_GAMEDAY_DECISIONS_ANALYSIS.md` §4.3.2, PART 3 rows 7, 8, 10, PART 5 items 5 & 13.
 
-### F-41 — Recalibrate the kicking and punting numbers
+### F-41 — Recalibrate the kicking and punting numbers — **DONE** (gameday wave — kicking/punting, plus the punt-floor defect it found)
 - **Class**: bug-fix
 - **Priority**: P2
 - **Where**: FG table `Engine/Simulation/PlaySimulator.swift:2040-2051` (0-30: 95 · 31-40: 85 ·
@@ -1336,7 +1361,7 @@ contracts where the number matters most.
 - **Depends on**: F-02 (same file)
 - **Source**: `AI_GAMEDAY_DECISIONS_ANALYSIS.md` PART 3 rows 3, 4, 5, 16, PART 5 items 10 & 12.
 
-### F-42 — Make field-goal range depend on the kicker
+### F-42 — Make field-goal range depend on the kicker — **DONE** (gameday wave — range gated on `kickPower`)
 - **Class**: design-change
 - **Priority**: P2
 - **Needs user decision**: *Should each club's field-goal range vary with its kicker's leg?* The
@@ -1356,7 +1381,7 @@ contracts where the number matters most.
 - **Depends on**: F-41, F-17
 - **Source**: `AI_GAMEDAY_DECISIONS_ANALYSIS.md` §4.2 item 5, PART 3 row 3, PART 5 item 10.
 
-### F-43 — Sample `scoreDifferential` per play, not per drive
+### F-43 — Sample `scoreDifferential` per play, not per drive — **DONE** (gameday wave — the real instance was overtime, fixed there)
 - **Class**: bug-fix
 - **Priority**: P2
 - **Where**: `Engine/Simulation/GameSimulator.swift:249`.
@@ -1372,7 +1397,7 @@ contracts where the number matters most.
 - **Depends on**: F-40
 - **Source**: `AI_GAMEDAY_DECISIONS_ANALYSIS.md` §4.2 item 6.
 
-### F-44 — Give play selection a real red zone
+### F-44 — Give play selection a real red zone — **DONE** (gameday wave — red zone at the 20)
 - **Class**: design-change
 - **Priority**: P2
 - **Needs user decision**: *Should the red zone start at the 20 for both play selection and defence?*
@@ -1391,7 +1416,7 @@ contracts where the number matters most.
 - **Depends on**: F-40
 - **Source**: `AI_GAMEDAY_DECISIONS_ANALYSIS.md` §1.3, PART 3 row 14.
 
-### F-45 — Let quality and contract status matter to retirement
+### F-45 — Let quality and contract status matter to retirement — **DONE** (lifecycle wave — `qualityHazardScale`, age wall untouched)
 - **Class**: design-change
 - **Priority**: P2
 - **Needs user decision**: *Should good players and unsigned players retire at different rates?* The
@@ -1414,7 +1439,7 @@ contracts where the number matters most.
 - **Source**: `REBUILD_VIABILITY_ANALYSIS.md` recommendation 12 and §2.3;
   `AI_ROSTER_DECISIONS_ANALYSIS.md` PART 3 (33+ share row).
 
-### F-46 — Make waiver claims actually move players
+### F-46 — Make waiver claims actually move players — **DONE** (lifecycle wave — `WaiverWireEngine`, 4 claims per club per window)
 - **Class**: bug-fix
 - **Priority**: P2
 - **Where**: `Engine/Camp/WaiverWireEngine.swift:24-42` (`processWaivers`), the write block at
@@ -1478,7 +1503,7 @@ contracts where the number matters most.
 - **Depends on**: F-22
 - **Source**: `REBUILD_VIABILITY_ANALYSIS.md` §2.7, §4.5, §4.6.
 
-### F-49 — Unify the four trade receipts and fix the `newsLog` append bug
+### F-49 — Unify the four trade receipts and fix the `newsLog` append bug — **trade wave did the part inside its own files; the `newsLog` append bug and the inbox fold are STILL OPEN**
 - **Class**: bug-fix
 - **Priority**: P2
 - **Where**: `Engine/FreeAgency/HoldoutEngine.swift:277-281` (`announcement.inbox` discarded;
@@ -1512,7 +1537,7 @@ contracts where the number matters most.
 - **Source**: `AI_TRADE_ANALYSIS.md` §1.5, §1.6 rows C2/C3/C4, §3.2 items 7 & 8, recommendations B5,
   B7, B11.
 
-### F-50 — Load the Trade Center's history card from the ledger
+### F-50 — Load the Trade Center's history card from the ledger — **DONE** (trade wave — history card reads `TradeRecord`)
 - **Class**: bug-fix
 - **Priority**: P2
 - **Where**: `UI/Contracts/TradeView.swift:67` (`@State private var tradeHistory`), `:1415`
@@ -1536,7 +1561,7 @@ contracts where the number matters most.
 - **Source**: `AI_TRADE_ANALYSIS.md` §1.6 row C1, §3.1 row 15, §3.2 item 4, recommendation B6.
   Ledger `TODO.md:4222` (#220).
 
-### F-51 — Add a Transactions lens over `TradeRecord`
+### F-51 — Add a Transactions lens over `TradeRecord` — **IN PROGRESS (D6 wave)**
 - **Class**: design-change
 - **Priority**: P2
 - **Needs user decision**: *Should the game have a league-wide Transactions screen?* The report calls
@@ -1553,7 +1578,7 @@ contracts where the number matters most.
 - **Depends on**: F-50
 - **Source**: `AI_TRADE_ANALYSIS.md` §1.2, §3.1 row 5, recommendation D6.
 
-### F-52 — Fix the inverted pity floor
+### F-52 — Fix the inverted pity floor — **DONE** (trade wave — pity floor un-inverted)
 - **Class**: bug-fix
 - **Priority**: P2
 - **Where**: `Engine/Contract/TradeValueEngine.swift:2146-2183` (`userOfferHazard`), specifically
@@ -1572,7 +1597,7 @@ contracts where the number matters most.
 - **Depends on**: F-06 (the pity floor is also the relaunch farm; fix the persistence first)
 - **Source**: `AI_TRADE_ANALYSIS.md` §1.3, §3.1 row 6, §3.2 item 10, recommendation B3.
 
-### F-53 — Read the trade-request registry for the user's own players
+### F-53 — Read the trade-request registry for the user's own players — **DONE** (trade wave — `shoppingTarget` reads the request registry)
 - **Class**: design-change
 - **Priority**: P2
 - **Needs user decision**: *Should a public trade demand from the user's star change the market —
@@ -1591,7 +1616,7 @@ contracts where the number matters most.
 - **Depends on**: F-06 (career-scoping the registries)
 - **Source**: `AI_TRADE_ANALYSIS.md` §1.4 item 5, §3.2 item 9, recommendation D3.
 
-### F-54 — Allow injured and tagged players to be traded
+### F-54 — Allow injured and tagged players to be traded — **DONE** (trade wave — INJURED HALF ONLY; the tag half is still open)
 - **Class**: design-change
 - **Priority**: P2
 - **Needs user decision**: *Should injured players be tradeable at a discount, and should
@@ -1610,7 +1635,7 @@ contracts where the number matters most.
 - **Depends on**: F-18, F-37 (tag-and-trade needs AI tags to exist)
 - **Source**: `AI_TRADE_ANALYSIS.md` §2.3, recommendation D4.
 
-### F-55 — Raise `aiSwapChance` once the pick chart is repaired
+### F-55 — Raise `aiSwapChance` once the pick chart is repaired — **DONE** (trade wave — swap rates 0.22/0.15/0.10)
 - **Class**: design-change
 - **Priority**: P2
 - **Needs user decision**: *Should draft-weekend swaps roughly double?* Proposal: R1 0.15 → 0.22,
@@ -1626,7 +1651,7 @@ contracts where the number matters most.
 - **Depends on**: F-09, F-05
 - **Source**: `AI_TRADE_ANALYSIS.md` §1.5, §2.3, §3.1 row 4, §3.2 item 2, recommendation D5.
 
-### F-56 — Surface or neutralise the user's hidden GM persona
+### F-56 — Surface or neutralise the user's hidden GM persona — **IN PROGRESS (D6 wave)**
 - **Class**: design-change
 - **Priority**: P2
 - **Needs user decision**: *Surface the user's franchise archetype in the UI, or exclude his club
@@ -1648,7 +1673,7 @@ contracts where the number matters most.
 - **Depends on**: F-07
 - **Source**: `AI_TRADE_ANALYSIS.md` §1.4 item 4, recommendation D9.
 
-### F-57 — Report roster holes after an executed trade
+### F-57 — Report roster holes after an executed trade — **DONE** (trade wave — `needProfile` before/after, 0.30 severity)
 - **Class**: design-change
 - **Priority**: P2
 - **Needs user decision**: *Should the post-trade receipt name positions the deal stripped bare?*
@@ -1666,7 +1691,7 @@ contracts where the number matters most.
 - **Depends on**: F-49
 - **Source**: `AI_TRADE_ANALYSIS.md` §1.6 ("Roster holes: nothing"), §3.1 row 14, recommendation D8.
 
-### F-58 — Add shop-your-own-player and a trade block
+### F-58 — Add shop-your-own-player and a trade block — **IN PROGRESS (D6 wave)**
 - **Class**: design-change
 - **Priority**: P2
 - **Needs user decision**: *Should the user be able to shop a player from his detail screen and
@@ -1685,7 +1710,7 @@ contracts where the number matters most.
 - **Depends on**: F-08, F-53
 - **Source**: `AI_TRADE_ANALYSIS.md` §1.6 ("Entry points"), recommendation D7.
 
-### F-59 — Make losing cost the user players
+### F-59 — Make losing cost the user players — **DONE** (lifecycle wave — holdout frustration + `.losingCulture` reaches a stranger's negotiation)
 - **Class**: design-change
 - **Priority**: P2
 - **Needs user decision**: *Should a losing record produce holdouts, trade demands and free-agent
@@ -1736,7 +1761,7 @@ contracts where the number matters most.
 - **Depends on**: F-38
 - **Source**: `AI_GAMEDAY_DECISIONS_ANALYSIS.md` §1.4, PART 5 item 14.
 
-### F-61 — Make guarantees and contract term AI negotiating levers
+### F-61 — Make guarantees and contract term AI negotiating levers — **IN PROGRESS (contract wave)**
 - **Class**: design-change
 - **Priority**: P2
 - **Needs user decision**: *Should the AI negotiate on guaranteed money and length?* No magnitudes are
@@ -1756,7 +1781,7 @@ contracts where the number matters most.
 - **Depends on**: F-11
 - **Source**: `AI_ROSTER_DECISIONS_ANALYSIS.md` §2.6, §4.2 P7, PART 5 item 19.
 
-### F-62 — Retune draft-board noise: the top-4 draw and the consensus spread
+### F-62 — Retune draft-board noise: the top-4 draw and the consensus spread — **DONE** (draft wave — top-4 draw deleted, consensus retuned)
 - **Class**: design-change
 - **Priority**: P2
 - **Needs user decision**: *Should the fog σ or the consensus-anchor decay come down?* The report
@@ -1783,7 +1808,7 @@ contracts where the number matters most.
   `REBUILD_VIABILITY_ANALYSIS.md` §1.3 (same mechanism, reported as "the average AI first-round pick
   is the 27.8th-best player on the true board, vs 20.0 with fog off").
 
-### F-63 — Let AI clubs elevate their own practice-squad players
+### F-63 — Let AI clubs elevate their own practice-squad players — **DONE** (lifecycle wave — own-squad elevation exists at all)
 - **Class**: design-change
 - **Priority**: P2
 - **Needs user decision**: *Should AI clubs promote from their own practice squad?* Small, but it is a
@@ -1802,7 +1827,7 @@ contracts where the number matters most.
 - **Depends on**: F-18 (elevation is most meaningful once injuries remove players)
 - **Source**: `AI_GAMEDAY_DECISIONS_ANALYSIS.md` §2.5, §2.6.
 
-### F-64 — Decrement coach contract years so firing has a cost
+### F-64 — Decrement coach contract years so firing has a cost — **DONE** (lifecycle wave — decrement AND renewal)
 - **Class**: bug-fix
 - **Priority**: P2
 - **Where**: `Coach.contractYearsRemaining` — never decremented anywhere in the engine;
@@ -1825,7 +1850,7 @@ contracts where the number matters most.
 - **Depends on**: none
 - **Source**: `REBUILD_VIABILITY_ANALYSIS.md` §1.5, §1.8.
 
-### F-65 — Price and preview the cost of a scheme change
+### F-65 — Price and preview the cost of a scheme change — **IN PROGRESS (D6 wave)**
 - **Class**: design-change
 - **Priority**: P2
 - **Needs user decision**: *Should the scheme-selection screen show the install cost before the user
@@ -1847,7 +1872,7 @@ contracts where the number matters most.
 - **Depends on**: F-21
 - **Source**: `REBUILD_VIABILITY_ANALYSIS.md` §1.6.
 
-### F-66 — Fill the clock-model gaps
+### F-66 — Fill the clock-model gaps — **DONE** (gameday wave — endgame clock via `ClockContext`)
 - **Class**: design-change
 - **Priority**: P2
 - **Needs user decision**: *How much clock fidelity is wanted?* Four named gaps, no proposed design.
@@ -1866,7 +1891,7 @@ contracts where the number matters most.
 
 # P3 — dead code, docs, and copy
 
-### F-67 — Delete the dead draft/trade code, including an armed fog breach
+### F-67 — Delete the dead draft/trade code, including an armed fog breach — **DONE** (draft wave — dead draft code deleted, fog breach disarmed)
 - **Class**: bug-fix
 - **Priority**: P3
 - **Where**: `Engine/Draft/DraftEventEngine.swift` — whole file, 229 lines, zero callers, header at
@@ -1916,7 +1941,7 @@ contracts where the number matters most.
 - **Source**: `AI_ROSTER_DECISIONS_ANALYSIS.md` §1.3, PART 5 item 7;
   `AI_TRADE_ANALYSIS.md` §1.6 rows C6–C9, §3.2 item 11, recommendation B9. Ledger `TODO.md:4229`.
 
-### F-69 — Fix UI copy that promises engine behaviour that does not exist
+### F-69 — Fix UI copy that promises engine behaviour that does not exist — **IN PROGRESS (D6 wave)**
 - **Class**: bug-fix
 - **Priority**: P3
 - **Where**: `UI/Match/GameSummaryView.swift:386` (prints
@@ -1970,7 +1995,7 @@ contracts where the number matters most.
 - **Depends on**: F-51 (a Transactions lens is the other natural reader)
 - **Source**: `AI_TRADE_ANALYSIS.md` §1.1, §1.5, §1.6 rows C5 and C10.
 
-### F-71 — Fold `FantasyDraftEngine.aiPickIndex` into the one draft brain
+### F-71 — Fold `FantasyDraftEngine.aiPickIndex` into the one draft brain — **DONE** (draft wave — kept separate, deliberately, with a comment on each)
 - **Class**: design-change
 - **Priority**: P3
 - **Needs user decision**: *Should the fantasy-draft league-creation mode share `aiMakePick`, or stay
