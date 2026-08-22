@@ -69,13 +69,83 @@ final class Contract {
         return base + proratedBonus
     }
 
-    /// Dead cap if the player is cut: remaining prorated signing bonus
-    /// for all future years (including the current year).
+    /// **Guaranteed base salary, year by year** — the half of `guaranteedMoney`
+    /// that is not the signing bonus.
+    ///
+    /// Derived, not stored, and deliberately so: `guaranteedMoney` is already
+    /// persisted and `ContractEngine.realisticGuaranteedMoney` already builds it
+    /// as *`signingBonus` + the first N base salaries*, so the year map is
+    /// recoverable exactly by walking the schedule and absorbing the pool from
+    /// year one. A second stored column would be a migration, a second source of
+    /// truth, and a chance for the two to disagree about the same deal.
+    ///
+    /// Guarantees run from the FRONT of a contract because that is the only
+    /// place a club will write them: a guarantee in year four is a guarantee the
+    /// club will never reach, and no agent counts one.
+    var guaranteedBaseByYear: [Int] {
+        guard totalYears > 0 else { return [] }
+        var pool = Swift.max(0, guaranteedMoney - signingBonus)
+        return (0..<totalYears).map { yearIndex in
+            let base = yearIndex < baseSalary.count ? baseSalary[yearIndex] : 0
+            let locked = Swift.min(pool, Swift.max(0, base))
+            pool -= locked
+            return locked
+        }
+    }
+
+    /// **Dead cap if the player is cut right now** — remaining prorated signing
+    /// bonus *plus the guaranteed base salary the club still owes him*.
+    ///
+    /// ## Why the second term exists (F-61)
+    ///
+    /// It did not until now: this returned the bonus acceleration alone, which
+    /// meant `guaranteedMoney` was a number the game stored, displayed and
+    /// negotiated over while changing nothing whatsoever. A 90 %-guaranteed deal
+    /// and a 20 %-guaranteed deal at the same salary cost a club exactly the same
+    /// to walk away from, so there was no reason for any GM — user or AI — to
+    /// care which one he signed, and no way for a contract to be the thing that
+    /// wrecks a franchise.
+    ///
+    /// A guarantee is precisely the promise that survives the club changing its
+    /// mind. Charging it here is what turns guaranteed money into the mechanism
+    /// that PRODUCES dead money, which is the coupling D2's per-year dead-money
+    /// ledger was built for (`CapManagementEngine.bookDeadMoney`): a release with
+    /// three or more years left now splits a charge that is finally large enough
+    /// to hurt across two league years.
+    ///
+    /// **It decays, and fast.** Only guarantees from `currentYear` forward are
+    /// owed — money already paid is not dead money. Because guarantees run from
+    /// the front of the deal (see ``guaranteedBaseByYear``), the pain is
+    /// concentrated in the first year or two and is gone by the middle of the
+    /// contract. That is the real shape: the mistake you cannot escape is the one
+    /// you made last winter, not the one you made three years ago.
+    ///
+    /// The result is bounded by the money actually left on the deal — a club can
+    /// never owe more for cutting a man than for keeping him.
     var deadCap: Int {
+        deadCapIfCut(atYear: currentYear)
+    }
+
+    /// The charge for releasing this man at the START of `yearIndex`.
+    ///
+    /// Split out of ``deadCap`` because ``yearlyBreakdown`` needs the same
+    /// arithmetic for every year of the deal and used to spell its own copy of
+    /// it — the exact class of drift where the contract card and the cut sheet
+    /// quote different numbers for the same release.
+    func deadCapIfCut(atYear yearIndex: Int) -> Int {
         guard totalYears > 0 else { return 0 }
+        let year = Swift.max(0, Swift.min(yearIndex, totalYears))
         let proratedPerYear = signingBonus / totalYears
-        let remainingYears = totalYears - currentYear
-        return proratedPerYear * remainingYears
+        let acceleratedBonus = proratedPerYear * (totalYears - year)
+        let owedGuarantee = guaranteedBaseByYear.dropFirst(year).reduce(0, +)
+
+        // Never more than what keeping him would have cost. Without this a
+        // pathological row (a guarantee larger than the schedule that backs it,
+        // which a hand-written or legacy contract can carry) would make cutting
+        // strictly worse than paying, and `CapManagementEngine.tradeCapSplit`
+        // would be clamping a number this type should never have produced.
+        let remainingObligation = baseSalary.dropFirst(year).reduce(0, +) + acceleratedBonus
+        return Swift.max(0, Swift.min(acceleratedBonus + owedGuarantee, remainingObligation))
     }
 
     /// Total contract value: sum of all base salaries + signing bonus.
@@ -91,15 +161,15 @@ final class Contract {
         return (0..<totalYears).map { yearIndex in
             let base = yearIndex < baseSalary.count ? baseSalary[yearIndex] : 0
             let yearCapHit = base + proratedPerYear
-            let remainingFromThisYear = totalYears - yearIndex
-            let deadCapIfCut = proratedPerYear * remainingFromThisYear
 
             return ContractYearDetail(
                 yearNumber: yearIndex + 1,
                 baseSalary: base,
                 proratedBonus: proratedPerYear,
                 capHit: yearCapHit,
-                deadCapIfCut: deadCapIfCut
+                // One arithmetic, one place: the year-by-year card and the cut
+                // sheet read the same guarantee-aware charge (F-61).
+                deadCapIfCut: deadCapIfCut(atYear: yearIndex)
             )
         }
     }

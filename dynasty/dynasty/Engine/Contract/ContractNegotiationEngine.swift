@@ -39,34 +39,46 @@ struct NegotiationOffer: Identifiable, Equatable {
         return annualSalary + proratedBonus
     }
 
+    /// The contract this offer would be written as, un-persisted.
+    ///
+    /// The same trick — and the same reason — as
+    /// `ContractEngine.projectedCapHit`: the preview must not be a second
+    /// formula. A `Contract` row built from the offer's own terms and never
+    /// inserted into a `ModelContext` gives the preview the exact `capHit` and
+    /// guarantee-aware `deadCap` the deal will carry once signed, so the number
+    /// the negotiation screen shows and the number the cut sheet later charges
+    /// cannot drift.
+    func previewContract(playerAge: Int) -> Contract? {
+        guard years > 0 else { return nil }
+        return ContractEngine.buildRealisticContract(
+            playerID: UUID(),
+            teamID: UUID(),
+            annualSalary: annualSalary,
+            years: years,
+            playerAge: playerAge,
+            noTrade: noTradeClause,
+            signingBonus: signingBonus,
+            // The NEGOTIATED guarantee, so the preview prices the lever the user
+            // just pulled rather than the club's default taste.
+            guaranteedMoney: guaranteedMoney
+        )
+    }
+
+    /// **What walking away from this deal costs, at signature** (F-61).
+    ///
+    /// The number the guarantee slider exists to move, and the reason the slider
+    /// is a decision: guaranteed money is what the club owes after it stops
+    /// wanting him, and `CapManagementEngine.bookDeadMoney` now carries a charge
+    /// this size into the following league year when three or more years remain.
+    func deadCapIfCutAtSigning(playerAge: Int = 25) -> Int {
+        previewContract(playerAge: playerAge)?.deadCap ?? 0
+    }
+
     /// Year-by-year breakdown of the offer for preview purposes.
     /// Uses escalating structure for display (young player default).
     func yearlyBreakdown(playerAge: Int = 25) -> [ContractYearDetail] {
-        guard years > 0 else { return [] }
-        let proratedPerYear = signingBonus / years
-
-        // Build base salaries with escalating/front-loaded structure
-        let baseSalaries: [Int]
-        if playerAge < 28 {
-            baseSalaries = ContractEngine.escalatingBaseSalaries(annualSalary: annualSalary, years: years)
-        } else {
-            baseSalaries = ContractEngine.frontLoadedBaseSalaries(annualSalary: annualSalary, years: years)
-        }
-
-        return (0..<years).map { yearIndex in
-            let base = yearIndex < baseSalaries.count ? baseSalaries[yearIndex] : annualSalary
-            let yearCapHit = base + proratedPerYear
-            let remainingFromThisYear = years - yearIndex
-            let deadCapIfCut = proratedPerYear * remainingFromThisYear
-
-            return ContractYearDetail(
-                yearNumber: yearIndex + 1,
-                baseSalary: base,
-                proratedBonus: proratedPerYear,
-                capHit: yearCapHit,
-                deadCapIfCut: deadCapIfCut
-            )
-        }
+        guard let preview = previewContract(playerAge: playerAge) else { return [] }
+        return preview.yearlyBreakdown
     }
 }
 
@@ -1310,6 +1322,20 @@ enum ContractNegotiationEngine {
         return min(span.lowerBound + step, ageMax)
     }
 
+    /// **The guarantee share the agent opens by asking for.**
+    ///
+    /// Two inputs, and they are different questions. The OVERALL band is how
+    /// good he is; the position scalar (`ContractEngine.guaranteeLeverage`) is
+    /// what the market grants men who do his job. Real guarantee structure is
+    /// dominated by the second one and this model had none of it: an 88-OVR
+    /// running back and an 88-OVR quarterback opened at the same 45-65 % band,
+    /// in a league where the franchise quarterback's first three years are
+    /// locked at signature and the back is playing on his bonus plus year one.
+    ///
+    /// Applied multiplicatively on the tier band, so the LEAGUE average is
+    /// unchanged (the scalars normalise on the middle of the roster) and only
+    /// its shape by position moves. Re-clamped to 10…95: nobody signs for
+    /// nothing down, and nobody but a franchise-tagged quarterback gets it all.
     private static func preferredGuaranteedPercent(player: Player, persona: AgentPersona) -> Int {
         let draw = unitDraw(player.id, salt: 0x6B)
         let span: ClosedRange<Int> = {
@@ -1321,7 +1347,8 @@ enum ContractNegotiationEngine {
             }
         }()
         let width = span.upperBound - span.lowerBound
-        let base = span.lowerBound + Int(draw * Double(width))
+        let tier = span.lowerBound + Int(draw * Double(width))
+        let base = Int(Double(tier) * ContractEngine.guaranteeLeverage(player.position))
         // A hardliner does not only want more money, he wants more of it
         // written down.
         let shift = persona == .hardliner ? 5 : (persona == .cooperative ? -3 : 0)
@@ -1525,14 +1552,33 @@ enum ContractNegotiationEngine {
             ? proveItShortDealCredit
             : 1.0
 
-        // Guarantees are the other half of an offer. A number that matches the
-        // ask on paper but guarantees 20 points less of it is not the same
-        // offer, and an agent prices that gap rather than ignoring it.
-        let guaranteeGap = previousAgentOffer.guaranteedPercent - gmOffer.guaranteedPercent
-        let guaranteeDrag = guaranteeGap > 15 ? 0.96 : 1.0
+        // **The other two dimensions** (F-61). An offer is not a number, it is a
+        // number, a promise and a length, and until now only the first of the
+        // three was graded: guarantees were a single 4 % step past a fifteen-
+        // point shortfall (so the sixteenth point and the sixtieth cost the same,
+        // and guaranteeing MORE than was asked bought nothing at all), and term
+        // was a veto and nothing else.
+        //
+        // Both are priced against the agent's STANDING demand rather than his
+        // opener, for the same reason the money is: an agent who has already
+        // come down on structure cannot keep grading against terms he abandoned.
+        //
+        // The two multiply rather than add. They are independent concessions and
+        // a club that makes both should get both — that is how a real deal is
+        // built, and the swing caps (±10 % and ±13 %) bound the product at a
+        // level well under what the man himself is worth.
+        let structureValue = ContractEngine.guaranteeValueMultiplier(
+            offered: gmOffer.guaranteedPercent,
+            asked: previousAgentOffer.guaranteedPercent,
+            position: player.position
+        ) * ContractEngine.termValueMultiplier(
+            offerYears: gmOffer.years,
+            askYears: previousAgentOffer.years,
+            isProveIt: demand.isProveIt
+        )
 
         let effectivePerYear = Int(
-            Double(gmOffer.annualCapHit + creditedPerYear) * guaranteeDrag * shortDealCredit
+            Double(gmOffer.annualCapHit + creditedPerYear) * structureValue * shortDealCredit
         )
         let tone = demand.tone(forPerYear: effectivePerYear, currentAskPerYear: standingAsk)
 
@@ -1563,7 +1609,8 @@ enum ContractNegotiationEngine {
                 agentAsk: ratchetedAsk,
                 splitFactor: 1.0,           // he does not move toward the offer at all
                 player: player,
-                persona: persona
+                persona: persona,
+                isProveIt: demand.isProveIt
             )
             return AgentResponse(
                 tone: .insulted, counterOffer: counter, outcome: .pending,
@@ -1591,6 +1638,7 @@ enum ContractNegotiationEngine {
                 splitFactor: split,
                 player: player,
                 persona: persona,
+                isProveIt: demand.isProveIt,
                 // §5.5: this close, an agent who believes in clauses will bridge
                 // the last of the gap with them himself. A hardliner never does.
                 proposeIncentives: tone == .professional && persona != .hardliner
@@ -1972,20 +2020,65 @@ enum ContractNegotiationEngine {
 
     // MARK: - Compromise Generator
 
+    /// **How much stiffer an agent is about the promise than about the money.**
+    ///
+    /// Added to `splitFactor` for the guarantee line only, so a professional
+    /// counter that gives 40 % of the money gap gives 20 % of the guarantee gap.
+    /// Guarantees are what agents actually fight over — the annual number is a
+    /// press release and the guarantee is what his client eats if the club
+    /// changes its mind — and an agent who split both dimensions at the same
+    /// rate was conceding the half that matters twice as fast as he should.
+    ///
+    /// Trades against the length of a negotiation: raise it and structure stops
+    /// being negotiable at all, which pushes every deal back onto the annual
+    /// number this ruling exists to widen.
+    static let guaranteeConcessionStiffness = 0.20
+
     private static func generateCompromise(
         gmOffer: NegotiationOffer,
         agentAsk: NegotiationOffer,
         splitFactor: Double,  // 0.5 = meet in middle, 0.8 = agent barely moves
         player: Player,
         persona: AgentPersona,
+        isProveIt: Bool = false,
         proposeIncentives: Bool = false
     ) -> NegotiationOffer {
-        let salary = Int(Double(agentAsk.annualSalary) * splitFactor + Double(gmOffer.annualSalary) * (1.0 - splitFactor))
+        var salary = Int(Double(agentAsk.annualSalary) * splitFactor + Double(gmOffer.annualSalary) * (1.0 - splitFactor))
         let bonus = Int(Double(agentAsk.signingBonus) * splitFactor + Double(gmOffer.signingBonus) * (1.0 - splitFactor))
-        let guaranteed = Int(Double(agentAsk.guaranteedPercent) * splitFactor + Double(gmOffer.guaranteedPercent) * (1.0 - splitFactor))
 
-        // Years: agent usually holds firm on years
-        let years = agentAsk.years
+        // The promise moves slower than the money, and a hardliner does not move
+        // it at all — he is the persona whose whole characterisation is that the
+        // structure is the deal (`preferredGuaranteedPercent` already gives him
+        // five points more of it to defend).
+        let guaranteeSplit = persona == .hardliner
+            ? 1.0
+            : Swift.min(1.0, splitFactor + guaranteeConcessionStiffness)
+        let guaranteed = Int(
+            Double(agentAsk.guaranteedPercent) * guaranteeSplit
+                + Double(gmOffer.guaranteedPercent) * (1.0 - guaranteeSplit)
+        )
+
+        // **The agent SELLS the extra year rather than ignoring it** (F-61).
+        //
+        // He used to hold his own term flat and hand back a counter that was
+        // silent about length, so a GM who offered a fifth year to lower his cap
+        // number got no answer to it — term was a club veto in one direction and
+        // a dead letter in the other. Now a year past what he asked for is a
+        // year he keeps (more total money, more security), and he pays for it by
+        // shaving the nominal ask by exactly what
+        // `ContractEngine.termValueMultiplier` says the year is worth. His
+        // EFFECTIVE ask is unchanged; the cap number the club has to write is
+        // lower. That is the trade real clubs make, made from the agent's side.
+        //
+        // Never shorter than he asked for: selling his own term back is a
+        // concession, and a concession the GM did not ask for is a gift.
+        let years = Swift.max(agentAsk.years, gmOffer.years)
+        if years > agentAsk.years {
+            let credit = ContractEngine.termValueMultiplier(
+                offerYears: years, askYears: agentAsk.years, isProveIt: isProveIt
+            )
+            if credit > 0 { salary = Int(Double(salary) / credit) }
+        }
 
         // §5.5: the counter keeps whatever clauses the GM put on the table —
         // the agent is arguing about the money, not tearing up the structure.

@@ -756,6 +756,10 @@ enum ContractEngine {
 
     /// Calculates realistic guaranteed money for a contract.
     /// First 1-2 years fully guaranteed for big deals, less for smaller ones.
+    ///
+    /// The league-neutral shape. Real clubs are not neutral about this — see
+    /// ``clubGuaranteeLean(forTeam:)``, which is what the AI market applies on
+    /// top of it, and ``guaranteeLeverage(_:)`` for the position half.
     static func realisticGuaranteedMoney(baseSalaries: [Int], signingBonus: Int) -> Int {
         guard !baseSalaries.isEmpty else { return signingBonus }
         let avgSalary = baseSalaries.reduce(0, +) / baseSalaries.count
@@ -771,6 +775,313 @@ enum ContractEngine {
         return guaranteedBase + signingBonus
     }
 
+    // MARK: - Contract Structure: guarantees and term (F-61)
+    //
+    // ## What this section is
+    //
+    // A contract had exactly one negotiable dimension — the annual number.
+    // `Contract.guaranteedMoney` was stored and displayed and read by nothing;
+    // term was a club VETO (`ContractNegotiationEngine.maxContractYears`) rather
+    // than a lever, so no GM ever bought a year to lower a cap hit and no agent
+    // ever sold one. This section is the price list for the other two
+    // dimensions, in one place, so the negotiation screen, the agent's grading
+    // and the AI market cannot quote three different exchange rates.
+    //
+    // ## The one model everything below is derived from
+    //
+    // A dollar that is guaranteed is worth more than a dollar that is not,
+    // because the second one only arrives if the club still wants him. Write the
+    // survival probability of at-risk money as `s`; a deal with guarantee share
+    // `g` is worth `g + (1 − g)·s` of its face value.
+    //
+    // `s ≈ 0.65`. Veteran multi-year deals are terminated early more often than
+    // they are played out — in the NFL the median veteran contract ends about a
+    // year short, and this league's own churn instrument (`ChurnDiag`) puts a
+    // comparable share of signings back on the market before their term is up.
+    // So `EV(g) = 0.65 + 0.35·g`, and `dEV/dg = 0.0035` **per point of
+    // guarantee share**: that is the risk-neutral price of a guarantee, and
+    // every constant below is a deliberate deviation from it.
+
+    /// **What the GM gets back for guaranteeing MORE than the agent asked**, as
+    /// a fraction of annual salary per point of guarantee share.
+    ///
+    /// 0.25 %/pt against the risk-neutral 0.35 %/pt derived above. Deliberately
+    /// UNDER it: an agent does not sell his client's insurance at cost. The gap
+    /// is what stops the lever being an exploit — the user can genuinely buy his
+    /// cap number down with guarantees, and he pays a spread to do it.
+    ///
+    /// Trades against: raise it and guarantees become the cheapest way to sign
+    /// anybody, which is the free lunch the ruling forbids; lower it and the
+    /// lever stops being worth pulling, which is the state this replaces.
+    static let guaranteeCreditPerPoint = 0.0025
+
+    /// **What the GM pays for guaranteeing LESS than the agent asked**, same
+    /// units.
+    ///
+    /// 0.40 %/pt, ABOVE the risk-neutral rate for the mirror reason: the agent
+    /// is being asked to move risk onto his client and prices it as a seller,
+    /// not as an actuary. The same asymmetry `GMAdjustment.bounds` documents —
+    /// being good is worth less than being bad costs.
+    ///
+    /// The 0.25/0.40 spread is also the anti-round-trip property: strip twenty
+    /// points of guarantee and put them back and the GM is 3 % of APY worse off
+    /// than if he had never touched it. There is no free probe.
+    ///
+    /// This replaces a binary `guaranteeGap > 15 ? 0.96 : 1.0` step, which was
+    /// the only guarantee arithmetic in the game: it charged a flat 4 % for any
+    /// shortfall past fifteen points (so the sixteenth point and the sixtieth
+    /// cost the same) and paid NOTHING for a guarantee above the ask, which is
+    /// the direction a club actually uses.
+    static let guaranteeChargePerPoint = 0.0040
+
+    /// Ceiling on the whole guarantee term, either way, as a fraction of APY.
+    ///
+    /// 10 %. The bound is set by what else is already moving the number: the
+    /// situation multiplier spans 0.72…1.50 and the GM-standing term −8/+15 %.
+    /// A STRUCTURAL lever has to be smaller than the man and smaller than the
+    /// front office, or the negotiation stops being about who he is. Ten per
+    /// cent is roughly one tier-step of ``marketBasePercent`` — enough to close
+    /// a real gap, never enough to buy a star at a role player's price.
+    ///
+    /// At the base rates this binds at 40 points of guarantee given (credit) or
+    /// 25 points withheld (charge), before the position scalar.
+    static let guaranteeSwingCap = 0.10
+
+    /// **How hard THIS man bargains over guarantees**, as a scalar on both rates.
+    ///
+    /// Leverage and risk are two different things and this is the risk half. A
+    /// player who expects to be cut values insurance more and will trade more
+    /// annual salary for it; a player nobody releases for cap reasons barely
+    /// prices it at all. Anchored on real cut exposure and career length rather
+    /// than on money: running backs are released in their fourth year as a
+    /// matter of routine, and quarterbacks are not released at all.
+    ///
+    /// Note this runs the OPPOSITE way to ``guaranteeLeverage(_:)``, and that is
+    /// the point of having both. The quarterback gets the biggest guarantee in
+    /// the league because he can demand it, and trades it away most cheaply
+    /// because he needs it least. The back gets the smallest and defends it
+    /// hardest. Collapse the two into one number and the market loses the thing
+    /// that makes structure worth arguing about.
+    static func guaranteeSensitivity(_ position: Position) -> Double {
+        switch position {
+        case .QB:                        return 0.75
+        case .LT:                        return 0.90
+        case .WR, .CB, .DE, .DT, .RT,
+             .LG, .RG, .C:               return 1.00
+        case .MLB, .OLB, .FS, .SS, .TE,
+             .K, .P:                     return 1.15
+        case .RB, .FB:                   return 1.35
+        }
+    }
+
+    /// **What the market GRANTS this position at signing**, as a scalar on the
+    /// guarantee share an agent opens by asking for.
+    ///
+    /// Real anchor, expressed the way clubs actually think about it — how many
+    /// years of a deal are locked at signature:
+    ///
+    /// | tier | practical guaranteed years | share of a 4-year deal | scalar |
+    /// |---|---|---|---|
+    /// | franchise QB | ~3 | ~0.75 | 1.35 |
+    /// | premium edge / LT / WR / CB | ~2 | ~0.50 | 1.10 |
+    /// | the middle of the roster | ~1.5 | ~0.40 | 1.00 |
+    /// | back / specialist | ~1 | ~0.25 | 0.70 |
+    ///
+    /// The scalars are those shares normalised on the middle rung, which is
+    /// where ``ContractNegotiationEngine``'s overall-tier band was already
+    /// calibrated — so this re-shapes the league's guarantee structure by
+    /// position without moving its average.
+    ///
+    /// It is deliberately NOT ``positionMultiplier``: that ladder prices how
+    /// much a man is paid, this one prices how much of it he is promised, and
+    /// the two disagree most exactly where the real market is most interesting
+    /// (a top guard is paid like a safety and guaranteed like one; a back is
+    /// paid better than a safety and guaranteed far worse).
+    static func guaranteeLeverage(_ position: Position) -> Double {
+        switch position {
+        case .QB:                        return 1.35
+        case .DE, .LT, .WR, .CB:         return 1.10
+        case .DT, .OLB, .MLB, .TE,
+             .FS, .SS, .RT, .LG, .RG, .C: return 1.00
+        case .RB, .FB, .K, .P:           return 0.70
+        }
+    }
+
+    /// **What an offer is WORTH per year given how much of it is guaranteed**,
+    /// as a multiplier on the annual cap hit.
+    ///
+    /// The single conversion both sides of every negotiation read. Above 1.0 the
+    /// GM guaranteed more than was asked and the agent will take less per year
+    /// for it; below 1.0 he guaranteed less and the ask goes up.
+    ///
+    /// - Parameters:
+    ///   - offered: guarantee share of the GM's offer, 0…100.
+    ///   - asked: the share the agent's standing demand carries.
+    static func guaranteeValueMultiplier(offered: Int, asked: Int, position: Position) -> Double {
+        let gap = Double(offered - asked)
+        guard gap != 0 else { return 1.0 }
+        let sensitivity = guaranteeSensitivity(position)
+        let rate = gap > 0 ? guaranteeCreditPerPoint : guaranteeChargePerPoint
+        let raw = gap * rate * sensitivity
+        return 1.0 + Swift.min(guaranteeSwingCap, Swift.max(-guaranteeSwingCap, raw))
+    }
+
+    /// **What one extra year of term is worth to the club**, as a fraction of
+    /// annual salary.
+    ///
+    /// This is ``capGrowthPerSeason`` and it is not a coincidence: the cap grows
+    /// 5-8 % a year, so a deal written at a FLAT annual number sheds that much
+    /// of its cap-relative value every season it runs. A player who signs one
+    /// more year at the same money hands the club exactly one year of cap
+    /// growth, and that transfer is the entire reason real clubs buy term.
+    /// Pricing it at anything else would either give the years away or make them
+    /// unbuyable.
+    static let termValuePerYear = capGrowthPerSeason
+
+    /// **What one year SHORT of the agent's ask costs the club**, same units.
+    ///
+    /// 9 % — the 6.5 % of cap growth the player is giving up, plus ~2.5 points
+    /// for the fact that a short deal is his bet and not the club's. A man told
+    /// "we want to take a look at you first" is carrying the injury year
+    /// himself, and he charges for it.
+    ///
+    /// Rejected: a symmetric 6.5 %. It made the prove-it deal free for the club
+    /// — offer one year, pay one year's discount, re-sign at leisure — which is
+    /// the exact mechanic ``ContractNegotiationEngine/provenBetPremium`` exists
+    /// to protect, and it made shortening a deal the dominant move for every
+    /// club with a cap problem.
+    ///
+    /// It does NOT apply to a prove-it client, who is buying the short term
+    /// rather than suffering it (`proveItShortDealCredit` already pays him for
+    /// it, and charging here as well would price the same year twice in opposite
+    /// directions).
+    static let termShortPremiumPerYear = 0.09
+
+    /// Ceiling on the whole term adjustment, either way, as a fraction of APY.
+    ///
+    /// 13 % — two years of ``termValuePerYear``. Past two years beyond what he
+    /// asked for, an agent stops trading: a man does not sell his thirties by
+    /// the yard, and the age ceiling
+    /// (`ContractNegotiationEngine.maxContractYears`) is a separate and harder
+    /// veto that this must never look like a way around.
+    static let termSwingCap = 0.13
+
+    /// **What an offer is WORTH per year given its length**, as a multiplier on
+    /// the annual cap hit.
+    ///
+    /// Above 1.0 the GM offered more years than the agent asked for — more total
+    /// money and more security, so the agent will take less per year. Below 1.0
+    /// he offered fewer.
+    ///
+    /// Note the mechanical half of the term lever is already in
+    /// `NegotiationOffer.annualCapHit`: a longer deal prorates the signing bonus
+    /// over more years and lowers the cap number by itself. This is the
+    /// BEHAVIOURAL half — what the man on the other side of the table thinks
+    /// about it — and the two compound, which is why real clubs lengthen deals.
+    static func termValueMultiplier(offerYears: Int, askYears: Int, isProveIt: Bool) -> Double {
+        let delta = Double(offerYears - askYears)
+        guard delta != 0 else { return 1.0 }
+        if delta < 0 {
+            guard !isProveIt else { return 1.0 }
+            let raw = delta * termShortPremiumPerYear
+            return 1.0 + Swift.max(-termSwingCap, raw)
+        }
+        return 1.0 + Swift.min(termSwingCap, delta * termValuePerYear)
+    }
+
+    // MARK: - The clubs' own taste in structure (F-61 × D3)
+
+    /// **How much of a deal THIS front office writes down**, as a scalar on the
+    /// guarantee it would otherwise have offered.
+    ///
+    /// The house pattern is `FreeAgencyEngine.capReserve(forTeam:)`: one taste,
+    /// four archetypes, keyed on `Team.id` through
+    /// `TradeValueEngine.GMPersona.forTeam(id:)` so a franchise's GM behaves the
+    /// same way in every session without a stored field.
+    ///
+    /// * **aggressive 1.30** — over-guarantees, and this is the whole point of
+    ///   him. D3's refinement asks for franchise-altering blunders in the tail
+    ///   rather than a wider Gaussian everywhere; too much guaranteed money on
+    ///   the wrong man is the blunder real clubs actually make, and now that
+    ///   `Contract.deadCap` charges guarantees and `CapManagementEngine`
+    ///   carries the charge into next year, he can finally make it.
+    /// * **analytics 0.72** — refuses guarantees on principle, which is why he
+    ///   is the club that can absorb a deadline salary in November.
+    /// * **oldSchool 1.05** — believes in rewarding his own men.
+    /// * **balanced 1.00** — the control group.
+    ///
+    /// **The league average is deliberately left alone.** Weighted by the
+    /// archetype frequencies in `GMPersona.forTeam` (oldSchool 26 %, balanced
+    /// 34 %, analytics 20 %, aggressive 20 %) the mean is **1.017** — 1.7 % above
+    /// neutral. What this changes is the SPREAD, not the level: the aggressive
+    /// GM's mistakes cost 30 % more to escape and the analytics GM's cost 28 %
+    /// less, while the league-wide dead-money bill D2 is measuring stays where
+    /// the lead calibrated it. Raise the level here and you are retuning
+    /// somebody else's ledger by accident.
+    static func clubGuaranteeLean(forTeam teamID: UUID) -> Double {
+        switch TradeValueEngine.GMPersona.forTeam(id: teamID).archetype {
+        case .aggressive: return 1.30
+        case .oldSchool:  return 1.05
+        case .balanced:   return 1.00
+        case .analytics:  return 0.72
+        }
+    }
+
+    /// **How many extra years THIS front office buys**, as a delta on the term
+    /// it would otherwise agree to.
+    ///
+    /// The mirror of ``clubGuaranteeLean(forTeam:)`` and the same four
+    /// archetypes read the same way. The analytics GM buys term because
+    /// ``termValuePerYear`` says a year is worth 6.5 % of the annual number and
+    /// he is the one who has done that arithmetic; the aggressive GM shortens
+    /// deals because he is paying for now and expects to be right about the man.
+    ///
+    /// **Not yet wired.** The AI free-agent market settles term at
+    /// `FreeAgencyEngine.contractYearsCeiling` / `agreedYears`, in a file this
+    /// wave does not own. The function ships with its derivation so the term
+    /// half can be turned on in one line at that seam without re-deriving
+    /// anything; the age ceiling must still bind after it, since a taste is not
+    /// a licence to sign a 35-year-old for four years.
+    static func clubTermLean(forTeam teamID: UUID) -> Int {
+        switch TradeValueEngine.GMPersona.forTeam(id: teamID).archetype {
+        case .analytics:  return 1
+        case .oldSchool:  return 0
+        case .balanced:   return 0
+        case .aggressive: return -1
+        }
+    }
+
+    /// **Dead money for a man with no detailed `Contract` row** — every player
+    /// an AI club has ever signed.
+    ///
+    /// The AI free-agent market writes `Player.annualSalary` and
+    /// `contractYearsRemaining` and nothing else (`ContractEngine.signPlayer` →
+    /// `signPlayerSimple`); only the user's signings and negotiated deals get a
+    /// `Contract` row. So the guarantee model above would have described the
+    /// user's league and nobody else's, which is exactly the one-directional
+    /// asymmetry the fix queue keeps finding.
+    ///
+    /// `RosterCutEvaluator.deadCap` was a flat **15 % of salary per remaining
+    /// year** — a proxy for a prorated bonus, identical for all 32 clubs. This
+    /// keeps that number as the league mean and applies the club's own
+    /// ``clubGuaranteeLean(forTeam:)`` to it, so the aggressive GM's cuts cost
+    /// **19.5 %/yr** and the analytics GM's **10.8 %/yr**. Same league bill,
+    /// different clubs paying it — and a club whose GM guarantees everything now
+    /// has a genuinely harder time getting out from under a bad signing, which
+    /// is the whole of F-61 on the AI side.
+    ///
+    /// A player with no club is priced neutrally: there is no front office to
+    /// have a taste.
+    static let impliedGuaranteeRate = 0.15
+
+    static func impliedDeadCap(player: Player) -> Int {
+        let years = Swift.max(0, player.contractYearsRemaining)
+        guard years > 0 else { return 0 }
+        let lean = player.teamID.map { clubGuaranteeLean(forTeam: $0) } ?? 1.0
+        let perYear = Double(player.annualSalary) * impliedGuaranteeRate * lean
+        return Swift.max(0, Int(perYear) * years)
+    }
+
     /// Build a complete realistic contract with escalating or front-loaded structure.
     /// - Young players (age < 28): escalating salary structure
     /// - Veteran players (age >= 28): front-loaded salary structure
@@ -781,6 +1092,15 @@ enum ContractEngine {
     /// the no-trade clause the agent demanded and the GM agreed to are terms of
     /// the contract, and re-drawing them here silently threw away the half of
     /// the deal that was not the salary.
+    ///
+    /// **F-61 — the club's own taste in guarantees.** When no guarantee was
+    /// negotiated, the neutral ``realisticGuaranteedMoney`` is scaled by
+    /// ``clubGuaranteeLean(forTeam:)``: an aggressive front office writes 30 %
+    /// more of the deal down, an analytics one 28 % less. Guarantees never touch
+    /// `Contract.capHit` — only `Contract.deadCap` — so this cannot move a cap
+    /// charge and therefore cannot drift from the quote ``projectedCapHit``
+    /// holds (which builds this row against a throwaway `teamID` for exactly
+    /// that reason, and reads only `capHit`).
     static func buildRealisticContract(
         playerID: UUID,
         teamID: UUID,
@@ -798,8 +1118,19 @@ enum ContractEngine {
             baseSalaries = frontLoadedBaseSalaries(annualSalary: annualSalary, years: years)
         }
         let signingBonus = negotiatedBonus ?? realisticSigningBonus(annualSalary: annualSalary)
-        let guaranteed = negotiatedGuarantee
-            ?? realisticGuaranteedMoney(baseSalaries: baseSalaries, signingBonus: signingBonus)
+        let guaranteed = negotiatedGuarantee ?? {
+            let neutral = realisticGuaranteedMoney(
+                baseSalaries: baseSalaries, signingBonus: signingBonus
+            )
+            // The bonus is guaranteed by construction — it is paid at signature.
+            // Only the BASE half of the promise is the club's to have a taste
+            // about, so the lean is applied to that and the bonus rides through
+            // untouched. Bounded above by the schedule that backs it: a club
+            // cannot guarantee money the contract does not contain.
+            let base = Swift.max(0, neutral - signingBonus)
+            let leaned = Int(Double(base) * clubGuaranteeLean(forTeam: teamID))
+            return signingBonus + Swift.min(leaned, baseSalaries.reduce(0, +))
+        }()
 
         return Contract(
             playerID: playerID,
