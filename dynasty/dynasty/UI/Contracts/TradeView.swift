@@ -629,7 +629,14 @@ struct TradeView: View {
                         Text("No incoming offers")
                             .font(.subheadline)
                             .foregroundStyle(Color.textSecondary)
-                        Text("AI offers arrive weekly during the regular season — contenders buy, rebuilders sell. New offers land in your inbox until the Week \(TradeValueEngine.deadlineWeek) deadline.")
+                        // F-69: the old line said offers arrive "weekly during
+                        // the regular season", full stop, and the league market
+                        // has run in five OFFSEASON windows since Wave 2
+                        // (`MarketWindow.offseason`, driven from
+                        // `WeekAdvancer.runLeagueMarketWindow`). A user who read
+                        // this and then put the phone down at the deadline was
+                        // told the wrong thing by his own screen.
+                        Text("AI offers arrive weekly during the regular season — contenders buy, rebuilders sell — through the Week \(TradeValueEngine.deadlineWeek) deadline. The phone rings in the offseason too: the league trades again after the season, around free agency, before and after the draft, and on cut days.")
                             .font(.caption)
                             .foregroundStyle(Color.textTertiary)
                             .multilineTextAlignment(.center)

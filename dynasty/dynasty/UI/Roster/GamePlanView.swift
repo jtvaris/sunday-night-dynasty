@@ -32,9 +32,21 @@ struct GamePlanView: View {
     @State private var highlightedSliders: Set<PlanSlider> = []
     @State private var highlightFlashID = 0
 
-    /// The five game-plan dials, used to name what a preset changed.
+    /// The game-plan dials this screen offers, used to name what a preset
+    /// changed.
+    ///
+    /// F-69: `GamePlan.offensiveAggression` is **not** on this list and no
+    /// longer has a slider. It has zero read sites outside `GamePlan`'s own
+    /// `styleSummary` — not in `PlaySimulator`, not in `GameSimulator`, not in
+    /// `LiveGameEngine` — so the "Offensive Style" dial this screen used to
+    /// offer changed nothing at all, in any path, for anyone, while its label
+    /// promised shots downfield and its post-game panel narrated the result.
+    /// The queue's ruling on that class is *delete the copy or wire the
+    /// behaviour*; wiring it is an engine change and this file cannot make one,
+    /// so the promise is withdrawn. The field stays on `GamePlan` untouched: it
+    /// is a live seam for whoever threads it, and the day it reads in the
+    /// simulator the dial comes straight back.
     enum PlanSlider: String, CaseIterable {
-        case offensiveAggression
         case runPassRatio
         case fourthDown
         case defensiveAggression
@@ -42,7 +54,6 @@ struct GamePlanView: View {
 
         var shortLabel: String {
             switch self {
-            case .offensiveAggression: return "Off. Style"
             case .runPassRatio:        return "Play Mix"
             case .fourthDown:          return "4th Down"
             case .defensiveAggression: return "Def. Style"
@@ -505,8 +516,11 @@ struct GamePlanView: View {
 
         plan = Self.snapped(plan)
 
+        // `offensiveAggression` is deliberately absent: the recommendation still
+        // shapes it above so the value on the plan stays coherent for whoever
+        // wires it, but it has no slider to flash and no engine reader to
+        // matter to. See `PlanSlider`.
         var changed: Set<PlanSlider> = []
-        if !approxEqual(plan.offensiveAggression, gamePlan.offensiveAggression) { changed.insert(.offensiveAggression) }
         if !approxEqual(plan.runPassRatio, gamePlan.runPassRatio) { changed.insert(.runPassRatio) }
         if !approxEqual(plan.fourthDownAggressiveness, gamePlan.fourthDownAggressiveness) { changed.insert(.fourthDown) }
         if !approxEqual(plan.defensiveAggression, gamePlan.defensiveAggression) { changed.insert(.defensiveAggression) }
@@ -1057,16 +1071,6 @@ struct GamePlanView: View {
             Divider().overlay(Color.surfaceBorder)
 
             sliderRow(
-                label: "Offensive Style",
-                leftLabel: "Conservative",
-                rightLabel: "Aggressive",
-                riskReward: "Shots downfield open up — sacks and turnovers follow.",
-                value: $gamePlan.offensiveAggression,
-                color: .accentBlue,
-                slider: .offensiveAggression
-            )
-
-            sliderRow(
                 label: "Play Calling Mix",
                 leftLabel: "Run Heavy",
                 rightLabel: "Pass Heavy",
@@ -1104,6 +1108,7 @@ struct GamePlanView: View {
                 leftLabel: "Soft Zone",
                 rightLabel: "Press Man",
                 riskReward: "Press coverage forces mistakes — beaten corners give up big plays.",
+                reach: Self.coachedOnlyReach,
                 value: $gamePlan.defensiveAggression,
                 color: .danger,
                 slider: .defensiveAggression
@@ -1114,6 +1119,7 @@ struct GamePlanView: View {
                 leftLabel: "Coverage",
                 rightLabel: "Full Blitz",
                 riskReward: "More sacks and hurried throws — open field behind the rush.",
+                reach: Self.coachedOnlyReach,
                 value: $gamePlan.blitzFrequency,
                 color: .danger,
                 slider: .blitzFrequency
@@ -1126,11 +1132,24 @@ struct GamePlanView: View {
 
     // MARK: - Slider Row
 
+    /// F-69: how far a dial actually reaches.
+    ///
+    /// `blitzFrequency` and `defensiveAggression` are read in exactly one place
+    /// — `LiveGameEngine`'s package override, on the COACHED path — and never by
+    /// `GameSimulator`. A user who quick-sims his own game and moves either one
+    /// changes nothing, and the screen said nothing about it. Rather than delete
+    /// two dials that do work where they work, the reach is stated. The offense
+    /// carries no such caveat: `runPassRatio` and `fourthDownAggressiveness` are
+    /// both read by `PlaySimulator` and therefore apply on every path.
+    private static let coachedOnlyReach =
+        "Applies to games you coach. A quick-simmed game does not read this dial."
+
     private func sliderRow(
         label: String,
         leftLabel: String,
         rightLabel: String,
         riskReward: String,
+        reach: String? = nil,
         value: Binding<Double>,
         color: Color,
         slider: PlanSlider
@@ -1183,6 +1202,17 @@ struct GamePlanView: View {
                 .font(.caption2)
                 .foregroundStyle(Color.textTertiary)
                 .italic()
+
+            if let reach {
+                HStack(alignment: .top, spacing: DSSpacing.xxs) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: DSType.Size.micro, weight: .semibold))
+                    Text(reach)
+                        .font(DSType.text(DSType.Size.caption, .medium, prose: true))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .foregroundStyle(Color.textTertiaryReadable)
+            }
         }
         .padding(.horizontal, isHighlighted ? 8 : 0)
         .padding(.vertical, isHighlighted ? 6 : 0)
