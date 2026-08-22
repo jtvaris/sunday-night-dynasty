@@ -1737,7 +1737,7 @@ final class CRLeague {
                 p.gamesPlayedThisSeason = 0
                 p.gamesStartedThisSeason = 0
             }
-            TrainingFocusEngine.autoAssignFocus(roster: club.roster)
+            TrainingFocusEngine.autoAssignFocus(roster: club.roster, teamID: club.id)
         }
         majorInjuryThisSeason = []
 
