@@ -1974,9 +1974,7 @@ struct TradeView: View {
             teamsByID: teamsByID,
             userTeamID: career.teamID
         )
-        var log = career.newsLog
-        log.insert(announcement.news, at: 0)
-        career.newsLog = log
+        career.postNews(announcement.news)
         try? modelContext.save()
     }
 

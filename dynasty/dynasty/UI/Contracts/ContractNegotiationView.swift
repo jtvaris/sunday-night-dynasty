@@ -1910,7 +1910,9 @@ struct ContractNegotiationView: View {
     private func fileTradeRequest() {
         guard let career, let team else { return }
         guard TradeRequestRegistry.record(playerID: player.id, season: season) else { return }
-        career.newsLog.append(NewsItem(
+        // F-49(1): `append` on a newest-first, 150-truncated list is a silent
+        // no-op once the career is established. `postNews` prepends.
+        career.postNews(NewsItem(
             headline: "\(player.fullName) asks \(team.abbreviation) for a trade",
             body: "\(player.fullName)'s agent went public today, saying the \(player.position.rawValue) has told the club he wants to play for a contender. "
                 + "\"This isn't about money,\" the agent said. \"He's given this building his best football and watched it go nowhere. He wants a chance to win.\" "

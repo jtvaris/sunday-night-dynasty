@@ -706,6 +706,17 @@ extension Career {
 
     /// Persisted news feed, newest first (max 150). Writing encodes and
     /// stores the trimmed list (caller saves the context).
+    ///
+    /// ## Prefer ``postNews(_:)-(NewsItem)`` over touching this directly
+    ///
+    /// The setter truncates with `prefix(150)`, and the list is NEWEST-FIRST.
+    /// Those two facts together make `newsLog.append(item)` a silent no-op on
+    /// any established career: the item is placed at index 150+ and encoded
+    /// away in the same statement. That is F-49(1) — the headline announcing
+    /// the user's own holding-out star being force-traded was written and
+    /// discarded, every time, for as long as the career was old enough to
+    /// matter. It fails silently and only on old saves, which is the worst
+    /// combination a bug can have.
     var newsLog: [NewsItem] {
         get {
             guard let data = newsLogData,
@@ -717,6 +728,22 @@ extension Career {
         set {
             newsLogData = try? JSONEncoder().encode(Array(newValue.prefix(150)))
         }
+    }
+
+    /// Publishes a headline to the persisted feed, newest first.
+    ///
+    /// **The only correct way to add to `newsLog`.** Exists so that no caller
+    /// has to remember the ordering or the truncation — see the note on
+    /// `newsLog` for what forgetting them costs. Caller still saves the context.
+    func postNews(_ item: NewsItem) {
+        postNews([item])
+    }
+
+    /// Publishes several headlines at once, keeping the order they were
+    /// produced in, all of them ahead of what the feed already holds.
+    func postNews(_ items: [NewsItem]) {
+        guard !items.isEmpty else { return }
+        newsLog = items + newsLog
     }
 
     /// Milestone crossings already announced this season (#154a).

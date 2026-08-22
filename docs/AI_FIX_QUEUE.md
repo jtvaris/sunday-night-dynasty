@@ -1585,7 +1585,7 @@ contracts where the number matters most.
 - **Depends on**: F-22
 - **Source**: `REBUILD_VIABILITY_ANALYSIS.md` §2.7, §4.5, §4.6.
 
-### F-49 — Unify the four trade receipts and fix the `newsLog` append bug — **trade wave did the part inside its own files; the `newsLog` append bug and the inbox fold are STILL OPEN**
+### F-49 — Unify the four trade receipts and fix the `newsLog` append bug — **(1) and (2) DONE 2026-08-22; (3) the receipt unification is STILL OPEN**
 - **Class**: bug-fix
 - **Priority**: P2
 - **Where**: `Engine/FreeAgency/HoldoutEngine.swift:277-281` (`announcement.inbox` discarded;
@@ -1607,6 +1607,25 @@ contracts where the number matters most.
   the same event** and which one the user gets depends on which screen he executed from: the Trade
   Center quotes *"Dead money retained: $X.XM"*, while the factory version says only *"Roster and cap
   adjustments have been processed"* — so the draft room and the holdout path get the silent one.
+- **(1) and (2) RESOLVED 2026-08-22 — and the bug CLASS is closed, not just its two instances.**
+  Prepending at the two append sites would have left the trap armed for the next writer, so
+  `Career.postNews(_:)` was added as the one way to publish. It prepends and lets the setter
+  truncate, so the ordering and the 150-cap are no longer facts a caller has to remember. **All six**
+  writers now go through it — the two broken appends (`HoldoutEngine:369`,
+  `ContractNegotiationView:1913`) and the four open-coded prepends (`TradeView`,
+  `DraftDayCoordinator`, `WeekAdvancer`, `CoachingStaffView`, the last of which this entry did not
+  list). `newsLog` carries a note saying why `append` is a silent no-op: newest-first plus
+  `prefix(150)` means the item is placed at index 150+ and encoded away in the same statement — it
+  fails silently AND only on established saves, the worst combination available.
+  **(2)** `announcement.inbox` is now delivered, staged on `WeekAdvancer.lastInboxMessages` (the
+  channel a flow running with the shell off screen uses; the shell drains it on the next navigation
+  change, i.e. the dialog closing). The user who force-trades his own star finally gets a receipt
+  naming what came back.
+- **(3) STILL OPEN**: the two competing receipts, and `offeringDeadCap` / `receivingDeadCap` still
+  discarded at all four execution sites (`TradeCapOutcome.totalDeadCap` still has zero call sites).
+  Which receipt the user gets still depends on which screen he executed from. Untouched here — it is
+  a copy-and-plumbing unification, not a bug fix, and worth doing in one pass.
+- **Verification owed**: compiles clean; not exercised on a live holdout force-trade.
 - **What to do**: Prepend in both append sites; deliver `announcement.inbox`; return and use
   `offeringDeadCap`/`receivingDeadCap` from all four execution paths; fold the dead-money line into
   `InboxEngine.tradeCompletedMessage` so all four disclose identically; delete the duplicate

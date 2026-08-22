@@ -1002,7 +1002,7 @@ enum WeekAdvancer {
         // screen has real content that survives app restarts. `lastNewsItems`
         // stays available for same-advance consumers (owner satisfaction).
         if !lastNewsItems.isEmpty {
-            career.newsLog = lastNewsItems + career.newsLog
+            career.postNews(lastNewsItems)
         }
     }
 

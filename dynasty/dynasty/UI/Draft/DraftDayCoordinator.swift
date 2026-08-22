@@ -1005,7 +1005,7 @@ final class DraftDayCoordinator: ObservableObject {
             teamsByID: teamsByID,
             userTeamID: userTeamID
         )
-        career.newsLog = [announcement.news] + career.newsLog
+        career.postNews(announcement.news)
         if let inbox = announcement.inbox {
             // F-49: the shared factory's receipt says only "roster and cap
             // adjustments have been processed", so the war room used to be the

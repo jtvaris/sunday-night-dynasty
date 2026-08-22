@@ -366,7 +366,17 @@ enum HoldoutEngine {
             let announcement = TradeNewsFactory.announce(
                 record: record, teamsByID: teamsByID, userTeamID: career.teamID
             )
-            career.newsLog.append(announcement.news)
+            // F-49(1): this was `newsLog.append`, which on a career already
+            // holding 150 items encoded the headline straight into the bin.
+            career.postNews(announcement.news)
+            // F-49(2): and the receipt was dropped on the floor. The user gave
+            // up his own star and got no inbox message naming what came back.
+            // `lastInboxMessages` is the channel a flow running with the shell
+            // off screen stages mail on; the shell drains it on the next
+            // navigation change, which is the dialog closing.
+            if let receipt = announcement.inbox {
+                WeekAdvancer.lastInboxMessages.append(receipt)
+            }
         }
 
         // He left angry, but he left: the standoff is over either way.

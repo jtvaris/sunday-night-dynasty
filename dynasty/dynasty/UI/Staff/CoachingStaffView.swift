@@ -3076,7 +3076,7 @@ struct CoachingStaffView: View {
                 detail: "Left your staff to become head coach"
             )] + career.coachCarouselLog
 
-            career.newsLog = [NewsItem(
+            career.postNews(NewsItem(
                 headline: "\(request.requestingTeamName) hire \(request.coachName) as head coach",
                 body: "\(request.coachName) is leaving \(career.playerName)'s staff to take over as head coach of the \(request.requestingTeamName). Another branch grows on a coaching tree the league is starting to talk about.",
                 category: .coachingChange,
@@ -3084,7 +3084,7 @@ struct CoachingStaffView: View {
                 season: career.currentSeason,
                 relatedTeamID: request.requestingTeamID,
                 sentiment: .neutral
-            )] + career.newsLog
+            ))
 
             presentOutcome(StaffOutcome(
                 tone: .neutral,
