@@ -2308,6 +2308,29 @@ Things all four reports explicitly found correct and well-built. A later pass sh
   `considerAITradeUpOffer()` **before** consuming each pick and breaks the tape when a phone rings —
   the plan's S6 finding is genuinely closed.
 
+### QA-06 — Two consecutive advances both say "Advance to the Championship"
+- **Class**: bug-fix (copy)
+- **Priority**: P3
+- **Where**: `UI/Common/TimelineTasksPanel.swift` `advanceButtonLabel` — the `.playoffs` week-21 case
+  (`"Advance to the Championship"`, hardcoded) and the outer `default:` (`"Advance to \(nextPhase)"`,
+  which resolves to `"The Championship"` in the `.superBowl` phase).
+- **What is wrong**: Observed in the live 2027 run (driver log iterations 151 → 152). From the
+  Conference Championship week the button reads **"Advance to the Championship"**; tapping it moves
+  the career into the `.superBowl` phase, where the button reads **"Advance to The Championship"** —
+  the same sentence with a different capital T. To the user the control looks like it did nothing.
+- **The real defect is not the capital letter**: by the second tap the club is already IN the
+  Championship, so the label should say what advancing DOES (play/finish it) rather than re-announce
+  arriving at it. The next tap after that correctly reads "Advance to Coaching Changes".
+- **What to do**: give `.superBowl` its own case in `advanceButtonLabel` with a verb that matches the
+  action. Check the sibling phases (`.proBowl`, `.allStar`) for the same shape while there — they
+  also fall through to the generic `default:`.
+- **Risk / how to verify**: pure copy; verify by advancing through weeks 21→22→offseason and reading
+  the three consecutive labels.
+- **Depends on**: none
+- **Source**: live QA, 2026-08-22 season run.
+
+---
+
 ### QA-05 — The trade wizard quoted picks in a different currency from the engine — **DONE 2026-08-22**
 - **Class**: bug-fix
 - **Priority**: P1
