@@ -1170,6 +1170,9 @@ struct PressConferenceView: View {
                 VStack(alignment: .leading, spacing: DSSpacing.md) {
                     summaryHeadline(result: result)
                     summaryChanged(result: result)
+                    if session == .introductory {
+                        summaryFrontOffice(result: result)
+                    }
                     summaryApproach(result: result)
                     summaryQuotes(result: result)
                     if !result.promises.isEmpty {
@@ -1225,6 +1228,90 @@ struct PressConferenceView: View {
     /// #120 / #122: the deltas, with `baseline \u{2192} final` where a baseline
     /// exists. Laid out as a `Grid` for the same reason `DSResultSheet` is — an
     /// `HStack` of stacks drops a numeral the moment one column grows a line.
+    /// F-56 — the other read the room takes away, and the only one the TRADE
+    /// market cares about.
+    ///
+    /// The line above this card has said since #121 that the media read "shapes
+    /// free-agent interest". This card is the half of that sentence the user
+    /// could never see: the identity the other 31 front offices will price him
+    /// against, which his coaching style seeded at team selection and which an
+    /// emphatic answer at this podium has just overruled or left standing.
+    ///
+    /// It computes the read rather than reading the registry back, because
+    /// `IntroSequenceView.applyPressConferenceResult` does not write it until
+    /// `onComplete` fires — which is after this screen is done. Both sides call
+    /// the same two functions, so they cannot disagree.
+    ///
+    /// The caveat underneath is not decoration. A declared identity that the
+    /// user believes is permanent would be a free disguise, and it is not one:
+    /// `TradeReputationRegistry` moves the league's read off this seed from the
+    /// first executed deal onward.
+    private func summaryFrontOffice(result: PressConferenceResult) -> some View {
+        let identity = FranchiseIdentityDeclaration.podiumRead(for: result.dominantTone)
+            ?? FranchiseIdentityDeclaration.seed(for: career.coachingStyle)
+        let heldTheLine = FranchiseIdentityDeclaration.podiumRead(for: result.dominantTone) == nil
+
+        return VStack(alignment: .leading, spacing: DSSpacing.xs) {
+            Text("HOW THE LEAGUE WILL DEAL WITH YOU")
+                .font(DSType.display(DSType.Size.caption, .heavy))
+                .tracking(0.7)
+                .foregroundStyle(Color.textSecondary)
+
+            VStack(alignment: .leading, spacing: DSSpacing.xs) {
+                Text(FranchiseIdentityDeclaration.leagueReadHeadline(identity))
+                    .font(DSType.display(DSType.Size.title3, .heavy))
+                    .foregroundStyle(Color.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text(identity.declaration)
+                    .font(DSType.text(DSType.Size.body, .regular, prose: true).italic())
+                    .foregroundStyle(Color.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                summaryFrontOfficeLedger(
+                    icon: "plus.circle.fill",
+                    tint: Color.success,
+                    text: FranchiseIdentityDeclaration.buysLine(identity)
+                )
+                summaryFrontOfficeLedger(
+                    icon: "minus.circle.fill",
+                    tint: Color.dangerText,
+                    text: FranchiseIdentityDeclaration.costsLine(identity)
+                )
+
+                Text(heldTheLine
+                     ? "Nothing you said at this podium changed that — it is the front office you described when you took the job."
+                     : "That is the answer that did it. It is not what your staff file said when you were hired.")
+                    .font(DSType.text(DSType.Size.footnote, .regular, prose: true))
+                    .foregroundStyle(Color.textTertiaryReadable)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text(FranchiseIdentityDeclaration.priorCaveat)
+                    .font(DSType.text(DSType.Size.footnote, .regular, prose: true))
+                    .foregroundStyle(Color.textTertiaryReadable)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(DSSpacing.sm)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .cardBackground()
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private func summaryFrontOfficeLedger(
+        icon: String, tint: Color, text: String
+    ) -> some View {
+        HStack(alignment: .top, spacing: DSSpacing.xs) {
+            Image(systemName: icon)
+                .font(.system(size: DSType.Size.footnote, weight: .semibold))
+                .foregroundStyle(tint)
+            Text(text)
+                .font(DSType.text(DSType.Size.footnote, .medium, prose: true))
+                .foregroundStyle(Color.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
     private func summaryChanged(result: PressConferenceResult) -> some View {
         let effects = result.totalEffects
         let cells: [(label: String, value: Int, context: String?)] = [

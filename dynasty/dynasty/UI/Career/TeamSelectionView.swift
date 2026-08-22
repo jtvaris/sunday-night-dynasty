@@ -865,6 +865,27 @@ struct TeamSelectionView: View {
         // belong to whichever career last ran; a new save must not inherit them.
         WeekAdvancer.resetProcessStateForCareerSwitch()
 
+        // F-56 — the declaration, and the scope it has to be written into.
+        //
+        // `FranchiseIdentityRegistry` writes through
+        // `CareerScopedDefaults.scopedKey`, which resolves against
+        // `WeekAdvancer.activeCareerID`. The reset directly above deliberately
+        // clears that, and `CareerShellView` does not bind until the user has
+        // already sat through the intro sequence — so without this line the
+        // seed, and the press conference's amendment after it, would both land
+        // on the bare un-suffixed key and be attributed to no save at all.
+        //
+        // Binding here is not a workaround, it is the truth: this career IS the
+        // active one from the moment its league is in the store. The shell's own
+        // `bind(to:)` becomes a no-op (it guards on the id), and the reset it
+        // would otherwise have performed has just run.
+        if let chosenTeamID {
+            WeekAdvancer.bind(to: career)
+            FranchiseIdentityDeclaration.declare(
+                style: career.coachingStyle, teamID: chosenTeamID
+            )
+        }
+
         isLoading = false
         selectedCareer = career
     }
