@@ -4352,16 +4352,56 @@ tuottavat pelatussa pelissä 3,47-3,80 — paremmat pelaajat tuottavat vähemmä
 polussa syö juoksujaardeja (väsymys / kuka syvyyskaaviosta oikeasti pelaa / kompressoitu
 lahjakkuustermi). Sen nimeäminen on seuraava työ eikä sama työ kuin F-25:n kuvaama viritys.
 
+### Iltapäivän aalto — esteenpoisto, D1, D6, F-61, F-25:n juurisyy
+
+**Korjauslista tarkistettu koodia vasten** (`fd42566`): **40 kohtaa DONE**, jokainen greppaamalla
+lähdettä eikä agenttiraporttia. 2 suljettu/hylätty, 9 työn alla, 17 aidosti auki. Tämä ei ollut
+kosmetiikkaa — annoin agentille jo tehdyn kohdan (F-57) vanhentuneelta listalta ja jouduin perumaan
+tehtävän kesken ajon.
+
+**`.accessibilityIdentifier` korjasi napautuksen** (`1004e2b`). Eilinen johtopäätös "se oli minun
+työkaluni" oli puoliksi väärä: identifierin lisääminen saa semanttisen napautuksen toimimaan — sama
+nappi, sama ref-valitsin, sheet aukeaa ensimmäisellä. Se oli työkalurajoite jonka **sovelluspuolen
+muutos korjaa**, ja identifier ei ole hygieniaa vaan käyttäytymismuutos.
+
+**D1** (`13a984b`): prep on nyt kilpailu — jokaisella seuralla focus 0…1 -asteikolla jossa **0,5 on
+liigan keskiviikko**, joten kaksi keskitason staffia kumoavat toisensa ja huono suunnittelija kärsii.
+Pelin jälkeinen kerroin **poistettiin, ei siirretty**. Mitattu erikseen lisätyllä harness-lipulla:
+maksimiprep on **+0,8 pistettä marginaalia**, 19 % siitä +4,2:sta. FA:n häviäjävero on universaali ja
+keskitetty .500:aan; käyttäjän ennätyssokeat kertoimet poistettu. Ja maine osuu vihdoin
+`userAcceptBar`iin — 31. puhelu lowball-kiertueella hinnoiteltiin ennen kuin ensimmäinen.
+
+**D6 + F-56** (`aee4404`): liigan transaktiolista lukee vihdoin `TradeRecord`ia, shop-your-own-player
+kysyy kaikilta 31:ltä, schemen vaihto **virittyy** ennen kuin laukeaa. F-56 tehtiin oikein: **ei
+neljättä kanavaa** vaan valmentajatyyli siementää identiteetin ja lehdistötilaisuuden sävy täydentää
+sitä. Aalto greppasi ensin ja löysi kaksi kohtaa jotka olivat jo tehty.
+
+**F-61** (`1004e2b`): löysi että **`Contract.deadCap` ei koskaan laskenut taattua peruspalkkaa**
+vaikka sen dokumentaatio väitti niin — 90 % ja 20 % taattu sopimus maksoivat saman purkaa. D2:n
+kirjanpito operoi siis vajaalla luvulla. Takuurahan hinta johdettu: dollari riskissä ≈ 0,65
+taatusta, agentti myy alle ja seura ostaa yli, ja **se väli on exploit-suoja**.
+
+**F-25:n juurisyy** (`ee8e5c4`) — ja se kumoaa aiemman korjaukseni. Ratkaiseva mittaus 70-vs-70:
+identtiset pelaajat, kutistus tasan 1,0, ypc silti **3,33** kun neutraali antaa **4,09**. Se sulkee
+pois kompression, lahjakkuuskäyrän ja henkilöstön; Q4 3,39 > early 3,34 sulkee pois väsymyksen.
+Jäljelle jää `runKeyIntensity: 0` — neutraali veto ei mallinna puolustusta joka lukee juoksun.
+`spam` hinnoittelee sen: toisto romahtaa 42 %:iin, **sekoittava häviää 0,07**. Peli tuottaa 3,33 kun
+sekoittavan pitäisi olla ~4,45 → **pelin kutsuja on ennustettava.** F-25 on pelivalintatyötä
+sittenkin, mutta järjestyksestä eikä tilanteesta.
+
 ### Auki tämän päivän jäljiltä
 
-1. **Korjauslistan tilamerkinnät ovat vanhentuneet** — merkitty vain F-01…F-04, vaikka aallot
-   toteuttivat ~40 kohtaa. Siivottava ennen kuin listaa käytetään työjonona.
+1. ~~Korjauslistan tilamerkinnät~~ **TEHTY** — 40 merkitty, koodia vasten tarkistettuna.
 2. **Ero levenee yhä** (5,04 → 6,27 D2:n jälkeenkin). Kärjen kasautuminen on kesken.
 3. **F-25:n juurisyy** — kolme kandidaattia yllä, yksikään ei vielä suljettu pois.
 4. **QA-03:n näyttöpuoli** — viikkonauha luki BYE samalla kun kortti nimesi vastustajan; nähty kerran,
    varmistamatta normaalilla uralla.
-5. **Kausi jäi pelaamatta loppuun** — vaatii koordinaattipohjaisen ajon tai
-   `.accessibilityIdentifier`it etenemiskontrolleihin.
+5. **Kausi jäi yhä pelaamatta loppuun.** Identifier korjasi etenemisnapin, mutta pakolliset
+   tehtävät eivät ole yhdellä kuittauksella suljettavia — kukin vaatii oman päätöksensä (Franchise
+   Tag Decisions, Review Position Group Grades, …). Läpiajo vaatii tehtäväkohtaisen ajurin, ja se on
+   oma työnsä. Kaksi ansaa dokumentoitu matkan varrella: snapshot palauttaa KOKO navigaatiopinon
+   (päävalikon napit ovat aina puussa, ja skripti napautti näkymätöntä nappia 27 kertaa), ja
+   `tasks.advance` jää puuhun vahvistussheetin taakse, joten sheet on ratkaistava ensin.
 6. Päätetty muttei toteutettu: **D7-B** (sauma valmis), **F-56**:n identiteettivalitsin, **F-61**
    (takuuraha + vuodet), **D6**-aalto kokonaan, **D1** (prepin threadaus + FA-kertoimen kääntö),
    **D4-B** (lykätty tarkoituksella).
