@@ -9,16 +9,23 @@ it already cost one agent a wasted assignment this week.
 
 | state | count | what it means |
 |---|---:|---|
-| **DONE** | 40 | verified present in the source on this branch, not taken from a report |
+| **DONE** | 47 | verified present in the source on this branch, not taken from a report |
 | **CLOSED / REJECTED** | 2 | F-03 closed by measurement, F-08 rejected by the D1 ruling |
 | **IN PROGRESS** | 9 | a wave is implementing it right now |
-| open | 20 | genuinely unstarted |
+| open | 15 | genuinely unstarted (F-71 / F-72 are new, from measurement) |
+
+**2026-08-22, second wave** — QA-03, F-13, F-32, F-49(1,2), F-68, F-70(1,2), F-24.
+**Four of those seven entries were wrong about their own subject**, which is now the
+queue's most reliable failure mode: F-32's OVR table was off for rounds 4-6; F-68
+named six bad comments when two were fine; F-24's "needs user decision" flag and its
+F-23 dependency were both void; F-49 missed a sixth `newsLog` writer. Read the code,
+not the entry.
 
 The four waves of 2026-08-22 (lifecycle, draft brain, trades + reputation,
 gameday) plus D2's four sub-parts account for nearly all of the DONE column;
 `TODO.md`'s `## PÄIVÄ 2026-08-22` section is the narrative record.
 
-**Three entries had their diagnosis corrected rather than implemented as written**,
+**Entries whose diagnosis was corrected rather than implemented as written**,
 and each correction is inside the entry: F-12 (the roster ceiling binds before the
 appeal bars), F-25 (the run model is in band; the loss is in ordinary early-down
 carries) and QA-03 (half of it was my own tooling). An entry that rests on a false
@@ -2300,6 +2307,47 @@ Things all four reports explicitly found correct and well-built. A later pass sh
 - **The draft room's skip path.** `autoAdvanceUntil` calls `considerAIvsAISwap()` and
   `considerAITradeUpOffer()` **before** consuming each pick and breaks the tape when a phone rings —
   the plan's S6 finding is genuinely closed.
+
+### F-71 — The §8 80+ share sits a rounding step outside its band
+- **Class**: balance
+- **Priority**: P3
+- **Where**: `tools/balance-harness/driver/CareerScenario.harness.swift` assertion 6.9b; the shape is
+  produced by `DraftClassBuilder` intake against the shipped development stack.
+- **What is wrong**: `./run.sh career` reports the §8 80+ share at **19.00 %** against a `[12,19]`
+  band and fails. Measured at `a37e045` it was **19.16 %**, so this is long-standing and not caused
+  by any recent wave. `LeagueGenScenario`'s own comments record the four-season smoke running this
+  share at **19.8-21 %** historically, which suggests the league has sat at or just outside the top
+  of this band for some time.
+- **What to do**: decide which is wrong — the band or the league. If the band is a real §8 target,
+  the intake or the development stack has to give back roughly a point of 80+ share; if the league
+  is right, the band's upper edge is mis-set and should say so. **Do not "fix" this by widening the
+  band silently**; that is how 6.9b stops meaning anything.
+- **Risk / how to verify**: touching intake or development moves every other pyramid gate with it.
+  Re-run the full `career` assert block, not just 6.9b.
+- **Depends on**: none
+- **Source**: measured 2026-08-22 while verifying F-24; baseline established by worktree run.
+
+---
+
+### F-72 — The 33+ age share runs double its §8 target
+- **Class**: balance
+- **Priority**: P3
+- **Where**: `tools/balance-harness/driver/CareerScenario.harness.swift` assertion 6.9g; the
+  retirement pass in the offseason lifecycle.
+- **What is wrong**: 33+ players are **4.33 %** of the league against a `≤4.0 %` assert and a §8
+  target of **≤2 %** — the assert is already relaxed to twice the design target and still fails.
+  Measured **4.39 %** at `a37e045`, so it is pre-existing. The assert's own message calls it a
+  "retirement-calibration follow-up", i.e. this is a known deferral that has never been picked up.
+- **What to do**: calibrate the retirement pass. Note the two numbers to hit are different — clearing
+  the assert (4.0 %) is not the same as meeting §8 (2 %), and the entry should say which is being
+  targeted before anyone starts.
+- **Risk / how to verify**: retiring more veterans lowers the roster mean age (6.9f, currently 26.33
+  in a `[25.5,26.5]` band) and frees cap, which feeds free-agency prices. Re-run the full `career`
+  block and the FA price gates 6.11b/c.
+- **Depends on**: none
+- **Source**: measured 2026-08-22 while verifying F-24; baseline established by worktree run.
+
+---
 
 **League-level calibration**
 - **The win *spread*.** sd of team wins **3.24** vs a real 3.10; luck share of record variance
