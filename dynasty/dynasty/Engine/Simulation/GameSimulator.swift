@@ -100,12 +100,16 @@ enum GameSimulator {
     /// per-player ``PlayerGameStats``, and selects an MVP.
     ///
     /// - Parameters:
-    ///   - audibleBoost: 0..0.20 multiplicative bonus to the boosted team's offense
-    ///     (applied as final-score amplification). Wired from `OpponentPrepEngine.gameBoost`.
-    ///   - defReadBoost: 0..0.15 multiplicative bonus to the boosted team's defense
-    ///     (applied as opponent-score dampener).
-    ///   - boostedTeamID: The UUID of the team receiving the boost (typically the user's team).
-    ///     Pass `nil` to disable boosts entirely.
+    ///   - prepFocusDelta: What the club at `prepTeamID` chose to do with its
+    ///     week, as a signed shift on ``OpponentPrep``'s 0…1 focus scale
+    ///     (−0.5 … +0.5, `0` = whatever its staff would have done anyway).
+    ///     This is the ONLY caller-supplied half of opponent prep; the base
+    ///     focus for all 32 clubs is derived below from the staff each one
+    ///     already employs, so a club with no row is prepared, not absent.
+    ///     See ``OpponentPrep`` for the magnitude argument and for what the
+    ///     `×1.10` / `×0.925` post-game score edit this replaced was worth.
+    ///   - prepTeamID: Which club that delta belongs to. `nil` = neither, which
+    ///     is every AI-vs-AI game and every harness run.
     ///   - homeGamePlan: Optional coaching game plan applied to the HOME team's
     ///     offensive play-calling (run/pass mix, 4th-down aggressiveness).
     ///     Typically only the user's team gets a non-nil plan; F-17 fills `nil`
@@ -131,9 +135,8 @@ enum GameSimulator {
         awayTeam: Team,
         homeCoaches: [Coach] = [],
         awayCoaches: [Coach] = [],
-        audibleBoost: Double = 0,
-        defReadBoost: Double = 0,
-        boostedTeamID: UUID? = nil,
+        prepFocusDelta: Double = 0,
+        prepTeamID: UUID? = nil,
         homeGamePlan: GamePlan? = nil,
         awayGamePlan: GamePlan? = nil,
         weather: GameWeather? = nil,
@@ -202,8 +205,35 @@ enum GameSimulator {
         let awayRatings = CoachingModifiers.ratings(from: awayCoaches)
         // Per-possession offense edge (offense OC/plan/scheme vs the defending
         // DC/plan/scheme; discipline scales the offense's own flags/fumbles).
-        let homeOffenseAdj = CoachingModifiers.offenseAdjustments(offense: homeRatings, defense: awayRatings)
-        let awayOffenseAdj = CoachingModifiers.offenseAdjustments(offense: awayRatings, defense: homeRatings)
+        let homeCoachAdj = CoachingModifiers.offenseAdjustments(offense: homeRatings, defense: awayRatings)
+        let awayCoachAdj = CoachingModifiers.offenseAdjustments(offense: awayRatings, defense: homeRatings)
+
+        // D1 / F-16 — OPPONENT PREP, threaded.
+        //
+        // This used to be §6b at the bottom of this function: a multiplier on
+        // the FINAL SCORE, ×1.10 on the user's points and ×0.925 on the rival's,
+        // worth +4.2 points of margin a game ≈ +2.1 wins a season, and only ever
+        // the user's because `OpponentPrepWeek`'s single construction site
+        // hard-codes the career's own club. It now composes into the SAME
+        // `PlaySimulator.Adjustments` channel the coaching staff moves, at a
+        // fifth of the size, for all 32 clubs. See ``OpponentPrep``.
+        //
+        // Both halves are here because prep is a contest between two staffs: a
+        // club's own audible edge lifts its offense, and its defensive read
+        // lands on the OTHER club's offense adjustments. Two average staffs
+        // cancel to exactly zero, and a game with no coaches on either side —
+        // every balance-harness roster — produces `nil` from both helpers and
+        // therefore the identical pre-D1 numbers.
+        let homeFocus = OpponentPrep.clampFocus(
+            OpponentPrep.staffFocus(gamePlanning: homeRatings.gamePlanning)
+                + (prepTeamID == homeTeam.id ? prepFocusDelta : 0))
+        let awayFocus = OpponentPrep.clampFocus(
+            OpponentPrep.staffFocus(gamePlanning: awayRatings.gamePlanning)
+                + (prepTeamID == awayTeam.id ? prepFocusDelta : 0))
+        let homeOffenseAdj = CoachingModifiers.combine(
+            homeCoachAdj, prepAdjustments(own: homeFocus, opposing: awayFocus))
+        let awayOffenseAdj = CoachingModifiers.combine(
+            awayCoachAdj, prepAdjustments(own: awayFocus, opposing: homeFocus))
         // Pre-game morale: a strong staff (morale-influence + HC motivation)
         // lifts the room so fewer mood-dependent players dip under the penalty
         // line. Snapshot-only — the live @Model players are never touched.
@@ -618,26 +648,9 @@ enum GameSimulator {
             awayQuarterScores[4] = otResult.awayOTPoints
         }
 
-        // -----------------------------------------------------------------
-        // 6b. Apply OpponentPrepEngine game boost (Camp Phase 1 wire-up)
-        // -----------------------------------------------------------------
-        // The boost is applied as a final-score nudge rather than threading
-        // multipliers through every PlaySimulator call. audibleBoost (0..0.20)
-        // amplifies the boosted team's own scoring; defReadBoost (0..0.15)
-        // dampens the opponent's. Half-strength (×0.5) is intentional —
-        // a 100% opponent-prep week shifts the final by ~+10% offense /
-        // -7.5% defense, matching the design intent without runaway scoring.
-        if let boostedID = boostedTeamID, (audibleBoost > 0 || defReadBoost > 0) {
-            let audibleMult = 1.0 + (max(0.0, min(0.20, audibleBoost)) * 0.5)
-            let defReadMult = 1.0 - (max(0.0, min(0.15, defReadBoost)) * 0.5)
-            if boostedID == homeTeam.id {
-                homeScore = Int((Double(homeScore) * audibleMult).rounded())
-                awayScore = max(0, Int((Double(awayScore) * defReadMult).rounded()))
-            } else if boostedID == awayTeam.id {
-                awayScore = Int((Double(awayScore) * audibleMult).rounded())
-                homeScore = max(0, Int((Double(homeScore) * defReadMult).rounded()))
-            }
-        }
+        // §6b — the opponent-prep score multiplier — is DELETED, not moved.
+        // It ran here, after the whistle, editing the scoreboard: see the prep
+        // block in section 1 for what replaced it and why.
 
         // -----------------------------------------------------------------
         // 6c. Round 4 (§5): end-of-game heat → morale write-back
@@ -1719,6 +1732,30 @@ enum GameSimulator {
         for i in players.indices {
             players[i].morale = Swift.max(0, Swift.min(100, players[i].morale + bump))
         }
+    }
+
+    /// D1 / F-16: one club's opponent-prep contribution to its OWN offense's
+    /// per-play adjustments — its audible edge minus what the defense across the
+    /// field has prepared for it.
+    ///
+    /// Returns `nil` when the two staffs cancel, which is the common case and is
+    /// what keeps the no-coach path (`gamePlanning == nil` on both sides)
+    /// byte-identical to the pre-D1 engine: `CoachingModifiers.combine` passes a
+    /// `nil` straight through, so a neutral game never even allocates an
+    /// `Adjustments`.
+    ///
+    /// Shared by both teams and both directions, so the offense's gain and the
+    /// defense's suppression can never be tuned apart by accident.
+    static func prepAdjustments(own: Double, opposing: Double) -> PlaySimulator.Adjustments? {
+        let mine = OpponentPrep.offenseEdge(focus: own)
+        let theirs = OpponentPrep.defenseEdge(focus: opposing)
+        let completion = mine.completion + theirs.completion
+        let run = mine.run + theirs.run
+        guard completion != 0 || run != 0 else { return nil }
+        var adj = PlaySimulator.Adjustments()
+        adj.completionBonus = completion
+        adj.runYardageBonus = run
+        return adj
     }
 
     // MARK: - Mental Game (round 4 — hot/cold FORM)

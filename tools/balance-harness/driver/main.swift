@@ -1402,6 +1402,16 @@ func scenarioFullGame(_ f: [String: String]) {
     print("  HOME: \(describe(homeSpec))")
     print("  AWAY: \(describe(awaySpec))")
     print("  games=\(n)  seedable=\(f["seedable"] != nil ? "rosters-fixed" : "no")  (engine play-by-play RNG is always stochastic)")
+    // D1 / F-16: `--home-prep <0…100>` is the HOME club's Week Prep slider, in
+    // the same units the Week Prep screen shows. 50 = whatever its staff would
+    // have done anyway (the default, and exact parity with a run that omits the
+    // flag). It exists so the ruling's "roughly a fifth of +4.2 points of
+    // margin" can be MEASURED rather than asserted — the shipped `fullgame`
+    // rosters carry no coaches, so prep is otherwise identically neutral here.
+    let homePrepDelta: Double = (Double(f["home-prep"] ?? "") ?? 50.0) / 100.0 - 0.5
+    if homePrepDelta != 0 {
+        print(String(format: "  HOME PREP  slider=%.0f%%  focus delta=%+.2f", (homePrepDelta + 0.5) * 100, homePrepDelta))
+    }
     var home = Aggregate(), away = Aggregate(), both = Aggregate()
     var homeWins = 0, awayWins = 0, ties = 0
     var margins: [Double] = []
@@ -1411,6 +1421,7 @@ func scenarioFullGame(_ f: [String: String]) {
         let (ht, hc, hp) = buildRoster(homeSpec, side: "H")
         let (at, ac, ap) = buildRoster(awaySpec, side: "A")
         let r = GameSimulator.simulate(homeTeam: ht, awayTeam: at, homeCoaches: hc, awayCoaches: ac,
+                                       prepFocusDelta: homePrepDelta, prepTeamID: ht.id,
                                        homeGamePlan: hp, awayGamePlan: ap)
         let hl = teamLine(r.boxScore.home, drives: r.boxScore.drives, teamID: ht.id)
         let al = teamLine(r.boxScore.away, drives: r.boxScore.drives, teamID: at.id)
