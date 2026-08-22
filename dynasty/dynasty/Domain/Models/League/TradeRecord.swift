@@ -91,6 +91,22 @@ final class TradeRecord {
 
     var occurredAt: Date
 
+    /// The best player who changed hands, if any — the man a headline about
+    /// this deal is actually about.
+    ///
+    /// F-70: `sentSummary` / `receivedSummary` store NAMES so the ledger
+    /// survives retirements, which is right for the ledger and left the news
+    /// feed unable to render a portrait: every trade story set
+    /// `relatedPlayerID: nil` while every other person-story lit one up. This is
+    /// the id the feed needs, kept deliberately OPTIONAL and separate from the
+    /// summaries: it is a pointer to a row that may be gone, so a reader must
+    /// tolerate a miss, and nothing about the ledger's own meaning depends on
+    /// it. `nil` for a pick-only swap.
+    ///
+    /// Default-value stored property, never in `init` -> free lightweight
+    /// migration (`docs/SWIFTDATA_MIGRATION_PLAN.md` §4).
+    var headlinePlayerID: UUID? = nil
+
     /// Typed accessor over `phaseRaw`; unknown/legacy values read as
     /// `.regularSeason` rather than crashing a history screen.
     var phase: SeasonPhase {
@@ -270,6 +286,11 @@ enum TradeLedger {
             futurePicksCount: (sentPicks + receivedPicks)
                 .filter { $0.seasonYear > context.season }.count
         )
+        // The headline man is the best player in the deal, whichever way he
+        // went — "Denver land Vale" and "Vegas ship Vale out" are the same
+        // story and it carries the same face.
+        record.headlinePlayerID = (sentPlayers + receivedPlayers)
+            .max(by: { $0.overall < $1.overall })?.id
         record.careerID = (sentPlayers + receivedPlayers).first?.careerID
             ?? (sentPicks + receivedPicks).first?.careerID
             ?? WeekAdvancer.activeCareerID

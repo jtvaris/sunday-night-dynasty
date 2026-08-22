@@ -2425,8 +2425,11 @@ enum WeekAdvancer {
         // each other, in any phase, ever"). Weeks 1-6 are nearly silent, 7-8 pick
         // up, deadline week below is the flurry — the §5 shape of "8-25 in-season
         // trades, ≥60 % of them in the last three pre-deadline weeks".
+        // F-70: the result is read below, to keep the week's trade RUMOUR from
+        // contradicting the deals this pass just executed.
+        var marketRecords: [TradeRecord] = []
         if week < tradeDeadlineWeek {
-            runLeagueMarketWindow(
+            marketRecords += runLeagueMarketWindow(
                 window: .week(week),
                 career: career,
                 teams: teams,
@@ -2434,7 +2437,7 @@ enum WeekAdvancer {
                 allPlayers: allPlayers,
                 week: week,
                 modelContext: modelContext
-            )
+            ).records
         }
 
         // Deadline week CLOSES here: the deadline passes once the week's games
@@ -2458,6 +2461,7 @@ enum WeekAdvancer {
                 week: week,
                 modelContext: modelContext
             )
+            marketRecords += deadlineResult.records
             if !deadlineResult.summaries.isEmpty {
                 lastInboxMessages.append(
                     TradeValueEngine.deadlineRoundupMessage(
@@ -2477,6 +2481,29 @@ enum WeekAdvancer {
                     season: season
                 ))
             }
+        }
+
+        // 9a. The week's trade RUMOUR, raised here and not in
+        // `generateWeeklyNews` (F-70).
+        //
+        // The news pass runs far above this point, before the league's market
+        // window has moved anybody, so a rumour written there could name a club
+        // as "interested" in a player the very same advance had already shipped
+        // somewhere else. Raised here it can be told who actually moved.
+        //
+        // Appending after `OwnerSatisfactionEngine.updateSatisfaction` has
+        // already read `lastNewsItems` is deliberate and is a no-op for it: that
+        // pass counts `.negative` and `.positive` rows only, and a rumour is
+        // `.neutral`.
+        if let rumor = NewsGenerator.weeklyTradeRumor(
+            players: allPlayers,
+            teams: teams,
+            career: career,
+            week: week,
+            season: season,
+            excluding: Set(marketRecords.compactMap(\.headlinePlayerID))
+        ) {
+            lastNewsItems.append(rumor)
         }
 
         // 9b. Midseason mock draft at week 9 (generate draft class early for projections)

@@ -77,12 +77,14 @@ enum NewsGenerator {
             items.append(injuryNews)
         }
 
-        // 4) Trade rumors (random chance, higher near trade deadline)
-        if Bool.random() || career.currentPhase == .tradeDeadline {
-            if let tradeRumor = generateTradeRumor(players: players, teams: teams, week: week, season: season) {
-                items.append(tradeRumor)
-            }
-        }
+        // 4) Trade rumours are NOT generated here — see `weeklyTradeRumor`.
+        //
+        // F-70: this pass runs BEFORE the league's market window inside
+        // `advanceRegularSeasonWeek`, so a rumour written here cannot know what
+        // the market is about to do. The feed printed "PHI have interest in
+        // Vale" in the same advance that shipped Vale to Denver. The rumour is
+        // now raised after the deals are done, with the men who actually moved
+        // excluded.
 
         // 5) Coaching hot seat speculation
         let strugglingTeams = teams.filter { $0.losses > $0.wins && ($0.wins + $0.losses) >= 4 }
@@ -697,15 +699,46 @@ enum NewsGenerator {
         )
     }
 
+    /// A trade rumour for the week, raised AFTER the league's market window so
+    /// it cannot contradict a deal that just happened.
+    ///
+    /// F-70: the caller passes the players the market actually moved. That set
+    /// is the headline man of each executed deal (`TradeRecord.headlinePlayerID`)
+    /// — **not** everyone who changed hands, so a rumour can still, rarely, name
+    /// a secondary piece in a completed package. It removes the case the defect
+    /// was reported for (the notable player the feed and the market disagree
+    /// about) and does not claim to remove every one.
+    ///
+    /// Fires near-always at the deadline and on a coin flip otherwise, which is
+    /// the behaviour the old inline call had.
+    static func weeklyTradeRumor(
+        players: [Player],
+        teams: [Team],
+        career: Career,
+        week: Int,
+        season: Int,
+        excluding movedPlayerIDs: Set<UUID>
+    ) -> NewsItem? {
+        guard Bool.random() || career.currentPhase == .tradeDeadline else { return nil }
+        return generateTradeRumor(
+            players: players, teams: teams, week: week, season: season,
+            excluding: movedPlayerIDs
+        )
+    }
+
     private static func generateTradeRumor(
         players: [Player],
         teams: [Team],
         week: Int,
-        season: Int
+        season: Int,
+        excluding movedPlayerIDs: Set<UUID>
     ) -> NewsItem? {
-        // Players in last year of contract or unhappy are trade candidates
+        // Players in last year of contract or unhappy are trade candidates —
+        // minus anyone the market just moved, who is news, not a rumour.
         let candidates = players.filter {
-            $0.teamID != nil && ($0.contractYearsRemaining <= 1 || $0.morale < 40)
+            $0.teamID != nil
+                && ($0.contractYearsRemaining <= 1 || $0.morale < 40)
+                && !movedPlayerIDs.contains($0.id)
         }
         guard let player = candidates.randomElement() else { return nil }
         let currentTeam = teams.first(where: { $0.id == player.teamID })?.fullName ?? "his team"
@@ -1034,10 +1067,12 @@ enum TradeNewsFactory {
             week: record.week,
             season: record.season,
             relatedTeamID: userWasInvolved ? userTeamID : acquirerTeamID,
-            // The ledger stores names, not player ids (it has to survive
-            // retirements), so news rows from trades carry no portrait. Handoff:
-            // a `headlinePlayerID` on `TradeRecord` would light one up.
-            relatedPlayerID: nil,
+            // F-70: the handoff this comment used to describe is done —
+            // `TradeRecord.headlinePlayerID` names the best man in the deal, so
+            // a trade story renders a portrait like every other person-story.
+            // Still optional: it points at a row that may have retired, and a
+            // pick-only swap has no face at all.
+            relatedPlayerID: record.headlinePlayerID,
             sentiment: isBigDeal
                 ? .positive
                 : (record.kind == .holdoutForced ? .negative : .neutral)

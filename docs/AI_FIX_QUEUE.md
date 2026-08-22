@@ -2074,7 +2074,7 @@ contracts where the number matters most.
   `REBUILD_VIABILITY_ANALYSIS.md` §1.1 and recommendation 7 ("at minimum, remove the checkmark");
   `AI_TRADE_ANALYSIS.md` §1.6 row C11.
 
-### F-70 — Repair trade news fidelity
+### F-70 — Repair trade news fidelity — **(1) and (2) DONE 2026-08-22; (3) STILL OPEN**
 - **Class**: bug-fix
 - **Priority**: P3
 - **Where**: `Engine/Media/NewsGenerator.swift:700-720` (`generateTradeRumor`), fired from
@@ -2097,6 +2097,28 @@ contracts where the number matters most.
   today.
 - **Risk / how to verify**: `python3 tools/lint/design_tokens.py`, clean build; read the news feed
   across a deadline week and confirm no rumour contradicts an executed deal.
+- **PARTIALLY RESOLVED 2026-08-22.**
+  - ✅ **(2) Trade stories carry a face.** `TradeRecord.headlinePlayerID` (optional, inline default →
+    free migration per `SWIFTDATA_MIGRATION_PLAN.md` §4) names the best man in the deal, set by
+    `TradeRecord.record(...)`; the news row reads it. This is exactly the handoff the old
+    `relatedPlayerID: nil` comment asked for. Kept optional and separate from the summaries: it
+    points at a row that may have retired, and a pick-only swap has no face.
+  - ✅ **(1) The rumour can no longer contradict the market.** Root cause is ORDERING, which this
+    entry did not name: `generateWeeklyNews` runs at `WeekAdvancer:1688` and the league market window
+    at `:2428`, both inside `advanceRegularSeasonWeek` — the rumour was written before the deals
+    existed. Rumour generation moved out of `generateWeeklyNews` into
+    `NewsGenerator.weeklyTradeRumor`, called after the market pass with the executed men excluded.
+    **Honest limit**: the exclusion set is each deal's headline player, not everyone who changed
+    hands, so a rumour can still name a secondary piece in a completed package. It removes the
+    reported case and does not claim to remove every one.
+    Checked before moving it: appending after `OwnerSatisfactionEngine.updateSatisfaction` has read
+    `lastNewsItems` is a **no-op** for that pass — it counts `.negative` / `.positive` rows and a
+    rumour is `.neutral`.
+  - ❌ **(3) `DraftStoryRecorder.events(forYear:)` still has no reader.** Draft-night trade events
+    remain write-only DB rows. Needs a UI surface (`DraftRecapView` / `RoundRecapSheet`) and overlaps
+    F-49's inbox/receipt work — left open deliberately rather than half-built.
+- **Verification owed**: compiles clean and the design-token lint passes; the feed has NOT been read
+  across a live deadline week. This season run has not reached week 9 yet.
 - **Depends on**: F-51 (a Transactions lens is the other natural reader)
 - **Source**: `AI_TRADE_ANALYSIS.md` §1.1, §1.5, §1.6 rows C5 and C10.
 
