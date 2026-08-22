@@ -939,7 +939,7 @@ contracts where the number matters most.
 - **Source**: `AI_GAMEDAY_DECISIONS_ANALYSIS.md` §2.3, §4.2 item 3, PART 5 item 7;
   `REBUILD_VIABILITY_ANALYSIS.md` §1.4. Ledger `TODO.md:4229`.
 
-### F-25 — Bring full-game play selection back inside the NFL bands
+### F-25 — Bring full-game play selection back inside the NFL bands — **ROOT CAUSE FOUND 2026-08-22; play selection, but the SEQUENCE not the situation**
 - **Class**: design-change
 - **Priority**: P1
 - **Needs user decision**: *Which lever moves first — the base pass weights, the situational
@@ -980,6 +980,31 @@ contracts where the number matters most.
 > coach per game (mirroring `passTotalMalusCap` / `runGrandBiteCap`), and make roughly half of
 > `clockErrorRate` outcomes *over*-aggression that sometimes helps the AI — otherwise "imperfection"
 > is a difficulty slider wearing a costume.
+
+- **ROOT CAUSE, each step measured (2026-08-22):**
+  1. The run model is IN BAND — `percall` gives the NFL blend **4.09**, stuff 18.6 %.
+  2. A full game at 80 vs 78 gives 3.68; at **70 vs 70** — identical players, and
+     `edgeCompressionScale` returns exactly 1.0 below a 3.5-point gap so compression is not even
+     active — it gives **3.33**. That rules out compression, the talent curve, and personnel (with
+     all-70 players there is no better man for the depth chart to pick).
+  3. Fatigue is ruled out by the new `RUN SPLIT` line: Q4 reads **3.39** against **3.34** on early
+     downs. If backs were tiring, Q4 would be the low bucket.
+  4. What a neutral snap does not model is the one thing left: `measureRun` passes
+     `runKeyIntensity: 0`, so the defence never reads the run. `percall`'s "vs-mix" means a random
+     defensive PACKAGE, not an adaptive opponent.
+  5. `spam` prices the mechanism: a repeated inside run collapses **4.12 → 1.74** (42 % of first-call
+     value) while a **mixed** caller loses **0.07** (4.45 memory-on vs 4.52 off).
+- **Therefore**: the adaptive defence works as designed, and the game's own play-caller is predictable
+  enough to be keyed. A mixed caller would sit near 4.45; the game measures 3.33.
+- **What to do**: vary the SEQUENCE in `decidePlayCall`. NOT a retune of the run model — its base
+  band's doc comment says the harness dialled it — and NOT the situational mix: the red zone reading
+  2.18 is a short field with a stacked box, which is what a short field should yield.
+- **Also noticed**: `spam`'s r4 reads 1.74 against a stated floor of ~1.8. Probably noise at this N,
+  worth one look by whoever takes the retune.
+- **A correction worth keeping**: an earlier note recorded that F-25's play-selection diagnosis was
+  wrong, because the loss sits in ordinary early-down carries rather than special situations. The
+  observation was right and the conclusion was not. It IS play selection — the sequence, not the
+  situation.
 
 ### F-26 — Give AI clubs house preferences (`GMTaste`) — **DONE** (draft wave — `GMTaste`, +42 % between-club spread vs control)
 - **Class**: design-change
