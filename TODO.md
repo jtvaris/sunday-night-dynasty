@@ -4254,6 +4254,118 @@ mittalukuja joita muiden korjausten arviointi käyttää; vasta sitten #215-#217
 eivätkä bugikorjauksia. Kaikki neljä raporttia päättyvät omaan priorisoituun suosituslistaansa
 `tiedosto:rivi`-kohteineen, ja jokainen suositus on merkitty joko bugikorjaukseksi tai designmuutokseksi.
 
+## PÄIVÄ 2026-08-22 — suunnitteluohjelma toteutukseen: neljä aaltoa, D2 kokonaan, elävä QA
+
+Käyttäjän brief: *"realismia kohti, pysyy pelattavana ja kiinnostavana, AI tekee virheitä, häviöt
+maksaa"*. Kaikki seitsemän suunnittelupäätöstä (D1-D7) + F-56/F-61/F-66 päätettiin ja kirjattiin
+`docs/AI_DESIGN_DECISIONS.md`:hen, ja toteutus ajettiin.
+
+**Neljä rinnakkaista aaltoa, kukin omassa git-worktreessään, kukin käännetty ja mitattu ennen mergeä:**
+
+| aalto | mitä | merge |
+|---|---|---|
+| Kausikierto (D4-A/C) | oman practice squadin nostot olemassa ensi kertaa, loukkaantuneet eivät pukeudu, waiverit siirtävät pelaajia, valmentajasopimukset kuluvat JA uusiutuvat, häviämisen hinta kahdesta kohdasta | `c31126d` |
+| Draft-aivo (D3) | `GMTaste` — 2/6 pysyvää mieltymystä per seura, katko 4,0 OVR, **jokainen syöte julkinen**; position run -paniikki; kierrosskaalattu need; kolme positioarvotaulua yhdeksi | `c6ac160` |
+| Treidit + maine (D7-A) | pick-käyrän häntä oikeista Johnson-arvoista, dossier avaimena ihminen, maine suunnattuna, F-07 arbitraasi 1,49× (oli rajoittamaton, mitattu +128 %/käännös) | `d6004a5` |
+| Pelipäivä (D5, F-66) | valmentajapersoonat `gamePlan`-slottiin (oli kovakoodattu `nil` 31 seuralle), lopputilanteiden kello, AI:n aikalisät ja polvistumiset, koordinaattorin misread-lattia | `6b7c07b` |
+
+**Mitattu tulos, ei väite:** GMTaste tuotti seurojen välisen positiojakauman hajonnan **0,0185 vs
+0,0130** varta vasten rakennetulla "ei makua" -kontrollihaaralla (+42 %), ja QB per 1. kierros
+**3,88 / sd 1,90 / 0-8** vastaan oikean liigan 2018-25 keskiarvoa 3,4 / sd 1,9.
+
+**Kolme aaltoa löysi yhteensä ~10 väärää premissiä korjauslistasta ja korjasi ne kirjoitetun sijaan.**
+Se on oikea lopputulos: kohta joka lepää väärällä premissillä on suljettava mittauksella, ei
+toteutettava.
+
+### D2 kokonaan — palkkakatto sitoo nyt vuosien yli
+
+* **(a)** `Team.deadCapCurrentYear` / `deadCapNextYear`. Maaliskuun true-up **pyyhki ehdoitta kaiken
+  kuolleen rahan** — sen oma kommentti myönsi olevansa väliaikainen "kunnes per-vuosi-kirjanpito on
+  olemassa". Nyt on. Yksi kirjauspaikka (`bookDeadMoney`) jaettuna vapautuksen ja treidin kesken,
+  June 1 -muotoinen: 3+ vuoden diili jakautuu kahdelle liigavuodelle, lyhyempi osuu kokonaan nyt.
+* **(b)** Palkkalattia. **Ensimmäinen malli oli väärä ja mittaus näytti sen:** toteutin sen
+  lisäaaltona ja payroll ei liikkunut lainkaan (81,7 % vs 83,9 % ilman). Syy on rakenteellinen —
+  **rosterikatto sitoo ennen rahaa**, eikä oikea liiga täytä lattiaa allekirjoittamalla useampia vaan
+  maksamalla enemmän. Korvattu lattiapreemiolla (katto +25 %), joka on samalla se rehellinen puoli
+  "loser taxista".
+* **(c)** Cap-reservi GM:n makuna eikä kiskona: analytics 18 / balanced 15 / old-school 14 /
+  **aggressive 8**. Kahdeksan on tarkoituksella lähellä 6,6 %:n pakollista laskua — aggressiivisen
+  seuran KUULUU joskus päätyä miinukselle, ja se on se mekanismi joka tuo hyvän pelaajan markkinalle.
+* **(d)** Rajattu cap-casualty-pass `selfHealCapCompliance`iin: yksi mies per ajo, vain sellainen
+  jonka vapautus oikeasti auttaa (kiihdytys < cap-osuma), ja halvin riittävä eikä suurin säästö.
+
+### Se mikä oli väärin ja jonka mittari löysi
+
+**#214:n ankkuri oli minun oma virheeni.** Kalibroin monotonisen käyrän yhteen lukuun — "6,6 pisteen
+ero = liigan paras vs huonoin = 85 %" — ja ankkuri oli oikea mutta päättely siitä väärä: jos 6,6 on
+koko liigan hajonta, tavallinen ottelu on 2-3 pisteen ero ja niiden pitää olla lähellä kolikonheittoa.
+Ne olivat 75-86 %. `corr(rosteri, voitot)` oli 0,86 ja smoke tuotti 17-0-kauden.
+
+Korjaus keyaa kutistuksen **leveyteen** eikä keskiarvoeroon: mediaani erottaa keskitetyn edun (kaksi
+tähteä liikuttavat keskiarvoa muttei mediaania) laajasta (molemmat liikkuvat). Shutdown-CB-pari saa
+siis yhä `scale = 1.0` — se mihin vanha tasainen vyöhyke oli olemassa — ja tasainen tier-ero saa
+täyden kutistuksen MISSÄ TAHANSA koossa.
+
+### Mittari, joka teki tästä mahdollista
+
+**F-04**: `diag balance` (winSD, corr(starterOVR,wins), yoyCorr, worstToField) ja tänään lisäksi
+**`diag talent`** (liigan OVR, top5, bottom5, ero). Ennen näitä repossa ei ollut MITÄÄN joka olisi
+mitannut pysyykö sarjataulukko kilpailullisena — ja juuri siksi #213 sai elää.
+
+Kuuden kauden diagnoosi: **ero levenee 5,04 → 6,34 ja se on kärjen työtä** (top5 +1,02, bottom5
+−0,28). Malli on terve alussa — kaudella 2028 yoyCorr 0,22 ja pohjanelikosta 75 % playoffeihin — ja
+kasautuminen syö sen. D2 (c)+(d) jälkeen: yoyCorr **0,77 → 0,53** ja **0,65 → 0,44**, pohjanelikosta
+taas 25 %, payroll vakiintui **84-87 %:iin** (CBA-lattia 89), cap roomin minimi 3,6 %, winSD bändissä
+joka kaudella.
+
+### Elävä QA — yksi ura simulaattorilla, viisi korjausta
+
+`docs/AI_FIX_QUEUE.md` §QA-01. Korjattu: **Roster OVR tarkoitti kahta eri asiaa** (picker 76 /
+dashboard 68 — `RosterStrength` on nyt yksi määritelmä, F-20); disabloitu CTA joka putosi
+saavutettavuuspuusta selittämättä itseään; **"Cosmetic only"** muotokuvavalitsimessa, joka oli
+harhaanjohtava koska tyyli kantaa +10 play-callingia ja lehdistötilaisuuden recap sanoo itse
+vaikuttavansa vapaiden agenttien kiinnostukseen; **auto-hire joka lupasi parasta ja tuotti Play
+Calling 47** (järjesti 12 attribuutin keskiarvolla, joka antaa koordinaattorin määrittävälle
+taidolle yhden kahdestoistaosan äänivallasta) — nyt roolipainotettu, verifioitu 47 → **91**; ja oman
+D2-muutokseni jättämä vanhentunut teksti kuolleesta rahasta.
+
+**QA-02 korjaa F-12:n diagnoosin.** Kohta syyttää AI:n tarjouskynnystä; elävä ura sanoo sitovan
+rajoitteen olevan `faRosterCeiling = 46`, joka on alle sen mitä seura kantaa maaliskuussa. 199 miestä
+markkinalla, kahdeksan heistä 91-96 OVR, ja kaikki kuusi omaa lähtijää allekirjoittamatta — 30 %:n
+cap-tilalla. Ei viritetty sokkona: vakiolla on mitattu perustelu (#53).
+
+**QA-03 peruttu puoliksi — se oli minun työkaluni.** Raportoin että "viikko ei etene"; tuore ura
+ilman debug-hyppyä toisti oireen 26 semanttisella napautuksella, ja `idb`-koordinaattinapautus
+aktivoi saman napin ensimmäisellä yrityksellä. XcodeBuildMCP:n semanttinen tap ei aktivoi tuota
+kontrollia. Pelikirjaan (`dynasty-sim-qa`) lisättiin sääntö: **tuloksettomasta semanttisesta
+napautuksesta ei saa tehdä löydöstä ennen kuin `idb` on kokeiltu.**
+
+### F-25 — sen oma diagnoosi on väärä
+
+Bändeistä ulkona on enää kolme, joista kaksi pyöristysmarginaalilla ja jäljitetty kellotyöhön. Aito on
+ypc 3,64-3,68 (lattia 3,9). **Juoksumalli on kunnossa** — `percall` antaa NFL-blendin **4,09**,
+stuff 18,6 %, molemmat bändissä. Uusi `RUN SPLIT` -rivi erittelee vedot tilanteittain ja kumoaa
+väitteen "the gap is pure play-selection": erikoistilanteet ovat vähemmistö, punaisen alueen matala
+ypc on realistista, ja **häviö on tavallisissa 1./2. downin juoksuissa jotka ovat 83 % vedoista**.
+Terävin kohta: neutraali malli tuottaa 4,09 pelkillä 70-tason pelaajilla, kun 78-80-tason joukkueet
+tuottavat pelatussa pelissä 3,47-3,80 — paremmat pelaajat tuottavat vähemmän. Jokin täyden pelin
+polussa syö juoksujaardeja (väsymys / kuka syvyyskaaviosta oikeasti pelaa / kompressoitu
+lahjakkuustermi). Sen nimeäminen on seuraava työ eikä sama työ kuin F-25:n kuvaama viritys.
+
+### Auki tämän päivän jäljiltä
+
+1. **Korjauslistan tilamerkinnät ovat vanhentuneet** — merkitty vain F-01…F-04, vaikka aallot
+   toteuttivat ~40 kohtaa. Siivottava ennen kuin listaa käytetään työjonona.
+2. **Ero levenee yhä** (5,04 → 6,27 D2:n jälkeenkin). Kärjen kasautuminen on kesken.
+3. **F-25:n juurisyy** — kolme kandidaattia yllä, yksikään ei vielä suljettu pois.
+4. **QA-03:n näyttöpuoli** — viikkonauha luki BYE samalla kun kortti nimesi vastustajan; nähty kerran,
+   varmistamatta normaalilla uralla.
+5. **Kausi jäi pelaamatta loppuun** — vaatii koordinaattipohjaisen ajon tai
+   `.accessibilityIdentifier`it etenemiskontrolleihin.
+6. Päätetty muttei toteutettu: **D7-B** (sauma valmis), **F-56**:n identiteettivalitsin, **F-61**
+   (takuuraha + vuodet), **D6**-aalto kokonaan, **D1** (prepin threadaus + FA-kertoimen kääntö),
+   **D4-B** (lykätty tarkoituksella).
+
 ## PÄIVÄ 2026-08-21 — 14.8. työpuu committoitu + pushattu, #199-jäännökset kiinni, varoitusvelka NOLLAAN
 
 **Lähtötilanne: viikon vanha valmis työ oli committoimatta.** 14.8. aallot 1-2 + #199-kasa istuivat
