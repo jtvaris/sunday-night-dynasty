@@ -943,7 +943,7 @@ contracts where the number matters most.
   `AI_GAMEDAY_DECISIONS_ANALYSIS.md` §4.2 (the "where the AI is omniscient" theme). Ledger
   `TODO.md:4229` (#222).
 
-### F-24 — Fog the AI development desk's potential read
+### F-24 — Fog the AI development desk's potential read — **DONE 2026-08-22 (D3 had already decided it; the 'needs user decision' flag was stale)**
 - **Class**: design-change
 - **Priority**: P1
 - **Needs user decision**: *Should the AI's training-focus desk read `truePotential`, the number the
@@ -969,7 +969,32 @@ contracts where the number matters most.
 - **Risk / how to verify**: Fogging the AI's read makes AI development slightly worse — measure with
   `./run.sh career` (league mean OVR drift must stay inside ≤ |0.40|/season) and the smoke's league
   average OVR band.
-- **Depends on**: F-23 (share the perception machinery)
+- **The 'needs user decision' flag was STALE.** D3 already ruled: *"The development desk's
+  `truePotential` read is closed as pure information unrealism"* and *"Fog the development desk
+  (F-24) as part of A, since it reads a number the user is denied."* Nothing was waiting on the user.
+- **The stated dependency on F-23 was also void**: `AIDraftPerception.read` already takes a bare
+  UUID, so the machinery was shareable as it stood.
+- **RESOLVED 2026-08-22.**
+  - **The fog**: `AIDraftPerception.ownRosterLens(forTeam:)` — the same deterministic,
+    persona-shaped, fat-tailed machinery as the draft, narrowed for familiarity. A front office sees
+    its own players every day and is *better* at them than at a stranger, so σ is scaled by
+    `ownRosterSigmaScale = 0.45` (≈1.4 analytics to 2.7 old-school on the ceiling read) and the
+    catastrophic-misread rate drops to `ownRosterFatTailRate = 0.03`. Not zero: the "we believed in
+    him" bust is exactly the tail D3(3) asks for. `Lens` now carries `fatTailRate` so how often a
+    room is completely wrong can depend on how well it knows the man.
+  - **Verified the draft path is untouched**: `./run.sh perception --n 200` after the change reports
+    league mean |perceived−true| **3.96 OVR**, fat tail **6.89 %** — the same numbers as before, so
+    the new lens field does not leak into `lens(forTeam:)`.
+  - **The secondary defect** (`defaultArea` always returning the first listed area, so all 31 clubs
+    developed every quarterback along one identical path): AI assignment now goes through
+    `TrainingFocusArea.autoArea(for:teamID:playerID:)`, drawn deterministically from the
+    `(team, player)` pair — **club-shaped and stable**, D3's coherent plan rather than a per-tick die
+    roll. **Honest limit: this is not SITUATIONAL.** That would develop the attribute the player is
+    worst at, and no area→attribute reader exists — the mapping lives inside the private `bump`
+    switch on the position-attribute enum. Exposing one is the better fix and is left open.
+- **Verification owed**: the `./run.sh career` league-mean-OVR-drift gate (≤ |0.40|/season) has NOT
+  been run against this change yet.
+- **Depends on**: ~~F-23~~ — void, `AIDraftPerception.read` already takes a bare UUID
 - **Source**: `AI_GAMEDAY_DECISIONS_ANALYSIS.md` §2.3, §4.2 item 3, PART 5 item 7;
   `REBUILD_VIABILITY_ANALYSIS.md` §1.4. Ledger `TODO.md:4229`.
 

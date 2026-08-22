@@ -64,7 +64,9 @@ enum AIDraftPerception {
     /// worse at them by the same margin.
     static let potentialSigmaBonus = 1.0
 
-    /// Share of `(team, prospect)` pairs that get a fat-tail misread.
+    /// Share of `(team, prospect)` pairs that get a fat-tail misread. This is
+    /// the STRANGER rate, carried onto `Lens` by `lens(forTeam:)`; a club looking
+    /// at its own roster uses ``ownRosterFatTailRate``.
     static let fatTailRate = 0.07
     /// Magnitude band of that misread, in OVR points.
     static let fatTailMin = 8.0
@@ -87,17 +89,62 @@ enum AIDraftPerception {
         let teamID: UUID
         let archetype: TradeValueEngine.GMArchetype
         let sigmaOverall: Double
+        /// Share of pairs this lens misreads catastrophically. On the lens
+        /// rather than as a file-level constant because how often a room is
+        /// COMPLETELY wrong depends on how well it knows the man — see
+        /// ``ownRosterLens(forTeam:)``.
+        let fatTailRate: Double
         var sigmaPotential: Double { sigmaOverall + potentialSigmaBonus }
     }
 
-    /// The lens for one franchise. Cheap and pure — safe to call per prospect
-    /// per pick, but `aiMakePick` hoists it out of the board loop anyway.
+    /// The lens for one franchise looking at a STRANGER — a draft prospect, a
+    /// free agent, anyone the club knows off tape and interviews.
+    ///
+    /// Cheap and pure — safe to call per prospect per pick, but `aiMakePick`
+    /// hoists it out of the board loop anyway.
     static func lens(forTeam teamID: UUID) -> Lens {
         let archetype = TradeValueEngine.GMPersona.forTeam(id: teamID).archetype
         return Lens(
             teamID: teamID,
             archetype: archetype,
-            sigmaOverall: sigmaOverall(for: archetype)
+            sigmaOverall: sigmaOverall(for: archetype),
+            fatTailRate: fatTailRate
+        )
+    }
+
+    /// How much of the stranger-σ survives when the club is looking at a man on
+    /// its OWN roster.
+    ///
+    /// D3 closes the development desk's `truePotential` read as "pure
+    /// information unrealism" — but the honest correction is not to hand a club
+    /// the draft's fog about its own third-year receiver. A front office sees
+    /// its own players every day: in the building, in practice, in the training
+    /// room, on its own coaches' reports. It is *better* at them than at
+    /// anyone else and still not perfect, which is exactly why real clubs both
+    /// extend the right man and hand a second contract to a player who never
+    /// takes the step. At 0.45 the archetype spread lands at σ ≈ 1.4 (analytics)
+    /// to 2.7 (old-school) on the ceiling read — a wrong-but-close ordering,
+    /// not a blindfold.
+    static let ownRosterSigmaScale = 0.45
+
+    /// And it is rarer for a club to be catastrophically wrong about a man it
+    /// employs — rarer, not impossible. This is the "we believed in him" bust,
+    /// and D3(3) explicitly wants that tail to exist.
+    static let ownRosterFatTailRate = 0.03
+
+    /// The lens for one franchise looking at its OWN player.
+    ///
+    /// Same deterministic, persona-shaped machinery as ``lens(forTeam:)`` —
+    /// the same room is wrong about the same man in the same direction all
+    /// season, and an analytics shop is tighter than an old-school one — just
+    /// narrowed for familiarity. See ``ownRosterSigmaScale``.
+    static func ownRosterLens(forTeam teamID: UUID) -> Lens {
+        let archetype = TradeValueEngine.GMPersona.forTeam(id: teamID).archetype
+        return Lens(
+            teamID: teamID,
+            archetype: archetype,
+            sigmaOverall: sigmaOverall(for: archetype) * ownRosterSigmaScale,
+            fatTailRate: ownRosterFatTailRate
         )
     }
 
@@ -149,7 +196,7 @@ enum AIDraftPerception {
         // wrong about a man is wrong about all of him, so the shift lands on
         // both numbers in the same direction.
         let tailRoll = Double.random(in: 0..<1, using: &rng)
-        let isFatTail = tailRoll < fatTailRate
+        let isFatTail = tailRoll < l.fatTailRate
         if isFatTail {
             let magnitude = Double.random(in: fatTailMin...fatTailMax, using: &rng)
             let sign: Double = Double.random(in: 0..<1, using: &rng) < 0.5 ? -1.0 : 1.0

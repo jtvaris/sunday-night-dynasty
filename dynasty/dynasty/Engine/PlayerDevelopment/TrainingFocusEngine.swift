@@ -62,9 +62,43 @@ enum TrainingFocusArea: String, Codable, CaseIterable, Identifiable {
         return specific + [.conditioning, .filmStudy]
     }
 
-    /// Default auto-pick (used by AI teams): the first position-specific area.
+    /// Default auto-pick: the first position-specific area.
+    ///
+    /// Kept for callers that have no club or player in hand. AI assignment goes
+    /// through ``autoArea(for:teamID:playerID:)`` instead — see why there.
     static func defaultArea(for position: Position) -> TrainingFocusArea {
         areas(for: position).first ?? .filmStudy
+    }
+
+    /// The area an AI club puts a given young player on.
+    ///
+    /// F-24's secondary defect: every AI club called `defaultArea` and so always
+    /// took the FIRST listed area for the position. Thirty-one clubs developed
+    /// every quarterback they ever drafted along one identical path.
+    ///
+    /// The pick is now drawn deterministically from the `(team, player)` pair,
+    /// using the same seed machinery as the perception fog. That makes it
+    /// **club-shaped and stable** — one room's idea of what this kid needs, the
+    /// same answer every week for as long as he is there — which is D3's
+    /// "coherent plan that can be wrong" rather than a die rolled per tick.
+    ///
+    /// **Honest limit**: this is not SITUATIONAL. A genuinely situational pick
+    /// would develop the attribute the player is worst at, and there is no
+    /// area→attribute reader to ask — the mapping lives inside the private
+    /// `bump` switch keyed on the position-attribute enum. Exposing one is the
+    /// better fix and is left open.
+    static func autoArea(
+        for position: Position,
+        teamID: UUID?,
+        playerID: UUID
+    ) -> TrainingFocusArea {
+        let specific = areas(for: position).filter { $0 != .conditioning && $0 != .filmStudy }
+        guard !specific.isEmpty else { return defaultArea(for: position) }
+        guard let teamID else { return specific[0] }
+        var rng = SeededLeagueRandom(
+            seed: AIDraftPerception.pairSeed(teamID: teamID, prospectID: playerID)
+        )
+        return specific[Int.random(in: 0..<specific.count, using: &rng)]
     }
 }
 
@@ -262,6 +296,28 @@ enum TrainingFocusEngine {
     /// conversion decision needs — the user makes his own on the development
     /// screen, and an AI pass that also moved his players would be reaching
     /// over his shoulder.
+    /// ## F-24 / D3: the desk no longer reads a number the user is denied
+    ///
+    /// This sorted on `truePotential` — the hidden ceiling the engine uses to
+    /// develop the player years later, and the exact number
+    /// `DevelopmentReportView` tells the user it will not show him. Every AI
+    /// club therefore picked the three genuinely-highest-ceiling youngsters on
+    /// its roster, every week, for all 31 clubs, while the user worked off the
+    /// noisy `assessedPotential` label. D3 closes that as "pure information
+    /// unrealism".
+    ///
+    /// The read now goes through `AIDraftPerception.ownRosterLens` — the same
+    /// deterministic, persona-shaped fog the draft already uses, narrowed for
+    /// familiarity (a club knows its own players far better than a prospect;
+    /// see `ownRosterSigmaScale`). Consequences that are the POINT, not side
+    /// effects: a club can spend a season developing the wrong kid, two clubs
+    /// can rate the same player differently, and the same club is wrong about
+    /// the same man consistently rather than re-rolling every week.
+    ///
+    /// This is deliberately a fog on the READ only. The queue's note is right
+    /// that the system is otherwise good — symmetric, weekly, all 31 clubs,
+    /// value reaching the simulator through real attributes — so nothing about
+    /// how the focus works is weakened.
     static func autoAssignFocus(roster: [Player]) {
         // No staff in hand here (the caller keeps coaches for the focus tick),
         // which only costs the offer's week estimate — a display field the AI
@@ -276,10 +332,31 @@ enum TrainingFocusEngine {
 
         var focused = roster.filter { $0.trainingFocusArea != nil }
 
+        // The club's own read on its own men. Built once per pass rather than
+        // per comparison: `read` is pure, but a sort calls it O(n log n) times
+        // and the lens lookup goes through `GMPersona`.
+        let teamID = roster.first(where: { $0.teamID != nil })?.teamID
+        let lens = teamID.map { AIDraftPerception.ownRosterLens(forTeam: $0) }
+        let perceivedCeiling: (Player) -> Double = { player in
+            guard let teamID, let lens else { return Double(player.truePotential) }
+            return AIDraftPerception.read(
+                teamID: teamID,
+                prospectID: player.id,
+                trueOverall: player.overall,
+                truePotential: player.truePotential,
+                lens: lens
+            ).potential
+        }
+        let ceilingByPlayer = Dictionary(
+            roster.map { ($0.id, perceivedCeiling($0)) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let ceiling: (Player) -> Double = { ceilingByPlayer[$0.id] ?? Double($0.truePotential) }
+
         // Trim overflow (e.g. an already-focused player arrived via trade).
         if focused.count > maxFocusPlayersPerTeam {
             let keep = focused
-                .sorted { $0.truePotential > $1.truePotential }
+                .sorted { ceiling($0) > ceiling($1) }
                 .prefix(maxFocusPlayersPerTeam)
             let keepIDs = Set(keep.map(\.id))
             for player in focused where !keepIDs.contains(player.id) {
@@ -298,14 +375,16 @@ enum TrainingFocusEngine {
                 && $0.age < $0.position.peakAgeRange.upperBound
             }
             .sorted {
-                if $0.truePotential != $1.truePotential {
-                    return $0.truePotential > $1.truePotential
+                if ceiling($0) != ceiling($1) {
+                    return ceiling($0) > ceiling($1)
                 }
                 return $0.age < $1.age
             }
 
         for player in candidates.prefix(maxFocusPlayersPerTeam - focused.count) {
-            player.trainingFocusAreaRaw = TrainingFocusArea.defaultArea(for: player.position).rawValue
+            player.trainingFocusAreaRaw = TrainingFocusArea
+                .autoArea(for: player.position, teamID: teamID, playerID: player.id)
+                .rawValue
         }
     }
 
