@@ -961,8 +961,59 @@ enum TradeValueEngine {
             let leanPenalty = row.samples > 0
                 ? min(0.10, abs(row.lean - neutralLean) * 0.40)
                 : 0.0
-            let lowballPenalty = min(0.14, Double(row.lowballs) * 0.035)
-            return max(0.88, min(1.12, 1.0 - leanPenalty - lowballPenalty))
+            let lowballPenalty = min(lowballPenaltyCap, Double(row.lowballs) * lowballPenaltyStep)
+            return max(standingFloor, min(1.12, 1.0 - leanPenalty - lowballPenalty))
+        }
+
+        /// Standing lost per insulting proposal, and the ceiling on that loss.
+        ///
+        /// D1: these were `0.035` and a `0.14` cap under a `0.88` floor, which
+        /// meant the scale **saturated at four lowballs**. A user could work
+        /// through all 31 clubs and the thirty-first call was priced exactly like
+        /// the fifth — the specific failure the ruling names when it says the
+        /// thirty-first call in a tour must be measurably worse than the first.
+        /// At 0.02 a step under a 0.22 cap it takes **eleven** lowballs to
+        /// saturate, which is a TOUR rather than a bad afternoon: two or three
+        /// misjudged offers cost 4-6 % and are forgivable, eleven cost the full
+        /// 22 % and are a reputation.
+        ///
+        /// Rejected: no cap at all. An uncapped scale turns one bad week into a
+        /// career-ending death spiral, and `ageOneLeagueYear` below is the
+        /// counterweight that makes a bounded penalty the right shape — it hurts
+        /// now, and it fades if the behaviour does.
+        static let lowballPenaltyStep = 0.02
+        static let lowballPenaltyCap = 0.22
+        /// Worst standing any front office can reach. 0.78 is a ×1.28 surcharge
+        /// on every price the league quotes him.
+        static let standingFloor = 0.78
+
+        /// Fades the lowball ledger at the league-year rollover.
+        ///
+        /// A reputation that never decays is not a reputation, it is a criminal
+        /// record — and with the widened scale above, a single tour would
+        /// otherwise price a front office at the floor for the rest of the
+        /// career. At ×0.55 a saturating tour still costs most of a season, is
+        /// half-forgotten a year later and is gone in three, which is roughly how
+        /// long a real front office's "he wastes your time" label lasts.
+        ///
+        /// The `lean` half is deliberately NOT aged. That one is a read on how a
+        /// man trades rather than on how he behaves, it already self-corrects
+        /// through `leanLearningRate` every time he does a deal, and the type's
+        /// own doc commits to it surviving February.
+        static let lowballDecayPerLeagueYear = 0.55
+
+        /// Called once at the league-year rollover, beside
+        /// `TradeTalkRegistry.reset()`. Rounds DOWN so the ledger actually
+        /// reaches zero (11 → 6 → 3 → 1 → 0); rounding to nearest would leave a
+        /// permanent single strike on the record forever.
+        static func ageOneLeagueYear() {
+            guard let table = UserDefaults.standard.dictionary(forKey: scopedKey) as? [String: [String: Double]] else { return }
+            var aged = table
+            for (id, var row) in table {
+                row["lowballs"] = ((row["lowballs"] ?? 0) * lowballDecayPerLeagueYear).rounded(.down)
+                aged[id] = row
+            }
+            UserDefaults.standard.set(aged, forKey: scopedKey)
         }
 
         /// Multiplier on how often the phone rings for this front office,
@@ -1112,6 +1163,28 @@ enum TradeValueEngine {
         /// (`TradeReputationRegistry.summary`).
         let leagueRead: String?
 
+        /// What this GM's own rejection memory is charging, in whole percent —
+        /// `5 × strikes`, the `userAcceptBar` term.
+        ///
+        /// D1's other half is that refusal has to be VISIBLE. The strike pips
+        /// already told the user how many rounds he had left; they never told
+        /// him what the last one cost, which made the price the one part of the
+        /// mechanic he could not learn. These two are that number, split the way
+        /// the bar splits it — this man's patience, and the league's read — so a
+        /// screen can quote either without recomputing anything.
+        let strikeSurchargePercent: Int
+
+        /// What the rest of the league's read on the user is charging on top,
+        /// in whole percent (`1 / standing − 1`). `0` until he has done
+        /// something the league noticed.
+        let leagueSurchargePercent: Int
+
+        /// Everything the two together add to this GM's price.
+        var totalSurchargePercent: Int {
+            Int(((1.0 + Double(strikeSurchargePercent) / 100.0)
+                 * (1.0 + Double(leagueSurchargePercent) / 100.0) - 1.0) * 100.0)
+        }
+
         /// True while he still answers the user's calls.
         var talksOpen: Bool { strikes < patience }
         /// Lowballs left before the freeze-out.
@@ -1155,7 +1228,11 @@ enum TradeValueEngine {
             dossierContacts: userTeamID.map {
                 ScoutingDossier.contacts(observer: $0, subject: subject)
             } ?? 0,
-            leagueRead: userTeamID.flatMap { TradeReputationRegistry.summary(teamID: $0) }
+            leagueRead: userTeamID.flatMap { TradeReputationRegistry.summary(teamID: $0) },
+            strikeSurchargePercent: 5 * TradeTalkRegistry.strikes(season: season, teamID: team.id),
+            leagueSurchargePercent: userTeamID.map {
+                Int((((1.0 / max(0.5, TradeReputationRegistry.standing(teamID: $0))) - 1.0) * 100.0).rounded())
+            } ?? 0
         )
     }
 
@@ -1462,11 +1539,47 @@ enum TradeValueEngine {
         /// Strikes this GM has logged against the user's front office this year.
         var strikes: Int { TradeTalkRegistry.strikes(season: season, teamID: team.id) }
 
-        /// The bar a user proposal must clear. Rejection memory bites here:
-        /// every lowball makes the same GM 5 % more expensive for the rest of
-        /// the league year (plan §6 Wave 2.4).
+        /// Whose proposal this view is about to price, when there is one
+        /// (`respond` and `partnerVerdict` both set it from
+        /// `proposal.offeringTeamID`). `nil` for the market passes that only
+        /// need this club's own chair, and inert there.
+        var proposerTeamID: UUID?
+
+        /// What the LEAGUE'S read on the proposer adds to this GM's price —
+        /// `1.0` for a front office nobody has a read on, up to ≈`1.28` at the
+        /// standing floor.
+        ///
+        /// D1: this is the half that was missing, and it is the whole of "make
+        /// refusal bite". `TradeReputationRegistry` already existed and already
+        /// marked a lowballer down in the offers the AI BUILT for him
+        /// (`buildBuyOffer`, `buildSellOffer`) and in how often the phone rang
+        /// at all (`marketAppetite` → `callDepth`). What it did not touch was
+        /// the bar a proposal HE builds has to clear — so a user could exhaust
+        /// one GM's patience, dial the next club, and be quoted the opening
+        /// price as though nothing had happened. Thirty-one times.
+        ///
+        /// It divides rather than multiplies for the reason the registry's own
+        /// doc gives: standing is applied DIRECTIONALLY, marked down when the
+        /// league prices what he sells and up when it prices what he buys, and
+        /// a proposal he is pushing across the desk is the second one.
+        var reputationSurcharge: Double {
+            guard let proposerTeamID else { return 1.0 }
+            return 1.0 / max(0.5, TradeReputationRegistry.standing(teamID: proposerTeamID))
+        }
+
+        /// The bar a user proposal must clear.
+        ///
+        /// Rejection memory bites twice, and the two are deliberately different
+        /// shapes. `strikes` is the RELATIONSHIP — every lowball makes THIS GM
+        /// 5 % more expensive for the rest of the league year and his patience
+        /// ends the conversation (plan §6 Wave 2.4). `reputationSurcharge` is
+        /// the LEAGUE — what the other thirty clubs have heard, which is what
+        /// makes the thirty-first call in a tour worse than the first. At the
+        /// extremes they compose to a bar ≈47 % above the opening one, which is
+        /// a price, not a lockout: the deal is still there to be done, it simply
+        /// costs what a wasted afternoon costs.
         var userAcceptBar: Double {
-            persona.acceptRatio * noise * (1.0 + 0.05 * Double(strikes))
+            persona.acceptRatio * noise * (1.0 + 0.05 * Double(strikes)) * reputationSurcharge
         }
 
         /// The bar another AI club has to clear — same noise, no memory (the
@@ -1550,7 +1663,11 @@ enum TradeValueEngine {
                 needs: needs,
                 roster: roster,
                 season: season,
-                week: week
+                week: week,
+                // Carried through: a fogged read of a man is still a read of the
+                // same negotiation, so the bar it implies must carry the same
+                // reputation surcharge the true chair would.
+                proposerTeamID: proposerTeamID
             )
         }
 
@@ -1720,12 +1837,18 @@ enum TradeValueEngine {
     /// `coreReference` is `leagueCoreReference(allPlayers:)`; callers that build
     /// many views in a row (the league market pass) compute it once and pass it in
     /// rather than paying for it 31 times.
+    ///
+    /// `proposerTeamID` is who this view is about to price a proposal FROM. It
+    /// is what lets `userAcceptBar` carry the league's read on that front office
+    /// (D1), and it is `nil` for every caller that only needs this club's own
+    /// chair — the market passes, the offer builders, the diagnostics.
     static func marketView(
         team: Team,
         allPlayers: [Player],
         season: Int,
         week: Int,
-        coreReference: Double? = nil
+        coreReference: Double? = nil,
+        proposerTeamID: UUID? = nil
     ) -> GMMarketView {
         let roster = allPlayers.filter { $0.teamID == team.id && !$0.isRetired }
         return GMMarketView(
@@ -1746,7 +1869,8 @@ enum TradeValueEngine {
             needs: needProfile(roster: roster),
             roster: roster,
             season: season,
-            week: week
+            week: week,
+            proposerTeamID: proposerTeamID
         )
     }
 
@@ -1900,7 +2024,8 @@ enum TradeValueEngine {
         standingCounter: TradeProposal? = nil
     ) -> PartnerVerdict {
         let view = marketView(
-            team: aiTeam, allPlayers: allPlayers, season: currentSeason, week: week
+            team: aiTeam, allPlayers: allPlayers, season: currentSeason, week: week,
+            proposerTeamID: proposal.offeringTeamID
         )
         if hardBlocker(
             proposal: proposal, view: view, allPlayers: allPlayers, contracts: contracts
@@ -2035,7 +2160,8 @@ enum TradeValueEngine {
         pressureWeek: Int? = nil
     ) -> AIResponse {
         let view = marketView(
-            team: aiTeam, allPlayers: allPlayers, season: currentSeason, week: week
+            team: aiTeam, allPlayers: allPlayers, season: currentSeason, week: week,
+            proposerTeamID: proposal.offeringTeamID
         )
 
         // Hard rules first — clause vetoes, untouchables, the last body at a
@@ -2113,10 +2239,18 @@ enum TradeValueEngine {
                 // rule that counts his deals.
                 TradeReputationRegistry.recordLowball(teamID: proposal.offeringTeamID)
                 if strikes >= view.persona.maxRounds {
-                    return .rejected(reason: "\(view.persona.name) has heard enough. \(view.abbreviation) are done talking trade with you this league year.")
+                    // The other 31 phones still work, and what the tour has
+                    // already cost him at every one of them is the sentence he
+                    // needs to read. Refusal is priced, so the price is quoted.
+                    let league = Int((((1.0 / max(0.5, TradeReputationRegistry.standing(
+                        teamID: proposal.offeringTeamID))) - 1.0) * 100.0).rounded())
+                    let tail = league >= 2
+                        ? " Word travels: the rest of the league is quoting you about \(league) % over the board."
+                        : ""
+                    return .rejected(reason: "\(view.persona.name) has heard enough. \(view.abbreviation) are done talking trade with you this league year.\(tail)")
                 }
                 if strikes > 1 {
-                    return .rejected(reason: "\(view.abbreviation) hang up again — and \(view.persona.name) says the price just went up.")
+                    return .rejected(reason: "\(view.abbreviation) hang up again — and \(view.persona.name) says the price just went up. He's asking \(5 * strikes) % over the board now.")
                 }
             }
             return .rejected(reason: isOverpay

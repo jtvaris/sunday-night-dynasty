@@ -1228,6 +1228,12 @@ enum WeekAdvancer {
         leagueTradesThisSeason = 0
         leagueTradesThisOffseason = 0
         TradeValueEngine.TradeTalkRegistry.reset()
+        // D1: the per-GM strikes above are wiped — a new league year is a clean
+        // slate at every individual desk. The LEAGUE'S read is not wiped, it
+        // fades: a lowball tour still costs most of the following season and is
+        // gone in three. A reputation that evaporates every February is not a
+        // reputation, and one that never fades is a criminal record.
+        TradeValueEngine.TradeReputationRegistry.ageOneLeagueYear()
 
         // 6b. R28: return decisions are week-scoped calls — never carry them
         // into a new season (offseason rehab resolves the injuries anyway).
@@ -1321,14 +1327,17 @@ enum WeekAdvancer {
         let week = career.currentWeek
         let season = career.currentSeason
 
-        // Camp Phase 1: apply opponent-prep drift penalty if user has been
-        // over-focusing on opponent prep for 3+ consecutive weeks. The
-        // gameBoost() side is consumed inside GameSimulator integration -- here
-        // we only persist the long-term drift consequence (-1..-3 OVR) so it
-        // survives across re-renders.
-        if let teamID = career.teamID {
-            applyOpponentPrepDrift(teamID: teamID, season: season, week: week, modelContext: modelContext)
-        }
+        // D1 / F-15: the opponent-prep drift penalty. It used to be WRITTEN here
+        // — `-1…-3` onto every rostered player's `physical.stamina`, a field no
+        // simulator file reads (`PlaySimulator`, `GameSimulator`,
+        // `DriveSimulator`, `LiveGameEngine`, `SimPlayer`: zero occurrences), so
+        // riding it to the floor for a season cost -1.5 displayed OVR and
+        // nothing else. It is now READ here and spent below, against the prep
+        // focus the game is actually simulated with. Same trade-off, in the one
+        // channel prep lives in.
+        let prepDriftWeeks = career.teamID.map {
+            opponentPrepDriftWeeks(teamID: $0, season: season, week: week, modelContext: modelContext)
+        } ?? 0
 
         // Fetch all unplayed regular-season games for this week.
         let unplayedGames = fetchUnplayedGames(
@@ -1398,14 +1407,25 @@ enum WeekAdvancer {
                 let homeCoaches = allCoaches.filter { $0.teamID == homeTeam.id }
                 let awayCoaches = allCoaches.filter { $0.teamID == awayTeam.id }
 
-                // Camp Phase 1: fetch this week's OpponentPrepWeek for the user
-                // and convert it into a game-boost via OpponentPrepEngine. The
-                // boost is applied to the user's team only — AI-vs-user games
-                // still get the full play-by-play simulation but with the user
-                // benefiting from their prep choice.
+                // D1 / F-16: this week's `OpponentPrepWeek` row, as a SIGNED
+                // shift on `OpponentPrep`'s focus scale rather than a boost.
+                //
+                // What changed and why it matters: the row used to become
+                // `(audibleBoost: 0.20×ratio, defReadBoost: 0.15×ratio)` and be
+                // multiplied into the final score after the game was over — a
+                // scoreboard edit worth +4.2 points of margin a game that no AI
+                // club could ever have. Now the slider says only how far the
+                // user's week departs from what his own staff would have done
+                // (50 % = his staff's number, unchanged), the base focus for all
+                // 32 clubs is derived inside `GameSimulator` from the coaches
+                // each already employs, and the whole thing lands on plays.
+                //
+                // The drift streak is spent here (F-15): three consecutive
+                // opponent-heavy weeks hand back 0.30 of focus, which is 60 % of
+                // the maximum edge. It used to be charged to `physical.stamina`,
+                // which nothing in the simulator reads.
                 let userTeamID = career.teamID
-                var audibleBoost = 0.0
-                var defReadBoost = 0.0
+                var prepFocusDelta = 0.0
                 if let userTeamID = userTeamID,
                    userTeamID == homeTeam.id || userTeamID == awayTeam.id {
                     let prepDescriptor = FetchDescriptor<OpponentPrepWeek>(
@@ -1416,9 +1436,9 @@ enum WeekAdvancer {
                         }
                     )
                     if let prep = (try? modelContext.fetch(prepDescriptor))?.first {
-                        let boost = OpponentPrepEngine.gameBoost(prep: prep)
-                        audibleBoost = boost.audibleBoost
-                        defReadBoost = boost.defensiveReadBoost
+                        let opponentRatio = max(0.0, min(1.0, Double(prep.opponentPct) / 100.0))
+                        prepFocusDelta = (opponentRatio - OpponentPrep.neutralFocus)
+                            - Double(prepDriftWeeks) * OpponentPrep.driftFocusPerWeek
                     }
                 }
 
@@ -1432,9 +1452,8 @@ enum WeekAdvancer {
                     awayTeam: awayTeam,
                     homeCoaches: homeCoaches,
                     awayCoaches: awayCoaches,
-                    audibleBoost: audibleBoost,
-                    defReadBoost: defReadBoost,
-                    boostedTeamID: userTeamID,
+                    prepFocusDelta: prepFocusDelta,
+                    prepTeamID: userTeamID,
                     homeGamePlan: homeTeam.id == userTeamID ? userPlan : nil,
                     awayGamePlan: awayTeam.id == userTeamID ? userPlan : nil,
                     // Deterministic per-game weather — the live coached game
@@ -8777,16 +8796,23 @@ enum WeekAdvancer {
         }
     }
 
-    /// Applies the long-term attribute drift penalty when the user has prepped
-    /// opponent-heavy 3+ consecutive weeks. Penalty is a flat OVR drop applied
-    /// to physical.stamina (proxy for unit-wide drift -- TODO: scope to the
-    /// affected unit only when scheme-attribution lands).
-    private static func applyOpponentPrepDrift(
+    /// How many consecutive weeks before `week` this club has spent at 70 %+
+    /// opponent-specific preparation — the streak `OpponentPrepEngine
+    /// .driftPenalty` prices.
+    ///
+    /// D1 / F-15: this used to be `applyOpponentPrepDrift`, which WROTE the
+    /// penalty onto `physical.stamina` and thereby into nothing at all. It is
+    /// now a pure read, and the caller spends the streak against the prep focus
+    /// the game is simulated with (see ``OpponentPrep/driftFocusPerWeek``). No
+    /// attribute is mutated any more, which also means a user who rides the
+    /// slider no longer silently loses displayed OVR for a cost that was never
+    /// charged.
+    private static func opponentPrepDriftWeeks(
         teamID: UUID,
         season: Int,
         week: Int,
         modelContext: ModelContext
-    ) {
+    ) -> Int {
         let descriptor = FetchDescriptor<OpponentPrepWeek>(
             predicate: #Predicate<OpponentPrepWeek> {
                 $0.teamID == teamID && $0.seasonYear == season
@@ -8798,16 +8824,9 @@ enum WeekAdvancer {
         for entry in recent where entry.weekNumber < week {
             if entry.opponentPct >= 70 { streak += 1 } else { break }
         }
-        let penalty = OpponentPrepEngine.driftPenalty(consecutiveOpponentWeeks: streak)
-        guard penalty < 0 else { return }
-
-        // Apply -1..-3 to stamina across the user's roster as a unit-wide proxy.
-        let playerDescriptor = FetchDescriptor<Player>(
-            predicate: #Predicate<Player> { $0.teamID == teamID }
-        )
-        let roster = (try? modelContext.fetch(playerDescriptor)) ?? []
-        for player in roster {
-            player.physical.stamina = max(40, player.physical.stamina + penalty)
-        }
+        // `driftPenalty` returns 0 / −1 / −2 / −3; the caller wants the count of
+        // weeks it is charging for, so the sign is dropped here rather than at
+        // every use site.
+        return -OpponentPrepEngine.driftPenalty(consecutiveOpponentWeeks: streak)
     }
 }

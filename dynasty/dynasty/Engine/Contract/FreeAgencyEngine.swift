@@ -3456,21 +3456,34 @@ enum FreeAgencyEngine {
                 score *= 1.3
 
             case .winning:
-                // Prefers teams with better record (discount up to 15%)
-                if let record = bid.teamRecord {
-                    let winPct = Double(record.wins) / Double(max(record.wins + record.losses, 1))
-                    score *= (1.0 + winPct * 0.15)
-                }
-                if bid.isPlayer { score *= 1.15 }
+                // The record term that used to live here is now universal and
+                // sits below (`loserTax`) — a man who wants to win is the one it
+                // weighs HEAVIEST, not the only one it applies to. The extra
+                // `bid.isPlayer × 1.15` that used to ride alongside it is gone:
+                // a free agent chasing a ring has no reason to prefer the user's
+                // club for being the user's club.
+                break
 
             case .stats:
-                // Prefers teams where they'll start
+                // Prefers teams where they'll start.
+                //
+                // D1: the `bid.isPlayer × 1.05` that used to sit here went with
+                // the other structural multipliers, and this one was redundant
+                // as well as unearned — a stats-motivated man's preference for a
+                // starting job is already priced per-bid and at more than double
+                // everyone else's weight by the `roleScore` term below (0.30 vs
+                // 0.12), against the club's ACTUAL depth chart rather than
+                // against who is holding the phone.
                 score *= 1.05
-                if bid.isPlayer { score *= 1.05 }
 
             case .loyalty:
-                // Prefers current team (discount up to 20%)
-                score *= bid.isPlayer ? 1.25 : 0.85
+                // D1: 1.25 / 0.85 — a 47 % swing in the user's favour, on a
+                // "loyalty" the game cannot actually check, because a free agent
+                // has no `teamID` to compare against and there is no
+                // `previousTeamID` anywhere in `Player`. What the flag really
+                // meant was "the club with a GM on the phone", so it is priced
+                // as the pitch it is: a few percent, per the ruling.
+                score *= bid.isPlayer ? 1.06 : 0.98
 
             case .fame:
                 // Prefers big-market teams
@@ -3480,15 +3493,29 @@ enum FreeAgencyEngine {
                 score *= 1.1
             }
 
-            // General player-team loyalty bonus
-            if bid.isPlayer {
-                score *= 1.1
-            }
+            // D1 — THE LOSER TAX. Applied to every bid on the table, the user's
+            // included, and this is the term that inverts the sign.
+            score *= loserTax(record: bid.teamRecord, motivation: player.personality.motivation)
 
-            // R23: hosted facility visit — the player got the tour, met the
-            // staff, saw the plan. Clear, explainable edge for the host team.
-            if bid.isPlayer && hostedVisit {
-                score *= 1.15
+            // D1 — THE PITCH, at what a pitch is worth.
+            //
+            // These two lines were `×1.10` flat and `×1.15` for a hosted visit,
+            // and neither one asked a single question about the club offering
+            // them: they were paid for being the user. Together with the old
+            // `.loyalty` branch that is the ×1.10 / ×1.15 / ×1.25 the audit
+            // measured, against a maximum 12.4 % penalty for being bad, which is
+            // how **a 2-15 user outbid a 14-3 AI club at 79 cents on the dollar**.
+            //
+            // The phenomenon underneath is real — a man does sign for a little
+            // less to go where he was courted — so it survives at the size the
+            // ruling priced it at rather than being deleted. 2 % for having a
+            // front office he has actually spoken to, 4 % more for having walked
+            // the building. The visit is additionally rate-limited by
+            // `VisitTracker` (1/day, 3/week), so it is a scarce lever rather
+            // than a standing multiplier.
+            if bid.isPlayer {
+                score *= 1.02
+                if hostedVisit { score *= 1.04 }
             }
 
             // R23: role factor — players favor rosters where they'd start.
@@ -3546,6 +3573,88 @@ enum FreeAgencyEngine {
                 years: best.bid.years,
                 shoppingAround: false
             )
+        }
+    }
+
+    // MARK: - The Loser Tax (D1)
+
+    /// How much one club's money is worth to a free agent, per what that club
+    /// has been doing on Sundays. Above 1.0 for a winner, below 1.0 for a loser,
+    /// exactly 1.0 at .500 and for a club with no record on file.
+    ///
+    /// # Why the SIGN, not the size, was the finding
+    ///
+    /// Before this, the entire penalty for being a bad club was one branch of
+    /// the motivation switch — `.winning` players got `×(1 + winPct × 0.15)`,
+    /// a **12.4 % spread between 0-17 and 17-0** and nothing at all for the
+    /// other four motivations — while the user's club carried `×1.10` flat,
+    /// `×1.15` for a visit and `×1.25` for a loyalty-motivated man regardless of
+    /// its record. Net measured effect: **a 2-15 user outbid a 14-3 AI club at
+    /// 79 cents on the dollar** (money-motivated, with a visit), or 61.8 cents
+    /// for a loyalty-motivated one. The game had a discount for losing.
+    ///
+    /// Real free agents demand MORE to sign with a bad club, and the term is now
+    /// universal, centred at .500 so it cuts both ways, and weighted by what the
+    /// man is actually chasing. Worked at the audit's own headline case,
+    /// money-motivated with a hosted visit: a 2-15 user is `×0.962` here and
+    /// `×1.061` on the pitch = 1.020, against a 14-3 AI club's `×1.032` — so
+    /// **the user now pays ≈101 cents on the dollar where he paid 79**, and
+    /// ≈112 cents for a `.winning`-motivated man. The one case still running his
+    /// way is the `.loyalty` man at ≈94 cents (≈97 without a visit) against
+    /// **53.8 / 61.8** before, and that one is the hometown discount the ruling
+    /// explicitly kept — at six percent instead of thirty-eight.
+    ///
+    /// # How this composes with D2(b), and why it is not a double count
+    ///
+    /// A club under the CBA's 89 % cash floor already pays a premium — but that
+    /// one lives in `attemptSigning`, raises the **cash a club actually writes**,
+    /// and runs on the AI-vs-AI bulk market, which never calls this function at
+    /// all (see `legacyVeteranPreference`'s note). This one is a **perception**
+    /// term on the shortlist a named free agent chooses from. The two therefore
+    /// stack in the correct order rather than twice on the same quantity: a bad
+    /// club is pushed to bid more money, and that money is then worth less to
+    /// the man than the same money from a contender. Both together are what
+    /// "bad clubs overpay in free agency" means.
+    ///
+    /// # What was rejected
+    ///
+    /// * **A flat league-wide weight.** It made a money-motivated man refuse a
+    ///   cheque over a 4-13 record, which is not what money-motivated means.
+    /// * **Gating the user's `×1.10` on his record instead of inverting.** The
+    ///   queue's own option (F-14). It leaves a 12-5 user with a structural
+    ///   bonus no AI club can earn, which is the asymmetry, not the size of it.
+    ///
+    /// - Parameter record: the suitor's season so far. `nil`, or fewer than four
+    ///   games played, reads as 1.0 — March is not a referendum on a record
+    ///   nobody has yet, and week 2 is not a record.
+    static func loserTax(
+        record: (wins: Int, losses: Int)?,
+        motivation: Motivation
+    ) -> Double {
+        guard let record else { return 1.0 }
+        let played = record.wins + record.losses
+        guard played >= 4 else { return 1.0 }
+        let winPct = Double(record.wins) / Double(played)
+        // −0.5 (winless) … +0.5 (unbeaten), 0 at .500.
+        let edge = winPct - 0.5
+        return 1.0 + edge * loserTaxWeight(motivation)
+    }
+
+    /// Full 0-17-to-17-0 spread of the loser tax, by what the man is chasing.
+    ///
+    /// A `.winning` free agent is the one the record is nearly the whole
+    /// decision for (24 %); a `.money` one still notices, because a losing club
+    /// is a worse place to be paid (10 %) — the real market's "hazard pay" is
+    /// visible but never decisive. `.fame` sits between them: losing is bad for
+    /// a brand, but a big market is its own compensation and is priced
+    /// separately by `mediaMarket.freeAgentAttraction`.
+    private static func loserTaxWeight(_ motivation: Motivation) -> Double {
+        switch motivation {
+        case .winning: return 0.24
+        case .fame:    return 0.14
+        case .stats:   return 0.12
+        case .money:   return 0.10
+        case .loyalty: return 0.10
         }
     }
 
