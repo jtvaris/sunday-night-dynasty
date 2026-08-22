@@ -4276,6 +4276,9 @@ struct CareerDashboardView: View {
                             // is exactly one advance path on this screen.
                             performAdvance()
                         }
+                        // Same stable handle as the sidebar's control — one
+                        // advance path on this screen deserves one name.
+                        .accessibilityIdentifier("hero.advance")
                     }
                 }
                 if !canAdvance {

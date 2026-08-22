@@ -685,6 +685,17 @@ struct TimelineTasksPanel: View {
             }
             .disabled(!canAdvance)
             .animation(.spring(duration: 0.3), value: canAdvance)
+            // A STABLE handle for the season's primary progression control.
+            //
+            // Its label changes every week ("Advance to Week 12", "Advance to
+            // the Championship"), so any script that drives the game has to
+            // match on a moving string. Worse, a QA pass this week recorded
+            // "the week will not advance" as an app defect on two separate
+            // careers before a coordinate tap disproved it — the semantic tap
+            // resolves this control and does not actuate it. An identifier does
+            // not fix that by itself, but it removes the guessing from the half
+            // that IS in our control, and it is what the QA playbook asks for.
+            .accessibilityIdentifier("tasks.advance")
 
             // Honest footnote for the secondary state: the user is one tap away
             // from having their own game played for them.
