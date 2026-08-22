@@ -3271,6 +3271,31 @@ enum FreeAgencyEngine {
     }
 
     /// Score a salary offer based on player motivation (used for leaning calculation).
+    ///
+    /// ## This must agree with `scoreBid`, and for a while it did not
+    ///
+    /// `scoreBid` is what actually SIGNS the man. This is what the negotiation
+    /// screen shows him leaning toward. D1 rewrote the first and missed the
+    /// second, so the display kept the pre-D1 multipliers the ruling deleted:
+    /// a flat `× 1.10` for being the user, `× 1.15` more if he wanted to win,
+    /// and `1.25 / 0.9` on loyalty. On equal money a loyalty free agent
+    /// therefore READ as `1.25 × 1.10 / 0.9 = 1.53` — "Strong interest" — while
+    /// the decision underneath scored him `1.06 / 0.98 = 1.08`, a coin flip.
+    /// The player was told he was winning men he then lost, which is worse than
+    /// either number being wrong on its own.
+    ///
+    /// The user-side terms now mirror `scoreBid`. They are still two functions,
+    /// which is the remaining fragility: `scoreBid` is a local closure over
+    /// `player`, `hostedVisit`, `allPlayers` and the record, so sharing one
+    /// scorer is a real refactor rather than an extraction. Until that happens,
+    /// **any change to one belongs in the other in the same commit.**
+    ///
+    /// Note that the only call site passes `teamRecord: nil` and
+    /// `mediaMarket: nil` for both sides, so the record and market terms below
+    /// are inert there — the leaning compares salary and motivation only. That
+    /// is why the loser tax does not appear here: it would need real records on
+    /// both sides to mean anything, and giving it them is the follow-up, not
+    /// this fix.
     private static func scoreOfferForMotivation(
         salary: Int,
         isPlayerTeam: Bool,
@@ -3284,18 +3309,21 @@ enum FreeAgencyEngine {
         case .money:
             score *= 1.3
         case .winning:
-            if isPlayerTeam {
-                score *= 1.15
-            }
+            // D1 removed the `isPlayerTeam × 1.15` from the DECISION; it is gone
+            // from the display for the same reason. A man chasing a ring has no
+            // reason to prefer the club with a GM on the phone.
             if let record = teamRecord {
                 let winPct = Double(record.wins) / Double(max(record.wins + record.losses, 1))
                 score *= (1.0 + winPct * 0.15)
             }
         case .stats:
+            // The flat 1.05 is motivation, not favouritism, so it stays; the
+            // second `isPlayerTeam × 1.05` was the structural bonus D1 deleted.
             score *= 1.05
-            if isPlayerTeam { score *= 1.05 }
         case .loyalty:
-            score *= isPlayerTeam ? 1.25 : 0.9
+            // Priced as `scoreBid` prices it — as a pitch, not as a bond the
+            // game cannot check (a free agent has no `previousTeamID`).
+            score *= isPlayerTeam ? 1.06 : 0.98
         case .fame:
             score *= 1.1
             if let market = mediaMarket {
@@ -3303,8 +3331,9 @@ enum FreeAgencyEngine {
             }
         }
 
+        // THE PITCH, at the size `scoreBid` pays for it. This was `× 1.10`.
         if isPlayerTeam {
-            score *= 1.1
+            score *= 1.02
         }
 
         return score

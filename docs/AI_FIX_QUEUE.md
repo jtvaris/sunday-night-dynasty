@@ -628,7 +628,7 @@ contracts where the number matters most.
 
 ---
 
-### F-13 — Fix the loyalty branch in `scoreBid`
+### F-13 — Fix the loyalty branch in `scoreBid` — **DONE 2026-08-22 (the decision was already fixed by D1; the DISPLAY was not)**
 - **Class**: bug-fix
 - **Priority**: P1
 - **Where**: `Engine/Contract/FreeAgencyEngine.swift:3353-3355` (the `.loyalty` branch), `:3273-3282`
@@ -641,6 +641,26 @@ contracts where the number matters most.
 - **Risk / how to verify**: Removes a large user advantage on one motivation class; combined with
   F-14 the swing is material. Verify with the FA smoke diagnostics (user win rate on contested
   free agents) and by a manual round-1 negotiation against a loyalty-motivated player.
+- **RESOLUTION, 2026-08-22.** The named site was already closed: D1 rewrote `scoreBid`'s `.loyalty`
+  branch to `1.06 / 0.98` and priced the pitch at `× 1.02` (+`× 1.04` for a hosted visit). Keying on
+  `bid.teamID == player.teamID` as this entry proposed is **not possible** — a free agent has no
+  `teamID` and `Player` has no `previousTeamID`, which is why D1 repriced the flag as a pitch rather
+  than repairing it as a bond.
+- **WHAT WAS STILL BROKEN, and is the real content of this entry**: D1 fixed the function that SIGNS
+  the man and missed its sibling, `scoreOfferForMotivation`, which computes the **leaning the
+  negotiation screen shows**. It still carried every multiplier the ruling deleted — a flat
+  `× 1.10` for being the user, `× 1.15` more on `.winning`, `× 1.05` more on `.stats`, and
+  `1.25 / 0.9` on `.loyalty`. On equal money a loyalty free agent therefore DISPLAYED as
+  `1.25 × 1.10 / 0.9 = 1.53` → "Strong interest" while the decision underneath scored him
+  `1.06 / 0.98 = 1.08`, a coin flip. **The player was told he was winning men he then lost** — worse
+  than either number being wrong alone, and the same one-quantity-two-spellings defect as #154 and
+  QA-03.
+- **The fix**: the user-side terms in `scoreOfferForMotivation` now mirror `scoreBid` exactly, with
+  a doc comment on the function naming the constraint. They remain two functions — `scoreBid` is a
+  local closure over `player`, `hostedVisit`, `allPlayers` and the record, so sharing one scorer is
+  a real refactor, not an extraction. **Follow-up (open): unify them, and feed the leaning real team
+  records so the loser tax reaches the display too** — the one call site passes `teamRecord: nil` for
+  both sides today, so the leaning compares salary and motivation only.
 - **Depends on**: none
 - **Source**: `REBUILD_VIABILITY_ANALYSIS.md` recommendation 6 (the second half, explicitly flagged
   as "mis-implemented against its own comment").
