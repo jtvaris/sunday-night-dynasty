@@ -1291,12 +1291,35 @@ struct TradeView: View {
         }
     }
 
+    /// What the trade WIZARD is allowed to call a pick worth.
+    ///
+    /// ## QA 2026-08-22: the wizard was quoting a different currency
+    ///
+    /// Every number in the wizard came from `PickValueChart.points(forPick:)` —
+    /// the raw Jimmy Johnson chart — while the engine that actually accepts or
+    /// rejects the deal prices through `TradeValueEngine.pickTradeValue`, which
+    /// compounds `futurePickDiscountPerYear` (0.6) per year out. So the asset
+    /// board listed a 2028, 2029, 2030 and 2031 first at **1 000 pts each**,
+    /// identical, when the engine valued them 600 / 360 / 216 / 130.
+    ///
+    /// Both sides of the wizard's ratio used the raw chart, so a same-year swap
+    /// looked right by accident. The moment the two sides are different years —
+    /// which is the entire point of a trade-up or trade-down wizard — it
+    /// recommended deals the engine considers robbery, and printed a
+    /// reassuring "100 %" over them.
+    ///
+    /// One function, so the suggestion engine, the chips and the ratio cannot
+    /// drift apart again.
+    private func wizardPickPoints(_ pick: DraftPick) -> Int {
+        TradeValueEngine.pickTradeValue(pick: pick, currentSeason: career.currentSeason)
+    }
+
     private func wizardPickChip(pick: DraftPick, isSelected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             VStack(spacing: 1) {
                 Text(pickLabelShort(pick))
                     .font(.system(size: 11).weight(.bold))
-                Text("\(PickValueChart.points(forPick: pick.pickNumber)) pts")
+                Text("\(wizardPickPoints(pick)) pts")
                     .font(.system(size: DSType.Size.caption))
             }
             .padding(.horizontal, 10)
@@ -1345,7 +1368,7 @@ struct TradeView: View {
 
     @ViewBuilder
     private func wizardSuggestions(myPick: DraftPick, partner: Team) -> some View {
-        let myValue = PickValueChart.points(forPick: myPick.pickNumber)
+        let myValue = wizardPickPoints(myPick)
         let partnerPicks = theirPicks(partner: partner)
 
         let upSuggestions = tradeUpSuggestions(myPickValue: myValue, partnerPicks: partnerPicks)
@@ -1403,14 +1426,14 @@ struct TradeView: View {
     }
 
     private func wizardSuggestionRow(suggestion: WizardSuggestion, myValue: Int, accent: Color) -> some View {
-        let totalValue = suggestion.picks.reduce(0) { $0 + PickValueChart.points(forPick: $1.pickNumber) }
+        let totalValue = suggestion.picks.reduce(0) { $0 + wizardPickPoints($1) }
         let ratio: Double = myValue > 0 ? Double(totalValue) / Double(myValue) : 0
         let label = String(format: "%.0f%%", ratio * 100.0)
 
         return HStack(alignment: .top, spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
                 ForEach(suggestion.picks) { p in
-                    Text(pickLabelShort(p) + "  \(PickValueChart.points(forPick: p.pickNumber)) pts")
+                    Text(pickLabelShort(p) + "  \(wizardPickPoints(p)) pts")
                         .font(.system(size: 11).weight(.semibold).monospacedDigit())
                         .foregroundStyle(Color.textPrimary)
                 }
@@ -1435,8 +1458,8 @@ struct TradeView: View {
     private func tradeUpSuggestions(myPickValue: Int, partnerPicks: [DraftPick]) -> [WizardSuggestion] {
         var results: [WizardSuggestion] = []
         let betterPicks = partnerPicks
-            .filter { PickValueChart.points(forPick: $0.pickNumber) > Int(Double(myPickValue) * 1.05) }
-            .sorted { PickValueChart.points(forPick: $0.pickNumber) < PickValueChart.points(forPick: $1.pickNumber) }
+            .filter { wizardPickPoints($0) > Int(Double(myPickValue) * 1.05) }
+            .sorted { wizardPickPoints($0) < wizardPickPoints($1) }
             .prefix(3)
         for pick in betterPicks {
             results.append(WizardSuggestion(picks: [pick]))
@@ -1446,8 +1469,8 @@ struct TradeView: View {
 
     private func tradeDownSuggestions(myPickValue: Int, partnerPicks: [DraftPick]) -> [WizardSuggestion] {
         let lesser = partnerPicks
-            .filter { PickValueChart.points(forPick: $0.pickNumber) < myPickValue }
-            .sorted { PickValueChart.points(forPick: $0.pickNumber) > PickValueChart.points(forPick: $1.pickNumber) }
+            .filter { wizardPickPoints($0) < myPickValue }
+            .sorted { wizardPickPoints($0) > wizardPickPoints($1) }
 
         guard !lesser.isEmpty else { return [] }
 
@@ -1456,20 +1479,20 @@ struct TradeView: View {
         let upper = Int(Double(myPickValue) * 1.15)
 
         for i in 0..<lesser.count {
-            let v1 = PickValueChart.points(forPick: lesser[i].pickNumber)
+            let v1 = wizardPickPoints(lesser[i])
             if v1 >= lower && v1 <= upper {
                 results.append(WizardSuggestion(picks: [lesser[i]]))
                 if results.count >= 3 { return results }
             }
             for j in (i + 1)..<lesser.count {
-                let v2 = v1 + PickValueChart.points(forPick: lesser[j].pickNumber)
+                let v2 = v1 + wizardPickPoints(lesser[j])
                 if v2 >= lower && v2 <= upper {
                     results.append(WizardSuggestion(picks: [lesser[i], lesser[j]]))
                     if results.count >= 3 { return results }
                 }
                 if lesser.count > j + 1 {
                     for k in (j + 1)..<lesser.count {
-                        let v3 = v2 + PickValueChart.points(forPick: lesser[k].pickNumber)
+                        let v3 = v2 + wizardPickPoints(lesser[k])
                         if v3 >= lower && v3 <= upper {
                             results.append(WizardSuggestion(picks: [lesser[i], lesser[j], lesser[k]]))
                             if results.count >= 3 { return results }

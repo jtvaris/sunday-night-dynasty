@@ -2308,6 +2308,37 @@ Things all four reports explicitly found correct and well-built. A later pass sh
   `considerAITradeUpOffer()` **before** consuming each pick and breaks the tape when a phone rings —
   the plan's S6 finding is genuinely closed.
 
+### QA-05 — The trade wizard quoted picks in a different currency from the engine — **DONE 2026-08-22**
+- **Class**: bug-fix
+- **Priority**: P1
+- **Where**: `UI/Contracts/TradeView.swift` — `wizardPickChip`, `wizardSuggestionRow`,
+  `tradeUpSuggestions`, `tradeDownSuggestions` and the combination search, all pricing through
+  `PickValueChart.points(forPick:)`; the authority is
+  `TradeValueEngine.pickTradeValue(pick:currentSeason:)` (`futurePickDiscountPerYear = 0.6`).
+- **What was wrong**: Found by reading the Trade Center's asset board at the end of the live 2027
+  season. It listed the club's **2028, 2029, 2030 and 2031 first-rounders at `1 000 pts` each** —
+  identical — and every second at `420`, every third at `192`. The engine values those same four
+  firsts at **600 / 360 / 216 / 130**: a 2031 first was displayed at **7.7×** what the deal would
+  actually be judged on.
+  Both sides of the wizard's fairness ratio used the raw chart, so a **same-year** swap looked right
+  by accident. The moment the two sides are different years — which is the whole purpose of a
+  trade-up / trade-down wizard — it recommended deals the engine treats as robbery and printed a
+  reassuring **"100 %"** over them. The suggestion search itself ranked candidates in the wrong
+  currency too, so the offered options were mis-ordered before the user ever saw a percentage.
+- **The fix**: one private `wizardPickPoints(_:)` that calls `TradeValueEngine.pickTradeValue`, and
+  every one of the wizard's eleven raw-chart call sites now goes through it — chips, ratio,
+  suggestion filters, sorts and the multi-pick combination search. One function, so the three
+  cannot drift apart again.
+- **Note on scope**: the raw chart is still correct for surfaces that describe a pick's SLOT rather
+  than its trade price (the war room's board, the draft-order screen). This entry changes only the
+  wizard, which is quoting a price.
+- **Verification**: compiles clean, both lints pass. Not re-observed on a live save — this build is
+  newer than the one the season ran on.
+- **Depends on**: none
+- **Source**: live QA, 2026-08-22 season run (Las Vegas Highrollers, 2027).
+
+---
+
 ### QA-04 — The postseason told a 4-13 club to prepare for a Wild Card game — **DONE 2026-08-22**
 - **Class**: bug-fix
 - **Priority**: P1
