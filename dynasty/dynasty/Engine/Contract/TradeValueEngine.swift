@@ -47,17 +47,18 @@ enum TradeValueEngine {
     /// finding S2. This is the single source of truth: the Trade Center's
     /// closed-window copy and the offer-expiry text already read it.
     ///
-    /// PAIRED CHANGE: `WeekAdvancer` still gates its deadline pass on a
-    /// hardcoded `if week == 8`; the Wave 1 phase work replaces that literal
-    /// with this constant (and stops overwriting `.tradeDeadline` on the next
-    /// line). Until it does, the AI-vs-AI deadline pass fires after week 8
-    /// while the window stays open through week 9 — trades remain legal, the
-    /// league's own flurry just lands a week early.
+    /// The paired change this comment used to warn about is DONE:
+    /// `WeekAdvancer.tradeDeadlineWeek` now reads this constant rather than a
+    /// hardcoded `8`, so the AI-vs-AI deadline pass and the trade window close
+    /// on the same week. Nothing here is waiting on anything.
     static let deadlineWeek = 9
 
     /// Trading is open in every offseason phase and during the regular season
-    /// up to and including the Week 8 deadline. Closed for playoffs and the
-    /// All-Star / Championship ceremony weeks.
+    /// up to and including the ``deadlineWeek`` deadline (week 9). Closed for
+    /// playoffs and the All-Star / Championship ceremony weeks.
+    ///
+    /// The week is named by the constant, not spelled out here — this comment
+    /// said "Week 8" for as long as the constant said 9.
     static func isTradeWindowOpen(phase: SeasonPhase, week: Int) -> Bool {
         switch phase {
         case .regularSeason:
@@ -2477,11 +2478,20 @@ enum TradeValueEngine {
     }
 
     /// 0 … 1 over the last four weeks of the trade window (week 6 → 0.25, the
-    /// deadline week itself → 1.0). Zero everywhere else, which covers both the
-    /// early season and every offseason week — `Career.currentWeek` only ever
-    /// holds 1…9 during the regular season (it is set to 1 at the rollover and
-    /// jumps to 19 at the playoffs), so the range test doubles as a phase test
-    /// without `respond` having to be handed a `SeasonPhase` it never took.
+    /// deadline week itself → 1.0). Zero everywhere else, which covers the early
+    /// season, the back half of the season after the window shuts, and every
+    /// offseason week.
+    ///
+    /// The range test doubles as a phase test — `respond` never has to be handed
+    /// a `SeasonPhase` it did not take — but NOT for the reason this comment
+    /// used to give. It claimed `Career.currentWeek` "only ever holds 1…9
+    /// during the regular season", which is false: the regular season is
+    /// `SeasonWeekBand.regularSeasonWeeks` (18) weeks long and the week counter
+    /// runs the whole way. What actually makes the test safe is that the
+    /// offseason never parks the counter inside 6…9 — it holds 19…22 through the
+    /// bracket and is reset to 1 at the rollover — so no offseason negotiation
+    /// can pick up deadline pressure. Weeks 10…18 return zero on the `week <=
+    /// deadlineWeek` guard, correctly: the window is shut by then.
     static func deadlinePressure(week: Int) -> Double {
         let ramp = 4
         guard week <= deadlineWeek, week > deadlineWeek - ramp else { return 0 }

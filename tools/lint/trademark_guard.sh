@@ -146,6 +146,11 @@ if [[ $failed -ne 0 ]]; then
   exit 1
 fi
 
-echo "trademark_guard: clean (no 'Super Bowl' / 'NFL' in Swift, no 'nfl*'"
-echo "bundled filename, no mark in either league template, no 'Canton' in UI)."
+# Say what was actually checked. "no 'NFL' in Swift" was not true and could not
+# be: check 2 is deliberately scoped to STRING LITERALS, because "NFL hash
+# marks" in a comment is legitimate shorthand (see the header). A clean line
+# that overstates its own coverage is how a guard stops being trusted.
+echo "trademark_guard: clean (no 'Super Bowl' anywhere in Swift, no 'NFL' in a"
+echo "Swift STRING LITERAL — comments are allowed shorthand — no 'nfl*' bundled"
+echo "filename, no mark in either league template, no 'Canton' in UI)."
 exit 0

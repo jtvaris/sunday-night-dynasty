@@ -946,8 +946,12 @@ enum InboxEngine {
 
     /// Delivered once, when the career ENTERS the deadline week (end of the
     /// previous advance), so "the deadline is approaching" is still true and the
-    /// user has the whole week to act. Dead code until the phase became real —
-    /// plan finding S2.
+    /// user has the whole week to act.
+    ///
+    /// This is LIVE. The comment said "dead code until the phase became real"
+    /// long after the phase became real: `WeekAdvancer` sets
+    /// `career.currentPhase = .tradeDeadline` on reaching
+    /// `tradeDeadlineWeek`, and `generatePhaseMessages` routes that phase here.
     private static func tradeDeadlineMessages(
         ownerName: String, teamName: String,
         dateString: String

@@ -1997,7 +1997,7 @@ contracts where the number matters most.
 - **Source**: `AI_ROSTER_DECISIONS_ANALYSIS.md` §1.1, §1.3, PART 5 item 17;
   `AI_TRADE_ANALYSIS.md` §1.1, recommendations B10 and B11.
 
-### F-68 — Correct the stale and false doc comments
+### F-68 — Correct the stale and false doc comments — **DONE 2026-08-22 (four of the six; two of this entry's claims were themselves wrong)**
 - **Class**: bug-fix
 - **Priority**: P3
 - **Where**: `UI/Draft/Components/ProspectFog.swift:24-26`;
@@ -2019,7 +2019,30 @@ contracts where the number matters most.
   `AIDraftPerception` is live and wired (`DraftEngine.swift:236-244`), measured at a league mean
   |error| of 3.96 OVR.
 - **Risk / how to verify**: Clean build.
-- **Depends on**: F-05 (which gives `runAIDraft` the caller its comment describes)
+- **RESOLVED 2026-08-22, after checking all six against the tree.** Four were stale and are
+  corrected; **two of this entry's own claims did not hold**, which is the same defect the entry is
+  about:
+  - ✅ `TradeValueEngine` `deadlineWeek`'s "PAIRED CHANGE" warning — stale. `WeekAdvancer.swift:23`
+    reads `static let tradeDeadlineWeek = TradeValueEngine.deadlineWeek`; the hardcoded `8` is gone.
+  - ✅ `isTradeWindowOpen`'s "up to and including the **Week 8** deadline" — stale, and it now names
+    the constant instead of a literal so it cannot drift again.
+  - ✅ `deadlinePressure`'s justification — false. It claimed `Career.currentWeek` "only ever holds
+    1…9 during the regular season"; the season is 18 weeks and the counter runs the whole way.
+    **The function is still correct and for a reason worth stating**: I checked whether the false
+    justification hid a live bug (an offseason negotiation picking up deadline pressure) and it does
+    not — the offseason parks the counter at 19…22 through the bracket and resets to 1 at the
+    rollover, never inside 6…9. Weeks 10…18 return zero on the `week <= deadlineWeek` guard,
+    correctly. The comment now says that.
+  - ✅ `InboxEngine.tradeDeadlineMessages`'s "dead code until the phase became real" — stale.
+    `WeekAdvancer:2410` sets `.tradeDeadline` and `generatePhaseMessages` routes it here.
+  - ❌ **`ProspectFog.swift` was already fixed.** The comment does not say "the AI keeps drafting on
+    the true values internally"; it carries an explicit "## What the AI sees, corrected" section
+    that quotes the old sentence and says both halves stopped being true. Nothing to do.
+  - ❌ **`MultiSeasonSmokeTest.runAIDraft`'s comment is accurate.** It says the method is internal
+    "so the DEBUG dashboard skip can reuse it", and that caller EXISTS —
+    `CareerDashboardView.skipToFreeAgency` calls `MultiSeasonSmokeTest.runAIDraft(career:context:)`.
+    **This also voids the entry's stated dependency on F-05.**
+- **Depends on**: ~~F-05~~ — void, see above; `runAIDraft` already has the caller its comment names
 - **Source**: `AI_ROSTER_DECISIONS_ANALYSIS.md` §1.3, PART 5 item 7;
   `AI_TRADE_ANALYSIS.md` §1.6 rows C6–C9, §3.2 item 11, recommendation B9. Ledger `TODO.md:4229`.
 
