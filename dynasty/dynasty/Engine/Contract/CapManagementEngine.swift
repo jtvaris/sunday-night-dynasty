@@ -1316,6 +1316,60 @@ enum CapManagementEngine {
             )
             freed += applied?.immediateRelief ?? 0
         }
+
+        // D2(d) — THE CAP CASUALTY, and why there is at most one.
+        //
+        // Restructuring alone cannot save a club that has run out of contracts
+        // to push money forward on, and until now that club simply stayed over
+        // the cap forever: this pass returned whatever it had freed and left the
+        // books red. A real front office reaches for the other lever, and it is
+        // the lever that puts a good player on the market in March — the single
+        // most-missed thing in the whole free-agency audit.
+        //
+        // Bounded three ways, on purpose:
+        //
+        // 1. **One per club per pass.** Cuts move roster churn, which task #53
+        //    calibrated, and this pass runs weekly. An unbounded version would
+        //    quietly rewrite the league's age and quality composition, which is
+        //    the stated reason this function was restructure-only.
+        // 2. **Only a contract that actually HELPS.** A release whose dead money
+        //    exceeds the cap hit RAISES usage — the acceleration is larger than
+        //    the relief — so cutting that man to fix a cap problem makes it
+        //    worse. That is not a hard case to construct; it is most of the
+        //    league's big contracts in their early years.
+        // 3. **Cheapest man who closes the gap.** Not the biggest saving: a club
+        //    $2M over should not release its second-best player because the
+        //    arithmetic happens to work. Sorted by cap hit ascending and the
+        //    first sufficient one is taken.
+        if team.availableCap < 0 {
+            let casualties = players
+                .compactMap { player -> (Player, Int, Int)? in
+                    guard let contract = contractsByPlayer[player.id] else { return nil }
+                    let split = releaseCapSplit(player: player, contract: contract, capMode: capMode)
+                    // `capSavings` is signed; a non-positive one is a release
+                    // that costs the club money.
+                    guard split.capSavings > 0 else { return nil }
+                    return (player, split.capSavings, player.annualSalary)
+                }
+                .sorted { $0.2 < $1.2 }
+
+            if let victim = casualties.first(where: { $0.1 >= -team.availableCap })
+                ?? casualties.max(by: { $0.1 < $1.1 }) {
+                let before = team.currentCapUsage
+                applyRelease(
+                    player: victim.0,
+                    team: team,
+                    contract: contractsByPlayer[victim.0.id],
+                    capMode: capMode,
+                    // The receipt says WHY, so a cut that shows up on the wire
+                    // in March is legible as the cap move it is rather than as
+                    // an unexplained roster churn row.
+                    reason: .capCompliance
+                )
+                freed += max(0, before - team.currentCapUsage)
+            }
+        }
+
         return freed
     }
 }

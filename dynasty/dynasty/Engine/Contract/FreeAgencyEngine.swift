@@ -935,7 +935,7 @@ enum FreeAgencyEngine {
         modelContext: ModelContext
     ) -> Bool {
         if capMode != .sandbox {
-            let reserve = Int(Double(team.salaryCap) * capReservePercent)
+            let reserve = Int(Double(team.salaryCap) * capReserve(forTeam: team.id))
             guard team.availableCap - reserve >= salary else { return false }
         }
         signFreeAgent(
@@ -1161,6 +1161,35 @@ enum FreeAgencyEngine {
     /// with **8 %** room so the trade market has something to work with. 6.6 + 8
     /// ≈ 15.
     static let capReservePercent = 0.15
+
+    /// The reserve THIS club holds back — a taste, not a rail (D2c).
+    ///
+    /// ``capReservePercent`` is the league-average bill, and it was applied
+    /// identically to all 32 clubs, which is why no AI club could ever be short
+    /// of money in November: every one of them had budgeted for the same winter
+    /// with the same discipline. Real front offices differ on exactly this. The
+    /// analytics GM keeps powder dry and is the club still able to absorb a
+    /// deadline salary; the aggressive one spends to the edge in March and finds
+    /// out in December what that cost.
+    ///
+    /// The floor of the band is deliberate. The two bills the market does not
+    /// pay — the rookie class and the in-season refill — measure **6.6 % of cap**
+    /// between them, so a club reserving 8 % has almost nothing between itself
+    /// and trouble, and one reserving 18 % has a real cushion. An aggressive club
+    /// SHOULD occasionally end its year in the red; that is the point, and it is
+    /// the mechanism that puts a good player on the market in March.
+    ///
+    /// The mean across the four archetypes is ~0.1375, a shade under the 0.15
+    /// rail, so the league runs slightly tighter overall — the direction D2 wants
+    /// the cap to move.
+    static func capReserve(forTeam teamID: UUID) -> Double {
+        switch TradeValueEngine.GMPersona.forTeam(id: teamID).archetype {
+        case .analytics:  return 0.18
+        case .balanced:   return 0.15
+        case .oldSchool:  return 0.14
+        case .aggressive: return 0.08
+        }
+    }
 
     // MARK: - The market's age discount (task #53)
 
@@ -1614,7 +1643,7 @@ enum FreeAgencyEngine {
             // signs without a cap filter there: half a cap model is worse than
             // none, because it would let the user's league spend freely while
             // every AI club still had to balance its books.
-            var room = Int(Double(team.salaryCap) * (1.0 - capReservePercent))
+            var room = Int(Double(team.salaryCap) * (1.0 - capReserve(forTeam: team.id)))
                 - (survivingPayrollByTeam[team.id] ?? 0)
             var signed = 0
             // Task #98 — men this club has already kept, so the veteran pass
@@ -2546,7 +2575,7 @@ enum FreeAgencyEngine {
                             && CapManagementEngine.amountBelowFloor(team: team, capMode: capMode) > 0
                         let reserve = underFloor
                             ? 0
-                            : Int(Double(team.salaryCap) * capReservePercent)
+                            : Int(Double(team.salaryCap) * capReserve(forTeam: team.id))
                         let hole = holeReserve(for: team)
                         guard team.availableCap - reserve - hole >= agent.askingPrice else { return false }
                         guard let needIndex else { return true }
@@ -2975,7 +3004,7 @@ enum FreeAgencyEngine {
                 // outbidding everybody for a fourth receiver first.
                 let hole = holeReserve(team: team, position: fa.player.position)
                 if capMode != .sandbox {
-                    let reserve = Int(Double(team.salaryCap) * capReservePercent)
+                    let reserve = Int(Double(team.salaryCap) * capReserve(forTeam: team.id))
                     guard team.availableCap - reserve - hole >= fa.askingPrice else { continue }
                     if let needIndex, needIndex.rosterSize(teamID: team.id) >= faRosterCeiling {
                         continue
@@ -3034,7 +3063,7 @@ enum FreeAgencyEngine {
                     // 30 % of SPENDABLE room, not of nominal room — the reserve
                     // is not the club's to bid with (task #27), and neither is
                     // the hole reserve (task #92c).
-                    let reserve = Int(Double(team.salaryCap) * capReservePercent)
+                    let reserve = Int(Double(team.salaryCap) * capReserve(forTeam: team.id))
                     let spendable = max(0, team.availableCap - reserve - hole)
                     let maxBid = Int(Double(spendable) * 0.30)
                     offeredSalary = max(min(rawOffer, maxBid), minimum)

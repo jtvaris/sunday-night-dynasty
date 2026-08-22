@@ -931,6 +931,26 @@ enum MultiSeasonSmokeTest {
             }
         }
 
+        // WHERE the talent sits, not just how spread the table is (2026-08-22).
+        //
+        // winSD and yoyCorr both drift UPWARD season over season rather than
+        // sitting flat, which says something is concentrating talent over time —
+        // but the two ways that can happen need opposite fixes. If the TOP is
+        // pulling away, the good clubs are compounding (draft position, cap room,
+        // development). If the BOTTOM is falling, the bad clubs cannot recover
+        // (no market, no churn, dead money). These three numbers separate them,
+        // and without them any retune of the curve is a guess.
+        let ovrs = table.map(\.starterOVR).sorted(by: >)
+        let topFive = ovrs.prefix(5)
+        let bottomFive = ovrs.suffix(5)
+        let leagueMeanOVR = mean(ovrs)
+        print(String(
+            format: "SMOKE: diag talent season=%d leagueOVR=%.2f top5=%.2f bottom5=%.2f spread=%.2f",
+            seasonLabel, leagueMeanOVR,
+            mean(Array(topFive)), mean(Array(bottomFive)),
+            mean(Array(topFive)) - mean(Array(bottomFive))
+        ))
+
         print(String(
             format: "SMOKE: diag balance season=%d winSD=%.2f corr(starterOVR,wins)=%.2f "
                   + "yoyCorr=%@ worstToField=%@ bestRec=%d-%d worstRec=%d-%d",
