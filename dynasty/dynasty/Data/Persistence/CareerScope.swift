@@ -652,6 +652,13 @@ enum CareerScopedDefaults {
         // reason: a new career must not open with somebody else's disgruntled
         // star already on the block.
         "tradeRequestSeasons",
+        // `TradeBlockStore.defaultsKey` (F-58) — the user's own shortlist of men
+        // he is willing to move. Distinct from the row above in both directions:
+        // that one is the PLAYER demanding out and carries market consequences,
+        // this one is the front office's private note and carries none. Listed
+        // here for the ordinary reason — a deleted save must not hand a new
+        // career somebody else's tight end on the block.
+        "tradeBlock",
         // `PayCutRegistry` — who has already answered the pay-cut question this
         // league year, and whose "then release me" has already been charged its
         // morale. Career state: a new save must not open with the previous

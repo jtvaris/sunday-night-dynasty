@@ -471,6 +471,9 @@ struct PlayerDetailView: View {
     /// unrepresentable rather than silently resolved.
     private enum CardSheet: String, Identifiable {
         case positionChange
+        /// F-58 — the shopping poll. Shares the one slot rather than adding a
+        /// second `.sheet` modifier, which is the whole point of the enum.
+        case shop
         var id: String { rawValue }
     }
 
@@ -617,6 +620,18 @@ struct PlayerDetailView: View {
         .sheet(item: $activeSheet) { sheet in
             switch sheet {
             case .positionChange: positionChangeSheet
+            case .shop:
+                // `careers` is already narrowed to this save, so `first` is the
+                // open career and not a guess. No career means no club to shop
+                // from, and the button that opens this is gated on the same
+                // condition.
+                if let career = careers.first {
+                    ShopPlayerSheet(
+                        player: player,
+                        career: career,
+                        allPlayers: allLeaguePlayers
+                    )
+                }
             }
         }
         .fullScreenCover(item: $contractTalk) { talk in
@@ -1722,6 +1737,45 @@ struct PlayerDetailView: View {
                         )
                     }
                 }
+            }
+
+            // F-58: the way out of this card.
+            //
+            // The card has priced him for two waves and offered no way to act on
+            // the price — "Trade For" exists on a RIVAL's card and there was
+            // nothing at all on one of your own, so shopping your own player
+            // meant guessing a partner in the Trade Center's partner-first
+            // builder first. This asks all 31 clubs instead.
+            //
+            // It sits in the card rather than on the action bar deliberately:
+            // the bar's four slots are the four things that CHANGE this player's
+            // situation (release, position, and the two contract conversations),
+            // and a poll changes nothing. It belongs next to the valuation it
+            // acts on (P5 — the bar is for commits).
+            if isUserRosterPlayer {
+                Divider().overlay(Color.surfaceBorder)
+                Button { activeSheet = .shop } label: {
+                    HStack(spacing: DSSpacing.xs) {
+                        Image(systemName: "antenna.radiowaves.left.and.right")
+                            .font(.system(size: DSType.Size.footnote, weight: .semibold))
+                        Text("Shop \(player.lastName)")
+                            .font(DSType.text(DSType.Size.body, .semibold))
+                        Spacer(minLength: 0)
+                        if TradeBlockStore.shared.isListed(player.id) {
+                            DSStatusPill(label: "On the block", tone: .info, showsDot: false)
+                        }
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: DSType.Size.caption, weight: .semibold))
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                    .foregroundStyle(Color.accentBlue)
+                    .padding(.horizontal, DSSpacing.xs)
+                    .frame(minHeight: 44)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Shop \(player.fullName)")
+                .accessibilityHint("Asks all 31 clubs what they would pay for him")
             }
 
             // "If this player leaves" replacement preview (#37) — shows the next-best player
