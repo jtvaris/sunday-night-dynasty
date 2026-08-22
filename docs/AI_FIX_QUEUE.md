@@ -992,8 +992,17 @@ contracts where the number matters most.
     roll. **Honest limit: this is not SITUATIONAL.** That would develop the attribute the player is
     worst at, and no area→attribute reader exists — the mapping lives inside the private `bump`
     switch on the position-attribute enum. Exposing one is the better fix and is left open.
-- **Verification owed**: the `./run.sh career` league-mean-OVR-drift gate (≤ |0.40|/season) has NOT
-  been run against this change yet.
+- **VERIFIED 2026-08-22.** `./run.sh career` — **the gate this entry names PASSES**: §8 league mean
+  OVR drift **+0.021**/season against the ≤ |0.40| limit. Fogging the desk did not measurably weaken
+  AI development, which is the risk the entry flagged.
+  Two of the 36 assertions fail (6.9b §8 80+ share 19.00 % against a [12,19] band; 6.9g 33+ age share
+  4.33 % against ≤4.0 %). **Both are PRE-EXISTING and neither is a regression** — measured, not
+  assumed, by running the same scenario in a worktree at `a37e045` (the commit before any of today's
+  work), which fails the same two at **19.16 %** and **4.39 %**. Today's wave moved both slightly
+  toward their bands and left the drift gate unchanged (+0.022 → +0.021).
+  `6.9g` carries its own note calling it a retirement-calibration follow-up; `6.9b` sits a rounding
+  step outside a band that `LeagueGenScenario`'s own comments record the league historically running
+  at 19.8-21 %. Neither belongs to F-24; both are worth their own entry.
 - **Depends on**: ~~F-23~~ — void, `AIDraftPerception.read` already takes a bare UUID
 - **Source**: `AI_GAMEDAY_DECISIONS_ANALYSIS.md` §2.3, §4.2 item 3, PART 5 item 7;
   `REBUILD_VIABILITY_ANALYSIS.md` §1.4. Ledger `TODO.md:4229`.

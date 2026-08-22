@@ -2050,7 +2050,7 @@ enum WeekAdvancer {
             guard !roster.isEmpty else { continue }
 
             if team.id != career.teamID {
-                TrainingFocusEngine.autoAssignFocus(roster: roster)
+                TrainingFocusEngine.autoAssignFocus(roster: roster, teamID: team.id)
             }
             let teamCoaches = coachesByTeam[team.id] ?? []
             var conversions: [VersatilityDevelopmentEngine.CompletedConversion] = []

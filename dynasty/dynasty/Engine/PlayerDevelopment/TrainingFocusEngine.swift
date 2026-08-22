@@ -318,7 +318,11 @@ enum TrainingFocusEngine {
     /// that the system is otherwise good — symmetric, weekly, all 31 clubs,
     /// value reaching the simulator through real attributes — so nothing about
     /// how the focus works is weakened.
-    static func autoAssignFocus(roster: [Player]) {
+    /// - Parameter teamID: the club whose desk this is. Taken explicitly rather
+    ///   than derived from `roster.first?.teamID`: the caller already has it,
+    ///   and a derived answer would silently pick one club's lens for everybody
+    ///   if a mixed roster were ever passed in.
+    static func autoAssignFocus(roster: [Player], teamID: UUID?) {
         // No staff in hand here (the caller keeps coaches for the focus tick),
         // which only costs the offer's week estimate — a display field the AI
         // never reads.
@@ -335,7 +339,6 @@ enum TrainingFocusEngine {
         // The club's own read on its own men. Built once per pass rather than
         // per comparison: `read` is pure, but a sort calls it O(n log n) times
         // and the lens lookup goes through `GMPersona`.
-        let teamID = roster.first(where: { $0.teamID != nil })?.teamID
         let lens = teamID.map { AIDraftPerception.ownRosterLens(forTeam: $0) }
         let perceivedCeiling: (Player) -> Double = { player in
             guard let teamID, let lens else { return Double(player.truePotential) }
