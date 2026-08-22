@@ -12,7 +12,7 @@ it already cost one agent a wasted assignment this week.
 | **DONE** | 47 | verified present in the source on this branch, not taken from a report |
 | **CLOSED / REJECTED** | 2 | F-03 closed by measurement, F-08 rejected by the D1 ruling |
 | **IN PROGRESS** | 9 | a wave is implementing it right now |
-| open | 15 | genuinely unstarted (F-71 / F-72 are new, from measurement) |
+| open | 15 | genuinely unstarted (F-71 / F-72 new from measurement; QA-04 found and fixed same day) |
 
 **2026-08-22, second wave** — QA-03, F-13, F-32, F-49(1,2), F-68, F-70(1,2), F-24.
 **Four of those seven entries were wrong about their own subject**, which is now the
@@ -2307,6 +2307,34 @@ Things all four reports explicitly found correct and well-built. A later pass sh
 - **The draft room's skip path.** `autoAdvanceUntil` calls `considerAIvsAISwap()` and
   `considerAITradeUpOffer()` **before** consuming each pick and breaks the tape when a phone rings —
   the plan's S6 finding is genuinely closed.
+
+### QA-04 — The postseason told a 4-13 club to prepare for a Wild Card game — **DONE 2026-08-22**
+- **Class**: bug-fix
+- **Priority**: P1
+- **Where**: `Engine/Simulation/TaskGenerator.swift` `playoffTasks`, dispatched from the `.playoffs`
+  case; the input comes from `CareerShellView.regenerateTasks`.
+- **What was wrong**: Found in the live 2027 season run. Las Vegas finished **4-13** and the season
+  review card correctly said **MISSED THE PLAYOFFS** — and the task rail on the same save still
+  listed *"Prepare for Wild Card vs your opponent — Set your game plan for this win-or-go-home
+  matchup"*, *"Review matchups — Compare your roster against the opponent's strengths and
+  weaknesses"* and *"Check injury report — Make sure your key players are healthy for the biggest
+  stage."* There was no matchup, no opponent and no stage.
+  `playoffTasks` was generated unconditionally for the phase, and its `opponentName ?? "your
+  opponent"` fallback is **what hid the fault** rather than what guarded against it: a missing
+  fixture became a plausible sentence instead of an obvious blank. Same family as #154 and QA-03 —
+  two surfaces on one screen disagreeing about the same fact.
+- **The fix**: `playoffTasks` takes `isPlaying`, supplied by the shell as `!upcomingGames.isEmpty`
+  (unplayed games at or after the current week). True while a live club prepares; false the moment it
+  is knocked out; false all postseason for a club that never qualified. A club that is out gets a
+  short, honest list that points at real surfaces — watch the round (`.standings`), see who is still
+  playing (`.schedule`), start reading the draft board (`.scouting`) — and deliberately does NOT
+  duplicate the offseason review phases that follow.
+- **Verification**: compiles clean, both lints pass. Not yet re-observed on a live save — this build
+  is newer than the one the season ran on.
+- **Depends on**: none
+- **Source**: live QA, 2026-08-22 season run (Las Vegas Highrollers, 2027, 4-13).
+
+---
 
 ### F-71 — The §8 80+ share sits a rounding step outside its band
 - **Class**: balance

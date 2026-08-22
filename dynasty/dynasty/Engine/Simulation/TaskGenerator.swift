@@ -394,6 +394,10 @@ enum TaskGenerator {
     ///   - hasExpiringContracts: Whether any key players have expiring contracts.
     ///   - opponentName: The name of the next opponent (regular season / playoffs).
     ///   - playoffRoundName: The name of the current playoff round (e.g. "Divisional").
+    ///   - hasUpcomingGame: Whether the club has an UNPLAYED game at or after the current week.
+    ///     In the postseason this is what separates a club still in the bracket from one watching
+    ///     it — see ``playoffTasks(playoffRoundName:opponentName:isPlaying:)``. Defaults to `true`
+    ///     so callers that only ever generate in-season lists are unaffected.
     ///   - hasScoutsAssigned: Whether any scouts are deployed on college scouting.
     ///   - hasPendingEvents: Whether there are unhandled game events / news items.
     ///   - ownerSatisfaction: The owner's current satisfaction rating.
@@ -411,6 +415,7 @@ enum TaskGenerator {
         hasExpiringContracts: Bool = false,
         opponentName: String? = nil,
         playoffRoundName: String? = nil,
+        hasUpcomingGame: Bool = true,
         hasScoutsAssigned: Bool = false,
         hasPendingEvents: Bool = false,
         ownerSatisfaction: Int = 50,
@@ -486,7 +491,8 @@ enum TaskGenerator {
         case .playoffs:
             phaseTasks = playoffTasks(
                 playoffRoundName: playoffRoundName,
-                opponentName: opponentName
+                opponentName: opponentName,
+                isPlaying: hasUpcomingGame
             )
         }
 
@@ -1487,11 +1493,66 @@ enum TaskGenerator {
         return tasks
     }
 
+    /// The postseason list — for a club that is IN it, and for one that is not.
+    ///
+    /// ## QA, 2026-08-22: it used to assume you were playing
+    ///
+    /// A live season finished **4-13** and missed the playoffs, and the phase
+    /// still handed the user three tasks: *"Prepare for Wild Card vs your
+    /// opponent — set your game plan for this win-or-go-home matchup"*,
+    /// *"Review matchups — compare your roster against the opponent's strengths
+    /// and weaknesses"*, and *"make sure your key players are healthy for the
+    /// biggest stage"*. There is no matchup, no opponent and no stage. The
+    /// `?? "your opponent"` fallback did not protect against this — it is what
+    /// **hid** it, turning a missing fixture into a plausible sentence.
+    ///
+    /// `isPlaying` comes from the shell's `upcomingGames`: an unplayed game at
+    /// or after the current week. That is true while a live club prepares, false
+    /// the moment it is knocked out (its game is played and no next round is
+    /// staged for it), and false all postseason for a club that never qualified.
+    ///
+    /// The out-of-it list is deliberately short and points at things that are
+    /// really there. It does NOT duplicate the offseason review phases that
+    /// follow — those arrive on their own, and pre-empting them here would
+    /// replace one lie with a different kind of confusion.
     private static func playoffTasks(
         playoffRoundName: String?,
-        opponentName: String?
+        opponentName: String?,
+        isPlaying: Bool
     ) -> [GameTask] {
         let round = playoffRoundName ?? "this round"
+
+        guard isPlaying else {
+            return [
+                GameTask(
+                    phase: .playoffs,
+                    title: "Watch the \(round) from home",
+                    description: "Your season is over. The bracket plays out without you — "
+                        + "your offseason opens when it ends.",
+                    icon: "tv",
+                    destination: .standings,
+                    isRequired: false
+                ),
+                GameTask(
+                    phase: .playoffs,
+                    title: "See who is still playing",
+                    description: "The clubs left in are the ones you have to close the gap on.",
+                    icon: "list.bullet.rectangle",
+                    destination: .schedule,
+                    isRequired: false
+                ),
+                GameTask(
+                    phase: .playoffs,
+                    title: "Get a head start on the draft class",
+                    description: "A season that ends early is a pick that lands early. "
+                        + "Start reading the board.",
+                    icon: "binoculars.fill",
+                    destination: .scouting,
+                    isRequired: false
+                ),
+            ]
+        }
+
         let opponent = opponentName ?? "your opponent"
 
         return [

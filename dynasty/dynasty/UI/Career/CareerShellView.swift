@@ -3100,6 +3100,12 @@ struct CareerShellView: View {
             hasExpiringContracts: hasExpiringContracts,
             opponentName: opponentName,
             playoffRoundName: playoffRoundName,
+            // QA 2026-08-22: a 4-13 club that missed the playoffs was still told
+            // to "Prepare for Wild Card vs your opponent". `upcomingGames` holds
+            // only UNPLAYED games at or after the current week, so it is empty
+            // exactly when the club has nothing left to play — which is what the
+            // postseason list needs to know.
+            hasUpcomingGame: !upcomingGames.isEmpty,
             hasScoutsAssigned: hasScoutsAssigned,
             hasPendingEvents: hasPendingEvents,
             ownerSatisfaction: ownerSatisfaction,
