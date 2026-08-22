@@ -1268,6 +1268,19 @@ struct TeamLine {
     var thirdPct: Double { thirdA > 0 ? Double(thirdC) / Double(thirdA) * 100 : 0 }
     var netYPA: Double { (atts + sacks) > 0 ? Double(passYds) / Double(atts + sacks) : 0 }
     var ypc: Double { rushAtt > 0 ? Double(rushYds) / Double(rushAtt) : 0 }
+
+    // WHERE the run yards go (F-25). `percall` measures the run model at a
+    // neutral snap and lands it at 4.09 ypc, inside the 4.0-4.6 band, while a
+    // full game measures 3.68 — so the whole ~0.4 gap is situational, exactly as
+    // the README claims. This splits the carries by the situations that can eat
+    // it, so the retune can name a cause instead of nudging the base band.
+    var runEarlyYds = 0, runEarlyAtt = 0        // 1st/2nd down
+    var runThirdShortYds = 0, runThirdShortAtt = 0   // 3rd/4th, ≤3 to go
+    var runThirdLongYds = 0, runThirdLongAtt = 0     // 3rd/4th, 4+ to go
+    var runRedZoneYds = 0, runRedZoneAtt = 0    // inside the opponent 20
+    var runLateLeadYds = 0, runLateLeadAtt = 0  // Q4, clock-killing territory
+
+    func ypcOf(_ y: Int, _ a: Int) -> Double { a > 0 ? Double(y) / Double(a) : 0 }
 }
 func teamLine(_ box: TeamBoxScore, drives: [DriveResult], teamID: UUID) -> TeamLine {
     var L = TeamLine()
@@ -1278,7 +1291,18 @@ func teamLine(_ box: TeamBoxScore, drives: [DriveResult], teamID: UUID) -> TeamL
         for p in drive.plays {
             if p.outcome == .penalty { continue }
             if p.playType == .pass || p.playType == .run { L.plays += 1 }
-            if p.playType == .run { L.rushAtt += 1 }
+            if p.playType == .run {
+                L.rushAtt += 1
+                let y = p.yardsGained
+                if p.yardLine >= 80 { L.runRedZoneYds += y; L.runRedZoneAtt += 1 }
+                if p.down >= 3 {
+                    if p.distance <= 3 { L.runThirdShortYds += y; L.runThirdShortAtt += 1 }
+                    else { L.runThirdLongYds += y; L.runThirdLongAtt += 1 }
+                } else {
+                    L.runEarlyYds += y; L.runEarlyAtt += 1
+                }
+                if p.quarter >= 4 { L.runLateLeadYds += y; L.runLateLeadAtt += 1 }
+            }
             switch p.outcome {
             case .completion:   L.comps += 1; L.atts += 1
             case .incompletion: L.atts += 1
@@ -1329,6 +1353,26 @@ struct Aggregate {
     // Scrimmage run share (rush att ÷ run+pass plays) — how run-heavy the AI
     // actually called, the input RunKeyState keys on (item 2 diagnostic).
     var runShare: Double { let r = lines.reduce(0) { $0 + $1.rushAtt }, p = lines.reduce(0) { $0 + $1.plays }; return p > 0 ? Double(r) / Double(p) * 100 : 0 }
+
+    /// F-25: ypc and carry share by situation, so the full-game shortfall against
+    /// the neutral `percall` number can be attributed instead of guessed at.
+    var runSplit: String {
+        func cell(_ label: String, _ y: KeyPath<TeamLine, Int>, _ a: KeyPath<TeamLine, Int>) -> String {
+            let yds = lines.reduce(0) { $0 + $1[keyPath: y] }
+            let att = lines.reduce(0) { $0 + $1[keyPath: a] }
+            let all = lines.reduce(0) { $0 + $1.rushAtt }
+            let ypc = att > 0 ? Double(yds) / Double(att) : 0
+            let share = all > 0 ? Double(att) / Double(all) * 100 : 0
+            return String(format: "%@ %.2f(%.0f%%)", label, ypc, share)
+        }
+        return [
+            cell("early", \TeamLine.runEarlyYds, \TeamLine.runEarlyAtt),
+            cell("3rd-short", \TeamLine.runThirdShortYds, \TeamLine.runThirdShortAtt),
+            cell("3rd-long", \TeamLine.runThirdLongYds, \TeamLine.runThirdLongAtt),
+            cell("redzone", \TeamLine.runRedZoneYds, \TeamLine.runRedZoneAtt),
+            cell("Q4", \TeamLine.runLateLeadYds, \TeamLine.runLateLeadAtt)
+        ].joined(separator: "  ")
+    }
 }
 
 func printBandTable(_ a: Aggregate) {
@@ -1383,6 +1427,8 @@ func scenarioFullGame(_ f: [String: String]) {
     let hp = Double(homeWins) / Double(n) * 100, apw = Double(awayWins) / Double(n) * 100, tp = Double(ties) / Double(n) * 100
     print(String(format: "  WIN SPLIT  home=%.1f%% away=%.1f%% tie=%.1f%%   home margin mean=%+.1f (sd %.1f)  home pts %.1f | away pts %.1f",
         hp, apw, tp, meanD(margins), sdD(margins), home.meanPts, away.meanPts))
+    print("  RUN SPLIT  (ypc by situation, share of carries) — HOME " + home.runSplit)
+    print("             AWAY " + away.runSplit)
     print(String(format: "  PER-SIDE   HOME off: passYds/g=%.0f netYPA=%.2f comp=%.1f%% runShare=%.1f%% ypc=%.2f  |  AWAY off: passYds/g=%.0f netYPA=%.2f comp=%.1f%% runShare=%.1f%% ypc=%.2f",
         home.meanPassYds, home.netYPA, home.compPct, home.runShare, home.ypc, away.meanPassYds, away.netYPA, away.compPct, away.runShare, away.ypc))
     print(String(format: "  RUNTIME  %d games in %.2fs = %.1f games/sec", n, elapsed, Double(n) / max(elapsed, 0.0001)))
