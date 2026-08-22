@@ -1181,7 +1181,7 @@ contracts where the number matters most.
 - **Source**: `AI_ROSTER_DECISIONS_ANALYSIS.md` §1.4, PART 3, PART 5 item 10, recommendation R8
   (second half).
 
-### F-32 — Fix the bidding-war gate and the receipt for a price nobody paid
+### F-32 — Fix the bidding-war gate and the receipt for a price nobody paid — **DONE 2026-08-22 (plus a third bug found while fixing it)**
 - **Class**: bug-fix
 - **Priority**: P2
 - **Where**: `Engine/Contract/FreeAgencyEngine.swift:2982-2983` (`maxBidders = max(1,
@@ -1205,6 +1205,29 @@ contracts where the number matters most.
 - **Risk / how to verify**: More bidding wars means higher FA prices league-wide. Verify with the FA
   smoke diagnostics (mean signing price vs ask, wars per round) and the `capRoom` band. Note the
   reserve subtraction becomes moot if F-11(c) makes the reserve per-club — sequence accordingly.
+- **RESOLVED 2026-08-22.**
+  - **Arithmetic re-derived, and this entry's table was partly wrong.** Solving `Int(aggression x
+    (ovr-60)/40 x 6) >= 4` gives minimum OVR **87 / 92 / 99 / 114 / 137 / 194** for rounds 1-6. The
+    first three match; R4-R6 were stated as 113 / 151 / 193. The conclusion is unaffected — rounds
+    4-6 are impossible and round 3 needs a 99 — but the numbers are corrected in the code's doc
+    comment, which is now the reference.
+  - **Gate**: `bids.count >= 3` **or** the top two offers within 10 % (`biddingWarMinBidders = 3`,
+    `biddingWarCloseness = 0.90`). The second clause is the one that decouples the trigger from the
+    bid cap rather than moving it down by one: two clubs a percent apart IS a war, and it is
+    reachable in every round.
+  - **Receipt**: the drop-out test now subtracts the reserve through `capReserve(forTeam:)` — the
+    same question `signFreeAgentAI` asks — so a surviving bid is one the door will honour, and the
+    escalated price the user is shown is a price that can actually be paid. The raised-bid clamp
+    uses the reserve-aware figure too. F-11(c) landed first, so this consumes the per-club reserve
+    as that entry's note anticipated.
+  - **THIRD BUG, not in this entry, found while fixing the other two**: `aiBids[playerID] =
+    survivingBids` ran unconditionally. When every bidder failed the affordability test the player's
+    whole bid list was replaced with an empty array — a war nobody could afford did not fizzle, it
+    **erased offers that already existed** and left the man unsigned by anyone. A war with fewer
+    than two survivors is now a war that did not happen: original bids stand, nothing is reported.
+- **Verification owed**: not yet measured. This raises FA prices league-wide by construction, and
+  the gates this entry names (mean signing price vs ask, wars per round, the `capRoom` band) still
+  need a harness run. Compiles clean; behaviour unverified.
 - **Depends on**: coordinate with F-11
 - **Source**: `AI_ROSTER_DECISIONS_ANALYSIS.md` §2.4, PART 5 items 5 & 6, recommendation R7. Ledger
   `TODO.md:4179` (last sentence).

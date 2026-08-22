@@ -3121,6 +3121,14 @@ enum FreeAgencyEngine {
 
     // MARK: - Bidding War Detection
 
+    /// How many clubs on one man count as a war on their own. See
+    /// ``processBiddingWars`` for why this is 3 and not 4.
+    static let biddingWarMinBidders = 3
+
+    /// How close the second-best offer must be to the best for two clubs to
+    /// count as a war without a third. 0.90 = within 10 %.
+    static let biddingWarCloseness = 0.90
+
     struct BiddingWarInfo {
         let playerID: UUID
         let playerName: String
@@ -3130,8 +3138,55 @@ enum FreeAgencyEngine {
         let droppedOutTeams: [String]  // Teams that couldn't keep up
     }
 
-    /// Detect and escalate bidding wars when 4+ teams bid on the same player.
-    /// Returns escalated bids and info about which teams dropped out.
+    /// Detect and escalate bidding wars, and report only wars that actually happened.
+    ///
+    /// ## F-32: the gate was arithmetically unreachable
+    ///
+    /// The trigger was `bids.count >= 4` while the bid cap upstream is
+    /// `maxBidders = Int(aggression x (overall - 60) / 40 x 6)`. Solving the two
+    /// against each other gives the minimum OVR a free agent needed before a
+    /// fourth club was even ALLOWED to bid on him:
+    ///
+    /// | round | aggression | min OVR for 4 bidders |
+    /// |-------|-----------|-----------------------|
+    /// | 1     | 1.00      | 87                    |
+    /// | 2     | 0.85      | 92                    |
+    /// | 3     | 0.70      | 99                    |
+    /// | 4     | 0.50      | 114                   |
+    /// | 5     | 0.35      | 137                   |
+    /// | 6     | 0.20      | 194                   |
+    ///
+    /// Rounds 4-6 are impossible; round 3 needs a 99. Against a league whose 90+
+    /// band is 1.7-3.1 %, and whose star door keeps the most appealing men off
+    /// the open market entirely, the mechanic fired on a handful of players a
+    /// decade. It read as "bidding wars are rare"; it was "bidding wars cannot
+    /// occur".
+    ///
+    /// The gate is now `>= 3` bidders **or** the top two offers within 10 % of
+    /// each other. The second clause is the one that matters: two clubs a
+    /// percent apart IS a bidding war, and it is reachable in every round,
+    /// which is what decouples the trigger from the bid cap instead of just
+    /// moving it down by one.
+    ///
+    /// ## F-32: and the receipt described a price nobody paid
+    ///
+    /// The drop-out test asked `team.availableCap >= escalatedPrice` — the only
+    /// cap test in this file that did not subtract the reserve — while the
+    /// signing door (`signFreeAgentAI`) refuses on `availableCap - reserve >=
+    /// salary`. A club could therefore "stay in", have its raised bid recorded,
+    /// be reported to the user at the escalated price, and then be turned away
+    /// at the door. Both tests now ask the same question through
+    /// `capReserve(forTeam:)`, so a surviving bid is one the door will honour.
+    ///
+    /// ## And a third bug, found while fixing those two
+    ///
+    /// `aiBids[playerID] = survivingBids` ran unconditionally. When every bidder
+    /// failed the affordability test the player's entire bid list was replaced
+    /// with an empty array — so a war nobody could afford did not merely fizzle,
+    /// it **erased the offers that already existed** and left the man unsigned
+    /// by anyone. A war with fewer than two survivors is now treated as a war
+    /// that did not happen: the original bids stand and nothing is reported.
+    ///
     /// In sandbox cap mode every team can afford every escalation.
     static func processBiddingWars(
         aiBids: inout [UUID: [AIBid]],
@@ -3142,7 +3197,13 @@ enum FreeAgencyEngine {
         var wars: [BiddingWarInfo] = []
 
         for (playerID, bids) in aiBids {
-            guard bids.count >= 4 else { continue }
+            // Three clubs on one man, OR two clubs effectively tied. See the
+            // doc comment: the old `>= 4` could not fire past round 3.
+            let salariesDescending = bids.map(\.salary).sorted(by: >)
+            let topTwoAreClose = salariesDescending.count >= 2
+                && salariesDescending[0] > 0
+                && Double(salariesDescending[1]) >= Double(salariesDescending[0]) * biddingWarCloseness
+            guard bids.count >= biddingWarMinBidders || topTwoAreClose else { continue }
             guard let fa = freeAgents.first(where: { $0.player.id == playerID }) else { continue }
 
             let bestOffer = bids.map(\.salary).max() ?? fa.askingPrice
@@ -3156,7 +3217,11 @@ enum FreeAgencyEngine {
 
             for bid in bids {
                 guard let team = allTeams.first(where: { $0.id == bid.teamID }) else { continue }
-                let canAfford = (capMode == .sandbox) ? true : (team.availableCap >= escalatedPrice)
+                // The SAME question the signing door asks. Anything else
+                // reports a price the door will refuse.
+                let reserve = Int(Double(team.salaryCap) * capReserve(forTeam: team.id))
+                let spendable = team.availableCap - reserve
+                let canAfford = (capMode == .sandbox) ? true : (spendable >= escalatedPrice)
                 // Critical-need teams push harder to stay in
                 let staysIn: Bool
                 if bid.needLevel == .critical {
@@ -3172,7 +3237,7 @@ enum FreeAgencyEngine {
                     let raisedSalary = Int(Double(bid.salary) * escalation)
                     let clampedSalary = (capMode == .sandbox)
                         ? raisedSalary
-                        : min(raisedSalary, team.availableCap)
+                        : min(raisedSalary, spendable)
                     survivingBids.append(AIBid(
                         teamID: bid.teamID,
                         teamAbbr: bid.teamAbbr,
@@ -3185,6 +3250,11 @@ enum FreeAgencyEngine {
                 }
             }
 
+            // A war fewer than two clubs can afford is a war that did not
+            // happen. Leave the original bids alone — overwriting them with an
+            // empty array is how a man nobody could outbid ended up with no
+            // offers at all.
+            guard survivingBids.count >= 2 else { continue }
             aiBids[playerID] = survivingBids
 
             wars.append(BiddingWarInfo(
