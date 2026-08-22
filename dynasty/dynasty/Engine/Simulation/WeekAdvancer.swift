@@ -7471,19 +7471,21 @@ enum WeekAdvancer {
     /// Plays one round of playoff games and returns the USER's box score, if he
     /// was in it.
     ///
-    /// The 31 AI games stay score-only (`simulateGameScore`); the user's own game
-    /// goes through the full play-by-play simulator.
+    /// **Every game in the round runs `GameSimulator`** — the user's and all 31 of
+    /// the AI's. #213 converted the AI half; the user's game additionally carries
+    /// his saved game plan and returns a box score.
     ///
-    /// **F-73 — this is a known, filed defect, and the justification this comment
-    /// used to carry is false.** It said the AI games stay score-only as "the same
-    /// bargain the regular season strikes … the identical reason
-    /// `advanceRegularSeasonWeek` runs `GameSimulator` for exactly one game a
-    /// week". #213 changed exactly that: the regular season now runs
-    /// `GameSimulator` for ALL of its games. The postseason was never converted,
-    /// so a 14-3 club with the best roster in the league has the same chance of
-    /// winning a playoff game as the 9-8 club that squeaked in, and the champion
-    /// is chosen by RNG. `coachesCache` below is already fetched for every game,
-    /// so the inputs for the conversion are in hand.
+    /// `simulateGameScore()` survives at the tail as the fallback for a game whose
+    /// teams the career scope cannot resolve, and for nothing else. It is the same
+    /// bargain `advanceRegularSeasonWeek` strikes.
+    ///
+    /// This comment used to say the opposite — "the 31 AI games stay score-only …
+    /// the identical reason `advanceRegularSeasonWeek` runs `GameSimulator` for
+    /// exactly one game a week" — describing the world before #213, which changed
+    /// both halves. It was left standing over a body that had already been fixed,
+    /// and on 2026-08-22 it cost a reader (me) a wrong P0 bug report: read down to
+    /// the `#213` block below before believing anything above it. A comment that
+    /// contradicts its own body is worse than no comment.
     ///
     /// A playoff game cannot end level: both paths re-roll until the scores
     /// differ, and the play-by-play path caps its retries so a pathological
