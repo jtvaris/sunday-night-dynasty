@@ -7471,12 +7471,19 @@ enum WeekAdvancer {
     /// Plays one round of playoff games and returns the USER's box score, if he
     /// was in it.
     ///
-    /// The 31 AI games stay score-only (`simulateGameScore`), the same bargain
-    /// the regular season strikes. The user's own game goes through the full
-    /// play-by-play simulator instead, because the postseason columns need a real
-    /// box score and his game is the only one in the league that can produce one
-    /// — the identical reason `advanceRegularSeasonWeek` runs `GameSimulator` for
-    /// exactly one game a week.
+    /// The 31 AI games stay score-only (`simulateGameScore`); the user's own game
+    /// goes through the full play-by-play simulator.
+    ///
+    /// **F-73 — this is a known, filed defect, and the justification this comment
+    /// used to carry is false.** It said the AI games stay score-only as "the same
+    /// bargain the regular season strikes … the identical reason
+    /// `advanceRegularSeasonWeek` runs `GameSimulator` for exactly one game a
+    /// week". #213 changed exactly that: the regular season now runs
+    /// `GameSimulator` for ALL of its games. The postseason was never converted,
+    /// so a 14-3 club with the best roster in the league has the same chance of
+    /// winning a playoff game as the 9-8 club that squeaked in, and the champion
+    /// is chosen by RNG. `coachesCache` below is already fetched for every game,
+    /// so the inputs for the conversion are in hand.
     ///
     /// A playoff game cannot end level: both paths re-roll until the scores
     /// differ, and the play-by-play path caps its retries so a pathological

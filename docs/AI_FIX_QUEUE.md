@@ -9,10 +9,15 @@ it already cost one agent a wasted assignment this week.
 
 | state | count | what it means |
 |---|---:|---|
-| **DONE** | 47 | verified present in the source on this branch, not taken from a report |
+| **DONE** | 58 | verified present in the source on this branch, not taken from a report |
 | **CLOSED / REJECTED** | 2 | F-03 closed by measurement, F-08 rejected by the D1 ruling |
-| **IN PROGRESS** | 9 | a wave is implementing it right now |
-| open | 15 | genuinely unstarted (F-71 / F-72 new from measurement; QA-04 found and fixed same day) |
+| **IN PROGRESS** | 0 | — |
+| open | 16 | genuinely unstarted (F-71 / F-72 from measurement, F-73 from the season run) |
+
+**2026-08-22, stamp audit.** All nine `IN PROGRESS` entries were finished and merged; the
+stamps were stale. Each now names the commit AND the source evidence, because a commit
+message is a claim and the tree is the fact. The audit also found that **F-01 was only half
+done** — the regular season goes through the real simulator, the playoffs do not.
 
 **2026-08-22, second wave** — QA-03, F-13, F-32, F-49(1,2), F-68, F-70(1,2), F-24.
 **Four of those seven entries were wrong about their own subject**, which is now the
@@ -75,8 +80,8 @@ because nothing measures it.
 
 | id | title | class | priority | one-line effect |
 |---|---|---|---|---|
-| F-01 | Make AI-vs-AI game results depend on the rosters | design-change | P0 **IN PROGRESS (#213)** | Turns the standings from a random-number generator into a consequence of AI front-office quality |
-| F-02 | Make the roster-quality → win-probability curve monotone | bug-fix | P0 **IN PROGRESS (#214)** | A better roster stops winning fewer games |
+| F-01 | Make AI-vs-AI game results depend on the rosters | design-change | P0 **DONE for the REGULAR SEASON (#213); the PLAYOFFS are still RNG — see F-73** | Turns the standings from a random-number generator into a consequence of AI front-office quality |
+| F-02 | Make the roster-quality → win-probability curve monotone | bug-fix | P0 **DONE (#214)** | A better roster stops winning fewer games |
 | F-03 | Stop underdog relief stacking inside the compression floor | bug-fix | P0 | Removes the second half of the win-curve reversal |
 | F-04 | Instrument competitive dispersion in the smoke test | measurement-gap | P0 | Makes F-01/F-02/F-11/F-12 visible to CI instead of invisible |
 | F-05 | Give the headless draft AI-vs-AI swaps and assert `draftSwaps` | measurement-gap | P0 | Un-blinds the fourth-largest trade category, which is structurally 0 in the harness |
@@ -158,7 +163,10 @@ because nothing measures it.
 
 ### F-01 — Make AI-vs-AI game results depend on the rosters — **DONE** (`2c70d51`, #213)
 - **Class**: design-change (with a bug-fix sub-item: the tie-break)
-- **Priority**: P0 — **IN PROGRESS** (ledger #213, another agent is editing `WeekAdvancer.swift`)
+- **Priority**: P0 — **DONE FOR THE REGULAR SEASON (#213)**, verified in source 2026-08-22
+  (`advanceRegularSeasonWeek` passes `homeRosterOverride` into `GameSimulator.simulate`).
+  **NOT done for the postseason** — `playPlayoffGames` still sends all 31 AI games to
+  `simulateGameScore()`. Split out as **F-73**.
 - **Where**: `Engine/Simulation/WeekAdvancer.swift` — `randomTeamScore(homeAdvantage:)` (reported
   `:8186-8214`), `simulateGameScore()` (`:971-990`), the tie-break (`:984-987`), call sites in the
   regular-season advance (`:1383`), the playoffs (`:7324-7327`), the Pro Bowl (`:3065`);
@@ -189,7 +197,8 @@ because nothing measures it.
 
 ### F-02 — Make the roster-quality → win-probability curve monotone — **DONE** (`e04dac4`, #214)
 - **Class**: bug-fix
-- **Priority**: P0 — **IN PROGRESS** (ledger #214, another agent is editing `PlaySimulator.swift`)
+- **Priority**: P0 — **DONE (#214)**, verified in source 2026-08-22: `PlaySimulator`'s
+  `edgeCompressionScale` keys on BREADTH (`medianGap / meanGap`), not on the mean gap alone.
 - **Where**: `Engine/Simulation/PlaySimulator.swift` — `edgeCompressionScale` (reported
   `:2769-2785`, constants `teamEdgeFull = 3.5`, `teamEdgeCrush = 9.0`, `teamEdgeFloor = 0.085`);
   ~14 call sites across the 0-centred talent channels (reported `:509-510`, `:573`, `:713`, `:796`,
@@ -672,7 +681,7 @@ contracts where the number matters most.
 - **Source**: `REBUILD_VIABILITY_ANALYSIS.md` recommendation 6 (the second half, explicitly flagged
   as "mis-implemented against its own comment").
 
-### F-14 — Rebalance `scoreBid`'s structural user multipliers — **IN PROGRESS (D1 wave)**
+### F-14 — Rebalance `scoreBid`'s structural user multipliers — **DONE — `893da82` (D1 wave) — `scoreBid`'s structural multipliers are 1.06/0.98 + a 1.02 pitch; verified in source 2026-08-22**
 - **Class**: design-change
 - **Priority**: P1
 - **Needs user decision**: *Should the user keep a flat structural bonus in free agency, and how
@@ -698,7 +707,7 @@ contracts where the number matters most.
 - **Depends on**: F-13
 - **Source**: `REBUILD_VIABILITY_ANALYSIS.md` recommendation 6, §1.1, §4.6. Ledger `TODO.md:4179`.
 
-### F-15 — Route the opponent-prep drift penalty into a field the simulator reads — **IN PROGRESS (D1 wave)**
+### F-15 — Route the opponent-prep drift penalty into a field the simulator reads — **DONE — `893da82` — `prepFocusDelta` is a real `GameSimulator.simulate` parameter and reaches the score (`:229`)**
 - **Class**: bug-fix
 - **Priority**: P1
 - **Where**: `Engine/Camp/OpponentPrepEngine.swift:26-30` (`driftPenalty`, −1…−3 after 3+
@@ -723,7 +732,7 @@ contracts where the number matters most.
 - **Source**: `AI_GAMEDAY_DECISIONS_ANALYSIS.md` §2.2 and PART 5 item 2 (the bug half). Ledger
   `TODO.md:4237`.
 
-### F-16 — Replace the opponent-prep post-game score multiplier — **IN PROGRESS (D1 wave)**
+### F-16 — Replace the opponent-prep post-game score multiplier — **DONE — `13a984b` — no `prepMultiplier` / `postGameScoreMultiplier` survives anywhere in `Engine/`**
 - **Class**: design-change
 - **Priority**: P1
 - **Needs user decision**: *Should opponent prep (a) thread through the simulator as real per-play
@@ -1703,7 +1712,7 @@ contracts where the number matters most.
 - **Source**: `AI_TRADE_ANALYSIS.md` §1.6 row C1, §3.1 row 15, §3.2 item 4, recommendation B6.
   Ledger `TODO.md:4222` (#220).
 
-### F-51 — Add a Transactions lens over `TradeRecord` — **IN PROGRESS (D6 wave)**
+### F-51 — Add a Transactions lens over `TradeRecord` — **DONE — `29107d7` — `UI/Contracts/LeagueTransactionsView.swift` exists and the shell mounts it**
 - **Class**: design-change
 - **Priority**: P2
 - **Needs user decision**: *Should the game have a league-wide Transactions screen?* The report calls
@@ -1793,7 +1802,7 @@ contracts where the number matters most.
 - **Depends on**: F-09, F-05
 - **Source**: `AI_TRADE_ANALYSIS.md` §1.5, §2.3, §3.1 row 4, §3.2 item 2, recommendation D5.
 
-### F-56 — Surface or neutralise the user's hidden GM persona — **IN PROGRESS (D6 wave)**
+### F-56 — Surface or neutralise the user's hidden GM persona — **DONE — `960f3c7` / merged `aee4404`**
 - **Class**: design-change
 - **Priority**: P2
 - **Needs user decision**: *Surface the user's franchise archetype in the UI, or exclude his club
@@ -1833,7 +1842,7 @@ contracts where the number matters most.
 - **Depends on**: F-49
 - **Source**: `AI_TRADE_ANALYSIS.md` §1.6 ("Roster holes: nothing"), §3.1 row 14, recommendation D8.
 
-### F-58 — Add shop-your-own-player and a trade block — **IN PROGRESS (D6 wave)**
+### F-58 — Add shop-your-own-player and a trade block — **DONE — `401f18b`**
 - **Class**: design-change
 - **Priority**: P2
 - **Needs user decision**: *Should the user be able to shop a player from his detail screen and
@@ -1903,7 +1912,7 @@ contracts where the number matters most.
 - **Depends on**: F-38
 - **Source**: `AI_GAMEDAY_DECISIONS_ANALYSIS.md` §1.4, PART 5 item 14.
 
-### F-61 — Make guarantees and contract term AI negotiating levers — **IN PROGRESS (contract wave)**
+### F-61 — Make guarantees and contract term AI negotiating levers — **DONE — merged `1004e2b`**
 - **Class**: design-change
 - **Priority**: P2
 - **Needs user decision**: *Should the AI negotiate on guaranteed money and length?* No magnitudes are
@@ -1992,7 +2001,7 @@ contracts where the number matters most.
 - **Depends on**: none
 - **Source**: `REBUILD_VIABILITY_ANALYSIS.md` §1.5, §1.8.
 
-### F-65 — Price and preview the cost of a scheme change — **IN PROGRESS (D6 wave)**
+### F-65 — Price and preview the cost of a scheme change — **DONE — `70893eb` — `UI/Staff/SchemeSelectionView.swift` carries the priced, confirmed switch**
 - **Class**: design-change
 - **Priority**: P2
 - **Needs user decision**: *Should the scheme-selection screen show the install cost before the user
@@ -2106,7 +2115,7 @@ contracts where the number matters most.
 - **Source**: `AI_ROSTER_DECISIONS_ANALYSIS.md` §1.3, PART 5 item 7;
   `AI_TRADE_ANALYSIS.md` §1.6 rows C6–C9, §3.2 item 11, recommendation B9. Ledger `TODO.md:4229`.
 
-### F-69 — Fix UI copy that promises engine behaviour that does not exist — **IN PROGRESS (D6 wave)**
+### F-69 — Fix UI copy that promises engine behaviour that does not exist — **DONE — `373bed9` + `f5156ec`**
 - **Class**: bug-fix
 - **Priority**: P3
 - **Where**: `UI/Match/GameSummaryView.swift:386` (prints
@@ -2387,6 +2396,38 @@ Things all four reports explicitly found correct and well-built. A later pass sh
   is newer than the one the season ran on.
 - **Depends on**: none
 - **Source**: live QA, 2026-08-22 season run (Las Vegas Highrollers, 2027, 4-13).
+
+---
+
+### F-73 — The entire playoff bracket outside the user's own game is random numbers
+- **Class**: design-change
+- **Priority**: **P0** — this is the unfinished half of F-01
+- **Where**: `Engine/Simulation/WeekAdvancer.swift` `playPlayoffGames`. The user's game goes through
+  `GameSimulator.simulate`; every other game falls through to `var score = simulateGameScore()` with
+  a re-roll loop to break ties.
+- **What is wrong**: F-01/#213 routed the REGULAR season's AI-vs-AI games through the real simulator
+  so that "the standings stop being a random-number generator and become a consequence of AI
+  front-office quality". **The postseason was never converted.** All 31 AI playoff games are drawn
+  from `simulateGameScore()`, which reads no roster, no coach, no scheme and no home field. So a
+  14-3 club with the best roster in the league has **exactly the same chance** of winning a playoff
+  game as the 9-8 club that squeaked in, and the champion is chosen by RNG.
+  This defeats the point of F-01 at the only stage anybody remembers, and it silently invalidates
+  every dynasty-level measurement that reads championships — legacy scoring, owner goals ("Win the
+  Division" / titles), the coaching carousel's read of success, and the rebuild-viability question
+  of whether a well-built roster is rewarded.
+- **The justifying comment is also stale** and should go with the fix: it says the AI games stay
+  score-only "the same bargain the regular season strikes … the identical reason
+  `advanceRegularSeasonWeek` runs `GameSimulator` for exactly one game a week". #213 changed exactly
+  that — the regular season now runs `GameSimulator` for ALL of them.
+- **What to do**: mirror #213. `playPlayoffGames` already fetches `coachesCache` for every game
+  since #213, so the inputs are in hand; it needs the roster override and the same tie handling the
+  regular season uses. Keep the score-only path as the unresolvable-team fallback only.
+- **Risk / how to verify**: this makes the postseason favour better rosters, which will change
+  champion distribution and everything downstream of it. Gate on `MultiSeasonSmokeTest`'s
+  competitive-balance block (winSD, `corr(starterOVR, wins)`, yoyCorr, worstToField) and confirm the
+  champion's mean starter OVR rises above league mean, which today it should not.
+- **Depends on**: none (F-01's machinery already exists)
+- **Source**: found 2026-08-22 during the stamp audit that followed the live season run.
 
 ---
 
