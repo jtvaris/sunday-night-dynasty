@@ -3824,6 +3824,84 @@ Skeleton is FM-like and GOOD: 100-point Tactical/Physical/Technical team split +
 - [ ] Live leaders including the in-progress drive — stats accumulate per completed drive (mirrors the quick sim's accumulateStats cadence); recomputing mid-drive would double-count once the drive finishes. Sheet documents the cadence in a comment.
 - [ ] Simulator verification — settled for green build + code review per round rules (a live coached game needs cooperative game state); the sheet/chip/overlay should be eyeballed in the next play session.
 
+## PÄIVÄ 2026-08-22 (ilta) — TODO-TRIAGE: koko avoin jono käyty läpi koodia vasten
+
+Käyttäjä: "korjaa F01 ja F-73 ja sen jälkeen kaikki todo:t". Tässä on tulos. Sääntö
+oli sama kuin koko päivän: **leimaan ei luoteta, koodi katsotaan.**
+
+**F-01 / F-73 — molemmat suljettu, toinen väärän hälytyksen kautta.**
+F-01 oli jo valmis MOLEMMILTA puoliltaan. Kirjasin F-73:n väittäen että pudotuspelit
+ovat RNG:tä, luettuani funktion vanhentuneen otsikkokommentin ja sen häntäpään
+`simleGameScore()`-fallbackin — lukematta niiden VÄLISSÄ olevaa `#213`-lohkoa, joka
+ajaa kaikki 31 AI-peliä oikean simulaattorin läpi. Vedetty pois tuntia myöhemmin.
+Se on juuri se virhetyyppi jota F-68 koskee, ja se osui minuun tunti F-68:n
+sulkemisen jälkeen. Kommentti korjattu kuvaamaan runkoaan.
+
+**F-23 — päätös tehty (käyttäjä delegoi), toteutettu ja MITATTU.**
+D3 vaatii parin: joko käyttäjän oma sumu tai AI:n σ-katto 2.0:aan. Otin katon —
+käyttäjäsumu on paljon isompi muutos kuin miltä kuulostaa (jokainen ruutu joka
+tulostaa vapaan agentin arvon joutuisi tulostamaan sumutetun, ja luku lakkaisi
+tarkoittamasta samaa kuin muualla). Kirjattu omaksi työkseen: **F-74**.
+Katto skaalauksena eikä leikkurina, jotta seurat yhä eroavat toisistaan.
+Mitattu: liiga 1.54 OVR vs draftin 3.97; analytics 1.27 < balanced 1.55 <
+aggressive 1.74 < oldSchool 1.95; häntä 3.91 % (tavoite 4 %); vakaa vuoden sisällä,
+arpoo uudelleen vuosien välillä.
+
+**Mocap-putki (21 klipin paketti) — VALMIS, seitsemän rastia oli vanhentunut.**
+`PlayerClip_*.usdc` ovat `Resources/`issa ja `SkeletalFigure` kantaa poolitettua
+klippikatalogia ("a clip with no pool loads PlayerClip_<name>.usdc directly").
+Sekä "Next (fix round)" että "Remaining (game integration)" oli tehty jo
+2026-07-20 — sen kertoo TODO:n oma myöhempi osio.
+
+**Numeroitu backlog — kaikilla laskeutunut commit.**
+#112 #115 #116 (`648a335`) · #124 (`b71fdb5`) · #125 (`7b1d75c`) · #126 (`ebb4165`) ·
+#127 (`36e6d0a`) · #133 #135 #158 (`91f62a5`) · #134 (`8ba35f1`) · #152 (`8c4d1d7`) ·
+#154 (QA-04, tänään) · #155 (`ce5ad57`) · #156 (`08df531`) · #157 (`7ff5cf3`,
+suljettu mittaamalla) · #105 (`717541f`).
+Rivin 4593 jäännös (`pressureWeek` oletusarvolla) on **jo korjattu** — molemmat
+kutsujat välittävät sen. Se rivi oli vanhentunut.
+
+**#97 = F-71, ja F-72 on sama vika ikäsarakkeessa — MITATTU.**
+Kirjasin aamulla F-71:n (80+ osuus 19.0 % vs kaista [12,19]) tietämättä että
+TODO:n #97 on sama vika ja kantaa jo diagnoosin: ero on REALISAATIOSSA, ei
+headroomissa — `offseasonDevelop` +2.2 OVR/pelaaja/kausi kun kaikki muut passit
+yhteensä +0.05. Diagnoosi yhdistetty F-71:een.
+Uusi diagnostiikka `CareerScenario`ssa testaa olivatko F-71 ja F-72 sama asia:
+```
+33+ väestö: 1470 | 80+ 841 (57%) | 70-79 482 (33%) | <70 147 (10%)
+P(33+ | 80+) = 13.00%  vs  P(33+ | all) = 4.34%  suhde 3.00x
+```
+**Kyllä olivat.** 57 % koko 33+-joukosta on 80+, ja 80+-pelaaja on kolme kertaa
+todennäköisemmin yli 33:n. Syy on F-45:n `qualityHazardScale`, joka TAHALLAAN antaa
+huippupelaajien jatkaa pidempään, ja ikämuuri on DO-NOT-TOUCH-listalla. Eli 6.9g:n
+korjaaminen eläkeputkea säätämällä rikkoisi toimivan mallin oireen peittämiseksi.
+**Kaksi asserttia, yksi korjaus.**
+
+### Ainoa aidosti auki jäävä työ
+- [ ] **F-71 / #97 — realisaation ylitoimitus (`offseasonDevelop`).** Vaatii OMAN
+      aallon, ei tämän päivän muutosten päälle. Syyt: (1) edellinen yritys
+      (`runwayCentre` 0.55→0.40) rikkoi NELJÄ §6-asserttia, koska §6:n hit/elite-käyrät
+      ovat väite headroomista; (2) se pitää mitata sekä rigiä ETTÄ appin smokea vasten,
+      koska #97:n jäännös on nimenomaan näiden kahden ero; (3) tänään on jo ajettu
+      F-23 sisään, ja toinen balanssimuutos samaan mittaukseen tekisi regression
+      kohdistamisen mahdottomaksi. Seuraava vipu on #97:n nimeämä:
+      `WeekAdvancer`in `processOffseason`-syötteet (opportunity / coaching / scheme fit),
+      **ei** generaattorivakio. 6.9g pitää mitata uudelleen vasta tämän jälkeen.
+
+### Käsin katsottavat (ei suljettavissa koodilla)
+- [ ] `ScoutNotesView` ei ole renderöitynyt kertaakaan laitteella.
+- [ ] Insights-kiinni-oletus rakennettu muttei nähty ajossa.
+- [ ] Portrait-taitto: 7 slattia + 6 tabia 1032 pt:llä — aritmetiikka sanoo että mahtuu
+      ilman varaa, ei koskaan piirretty.
+- [ ] QA-04/QA-05/QA-03-korjaukset eivät ole vielä näkyneet elävässä savessa: ne
+      rakennettiin kauden ajon JÄLKEEN, joten simulaattorilla pyöri vanhempi build.
+
+### Odottaa käyttäjää
+- [ ] **F-74** — käyttäjän oma veteraanisumu (D3:n parin toinen puoli). Vaatii
+      päätöksen: näytetäänkö sumutettu arvio VÄLINÄ/kirjaimena vai siirrettynä lukuna.
+      Siirretty luku muuttaisi hiljaa sen mitä `overall` tarkoittaa yhdellä ruudulla —
+      juuri se vikatyyppi jota tämä koodikanta toistaa (#154, QA-03, QA-05).
+
 ## Visual design loop: coach-mode 3D (2026-07-09, /visual-design-loop, 2 iteraatiota)
 - [x] Iter 1: goalposts thicker + duller gold (glow-stick look fixed); end zone tint deepened; dark apron strips ground the sideline walls; defense-card zone bubbles tightened (PlayDiagramView)
 - [x] Iter 2: end zones deepened further (darken 0.45 — no more neon vs muted turf); floating jersey numbers 0.75→0.62 + calmer emission (no more label collisions in line traffic); helmets shaded 20% darker than jerseys (heads read as gear, NFL look); broadcast plate / result toast vertical separation
