@@ -9,10 +9,10 @@ it already cost one agent a wasted assignment this week.
 
 | state | count | what it means |
 |---|---:|---|
-| **DONE** | 58 | verified present in the source on this branch, not taken from a report |
+| **DONE** | 59 | verified present in the source on this branch, not taken from a report |
 | **CLOSED / REJECTED** | 2 | F-03 closed by measurement, F-08 rejected by the D1 ruling |
 | **IN PROGRESS** | 0 | — |
-| open | 15 | genuinely unstarted (F-71 / F-72 from measurement; F-73 filed and withdrawn) |
+| open | 15 | genuinely unstarted (F-71 / F-72 from measurement; F-74 split out of F-23; F-73 withdrawn) |
 
 **2026-08-22, stamp audit.** All nine `IN PROGRESS` entries were finished and merged; the
 stamps were stale. Each now names the commit AND the source evidence, because a commit
@@ -930,7 +930,7 @@ contracts where the number matters most.
 - **Source**: `REBUILD_VIABILITY_ANALYSIS.md` recommendation 11 and §2.7 ("Defect found: the rookie
   boom/bust roll is unreachable").
 
-### F-23 — Give AI free agency a veteran perception model
+### F-23 — Give AI free agency a veteran perception model — **DONE 2026-08-22, measured**
 - **Class**: design-change
 - **Priority**: P1
 - **Needs user decision**: *Should AI clubs misjudge veterans, and should the user's own read of a
@@ -957,7 +957,39 @@ contracts where the number matters most.
   can accidentally accelerate the rebuild it is meant to slow. Verify with the FA smoke diagnostics
   (contested-signing win rate, mean overpay) and F-04's dispersion metrics. The `perception`
   scenario is the template for the read-only diagnostic to add.
-- **Depends on**: F-01, F-04
+- **THE OPEN DECISION, DECIDED (user delegated it, 2026-08-22): take the σ cap, file the user-side
+  fog.** D3 requires a pairing because fogging the AI alone is a gift, and names two options without
+  choosing. I took the cap, because the user-side fog is a much larger change than it sounds: every
+  screen printing a free agent's rating would have to print a fogged one, that number would stop
+  meaning what it means everywhere else in the app, and it needs a scouting-spend mechanic to narrow.
+  That is a feature and deserves to be built as one, not smuggled in as the tail of a balance change.
+  **Filed as its own entry rather than skipped.**
+  The cap is applied as a **scale, not a clamp** — `2.0/3.5` over the whole archetype table, so the
+  maximum lands on 2.0 and the clubs still differ (1.14 / 1.43 / 1.71 / 2.00). A clamp would have
+  flattened three of the four archetypes onto one number and thrown away the only property D3's
+  Option A is actually about: that the rooms are distinguishable, and therefore learnable.
+- **RESOLVED.** `AIDraftPerception.veteranLens` / `veteranRead` reuse the draft's machinery rather
+  than the separate `VeteranPerception` file this entry proposed — one perception module cannot drift
+  from itself, and the harness already syncs this one. `read` gained an optional `seedSalt` (0 = the
+  existing pair-anchored behaviour, bit-identical) so the veteran read can be **season-anchored** as
+  this entry asks.
+- **Attachment**: the fog lands on whatever each path actually DECIDES. The interactive rounds
+  (`generateAIOffers`) decide by bid, so it moves money (`perceptionPricePerOVR = 0.03`, capped
+  ±20 %). The bulk market (`simulateAIFreeAgency`) decides by a weighted pick, so it moves appetite
+  (`perceptionWantPerOVR = 0.06`, capped ±35 %). `marketAppeal` is deliberately left alone — it is
+  the league-wide consensus queue, not one club's read.
+- **MEASURED** (`./run.sh perception`, new VETERAN READ block, which is the read-only diagnostic this
+  entry asked for):
+  - league mean |perceived−true| **1.54 OVR** vs the draft's **3.97** — veterans are the tighter read,
+    which is the whole justification for halving σ;
+  - archetype ORDER preserved and legible: analytics **1.27** < balanced **1.55** < aggressive
+    **1.74** < oldSchool **1.95**;
+  - fat tail **3.91 %** against a 4 % target;
+  - **stable within a league year = true**, **re-rolls across league years = true**.
+- **No regression**: `./run.sh career` after the change fails the same two pre-existing assertions
+  (6.9b 19.05 %, 6.9g 4.31 %) and nothing else; OVR drift unchanged at **+0.021**; every price gate
+  holds (6.11a-e), including league salary/market **0.732** and the 85+ cohort at **0.810**.
+- **Depends on**: ~~F-01, F-04~~ — both landed
 - **Source**: `AI_ROSTER_DECISIONS_ANALYSIS.md` §4.2 P1, PART 5 item 2, recommendation R1;
   `AI_GAMEDAY_DECISIONS_ANALYSIS.md` §4.2 (the "where the AI is omniscient" theme). Ledger
   `TODO.md:4229` (#222).
@@ -2421,6 +2453,29 @@ Things all four reports explicitly found correct and well-built. A later pass sh
   F-68.** The comment is now corrected to match its body and says so.
 - **What survives**: nothing actionable. F-01 is fully DONE, regular season and postseason alike.
 - **Source**: filed and withdrawn 2026-08-22, both by reading the same function.
+
+---
+
+### F-74 — The user-side veteran fog (D3's other half of the F-23 pairing)
+- **Class**: design-change
+- **Priority**: P2
+- **Where**: every surface that prints a free agent's `overall` — the FA board, the player card, the
+  comparison views; plus a scouting-spend hook to narrow it.
+- **What is wrong**: F-23 fogged the AI's read of veterans and paid for the asymmetry with D3's σ cap
+  (2.0). That is a **bounded** answer, not the full one. D3's preferred pairing is that the USER also
+  misjudges veterans he has not seen — his own division sharp, the rest fogged at ±1-2, narrowing
+  with a scouting spend. Until that exists the user still reads every free agent in the league
+  perfectly while all 32 AI rooms do not.
+- **What to do**: decide first whether a fogged rating is DISPLAYED as a range/grade or as a shifted
+  number. This is the load-bearing question: a shifted number silently changes what `overall` means
+  on one screen and not others, which is the defect class this codebase keeps hitting (#154, QA-03,
+  QA-05). A range or a letter is honest about being an estimate. `ProspectFog` / `HeadroomFog` are
+  the precedent and should be the template.
+- **Risk / how to verify**: this makes the user WEAKER, so it must be paired with lifting the AI σ
+  cap back toward D3's 2.0-3.5, or the league simply gets foggier overall. Re-run `./run.sh career`
+  and the FA price gates, and re-measure contested-signing win rate.
+- **Depends on**: F-23 (landed)
+- **Source**: split out of F-23 when its pairing decision was taken, 2026-08-22.
 
 ---
 

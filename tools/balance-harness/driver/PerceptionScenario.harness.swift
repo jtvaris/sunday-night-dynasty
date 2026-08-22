@@ -507,6 +507,64 @@ func scenarioPerception(_ flags: [String: String]) {
     print("")
     print("  determinism: repeat read identical = \(a.overall == b.overall && a.potential == b.potential)")
 
+    // --- F-23: the VETERAN fog -----------------------------------------------
+    //
+    // The draft block above measures a permanent, pair-anchored read. The
+    // veteran read is a different animal by design: half the sigma (a veteran
+    // has pro tape), a smaller fat tail, capped for the D3 pairing, and
+    // RE-ROLLED every league year. All four properties are checked here, off
+    // the shipped constants — never re-typed (see sync_sources' guard).
+    print("")
+    print("--- VETERAN READ (F-23) ------------------------------------------------------")
+    var vetErrByPersona: [String: [Double]] = [:]
+    var vetAbsAll: [Double] = []
+    var vetFatHits = 0
+    var vetPairs = 0
+    let vetSeason = 2030
+    for club in clubIDs {
+        let lens = AIDraftPerception.veteranLens(forTeam: club)
+        for _ in 0..<400 {
+            let pid = UUID()
+            let trueOVR = Int.random(in: 62...92)
+            let r = AIDraftPerception.veteranRead(
+                teamID: club, playerID: pid, season: vetSeason,
+                trueOverall: trueOVR, truePotential: min(99, trueOVR + Int.random(in: 0...8)),
+                lens: lens
+            )
+            let e = abs(r.overall - Double(trueOVR))
+            vetErrByPersona[lens.archetype.rawValue, default: []].append(e)
+            vetAbsAll.append(e)
+            vetPairs += 1
+            if r.isFatTail { vetFatHits += 1 }
+        }
+    }
+    for a in TradeValueEngine.GMArchetype.allCases {
+        let xs = vetErrByPersona[a.rawValue] ?? []
+        guard !xs.isEmpty else { continue }
+        print(String(format: "  %-11@ mean |perceived-true| %.2f OVR   (sigma %.2f after the D3 pairing cap, n=%d)",
+                     a.rawValue, mean(xs),
+                     AIDraftPerception.veteranSigmaUncapped(for: a) * AIDraftPerception.veteranSigmaPairingScale,
+                     xs.count))
+    }
+    print(String(format: "  LEAGUE      mean |perceived-true| %.2f OVR   fat tail %.2f%% (target %.0f%%)",
+                 mean(vetAbsAll),
+                 vetPairs == 0 ? 0 : Double(vetFatHits) / Double(vetPairs) * 100,
+                 AIDraftPerception.veteranFatTailRate * 100))
+    print(String(format: "  vs the DRAFT read: %.2f vs %.2f OVR — veterans must be the tighter of the two",
+                 mean(vetAbsAll), mean(absErrAll)))
+
+    // The two properties the veteran model claims and the draft model does not.
+    let vt = clubIDs[0]
+    let vp = UUID()
+    let y1a = AIDraftPerception.veteranRead(teamID: vt, playerID: vp, season: 2028,
+                                           trueOverall: 78, truePotential: 82)
+    let y1b = AIDraftPerception.veteranRead(teamID: vt, playerID: vp, season: 2028,
+                                           trueOverall: 78, truePotential: 82)
+    let y2 = AIDraftPerception.veteranRead(teamID: vt, playerID: vp, season: 2030,
+                                           trueOverall: 78, truePotential: 82)
+    print("  stable WITHIN a league year   = \(y1a.overall == y1b.overall)")
+    print("  re-rolls ACROSS league years  = \(y1a.overall != y2.overall)")
+
     print("")
     print("PERCEPTION: OK (diagnostic — no gate)")
 }

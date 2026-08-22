@@ -845,7 +845,8 @@ enum FreeAgencyEngine {
         allTeams: [Team],
         playerTeamID: UUID?,
         modelContext: ModelContext,
-        capMode: CapMode = .simple
+        capMode: CapMode = .simple,
+        season: Int
     ) {
         // Use average cap across all teams for market valuation
         let avgCap = allTeams.isEmpty ? ContractEngine.openingSalaryCap : allTeams.reduce(0) { $0 + $1.salaryCap } / allTeams.count
@@ -856,7 +857,8 @@ enum FreeAgencyEngine {
             teams: aiTeams,
             modelContext: modelContext,
             capMode: capMode,
-            allPlayers: allPlayers
+            allPlayers: allPlayers,
+            season: season
         )
     }
 
@@ -900,7 +902,8 @@ enum FreeAgencyEngine {
             allTeams: allTeams,
             playerTeamID: playerTeamID,
             modelContext: modelContext,
-            capMode: capMode
+            capMode: capMode,
+            season: career?.currentSeason ?? 0
         )
         return true
     }
@@ -1284,6 +1287,25 @@ enum FreeAgencyEngine {
     /// This changes WHO gets the roster spots, not how many: the loop below
     /// still signs until clubs hit `faRosterCeiling` or their cap reserve, so
     /// the market writes the same number of contracts either way.
+    /// How much one OVR point of misread moves a club's APPETITE in the bulk
+    /// market's weighted pick. Larger than the money knob because a weight is a
+    /// relative quantity competing against need and stance, and a 3 % nudge there
+    /// would be invisible.
+    static let perceptionWantPerOVR = 0.06
+
+    /// Bound on the same, so a fat-tail read tilts the pick rather than deciding
+    /// it outright. Need still outranks taste (`marketPersonalityLeanCap`'s rule).
+    static let perceptionWantSwingCap = 0.35
+
+    /// How much one OVR point of misread moves a club's bid. 0.03 = a 2-point
+    /// misread is worth ~6 % on the price — enough to decide a contested signing,
+    /// small enough that the market does not become noise.
+    static let perceptionPricePerOVR = 0.03
+
+    /// Hard bound on the fog's effect on money, so a fat-tail read (±6-10 OVR)
+    /// becomes a bad decision rather than an absurd one. ±20 %.
+    static let perceptionPriceSwingCap = 0.20
+
     static func marketAppeal(_ player: Player) -> Double {
         var score = Double(player.overall)
         score -= min(
@@ -2380,12 +2402,15 @@ enum FreeAgencyEngine {
     /// `CoachingEngine.developmentAppeal` is now that pull (0.85-1.15), applied
     /// as a weight on the same shortlist rather than as a new filter, so it can
     /// tilt a coin-flip without ever overriding need or cap room.
+    /// - Parameter season: seeds the veteran fog, re-rolled per league year
+    ///   (`AIDraftPerception.veteranRead`).
     static func simulateAIFreeAgency(
         freeAgents: [FreeAgent],
         teams: [Team],
         modelContext: ModelContext,
         capMode: CapMode = .simple,
-        allPlayers: [Player]? = nil
+        allPlayers: [Player]? = nil,
+        season: Int
     ) {
         // Order the market by APPEAL, not by raw `overall` (task #53). The
         // elite still go first — an 88-OVR 32-year-old grades 76 against a
@@ -2461,6 +2486,12 @@ enum FreeAgencyEngine {
                 )
             }
         }
+
+        // F-23 — one veteran lens per club, hoisted for the same reason as
+        // everything else in this block.
+        let veteranLensByTeam: [UUID: AIDraftPerception.Lens] = Dictionary(
+            uniqueKeysWithValues: teams.map { ($0.id, AIDraftPerception.veteranLens(forTeam: $0.id)) }
+        )
 
         // Task #91 — the GM's own settlement bias. `forTeam` is a UUID-byte
         // draw, but it is a draw per free agent otherwise, so it is cached with
@@ -2644,6 +2675,31 @@ enum FreeAgencyEngine {
                             stance.incomingAgeMultiplier(age: agent.player.age)
                         )
                     }
+                    // F-23 / D3 Option A — THE VETERAN FOG, on the bulk market.
+                    //
+                    // The interactive path expresses a club's opinion as money
+                    // because there the BID is the decision. Here the decision is
+                    // a weighted pick — who ends up wanting him most — so the fog
+                    // lands on the wanting. Same model, same seed, attached to
+                    // whatever each path actually decides.
+                    //
+                    // This is what produces the two stories free agency has never
+                    // been able to tell: the club that talks itself into a man the
+                    // rest of the league has right, and the good player who slides
+                    // because the room that needed him read him low.
+                    let perceived = AIDraftPerception.veteranRead(
+                        teamID: team.id,
+                        playerID: agent.player.id,
+                        season: season,
+                        trueOverall: agent.player.overall,
+                        truePotential: agent.player.truePotential,
+                        lens: veteranLensByTeam[team.id]
+                    )
+                    let readError = perceived.overall - Double(agent.player.overall)
+                    weight *= max(
+                        1.0 - perceptionWantSwingCap,
+                        min(1.0 + perceptionWantSwingCap, 1.0 + readError * perceptionWantPerOVR)
+                    )
                     return weight
                 }
             ) else { return }
@@ -2857,13 +2913,18 @@ enum FreeAgencyEngine {
     /// AI teams now bid based on positional need and cap space.
     /// Returns a dictionary keyed by player ID with arrays of competing bids.
     /// In sandbox cap mode the cap-room precondition is dropped so any team can bid.
+    /// - Parameter season: the league year, which seeds the veteran fog. It is
+    ///   re-rolled annually on purpose — a club that misjudged a man in 2028 has
+    ///   two more seasons of film on him by 2030 and is allowed to change its
+    ///   mind. See `AIDraftPerception.veteranRead`.
     static func generateAIOffers(
         freeAgents: [FreeAgent],
         round: Int,
         allTeams: [Team],
         allPlayers: [Player]? = nil,
         playerTeamID: UUID?,
-        capMode: CapMode = .simple
+        capMode: CapMode = .simple,
+        season: Int
     ) -> [UUID: [AIBid]] {
         let aggression = FreeAgencyStep.aiAggression(round)
         var offers: [UUID: [AIBid]] = [:]
@@ -2886,6 +2947,13 @@ enum FreeAgencyEngine {
         // per agent × team (same fix as simulateAIFreeAgency).
         let rosterPlayers = allPlayers ?? []
         let needIndex = rosterPlayers.isEmpty ? nil : RosterNeedIndex(allPlayers: rosterPlayers)
+
+        // F-23: one lens per club, hoisted out of the agent x team loop. The
+        // lens is a `GMPersona` lookup and a switch; the READ is the per-pair
+        // work and stays inside.
+        let veteranLensByTeam: [UUID: AIDraftPerception.Lens] = Dictionary(
+            uniqueKeysWithValues: aiTeams.map { ($0.id, AIDraftPerception.veteranLens(forTeam: $0.id)) }
+        )
 
         // Task #89 — the same draft board the bulk market reads.
         var topNeedsByTeam: [UUID: Set<Position>] = [:]
@@ -3049,8 +3117,47 @@ enum FreeAgencyEngine {
                     )
                 }
 
+                // F-23 / D3 Option A — THE VETERAN FOG.
+                //
+                // Until this line every AI club read every free agent's true
+                // `overall`. All 31 rooms valued all ~500 veterans identically
+                // and correctly: nobody ever signed a bust, nobody let a good
+                // player walk because they misjudged him, nobody overpaid for a
+                // name. The draft has had a measured fog since
+                // `AIDraftPerception`; free agency had none at all.
+                //
+                // The club now prices off what IT thinks the man is, and the
+                // error is deterministic per `(club, player, league year)`,
+                // persona-shaped and fat-tailed — so a room is wrong about the
+                // same veteran all winter, an old-school room is wrong more
+                // often than an analytics one, and roughly one read in
+                // twenty-five is wrong enough to become a story.
+                //
+                // It is expressed as MONEY rather than as a re-rating, because
+                // that is where a front office's opinion actually surfaces and
+                // because it leaves the market's queue (`marketAppeal`, the
+                // league-wide consensus order) alone. `perceptionPricePerOVR` is
+                // deliberately small: ±2 OVR of misread moves a bid ~6 %, enough
+                // to lose or win a contested signing without turning the market
+                // into noise.
+                let perceived = AIDraftPerception.veteranRead(
+                    teamID: team.id,
+                    playerID: fa.player.id,
+                    season: season,
+                    trueOverall: fa.player.overall,
+                    truePotential: fa.player.truePotential,
+                    lens: veteranLensByTeam[team.id]
+                )
+                let readError = perceived.overall - Double(fa.player.overall)
+                let perceptionFactor = max(
+                    1.0 - perceptionPriceSwingCap,
+                    min(1.0 + perceptionPriceSwingCap, 1.0 + readError * perceptionPricePerOVR)
+                )
+
                 // Combine need with round aggression
-                let salaryMultiplier = needFactor * Double.random(in: (aggression * 0.85)...(aggression * 1.05 + 0.05))
+                let salaryMultiplier = needFactor
+                    * perceptionFactor
+                    * Double.random(in: (aggression * 0.85)...(aggression * 1.05 + 0.05))
 
                 // Cap-aware: don't bid more than 30% of remaining cap on one player.
                 // Sandbox skips this clamp so bids reflect raw demand only.

@@ -132,6 +132,95 @@ enum AIDraftPerception {
     /// and D3(3) explicitly wants that tail to exist.
     static let ownRosterFatTailRate = 0.03
 
+    // MARK: - Veterans (F-23 / D3 Option A)
+
+    /// σ of a club's read on a VETERAN free agent, before the pairing cap below.
+    ///
+    /// Half the draft spread, and for a stated reason: a college prospect is
+    /// projection off college tape, a veteran has years of professional film
+    /// against professional opponents. Clubs are simply better at him. D3's
+    /// Option A names 2.0 / 2.5 / 3.0 / 3.5 by archetype and that shape is kept
+    /// here — the ORDER is the learnable part ("the old-school room is the one
+    /// most likely to be wrong about a free agent").
+    static func veteranSigmaUncapped(for archetype: TradeValueEngine.GMArchetype) -> Double {
+        switch archetype {
+        case .analytics:  return 2.0
+        case .balanced:   return 2.5
+        case .aggressive: return 3.0
+        case .oldSchool:  return 3.5
+        }
+    }
+
+    /// **The pairing, and the decision behind it.**
+    ///
+    /// D3 is explicit that fogging the AI alone is a gift — a club that misjudges
+    /// free agents is a WEAKER bidder, and a weaker league accelerates exactly
+    /// the rebuild F-23 is meant to make honest. It offers two ways to pay for
+    /// it: a small user-side fog on free agents outside his division, or capping
+    /// the AI σ at 2.0 "so the asymmetry stays small". It does not choose.
+    ///
+    /// This takes the cap, because the user-side fog is a much larger change than
+    /// it sounds: every screen that prints a free agent's rating would have to
+    /// print a fogged one, the number would stop meaning what it means everywhere
+    /// else in the app, and it needs a scouting-spend mechanic to narrow. That is
+    /// a feature, and it deserves to be built as one rather than smuggled in as
+    /// the tail of a balance change. It is filed rather than skipped.
+    ///
+    /// The cap is applied as a SCALE, not a clamp: `2.0 / 3.5` scales the whole
+    /// archetype table so the maximum lands on 2.0 and the clubs still differ
+    /// from each other (1.14 / 1.43 / 1.71 / 2.00). A clamp would have flattened
+    /// analytics, balanced and aggressive onto one number and thrown away the
+    /// only property D3's Option A actually cares about — that the rooms are
+    /// distinguishable and therefore learnable.
+    static let veteranSigmaPairingScale = 2.0 / 3.5
+
+    /// Share of `(team, veteran, season)` triples that get a fat-tail misread.
+    ///
+    /// Lower than the draft's 7 % — there is less to be catastrophically wrong
+    /// about when a man has pro tape — but deliberately NOT zero and NOT scaled
+    /// down with σ. This is the contract that eats a club for three years and the
+    /// good player nobody would pay, which is D3(3)'s "big blunders are allowed"
+    /// and the only part of this model that produces a story.
+    static let veteranFatTailRate = 0.04
+
+    /// The lens for one franchise looking at a veteran free agent.
+    static func veteranLens(forTeam teamID: UUID) -> Lens {
+        let archetype = TradeValueEngine.GMPersona.forTeam(id: teamID).archetype
+        return Lens(
+            teamID: teamID,
+            archetype: archetype,
+            sigmaOverall: veteranSigmaUncapped(for: archetype) * veteranSigmaPairingScale,
+            fatTailRate: veteranFatTailRate
+        )
+    }
+
+    /// A club's read on a veteran, **re-rolled every league year**.
+    ///
+    /// This is the one place the perception model is deliberately NOT
+    /// pair-anchored. The draft fog is permanent on purpose: a front office
+    /// misjudges a prospect the same way at pick 3 and pick 190 because it is the
+    /// same evaluation of the same college tape. A veteran keeps PLAYING — a club
+    /// that was wrong about him in 2028 has two more seasons of film by 2030, and
+    /// should be able to be right about him. Mixing the season into the seed is
+    /// what lets an opinion change without making it random within a year.
+    static func veteranRead(
+        teamID: UUID,
+        playerID: UUID,
+        season: Int,
+        trueOverall: Int,
+        truePotential: Int,
+        lens: Lens? = nil
+    ) -> Read {
+        read(
+            teamID: teamID,
+            prospectID: playerID,
+            trueOverall: trueOverall,
+            truePotential: truePotential,
+            lens: lens ?? veteranLens(forTeam: teamID),
+            seedSalt: UInt64(bitPattern: Int64(season))
+        )
+    }
+
     /// The lens for one franchise looking at its OWN player.
     ///
     /// Same deterministic, persona-shaped machinery as ``lens(forTeam:)`` —
@@ -166,15 +255,21 @@ enum AIDraftPerception {
     /// What `teamID`'s front office believes about `prospectID`.
     ///
     /// Deterministic: same inputs → same read, every call, every launch.
+    /// - Parameter seedSalt: mixed into the pair seed so a caller can re-roll the
+    ///   same pair on a schedule of its own. `0` (the default) is the permanent,
+    ///   pair-anchored draft behaviour; `veteranRead` passes the league year.
     static func read(
         teamID: UUID,
         prospectID: UUID,
         trueOverall: Int,
         truePotential: Int,
-        lens: Lens? = nil
+        lens: Lens? = nil,
+        seedSalt: UInt64 = 0
     ) -> Read {
         let l = lens ?? Self.lens(forTeam: teamID)
-        var rng = SeededLeagueRandom(seed: pairSeed(teamID: teamID, prospectID: prospectID))
+        var rng = SeededLeagueRandom(
+            seed: saltedSeed(pairSeed(teamID: teamID, prospectID: prospectID), salt: seedSalt)
+        )
 
         // Box-Muller off the repo RNG: two uniforms in, two independent
         // standard normals out. `u1` is floored away from 0 because log(0) is
@@ -237,6 +332,17 @@ enum AIDraftPerception {
         var s = (t.hi ^ p.hi) &* 0x9E37_79B9_7F4A_7C15
         s = (s ^ (s >> 29)) &+ ((t.lo ^ p.lo) &* 0xBF58_476D_1CE4_E5B9)
         s = (s ^ (s >> 32)) &* 0x94D0_49BB_1331_11EB
+        return s == 0 ? 0x9E37_79B9_7F4A_7C15 : s
+    }
+
+    /// Mixes a salt into a pair seed without weakening it. `salt == 0` returns the
+    /// seed untouched, so every existing pair-anchored read is bit-identical.
+    private static func saltedSeed(_ seed: UInt64, salt: UInt64) -> UInt64 {
+        guard salt != 0 else { return seed }
+        var s = seed ^ (salt &* 0x9E37_79B9_7F4A_7C15)
+        s = (s ^ (s >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        s = (s ^ (s >> 27)) &* 0x94D0_49BB_1331_11EB
+        s = s ^ (s >> 31)
         return s == 0 ? 0x9E37_79B9_7F4A_7C15 : s
     }
 

@@ -1821,7 +1821,8 @@ struct FAWeeklyView: View {
             allTeams: allTeams,
             allPlayers: allPlayers.isEmpty ? nil : allPlayers,
             playerTeamID: career.teamID,
-            capMode: career.capMode
+            capMode: career.capMode,
+            season: career.currentSeason
         )
 
         // Process bidding wars (4+ teams on same player)
