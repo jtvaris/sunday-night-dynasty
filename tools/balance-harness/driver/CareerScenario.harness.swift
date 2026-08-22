@@ -2612,6 +2612,44 @@ func crReport(leagues: [CRLeague], elapsed: TimeInterval) {
                  sh90SE, sh75SE, sub65SE))
     print(String(format: "  blue chips (90+) %.1f players in a 1696-man league [25-35]   age mean %.2f [25.5-26.5]  33+ %.1f%% [<=4.0]",
                  blueChips, crMean(pyramidAges), a33))
+    // F-71 / F-72 (= TODO #97): are the 80+ share and the 33+ share the SAME
+    // defect?
+    //
+    // The hypothesis worth testing rather than asserting: F-45's
+    // `qualityHazardScale` deliberately lets great players last longer (a 92-OVR
+    // veteran carries `qualityHazardFloor` = 0.55 of the normal hazard), and the
+    // age wall itself is on the DO NOT TOUCH list. If the league is carrying too
+    // many high-OVR players — which 6.9b says it is — then it is also carrying
+    // too many quality-discounted OLD players, and 6.9g is a SYMPTOM of 6.9b
+    // rather than an independent retirement-calibration miss.
+    //
+    // If that is right, turning retirement knobs is the wrong fix and would
+    // damage a curve that is behaving as designed. If it is wrong — if the 33+
+    // cohort is ordinary players — then retirement really is mis-calibrated and
+    // 6.9g deserves its own lever. Print the split and let it decide.
+    if !equilibrium.isEmpty {
+        let old33 = equilibrium.filter { $0.age >= 33 }
+        let hi = equilibrium.filter { $0.ovr >= 80 }
+        let hiOld = hi.filter { $0.age >= 33 }
+        let old33Hi = old33.filter { $0.ovr >= 80 }.count
+        let old33Mid = old33.filter { $0.ovr >= 70 && $0.ovr < 80 }.count
+        let old33Low = old33.filter { $0.ovr < 70 }.count
+        print("")
+        print("  --- 33+ COHORT, BY QUALITY (F-71/F-72 shared-root test) ---")
+        print(String(format: "    33+ population: %d  |  80+ %d (%.0f%%)  70-79 %d (%.0f%%)  <70 %d (%.0f%%)",
+                     old33.count,
+                     old33Hi, old33.isEmpty ? 0 : Double(old33Hi) / Double(old33.count) * 100,
+                     old33Mid, old33.isEmpty ? 0 : Double(old33Mid) / Double(old33.count) * 100,
+                     old33Low, old33.isEmpty ? 0 : Double(old33Low) / Double(old33.count) * 100))
+        print(String(format: "    P(33+ | 80+) = %.2f%%   vs   P(33+ | all) = %.2f%%   ratio %.2fx",
+                     hi.isEmpty ? 0 : Double(hiOld.count) / Double(hi.count) * 100,
+                     a33,
+                     (hi.isEmpty || a33 == 0) ? 0 : (Double(hiOld.count) / Double(hi.count) * 100) / a33))
+        print("    Reading: a ratio near 1.0 means quality is NOT what keeps them around and 6.9g")
+        print("    needs its own retirement lever. A ratio well above 1.0 means 6.9g is downstream")
+        print("    of 6.9b and the fix belongs in realisation (TODO #97), not in the age wall.")
+    }
+
     // Task #84: how loud the Luck case actually was. Each one is a 1:1 swap, so
     // this is the total number of retirements whose IDENTITY changed — the
     // count itself never moved.

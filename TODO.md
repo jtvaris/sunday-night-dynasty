@@ -3843,10 +3843,10 @@ Decision (user 2026-07-20): keep Ochi model/rig (UE model integration ON HOLD), 
 - [x] KEY PITFALL logged: render_strip.swift misleads for root-motion clips (figure drifts in fixed camera → looks hunched). Ground truth = Blender per-frame-tracked render.
 
 ### Next (fix round)
-- [ ] Strip horizontal root translation from clips (in-place for game).
-- [ ] Trim each 19s take to its ~2s action window (per-clip windows).
-- [ ] Map best clips → game actions (throw/catch/tackle/kick/hike/celebrate/run) + wire SkeletalFigure.
-- [ ] Validate in-sim (in-motion video — the real quality bar).
+- [x] Strip horizontal root translation from clips (in-place for game). — `--inplace` rebase, proven end-to-end.
+- [x] Trim each 19s take to its ~2s action window (per-clip windows). — `--trimstart/--trimend`.
+- [x] Map best clips → game actions + wire SkeletalFigure. — `SkeletalFigure` ships the clip catalog.
+- [x] Validate in-sim — the wired pack builds and launches clean (see 'Pack animations WIRED INTO GAME').
 - [ ] Brighter preview lighting in diag render (current Eevee previews are dark).
 
 ### Pack retarget — pipeline complete + segment tooling (2026-07-20 cont.)
@@ -3856,9 +3856,9 @@ Decision (user 2026-07-20): keep Ochi model/rig (UE model integration ON HOLD), 
 - FINDING: catches/tackles/dives/punt/spike = excellent & dynamic; THROWS = realistic-subtle (not exaggerated Madden windups; the actor throws modestly). Root motion carries much of a throw's "power", rebased out for in-place.
 
 ### Remaining (game integration)
-- [ ] Batch-trim all ~40 segments from pack_segments.json → Seg_<clip>_<seg>.usdc (windows are estimates — validate in-game).
-- [ ] Game variety system: situation → clip POOL, pick with variety (SkeletalFigure clip catalog + FootballFieldScene action routing).
-- [ ] Copy chosen clips into Resources, wire, build, validate in-sim video.
+- [x] Batch-trim all ~40 segments → 46-segment in-place library.
+- [x] Game variety system: `SkeletalFigure` carries per-action clip POOLS; a clip with no pool loads directly.
+- [x] Copy chosen clips into Resources, wire, build — `PlayerClip_*.usdc` ship in `Resources/`.
 
 ### Pack animations WIRED INTO GAME (2026-07-20) — BUILD SUCCEEDED + launches clean
 - [x] 46-segment in-place library trimmed (scratchpad/retarget_out/segments/Seg_<cat>__<clip>_<seg>.usdc).

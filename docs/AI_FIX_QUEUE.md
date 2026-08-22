@@ -2479,7 +2479,7 @@ Things all four reports explicitly found correct and well-built. A later pass sh
 
 ---
 
-### F-71 — The §8 80+ share sits a rounding step outside its band
+### F-71 — The §8 80+ share sits a rounding step outside its band — **= TODO `#97`, diagnosis merged in**
 - **Class**: balance
 - **Priority**: P3
 - **Where**: `tools/balance-harness/driver/CareerScenario.harness.swift` assertion 6.9b; the shape is
@@ -2489,10 +2489,26 @@ Things all four reports explicitly found correct and well-built. A later pass sh
   by any recent wave. `LeagueGenScenario`'s own comments record the four-season smoke running this
   share at **19.8-21 %** historically, which suggests the league has sat at or just outside the top
   of this band for some time.
+- **THIS IS TODO's `#97`, WHICH ALREADY CARRIES A DIAGNOSIS** (found while triaging the ledger,
+  2026-08-22 — I filed F-71 without it). `#97`'s ledger entry: `leaguePot` 81.8 ≈ the rig's
+  convergence 82.66, so the headroom transient is spent, and yet the app runs 80+ at 21-22 % against
+  the rig's 16.1 % **on the same pot**. The difference is in REALISATION, not in intake:
+  `diag devsource` attributes **+2.2 OVR per player per season to `offseasonDevelop`**, while every
+  other pass sums to **+0.05**. One pass is the whole drift.
+- **What has already been tried and REVERTED**: `runwayCentre` 0.55 → 0.40 — the rig moved −2pp but
+  four §6 assertions broke, because §6's hit/elite curves ARE a claim about headroom. Do not
+  re-attempt that lever without re-deriving those curves.
+- **The lever `#97` names next**: `WeekAdvancer.processOffseason`'s INPUTS — the opportunity,
+  coaching and scheme-fit accumulations that feed `offseasonDevelop` — rather than the development
+  curve itself. Recorded on the smoke's ANOMALY line.
+- **F-72 IS THIS ENTRY IN THE AGE COLUMN** (measured 2026-08-22): 57 % of the league's 33+ cohort is
+  80+, and `P(33+ | 80+)` is **3.00×** `P(33+ | all)`. Fixing the 80+ overshoot should carry 6.9g
+  with it; chasing 6.9g separately would mean damaging F-45's deliberate quality credit. **Two
+  assertions, one fix.**
 - **What to do**: decide which is wrong — the band or the league. If the band is a real §8 target,
-  the intake or the development stack has to give back roughly a point of 80+ share; if the league
-  is right, the band's upper edge is mis-set and should say so. **Do not "fix" this by widening the
-  band silently**; that is how 6.9b stops meaning anything.
+  the realisation side has to give back roughly a point of 80+ share; if the league is right, the
+  band's upper edge is mis-set and should say so. **Do not "fix" this by widening the band
+  silently**; that is how 6.9b stops meaning anything.
 - **Risk / how to verify**: touching intake or development moves every other pyramid gate with it.
   Re-run the full `career` assert block, not just 6.9b.
 - **Depends on**: none
@@ -2500,7 +2516,7 @@ Things all four reports explicitly found correct and well-built. A later pass sh
 
 ---
 
-### F-72 — The 33+ age share runs double its §8 target
+### F-72 — The 33+ age share runs double its §8 target — **NOT ITS OWN DEFECT; it is F-71 in the age column (measured)**
 - **Class**: balance
 - **Priority**: P3
 - **Where**: `tools/balance-harness/driver/CareerScenario.harness.swift` assertion 6.9g; the
@@ -2509,9 +2525,25 @@ Things all four reports explicitly found correct and well-built. A later pass sh
   target of **≤2 %** — the assert is already relaxed to twice the design target and still fails.
   Measured **4.39 %** at `a37e045`, so it is pre-existing. The assert's own message calls it a
   "retirement-calibration follow-up", i.e. this is a known deferral that has never been picked up.
-- **What to do**: calibrate the retirement pass. Note the two numbers to hit are different — clearing
-  the assert (4.0 %) is not the same as meeting §8 (2 %), and the entry should say which is being
-  targeted before anyone starts.
+- **MEASURED 2026-08-22, and it changes what should be done.** A new diagnostic in
+  `CareerScenario` splits the 33+ cohort by quality, because F-45's `qualityHazardScale`
+  deliberately lets great players last longer (a 92-OVR veteran carries `qualityHazardFloor` = 0.55
+  of the normal hazard) and the age wall is on the DO NOT TOUCH list. If the league carries too many
+  high-OVR players it necessarily carries too many quality-discounted OLD ones.
+  ```
+  33+ population: 1470  |  80+ 841 (57%)  70-79 482 (33%)  <70 147 (10%)
+  P(33+ | 80+) = 13.00%   vs   P(33+ | all) = 4.34%   ratio 3.00x
+  ```
+  **57 % of the entire 33+ cohort is 80+, and an 80+ player is 3.00× more likely to be 33+ than an
+  average one.** The hypothesis is confirmed: 6.9g is downstream of 6.9b.
+- **What to do — REVISED**: **do not calibrate the retirement pass.** Its curve is behaving as F-45
+  designed, and touching the age wall to chase 6.9g would damage a working model to hide a symptom
+  whose cause is elsewhere. Fix F-71 / TODO `#97` (the realisation over-delivery in
+  `offseasonDevelop`) and re-measure 6.9g afterwards; it should fall on its own. Only if it does NOT
+  fall does retirement deserve a lever of its own — and this diagnostic is the test for that: a ratio
+  near 1.0 would mean quality is not what keeps them around.
+- **Merged into**: F-71 for prioritisation. Kept as its own entry because the assert is separate and
+  the diagnostic that settles it lives here.
 - **Risk / how to verify**: retiring more veterans lowers the roster mean age (6.9f, currently 26.33
   in a `[25.5,26.5]` band) and frees cap, which feeds free-agency prices. Re-run the full `career`
   block and the FA price gates 6.11b/c.
