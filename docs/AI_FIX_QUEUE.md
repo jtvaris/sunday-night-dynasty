@@ -584,7 +584,7 @@ contracts where the number matters most.
 
 ---
 
-### QA-03 — The week band read BYE while the card named an opponent — **NARROWED; the "will not advance" half was MY TOOLING**
+### QA-03 — The week band read BYE while the card named an opponent — **DONE (display half); the "will not advance" half was MY TOOLING**
 - **Class**: bug-fix
 - **Priority**: P1
 - **Where**: `UI/Career/CareerShellView.swift` `reloadSeasonFixtures` (`:3178`),
@@ -604,13 +604,27 @@ contracts where the number matters most.
   app's Lists (already documented in the QA skill). Two careers' worth of "the button does nothing"
   was my tooling, and it is withdrawn.
 - **What survives**: only the display half — the week strip read BYE for every week while the hero
-  card named a Week 1 opponent. That was observed once, on the debug-skipped career, and was NOT
-  re-checked on the normal career because the run stopped at the offseason. It needs one clean look
-  at a career that has reached its regular season before anyone spends time on it.
-- **What to do**: reach a regular season on a normally-played career and look at the strip. If it is
-  correct there, close this.
+  card named a Week 1 opponent.
+- **REPRODUCED AND FIXED, 2026-08-22.** Reached Week 1 of a 2027 regular season and photographed it:
+  every slat read `BYE`, the current one "No game this week", while the hero card read
+  `Week 1 · @ CLE (Away)` and the advance popover read "Skip your Week 1 game vs CLE?". Three labels,
+  two answers, on one screen.
+- **Root cause**: `seasonFixtures` is `@State` on the shell, written by `reloadSeasonFixtures()`, and
+  the note above ("it IS called after every advance, via `loadShellData`") is true only of
+  `performShellAdvance`. **The DEBUG skip is a second mutator of the calendar**: `skipToFreeAgency`
+  loops `WeekAdvancer.advanceWeek` itself and finishes with `loadAllData()` — the DASHBOARD's loader.
+  Nothing tells the shell. And a career opened in the offseason has no `Game` rows for the season it
+  is about to play, so the one fetch that did run found nothing and every week defaulted to a bye.
+  The hero card disagreed because it reads a live query, not a snapshot.
+- **The fix**: `reloadSeasonFixtures()` now hangs off `onChange(of: career.currentPhase)` and
+  `onChange(of: career.currentWeek)` as well. The ladder is now a function of the calendar's STATE
+  rather than of the code path that moved it, so any future mutator — a debug control, a full-screen
+  flow, a migration — cannot desynchronise it again. Cost is one `Game` fetch per week boundary.
+- **Honest scope**: as observed, this was reachable only through the DEBUG skip; the normal advance
+  path was never broken. The fix is kept anyway because the fragility, not the symptom, is the defect
+  — the band was one new caller away from lying on a shipping path.
 - **Depends on**: none
-- **Source**: live QA, 2026-08-21.
+- **Source**: live QA, 2026-08-21; reproduced and fixed 2026-08-22.
 
 ---
 

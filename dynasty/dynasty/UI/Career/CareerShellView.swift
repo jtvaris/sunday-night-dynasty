@@ -710,6 +710,14 @@ struct CareerShellView: View {
         .onChange(of: career.currentPhase) { _, newPhase in
             regenerateTasks(for: newPhase)
             collectInboxMessages()
+            // QA-03: the schedule for a season is generated when that season
+            // starts, which is ALWAYS after the shell opened — a career sitting
+            // in the offseason has no `Game` rows for the year it is about to
+            // play. `seasonFixtures` was loaded once at open and never again, so
+            // the week ladder drew eighteen byes for the whole regular season
+            // while the hero card, which reads a live query, named the real
+            // opponent. Same bug class as #154, one screen further out.
+            reloadSeasonFixtures()
         }
         .onChange(of: career.currentWeek) { _, _ in
             // #154: the weekly list names the week's opponent, and the phase
@@ -719,6 +727,10 @@ struct CareerShellView: View {
             regenerateTasks(for: career.currentPhase)
             refreshTaskCompletionStatus()
             collectInboxMessages()
+            // ...and the ladder for the same reason: Sunday's result is written
+            // by the advance that moved this week, so without a re-read the
+            // slat the club just left keeps its unplayed face.
+            reloadSeasonFixtures()
         }
         // ONE sheet slot and ONE cover slot (§2.8, and the sibling-modifier bug
         // class). `lastShellSheet` / `lastShellCover` are recorded on the way in
