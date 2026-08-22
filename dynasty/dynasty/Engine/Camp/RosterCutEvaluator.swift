@@ -73,13 +73,15 @@ enum RosterCutEvaluator {
 
     /// Dead cap incurred (in thousands) — prorated bonus acceleration if cut now.
     /// In the absence of a Contract row, uses a heuristic based on years remaining.
+    ///
+    /// The heuristic itself moved to `ContractEngine.impliedDeadCap(player:)`
+    /// with F-61, and this is now one line rather than two so that there is one
+    /// place the AI league's guarantee exposure is derived. The 15 %-per-year
+    /// proxy survives as the league MEAN; what it gained is the club's own taste
+    /// in guarantees, so an aggressive front office cannot escape a bad signing
+    /// as cheaply as an analytics one. See that function for the derivation.
     static func deadCap(player: Player) -> Int {
-        let years = max(0, player.contractYearsRemaining)
-        guard years > 0 else { return 0 }
-
-        // Heuristic: 15% of annual salary × remaining years (proxy for prorated bonus).
-        let bonusEstimate = Int(Double(player.annualSalary) * 0.15) * years
-        return bonusEstimate
+        ContractEngine.impliedDeadCap(player: player)
     }
 
     /// Practice-squad eligible? (rookie or <2 accrued seasons.)
