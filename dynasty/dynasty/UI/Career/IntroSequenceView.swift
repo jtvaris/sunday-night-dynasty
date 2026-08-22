@@ -116,6 +116,18 @@ struct IntroSequenceView: View {
             ownerObj.satisfaction = max(0, min(100, ownerObj.satisfaction + result.totalEffects.ownerSatisfaction))
         }
 
+        // F-56 — the podium is the first thing the league actually HEARS, so a
+        // dominant tone that says something about how this man does business
+        // overrules the identity his coaching style seeded at team selection.
+        // Tones with no market read (confident, funny) leave the seed alone:
+        // every new GM sounds confident at his own introduction, and that is not
+        // information. See `FranchiseIdentityDeclaration`.
+        if let teamID = career.teamID {
+            FranchiseIdentityDeclaration.amend(
+                tone: result.dominantTone, teamID: teamID
+            )
+        }
+
         pressConferenceComplete = true
         try? modelContext.save()
     }

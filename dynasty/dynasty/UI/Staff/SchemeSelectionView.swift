@@ -15,6 +15,49 @@ struct SchemeSelectionView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
 
+    // MARK: - F-65: the switch is armed, not fired
+    //
+    // Tapping a scheme used to write it to the coordinator, save, and dismiss —
+    // one tap, no preview, no confirmation, for a decision that costs a season
+    // of scheme fit and takes the better part of two to earn back. The tax is
+    // correct and untouched; only the disclosure was missing.
+    //
+    // A tap now ARMS the change: the row expands with a priced forecast and the
+    // commit moves to a `DSActionBar` whose explainer is the bill (§2.5 / P4 —
+    // cost and outcome stated, in that order, before commit). Choosing the
+    // system already installed disarms instead, so the screen is still a
+    // one-tap escape from a mis-tap.
+
+    /// The scheme the user has selected but not yet installed.
+    @State private var pendingOffense: OffensiveScheme?
+    @State private var pendingDefense: DefensiveScheme?
+
+    /// The priced forecast for whatever is pending.
+    ///
+    /// Cached rather than computed in the row body on purpose: `price` runs
+    /// `learnScheme` a few hundred times and `rosterSchemeFit` twice per
+    /// starter, which is nothing once and far too much for every row on every
+    /// redraw.
+    @State private var forecast: SchemeInstallForecast?
+
+    /// What the building installs on the side this picker is NOT editing. Held
+    /// fixed in the forecast so the fit delta isolates the one change.
+    private var installedOffense: OffensiveScheme? {
+        isOffensive
+            ? coordinator.offensiveScheme
+            : coaches.first { $0.role == .offensiveCoordinator }?.offensiveScheme
+    }
+
+    private var installedDefense: DefensiveScheme? {
+        isOffensive
+            ? coaches.first { $0.role == .defensiveCoordinator }?.defensiveScheme
+            : coordinator.defensiveScheme
+    }
+
+    private var pendingName: String? {
+        pendingOffense?.displayName ?? pendingDefense?.displayName
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -59,6 +102,7 @@ struct SchemeSelectionView: View {
                 .padding(16)
             }
             .background(Color.backgroundPrimary)
+            .safeAreaInset(edge: .bottom) { installBar }
             .navigationTitle("Select Scheme")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -70,6 +114,36 @@ struct SchemeSelectionView: View {
                 }
             }
             .toolbarColorScheme(.dark, for: .navigationBar)
+        }
+    }
+
+    // MARK: - The commit surface (F-65)
+
+    /// The bill, then the button. Nothing installs from a row tap any more.
+    @ViewBuilder
+    private var installBar: some View {
+        if let name = pendingName, let forecast {
+            DSActionBar(
+                explainer: .init(
+                    title: "What the switch costs",
+                    message: forecast.costHeadline,
+                    isWarning: forecast.fitCost >= 5
+                ),
+                ghost: .init(title: "Keep current", handler: disarm),
+                primary: .init(
+                    title: "Install \(name)",
+                    caption: forecast.seasonsToPivot.map { _ in "install year starts next camp" }
+                        ?? "no install year needed",
+                    handler: commitPending
+                )
+            )
+        } else {
+            DSActionBar(
+                explainer: .init(
+                    title: "Nothing armed",
+                    message: "Pick a system to see what installing it would cost this roster. **Nothing changes until you install it.**"
+                )
+            )
         }
     }
 
@@ -169,7 +243,16 @@ struct SchemeSelectionView: View {
     // MARK: - Offensive Scheme Row
 
     private func offensiveSchemeRow(_ scheme: OffensiveScheme) -> some View {
-        let isSelected = coordinator.offensiveScheme == scheme
+        // F-65: "selected" used to mean one thing — what is installed — and now
+        // means two. The gold ring stays the INSTALLED system, because that is
+        // what the building runs today and the user must never lose sight of it
+        // while shopping. The armed candidate takes the blue informational ring,
+        // which is the palette's job for "this is the one you are looking at"
+        // (P7: gold is the commit, and the commit is on the action bar).
+        let isInstalled = coordinator.offensiveScheme == scheme
+        let isArmed = pendingOffense == scheme
+        let isSelected = isInstalled || isArmed
+        let tint: Color = isInstalled ? .accentGold : .accentBlue
         let expertiseValue = coordinator.expertise(for: scheme.rawValue)
         let expertiseColor = schemeExpertiseColor(expertiseValue)
         let coachFit = staffCoachFit(schemeKey: scheme.rawValue, isOffensive: true)
@@ -183,10 +266,10 @@ struct SchemeSelectionView: View {
                 HStack(spacing: 12) {
                     // Selection indicator
                     Circle()
-                        .fill(isSelected ? Color.accentGold : Color.clear)
+                        .fill(isSelected ? tint : Color.clear)
                         .overlay(
                             Circle()
-                                .strokeBorder(isSelected ? Color.accentGold : Color.textTertiary, lineWidth: 2)
+                                .strokeBorder(isSelected ? tint : Color.textTertiary, lineWidth: 2)
                         )
                         .frame(width: 20, height: 20)
 
@@ -194,7 +277,7 @@ struct SchemeSelectionView: View {
                         HStack(spacing: 6) {
                             Text(scheme.displayName)
                                 .font(.subheadline.weight(.bold))
-                                .foregroundStyle(isSelected ? Color.accentGold : Color.textPrimary)
+                                .foregroundStyle(isSelected ? tint : Color.textPrimary)
 
                             // Per-scheme coach availability badge
                             coachAvailabilityBadge(count: coachesKnowing)
@@ -246,15 +329,20 @@ struct SchemeSelectionView: View {
                     .foregroundStyle(Color.warning)
                     .padding(.top, 6)
                 }
+
+                // F-65: the bill, on the row the user is looking at.
+                if isArmed, let forecast {
+                    installForecastPanel(forecast)
+                }
             }
             .padding(12)
             .background(
                 RoundedRectangle(cornerRadius: 10)
-                    .fill(isSelected ? Color.accentGold.opacity(0.08) : Color.backgroundSecondary)
+                    .fill(isSelected ? tint.opacity(0.08) : Color.backgroundSecondary)
                     .overlay(
                         RoundedRectangle(cornerRadius: 10)
                             .strokeBorder(
-                                isSelected ? Color.accentGold.opacity(0.5) : Color.surfaceBorder,
+                                isSelected ? tint.opacity(0.5) : Color.surfaceBorder,
                                 lineWidth: isSelected ? 1.5 : 1
                             )
                     )
@@ -266,7 +354,11 @@ struct SchemeSelectionView: View {
     // MARK: - Defensive Scheme Row
 
     private func defensiveSchemeRow(_ scheme: DefensiveScheme) -> some View {
-        let isSelected = coordinator.defensiveScheme == scheme
+        // See `offensiveSchemeRow` for why installed and armed are separate.
+        let isInstalled = coordinator.defensiveScheme == scheme
+        let isArmed = pendingDefense == scheme
+        let isSelected = isInstalled || isArmed
+        let tint: Color = isInstalled ? .accentGold : .accentBlue
         let expertiseValue = coordinator.expertise(for: scheme.rawValue)
         let expertiseColor = schemeExpertiseColor(expertiseValue)
         let coachFit = staffCoachFit(schemeKey: scheme.rawValue, isOffensive: false)
@@ -279,10 +371,10 @@ struct SchemeSelectionView: View {
             VStack(spacing: 0) {
                 HStack(spacing: 12) {
                     Circle()
-                        .fill(isSelected ? Color.accentGold : Color.clear)
+                        .fill(isSelected ? tint : Color.clear)
                         .overlay(
                             Circle()
-                                .strokeBorder(isSelected ? Color.accentGold : Color.textTertiary, lineWidth: 2)
+                                .strokeBorder(isSelected ? tint : Color.textTertiary, lineWidth: 2)
                         )
                         .frame(width: 20, height: 20)
 
@@ -290,7 +382,7 @@ struct SchemeSelectionView: View {
                         HStack(spacing: 6) {
                             Text(scheme.displayName)
                                 .font(.subheadline.weight(.bold))
-                                .foregroundStyle(isSelected ? Color.accentGold : Color.textPrimary)
+                                .foregroundStyle(isSelected ? tint : Color.textPrimary)
 
                             // Per-scheme coach availability badge
                             coachAvailabilityBadge(count: coachesKnowing)
@@ -342,15 +434,20 @@ struct SchemeSelectionView: View {
                     .foregroundStyle(Color.warning)
                     .padding(.top, 6)
                 }
+
+                // F-65: the bill, on the row the user is looking at.
+                if isArmed, let forecast {
+                    installForecastPanel(forecast)
+                }
             }
             .padding(12)
             .background(
                 RoundedRectangle(cornerRadius: 10)
-                    .fill(isSelected ? Color.accentGold.opacity(0.08) : Color.backgroundSecondary)
+                    .fill(isSelected ? tint.opacity(0.08) : Color.backgroundSecondary)
                     .overlay(
                         RoundedRectangle(cornerRadius: 10)
                             .strokeBorder(
-                                isSelected ? Color.accentGold.opacity(0.5) : Color.surfaceBorder,
+                                isSelected ? tint.opacity(0.5) : Color.surfaceBorder,
                                 lineWidth: isSelected ? 1.5 : 1
                             )
                     )
@@ -396,16 +493,105 @@ struct SchemeSelectionView: View {
 
     // MARK: - Actions
 
+    /// Arms an offensive scheme and prices it. Tapping the installed system
+    /// disarms — a mis-tap costs one more tap, not a season.
     private func selectOffensiveScheme(_ scheme: OffensiveScheme) {
-        coordinator.offensiveScheme = scheme
+        guard scheme != coordinator.offensiveScheme else { return disarm() }
+        pendingDefense = nil
+        pendingOffense = scheme
+        forecast = SchemeInstallForecast.price(
+            candidateOffense: scheme,
+            candidateDefense: nil,
+            currentOffense: installedOffense,
+            currentDefense: installedDefense,
+            players: players,
+            coordinator: coordinator
+        )
+    }
+
+    private func selectDefensiveScheme(_ scheme: DefensiveScheme) {
+        guard scheme != coordinator.defensiveScheme else { return disarm() }
+        pendingOffense = nil
+        pendingDefense = scheme
+        forecast = SchemeInstallForecast.price(
+            candidateOffense: nil,
+            candidateDefense: scheme,
+            currentOffense: installedOffense,
+            currentDefense: installedDefense,
+            players: players,
+            coordinator: coordinator
+        )
+    }
+
+    private func disarm() {
+        pendingOffense = nil
+        pendingDefense = nil
+        forecast = nil
+    }
+
+    /// The only write in this file. `WeekAdvancer.applySchemeChanges` picks the
+    /// swap up at the next training camp and marks the install year; nothing
+    /// here has to tell it anything.
+    private func commitPending() {
+        if let pendingOffense {
+            coordinator.offensiveScheme = pendingOffense
+        } else if let pendingDefense {
+            coordinator.defensiveScheme = pendingDefense
+        } else {
+            return
+        }
         try? modelContext.save()
         dismiss()
     }
 
-    private func selectDefensiveScheme(_ scheme: DefensiveScheme) {
-        coordinator.defensiveScheme = scheme
-        try? modelContext.save()
-        dismiss()
+    // MARK: - Install Forecast Panel (F-65)
+
+    /// The install curve, shown inline on the armed row.
+    ///
+    /// Three lines and no more: where the room starts and how long the climb is,
+    /// what happens to the playbook being abandoned, and the one thing working
+    /// in the user's favour. The scheme-fit cost itself is not repeated here —
+    /// it is the action bar's explainer, and §2.13's arithmetic gate is easier
+    /// to keep when a number has one home.
+    @ViewBuilder
+    private func installForecastPanel(_ forecast: SchemeInstallForecast) -> some View {
+        VStack(alignment: .leading, spacing: DSSpacing.xs) {
+            Text("IF YOU INSTALL THIS")
+                .font(DSType.display(DSType.Size.caption, .heavy))
+                .tracking(0.7)
+                .foregroundStyle(Color.textSecondary)
+
+            if forecast.starterCount == 0 {
+                Text(forecast.costHeadline)
+                    .font(DSType.text(DSType.Size.caption, .medium, prose: true))
+                    .foregroundStyle(Color.textTertiaryReadable)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                forecastLine(icon: "chart.line.uptrend.xyaxis", text: forecast.curveLine)
+                forecastLine(icon: "arrow.down.right.circle", text: forecast.abandonedLine)
+                forecastLine(icon: "figure.american.football", text: forecast.installYearLine)
+            }
+        }
+        .padding(DSSpacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                .fill(Color.backgroundTertiary)
+        )
+        .padding(.top, DSSpacing.xs)
+    }
+
+    private func forecastLine(icon: String, text: String) -> some View {
+        HStack(alignment: .top, spacing: DSSpacing.xs) {
+            Image(systemName: icon)
+                .font(.system(size: DSType.Size.caption, weight: .semibold))
+                .foregroundStyle(Color.accentBlue)
+                .frame(width: 14)
+            Text(text)
+                .font(DSType.text(DSType.Size.caption, .medium, prose: true))
+                .foregroundStyle(Color.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     // MARK: - Shared Metric Bar

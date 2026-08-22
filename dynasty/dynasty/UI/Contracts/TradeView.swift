@@ -22,6 +22,17 @@ struct TradeView: View {
     struct Prefill: Equatable {
         let partnerTeamID: UUID
         let targetPlayerIDs: [UUID]
+        /// F-58: the mirror direction. When the user arrives from the shopping
+        /// poll he is not asking about one of THEIR men, he is offering one of
+        /// his own — so his column arrives ticked instead of theirs. Empty for
+        /// every "Trade For" entry point, which is why it is defaulted.
+        var offeredPlayerIDs: [UUID] = []
+
+        init(partnerTeamID: UUID, targetPlayerIDs: [UUID], offeredPlayerIDs: [UUID] = []) {
+            self.partnerTeamID = partnerTeamID
+            self.targetPlayerIDs = targetPlayerIDs
+            self.offeredPlayerIDs = offeredPlayerIDs
+        }
     }
 
     @Environment(\.modelContext) private var modelContext
@@ -629,7 +640,14 @@ struct TradeView: View {
                         Text("No incoming offers")
                             .font(.subheadline)
                             .foregroundStyle(Color.textSecondary)
-                        Text("AI offers arrive weekly during the regular season — contenders buy, rebuilders sell. New offers land in your inbox until the Week \(TradeValueEngine.deadlineWeek) deadline.")
+                        // F-69: the old line said offers arrive "weekly during
+                        // the regular season", full stop, and the league market
+                        // has run in five OFFSEASON windows since Wave 2
+                        // (`MarketWindow.offseason`, driven from
+                        // `WeekAdvancer.runLeagueMarketWindow`). A user who read
+                        // this and then put the phone down at the deadline was
+                        // told the wrong thing by his own screen.
+                        Text("AI offers arrive weekly during the regular season — contenders buy, rebuilders sell — through the Week \(TradeValueEngine.deadlineWeek) deadline. The phone rings in the offseason too: the league trades again after the season, around free agency, before and after the draft, and on cut days.")
                             .font(.caption)
                             .foregroundStyle(Color.textTertiary)
                             .multilineTextAlignment(.center)
@@ -1479,6 +1497,28 @@ struct TradeView: View {
         VStack(alignment: .leading, spacing: 14) {
             sectionHeader(title: "Trade History (\(career.currentSeason))", icon: "clock.arrow.circlepath")
 
+            // F-51: this card is THIS season and THIS club, which is the right
+            // scope for "what have I done lately" and the wrong one for "what
+            // did the other 31 do". The wire is the other question, and it reads
+            // the same ledger.
+            shelfLink(
+                destination: .transactions,
+                icon: "list.bullet.rectangle",
+                title: "League transaction wire",
+                caption: "every deal, every club, every season"
+            )
+
+            // F-58: the standing version of "who wants my backup tight end?".
+            // The builder above is partner-first and cannot answer it.
+            shelfLink(
+                destination: .tradeBlock,
+                icon: "tray.full",
+                title: "Trade block",
+                caption: TradeBlockStore.shared.count == 0
+                    ? "nobody listed"
+                    : "\(TradeBlockStore.shared.count) listed"
+            )
+
             if tradeHistory.isEmpty {
                 HStack {
                     Spacer()
@@ -1497,6 +1537,41 @@ struct TradeView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(20)
         .cardBackground()
+    }
+
+    /// A row that leaves this screen for a related one. Two of them sit above
+    /// the season's history: the league-wide wire (F-51) and the block (F-58).
+    private func shelfLink(
+        destination: CareerShellView.ShellDestination,
+        icon: String,
+        title: String,
+        caption: String
+    ) -> some View {
+        NavigationLink(value: destination) {
+            HStack(spacing: DSSpacing.xs) {
+                Image(systemName: icon)
+                    .font(.system(size: DSType.Size.footnote, weight: .semibold))
+                Text(title)
+                    .font(DSType.text(DSType.Size.body, .semibold))
+                Spacer()
+                Text(caption)
+                    .font(DSType.text(DSType.Size.caption, .medium, prose: true))
+                    .foregroundStyle(Color.textTertiaryReadable)
+                    .lineLimit(1)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: DSType.Size.caption, weight: .semibold))
+                    .foregroundStyle(Color.textTertiary)
+            }
+            .foregroundStyle(Color.accentBlue)
+            .padding(.horizontal, DSSpacing.sm)
+            .frame(minHeight: 44)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                    .fill(Color.backgroundTertiary)
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     private func tradeHistoryRow(_ entry: CompletedTrade) -> some View {
@@ -2133,6 +2208,11 @@ struct TradeView: View {
         // screen must not silently include a player who was already traded away.
         let onRoster = Set(allPlayers.filter { $0.teamID == partner.id }.map(\.id))
         theirSelectedPlayers = Set(prefill.targetPlayerIDs.filter { onRoster.contains($0) })
+        // F-58: the same staleness guard on our own side. A man shopped from a
+        // detail screen and then traded elsewhere must not reappear ticked in a
+        // package we no longer own him for.
+        let ourRoster = Set(allPlayers.filter { $0.teamID == career.teamID }.map(\.id))
+        mySelectedPlayers = Set(prefill.offeredPlayerIDs.filter { ourRoster.contains($0) })
     }
 
     // MARK: - Computed Helpers

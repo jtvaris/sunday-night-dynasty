@@ -353,7 +353,16 @@ struct CareerDashboardView: View {
         )
         let leagueCoaches = (try? modelContext.fetch(coachDescriptor)) ?? []
 
-        // Same opponent-prep boost the quick sim applies (WeekAdvancer parity).
+        // The COACHED path's opponent-prep boost, and it is no longer the same
+        // thing the quick sim applies — the comment that claimed parity here was
+        // true until D1 and is not any more. `WeekAdvancer` now hands
+        // `GameSimulator` a signed `prepFocusDelta` that both clubs' staffs
+        // contest through `OpponentPrep`; `LiveGameEngine` still consumes the
+        // old user-only `gameBoost` pair as a per-play momentum nudge.
+        //
+        // Flagged as a known remaining asymmetry for a later pass rather than
+        // fixed here: it is one game in sixteen, and closing it is engine work.
+        // Left in place deliberately so nobody "tidies" it into silence.
         let season = career.currentSeason
         let week = career.currentWeek
         let prepDescriptor = FetchDescriptor<OpponentPrepWeek>(

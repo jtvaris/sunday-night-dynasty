@@ -378,12 +378,22 @@ struct GameSummaryView: View {
             positive: r.sacksForced >= 3
         ))
 
-        // 4 — the same dial from the other side: an aggressive offense holds
-        // the ball longer, and the sack count is where that bill comes due.
+        // 4 — dropback volume vs the bill for it. The more the plan asked the
+        // quarterback to hold the ball, the more chances the rush had.
+        //
+        // F-69: this row used to print `aggressionLabel(plan.offensiveAggression)`
+        // as its planned side, which was a promise with nothing behind it —
+        // `offensiveAggression` has zero read sites outside `GamePlan`'s own
+        // `styleSummary`, so the panel was narrating the effect of a dial that
+        // touched no play, no call and no sack in any path. It is re-based on
+        // `runPassRatio`, which `PlaySimulator` genuinely reads (`:502`), and
+        // which is also the honest cause of a sack count: dropbacks are what
+        // get a passer hit. The dial itself is gone from `GamePlanView` for the
+        // same reason.
         rows.append(PlanRow(
             id: 3,
             label: "Protection",
-            planned: "\(aggressionLabel(r.plan.offensiveAggression)) offense",
+            planned: "\(percent(r.plan.runPassRatio)) pass, \(r.passCalls) dropback\(r.passCalls == 1 ? "" : "s")",
             actual: "\(r.sacksAllowed) sack\(r.sacksAllowed == 1 ? "" : "s") allowed",
             verdict: r.sacksAllowed <= 1 ? "Clean" : (r.sacksAllowed <= 3 ? "Holding" : "Leaky"),
             positive: r.sacksAllowed <= 1
@@ -416,14 +426,9 @@ struct GameSummaryView: View {
         }
     }
 
-    private func aggressionLabel(_ value: Double) -> String {
-        switch value {
-        case ..<0.3:  return "Conservative"
-        case ..<0.55: return "Balanced"
-        case ..<0.75: return "Aggressive"
-        default:      return "All-out"
-        }
-    }
+    // `aggressionLabel` lived here and had exactly one caller: the Protection
+    // row's planned side, which is now read off `runPassRatio`. It is deleted
+    // with the promise it dressed (F-69).
 
     // MARK: - Team Comparison Card
 

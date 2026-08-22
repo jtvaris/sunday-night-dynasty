@@ -1859,6 +1859,13 @@ struct CareerShellView: View {
         case depthChart, gamePlan, coachingStaff, hireCoach
         case capOverview, freeAgency
         case contractTimeline, mentoring, trades, news
+        /// F-51 — the league transaction wire over the `TradeRecord` ledger.
+        /// Reached from the Trade Center rather than the bookmark strip: the
+        /// strip is capped at seven on purpose (P6), and a wire is something a
+        /// GM opens from the room where he trades.
+        case transactions
+        /// F-58 — the user's own shortlist of men he would move.
+        case tradeBlock
         case ownerMeeting, lockerRoom, inbox, rosterEvaluation
         case franchiseTag
         case developmentReport
@@ -2065,6 +2072,13 @@ struct CareerShellView: View {
                     markTaskVisited(for: .developmentReport)
                     refreshTaskCompletionStatus()
                 }
+        case .tradeBlock:
+            TradeBlockView(career: career)
+        case .transactions:
+            // No `markTaskVisited` — the wire is reference material, not a step
+            // any task points at, which is the same shape `.history` and
+            // `.draftReportCard` below already have.
+            LeagueTransactionsView(career: career)
         case .history:
             LeagueHistoryView(career: career)
         case .draftReportCard:

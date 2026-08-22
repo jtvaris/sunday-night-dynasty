@@ -1075,6 +1075,17 @@ private struct CoachingStyleCard: View {
                     .foregroundStyle(isSelected ? Color.textSecondary : Color.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
 
+                // F-56: the second thing this choice buys. The style is not only
+                // a coaching bonus — it is the identity the other 31 front
+                // offices price you against (`FranchiseIdentityDeclaration`),
+                // and a declaration the user cannot read is a hidden roll of the
+                // kind this repo has spent the month deleting. Every number in
+                // the line is derived from the engine constant it describes.
+                Text(FranchiseIdentityDeclaration.frontOfficeLine(for: style))
+                    .font(.system(size: DSType.Size.caption, weight: .medium))
+                    .foregroundStyle(isSelected ? Color.accentBlue : Color.textTertiaryReadable)
+                    .fixedSize(horizontal: false, vertical: true)
+
                 if isRecommended {
                     // Footnote rationale — prevents the badge from feeling arbitrary.
                     Text("Recommended for first-time players: easier learning curve.")
@@ -1100,7 +1111,10 @@ private struct CoachingStyleCard: View {
                 )
         )
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(style.displayName). \(gameplayEffect).")
+        .accessibilityLabel(
+            "\(style.displayName). \(gameplayEffect). "
+                + FranchiseIdentityDeclaration.frontOfficeLine(for: style)
+        )
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 }
