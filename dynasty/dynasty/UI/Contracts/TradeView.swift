@@ -1486,6 +1486,36 @@ struct TradeView: View {
         VStack(alignment: .leading, spacing: 14) {
             sectionHeader(title: "Trade History (\(career.currentSeason))", icon: "clock.arrow.circlepath")
 
+            // F-51: this card is THIS season and THIS club, which is the right
+            // scope for "what have I done lately" and the wrong one for "what
+            // did the other 31 do". The wire is the other question, and it reads
+            // the same ledger.
+            NavigationLink(value: CareerShellView.ShellDestination.transactions) {
+                HStack(spacing: DSSpacing.xs) {
+                    Image(systemName: "list.bullet.rectangle")
+                        .font(.system(size: DSType.Size.footnote, weight: .semibold))
+                    Text("League transaction wire")
+                        .font(DSType.text(DSType.Size.body, .semibold))
+                    Spacer()
+                    Text("every deal, every club, every season")
+                        .font(DSType.text(DSType.Size.caption, .medium, prose: true))
+                        .foregroundStyle(Color.textTertiaryReadable)
+                        .lineLimit(1)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: DSType.Size.caption, weight: .semibold))
+                        .foregroundStyle(Color.textTertiary)
+                }
+                .foregroundStyle(Color.accentBlue)
+                .padding(.horizontal, DSSpacing.sm)
+                .frame(minHeight: 44)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                        .fill(Color.backgroundTertiary)
+                )
+            }
+            .buttonStyle(.plain)
+
             if tradeHistory.isEmpty {
                 HStack {
                     Spacer()
