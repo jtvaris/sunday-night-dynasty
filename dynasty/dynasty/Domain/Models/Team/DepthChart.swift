@@ -24,7 +24,13 @@ enum DepthChartSlot: String, Codable, CaseIterable, Identifiable, Hashable {
     // Defense
     case LE
     case RE
-    case DT
+    // Two interior slots, not one. `MatchupResolver.defense` seats `dt1` and
+    // `dt2`, and `WeekAdvancer.startingLineupIDs` fills `.DT` twice — every
+    // engine that counts a start fields two tackles. A single `DT` slot with a
+    // compensating `maxDepth: 3` printed the club's second-best tackle as a
+    // BACKUP, which is a job he does not have.
+    case DT1
+    case DT2
     case LOLB
     case MLB
     case ROLB
@@ -55,7 +61,7 @@ enum DepthChartSlot: String, Codable, CaseIterable, Identifiable, Hashable {
         case .RG:   return .RG
         case .RT:   return .RT
         case .LE, .RE: return .DE
-        case .DT:   return .DT
+        case .DT1, .DT2: return .DT
         case .LOLB, .ROLB: return .OLB
         case .MLB:  return .MLB
         case .CB1, .CB2: return .CB
@@ -85,7 +91,8 @@ enum DepthChartSlot: String, Codable, CaseIterable, Identifiable, Hashable {
         case .RT:   return "Right Tackle"
         case .LE:   return "Left End"
         case .RE:   return "Right End"
-        case .DT:   return "Defensive Tackle"
+        case .DT1:  return "Defensive Tackle 1"
+        case .DT2:  return "Defensive Tackle 2"
         case .LOLB: return "Left Outside Linebacker"
         case .MLB:  return "Middle Linebacker"
         case .ROLB: return "Right Outside Linebacker"
@@ -109,7 +116,7 @@ enum DepthChartSlot: String, Codable, CaseIterable, Identifiable, Hashable {
         switch self {
         case .QB, .RB, .FB, .WR1, .WR2, .WR3, .TE, .LT, .LG, .C, .RG, .RT:
             return .offense
-        case .LE, .RE, .DT, .LOLB, .MLB, .ROLB, .CB1, .CB2, .FS, .SS:
+        case .LE, .RE, .DT1, .DT2, .LOLB, .MLB, .ROLB, .CB1, .CB2, .FS, .SS:
             return .defense
         case .K, .P, .KR, .PR:
             return .specialTeams
@@ -126,7 +133,7 @@ enum DepthChartSlot: String, Codable, CaseIterable, Identifiable, Hashable {
         case .TE:                        return 2
         case .LT, .LG, .C, .RG, .RT:   return 2
         case .LE, .RE:                   return 2
-        case .DT:                        return 3
+        case .DT1, .DT2:                 return 2
         case .LOLB, .MLB, .ROLB:        return 2
         case .CB1, .CB2:                 return 2
         case .FS, .SS:                   return 2
@@ -140,6 +147,66 @@ enum DepthChartSlot: String, Codable, CaseIterable, Identifiable, Hashable {
         self == .KR || self == .PR
     }
 
+    /// One line saying why the man at the top of this slot is not a starter,
+    /// or nil when he is.
+    ///
+    /// `MatchupResolver.offense` and `WeekAdvancer.startingLineupIDs` both fill
+    /// the backfield as ONE job — `[.RB, .FB]`, running back preferred — so a
+    /// fullback takes a snap only when the club has no back at all. The room is
+    /// still worth ranking (somebody is the first fullback off the bench), but
+    /// the chart must not draw him in the starter plate the other eleven earn.
+    var packageNote: String? {
+        self == .FB ? "The backfield is one job \u{2014} a fullback takes snaps only when no running back is available." : nil
+    }
+
+    /// True when this slot's top man is NOT one of the starters the game fields.
+    var isPackageRole: Bool {
+        packageNote != nil
+    }
+
+    /// The attribute this slot is ranked on, when it is not overall.
+    ///
+    /// KR and PR draw from the whole roster by speed and agility — in
+    /// `autoGenerate`, in `reconcile`, and in the candidate picker's default
+    /// sort. All three used to hard-code the trait separately and none of them
+    /// printed it, so the returner rows showed an OVR the slot ignores and the
+    /// candidate list arrived sorted by an invisible number.
+    var rankingTrait: RankingTrait? {
+        switch self {
+        case .KR: return .speed
+        case .PR: return .agility
+        default:  return nil
+        }
+    }
+
+    /// A player attribute a slot ranks on instead of overall.
+    enum RankingTrait {
+        case speed
+        case agility
+
+        /// Badge caption — the row has room for three letters, not a word.
+        var shortLabel: String {
+            switch self {
+            case .speed:   return "SPD"
+            case .agility: return "AGI"
+            }
+        }
+
+        var displayName: String {
+            switch self {
+            case .speed:   return "Speed"
+            case .agility: return "Agility"
+            }
+        }
+
+        func value(of player: Player) -> Int {
+            switch self {
+            case .speed:   return player.physical.speed
+            case .agility: return player.physical.agility
+            }
+        }
+    }
+
     /// Slots organized by offensive unit.
     static let offenseSlots: [DepthChartSlot] = [
         .QB, .RB, .FB, .WR1, .WR2, .WR3, .TE, .LT, .LG, .C, .RG, .RT
@@ -147,7 +214,7 @@ enum DepthChartSlot: String, Codable, CaseIterable, Identifiable, Hashable {
 
     /// Slots organized by defensive unit.
     static let defenseSlots: [DepthChartSlot] = [
-        .LE, .RE, .DT, .LOLB, .MLB, .ROLB, .CB1, .CB2, .FS, .SS
+        .LE, .RE, .DT1, .DT2, .LOLB, .MLB, .ROLB, .CB1, .CB2, .FS, .SS
     ]
 
     /// Slots organized by special teams.
@@ -173,6 +240,45 @@ struct DepthChart: Codable {
         storage = [:]
     }
 
+    // MARK: - Decoding
+
+    private enum CodingKeys: String, CodingKey {
+        case storage
+    }
+
+    /// Decodes a saved chart, migrating slots that have since been split.
+    ///
+    /// Storage is keyed by raw value, so a key nothing maps to any more is not
+    /// an error — it is silently invisible, which is worse: the room reads as
+    /// empty and the next Advance stops on "Lineup Incomplete" for a slot the
+    /// user filled months ago.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        var decoded = try container.decode([String: [UUID]].self, forKey: .storage)
+        Self.splitLegacyInteriorLine(&decoded)
+        storage = decoded
+    }
+
+    /// Charts saved before the interior line was split keep the whole tackle
+    /// room under one `DT` key. Deal them out alternately — first man to DT1,
+    /// second to DT2 — because that is what the old list MEANT: the engines
+    /// have always fielded both of the top two, whatever the card labelled them.
+    private static func splitLegacyInteriorLine(_ storage: inout [String: [UUID]]) {
+        guard let legacy = storage.removeValue(forKey: "DT"), !legacy.isEmpty,
+              storage[DepthChartSlot.DT1.rawValue] == nil,
+              storage[DepthChartSlot.DT2.rawValue] == nil else { return }
+
+        var first: [UUID] = []
+        var second: [UUID] = []
+        for (offset, id) in legacy.enumerated() {
+            if offset.isMultiple(of: 2) { first.append(id) } else { second.append(id) }
+        }
+        storage[DepthChartSlot.DT1.rawValue] = Array(first.prefix(DepthChartSlot.DT1.maxDepth))
+        if !second.isEmpty {
+            storage[DepthChartSlot.DT2.rawValue] = Array(second.prefix(DepthChartSlot.DT2.maxDepth))
+        }
+    }
+
     // MARK: - Public Interface (Slot-Based)
 
     /// Returns the full ordered depth list for a slot.
@@ -188,6 +294,22 @@ struct DepthChart: Codable {
     /// Returns all starter IDs across all slots.
     var allStarters: [UUID] {
         storage.values.compactMap { $0.first }
+    }
+
+    /// Every slot other than `excluding` where this man already stands first.
+    ///
+    /// `assign` deliberately lets one player hold a returner slot on top of a
+    /// position slot, which is right — a club's best receiver often is its
+    /// best returner. But a permitted double-booking still has to be visible:
+    /// three starting jobs used to be drawn as three unrelated gold plates on
+    /// two tabs, with nothing on any of them naming the other two.
+    func startingSlots(of playerID: UUID, excluding slot: DepthChartSlot? = nil) -> [DepthChartSlot] {
+        DepthChartSlot.allCases.filter { $0 != slot && starter(for: $0) == playerID }
+    }
+
+    /// Every slot other than `excluding` where this man appears at any depth.
+    func slots(holding playerID: UUID, excluding slot: DepthChartSlot? = nil) -> [DepthChartSlot] {
+        DepthChartSlot.allCases.filter { $0 != slot && depthOrder(for: $0).contains(playerID) }
     }
 
     // MARK: - Legacy Public Interface (Position-Based)
@@ -329,62 +451,71 @@ struct DepthChart: Codable {
             positionGroups[player.position, default: []].append(player)
         }
 
-        // Sort each group by overall descending. Overall alone is not a total
-        // order — two 79s at the same position are common, and Swift's sort is
-        // not stable, so Auto-Set could hand back a different starter from the
-        // same roster twice. Years pro then id breaks the tie the same way every
-        // run: at equal rating the younger man gets the reps.
+        // Sort each group by overall descending, with the tie broken the same
+        // way every run (see `outranks`).
         for key in positionGroups.keys {
-            positionGroups[key]?.sort {
-                if $0.overall != $1.overall { return $0.overall > $1.overall }
-                if $0.yearsPro != $1.yearsPro { return $0.yearsPro < $1.yearsPro }
-                return $0.id.uuidString < $1.id.uuidString
-            }
+            positionGroups[key]?.sort { a, b in Self.outranks(a, b, on: { $0.overall }) }
         }
 
-        // Fill each slot
+        // Returners first, and BEFORE the position rooms are drained.
+        //
+        // KR and PR draw from the whole roster by the trait `rankingTrait`
+        // names — their `basePosition` (RB, WR) is only a display default. They
+        // used to be filled inside the position loop, which reads that same
+        // pool AFTER the RB and WR1-3 slots have consumed it: a club with three
+        // running backs and three receivers emptied both groups before the loop
+        // ever reached the returners, so Auto-Set left them unassigned — while
+        // the "Lineup Incomplete" dialog told the user Auto-Set fills every
+        // empty slot in one tap, and the phase would not advance.
         for slot in DepthChartSlot.allCases {
-            // Returners first, and BEFORE the base-position guard.
-            //
-            // KR and PR draw from the whole roster by speed and agility — their
-            // `basePosition` (RB, WR) is only a display default. They used to sit
-            // below the guard, which reads that same pool AFTER the RB and WR1-3
-            // slots have consumed it: a club with three running backs and three
-            // receivers emptied both groups before the loop ever reached the
-            // returners, so `continue` fired and Auto-Set left them unassigned —
-            // while the "Lineup Incomplete" dialog told the user Auto-Set fills
-            // every empty slot in one tap, and the phase would not advance.
-            if slot == .KR {
-                let fastPlayers = players
-                    .sorted { $0.physical.speed > $1.physical.speed }
-                    .prefix(slot.maxDepth)
-                newStorage[slot.rawValue] = Array(fastPlayers).map { $0.id }
-                continue
-            }
-            if slot == .PR {
-                let agilePlayers = players
-                    .sorted { $0.physical.agility > $1.physical.agility }
-                    .prefix(slot.maxDepth)
-                newStorage[slot.rawValue] = Array(agilePlayers).map { $0.id }
-                continue
-            }
+            guard let trait = slot.rankingTrait else { continue }
+            let ranked = players
+                .sorted { a, b in Self.outranks(a, b, on: { trait.value(of: $0) }) }
+                .prefix(slot.maxDepth)
+            newStorage[slot.rawValue] = ranked.map { $0.id }
+        }
 
-            guard var available = positionGroups[slot.basePosition], !available.isEmpty else {
-                continue
+        // Position rooms, BREADTH-FIRST across sibling slots.
+        //
+        // WR1/WR2/WR3, CB1/CB2 and DT1/DT2 are one room split into jobs, so
+        // every starter has to be seated before any backup is. Filling them
+        // slot by slot handed WR1 the two best receivers and made the
+        // THIRD-best man WR2's starter — a card whose gold plate held a worse
+        // player than the backup row on the card above it.
+        var roomOrder: [Position] = []
+        var roomSlots: [Position: [DepthChartSlot]] = [:]
+        for slot in DepthChartSlot.allCases where slot.rankingTrait == nil {
+            if roomSlots[slot.basePosition] == nil { roomOrder.append(slot.basePosition) }
+            roomSlots[slot.basePosition, default: []].append(slot)
+        }
+
+        for position in roomOrder {
+            guard var pool = positionGroups[position], !pool.isEmpty else { continue }
+            let slots = roomSlots[position] ?? []
+            let deepest = slots.map(\.maxDepth).max() ?? 0
+            filling: for index in 0..<deepest {
+                for slot in slots where index < slot.maxDepth {
+                    guard !pool.isEmpty else { break filling }
+                    newStorage[slot.rawValue, default: []].append(pool.removeFirst().id)
+                }
             }
-
-            // Take players for this slot's depth, removing them from the pool
-            let count = min(slot.maxDepth, available.count)
-            let assigned = Array(available.prefix(count))
-            newStorage[slot.rawValue] = assigned.map { $0.id }
-
-            // Remove assigned players from the pool so they don't appear in sibling slots
-            let assignedIDs = Set(assigned.map { $0.id })
-            available.removeAll { assignedIDs.contains($0.id) }
-            positionGroups[slot.basePosition] = available
         }
 
         storage = newStorage
+    }
+
+    /// Ranks two men on `value`, breaking the tie the same way every run.
+    ///
+    /// Overall alone is not a total order — two 79s at the same position are
+    /// common, and Swift's sort is not stable, so Auto-Set could hand back a
+    /// different starter from the same roster twice. Years pro then id settles
+    /// it: at equal rating the younger man gets the reps.
+    private static func outranks(_ a: Player, _ b: Player, on value: (Player) -> Int) -> Bool {
+        let aValue = value(a)
+        let bValue = value(b)
+        if aValue != bValue { return aValue > bValue }
+        if a.yearsPro != b.yearsPro { return a.yearsPro < b.yearsPro }
+        return a.id.uuidString < b.id.uuidString
     }
 
     // MARK: - Reconcile after a roster change
@@ -445,15 +576,11 @@ struct DepthChart: Codable {
         var filled: [DepthChartSlot] = []
         for slot in DepthChartSlot.allCases
         where (storage[slot.rawValue] ?? []).isEmpty {
-            if slot == .KR || slot == .PR {
+            if let trait = slot.rankingTrait {
                 // The returners draw from the whole roster, by the same trait
                 // `autoGenerate` ranks them on — their `basePosition` is a
                 // display default, not a pool.
-                let pool = available.sorted {
-                    slot == .KR
-                        ? $0.physical.speed > $1.physical.speed
-                        : $0.physical.agility > $1.physical.agility
-                }
+                let pool = available.sorted { a, b in Self.outranks(a, b, on: { trait.value(of: $0) }) }
                 guard let pick = pool.first else { continue }
                 storage[slot.rawValue] = [pick.id]
                 filled.append(slot)

@@ -4128,6 +4128,39 @@ oman mitatun aaltonsa balanssirigiä vasten; jokainen on kirjattu syineen.
       `WorkloadEngine`n oma dokumentaatio kertoo hilasta ja bandit 30/56/63 on ankkuroitu
       juuri sille, joten kvantisoinnin poisto vaatii bandien uudelleenankkuroinnin samassa
       mitatussa vedossa. Oma passinsa.
+- [x] **`/analyze-app` AJETTU: Depth Chart, neljä linssiä.** Kloonatulla simulaattorilla,
+      klooni poistettu, käyttäjän simulaattori palautettu. **32 löydöstä, 6 kumottu, 26 jäi**
+      (2 blocking, 9 high, 13 medium, 2 low) — `docs/QA_DEPTHCHART_AUDIT_2026-08-27.md`.
+      21 UI-korjausta ajettu. Kärkeä: uudelleenjärjestyksen nappipari oli ~11×10 pt ja sen
+      pois-käytöstä-puolisko renderöityi kontrastilla 1.03:1 (eli näkymättömänä), joten
+      "laajenna rivi" pudottikin parhaan pelaajasi; Auto-Set ylikirjoitti koko kaavion ilman
+      varoitusta tai kumoamista (nyt vahvistus + Undo + kumoutuu jos käyttäjä muokkaa käsin);
+      KR/PR lajitellaan nopeudella ja ketteryydellä joita ei näytetty missään (nyt SPD/AGI
+      -merkit rivillä ja lajittelu sanoo "Speed"/"Agility"); DT oli yksi paikka vaikka moottori
+      kenttää kaksi (jaettu DT1/DT2 + migraatio vanhoille tallennuksille).
+- [x] **Kaksi regressiota omasta korjausaallosta löydetty ja korjattu Phase 3:ssa.**
+      "STARTER" leikkautui muotoon "START…" kun fontti kasvatettiin 58 pt sarakkeeseen, ja
+      monipaikkakapseli "ALSO WR1·PR" leikkautui muotoon "ALSO…" kaksipalstaisessa ruudukossa —
+      eli menetti ainoan asian jonka se kertoo. Molemmat verifioitu v3-kuvakaappauksilla.
+- [ ] **PÄÄTÖS TARVITAAN — syvyyskaavio ei vaikuta mihinkään.** Tarkistettu itse:
+      `grep` koko `Engine/`-puusta hakusanoilla `depthChartData`/`DepthChart` palauttaa
+      **yhden osuman, ja se on kommentti**. `WeekAdvancer.startingLineupIDs(available:)`
+      valitsee jokaisen paikan `player.overall > choice!.overall` -vertailulla eli
+      max-by-overall; käyttäjän järjestys ohitetaan. `GameSimulator.rollKickoff` ei ota
+      pelaajaa lainkaan (2 % maalitodennäköisyys, satunnainen aloitus 20–35), joten KR/PR
+      syöttävät tyhjää. Silti peli ESTÄÄ vaiheesta etenemisen kunnes kaavio on täysi
+      ("Lineup Incomplete") — pelaaja pidetään paikallaan kunnes hän nimeää palauttajat
+      järjestelmään jota ei ole. Vaihtoehdot: (1) kytke kaavio `startingLineupIDs`iin ja
+      putoa max-by-overalliin vain aukoissa — mitattava passi; (2) poista portti ja lupaus,
+      jätä kaavio visualisoinniksi; (3) kytke vain aloittajat, jätä palauttajat.
+      **Ei tehty omin päin: tämä muuttaa sitä mitä peli on, ei korjaa bugia.**
+- [ ] **Preseason-auditti kesken.** `PreseasonView`iin ei ole reittiä menneestä tallennuksesta
+      — koodin oma kommentti sanoo "there is no other door to it", valmiiden vaiheiden lista on
+      staattinen, postilaatikossa ei ole preseason-kirjettä ja debug-oikopolku menee vain
+      eteenpäin. Ajoi kloonia kohti seuraavaa preseasonia; ajuri jumitti kolmesti (kahdesti
+      `week.sh` osui navigaatiopinon "Continue"-nappiin, kerran semanttinen tappi
+      Advance-nappiin ei rekisteröitynyt ja vain koordinaattitappi toimi). Ei realistinen
+      tällä reitillä; odottaa tallennusta joka on luonnostaan preseasonissa.
 - [ ] **N-02 (high, TARKOITUKSELLA JÄTETTY — balanssi) — arvosanakäyrä on degeneroitunut.**
       `applyCampGrades` laskee `trainingPts = cumulativeLoad / 6` eli olettaa 0..180 kuorman,
       kun `WorkloadEngine`n omat bandit ovat healthy 30..80 ja mitattu vaihteluväli tällä
