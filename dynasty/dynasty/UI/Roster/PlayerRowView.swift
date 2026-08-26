@@ -228,9 +228,15 @@ struct PlayerRowView: View {
     private var fitSlot: DSStateSlot {
         guard let installedScheme,
               let familiarity = player.schemeFamiliarity[installedScheme] else {
+            // The dash, not a bare ident. With no coordinator hired the slot is
+            // empty on all 53 rows at once, and a column of the word FIT with
+            // nothing after it reads as a label the list forgot to fill rather
+            // than as the gap it is. `—` is the same "no number here" mark the
+            // potential column uses two columns over.
             return DSStateSlot(
                 label: "FIT",
                 tone: .empty,
+                value: "\u{2014}",
                 spokenLabel: "Scheme fit unknown — he has not taken a rep in this scheme"
             )
         }
@@ -340,9 +346,11 @@ struct PlayerRowView: View {
             // OVR (large, color-coded)
             ovrCell(font: .callout.monospacedDigit())
 
-            // Development potential indicator
+            // Headroom left in him — a number, next to the OVR it is measured
+            // from, in the digit voice the rest of the block speaks.
             Text(shortPotentialLabel)
-                .font(.system(size: DSType.Size.body, weight: .bold))
+                .font(DSType.display(11, .bold))
+                .monospacedDigit()
                 .foregroundStyle(shortPotentialColor)
                 .dsColumn(20)
 
@@ -746,10 +754,6 @@ struct PlayerRowView: View {
         return "\(min(idx + 1, 9))"
     }
 
-    private var isExpiringContract: Bool {
-        player.contractYearsRemaining <= 1
-    }
-
     /// R25: badge color for the personality trait (positive/risky/neutral tier).
     private var personalityTierColor: Color {
         switch player.personality.archetype.tier {
@@ -764,24 +768,19 @@ struct PlayerRowView: View {
     // overview lens already prints two columns to the right — cap hit over cap
     // percent — which is §2.2's "one encoding per quantity, never both".
 
+    /// The plain year count under the `Yrs` header — a number, in the digit
+    /// voice the rest of the trailing block speaks.
+    ///
+    /// It used to fill itself gold and border itself on an expiring deal, which
+    /// is the SAME fact the `EXT` slot beside the name already carries in its
+    /// own colours (orange at one year, red at zero). One contract year raised
+    /// two differently-coloured alarms two inches apart — §2.2's "one encoding
+    /// per quantity, never both", the rule the "Invested" badge above was
+    /// removed for. The alarm stays with the slot; the column stays a number.
     private var contractYearsLabel: some View {
         Text("\(player.contractYearsRemaining)yr")
             .font(DSType.display(11, .bold))
-            .foregroundStyle(isExpiringContract ? Color.backgroundPrimary : Color.textTertiary)
-            .padding(.horizontal, 3)
-            .padding(.vertical, 2)
-            .background(
-                isExpiringContract
-                    ? Color.warning
-                    : Color.clear,
-                in: RoundedRectangle(cornerRadius: 3)
-            )
-            .overlay(
-                isExpiringContract
-                    ? RoundedRectangle(cornerRadius: 3)
-                        .strokeBorder(Color.warning.opacity(0.6), lineWidth: 1)
-                    : nil
-            )
+            .foregroundStyle(Color.textSecondary)
     }
 
     private var moraleIndicator: some View {
@@ -821,26 +820,27 @@ struct PlayerRowView: View {
         .accessibilityLabel("Development \(developmentTrend.label)")
     }
 
-    /// Short potential label for overview columns (1-2 chars)
+    /// Overview lens: the headroom still in him — `truePotential` minus the OVR
+    /// printed one column to its left.
+    ///
+    /// It used to bucket the CEILING into ★ / ↑↑ / ↑ / → / ↓, which is an
+    /// absolute level drawn in the alphabet of a direction — and drawn directly
+    /// beside `developmentArrow`, which is an actual direction. A 22-year-old
+    /// with eight points to gain and a 31-year-old with three both read "↑↑",
+    /// so the column could not rank the two men it was there to compare. The
+    /// number answers the question the column serves ("how much is left in
+    /// him") and it sorts.
     private var shortPotentialLabel: String {
-        let pot = player.truePotential
-        switch pot {
-        case 90...:   return "★"
-        case 80..<90: return "↑↑"
-        case 70..<80: return "↑"
-        case 60..<70: return "→"
-        default:      return "↓"
-        }
+        let headroom = player.truePotential - player.overall
+        return headroom > 0 ? "+\(headroom)" : "\u{2014}"
     }
 
     private var shortPotentialColor: Color {
-        let pot = player.truePotential
-        switch pot {
-        case 90...:   return .accentGold
-        case 80..<90: return .success
-        case 70..<80: return .accentBlue
-        case 60..<70: return .textTertiary
-        default:      return .danger
+        switch player.truePotential - player.overall {
+        case 10...:   return .accentGold
+        case 6..<10:  return .success
+        case 3..<6:   return .accentBlue
+        default:      return .textTertiary
         }
     }
 

@@ -197,6 +197,16 @@ struct FranchiseTagView: View {
                 Text("\(expiringPlayers.count) expiring")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(Color.textTertiary)
+                Text("\u{2022}")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.textTertiary)
+                // The tag is a one-shot, and the only place that said so was a
+                // sentence buried in the grey rules paragraph — while eight rows
+                // each offered a gold Apply Tag. The count of the resource
+                // belongs next to the count of men it has to be spent on.
+                Text(hasUsedTag ? "0 tags left" : "1 tag available")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(hasUsedTag ? Color.textTertiary : Color.accentGold)
             }
         }
         .padding(.horizontal, 24)
@@ -256,6 +266,19 @@ struct FranchiseTagView: View {
 
     // MARK: - Rules Banner
 
+    /// The banner carries BOTH options' league year, not just the tag's.
+    ///
+    /// The row offers a tag and a Contact Agent thread side by side, and the two
+    /// land in different years: the tag is a forward commitment against
+    /// `nextSeason` and leaves today's room alone, while a re-sign agreed here
+    /// REPLACES the expiring deal on the spot (the `.replaceContract` gate at the
+    /// top of this file) and so charges the open year first. The screen used to
+    /// state only the tag's year, which left the user comparing a `nextSeason`
+    /// price against a conversation that quotes him this year's — and never said
+    /// what keeping the man does to the projected space the tag is being weighed
+    /// against. It is said once here rather than on every row, and deliberately
+    /// without a price: what the agent will ASK is what Contact Agent is for
+    /// (#127).
     private var tagRulesBanner: some View {
         HStack(spacing: 10) {
             Image(systemName: "info.circle.fill")
@@ -264,7 +287,7 @@ struct FranchiseTagView: View {
                 Text("Franchise Tag Rules")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Color.textPrimary)
-                Text("You can apply up to 1 franchise tag per season. A tagged player finishes his current deal, then plays \(seasonLabel(nextSeason)) at the average of the top 5 salaries at his position — so the tag charges the \(seasonLabel(nextSeason)) cap, not this year's.")
+                Text("You can apply up to 1 franchise tag per season. A tagged player finishes his current deal, then plays \(seasonLabel(nextSeason)) at the average of the top 5 salaries at his position — so the tag charges the \(seasonLabel(nextSeason)) cap, not this year's. Re-signing a man through Contact Agent instead replaces his expiring deal on the spot: it charges your \(seasonLabel(career.currentSeason)) space the moment he signs, and commits \(seasonLabel(nextSeason)) on top.")
                     .font(.caption)
                     .foregroundStyle(Color.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -293,52 +316,70 @@ struct FranchiseTagView: View {
     }
 
     private func taggedPlayerRow(_ player: Player) -> some View {
-        HStack(spacing: 12) {
-            positionBadge(player.position)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                positionBadge(player.position)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(player.fullName)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Color.textPrimary)
-                    .lineLimit(1)
-                HStack(spacing: 8) {
-                    Text("Age \(player.age)")
-                        .font(.caption)
-                        .foregroundStyle(Color.textTertiary)
-                    Text("\(player.overall) OVR")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.forRating(player.overall))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(player.fullName)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.textPrimary)
+                        .lineLimit(1)
+                    HStack(spacing: 8) {
+                        Text("Age \(player.age)")
+                            .font(.caption)
+                            .foregroundStyle(Color.textTertiary)
+                        Text("\(player.overall) OVR")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.forRating(player.overall))
+                        // The deal the tag is an alternative to. Every expiring
+                        // row states it; the tagged man's row did not, so his
+                        // tag figure had nothing on the row to be read against.
+                        Text(formatMillions(player.annualSalary) + "/yr")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(Color.textTertiary)
+                    }
                 }
+
+                Spacer()
+
+                VStack(alignment: .trailing, spacing: 2) {
+                    // #127: `annualSalary` is still the EXPIRING deal — the tag has
+                    // not been paid yet and does not overwrite it until the rollover
+                    // — so the number quoted here comes off the forward commitment
+                    // the tag actually booked. Showing `annualSalary` would now
+                    // print the old contract under the words "Tag Value".
+                    Text(formatMillions(tagCommitment(for: player)))
+                        .font(.subheadline.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(Color.accentGold)
+                    Text("\(seasonLabel(nextSeason)) Tag")
+                        .font(.system(size: DSType.Size.caption).weight(.medium))
+                        .foregroundStyle(Color.textTertiary)
+                }
+
+                Button {
+                    removeTag(from: player)
+                } label: {
+                    Text("Remove")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.danger)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.danger.opacity(0.15), in: Capsule())
+                        .overlay(Capsule().strokeBorder(Color.danger.opacity(0.4), lineWidth: 1))
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
 
-            Spacer()
-
-            VStack(alignment: .trailing, spacing: 2) {
-                // #127: `annualSalary` is still the EXPIRING deal — the tag has
-                // not been paid yet and does not overwrite it until the rollover
-                // — so the number quoted here comes off the forward commitment
-                // the tag actually booked. Showing `annualSalary` would now
-                // print the old contract under the words "Tag Value".
-                Text(formatMillions(tagCommitment(for: player)))
-                    .font(.subheadline.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(Color.accentGold)
-                Text("\(seasonLabel(nextSeason)) Tag")
-                    .font(.system(size: DSType.Size.caption).weight(.medium))
-                    .foregroundStyle(Color.textTertiary)
-            }
-
-            Button {
-                removeTag(from: player)
-            } label: {
-                Text("Remove")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Color.danger)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(Color.danger.opacity(0.15), in: Capsule())
-                    .overlay(Capsule().strokeBorder(Color.danger.opacity(0.4), lineWidth: 1))
-            }
-            .buttonStyle(.plain)
+            // A tag is not a terminal state. The man can still sign a long deal
+            // — `applyNegotiatedDeal` rescinds the tag's books on signature — and
+            // this row was the only one on the screen with no way to make the
+            // call, so the one screen that applies tags offered no way to convert
+            // one into a contract.
+            contactAgentButton(for: player)
+                .padding(.leading, 46)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -351,9 +392,12 @@ struct FranchiseTagView: View {
             if expiringPlayers.isEmpty {
                 emptyStateRow("No players with expiring contracts.")
             } else {
+                // Read once for the whole section rather than per row: the
+                // favourite has to price every candidate's tag to find itself.
+                let favouriteID = tagFavourite?.id
                 VStack(spacing: 0) {
                     ForEach(Array(expiringPlayers.enumerated()), id: \.element.id) { index, player in
-                        expiringPlayerRow(player)
+                        expiringPlayerRow(player, isFavourite: player.id == favouriteID)
                         if index < expiringPlayers.count - 1 {
                             Divider()
                                 .overlay(Color.surfaceBorder.opacity(0.5))
@@ -365,7 +409,7 @@ struct FranchiseTagView: View {
         }
     }
 
-    private func expiringPlayerRow(_ player: Player) -> some View {
+    private func expiringPlayerRow(_ player: Player, isFavourite: Bool) -> some View {
         let tagCost = tagValue(for: player.position)
         // #127. This used to be `availableCap − tagCost + annualSalary`: next
         // year's tag netted against this year's room, with this year's salary
@@ -373,7 +417,14 @@ struct FranchiseTagView: View {
         // refunded. Every term was from the wrong year. The tag charges
         // `nextSeason`, where the man's expiring deal is already worth nothing —
         // so the honest answer is simply projected space less the tag.
-        let capAfterTag = projectedNextYearSpace - tagCost
+        //
+        // Both terms are snapped to the tenth of a million the screen prints
+        // first. Subtracting the exact thousands and rounding once at the end
+        // showed $70.8M − $15.6M = $55.3M on one row (70 845 − 15 550 = 55 295),
+        // because the two operands rounded in opposite directions. Every row
+        // here has to survive the subtraction the reader does in his head
+        // against the banner.
+        let capAfterTag = roundedToDisplay(projectedNextYearSpace) - roundedToDisplay(tagCost)
         let recommendation = smartRecommendation(for: player)
 
         return VStack(alignment: .leading, spacing: 8) {
@@ -401,9 +452,16 @@ struct FranchiseTagView: View {
                 Spacer()
 
                 VStack(alignment: .trailing, spacing: 2) {
+                    // Not gold. Eight rows priced in the screen's emphasis
+                    // colour made twenty gold elements out of a screen with one
+                    // decision on it, and a price the club pays at most once is
+                    // not a call to action — the headline number and the
+                    // endorsed row's pill are. Once the tag is spent this figure
+                    // is the price of a move the row can no longer make, so it
+                    // drops again to tertiary.
                     Text(formatMillions(tagCost))
                         .font(.subheadline.weight(.semibold).monospacedDigit())
-                        .foregroundStyle(Color.accentGold)
+                        .foregroundStyle(hasUsedTag ? Color.textTertiary : Color.textPrimary)
                     Text("Tag Cost")
                         .font(.system(size: DSType.Size.caption).weight(.medium))
                         .foregroundStyle(Color.textTertiary)
@@ -421,47 +479,65 @@ struct FranchiseTagView: View {
                     Button {
                         applyTag(to: player, tagCost: tagCost)
                     } label: {
+                        // One tag, eight rows: a filled gold pill on every one
+                        // of them reads as eight primary actions for a resource
+                        // the club has exactly one of. Only the favourite is
+                        // filled; the rest are the same action, offered rather
+                        // than urged.
                         Text("Apply Tag")
                             .font(.caption.weight(.semibold))
-                            .foregroundStyle(Color.backgroundPrimary)
+                            .foregroundStyle(isFavourite ? Color.backgroundPrimary : Color.accentGold)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 6)
-                            .background(Color.accentGold, in: Capsule())
+                            .background(
+                                isFavourite ? Color.accentGold : Color.accentGold.opacity(0.10),
+                                in: Capsule()
+                            )
+                            .overlay(Capsule().strokeBorder(Color.accentGold.opacity(isFavourite ? 0 : 0.45), lineWidth: 1))
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                 }
             }
 
-            // Recommendation
+            // Recommendation. `textPrimary`, not secondary: this is the only
+            // line in the row that tells the GM what to do, and it was the
+            // faintest string on it.
             HStack(spacing: 6) {
                 Image(systemName: recommendation.icon)
                     .font(.caption)
                     .foregroundStyle(recommendation.color)
                 Text(recommendation.text)
                     .font(.caption)
-                    .foregroundStyle(Color.textSecondary)
+                    .foregroundStyle(Color.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .padding(.leading, 46)
 
-            // Cap impact
-            HStack(spacing: 6) {
-                Image(systemName: "dollarsign.circle")
-                    .font(.caption)
-                    .foregroundStyle(Color.textTertiary)
-                Text("\(seasonLabel(nextSeason)) space after tag: \(formatMillions(capAfterTag))")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(capAfterTag >= 0 ? Color.textTertiary : Color.danger)
-                if capAfterTag < 0 {
-                    Text("OVER CAP")
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(Color.danger)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.danger.opacity(0.15), in: Capsule())
+            // Cap impact. Only while a tag is there to spend: `committedNextYear`
+            // already carries the tag this club HAS applied, so once it is spent
+            // this line was projecting the room left after a SECOND tag — a
+            // number the rules three cards up forbid.
+            if !hasUsedTag {
+                HStack(spacing: 6) {
+                    Image(systemName: "dollarsign.circle")
+                        .font(.caption)
+                        .foregroundStyle(Color.textTertiary)
+                    Text("\(seasonLabel(nextSeason)) space after tag: \(formatMillions(capAfterTag))")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(capAfterTag >= 0 ? Color.textTertiary : Color.danger)
+                    if capAfterTag < 0 {
+                        Text("OVER CAP")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(Color.danger)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.danger.opacity(0.15), in: Capsule())
+                    }
                 }
+                .padding(.leading, 46)
             }
-            .padding(.leading, 46)
 
             // The alternative to the tag is a conversation, so it belongs on the
             // same row as the tag. Identical wording and behaviour to every other
@@ -499,6 +575,9 @@ struct FranchiseTagView: View {
             .padding(.vertical, 6)
             .background(Color.accentBlue.opacity(0.12), in: Capsule())
             .overlay(Capsule().strokeBorder(Color.accentBlue.opacity(0.35), lineWidth: 1))
+            // The pill stays a pill; the finger gets the 44pt it is entitled to.
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Contact \(player.fullName)'s agent")
@@ -510,35 +589,67 @@ struct FranchiseTagView: View {
         let text: String
         let icon: String
         let color: Color
+        /// Whether the screen is actually steering the one tag at this man. It
+        /// is what decides which single pill is filled — see `tagFavourite`.
+        let endorsesTag: Bool
     }
 
+    /// The judgement of the man never changes; the decision it is advice ABOUT
+    /// does. Once the tag is spent, "strongly consider tagging" recommends a
+    /// move this row has already disabled, so each tier states the choice that
+    /// is still open — re-sign him through his agent, or let him walk.
     private func smartRecommendation(for player: Player) -> Recommendation {
         let isPastPeak = player.age > player.position.peakAgeRange.upperBound
 
         if player.overall >= 85 {
             return Recommendation(
-                text: "Elite player — strongly consider tagging.",
+                text: hasUsedTag
+                    ? "Elite player — re-sign him or lose him for nothing."
+                    : "Elite player — strongly consider tagging.",
                 icon: "star.fill",
-                color: .accentGold
+                color: .accentGold,
+                endorsesTag: true
             )
         } else if isPastPeak {
             return Recommendation(
-                text: "Aging veteran at \(player.age) — tag cost may not be worth it.",
+                text: hasUsedTag
+                    ? "Aging veteran at \(player.age) — let him walk unless he re-signs cheap."
+                    : "Aging veteran at \(player.age) — tag cost may not be worth it.",
                 icon: "exclamationmark.triangle.fill",
-                color: .warning
+                color: .warning,
+                endorsesTag: false
             )
         } else if player.overall < 75 {
             return Recommendation(
                 text: "Role player — better to let walk and address in free agency.",
                 icon: "arrow.right.circle.fill",
-                color: .textTertiary
+                color: .textTertiary,
+                endorsesTag: false
             )
         } else {
             return Recommendation(
-                text: "Solid contributor — tag if you can't afford to lose him.",
+                text: hasUsedTag
+                    ? "Solid contributor — re-sign him if the price is right."
+                    : "Solid contributor — tag if you can't afford to lose him.",
                 icon: "checkmark.circle.fill",
-                color: .success
+                color: .success,
+                endorsesTag: true
             )
+        }
+    }
+
+    /// The one row that gets the filled pill.
+    ///
+    /// `expiringPlayers` is already sorted by rating, so this is the best man
+    /// the screen endorses tagging whose tag the projected cap can actually
+    /// absorb. Nobody qualifying means nothing is filled — the screen has no
+    /// business urging a tag it would then have to call unaffordable two lines
+    /// further down.
+    private var tagFavourite: Player? {
+        guard !hasUsedTag else { return nil }
+        return expiringPlayers.first {
+            smartRecommendation(for: $0).endorsesTag
+                && projectedNextYearSpace - tagValue(for: $0.position) >= 0
         }
     }
 
@@ -730,6 +841,13 @@ struct FranchiseTagView: View {
         } else {
             return "$\(thousands)K"
         }
+    }
+
+    /// Money as this screen actually prints it: thousands snapped to the tenth
+    /// of a million `formatMillions` rounds to. Arithmetic a reader can check
+    /// on screen has to be done on the figures on screen.
+    private func roundedToDisplay(_ thousands: Int) -> Int {
+        Int((Double(thousands) / 100.0).rounded()) * 100
     }
 
     // MARK: - Data Loading

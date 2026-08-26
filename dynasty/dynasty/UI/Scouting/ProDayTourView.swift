@@ -174,8 +174,35 @@ struct ProDayTourView: View {
         scouts.filter { $0.proDayColleges.count < $0.maxProDays }
     }
 
+    /// The department in the order the decision uses: who can still be spent,
+    /// best first. Insertion order answered a question nobody on this screen is
+    /// asking — finding the men with a slot left meant reading all eight
+    /// "n/3 slots" values.
+    private var department: [Scout] {
+        scouts.sorted { lhs, rhs in
+            let lhsOpen = lhs.proDayColleges.count < lhs.maxProDays
+            let rhsOpen = rhs.proDayColleges.count < rhs.maxProDays
+            if lhsOpen != rhsOpen { return lhsOpen }
+            if lhs.accuracy != rhs.accuracy { return lhs.accuracy > rhs.accuracy }
+            return lhs.fullName < rhs.fullName
+        }
+    }
+
+    /// **Reserving a school does not remove it from here.** It used to: the
+    /// filter dropped focused schools, so booking Michigan State deleted its row
+    /// and slid the next school up into the gap — a list of the same length,
+    /// with nothing on screen saying a row had left rather than the order having
+    /// changed. The only acknowledgement was a scout's subtitle further up. The
+    /// booked school now stays where it was and wears the RESERVED chip
+    /// `schoolStatus` already draws for it.
     private var recommended: [ScoutingEngine.ProDaySchoolSummary] {
-        summaries.filter { !$0.isFocused && $0.relevance > 5 }.prefix(5).map { $0 }
+        summaries.filter { $0.relevance > 5 }.prefix(5).map { $0 }
+    }
+
+    /// The recommended schools still worth a slot — what "Reserve all
+    /// recommended" would actually book.
+    private var unreservedRecommended: [ScoutingEngine.ProDaySchoolSummary] {
+        recommended.filter { !$0.isFocused }
     }
 
     // MARK: - Body
@@ -213,10 +240,19 @@ struct ProDayTourView: View {
         // ONE sheet modifier. Two of them on the same view is how Reserve came
         // to open an empty card (B1) — see `ActiveSheet`.
         .sheet(item: $activeSheet) { sheet in
-            switch sheet {
-            case let .reserveScout(college): scoutSheet(college: college)
-            case let .markTarget(college):   focusSheet(college: college)
+            Group {
+                switch sheet {
+                case let .reserveScout(college): scoutSheet(college: college)
+                case let .markTarget(college):   focusSheet(college: college)
+                }
             }
+            // This was the one sheet host in the app carrying no sizing
+            // modifier, so it took the default iPad form size — ~564x636 pt.
+            // The pinned "Select a scout" bar sliced the fifth scout's stat
+            // line in half, three of eight scouts sat below the fold, and the
+            // school's own prospect section was invisible: you chose who reads
+            // the school without ever seeing who is at it.
+            .presentationSizing(.page)
         }
         .alert("Go in on tape?", isPresented: $showSkipConfirm) {
             Button("Skip the circuit", role: .destructive) { advanceStage(runTour: false) }
@@ -308,11 +344,19 @@ struct ProDayTourView: View {
                         RoundedRectangle(cornerRadius: 3)
                             .fill(Color.backgroundTertiary)
                         RoundedRectangle(cornerRadius: 3)
-                            .fill(progress > 0.8 ? Color.danger : Color.accentGold)
+                            // NEVER `danger`. A nearly full bar is a department
+                            // that has committed its scouts, which is the point
+                            // of the stage — red said the user had done
+                            // something wrong by using what he was given.
+                            .fill(Color.accentGold)
                             .frame(width: geo.size.width * progress)
                     }
                 }
-                .frame(width: 60, height: 6)
+                // 200 pt, not 60: the row has the width to spare and one slot
+                // out of 25 is 2.4 pt on a 60 pt track — a tick the eye reads as
+                // an empty bar, on the one control that has to show the first
+                // reservation landing.
+                .frame(width: 200, height: 6)
             }
         }
         .listRowBackground(Color.backgroundSecondary)
@@ -322,7 +366,7 @@ struct ProDayTourView: View {
 
     private var departmentSection: some View {
         Section {
-            ForEach(scouts) { scout in
+            ForEach(department) { scout in
                 scoutRow(scout)
             }
         } header: {
@@ -395,14 +439,14 @@ struct ProDayTourView: View {
             ForEach(recommended) { info in
                 schoolRow(info, showWhy: true)
             }
-            if slotsLeft > 0 && !hasRunTour {
+            if slotsLeft > 0 && !hasRunTour && !unreservedRecommended.isEmpty {
                 Button { reserveAllRecommended() } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "scope")
                         Text("Reserve all recommended")
                             .font(.caption.weight(.bold))
                         Spacer()
-                        Text("\(min(slotsLeft, recommended.count)) slot\(min(slotsLeft, recommended.count) == 1 ? "" : "s")")
+                        Text("\(min(slotsLeft, unreservedRecommended.count)) slot\(min(slotsLeft, unreservedRecommended.count) == 1 ? "" : "s")")
                             .font(.caption2)
                             .foregroundStyle(Color.backgroundPrimary.opacity(0.8))
                     }
@@ -559,6 +603,8 @@ struct ProDayTourView: View {
                         Image(systemName: "xmark.circle.fill")
                             .font(.caption)
                             .foregroundStyle(Color.textTertiary)
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Release \(info.college)")
@@ -864,7 +910,12 @@ struct ProDayTourView: View {
             let pool = prospectsByCollege[info.college] ?? []
             let topPosition = Dictionary(grouping: pool) { $0.position }
                 .max { $0.value.count < $1.value.count }?.key
-            let scout = scoutsWithSlots.first { $0.positionSpecialization == topPosition }
+            // Same pick the reserve sheet's tip makes, for the same reason: the
+            // best specialist, then the best scout left.
+            let specialists = topPosition.map { position in
+                scoutsWithSlots.filter { $0.positionSpecialization == position }
+            } ?? []
+            let scout = specialists.max { $0.accuracy < $1.accuracy }
                 ?? scoutsWithSlots.max { $0.accuracy < $1.accuracy }
             guard let scout else { break }
             reserveFocus(scout: scout, college: info.college)
@@ -1060,8 +1111,13 @@ struct ProDayTourView: View {
         let topPosition = Dictionary(grouping: pool) { $0.position }
             .max { $0.value.count < $1.value.count }?.key
 
+        // The BEST specialist, not the first one the array happens to hold. Two
+        // men can carry the same specialisation, and picking by array order
+        // recommended the less accurate of them over his own colleague.
         if let position = topPosition,
-           let specialist = scoutsWithSlots.first(where: { $0.positionSpecialization == position }) {
+           let specialist = scoutsWithSlots
+               .filter({ $0.positionSpecialization == position })
+               .max(by: { $0.accuracy < $1.accuracy }) {
             let best = pool.filter { $0.position == position }
                 .max { ($0.scoutedOverall ?? 0) < ($1.scoutedOverall ?? 0) }
             return (specialist, "\(specialist.fullName) (\(position.rawValue) specialist) for \(best?.fullName ?? "the group")")
@@ -1179,8 +1235,21 @@ private struct ProDayFocusScoutSheet: View {
 
     @State private var selectedScoutID: UUID?
 
+    /// Recommended first, then by accuracy, with the men who have no slot left
+    /// at the bottom. Role order put the two recommended scouts 1st and 5th
+    /// with three rows the user cannot use between them, and left one of them
+    /// under the pinned button bar.
     private var sortedScouts: [Scout] {
-        scouts.sorted { $0.scoutRole.sortOrder < $1.scoutRole.sortOrder }
+        scouts.sorted { lhs, rhs in
+            let lhsFull = lhs.proDayColleges.count >= lhs.maxProDays
+            let rhsFull = rhs.proDayColleges.count >= rhs.maxProDays
+            if lhsFull != rhsFull { return rhsFull }
+            let lhsRecommended = isRecommended(lhs)
+            let rhsRecommended = isRecommended(rhs)
+            if lhsRecommended != rhsRecommended { return lhsRecommended }
+            if lhs.accuracy != rhs.accuracy { return lhs.accuracy > rhs.accuracy }
+            return lhs.fullName < rhs.fullName
+        }
     }
 
     private func isRecommended(_ scout: Scout) -> Bool {

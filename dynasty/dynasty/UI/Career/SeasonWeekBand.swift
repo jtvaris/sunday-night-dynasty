@@ -140,9 +140,14 @@ enum SeasonWeekBand {
             // result as the sub-caption rather than pretending it is still
             // ahead: `done` owns `outcome`, `current` owns `subcaption`, and
             // "Sunday is over" is exactly the state the hero card shows too.
+            //
+            // Before the game the fallback was `tag`, i.e. the title again —
+            // the widest slat in the band spent its second line printing
+            // "@ JAX" under "@ JAX" while the played slat beside it carried a
+            // score there. The slot says what the score is waiting on instead.
             let subcaption: String?
             switch state {
-            case .current: subcaption = result ?? (fixture?.isBye ?? true ? "No game this week" : tag)
+            case .current: subcaption = result ?? (fixture?.isBye ?? true ? "No game this week" : "Not played yet")
             case .done, .future, .locked: subcaption = nil
             }
 

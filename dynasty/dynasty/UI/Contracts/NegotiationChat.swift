@@ -314,13 +314,24 @@ struct NegotiationRoundBand: View {
     }
 
     var body: some View {
+        // Full height, not compact. `isCompact` is the demoted rendering for a
+        // surface the process is not the subject of — and it also drops the
+        // slat's second line, which on this band is the money a finished round
+        // tabled and the "one of N" under the live one. The screen computed all
+        // of it and then drew three blank parallelograms repeating a count the
+        // band head was already printing.
+        //
+        // NO HEADLINE. The band's eyebrow is the one channel here that says
+        // nothing the two beside it do not: the ribbon marks the current round
+        // and the meter names what is left of the resource. It was also the
+        // least trustworthy of the three — it counted off the RIBBON's total,
+        // which is the run the transcript has had, so a shrinking patience
+        // (`ContractDemand.maxRounds` after a lowball) printed "Round 3 of 3"
+        // next to a meter reading "0 left" and left the reader to work out
+        // which of the two was the cap.
         DSSlatBand(
             slats: slats,
-            headline: isClosed
-                ? "\(used) round\(used == 1 ? "" : "s") spoken"
-                : "Round \(min(used + 1, total)) of \(total)",
-            meter: resolvedMeter,
-            isCompact: true
+            meter: resolvedMeter
         )
         .padding(.horizontal, DSSpacing.md)
         .padding(.top, DSSpacing.xs)
@@ -356,6 +367,11 @@ struct NegotiationTranscript: View {
                 .frame(maxWidth: measure)
                 .frame(maxWidth: .infinity)
             }
+            // A thread three lines long does not fill a 13-inch page, and the
+            // transcript absorbs every point of slack in the body: the agent's
+            // live counter sat 250 pt above the dials that answer it. The newest
+            // bubble belongs against the composer, on both hosts.
+            .defaultScrollAnchor(.bottom)
             .onChange(of: scrollTarget) { _, target in
                 guard let target else { return }
                 withAnimation(.easeOut(duration: 0.3)) {

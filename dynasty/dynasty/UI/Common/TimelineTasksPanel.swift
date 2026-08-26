@@ -120,13 +120,17 @@ struct TimelineTasksPanel: View {
 
     private var panelHeader: some View {
         HStack(spacing: 8) {
+            // Grey, not gold. This is a standing label — it says the same word
+            // all season — and it was the first of ten gold objects down a
+            // column whose one unmissable thing is meant to be the advance
+            // button. Gold is reserved for the live phase and the button.
             Image(systemName: "list.clipboard.fill")
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(Color.accentGold)
+                .foregroundStyle(Color.textSecondary)
 
             Text("YOUR \(seasonLabel)")
                 .font(.system(size: 14, weight: .bold))
-                .foregroundStyle(Color.accentGold)
+                .foregroundStyle(Color.textSecondary)
                 .textCase(.uppercase)
                 .tracking(0.5)
 
@@ -135,8 +139,20 @@ struct TimelineTasksPanel: View {
             // Counts real steps only — the group banner is a label that ships
             // pre-`.done`, so including it read as "1/5 done" on a fresh week.
             // Shared with the Season Guide sheet (#134b): one function, one pair.
+            //
+            // The unit is spelled out because a bare "4/6" set against the words
+            // YOUR OFFSEASON reads as four phases of six — and the same rail
+            // says the offseason is fifteen phases, with a "step 2 of 2" caption
+            // three rows down for good measure. Three unlabelled fractions in
+            // one column is two too many.
+            //
+            // A phase with no required step is counted as "optional" instead:
+            // the regular-season list is all-optional by design, so its pill sat
+            // at "0/6" for seventeen straight weeks with nothing wrong, which is
+            // the one message a progress counter must never send.
             let progress = Self.taskProgress(tasks)
-            Text("\(progress.done)/\(progress.total)")
+            let anyRequired = Self.actionableTasks(tasks).contains { $0.isRequired }
+            Text("\(progress.done)/\(progress.total) \(anyRequired ? "tasks" : "optional")")
                 .font(.system(size: 11, weight: .semibold).monospacedDigit())
                 .foregroundStyle(Color.textSecondary)
         }
@@ -154,10 +170,21 @@ struct TimelineTasksPanel: View {
 
     // MARK: - Past Phases
 
+    /// Every phase behind the current one.
+    ///
+    /// `orderedPhases` is a cycle written out flat, cut just after the
+    /// Championship because that is where a dynasty year starts — which makes
+    /// the two postseason phases read as "already behind you" from every row in
+    /// the list. From the PLAYOFFS they are not: the engine's chain is playoffs
+    /// → All-Star Game → Championship, so the rail was reporting "Phases
+    /// complete (14)" directly above a button offering to advance to the
+    /// Championship, counting the two rounds the club is still trying to reach.
     private var pastPhases: [(phase: SeasonPhase, name: String)] {
         guard currentIndex > 0 else { return [] }
-        return (0..<currentIndex).map { i in
+        let postseasonStillAhead = career.currentPhase == .playoffs
+        return (0..<currentIndex).compactMap { i -> (phase: SeasonPhase, name: String)? in
             let phase = Self.orderedPhases[i]
+            if postseasonStillAhead, phase.group == .postseason { return nil }
             return (phase, Self.phaseName(phase))
         }
     }
@@ -208,7 +235,11 @@ struct TimelineTasksPanel: View {
         if career.currentPhase.group == .regularSeason, !groups.contains(.regularSeason) {
             return "Offseason complete"
         }
-        if groups.count == 1, let only = groups.first {
+        // Naming the group is only honest from OUTSIDE it. Standing in the
+        // Championship, with "POSTSEASON · STEP 2 OF 2" printed one row below,
+        // the rail was calling the postseason complete because the All-Star
+        // Game behind it was the only finished phase.
+        if groups.count == 1, let only = groups.first, only != career.currentPhase.group {
             return "\(only.displayName) complete"
         }
         return "Phases complete"
@@ -387,7 +418,7 @@ struct TimelineTasksPanel: View {
                             .font(.system(size: DSType.Size.body, weight: done ? .regular : (locked ? .regular : .medium)))
                             .foregroundStyle(done ? Color.textTertiary : (locked ? Color.textTertiary : Color.textPrimary))
                             .strikethrough(done, color: Color.textTertiary)
-                            .lineLimit(2)
+                            .lineLimit(3)
                             .fixedSize(horizontal: false, vertical: true)
 
                         if isNext {
@@ -406,7 +437,16 @@ struct TimelineTasksPanel: View {
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 1)
                                 .background(Capsule().fill(Color.backgroundTertiary))
-                        } else if isRequired && !done {
+                        } else if isRequired && !done && !isNext {
+                            // Not on the NEXT row. `nextActionableTask` only
+                            // ever picks a required task, so the two capsules
+                            // always arrived together — and two of them plus a
+                            // chevron left "Review Position Group Grades" about
+                            // 85 pt to wrap into, which printed the one row the
+                            // user MUST act on as "Review Position Grou…" while
+                            // the banner below it spelled the name in full. The
+                            // requirement is still stated on the row: the
+                            // sentence underneath opens "Required to advance".
                             Text("Required")
                                 .font(.system(size: DSType.Size.micro, weight: .heavy))
                                 .foregroundStyle(.white)
@@ -440,10 +480,17 @@ struct TimelineTasksPanel: View {
             // it belongs to.
             if !done {
                 HStack(alignment: .top, spacing: 6) {
+                    // Four, not two. Several of these sentences END on the one
+                    // clause that makes them actionable — "…then confirm the
+                    // review on the Schemes tab" — and at two lines a 300 pt
+                    // rail cut exactly that half off, on the rows whose whole
+                    // job was naming the tab that closes the task. A row whose
+                    // sentence is short still draws one line; only the long
+                    // ones grow.
                     Text(detailLine(for: task, isRequired: isRequired, locked: locked))
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(Color.textTertiaryReadable)
-                        .lineLimit(2)
+                        .lineLimit(4)
                         .fixedSize(horizontal: false, vertical: true)
 
                     Spacer(minLength: 2)
@@ -755,6 +802,17 @@ struct TimelineTasksPanel: View {
     private var upcomingPhaseTasks: [(phase: SeasonPhase, name: String, date: String, tasks: [GameTask])] {
         var result: [(SeasonPhase, String, String, [GameTask])] = []
 
+        // Inside the regular-season group a preview earns its rows by being what
+        // the phase ADDS. The deadline week's list is deliberately an OVERLAY on
+        // the weekly one (`TaskGenerator`), which is right while the deadline is
+        // live and wrong in a preview: the rail printed "Review depth chart" and
+        // "Check injury report" under REGULAR SEASON, again under TRADE DEADLINE
+        // and again under PLAYOFFS, three headers in one column. Every other
+        // group's phases carry their own lists and are previewed whole.
+        var shown: Set<String> = career.currentPhase.group == .regularSeason
+            ? Set(Self.actionableTasks(tasks).map(\.matchKey))
+            : []
+
         for i in 1...upcomingPhaseCount {
             let nextIndex = currentIndex + i
             guard nextIndex < Self.orderedPhases.count else { break }
@@ -780,7 +838,12 @@ struct TimelineTasksPanel: View {
                 hasPendingEvents: false,
                 ownerSatisfaction: 50
             )
-            result.append((phase, Self.phaseName(phase), Self.phaseDate(phase), previewTasks))
+            var preview = Self.actionableTasks(previewTasks)
+            if phase.group == .regularSeason {
+                preview = preview.filter { !shown.contains($0.matchKey) }
+                shown.formUnion(preview.map(\.matchKey))
+            }
+            result.append((phase, Self.phaseName(phase), Self.phaseDate(phase), preview))
         }
 
         return result
@@ -852,10 +915,14 @@ struct TimelineTasksPanel: View {
                 .strokeBorder(Color.textTertiary.opacity(0.5), lineWidth: 1)
                 .frame(width: 9, height: 9)
 
+            // Two lines: at one, a 300 pt rail was clipping four characters off
+            // "Read the Showcase & declaration report" — a preview row that
+            // costs a second line only when the title actually needs one.
             Text(task.title)
                 .font(.system(size: 12, weight: .regular))
                 .foregroundStyle(Color.textSecondary)
-                .lineLimit(1)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
 
             Spacer()
         }
@@ -924,9 +991,17 @@ struct TimelineTasksPanel: View {
     /// Regular-season groups repeat their list every week, which is exactly the
     /// thing the old "─ Regular Season ─" separator failed to say.
     private func groupCaption(for phase: SeasonPhase) -> String {
-        switch phase.group {
-        case .regularSeason:
+        // Switched on the PHASE, not its group. `SeasonPhase.group` files the
+        // playoffs under `.regularSeason` alongside the weekly phases, so a
+        // group-level switch printed "WEEKLY DURING REGULAR SEASON" under a
+        // PLAYOFFS header in January — a caption that was wrong twice in five
+        // words. The playoff list does repeat, just per round rather than per
+        // week, and what it repeats for is worth saying.
+        switch phase {
+        case .regularSeason, .tradeDeadline:
             return "Weekly during regular season"
+        case .playoffs:
+            return "Each playoff round \u{00B7} win or go home"
         default:
             let progress = phase.groupProgress
             return "\(phase.group.displayName) \u{00B7} step \(progress.current) of \(progress.total)"
@@ -967,8 +1042,16 @@ struct TimelineTasksPanel: View {
         case .trainingCamp:    return "Jul\u{2013}Aug"
         case .preseason:       return "Aug"
         case .rosterCuts:      return "Aug"
-        case .regularSeason:   return "Sep\u{2013}Jan"
-        case .tradeDeadline:   return "Oct"
+        // The rail is read top to bottom as a calendar, so these have to climb.
+        // They did not: REGULAR SEASON ran "Sep–Jan" over TRADE DEADLINE "Oct"
+        // over PLAYOFFS "Jan", i.e. the row below started inside the row above
+        // and the row below that repeated its last month. The season now stops
+        // short of the postseason's month, and the deadline — which is genuinely
+        // a single week INSIDE the season above it, not a month beside it — says
+        // so in the panel's own regular-season unit. `deadlineWeek` because the
+        // month was wrong too: week 9 falls in November.
+        case .regularSeason:   return "Sep\u{2013}Dec"
+        case .tradeDeadline:   return "Wk \(TradeValueEngine.deadlineWeek)"
         case .playoffs:        return "Jan"
         }
     }

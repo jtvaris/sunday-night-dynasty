@@ -234,11 +234,14 @@ struct DraftControlBar: View {
     private func decisionBar(for offer: DraftDayTradeEngine.DraftTradeOffer) -> some View {
         let gives = offer.givesLabel(currentSeason: coordinator.draftYear)
         let gets = offer.getsLabel(currentSeason: coordinator.draftYear)
+        let message = [offer.motive, slideRead(for: offer)]
+            .compactMap { $0 }
+            .joined(separator: " ")
         return stanceStrip {
             DSActionBar(
                 explainer: .init(
                     title: "Trade offer \u{2014} \(offer.gmName) \u{00B7} \(offer.gmStyle)",
-                    message: offer.motive
+                    message: message
                 ),
                 ghost: .init(
                     title: "Decline",
@@ -252,6 +255,39 @@ struct DraftControlBar: View {
                 )
             )
         }
+    }
+
+    /// Whether the man at the top of YOUR board survives the slide, as a
+    /// sentence for the offer explainer.
+    ///
+    /// Sit-or-move is not a points question and the bar was asking it as one:
+    /// `875 pts` against `921 pts`, and the bigger number wins every time.
+    /// `DraftAvailability` has modelled the actual input — is he still there
+    /// when you pick again — since the scouting screens were built, and the
+    /// draft room was the one place it was never printed.
+    ///
+    /// Only on a slide. Moving UP lands you ahead of the board, where survival
+    /// is not the question being asked, and a deal that returns nothing in this
+    /// year's pool has no landing slot to read against.
+    private func slideRead(for offer: DraftDayTradeEngine.DraftTradeOffer) -> String? {
+        guard case .userMovesDown = offer.kind else { return nil }
+        guard let landing = offer.userGetsPicks
+            .filter({ $0.seasonYear == coordinator.draftYear })
+            .map({ $0.pickNumber })
+            .min() else { return nil }
+        // The club's own board, not the media's — the whole point of the read is
+        // that it answers for the man the building wants.
+        let ranked = coordinator.availableProspects.compactMap { prospect in
+            coordinator.userBoardRanks[prospect.id].map { (prospect: prospect, rank: $0) }
+        }
+        guard let target = ranked.min(by: { $0.rank < $1.rank })?.prospect,
+              let read = DraftAvailability.read(
+                  for: target,
+                  atPick: landing,
+                  consensusRank: coordinator.publicBoardRanks[target.id]
+              ) else { return nil }
+        return "Your board's top man, \(target.position.rawValue) \(target.fullName), "
+            + "is **\(read.percent)%** to reach #\(landing)."
     }
 
     // MARK: - The strip the two `DSActionBar` stances sit on

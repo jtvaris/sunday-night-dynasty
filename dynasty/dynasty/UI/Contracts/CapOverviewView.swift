@@ -525,9 +525,9 @@ struct CapOverviewView: View {
         // A negative residual is NOT a smaller amount of dead money — it is the
         // books failing to reconcile, and it gets its own voice all the way up
         // to the card's own title (#188). Before this the card kept the "Dead
-        // Money" heading and then printed "No dead money on the books — every
-        // dollar of cap charge belongs to a player on the roster", which is the
-        // one sentence that is definitely false in exactly this state.
+        // Money" heading and then printed the clean-ledger line — "every dollar
+        // of cap charge belongs to a player on the roster" — which is the one
+        // sentence that is definitely false in exactly this state.
         let isVariance = dead < 0
 
         return VStack(alignment: .leading, spacing: 12) {
@@ -547,7 +547,11 @@ struct CapOverviewView: View {
                     .foregroundStyle(isVariance ? Color.warning : (dead > 0 ? Color.danger : Color.textTertiary))
             }
 
-            Divider().overlay(Color.surfaceBorder)
+            // A clean ledger gets the header row and nothing else: the rule and
+            // a sentence under it were card chrome around the word "none".
+            if dead != 0 {
+                Divider().overlay(Color.surfaceBorder)
+            }
 
             if isVariance {
                 Text("Books don't reconcile — ledger variance of \(formatMillions(-dead)). The club is charged LESS cap than the contracts on its own roster add up to, so this is not dead money: some deal moved a cap hit without moving the team total by the same amount.")
@@ -559,8 +563,11 @@ struct CapOverviewView: View {
                     .foregroundStyle(Color.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             } else if dead == 0 {
-                Text("No dead money on the books — every dollar of cap charge belongs to a player on the roster.")
-                    .font(.caption)
+                // The header above already reads "Dead money · $0"; saying "no
+                // dead money on the books" under it was the same fact twice.
+                // What is left is the part the number does not state.
+                Text("Every dollar of cap charge belongs to a player on the roster.")
+                    .font(.system(size: DSType.Size.micro))
                     .foregroundStyle(Color.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
@@ -723,7 +730,11 @@ struct CapOverviewView: View {
         let deadThisYear = deadMoney(team: team)
 
         VStack(alignment: .leading, spacing: 6) {
-            Text("CARRIED INTO \(nextSeason)")
+            // A year is a label, not a quantity: interpolating the Int straight
+            // into a LocalizedStringKey runs it through the device locale's
+            // grouping separator, which printed "CARRIED INTO 2 027" on a
+            // fi/EU sim. Build the String first, the way seasonLabel does.
+            Text("CARRIED INTO " + String(nextSeason))
                 .font(.system(size: DSType.Size.micro, weight: .semibold))
                 .tracking(0.8)
                 .foregroundStyle(Color.textSecondary)
@@ -915,7 +926,7 @@ struct CapOverviewView: View {
                 }
             }
 
-            Text("Committed vs projected cap, on the same rules as the Next Year section above. The middle bar is that section drawn instead of stated.")
+            Text("Committed money against the projected ceiling, on the same rules as the Next Year section above. The middle bar is that section, drawn as a bar.")
                 .font(.system(size: DSType.Size.micro))
                 .foregroundStyle(Color.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -1554,9 +1565,11 @@ struct CapOverviewView: View {
         let millions = Double(magnitude) / 1000.0
         if millions >= 1.0 {
             return sign + String(format: "$%.1fM", millions)
-        } else {
-            return sign + "$\(magnitude)K"
         }
+        // Nothing is not a quantity in thousands: "$0K" reads as a small sum
+        // rounded down, when the whole point of the line is that there is none.
+        if magnitude == 0 { return "$0" }
+        return sign + "$\(magnitude)K"
     }
 }
 

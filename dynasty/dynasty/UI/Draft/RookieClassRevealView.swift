@@ -254,8 +254,12 @@ enum RookieClassReveal {
         /// What he actually is.
         let overall: Int
         let verdict: RookieFog.Verdict
-        /// The staff's first read on his ceiling (noise-2 by design).
-        let projection: PotentialLabel?
+        // No staff projection on this row. `Player.assessedPotential` is
+        // written in exactly one place — the yearly development pass — and that
+        // pass runs at camp EXIT, so a man drafted this spring has never been
+        // through one and the field is nil for the whole class, every season.
+        // The row was reserving layout for a gold chip that could not render.
+
         /// The press grade the pick itself was given on draft night.
         let pressGrade: PickGrade?
         /// Average per year of the deal he signed at the podium, in thousands.
@@ -339,7 +343,6 @@ enum RookieClassReveal {
                 bandSource: RookieFog.source(for: player),
                 overall: player.overall,
                 verdict: RookieFog.verdict(realOverall: player.overall, band: band),
-                projection: player.assessedPotential.flatMap(PotentialLabel.init(rawValue:)),
                 pressGrade: gradesByPlayer[player.id]?.publicGrade,
                 salary: player.annualSalary,
                 contractYears: player.contractYearsRemaining
@@ -356,10 +359,29 @@ enum RookieClassReveal {
             ? 3.0
             : gradedRows.map(\.points).reduce(0, +) / Double(gradedRows.count))
 
-        let bestLine = gradedRows.max(by: { $0.points < $1.points })
-            .map { "\($0.row.slotText) \($0.row.position) \($0.row.name)" }
+        // "The room's favourite pick" has to be a judgement, not an artefact of
+        // the sort. `max(by:)` returns the FIRST element under a total tie, so
+        // whenever the class graded out level — which the current press
+        // calibration makes common — the sentence simply named the earliest
+        // selection and dressed it up as an opinion. Break the tie on the man
+        // who actually came out of the fog highest, and say nothing at all when
+        // every graded pick shares one grade.
+        let gradesAllAgree = gradedRows.count > 1
+            && Set(gradedRows.compactMap { $0.row.pressGrade }).count == 1
+        let bestLine: String? = gradesAllAgree
+            ? nil
+            : gradedRows
+                .max(by: {
+                    $0.points != $1.points ? $0.points < $1.points : $0.row.overall < $1.row.overall
+                })
+                .map { "\($0.row.slotText) \($0.row.position) \($0.row.name)" }
         let reachLine: String? = {
-            guard let worst = gradedRows.min(by: { $0.points < $1.points }),
+            // Same tie-break, pointing the other way — a class of eleven C
+            // grades named the earliest pick as the eyebrow-raiser for exactly
+            // the same reason.
+            guard let worst = gradedRows.min(by: {
+                      $0.points != $1.points ? $0.points < $1.points : $0.row.overall < $1.row.overall
+                  }),
                   let grade = worst.row.pressGrade,
                   grade == .reach || grade == .bigReach else { return nil }
             return "\(worst.row.slotText) \(worst.row.position) \(worst.row.name)"
@@ -491,6 +513,11 @@ struct RookieClassRevealView: View {
                 Image(systemName: "xmark.circle.fill")
                     .font(.system(size: 28))
                     .foregroundStyle(Color.textTertiary)
+                    // The glyph was the whole hit target — 28 pt against the
+                    // 44 pt minimum, on the same header as a correct 50 pt
+                    // "Open Camp". Padded out without growing the icon.
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel(String(localized: "Close rookie class report"))
@@ -558,9 +585,19 @@ struct RookieClassRevealView: View {
                     .foregroundStyle(Color.textTertiary)
             }
 
-            Text(String(localized: "Pre-camp band vs. the evaluation your staff filed this morning."))
-                .font(.caption2)
-                .foregroundStyle(Color.textTertiary)
+            VStack(alignment: .leading, spacing: 2) {  // ds-lint:allow(spacing) caption over its own legend
+                Text(String(localized: "Pre-camp band vs. the evaluation your staff filed this morning."))
+                    .font(.caption2)
+                    .foregroundStyle(Color.textTertiary)
+                // Three encodings in every row carry meaning and none of them
+                // says so: who filed the band (the tint), how the real number
+                // landed against it (the arrow), and that the last figure is
+                // his true overall.
+                Text(String(localized: "Gold band = your scouts · grey = the media's guess for his round · arrow = where he landed against it · last figure is his real OVR."))
+                    .font(.caption2)
+                    .foregroundStyle(Color.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             VStack(spacing: 8) {
                 ForEach(summary.rows) { row in
@@ -631,15 +668,13 @@ struct RookieClassRevealView: View {
                     .foregroundStyle(Color.textSecondary)
                     .lineLimit(1)
                     .accessibilityLabel(String(localized: "Signed for \(row.dealText)"))
-                if let projection = row.projection {
-                    Label(projection.displayName, systemImage: "binoculars.fill")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(Color.accentGold)
-                        .labelStyle(.titleAndIcon)
-                }
                 Spacer(minLength: 0)
                 if let grade = row.pressGrade {
-                    Text(String(localized: "Press \(grade.rawValue) · \(grade.qualifier)"))
+                    // WHEN this verdict was filed, not just who filed it: the
+                    // chip is April's draft-night grade and the arrow above it
+                    // is this morning's evaluation, and a green STEAL beside a
+                    // red down-arrow reads as one grader contradicting himself.
+                    Text(String(localized: "Draft night: \(grade.rawValue) · \(grade.qualifier)"))
                         .font(.system(size: DSType.Size.caption, weight: .heavy))
                         .tracking(0.4)
                         .foregroundStyle(pressTint(grade))

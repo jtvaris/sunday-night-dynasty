@@ -42,23 +42,44 @@ struct TrainingPlanView: View {
 
     @State private var didSave: Bool = false
 
+    /// The workload rows are a plain `VStack` inside the page's `ScrollView`,
+    /// so a 90-man camp roster would build every row up front. The preview stays
+    /// capped until the GM asks for the rest.
+    @State private var showAllWorkload: Bool = false
+
+    private let workloadPreviewLimit = 30
+
     private enum Focus { case tactical, physical, technical }
 
+    /// The presets name the SPLIT, never an intensity. "Camp Hard" and
+    /// "Recovery Mode" used to sit here, and both promised a dial the model has
+    /// no field for: a plan carries three percentages and nothing else, and
+    /// camp load comes from `WorkloadEngine` at an intensity the phase sets. A
+    /// 20/50/30 split is conditioning work; a 40/15/45 split is fundamentals.
+    /// Neither rests anybody.
     private enum Preset: String, CaseIterable, Identifiable {
         case balanced = "Balanced"
         case schemeHeavy = "Scheme Heavy"
-        case campHard = "Camp Hard"
-        case recovery = "Recovery Mode"
+        case conditioning = "Conditioning"
+        case fundamentals = "Fundamentals"
 
         var id: String { rawValue }
 
         var allocation: (tactical: Int, physical: Int, technical: Int) {
             switch self {
-            case .balanced:    return (34, 33, 33)
-            case .schemeHeavy: return (60, 20, 20)
-            case .campHard:    return (20, 50, 30)
-            case .recovery:    return (40, 15, 45)
+            case .balanced:     return (34, 33, 33)
+            case .schemeHeavy:  return (60, 20, 20)
+            case .conditioning: return (20, 50, 30)
+            case .fundamentals: return (40, 15, 45)
             }
+        }
+
+        /// The split itself, in slider order. On the chip because four names
+        /// cannot be compared without it — the alternative is tapping each one
+        /// in turn and losing the split you were tuning.
+        var splitText: String {
+            let alloc = allocation
+            return "\(alloc.tactical)/\(alloc.physical)/\(alloc.technical)"
         }
     }
 
@@ -94,8 +115,8 @@ struct TrainingPlanView: View {
                 title: didSave ? "Plan saved" : "Save \u{2014} \(headerTitle)",
                 message: totalIs100
                     ? (didSave
-                        ? "This split is what the engine will run this week. Move a slider to change it."
-                        : "Banks **\(tacticalPct)/\(physicalPct)/\(technicalPct)** tactical, physical and technical for this week's development pass.")
+                        ? "This split is what the engine will run for the \(developmentPassSpan) development pass. Move a slider to change it."
+                        : "Banks **\(tacticalPct)/\(physicalPct)/\(technicalPct)** tactical, physical and technical for the \(developmentPassSpan) development pass.")
                     : "The three focus areas have to add up to **100**. They currently make **\(tacticalPct + physicalPct + technicalPct)**.",
                 isWarning: !totalIs100
             ),
@@ -121,6 +142,18 @@ struct TrainingPlanView: View {
         return "\(career.currentPhase.displayName) Focus"
     }
 
+    /// The span the commit bar names, on the same rule as `headerTitle`: the
+    /// bar used to say "this week's development pass" under a header that had
+    /// just refused to print a week number at all.
+    private var developmentPassSpan: String {
+        switch career.currentPhase {
+        case .regularSeason, .tradeDeadline, .playoffs:
+            return "Week \(max(1, career.currentWeek))"
+        default:
+            return career.currentPhase.displayName
+        }
+    }
+
     private var header: some View {
         VStack(alignment: .leading, spacing: DSSpacing.xs) {
             SectionHeaderText(title: headerTitle)
@@ -135,24 +168,35 @@ struct TrainingPlanView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: DSSpacing.xs) {
                 ForEach(Preset.allCases) { preset in
+                    let isSelected = (activePreset == preset)
                     Button {
                         applyPreset(preset)
                     } label: {
-                        Text(preset.rawValue)
-                            .font(.caption.weight(.semibold))
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(
-                                RoundedRectangle(cornerRadius: DSCornerRadius.inline)
-                                    .fill(Color.backgroundTertiary)
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: DSCornerRadius.inline)
-                                    .strokeBorder(Color.surfaceBorder, lineWidth: 1)
-                            )
-                            .foregroundStyle(Color.textPrimary)
+                        VStack(spacing: 2) {  // ds-lint:allow(spacing) name-over-split lockup inside one chip
+                            Text(preset.rawValue)
+                                .font(.caption.weight(.semibold))
+                            Text(preset.splitText)
+                                .font(DSType.display(11, .semibold))
+                                .opacity(0.75)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        // §2.12 has no exceptions: the chips measured ~24 pt,
+                        // half of what the roster's own filter chips measure.
+                        .frame(minHeight: 44)
+                        .background(
+                            RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                                .fill(isSelected ? Color.accentGold : Color.backgroundTertiary)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                                .strokeBorder(isSelected ? Color.accentGold : Color.surfaceBorder, lineWidth: 1)
+                        )
+                        .foregroundStyle(isSelected ? Color.backgroundPrimary : Color.textPrimary)
+                        .contentShape(RoundedRectangle(cornerRadius: DSCornerRadius.inline))
                     }
                     .buttonStyle(.plain)
+                    .accessibilityAddTraits(isSelected ? [.isSelected] : [])
                 }
             }
         }
@@ -237,7 +281,16 @@ struct TrainingPlanView: View {
 
     private var workloadList: some View {
         VStack(alignment: .leading, spacing: DSSpacing.xxs) {
-            SectionHeaderText(title: "Per-Player Workload")
+            HStack(alignment: .firstTextBaseline, spacing: DSSpacing.xs) {
+                SectionHeaderText(title: "Per-Player Workload")
+                Spacer(minLength: DSSpacing.xs)
+                if !roster.isEmpty {
+                    Text(workloadCountLabel)
+                        .font(.caption2.weight(.semibold))
+                        .tracking(0.8)
+                        .foregroundStyle(Color.textTertiary)
+                }
+            }
             if displayRoster.isEmpty {
                 DSEmptyState(
                     density: .glance,
@@ -246,6 +299,16 @@ struct TrainingPlanView: View {
                     message: "There is nobody to train. Sign players in Free Agency and the load table fills itself."
                 )
             } else {
+                // What this table decides on this screen: the split steers
+                // attributes, camp intensity (a function of the phase) steers
+                // the bars, and a burnt-out man absorbs half of what the plan
+                // gives — which is the reason to read it before committing.
+                Text("Load carried into this week — camp intensity sets it, not the split above. A player who reads Burnt takes only half of the week's gains.")
+                    .font(.caption)
+                    .foregroundStyle(Color.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.bottom, DSSpacing.xxs)
+
                 // Header and rows read the same column constants (§2.2), so a
                 // label can never sit one column left of the number it names.
                 DSListHeaderRow(
@@ -256,14 +319,29 @@ struct TrainingPlanView: View {
                     portraitWidth: 0,
                     identityLabel: "PLAYER"
                 ) {
+                    DSColumnHeader("DUR", width: DSListColumn.attribute)
+                    DSColumnHeader("STA", width: DSListColumn.attribute)
+                    DSColumnHeader("AGE", width: DSListColumn.tight)
                     DSColumnHeader("LOAD", width: 96, alignment: .leading)
                     DSColumnHeader("STATE", width: DSListColumn.state)
-                    DSColumnHeader("INJ", width: DSListColumn.tight)
+                    DSColumnHeader("INJ", width: DSListColumn.attribute)
                 }
                 .padding(.horizontal, DSSpacing.sm)
 
                 ForEach(displayRoster, id: \.id) { player in
                     workloadRow(for: player)
+                }
+
+                if !showAllWorkload && roster.count > workloadPreviewLimit {
+                    Button {
+                        showAllWorkload = true
+                    } label: {
+                        Text("Show all \(roster.count)")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(Color.accentGold)
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.plain)
                 }
             }
         }
@@ -290,6 +368,18 @@ struct TrainingPlanView: View {
                 }
             },
             columns: {
+                // The two inputs the INJ figure is computed FROM, plus the age
+                // that decides how a heavy week reads. Without them the row
+                // asked the GM to trust a risk he had no way to check, and left
+                // most of its width empty doing it.
+                ratingCell(player.physical.durability)
+                    .dsColumn(DSListColumn.attribute)
+                ratingCell(player.physical.stamina)
+                    .dsColumn(DSListColumn.attribute)
+                Text("\(player.age)")
+                    .font(DSType.display(11, .semibold))
+                    .foregroundStyle(Color.textSecondary)
+                    .dsColumn(DSListColumn.tight)
                 workloadMeter(load: player.cumulativeLoad, status: player.workloadStatus)
                     .dsColumn(96, alignment: .leading)
                 DSStatusPill(
@@ -302,7 +392,8 @@ struct TrainingPlanView: View {
                 Text(injuryRiskLabel(for: player))
                     .font(DSType.display(11, .heavy))
                     .foregroundStyle(loadTint(for: player.workloadStatus))
-                    .dsColumn(DSListColumn.tight)
+                    .accessibilityLabel("Daily injury risk \(injuryRiskLabel(for: player))")
+                    .dsColumn(DSListColumn.attribute)
             }
         )
         .padding(.horizontal, DSSpacing.sm)
@@ -349,9 +440,26 @@ struct TrainingPlanView: View {
 
     // MARK: - Helpers
 
-    /// Limit roster preview to first 30 to keep ScrollView responsive on iPad.
+    /// Heaviest load first, then the thinner margin — the men this table exists
+    /// to warn about have to be the men it shows. It used to be
+    /// `roster.prefix(30)` off an unsorted fetch, so on an 87-man camp roster
+    /// the burnout could sit entirely inside the 57 rows that never rendered.
     private var displayRoster: [Player] {
-        Array(roster.prefix(30))
+        let ranked = roster.sorted { lhs, rhs in
+            if lhs.cumulativeLoad != rhs.cumulativeLoad {
+                return lhs.cumulativeLoad > rhs.cumulativeLoad
+            }
+            return lhs.physical.durability < rhs.physical.durability
+        }
+        return showAllWorkload ? ranked : Array(ranked.prefix(workloadPreviewLimit))
+    }
+
+    /// A truncated table has to say so, and say by what.
+    private var workloadCountLabel: String {
+        if showAllWorkload || roster.count <= workloadPreviewLimit {
+            return "\(roster.count) PLAYERS · HEAVIEST FIRST"
+        }
+        return "TOP \(workloadPreviewLimit) OF \(roster.count) BY LOAD"
     }
 
     private var totalIs100: Bool {
@@ -368,8 +476,33 @@ struct TrainingPlanView: View {
     private func injuryRiskLabel(for player: Player) -> String {
         // Use the real engine formula (durability + workload status) instead
         // of a flat base — otherwise every player reads an identical "4% inj".
+        //
+        // One decimal, because the integer threw the durability term away
+        // again: at a healthy load the formula's whole range is 4.0–5.6, so a
+        // 45-durability tackle and a 95-durability guard both printed "4%".
+        // The "inj" suffix goes with it — the column header already says INJ.
         let risk = WorkloadEngine.injuryRiskPct(player: player, baseRisk: 0.04)
-        return "\(Int(risk.rounded()))% inj"
+        return String(format: "%.1f%%", risk)
+    }
+
+    /// A 40-99 attribute in the row's numeric voice, on the same rating palette
+    /// the OVR under the name uses.
+    private func ratingCell(_ value: Int) -> some View {
+        Text("\(value)")
+            .font(DSType.display(11, .semibold))
+            .foregroundStyle(Color.forRating(value))
+    }
+
+    /// Derived, never stored — dragging a slider one point off a preset drops
+    /// the highlight on its own, so the chip row can never claim a split the
+    /// sliders no longer hold.
+    private var activePreset: Preset? {
+        Preset.allCases.first { preset in
+            let alloc = preset.allocation
+            return alloc.tactical == tacticalPct
+                && alloc.physical == physicalPct
+                && alloc.technical == technicalPct
+        }
     }
 
     private func applyPreset(_ preset: Preset) {

@@ -119,6 +119,13 @@ struct DSResultSheet: View {
             )
         }
         .background(Color.backgroundPrimary)
+        // The sheet is as tall as the ending it carries, and no taller. A form
+        // sheet with no sizing of its own takes its height from the largest
+        // face the presentation has shown — the staff hire list — so a result
+        // with a headline and four chips left ~350 pt of nothing between the
+        // chips and the cost bar while the `ScrollView` stretched to fill it.
+        // Height fits, width stays the standard form width.
+        .presentationSizing(.form.fitted(horizontal: false, vertical: true))
     }
 
     // MARK: Headline

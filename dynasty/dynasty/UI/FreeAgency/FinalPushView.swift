@@ -58,6 +58,8 @@ struct FinalPushView: View {
     @State private var showLeagueYearConfirm = false
     /// R23 — legal-tampering rumors for the top upcoming FAs (league-wide).
     @State private var tamperingRumors: [TamperingRumorEngine.TamperingRumor] = []
+    /// The buzz board starts closed — see `tamperingBuzzCard`.
+    @State private var showTamperingBuzz = false
 
     /// The player whose agent is on the phone. Non-nil while the Contact Agent
     /// thread is open.
@@ -274,40 +276,72 @@ struct FinalPushView: View {
     /// Pre-market intel: projected prices and early suitors for the top
     /// upcoming FAs, quoted from the same model the live market uses. Own
     /// expiring players are flagged — this is the last exclusive window.
+    ///
+    /// Closed by default. Open, it is eight rows of OTHER clubs' free agents
+    /// sitting between the header and the first man the screen exists to ask
+    /// about — six of seven decisions below the fold while the irreversible
+    /// "Start new league year" stayed pinned in view. It is context for those
+    /// decisions, so it keeps its place above them; the closed header still
+    /// says how many of the leaked names are the user's own.
     private var tamperingBuzzCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: "antenna.radiowaves.left.and.right")
-                    .foregroundStyle(Color.warning)
-                    .font(.system(size: 14))
-                Text("Legal Tampering Buzz")
-                    .font(.headline)
-                    .foregroundStyle(Color.warning)
-                Spacer()
-                Text("LEAGUE SOURCES")
-                    .font(.system(size: DSType.Size.micro, weight: .black))
-                    .foregroundStyle(Color.textTertiary)
+            Button {
+                withAnimation(.easeInOut(duration: 0.25)) {
+                    showTamperingBuzz.toggle()
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "antenna.radiowaves.left.and.right")
+                        .foregroundStyle(Color.warning)
+                        .font(.system(size: 14))
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Legal Tampering Buzz")
+                            .font(.headline)
+                            .foregroundStyle(Color.warning)
+                        Text(tamperingBuzzSummary)
+                            .font(.caption)
+                            .foregroundStyle(Color.textSecondary)
+                    }
+                    Spacer()
+                    Text("LEAGUE SOURCES")
+                        .font(.system(size: DSType.Size.micro, weight: .black))
+                        .foregroundStyle(Color.textTertiary)
+                    Image(systemName: showTamperingBuzz ? "chevron.up" : "chevron.down")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.textTertiary)
+                }
             }
+            .buttonStyle(.plain)
             .padding(.horizontal, 16)
             .padding(.top, 14)
 
-            Text("Numbers already leaking ahead of the market. Names flagged in gold are YOUR expiring players — this is your last exclusive shot at them.")
-                .font(.caption)
-                .foregroundStyle(Color.textSecondary)
-                .padding(.horizontal, 16)
+            if showTamperingBuzz {
+                Text("Numbers already leaking ahead of the market. Names flagged in gold are YOUR expiring players — this is your last exclusive shot at them.")
+                    .font(.caption)
+                    .foregroundStyle(Color.textSecondary)
+                    .padding(.horizontal, 16)
 
-            VStack(spacing: 0) {
-                ForEach(tamperingRumors) { rumor in
-                    tamperingRumorRow(rumor)
-                    if rumor.id != tamperingRumors.last?.id {
-                        Divider().overlay(Color.surfaceBorder.opacity(0.5))
+                VStack(spacing: 0) {
+                    ForEach(tamperingRumors) { rumor in
+                        tamperingRumorRow(rumor)
+                        if rumor.id != tamperingRumors.last?.id {
+                            Divider().overlay(Color.surfaceBorder.opacity(0.5))
+                        }
                     }
                 }
             }
-            .padding(.bottom, 8)
         }
+        .padding(.bottom, showTamperingBuzz ? 8 : 14)
         .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.surfaceBorder, lineWidth: 1))
+    }
+
+    /// What the closed header says the board holds. The "yours" half is the
+    /// reason to open it at all.
+    private var tamperingBuzzSummary: String {
+        let names = "\(tamperingRumors.count) name\(tamperingRumors.count == 1 ? "" : "s") leaking"
+        let own = tamperingRumors.filter(\.isOwnPlayer).count
+        return own > 0 ? "\(names) \u{2014} \(own) of them yours" : names
     }
 
     private func tamperingRumorRow(_ rumor: TamperingRumorEngine.TamperingRumor) -> some View {
@@ -335,9 +369,14 @@ struct FinalPushView: View {
                     .font(.system(size: DSType.Size.caption, weight: .semibold).monospacedDigit())
                     .foregroundStyle(Color.forRating(rumor.overall))
                 Spacer()
+                // Another club's man at another club's price is REFERENCE, and
+                // it was printing in the loudest colour on the page — eight
+                // rumoured salaries in gold above the one number the screen is
+                // actually asking about. The gold on this card belongs to the
+                // "YOURS" flag and the commit action, nothing else.
                 Text("~\(formatMillions(rumor.projectedSalary))/yr")
                     .font(.caption.weight(.bold).monospacedDigit())
-                    .foregroundStyle(Color.warning)
+                    .foregroundStyle(Color.textSecondary)
             }
             HStack(spacing: 6) {
                 if rumor.suitorAbbrs.isEmpty {
@@ -654,8 +693,11 @@ struct FinalPushView: View {
 
                 Spacer()
 
+                // The number every button under this header is measured
+                // against, so it is the biggest number on the card — it read
+                // one weight quieter than the rumoured salaries above it.
                 Text("~\(formatMillions(marketValue))")
-                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .font(.subheadline.weight(.bold).monospacedDigit())
                     .foregroundStyle(Color.accentBlue)
                 Text("MKT")
                     .font(.system(size: DSType.Size.micro, weight: .bold))
@@ -691,6 +733,13 @@ struct FinalPushView: View {
                             Text("\(fa.overall) OVR")
                                 .font(.caption.weight(.semibold).monospacedDigit())
                                 .foregroundStyle(Color.forRating(fa.overall))
+                            // The decision above this list is an aging player,
+                            // so an alternative with no age on it cannot be
+                            // compared to him. `FAPreviewPlayer` already carries
+                            // it — the row simply threw it away.
+                            Text("Age \(fa.age)")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(Color.textSecondary)
                             Text("~\(formatMillions(fa.estimatedSalary))")
                                 .font(.caption2.monospacedDigit())
                                 .foregroundStyle(Color.textTertiary)
@@ -1369,6 +1418,24 @@ struct FinalPushView: View {
     /// who is ALREADY on the roster: it charges the club the full new cap hit
     /// without crediting the salary the club was already carrying, and in
     /// realistic mode it inserts a second `Contract` row alongside the live one.
+    ///
+    /// **The guarantee is the agent's standing number, not zero.** It used to be
+    /// hardcoded `0`, which meant the Quick Offer door booked a `Contract` row
+    /// with no guaranteed money on a deal `evaluateReSignOffer` had graded WITH
+    /// one — that function builds the GM's offer as
+    /// `guaranteedPercent: ask.guaranteedPercent`, and Accept Counter takes the
+    /// agent's counter whole. A guarantee never touches `Contract.capHit`, only
+    /// `Contract.deadCap`, so the only thing the zero changed was the price of
+    /// walking away: the newest and largest contract on the books was the one
+    /// row in the club that could be released for nothing, while every man
+    /// without a `Contract` row is priced at `ContractEngine.impliedDeadCap`.
+    /// Re-sign in March, cut in August, keep the cap room. The Contact Agent
+    /// door has always carried the negotiated structure (see the
+    /// `onDealCompleted` note above); this is the half that was missing.
+    ///
+    /// The fallback is that proxy's league-mean rate, so a deal that somehow
+    /// reaches here with no ask recorded is priced like the rest of the league
+    /// rather than being free again.
     private func finalizeReSign(player: Player, team: Team, salary: Int, years: Int) {
         applyReSignOffer(
             player: player,
@@ -1377,7 +1444,8 @@ struct FinalPushView: View {
                 years: years,
                 annualSalary: salary,
                 signingBonus: 0,
-                guaranteedPercent: 0,
+                guaranteedPercent: decisions[player.id]?.standingAsk?.guaranteedPercent
+                    ?? Int(ContractEngine.impliedGuaranteeRate * 100),
                 noTradeClause: false
             )
         )

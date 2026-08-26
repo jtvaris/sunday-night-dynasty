@@ -61,11 +61,17 @@ enum PreseasonCampCase {
 
         /// The pill ident. Short by house rule — §2.2's clipping defect is a
         /// long word in a fixed column.
+        ///
+        /// `hurt` prints "Slipped", not "Hurt": the same rows carry a real
+        /// injury glyph and the sheet above them carries an INJURIES chip, so a
+        /// red "HURT" pill beside "none among the ones" read as a medical
+        /// status. The column is headed CASE and the pill now speaks its
+        /// vocabulary.
         var pillLabel: String {
             switch self {
             case .helped: return "Helped"
             case .held:   return "Held"
-            case .hurt:   return "Hurt"
+            case .hurt:   return "Slipped"
             case .quiet:  return "Quiet"
             }
         }
@@ -210,6 +216,12 @@ struct PreseasonRecap: Identifiable {
         let name: String
         let position: Position
         let overall: Int
+        /// Age and years left on the deal. An exhibition box score says what a
+        /// man did on one afternoon; these two say what releasing him costs,
+        /// and the screen that writes the cut to 65 had neither anywhere on it
+        /// nor one tap away.
+        let age: Int
+        let contractYears: Int
         let tier: Tier
         let isRookie: Bool
         let statLine: String
@@ -277,6 +289,14 @@ struct PreseasonRecap: Identifiable {
         lines.filter { $0.verdict.moved }
             .sorted { abs($0.caseScore) > abs($1.caseScore) }
     }
+
+    /// The starters inside `movers`, who are counted by neither `helpedCount`
+    /// nor `hurtCount` — those two are the cut cohort's.
+    ///
+    /// Every screen that prints the two counts over the named list has to state
+    /// this, or the arithmetic visibly fails: "4 helped, 1 hurt" sat above six
+    /// names, and the tier pill that explained the sixth was behind the sheet.
+    var starterMoverCount: Int { movers.filter { $0.tier == .starter }.count }
 
     /// The man the game belonged to, from the cutdown's point of view.
     var standout: Line? {
@@ -347,6 +367,8 @@ struct PreseasonRecap: Identifiable {
                 name: player.fullName,
                 position: stats.position,
                 overall: player.overall,
+                age: player.age,
+                contractYears: player.contractYearsRemaining,
                 tier: tier,
                 isRookie: isRookie,
                 statLine: PreseasonCampCase.statLine(stats),
@@ -434,6 +456,21 @@ extension PreseasonPolicy {
         }
     }
 
+    /// Pill tone for the install column, climbing as `riskTone` falls.
+    ///
+    /// The two pills are the two halves of one bet, so both axes have to move
+    /// in colour or the scan lies: a flat blue install pill on all three rows
+    /// beside a green → orange → red risk ramp said the benefit was constant
+    /// and only the cost varied. `empty` for resting is the same statement the
+    /// dashed chip makes everywhere else — the slot exists, nothing filled it.
+    var familiarityTone: DSStatusPill.Tone {
+        switch self {
+        case .startersRest: return .empty
+        case .starterSeries: return .info
+        case .fullTilt:     return .ok
+        }
+    }
+
     var icon: String {
         switch self {
         case .startersRest: return "shield.lefthalf.filled"
@@ -513,6 +550,13 @@ struct PreseasonRecapSheet: View {
             if hurt > 0 {
                 line += " and **\(hurt)** hurt \(hurt == 1 ? "his" : "theirs")"
             }
+            // Neither count includes a starter, and the who-moved list behind
+            // this sheet does. Without the clause the sentence is short by
+            // however many of the ones had an afternoon.
+            if recap.starterMoverCount > 0 {
+                line += ", plus **\(recap.starterMoverCount)** starter"
+                    + (recap.starterMoverCount == 1 ? " who moved" : "s who moved")
+            }
             sentences.append(line + ".")
         }
 
@@ -544,12 +588,17 @@ struct PreseasonRecapSheet: View {
                 id: "helped",
                 label: "Helped",
                 value: "\(recap.helpedCount)",
-                context: "of \(recap.cutCohort.count) on the bubble",
+                // NOT "on the bubble". `cutCohort` is built from THIS game's
+                // box score, so the denominator is who dressed and it moves
+                // from game to game — 54 then 53, with no cut and no injury
+                // between them, which read as a bug because the old wording
+                // promised a roster fact.
+                context: "of \(recap.cutCohort.count) who dressed",
                 valueColor: recap.helpedCount > 0 ? .success : .textPrimary
             ),
             .init(
                 id: "hurt",
-                label: "Hurt",
+                label: "Slipped",
                 value: "\(recap.hurtCount)",
                 context: recap.hurtCount > 0 ? "played themselves down" : "nobody slipped",
                 valueColor: recap.hurtCount > 0 ? .dangerText : .textPrimary
@@ -605,9 +654,14 @@ struct PreseasonBubbleTable: View {
         case bubble
         case everyone
 
+        /// "Cut sheet", not "On the bubble": the lens filters everyone the
+        /// ladder threatens, and most of those men carry a BUBBLE standing pill
+        /// on their own row while the rest carry CAMP or ROOK. A tab that told
+        /// the reader seven men were on the bubble and then told him five of
+        /// them were not had two meanings for one word.
         var label: String {
             switch self {
-            case .bubble:   return "On the bubble"
+            case .bubble:   return "Cut sheet"
             case .everyone: return "Whole roster"
             }
         }
@@ -664,6 +718,8 @@ struct PreseasonBubbleTable: View {
             identityLabel: "Player \u{00B7} outing"
         ) {
             DSColumnHeader("OVR", width: DSListColumn.ovr)
+            DSColumnHeader("Age", width: DSListColumn.tight)
+            DSColumnHeader("Yrs", width: DSListColumn.tight)
             DSColumnHeader("Fam", width: DSListColumn.tight)
             DSColumnHeader("Standing", width: DSListColumn.label)
             DSColumnHeader("Case", width: DSListColumn.label)
@@ -708,6 +764,19 @@ struct PreseasonBubbleTable: View {
                 .font(DSType.display(DSType.Size.body, .heavy))
                 .foregroundStyle(Color.forRating(line.overall))
                 .dsColumn(DSListColumn.ovr)
+
+            // Both stay in the neutral text colour on purpose: a 31-year-old on
+            // the last year of a deal is not a WARNING, it is a fact the coach
+            // weighs, and this screen already carries as much tone as it can.
+            Text("\(line.age)")
+                .font(DSType.display(11, .semibold))
+                .foregroundStyle(Color.textSecondary)
+                .dsColumn(DSListColumn.tight)
+
+            Text(line.contractYears > 0 ? "\(line.contractYears)" : "\u{2013}")
+                .font(DSType.display(11, .semibold))
+                .foregroundStyle(Color.textSecondary)
+                .dsColumn(DSListColumn.tight)
 
             Text(line.familiarityGain > 0 ? "+\(line.familiarityGain)" : "\u{2013}")
                 .font(DSType.display(11, .semibold))

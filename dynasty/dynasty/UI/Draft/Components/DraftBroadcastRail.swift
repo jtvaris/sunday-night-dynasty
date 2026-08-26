@@ -1080,7 +1080,16 @@ extension Beat {
                 icon: Beat.actorIcon(reaction.actor),
                 actor: Beat.actorName(reaction.actor),
                 message: reaction.message,
-                delta: reaction.mechanicalDelta,
+                // THE MEDIA'S NUMBER IS NOT A NUMBER. The owner, the locker room
+                // and the fans each have a 0..100 stat this delta moves; the
+                // media has none — `ReactionsEngine.apply` no-ops on `.media`,
+                // its mood is the narrative string instead. Printed in the same
+                // red/green chip as the three that DO move, a "-3" beside a
+                // critical headline reads as a penalty just taken, and on an AI
+                // pick (media is the only voice the room gives those, and its
+                // deltas are dropped on the floor) it isn't even the user's
+                // card. The sentence is the whole reaction.
+                delta: reaction.actor == .media ? nil : reaction.mechanicalDelta,
                 accent: Beat.sentimentAccent(reaction.sentiment)
             )
         }

@@ -197,7 +197,13 @@ struct ScoutingHubView: View {
             } // end else (not loading)
         }
         .navigationTitle("Scouting")
-        .navigationBarTitleDisplayMode(.large)
+        // INLINE, unlike the rest of the app's pushed screens, and for a reason
+        // this screen alone has: the shell's own nav strip already prints
+        // "Scouting" a row above, and below the title sit the slat band AND the
+        // tab's own header. A 44 pt large title repeating the word cost ~17 % of
+        // the screen before anything specific to the surface — the band's lit
+        // slat is what actually says where the user is standing.
+        .navigationBarTitleDisplayMode(.inline)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -397,7 +403,7 @@ struct ScoutingHubView: View {
         .sheet(item: $activeHubSheet, onDismiss: { loadData() }) { sheet in
             switch sheet {
             case .hireScout:     HireScoutSheet(career: career)
-            case .combineReport: CombineReportSheet(mentions: combineMedia)
+            case .combineReport: CombineReportSheet(mentions: combineMedia, career: career, prospects: prospects)
             }
         }
     }
@@ -555,14 +561,25 @@ struct ScoutingHubView: View {
     private struct CoverageReadout {
         let filed: Int
         let percent: Int
+        /// Men the club has actually had in a room this cycle.
+        ///
+        /// A SECOND KIND OF COVERAGE, and the hub needs it because `filed` is
+        /// deaf to the biggest spend of the spring: an interview writes exact
+        /// Football IQ and a handful of revealed bands onto a man without
+        /// filing paper, so burning 53 of the 60 slots moves `percent` by
+        /// nothing at all. Cheap on top of the walk above — `interviewCompleted`
+        /// is a stored `Bool`, not a `Codable` decode.
+        let met: Int
     }
 
     private func coverageReadout() -> CoverageReadout {
         let filed = scoutedCount
-        guard !prospects.isEmpty else { return CoverageReadout(filed: filed, percent: 0) }
+        let met = prospects.filter(\.interviewCompleted).count
+        guard !prospects.isEmpty else { return CoverageReadout(filed: filed, percent: 0, met: met) }
         return CoverageReadout(
             filed: filed,
-            percent: Int((Double(filed) / Double(prospects.count) * 100).rounded())
+            percent: Int((Double(filed) / Double(prospects.count) * 100).rounded()),
+            met: met
         )
     }
 
@@ -912,7 +929,7 @@ struct ScoutingHubView: View {
                 selected: stage,
                 // Counted off `cells`, which is the SIX rooms — the place slat
                 // is not a working week and never appears in either number.
-                headline: bandHeadline(cells: cells),
+                headline: bandHeadline(cells: cells, selected: stage),
                 meter: stageWeeks(cells: cells),
                 isWarRoomSelected: isWarRoomSelected,
                 // The obligation, one level up. `pendingMock` is the ONE
@@ -1027,11 +1044,28 @@ struct ScoutingHubView: View {
         )
     }
 
-    private func bandHeadline(cells: [DraftPrepStageCell]) -> String {
+    /// WHERE THE CLUB STANDS, and — when they differ — WHICH ROOM IS ON SCREEN.
+    ///
+    /// The count is the club's position and stays that way: it is the same
+    /// arithmetic the six pips beside it are drawn from, and a head that
+    /// followed the selection would sit next to a meter that did not. But the
+    /// two routinely disagree. `Career.prepStep` is a pointer the user advances
+    /// by hand while `DraftPrepProgress.reach` opens the next room the moment
+    /// this one is satisfied — so a combine review he has already read keeps the
+    /// gold current rule while he selects the interview slat and spends
+    /// stage-2 slots on the surface underneath. "Stage 1 of 6" over a screen
+    /// that is entirely stage 2 is the one place the process prints its count
+    /// naming a different room from the one the selection ring is on, one row
+    /// below it. Naming the room on screen costs a clause and closes it.
+    private func bandHeadline(cells: [DraftPrepStageCell], selected: DraftPrepStep?) -> String {
         let total = DraftPrepStageCell.bandSteps.count
         if let step = bandCurrentStep(cells: cells),
            let index = cells.firstIndex(where: { $0.step == step }) {
-            return "Stage \(index + 1) of \(total)"
+            let count = "Stage \(index + 1) of \(total)"
+            guard let selected, selected != step,
+                  cells.contains(where: { $0.step == selected })
+            else { return count }
+            return "\(count) \u{00B7} viewing \(selected.displayName)"
         }
         // No current room. Either every room is behind the club — the six-room
         // pipeline is settled and the head says so — or the calendar has not
@@ -1077,6 +1111,12 @@ struct ScoutingHubView: View {
             parts.append("\(prospects.count) declared")
         case .board:
             parts.append("\(coverage.filed) of \(prospects.count) filed on")
+            // MET, NOT SCOUTED, and the board is where it belongs. "46 of 288
+            // filed on" and "16 % scouted" are the same fact rendered twice —
+            // 46/288 IS 16 % — so the spine of the hub was spending two of its
+            // four clauses on one number and none on the one the interview room
+            // moves. Reports are not the only intel the club buys.
+            if coverage.met > 0 { parts.append("\(coverage.met) met") }
         default:
             break
         }
@@ -1088,8 +1128,14 @@ struct ScoutingHubView: View {
         // without expanding anything — the stage segment's own subtitle prints
         // it, from the same `DraftPrepProgress`.
         if let stage, selectedTab != .combine { parts.append(progress[stage].counter) }
-        parts.append("\(coverage.percent)% scouted")
-        parts.append(phaseLabel)
+        // Not on the board: the fraction it opens with is this percentage, spelt
+        // out. See the `.board` clause above.
+        if selectedTab != .board { parts.append("\(coverage.percent)% scouted") }
+        // ONE NAME PER ROOM. The phase clause says what week it is, which earns
+        // a slot right up until it says the surface's own title back at it: the
+        // pro-day surface ran "PRO DAYS · 0/25 focus slots · 16 % scouted ·
+        // Pro Days & Workouts".
+        if !phaseLabel.contains(selectedTab.label) { parts.append(phaseLabel) }
         return parts.prefix(4).joined(separator: " \u{00B7} ")
     }
 
@@ -1705,12 +1751,23 @@ struct ScoutingHubView: View {
 
 private struct CombineReportSheet: View {
     let mentions: [ScoutingEngine.CombineMediaMention]
+    /// The class behind the names, so a mention is a route rather than a
+    /// dead end. Every other list in the hub opens a prospect card on tap; this
+    /// one named ten men in prose and offered `Done`.
+    let career: Career
+    let prospects: [CollegeProspect]
     @Environment(\.dismiss) private var dismiss
 
     private let categories = ["Standout", "Stock Riser", "Stock Faller", "Surprise"]
 
     private func mentionsFor(_ category: String) -> [ScoutingEngine.CombineMediaMention] {
         mentions.filter { $0.category == category }
+    }
+
+    /// The man a mention is about. A linear scan over ~350 for ten rows — a
+    /// dictionary rebuilt per body pass would cost more than it saves.
+    private func prospect(for mention: ScoutingEngine.CombineMediaMention) -> CollegeProspect? {
+        prospects.first { $0.id == mention.prospectID }
     }
 
     private func categoryIcon(_ category: String) -> String {
@@ -1739,45 +1796,33 @@ private struct CombineReportSheet: View {
                 Color.backgroundPrimary.ignoresSafeArea()
 
                 List {
-                    // Header
+                    // THE COUNT, NOT A SECOND TITLE. The hero here was a 40 pt
+                    // "COMBINE REPORT" under a newspaper glyph, directly beneath
+                    // a nav bar already reading Combine Report — ~230 pt of a
+                    // sheet whose entire content is ten short lines, four of
+                    // which reached the fold because of it.
                     Section {
-                        VStack(spacing: 8) {
-                            Image(systemName: "newspaper.fill")
-                                .font(.system(size: DSType.Size.display))
-                                .foregroundStyle(Color.accentGold)
-                            Text("COMBINE REPORT")
-                                .font(.title2.weight(.black))
-                                .foregroundStyle(Color.textPrimary)
-                            Text("\(mentions.count) notable performances")
-                                .font(.subheadline)
-                                .foregroundStyle(Color.textSecondary)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
+                        Text("\(mentions.count) notable performances")
+                            .font(.caption)
+                            .foregroundStyle(Color.textSecondary)
                     }
-                    .listRowBackground(Color.backgroundSecondary)
+                    .listRowBackground(Color.clear)
 
                     ForEach(categories, id: \.self) { category in
                         let items = mentionsFor(category)
                         if !items.isEmpty {
                             Section {
                                 ForEach(items, id: \.prospectID) { mention in
-                                    HStack(spacing: 12) {
-                                        Text(mention.position)
-                                            .font(.caption.weight(.bold))
-                                            .foregroundStyle(Color.textPrimary)
-                                            .frame(width: 32, height: 22)
-                                            .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
-
-                                        VStack(alignment: .leading, spacing: 3) {
-                                            Text(mention.prospectName)
-                                                .font(.subheadline.weight(.semibold))
-                                                .foregroundStyle(Color.textPrimary)
-                                            Text(mention.headline)
-                                                .font(.caption)
-                                                .foregroundStyle(Color.textSecondary)
-                                                .lineLimit(2)
+                                    // A man who is worth a headline is worth
+                                    // opening. The fallback row is for a mention
+                                    // the class no longer holds — a name with no
+                                    // card behind it must not draw a chevron.
+                                    if let prospect = prospect(for: mention) {
+                                        NavigationLink(destination: ProspectDetailView(career: career, prospect: prospect)) {
+                                            mentionRow(mention)
                                         }
+                                    } else {
+                                        mentionRow(mention)
                                     }
                                 }
                             } header: {
@@ -1800,6 +1845,26 @@ private struct CombineReportSheet: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                 }
+            }
+        }
+    }
+
+    private func mentionRow(_ mention: ScoutingEngine.CombineMediaMention) -> some View {
+        HStack(spacing: 12) {
+            Text(mention.position)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(Color.textPrimary)
+                .frame(width: 32, height: 22)
+                .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(mention.prospectName)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.textPrimary)
+                Text(mention.headline)
+                    .font(.caption)
+                    .foregroundStyle(Color.textSecondary)
+                    .lineLimit(2)
             }
         }
     }

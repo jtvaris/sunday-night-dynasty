@@ -64,6 +64,10 @@ struct CapComplianceView: View {
     /// him to work out what just happened.
     @State private var releaseDemandName: String?
 
+    /// Whether a COMPLIANT club has asked to see the levers. Over the cap they
+    /// are the screen, and this is ignored.
+    @State private var leversExpanded = false
+
     // MARK: - Cap State
 
     private var isOverCap: Bool { capOverage > 0 }
@@ -98,7 +102,16 @@ struct CapComplianceView: View {
                     ScrollView {
                         VStack(spacing: DSSpacing.lg) {
                             complianceBanner(team: team)
-                            leverListCard(team: team)
+                            // A club that is already legal has no reason to be
+                            // handed a 46-row list of ways to cut its own
+                            // players as the whole body of the screen. The
+                            // workspace is still one tap away — it is simply
+                            // not the answer to a question nobody asked.
+                            if isOverCap || leversExpanded {
+                                leverListCard(team: team)
+                            } else {
+                                leversCollapsedRow
+                            }
                         }
                         .padding(DSSpacing.lg)
                         .frame(maxWidth: DSLayout.wideMeasure)
@@ -361,6 +374,37 @@ struct CapComplianceView: View {
         .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.surfaceBorder, lineWidth: 1))
     }
 
+    /// What stands in the workspace's place while the club is legal: the same
+    /// door, shut, with the count behind it.
+    private var leversCollapsedRow: some View {
+        Button {
+            leversExpanded = true
+        } label: {
+            HStack(spacing: DSSpacing.xs) {
+                Image(systemName: "slider.horizontal.3")
+                    .foregroundStyle(Color.accentGold)
+                    .font(.system(size: DSType.Size.callout))
+                VStack(alignment: .leading, spacing: DSSpacing.xxs) {
+                    Text("\(leverCandidates.count) ways to free more room")
+                        .font(.headline)
+                        .foregroundStyle(Color.accentGold)
+                    Text("Release, restructure or renegotiate \u{2014} ranked by cap freed.")
+                        .font(.caption)
+                        .foregroundStyle(Color.textSecondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.down")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Color.textTertiary)
+            }
+            .padding(DSSpacing.md)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.surfaceBorder, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+
     private func leverRow(player: Player) -> some View {
         let split = releaseSplit(for: player)
         let quote = restructureQuote(for: player)
@@ -403,6 +447,11 @@ struct CapComplianceView: View {
                 // a licence to field no quarterback; the way out of this room is
                 // the other two levers, or a trade.
                 let releaseBlock = releaseBlockReason(for: player)
+                // Which tile the list is ranked on. Same arithmetic as
+                // `bestSaving` — off the two quotes this row already has, so
+                // marking it costs no engine call — because a ranking the user
+                // cannot see in the row reads as no ranking at all.
+                let bestRelief = max(releaseBlock == nil ? split.capSavings : 0, quote?.immediateRelief ?? 0)
                 leverButton(
                     title: "Release",
                     headline: releaseBlock == nil
@@ -412,7 +461,8 @@ struct CapComplianceView: View {
                         : "\u{2014}",
                     footnote: releaseBlock ?? "\(formatMillions(split.deadCap)) dead",
                     tint: releaseBlock == nil && split.capSavings > 0 ? Color.danger : Color.textTertiary,
-                    enabled: releaseBlock == nil
+                    enabled: releaseBlock == nil,
+                    isBest: releaseBlock == nil && bestRelief > 0 && split.capSavings >= bestRelief
                 ) {
                     releaseTarget = player
                 }
@@ -420,9 +470,16 @@ struct CapComplianceView: View {
                 leverButton(
                     title: "Restructure",
                     headline: quote.map { "+\(formatMillions($0.immediateRelief))" } ?? "—",
-                    footnote: quote.map { "+\(formatMillions($0.proratedPerYear))/yr later" } ?? "Not available",
+                    // The engine wrote the refusal sentence for exactly this
+                    // slot; "Not available" threw it away and made the user
+                    // guess, one tile away from a Release lever that explains
+                    // itself.
+                    footnote: quote.map { "+\(formatMillions($0.proratedPerYear))/yr later" }
+                        ?? restructureBlockReason(for: player)
+                        ?? "Not available",
                     tint: quote != nil ? Color.accentGold : Color.textTertiary,
-                    enabled: quote != nil
+                    enabled: quote != nil,
+                    isBest: bestRelief > 0 && (quote?.immediateRelief ?? 0) >= bestRelief
                 ) {
                     restructureTarget = player
                 }
@@ -430,7 +487,12 @@ struct CapComplianceView: View {
                 leverButton(
                     title: "Renegotiate",
                     headline: "Ask",
-                    footnote: "His call",
+                    // "His call" was true of all 46 rows and told the user
+                    // nothing about which of them would actually take a cut.
+                    // The consent model is deterministic and says so in its own
+                    // doc — the same ask gets the same answer — so the row can
+                    // preview the opening one without the chat disagreeing.
+                    footnote: payCutRead(for: player),
                     tint: Color.accentBlue,
                     enabled: true
                 ) {
@@ -448,6 +510,9 @@ struct CapComplianceView: View {
         footnote: String,
         tint: Color,
         enabled: Bool,
+        /// The tile this row is ranked on. Drawn a shade louder so the list's
+        /// order is legible from the rows themselves.
+        isBest: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
@@ -472,12 +537,15 @@ struct CapComplianceView: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, DSSpacing.xs)
             .background(
-                (enabled ? tint : Color.textTertiary).opacity(enabled ? 0.10 : 0.05),
+                (enabled ? tint : Color.textTertiary).opacity(enabled ? (isBest ? 0.18 : 0.10) : 0.05),
                 in: RoundedRectangle(cornerRadius: DSCornerRadius.inline)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: DSCornerRadius.inline)
-                    .strokeBorder((enabled ? tint : Color.surfaceBorder).opacity(0.35), lineWidth: 1)
+                    .strokeBorder(
+                        (enabled ? tint : Color.surfaceBorder).opacity(isBest ? 0.9 : 0.35),
+                        lineWidth: isBest ? 2 : 1
+                    )
             )
         }
         .buttonStyle(.plain)
@@ -486,10 +554,16 @@ struct CapComplianceView: View {
 
     // MARK: - Ranking
 
+    /// Every man a lever could be pulled on. Split out from `rankedPlayers` so
+    /// the collapsed card can state how many there are without paying for the
+    /// ranking — the sort costs two engine quotes per comparison.
+    private var leverCandidates: [Player] {
+        players.filter { $0.annualSalary > 0 }
+    }
+
     /// Every man under contract, ordered by the biggest number he can free.
     private var rankedPlayers: [Player] {
-        players
-            .filter { $0.annualSalary > 0 }
+        leverCandidates
             .sorted { lhs, rhs in
                 let l = bestSaving(for: lhs)
                 let r = bestSaving(for: rhs)
@@ -571,6 +645,51 @@ struct CapComplianceView: View {
         restructureVerdict(for: player).quote
     }
 
+    /// Why this man's Restructure lever is dead, in the engine's own words —
+    /// minus the name it wrote for a dialog. The row is already wearing his
+    /// name and the tile has a third of a row to spend, so the sentence keeps
+    /// the clause that matters and sheds the one that repeats.
+    private func restructureBlockReason(for player: Player) -> String? {
+        guard case .unavailable(let reason) = restructureVerdict(for: player) else { return nil }
+        guard reason.hasPrefix("\(player.fullName) ") else { return reason }
+        let tail = reason.dropFirst(player.fullName.count + 1)
+        return tail.prefix(1).uppercased() + tail.dropFirst()
+    }
+
+    /// What his agent will say to the opening ask, previewed on the row.
+    ///
+    /// The ask is the one the chat opens the dial at — his market value, capped
+    /// at what the club already pays him — so the row and the conversation
+    /// cannot disagree. `demand` is documented as callable with nothing but a
+    /// player for exactly this: a list row pricing a man without assembling the
+    /// world. The number he would counter at is deliberately NOT printed; that
+    /// is what the phone call is for.
+    private func payCutRead(for player: Player) -> String {
+        let demand = ContractNegotiationEngine.demand(
+            player: player,
+            negotiationType: .payCut,
+            salaryCap: salaryCap
+        )
+        guard !demand.isRefusing else { return "Won't talk" }
+        let ask = max(
+            ContractNegotiationEngine.veteranMinimum(salaryCap: salaryCap),
+            min(player.annualSalary, demand.marketValue)
+        )
+        let verdict = ContractNegotiationEngine.payCutVerdict(
+            player: player,
+            demand: demand,
+            currentSalary: player.annualSalary,
+            proposedSalary: ask,
+            salaryCap: salaryCap
+        )
+        switch verdict.outcome {
+        case .accepted:       return "He'd sign"
+        case .countered:      return "He'll counter"
+        case .refused:        return "He'll say no"
+        case .demandsRelease: return "Wants out"
+        }
+    }
+
     // MARK: - Actions
 
     private func releasePlayer(_ player: Player) {
@@ -604,6 +723,16 @@ struct CapComplianceView: View {
         // release deletes `Contract` rows and rewrites the club's cap usage;
         // leaving that to the autosave meant the one destructive action on this
         // screen was the only one not flushed at the moment it committed.
+        //
+        // The released man is also swept out of the saved depth chart, and the
+        // slot he vacated re-filled from the men behind him. Without this his
+        // UUID sits in his slot with nothing to resolve it to, the slot reads as
+        // empty, and the next offseason advance stops on "Lineup Incomplete" —
+        // a block a phase away from the release that caused it.
+        DepthChart.reconcileSaved(
+            career: career,
+            roster: players.filter { $0.teamID == team.id }
+        )
         try? modelContext.save()
         releaseTarget = nil
         loadData()
@@ -680,12 +809,16 @@ struct CapComplianceView: View {
         }
     }
 
+    /// A cut can cost more than it saves, so this formatter has to render
+    /// negatives — and the sigil belongs OUTSIDE the sign, not inside it.
+    /// `String(format: "$%.1fM", -20.5)` printed "$-20.5M" on the release row.
     private func formatMillions(_ thousands: Int) -> String {
-        let millions = Double(thousands) / 1000.0
-        if abs(millions) >= 1.0 {
-            return String(format: "$%.1fM", millions)
+        let sign = thousands < 0 ? "-" : ""
+        let millions = abs(Double(thousands)) / 1000.0
+        if millions >= 1.0 {
+            return String(format: "%@$%.1fM", sign, millions)
         }
-        return "$\(thousands)K"
+        return "\(sign)$\(abs(thousands))K"
     }
 
     // MARK: - Data Loading
@@ -902,11 +1035,15 @@ struct RestructureQuoteSheet: View {
         }
     }
 
+    /// A cut can cost more than it saves, so this formatter has to render
+    /// negatives — and the sigil belongs OUTSIDE the sign, not inside it.
+    /// `String(format: "$%.1fM", -20.5)` printed "$-20.5M" on the release row.
     private func formatMillions(_ thousands: Int) -> String {
-        let millions = Double(thousands) / 1000.0
-        if abs(millions) >= 1.0 {
-            return String(format: "$%.1fM", millions)
+        let sign = thousands < 0 ? "-" : ""
+        let millions = abs(Double(thousands)) / 1000.0
+        if millions >= 1.0 {
+            return String(format: "%@$%.1fM", sign, millions)
         }
-        return "$\(thousands)K"
+        return "\(sign)$\(abs(thousands))K"
     }
 }

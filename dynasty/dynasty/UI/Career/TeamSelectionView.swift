@@ -48,6 +48,7 @@ struct TeamSelectionView: View {
     @State private var situationFilter: String = "All"
     @State private var sortMode: TeamSortMode = .division
     @State private var viewWidth: CGFloat = 0
+    @State private var viewHeight: CGFloat = 0
 
     // Compare mode (#117 polish): user picks 2-4 teams to compare side-by-side.
     @State private var compareModeOn: Bool = false
@@ -81,8 +82,11 @@ struct TeamSelectionView: View {
         let seasonHistory: [PlayerSeasonHistory]
     }
 
-    /// iPad always reports .regular for both size classes, so use actual width
-    private var isLandscape: Bool { viewWidth > 900 }
+    /// iPad always reports .regular for both size classes, so orientation has to
+    /// be measured. It used to be `viewWidth > 900`, which a 13-inch iPad
+    /// satisfies in PORTRAIT (1032 pt) — the two-column branch then ran on a
+    /// tall screen and left 40-45 % of it empty. Compare the two axes instead.
+    private var isLandscape: Bool { viewWidth > viewHeight }
 
     /// The 32 franchises of the league being browsed.
     private var allTeams: [LeagueTeamDefinition] { catalog.teams }
@@ -160,8 +164,7 @@ struct TeamSelectionView: View {
                     .padding(.bottom, 6)
 
                 // Column header row — labels otherwise-mystery numeric columns
-                columnHeaderRow
-                    .padding(.horizontal, 16)
+                columnHeaderBar
                     .padding(.bottom, 4)
 
                 // Compact table rows — all 16 teams with minimal scrolling
@@ -240,10 +243,11 @@ struct TeamSelectionView: View {
             }
         }
         .task { await prepareLeagueSource() }
-        .onGeometryChange(for: CGFloat.self) { proxy in
-            proxy.size.width
-        } action: { newWidth in
-            viewWidth = newWidth
+        .onGeometryChange(for: CGSize.self) { proxy in
+            proxy.size
+        } action: { newSize in
+            viewWidth = newSize.width
+            viewHeight = newSize.height
         }
         .navigationTitle("Choose Your Team")
         .navigationBarTitleDisplayMode(.large)
@@ -382,7 +386,10 @@ struct TeamSelectionView: View {
                     .foregroundStyle(Color.textTertiary)
                 Spacer(minLength: 0)
             }
-            .foregroundStyle(leagueSource.isTemplate ? Color.accentGold : Color.accentBlue)
+            // Neutral ink. accentBlue is this screen's interactive colour — the
+            // selected conference tab, the active filter chip — and the banner
+            // is a caption with nothing to tap.
+            .foregroundStyle(Color.textSecondary)
             .accessibilityElement(children: .combine)
         }
     }
@@ -403,6 +410,8 @@ struct TeamSelectionView: View {
             // Aligns with logo + name+QB column on the left of CompactTeamRow.
             Text("TEAM")
                 .frame(maxWidth: .infinity, alignment: .leading)
+            Text("OVR")
+                .frame(width: 34, alignment: .trailing)
             Text("DIFFICULTY")
                 .frame(width: 60, alignment: .trailing)
             Text("CAP / STAFF")
@@ -425,6 +434,34 @@ struct TeamSelectionView: View {
         .minimumScaleFactor(0.92)
         .foregroundStyle(Color.textTertiary)
         .padding(.leading, 56) // skip past logo
+    }
+
+    /// The header as the list actually renders. Landscape puts two rows on every
+    /// line, so one header labelled the right-hand column only; each branch also
+    /// takes the same measure cap as the list beneath it, or the labels sit off
+    /// the columns they name.
+    @ViewBuilder
+    private var columnHeaderBar: some View {
+        VStack(spacing: 3) {
+            if isLandscape {
+                HStack(spacing: 12) {
+                    columnHeaderRow
+                    columnHeaderRow
+                }
+            } else {
+                columnHeaderRow
+            }
+
+            // The owner column is a glyph and a year count, and nothing else on
+            // the screen says what either of them measures.
+            Text("OWNER = the owner's patience, and the seasons you get before the pressure mounts.")
+                .font(DSType.text(DSType.Size.micro, .regular, prose: true))
+                .foregroundStyle(Color.textTertiary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 16)
+        .frame(maxWidth: isLandscape ? DSLayout.gridMeasure : DSLayout.wideMeasure)
+        .frame(maxWidth: .infinity)
     }
 
     // MARK: - Filter/Sort Bar (#115)
@@ -462,6 +499,11 @@ struct TeamSelectionView: View {
                         .fill(situationFilter == "All" ? Color.backgroundSecondary : Color.accentBlue.opacity(0.15))
                         .overlay(Capsule().strokeBorder(Color.surfaceBorder, lineWidth: 0.5))
                 )
+                // The capsule is 26 pt tall; the target it hands the finger is
+                // not allowed to be. Same trick the conference picker beside it
+                // already uses — grow the hit area, leave the fill alone.
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
             }
 
             // Sort mode
@@ -482,7 +524,9 @@ struct TeamSelectionView: View {
                 HStack(spacing: 4) {
                     Image(systemName: "arrow.up.arrow.down")
                         .font(.system(size: DSType.Size.caption, weight: .semibold))
-                    Text(sortMode.label)
+                    // Named as a sort order: a bare "Division" beside a glyph
+                    // reads as a division filter to anyone seeing it once.
+                    Text("Sort: \(sortMode.label)")
                         .font(DSType.text(DSType.Size.footnote, .semibold))
                     Image(systemName: "chevron.down")
                         .font(.system(size: DSType.Size.micro, weight: .bold))
@@ -495,6 +539,8 @@ struct TeamSelectionView: View {
                         .fill(sortMode == .division ? Color.backgroundSecondary : Color.accentBlue.opacity(0.15))
                         .overlay(Capsule().strokeBorder(Color.surfaceBorder, lineWidth: 0.5))
                 )
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
             }
 
             Spacer()
@@ -522,6 +568,8 @@ struct TeamSelectionView: View {
                         .fill(compareModeOn ? Color.accentBlue.opacity(0.15) : Color.backgroundSecondary)
                         .overlay(Capsule().strokeBorder(Color.surfaceBorder, lineWidth: 0.5))
                 )
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel(compareModeOn ? "Compare mode on" : "Enter compare mode")
@@ -575,7 +623,11 @@ struct TeamSelectionView: View {
                 )
         )
         .padding(.horizontal, 16)
+        // Leading, not centred: the picker is the only thing on the screen that
+        // was not flush with the 16pt margin the title, the filter chips, the
+        // column header and every row share.
         .frame(maxWidth: 400)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Division Header
@@ -907,16 +959,6 @@ private struct CompactTeamRow: View {
     var compareModeOn: Bool = false
     var isSelectedForCompare: Bool = false
 
-    private var difficultyColor: Color {
-        switch preview.difficulty {
-        case 1, 2: return .success
-        case 3:    return .accentBlue
-        case 4:    return .warning
-        case 5:    return .danger
-        default:   return .textSecondary
-        }
-    }
-
     private var ownerPatienceColor: Color {
         switch preview.ownerPatience {
         case "Very Patient": return .success
@@ -969,6 +1011,12 @@ private struct CompactTeamRow: View {
                     Text("\u{2022}")
                         .font(DSType.text(DSType.Size.micro, .regular))
                         .foregroundStyle(Color.textTertiaryReadable)
+                    // The two letters VoiceOver already gets. Without them a
+                    // name and a number sit in the row with nothing saying
+                    // whether 94 is a rating, a coach, or a jersey.
+                    Text("QB")
+                        .font(DSType.display(DSType.Size.micro, .bold))
+                        .foregroundStyle(Color.textTertiaryReadable)
                     Text(preview.startingQBName)
                         .font(DSType.text(DSType.Size.micro, .medium))
                         .foregroundStyle(Color.textSecondary)
@@ -981,13 +1029,25 @@ private struct CompactTeamRow: View {
 
             Spacer(minLength: 4)
 
+            // Roster overall — the number the "Overall" sort orders by, and the
+            // one figure that says how good the team is. The QB rating beside
+            // the name is not a stand-in for it and can point the other way: the
+            // cheapest club in the AFC fields a 78 QB in front of a 66 roster.
+            Text("\(preview.estimatedOVR)")
+                .font(DSType.display(DSType.Size.body, .black))
+                .foregroundStyle(Color.forRating(preview.estimatedOVR))
+                .frame(width: 34, alignment: .trailing)
+
             // Difficulty stars (single source-of-truth — tier label removed to
-            // de-duplicate signal, per #117 polish).
+            // de-duplicate signal, per #117 polish). Monochrome: the count is
+            // already the magnitude, and colouring it green→red put a second
+            // meaning on the same amber the CAP/STF column uses two inches to
+            // the right, with no key anywhere on the screen.
             HStack(spacing: 1) {
                 ForEach(1...5, id: \.self) { star in
                     Image(systemName: star <= preview.difficulty ? "star.fill" : "star")
                         .font(.system(size: DSType.Size.micro))
-                        .foregroundStyle(star <= preview.difficulty ? difficultyColor : Color.textTertiary.opacity(0.3))
+                        .foregroundStyle(star <= preview.difficulty ? Color.textSecondary : Color.textTertiary.opacity(0.3))
                 }
             }
             .frame(width: 60, alignment: .trailing)
@@ -1034,7 +1094,9 @@ private struct CompactTeamRow: View {
             }
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        // 8, not 6 — the CAP/STF stack is two 10-11 pt lines and at 6 they read
+        // as one smudge. The list has the room.
+        .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 8)
                 .fill(isSelectedForCompare ? Color.accentBlue.opacity(0.12) : Color.backgroundSecondary)
@@ -1044,7 +1106,7 @@ private struct CompactTeamRow: View {
                 )
         )
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(team.city) \(team.name), \(preview.lastSeasonRecord), \(preview.situation), difficulty \(preview.difficulty) of 5, QB \(preview.startingQBName) \(preview.startingQBOverall) OVR\(preview.isLocked ? ", locked" : "")\(compareModeOn ? (isSelectedForCompare ? ", selected for compare" : ", not selected") : "")")
+        .accessibilityLabel("\(team.city) \(team.name), \(preview.lastSeasonRecord), \(preview.situation), roster \(preview.estimatedOVR) OVR, difficulty \(preview.difficulty) of 5, QB \(preview.startingQBName) \(preview.startingQBOverall) OVR, \(preview.ownerPatience) owner, \(preview.patienceSeasons) seasons\(preview.isLocked ? ", locked" : "")\(compareModeOn ? (isSelectedForCompare ? ", selected for compare" : ", not selected") : "")")
     }
 }
 
@@ -1272,15 +1334,19 @@ private struct TeamDetailSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var viewWidth: CGFloat = 0
+    @State private var viewHeight: CGFloat = 0
 
     private var isLandscape: Bool { viewWidth > 900 }
 
     private var preview: TeamPreview { catalog.preview(for: team) }
 
-    private var situationColor: Color {
-        // 3-tier color system (persona audit): blue = building, green = ascending,
-        // gold = competing. Amber/red stay reserved for warnings and dangers.
-        switch preview.situation {
+    private var situationColor: Color { Self.situationColor(for: preview.situation) }
+
+    /// 3-tier color system (persona audit): blue = building, green = ascending,
+    /// gold = competing. Amber/red stay reserved for warnings and dangers.
+    /// Keyed by the string so the division-rival chips read off the same ladder.
+    private static func situationColor(for situation: String) -> Color {
+        switch situation {
         case "Rebuilding":                      return .accentBlue
         case "Rising":                          return .success
         case "Contender", "Win Now", "Dynasty": return .accentGold
@@ -1331,10 +1397,11 @@ private struct TeamDetailSheet: View {
                 }
             }
         }
-        .onGeometryChange(for: CGFloat.self) { proxy in
-            proxy.size.width
-        } action: { newWidth in
-            viewWidth = newWidth
+        .onGeometryChange(for: CGSize.self) { proxy in
+            proxy.size
+        } action: { newSize in
+            viewWidth = newSize.width
+            viewHeight = newSize.height
         }
         // §2.5: the commit surface. This was a full-width gold slab with its own
         // `cornerRadius: 12` recipe — the third hand-copy of the same button —
@@ -1362,7 +1429,7 @@ private struct TeamDetailSheet: View {
             .foregroundStyle(Color.textSecondary)
     }
 
-    private func detailStat(icon: String, label: String, value: String, valueColor: Color) -> some View {
+    private func detailStat(icon: String, label: String, value: String, valueColor: Color, anchor: String) -> some View {
         VStack(spacing: 6) {
             HStack(spacing: 4) {
                 Image(systemName: icon)
@@ -1376,6 +1443,9 @@ private struct TeamDetailSheet: View {
                 // Promoted: these three numbers are the core decision data (audit).
                 .font(DSType.display(DSType.Size.title2, .black))
                 .foregroundStyle(valueColor)
+            Text(anchor)
+                .font(DSType.display(DSType.Size.micro, .semibold))
+                .foregroundStyle(Color.textTertiary)
         }
         .frame(maxWidth: .infinity)
     }
@@ -1454,7 +1524,11 @@ private struct TeamDetailSheet: View {
 
     private var ownerExpectationsCard: some View {
         VStack(spacing: 8) {
-            sectionLabel(String(localized: "Owner Expectations"))
+            // "Owner Patience", not "Owner Expectations": the tier word under it
+            // is "Moderate" for half the league, and 250 pt up the screen the
+            // difficulty tier says "Moderate" too. Naming the ladder is what
+            // keeps the two apart.
+            sectionLabel(String(localized: "Owner Patience"))
 
             HStack(spacing: 16) {
                 HStack(spacing: 6) {
@@ -1466,7 +1540,7 @@ private struct TeamDetailSheet: View {
                         .foregroundStyle(ownerPatienceColor)
                 }
 
-                Text("\(preview.patienceSeasons) season\(preview.patienceSeasons == 1 ? "" : "s") tolerance")
+                Text("Gives you \(preview.patienceSeasons) season\(preview.patienceSeasons == 1 ? "" : "s") before the pressure mounts")
                     .font(.caption)
                     .foregroundStyle(Color.textTertiary)
             }
@@ -1490,25 +1564,46 @@ private struct TeamDetailSheet: View {
         .cardBackground()
     }
 
+    /// League means for the three headline numbers. The coaching-budget card has
+    /// had its "League average: $NNM" line since an earlier audit; these three —
+    /// the ones the career is actually chosen on — were printed bare, so "OVR 81"
+    /// said nothing about whether 81 is a contender or the middle of the pack.
+    private var leagueAverages: (ovr: Int, capSpace: Int, draftPicks: Int) {
+        let previews = catalog.teams.map { catalog.preview(for: $0) }
+        guard !previews.isEmpty else { return (0, 0, 0) }
+        return (
+            previews.reduce(0) { $0 + $1.estimatedOVR } / previews.count,
+            previews.reduce(0) { $0 + $1.estimatedCapSpace } / previews.count,
+            previews.reduce(0) { $0 + $1.estimatedDraftPicks } / previews.count
+        )
+    }
+
     private var statsRow: some View {
-        HStack(spacing: 0) {
+        let league = leagueAverages
+        return HStack(spacing: 0) {
             detailStat(
                 icon: "chart.bar.fill",
                 label: "Roster OVR",
                 value: "\(preview.estimatedOVR)",
-                valueColor: Color.forRating(preview.estimatedOVR)
+                valueColor: Color.forRating(preview.estimatedOVR),
+                anchor: "League \(league.ovr)"
             )
             detailStat(
                 icon: "dollarsign.circle.fill",
                 label: "Cap Space",
                 value: "$\(preview.estimatedCapSpace)M",
-                valueColor: preview.estimatedCapSpace > 30 ? .success : preview.estimatedCapSpace > 15 ? .accentBlue : .warning
+                valueColor: preview.estimatedCapSpace > 30 ? .success : preview.estimatedCapSpace > 15 ? .accentBlue : .warning,
+                anchor: "League $\(league.capSpace)M"
             )
             detailStat(
                 icon: "doc.text.fill",
                 label: "Draft Picks",
                 value: "\(preview.estimatedDraftPicks)",
-                valueColor: preview.estimatedDraftPicks >= 9 ? .success : preview.estimatedDraftPicks >= 7 ? .textPrimary : .warning
+                // Middle band is accent blue, matching cap space — picks used to
+                // fall through to plain white, which read as "no opinion" beside
+                // two coloured figures on the same card.
+                valueColor: preview.estimatedDraftPicks >= 9 ? .success : preview.estimatedDraftPicks >= 7 ? .accentBlue : .warning,
+                anchor: "League \(league.draftPicks)"
             )
         }
         .padding(.vertical, 14)
@@ -1590,14 +1685,18 @@ private struct TeamDetailSheet: View {
                                 .foregroundStyle(Color.textTertiary)
                         }
 
+                        // Same ladder as this team's own chip two cards up — the
+                        // card exists to answer "how tough is my division", and
+                        // grey-on-grey made a rising rival look like a rebuilding one.
+                        let rivalSituationColor = Self.situationColor(for: rivalPreview.situation)
                         Text(rivalPreview.situation.uppercased())
                             .font(DSType.display(DSType.Size.caption, .bold))
-                            .foregroundStyle(Color.textSecondary)
+                            .foregroundStyle(rivalSituationColor)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 3)
                             .background(
                                 Capsule()
-                                    .fill(Color.surfaceBorder)
+                                    .fill(rivalSituationColor.opacity(0.15))
                             )
                     }
                 }

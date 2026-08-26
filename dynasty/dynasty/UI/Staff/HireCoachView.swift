@@ -263,9 +263,15 @@ struct HireCoachView: View {
         }
         cachedSortedCandidates = sortAscending ? sorted.reversed() : sorted
 
-        // Top-3 by OVR among filtered candidates (regardless of sort column)
+        // Top-3 by OVR among filtered candidates (regardless of sort column).
+        // A bare prefix(3) let sort stability, not merit, break a tie: two men
+        // on the same OVR, one badged and one not. Badge everyone level with 3rd.
         let byOVR = filtered.sorted { coachOverall($0) > coachOverall($1) }
-        cachedTop3IDs = Set(byOVR.prefix(3).map { $0.id })
+        if let thirdOVR = byOVR.prefix(3).last.map({ coachOverall($0) }) {
+            cachedTop3IDs = Set(byOVR.filter { coachOverall($0) >= thirdOVR }.map { $0.id })
+        } else {
+            cachedTop3IDs = []
+        }
 
         // Available scheme names — depends only on candidates list
         var schemes = Set<String>()
@@ -309,8 +315,12 @@ struct HireCoachView: View {
 
                 Divider().overlay(Color.surfaceBorder)
 
-                // #149: Horizontally scrollable table for cramped columns
-                ScrollView(.horizontal, showsIndicators: false) {
+                // #149: Horizontally scrollable table for cramped columns.
+                // Indicator shown: the row lays out at 780 pt, so in anything
+                // narrower Salary and Val are off the right edge and a hidden
+                // indicator left the gold role-dot of a clipped header as the
+                // only hint that more columns existed.
+                ScrollView(.horizontal, showsIndicators: true) {
                     VStack(spacing: 0) {
                         // Sticky column headers
                         tableHeaderRow
@@ -396,6 +406,7 @@ struct HireCoachView: View {
                 candidateRank: candidateRank(for: candidate),
                 totalCandidates: filteredCandidates.count,
                 schemeFitResult: schemeFit(for: candidate),
+                installedSchemeName: installedSchemeName(for: candidate),
                 // BUG FIX: When user is GM+HC, no .headCoach Coach record exists.
                 // Pass user's coaching style so chemistry can be evaluated against the user.
                 userIsHeadCoach: career.role == .gmAndHeadCoach,
@@ -500,7 +511,7 @@ struct HireCoachView: View {
                     HStack(spacing: 3) {
                         Image(systemName: "questionmark.circle")
                             .font(.system(size: DSType.Size.caption))
-                        Text("Colors")
+                        Text("Legend")
                             .font(.caption2.weight(.medium))
                     }
                     .foregroundStyle(showRatingLegend ? Color.accentGold : Color.textSecondary)
@@ -576,21 +587,30 @@ struct HireCoachView: View {
 
             // #17: Rating color legend
             if showRatingLegend {
-                HStack(spacing: 10) {
-                    Image(systemName: "paintpalette.fill")
-                        .font(.system(size: DSType.Size.micro))
-                        .foregroundStyle(Color.accentGold)
-                    legendSwatch(color: .success, label: "≥80 Elite")
-                    legendSwatch(color: .accentGold, label: "60–79 Solid")
-                    legendSwatch(color: .warning, label: "40–59 OK")
-                    legendSwatch(color: .danger, label: "<40 Poor")
-                    Spacer()
-                    Button { showRatingLegend = false } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: DSType.Size.footnote))
-                            .foregroundStyle(Color.textTertiary)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "paintpalette.fill")
+                            .font(.system(size: DSType.Size.micro))
+                            .foregroundStyle(Color.accentGold)
+                        legendSwatch(color: .success, label: "≥80 Elite")
+                        legendSwatch(color: .accentGold, label: "60–79 Solid")
+                        legendSwatch(color: .warning, label: "40–59 OK")
+                        legendSwatch(color: .danger, label: "<40 Poor")
+                        Spacer()
+                        Button { showRatingLegend = false } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: DSType.Size.footnote))
+                                .foregroundStyle(Color.textTertiary)
+                        }
+                        .accessibilityLabel("Dismiss legend")
                     }
-                    .accessibilityLabel("Dismiss color legend")
+                    // A row can carry five badges and none of them was explained
+                    // anywhere — the flame's meaning reached VoiceOver and nobody
+                    // else. This is the only legend on the screen, so it explains
+                    // the badges too, not just the colours.
+                    Text("TOP 3 = best OVR on the board \u{00B7} FREE AGENT = real out-of-work coach \u{00B7} flame = rival teams bidding \u{00B7} Ceiling badge = potential, Elite down to Low")
+                        .font(.system(size: DSType.Size.micro, weight: .medium))
+                        .foregroundStyle(Color.textSecondary)
                 }
                 .padding(8)
                 .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 6))
@@ -995,6 +1015,14 @@ struct HireCoachView: View {
     /// Determines how well a candidate's scheme fits the team's current scheme.
     /// Falls back from HC → OC/DC when no HC scheme set. Returns nil when no
     /// comparable scheme is available on the team or candidate.
+    /// The club's installed scheme on the side of the ball this candidate coaches —
+    /// the same value `schemeFit(for:)` rates against, so the detail card can name it.
+    private func installedSchemeName(for candidate: Coach) -> String? {
+        if candidate.offensiveScheme != nil { return teamOffensiveScheme?.displayName }
+        if candidate.defensiveScheme != nil { return teamDefensiveScheme?.displayName }
+        return nil
+    }
+
     private func schemeFit(for candidate: Coach) -> (color: Color, label: String)? {
         // Compare offensive schemes against effective team offensive scheme.
         if let candidateOff = candidate.offensiveScheme {
@@ -1077,12 +1105,13 @@ struct HireCoachView: View {
 
     /// Fix #67: Candidate ranking by OVR among filtered list.
     /// Called once when the detail sheet opens — no longer per-row.
+    ///
+    /// Standard competition ranking: two men on the same OVR share a number,
+    /// rather than the sort deciding which of them gets called "#1".
     private func candidateRank(for candidate: Coach) -> Int {
-        let byOVR = filteredCandidates.sorted { coachOverall($0) > coachOverall($1) }
-        if let idx = byOVR.firstIndex(where: { $0.id == candidate.id }) {
-            return idx + 1
-        }
-        return 0
+        guard filteredCandidates.contains(where: { $0.id == candidate.id }) else { return 0 }
+        let ovr = coachOverall(candidate)
+        return filteredCandidates.filter { coachOverall($0) > ovr }.count + 1
     }
 
     // MARK: - Hire Action
@@ -1179,6 +1208,11 @@ private struct CandidateDetailSheet: View {
     let candidateRank: Int
     let totalCandidates: Int
     let schemeFitResult: (color: Color, label: String)?
+    /// The scheme the club actually runs on this candidate's side of the ball.
+    /// `schemeFitResult` is computed from it, but the card could only name a
+    /// head coach — so a GM+HC career saw the rating suppressed even when a
+    /// coordinator had a scheme installed.
+    let installedSchemeName: String?
     /// BUG FIX: True when the user's career role is .gmAndHeadCoach (no HC Coach record exists).
     let userIsHeadCoach: Bool
     /// BUG FIX: User's coaching style — used as the HC reference for chemistry when userIsHeadCoach.
@@ -1196,7 +1230,7 @@ private struct CandidateDetailSheet: View {
     @State private var proposedYears: Int = 3
     @State private var negotiationResult: NegotiationResult?
 
-    init(candidate: Coach, remainingBudget: Int, isHired: Bool, headCoach: Coach?, currentCoach: Coach?, candidateRank: Int, totalCandidates: Int, schemeFitResult: (color: Color, label: String)?, userIsHeadCoach: Bool = false, userCoachingStyle: CoachingStyle? = nil, marketRivals: Int = 0, onHire: @escaping () -> Void, onRejected: (() -> Void)? = nil) {
+    init(candidate: Coach, remainingBudget: Int, isHired: Bool, headCoach: Coach?, currentCoach: Coach?, candidateRank: Int, totalCandidates: Int, schemeFitResult: (color: Color, label: String)?, installedSchemeName: String? = nil, userIsHeadCoach: Bool = false, userCoachingStyle: CoachingStyle? = nil, marketRivals: Int = 0, onHire: @escaping () -> Void, onRejected: (() -> Void)? = nil) {
         self.candidate = candidate
         self.remainingBudget = remainingBudget
         self.isHired = isHired
@@ -1205,6 +1239,7 @@ private struct CandidateDetailSheet: View {
         self.candidateRank = candidateRank
         self.totalCandidates = totalCandidates
         self.schemeFitResult = schemeFitResult
+        self.installedSchemeName = installedSchemeName
         self.userIsHeadCoach = userIsHeadCoach
         self.userCoachingStyle = userCoachingStyle
         self.marketRivals = marketRivals
@@ -1237,6 +1272,19 @@ private struct CandidateDetailSheet: View {
             discountRisk = 0.0
         }
         return min(0.95, discountRisk + competitionRisk)
+    }
+
+    /// The salary where acceptance crosses 50% — below it the roll in
+    /// `makeOffer` is likelier to fail than not.
+    ///
+    /// Inverts `rejectionChance`: under asking, the rival term is constant and
+    /// the discount term is linear at 1.8x, so the crossing has a closed form
+    /// and the player can be told where it is instead of hunting for it by
+    /// dragging. nil when the rivals alone already make the hire a coin flip.
+    private var coinFlipSalary: Double? {
+        let headroom = 0.5 - Double(marketRivals) * 0.06
+        guard headroom > 0 else { return nil }
+        return askingSalary * (1.0 - headroom / 1.8)
     }
 
     /// Fix #69: Acceptance likelihood label that updates with salary slider.
@@ -1348,7 +1396,12 @@ private struct CandidateDetailSheet: View {
 
     private var careerHistoryCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("CAREER HISTORY")
+            // "CAREER HISTORY" promised clubs, seasons and a won-lost record;
+            // `careerHistoryLines` derives two summary lines from age and years
+            // in the game. Title the card what it actually holds. (The sim does
+            // not persist per-season coach history yet — when it does, this is
+            // the card that earns the old name back.)
+            Text("EXPERIENCE")
                 .font(.system(size: DSType.Size.caption, weight: .black))
                 .tracking(1.5)
                 .foregroundStyle(Color.accentGold)
@@ -1573,16 +1626,22 @@ private struct CandidateDetailSheet: View {
                 .innovator:      [.steadyPerformer],
                 .motivator:      [.quietProfessional]
             ]
+            // `displayName` carries its own article ("The Tactician"), which
+            // read as "your The Tactician approach" once it was dropped into
+            // the sentence. The bare noun is what belongs after "your".
+            let styleNoun = style.displayName.hasPrefix("The ")
+                ? String(style.displayName.dropFirst(4))
+                : style.displayName
             if strongFits[style]?.contains(candidate.personality) == true {
                 return ("Strong", .success,
-                        "\(candidate.personality.displayName) fits well with your \(style.displayName) approach.")
+                        "\(candidate.personality.displayName) fits well with your \(styleNoun) approach.")
             }
             if weakFits[style]?.contains(candidate.personality) == true {
                 return ("Weak", .danger,
-                        "\(candidate.personality.displayName) may clash with your \(style.displayName) approach.")
+                        "\(candidate.personality.displayName) may clash with your \(styleNoun) approach.")
             }
             return ("Average", .textSecondary,
-                    "Neutral fit with your \(style.displayName) approach.")
+                    "Neutral fit with your \(styleNoun) approach.")
         }
 
         guard let hc = headCoach else {
@@ -1647,10 +1706,12 @@ private struct CandidateDetailSheet: View {
                             VStack(spacing: 12) {
                                 // All attributes
                                 attributesCard
-                                // #22: Role-aware projected contribution.
+                                // #22: Role-aware projected contribution. The
+                                // only efficiency projection on the profile —
+                                // #90's second card stacked another one right
+                                // under it off a cruder formula, and the two
+                                // printed opposite signs for the same hire.
                                 projectedImpactCard
-                                // #90: Position group impact (kept for finer-grained efficiency view).
-                                positionGroupImpactCard
                                 // #21: Career history
                                 careerHistoryCard
                                 // Background story
@@ -1675,6 +1736,7 @@ private struct CandidateDetailSheet: View {
                     .padding(16)
                     .frame(maxWidth: .infinity)
                 }
+                .safeAreaInset(edge: .bottom) { offerActionBar }
             }
             .navigationTitle("Candidate Profile")
             .navigationBarTitleDisplayMode(.inline)
@@ -1698,8 +1760,11 @@ private struct CandidateDetailSheet: View {
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(Color.textSecondary)
             Spacer()
-            if candidateRank <= 3 {
-                Text("Best Available")
+            // The superlative belongs to #1 only — handing it to three men told a
+            // player opening three profiles the same thing three times. Ranks 2-3
+            // get the list's own wording instead.
+            if candidateRank >= 1 && candidateRank <= 3 {
+                Text(candidateRank == 1 ? "Best Available" : "Top 3")
                     .font(.system(size: DSType.Size.micro, weight: .black))
                     .foregroundStyle(Color.backgroundPrimary)
                     .padding(.horizontal, 8)
@@ -1762,7 +1827,10 @@ private struct CandidateDetailSheet: View {
                         .font(.system(size: DSType.Size.micro, weight: .semibold))
                         .foregroundStyle(Color.forRating(ovr).opacity(0.8))
                 }
-                .frame(width: 52, height: 58)
+                // 52 pt clipped the context label to "Above A…" / "Below A…",
+                // i.e. every candidate rated 50–79 lost the word that gives the
+                // number its meaning.
+                .frame(width: 68, height: 58)
                 .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 8))
 
                 // #89: Coach development potential
@@ -1981,53 +2049,6 @@ private struct CandidateDetailSheet: View {
         .cardBackground()
     }
 
-    // MARK: - Position Group Impact Card (#90)
-
-    private var positionGroupImpactCard: some View {
-        let leagueAvg = 65.0
-        let playBoost = (Double(candidate.playCalling) - leagueAvg) * 0.15
-        let devBoost = (Double(candidate.playerDevelopment) - leagueAvg) * 0.15
-        let avgBoost = (playBoost + devBoost) / 2.0
-
-        let offensiveRoles: [CoachRole] = [.offensiveCoordinator, .qbCoach, .rbCoach, .wrCoach, .olCoach]
-        let defensiveRoles: [CoachRole] = [.defensiveCoordinator, .dlCoach, .lbCoach, .dbCoach]
-        let sideLabel: String = offensiveRoles.contains(candidate.role) ? "offensive" :
-            defensiveRoles.contains(candidate.role) ? "defensive" : "unit"
-
-        return VStack(alignment: .leading, spacing: 8) {
-            Text("PROJECTED IMPACT")
-                .font(.system(size: DSType.Size.caption, weight: .black))
-                .tracking(1.5)
-                .foregroundStyle(Color.accentGold)
-
-            HStack(spacing: 10) {
-                Image(systemName: "chart.line.uptrend.xyaxis")
-                    .font(.system(size: DSType.Size.body, weight: .semibold))
-                    .foregroundStyle(avgBoost >= 0 ? Color.success : Color.danger)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Expected \(sideLabel) boost: \(avgBoost >= 0 ? "+" : "")\(String(format: "%.1f", avgBoost))% efficiency")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(avgBoost >= 0 ? Color.success : Color.dangerText)
-                    HStack(spacing: 12) {
-                        Text("Play Calling: \(playBoost >= 0 ? "+" : "")\(String(format: "%.1f", playBoost))%")
-                            .font(.caption)
-                            .foregroundStyle(playBoost >= 0 ? Color.success.opacity(0.8) : Color.dangerText.opacity(0.8))
-                        Text("Player Dev: \(devBoost >= 0 ? "+" : "")\(String(format: "%.1f", devBoost))%")
-                            .font(.caption)
-                            .foregroundStyle(devBoost >= 0 ? Color.success.opacity(0.8) : Color.dangerText.opacity(0.8))
-                    }
-                }
-            }
-
-            Text("Compared to league average (\(Int(leagueAvg)) rating)")
-                .font(.system(size: DSType.Size.caption, weight: .medium))
-                .foregroundStyle(Color.textTertiary)
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .cardBackground()
-    }
-
     // MARK: - Attributes Card (Fix #64: color-coded)
 
     private var attributesCard: some View {
@@ -2127,6 +2148,14 @@ private struct CandidateDetailSheet: View {
 
     // MARK: - Scheme Fit Card (Fix #66)
 
+    /// `Coach.schemeExpertise` is keyed by raw enum value ("ProPassing"); every
+    /// other line on this card prints the display name ("Pro Passing").
+    private func schemeDisplayName(_ rawValue: String) -> String {
+        if let off = OffensiveScheme(rawValue: rawValue) { return off.displayName }
+        if let def = DefensiveScheme(rawValue: rawValue) { return def.displayName }
+        return rawValue
+    }
+
     private var schemeFitCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("SCHEME FIT")
@@ -2150,6 +2179,25 @@ private struct CandidateDetailSheet: View {
                             .foregroundStyle(Color.textTertiary)
                     }
                 }
+            } else if let fit = schemeFitResult, let installed = installedSchemeName {
+                // A GM+HC career has no `.headCoach` row, but the club still runs
+                // a scheme — the coordinator in post installed it. Rate against
+                // that rather than refusing to answer on the screen whose whole
+                // job is picking the next coordinator.
+                HStack(spacing: 10) {
+                    Circle()
+                        .fill(fit.color)
+                        .frame(width: 14, height: 14)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Scheme Compatibility: \(fit.label)")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(fit.color)
+                        let candScheme = candidate.offensiveScheme?.displayName ?? candidate.defensiveScheme?.displayName ?? "Unknown"
+                        Text("You run \(installed) \u{00B7} Candidate prefers \(candScheme)")
+                            .font(.caption)
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                }
             } else if headCoach == nil {
                 // #159: Show candidate's scheme even without HC
                 let candScheme = candidate.offensiveScheme?.displayName ?? candidate.defensiveScheme?.displayName ?? nil
@@ -2164,9 +2212,16 @@ private struct CandidateDetailSheet: View {
                                 .foregroundStyle(Color.textPrimary)
                             // A GM+HC career has no `.headCoach` Coach row — the
                             // user IS the head coach — so telling him to "hire a
-                            // head coach first" was advice he could not take.
+                            // head coach first" was advice he could not take. And
+                            // with nothing installed there is genuinely nothing to
+                            // rate against (`SchemeSelectionView` stores the scheme
+                            // on the coordinator), so say what the hire DOES rather
+                            // than ask him to hire the man he is looking at.
+                            let installsScheme = candidate.role == .offensiveCoordinator || candidate.role == .defensiveCoordinator
                             Text(userIsHeadCoach
-                                 ? "You set the scheme as head coach. Compatibility is rated once your coordinators are in place."
+                                 ? (installsScheme
+                                    ? "Nothing is installed yet — hiring him puts \(scheme) in, and you can change it later in Schemes."
+                                    : "Nothing is installed yet. Whichever coordinator you hire first sets the scheme this man would be rated against.")
                                  : "Hire a Head Coach first for a scheme compatibility rating.")
                                 .font(.caption)
                                 .foregroundStyle(Color.textTertiary)
@@ -2194,10 +2249,11 @@ private struct CandidateDetailSheet: View {
 
                 ForEach(candidate.schemeExpertise.sorted(by: { $0.value > $1.value }), id: \.key) { scheme, value in
                     HStack(spacing: 8) {
-                        Text(scheme)
+                        Text(schemeDisplayName(scheme))
                             .font(.system(size: DSType.Size.caption, weight: .medium))
                             .foregroundStyle(Color.textSecondary)
-                            .frame(width: 80, alignment: .leading)
+                            .lineLimit(1)
+                            .frame(width: 92, alignment: .leading)
 
                         GeometryReader { geo in
                             ZStack(alignment: .leading) {
@@ -2319,13 +2375,26 @@ private struct CandidateDetailSheet: View {
                         .font(.caption2)
                         .foregroundStyle(Color.textTertiary)
                 }
+
+                if let coinFlip = coinFlipSalary, coinFlip > minSalary {
+                    HStack(spacing: 5) {
+                        Image(systemName: "arrow.down.left.circle")
+                            .font(.system(size: DSType.Size.micro))
+                        Text("Under \(salaryFormatted(Int(coinFlip))) he is likelier to walk than sign")
+                            .font(.caption2.weight(.medium))
+                    }
+                    .foregroundStyle(proposedSalary < coinFlip ? Color.warning : Color.textSecondary)
+                }
             }
 
             // Fix #69: Acceptance likelihood
             HStack(spacing: 8) {
                 Image(systemName: "gauge.medium")
                     .foregroundStyle(acceptanceLikelihood.color)
-                Text("Acceptance: \(acceptanceLikelihood.label)")
+                // The bucketed word alone flattened a live probability into a
+                // 20-point band — "High" spans 75-95%. `makeOffer` rolls against
+                // exactly this number, so print it.
+                Text("Acceptance: \(Int((1.0 - rejectionChance) * 100))% \u{00B7} \(acceptanceLikelihood.label)")
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(acceptanceLikelihood.color)
                 Spacer()
@@ -2450,29 +2519,9 @@ private struct CandidateDetailSheet: View {
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-
-                    // #92: Accept counter-offer button
-                    if let counter = result.counterOffer, !result.accepted {
-                        Button {
-                            acceptCounterOffer(amount: counter)
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: "handshake.fill")
-                                    .font(.system(size: DSType.Size.body))
-                                Text("Accept Counter: \(salaryFormatted(counter))/yr")
-                                    .font(.subheadline.weight(.bold))
-                            }
-                            .foregroundStyle(Color.backgroundPrimary)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 44)
-                            .background(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .fill(Int(counter) > remainingBudget ? Color.backgroundTertiary : Color.warning)
-                            )
-                        }
-                        .disabled(Int(counter) > remainingBudget)
-                        .buttonStyle(.plain)
-                    }
+                    // #92's accept-counter button moved to `offerActionBar`:
+                    // this card is the last one in the right column, so every
+                    // commit it carried opened below the fold.
                 }
                 .padding(14)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -2484,35 +2533,6 @@ private struct CandidateDetailSheet: View {
                                 .strokeBorder(resultColor.opacity(0.3), lineWidth: 1)
                         )
                 )
-            }
-
-            // Make Offer button
-            if !isHired && negotiationResult?.accepted != true {
-                Button {
-                    makeOffer()
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "handshake.fill")
-                            .font(.system(size: DSType.Size.callout, weight: .semibold))
-                        VStack(spacing: 2) {
-                            Text("Offer Contract")
-                                .font(.headline.weight(.bold))
-                            // Fix #65: Budget impact on offer button
-                            Text("Budget after hire: $\(formatBudget(budgetAfterHire))M remaining")
-                                .font(.caption2)
-                                .opacity(0.8)
-                        }
-                    }
-                    .foregroundStyle(Color.backgroundPrimary)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 56)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(isOverBudget ? Color.backgroundTertiary : Color.accentGold)
-                    )
-                }
-                .disabled(isOverBudget)
-                .buttonStyle(.plain)
             }
 
             if isHired || negotiationResult?.accepted == true {
@@ -2530,6 +2550,73 @@ private struct CandidateDetailSheet: View {
         }
         .padding(16)
         .cardBackground()
+    }
+
+    // MARK: - The Commit (P5)
+
+    /// The profile's one commit, pinned.
+    ///
+    /// The negotiation card is the last card in the right column, so on a
+    /// portrait iPad the gold "Offer Contract" button opened below the fold:
+    /// the screen asked for a decision and showed no way to make one. The bar
+    /// carries the negotiation's ANSWER as well as the terms, because the card
+    /// that prints the result is the same one that was off-screen — without it,
+    /// pressing the pinned button would change nothing the user can see.
+    private var offerActionBar: some View {
+        let signed = isHired || negotiationResult?.accepted == true
+        var secondary: DSActionBar.Action?
+        var primary: DSActionBar.Action?
+        if !signed {
+            if let counter = negotiationResult?.counterOffer {
+                // Kept alongside the primary rather than replacing it: the user
+                // may still want to re-offer his own number after a counter.
+                secondary = DSActionBar.Action(
+                    title: "Accept Counter",
+                    caption: "\(salaryFormatted(counter))/yr",
+                    isEnabled: counter <= remainingBudget,
+                    handler: { acceptCounterOffer(amount: counter) }
+                )
+            }
+            primary = DSActionBar.Action(
+                title: "Offer Contract",
+                caption: "budget after: $\(formatBudget(budgetAfterHire))M",
+                isEnabled: !isOverBudget,
+                handler: { makeOffer() }
+            )
+        }
+        return DSActionBar(
+            explainer: .init(
+                title: offerBarTitle,
+                message: offerBarMessage,
+                isWarning: !signed && (isOverBudget || negotiationResult != nil)
+            ),
+            secondary: secondary,
+            primary: primary
+        )
+    }
+
+    private var offerBarTitle: String {
+        if isHired || negotiationResult?.accepted == true { return "Signed" }
+        guard let result = negotiationResult else { return "Your offer" }
+        return result.counterOffer != nil ? "Countered" : "Turned down"
+    }
+
+    /// Quotes the same salary and the same budget-after the negotiation card
+    /// prints, so the pinned bar and the card cannot disagree.
+    private var offerBarMessage: String {
+        if isHired || negotiationResult?.accepted == true {
+            return "**\(candidate.fullName)** signed at **\(salaryFormatted(candidate.salary))/yr** \u{00B7} **$\(formatBudget(remainingBudget - candidate.salary))M** left."
+        }
+        if let counter = negotiationResult?.counterOffer {
+            return "\(candidate.firstName) wants **\(salaryFormatted(counter))/yr** \u{00B7} **$\(formatBudget(remainingBudget - counter))M** left after."
+        }
+        if negotiationResult != nil {
+            return "\(candidate.firstName) rejected the offer \u{2014} see the negotiation card for what he said."
+        }
+        if isOverBudget {
+            return "**\(salaryFormatted(Int(proposedSalary)))/yr** for **\(proposedYears) years** \u{2014} over the **$\(formatBudget(remainingBudget))M** you have left."
+        }
+        return "**\(salaryFormatted(Int(proposedSalary)))/yr** for **\(proposedYears) years** \u{00B7} budget after: **$\(formatBudget(budgetAfterHire))M**."
     }
 
     // MARK: - Offer Logic

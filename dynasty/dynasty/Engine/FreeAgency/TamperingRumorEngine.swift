@@ -33,11 +33,19 @@ enum TamperingRumorEngine {
     /// Players about to hit the market when the FA phase opens: contracts that
     /// already expired at week 18, plus final-year contracts that expire at the
     /// new league year. Franchise-tagged players are off the market.
+    ///
+    /// A rostered man is expiring at `contractYearsRemaining <= 1` — the same
+    /// test `FinalPushView`'s own fetch and `ContractEngine.previewFreeAgents`
+    /// use. This clause read `== 1`, which silently dropped the man whose deal
+    /// has already run to 0 while he still holds his roster spot (a state
+    /// `ContractEngine.removeFranchiseTag` names outright). Those men are on
+    /// the Final Push list, so the leak board could be missing the very names
+    /// its caption promises to flag in gold.
     static func upcomingFreeAgents(allPlayers: [Player]) -> [Player] {
         allPlayers.filter { player in
             guard !player.isFranchiseTagged, !player.isRetired else { return false }
             if player.teamID == nil && player.contractYearsRemaining == 0 { return true }
-            return player.teamID != nil && player.contractYearsRemaining == 1
+            return player.teamID != nil && player.contractYearsRemaining <= 1
         }
     }
 
@@ -53,9 +61,22 @@ enum TamperingRumorEngine {
         userTeamID: UUID?,
         limit: Int = 8
     ) -> [TamperingRumor] {
-        let pool = upcomingFreeAgents(allPlayers: allPlayers)
+        let upcoming = upcomingFreeAgents(allPlayers: allPlayers)
+        let pool = upcoming
             .sorted { $0.overall > $1.overall }
             .prefix(limit)
+
+        // What each club's OWN expiring men are still costing it. The window
+        // opens before the league year turns, so `availableCap` is measured
+        // against books that still carry every deal about to run out; judged on
+        // that figure alone almost nobody clears a top free agent's price and
+        // the whole leak board falls into the empty-suitors branch — eight rows
+        // of "market still forming". The money these clubs will bid with is
+        // exactly the money coming off, so it is counted here.
+        let expiringRelief: [UUID: Int] = upcoming.reduce(into: [:]) { totals, player in
+            guard let teamID = player.teamID else { return }
+            totals[teamID, default: 0] += player.annualSalary
+        }
 
         let avgCap = allTeams.isEmpty
             ? ContractEngine.openingSalaryCap
@@ -69,7 +90,7 @@ enum TamperingRumorEngine {
             // sort first, then deepest pockets.
             let suitors = allTeams
                 .filter { $0.id != userTeamID && $0.id != player.teamID }
-                .filter { $0.availableCap >= projected }
+                .filter { $0.availableCap + (expiringRelief[$0.id] ?? 0) >= projected }
                 .compactMap { team -> (abbr: String, need: FreeAgencyEngine.PositionNeedLevel, cap: Int)? in
                     let need = FreeAgencyEngine.assessPositionNeed(
                         team: team,
@@ -77,7 +98,7 @@ enum TamperingRumorEngine {
                         allPlayers: allPlayers
                     )
                     guard need == .critical || need == .high else { return nil }
-                    return (team.abbreviation, need, team.availableCap)
+                    return (team.abbreviation, need, team.availableCap + (expiringRelief[team.id] ?? 0))
                 }
                 .sorted { lhs, rhs in
                     if (lhs.need == .critical) != (rhs.need == .critical) {

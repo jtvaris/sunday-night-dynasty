@@ -129,8 +129,19 @@ struct RoundResultsView: View {
 
     // MARK: - Scores
 
+    /// Abbreviation → this week's ranking row, so a score line can carry each
+    /// club's record.
+    ///
+    /// "DEN 23 @ TEN 20" is unreadable as a good or bad result on its own: the
+    /// records sat on the Power Rankings card further down the same scroll,
+    /// which is one card too far when there are sixteen of these to read.
+    private var rankingByAbbr: [String: PowerRankingEntry] {
+        Dictionary(data.rankings.map { ($0.teamAbbr, $0) }, uniquingKeysWith: { first, _ in first })
+    }
+
     private var scoresSection: some View {
-        sectionCard(
+        let ranks = rankingByAbbr
+        return sectionCard(
             title: String(localized: "This Week's Results"),
             icon: "sportscourt.fill",
             iconColor: Color.accentBlue,
@@ -138,19 +149,21 @@ struct RoundResultsView: View {
         ) {
             VStack(spacing: 8) {
                 ForEach(data.games) { game in
-                    scoreRow(game)
+                    scoreRow(game, ranks: ranks)
                 }
             }
         }
     }
 
-    private func scoreRow(_ game: GameLine) -> some View {
+    private func scoreRow(_ game: GameLine, ranks: [String: PowerRankingEntry]) -> some View {
         HStack(spacing: 10) {
-            teamScore(abbr: game.awayAbbr, score: game.awayScore, won: game.awayWon, isUser: game.isUserGame)
+            teamScore(abbr: game.awayAbbr, score: game.awayScore, won: game.awayWon,
+                      isUser: game.isUserGame, entry: ranks[game.awayAbbr])
             Text("@")
                 .font(.caption.weight(.bold))
                 .foregroundStyle(Color.textTertiary)
-            teamScore(abbr: game.homeAbbr, score: game.homeScore, won: game.homeWon, isUser: game.isUserGame)
+            teamScore(abbr: game.homeAbbr, score: game.homeScore, won: game.homeWon,
+                      isUser: game.isUserGame, entry: ranks[game.homeAbbr])
 
             Spacer(minLength: 4)
 
@@ -181,12 +194,31 @@ struct RoundResultsView: View {
         )
     }
 
-    private func teamScore(abbr: String, score: Int, won: Bool, isUser: Bool) -> some View {
+    /// The rank chip is top-ten only. Every club has a number and printing all
+    /// thirty-two turns the column into noise; what a reader wants from a
+    /// results sheet is which of these were beatings of somebody good.
+    private func teamScore(
+        abbr: String,
+        score: Int,
+        won: Bool,
+        isUser: Bool,
+        entry: PowerRankingEntry?
+    ) -> some View {
         HStack(spacing: 6) {
+            Text(entry.map { $0.rank <= 10 ? "#\($0.rank)" : "" } ?? "")
+                .font(.system(size: DSType.Size.micro, weight: .heavy))
+                .monospacedDigit()
+                .foregroundStyle(Color.accentGold.opacity(0.8))
+                .frame(width: 22, alignment: .trailing)
             Text(abbr)
                 .font(.subheadline.weight(won ? .heavy : .medium))
                 .foregroundStyle(isUser ? Color.accentGold : (won ? Color.textPrimary : Color.textSecondary))
                 .frame(width: 42, alignment: .leading)
+            Text(entry?.record ?? "")
+                .font(.system(size: DSType.Size.caption))
+                .monospacedDigit()
+                .foregroundStyle(Color.textTertiary)
+                .frame(width: 38, alignment: .leading)
             Text("\(score)")
                 .font(.subheadline.weight(won ? .heavy : .regular))
                 .monospacedDigit()
@@ -447,6 +479,10 @@ struct RoundResultsView: View {
         }
     }
 
+    /// Gold outline, never gold fill. The fill is this sheet's one commit
+    /// ("Continue"); these two are the same secondary-route treatment the hub
+    /// gives its "News" / "View All" links, and they were the only blue accents
+    /// on a screen the dashboard hands over entirely in gold.
     private func linkButton(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 6) {
@@ -455,12 +491,12 @@ struct RoundResultsView: View {
                 Text(title)
                     .font(.subheadline.weight(.semibold))
             }
-            .foregroundStyle(Color.accentBlue)
+            .foregroundStyle(Color.accentGold)
             .frame(maxWidth: .infinity)
             .frame(height: 44)
             .background(
                 RoundedRectangle(cornerRadius: 12)
-                    .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+                    .strokeBorder(Color.accentGold.opacity(0.35), lineWidth: 1)
             )
         }
         .buttonStyle(.plain)

@@ -2075,6 +2075,14 @@ struct PlayerDetailView: View {
             modelContext: modelContext
         )
         guard !split.isRefused else { return }
+        // Sweep him out of the saved depth chart and promote the man behind
+        // him. A released starter's UUID left in his slot renders the slot
+        // empty and stops the next offseason advance on "Lineup Incomplete",
+        // a screen and sometimes a phase away from this release.
+        DepthChart.reconcileSaved(
+            career: career,
+            roster: allLeaguePlayers.filter { $0.teamID == team.id }
+        )
         try? modelContext.save()
         dismiss()
     }

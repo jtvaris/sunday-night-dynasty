@@ -1143,22 +1143,48 @@ enum LeagueGenerator {
         }
     }
 
+    /// A real given name behind a single-initial token ("M." → "Merrick"), or
+    /// nil when the token is already a name, carries two initials ("C.J.", which
+    /// men do go by), or the pool has nothing under that letter.
+    ///
+    /// `RandomNameGenerator`'s given-name array is private, so the draw is by
+    /// rejection rather than by filtering it. The thinnest initial the 32
+    /// previews ask for lands about once in fifty draws, so a thousand tries
+    /// misses it about once in a billion leagues; a letter the pool genuinely
+    /// cannot serve falls back to the initial rather than to a wrong name.
+    private static func expandedGivenName(fromInitial token: String) -> String? {
+        let letters = token.filter { $0.isLetter }
+        guard token.contains("."), letters.count == 1, let initial = letters.first else { return nil }
+        for _ in 0..<1000 {
+            let candidate = RandomNameGenerator.randomName().first
+            if candidate.first == initial { return candidate }
+        }
+        return nil
+    }
+
     /// Creates the starting QB using the name and target overall from TeamPreview.
     /// The preview name format is "F. Last" (e.g., "S. Osgood"); a multi-initial
-    /// form ("C.J. Osgood") parses the same way.
+    /// form ("C.J. Osgood") parses the same way. A lone initial is expanded into
+    /// a real given name (`expandedGivenName`) before it is persisted.
     private static func generateNamedQB(previewName: String, targetOverall: Int, teamID: UUID) -> Player {
         // Parse the preview name: split on last space to get firstName and lastName.
         // Examples: "S. Osgood" -> ("S.", "Osgood"), "C.J. Osgood" -> ("C.J.", "Osgood")
         let parts = previewName.split(separator: " ", maxSplits: .max, omittingEmptySubsequences: true)
-        let firstName: String
+        let previewFirst: String
         let lastName: String
         if parts.count >= 2 {
-            firstName = parts.dropLast().joined(separator: " ")
+            previewFirst = parts.dropLast().joined(separator: " ")
             lastName = String(parts.last!)
         } else {
-            firstName = String(parts.first ?? "J.")
+            previewFirst = String(parts.first ?? "J.")
             lastName = "Doe"
         }
+        // The preview string is a scouting-blurb abbreviation, not a name, and
+        // storing it made the franchise QB the one man in the league whose
+        // first name is a letter — "M. Wimberly" on the roster, in KEY PLAYERS,
+        // in every press item, forever. The surname is what the preview card
+        // promises; the given name behind the initial is ours to draw.
+        let firstName = expandedGivenName(fromInitial: previewFirst) ?? previewFirst
 
         // Generate physical and mental attributes that produce the target overall.
         // Physicals come from the shared QB priors shifted so their average

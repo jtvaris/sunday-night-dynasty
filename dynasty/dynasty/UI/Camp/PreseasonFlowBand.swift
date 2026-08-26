@@ -51,10 +51,16 @@ enum PreseasonFlowBand {
     static func title(game: Int) -> String { "Game \(game)" }
 
     /// What the slat the club is standing on is for.
-    static func subcaption(_ stance: Stance) -> String {
+    ///
+    /// The reviewing caption has to know whether another exhibition is owed:
+    /// after game 3 it promised a next one while the meter on the same rule
+    /// read "0 left" and the bar underneath was already headed "After this".
+    static func subcaption(_ stance: Stance, isFinalGame: Bool = false) -> String {
         switch stance {
         case .planning:  return "Choose who dresses, then play it"
-        case .reviewing: return "Read the tape before the next one"
+        case .reviewing: return isFinalGame
+            ? "Last look before the cut"
+            : "Read the tape before the next one"
         case .complete:  return "The slate is done"
         }
     }
@@ -101,10 +107,17 @@ enum PreseasonFlowBand {
             } else {
                 state = .future
             }
-            let sub = state == .current ? subcaption(stance) : nil
+            let sub = state == .current
+                ? subcaption(stance, isFinalGame: current == gameCount)
+                : nil
             return DSSlat(
                 id: "preseason-game-\(game)",
-                index: "\(game)",
+                // NO POSITION NUMERAL: this slate's titles ARE the numerals.
+                // `FAFlowBand`'s slats are called "Final Push" and "Cap Review",
+                // so a leading "1" tells the reader something the word does not;
+                // here it produced "1 GAME 1", "2 GAME 2", "3 GAME 3". `DSSlat`
+                // draws the done-check in the same slot either way.
+                index: nil,
                 title: title(game: game),
                 subcaption: sub,
                 state: state,

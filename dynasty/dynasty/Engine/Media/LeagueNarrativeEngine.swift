@@ -351,7 +351,18 @@ enum LeagueNarrativeEngine {
                 "Playing for pride and next year's core.",
             ]
         }
-        return pool[(week + rank) % pool.count]
+        // The variant used to be `(week + rank) % pool.count`, which with
+        // three-line pools meant any two clubs in the same bucket whose ranks
+        // differ by a multiple of three printed the IDENTICAL sentence on the
+        // same board, every week: KC at 1 and DEN at 4 both reading "The
+        // N-game heater shows no sign of cooling off." Mixing the club in
+        // separates them.
+        //
+        // Summed scalars rather than `hashValue`, because String hashing is
+        // seeded per process — a board that reads differently after a relaunch
+        // is a save the user cannot trust.
+        let identity = team.abbreviation.unicodeScalars.reduce(0) { $0 + Int($1.value) }
+        return pool[(week + rank + identity) % pool.count]
     }
 
     private static func powerRankingsNews(

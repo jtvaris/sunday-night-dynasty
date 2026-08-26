@@ -241,6 +241,53 @@ enum PressConferenceEngine {
         localReporters.randomElement() ?? ("Beat Reporter", "Local Press")
     }
 
+    /// Give every question in one conference a different masthead.
+    ///
+    /// Each generator draws its own reporter with `randomElement()` and knows
+    /// nothing about the others, so a five-question session could — and on
+    /// screen did — put THE GRIDIRON WEEKLY on slats 2 and 4 of the progress
+    /// rail, which is the strip the player navigates the conference by. Doing
+    /// it as a pass over the finished list leaves all twenty-odd generators
+    /// alone and only breaks the collision.
+    private static func dealDistinctOutlets(_ questions: [PressQuestion]) -> [PressQuestion] {
+        var used: Set<String> = []
+        let national = reporters.shuffled()
+        let local = localReporters.shuffled()
+
+        return questions.map { question in
+            guard !used.insert(question.outlet).inserted else { return question }
+
+            // A local-press question stays local: the outlet carries the
+            // question's register, not just its name.
+            let fromLocal = localReporters.contains { $0.outlet == question.outlet }
+            guard let replacement = (fromLocal ? local : national).first(where: { !used.contains($0.outlet) })
+            else { return question }
+            used.insert(replacement.outlet)
+
+            return PressQuestion(
+                id: question.id,
+                reporterName: replacement.name,
+                outlet: replacement.outlet,
+                question: question.question,
+                responses: question.responses.map { restamp($0, from: question.outlet, to: replacement.outlet) }
+            )
+        }
+    }
+
+    /// Reaction headlines are authored as `"OUTLET: “…”"`, so a rewritten byline
+    /// has to be rewritten there too — otherwise the reveal quotes a paper that
+    /// never asked the question.
+    private static func restamp(_ response: PressResponse, from old: String, to new: String) -> PressResponse {
+        guard response.mediaReaction.hasPrefix(old) else { return response }
+        return PressResponse(
+            id: response.id,
+            text: response.text,
+            tone: response.tone,
+            mediaReaction: new + String(response.mediaReaction.dropFirst(old.count)),
+            effects: response.effects
+        )
+    }
+
     // MARK: - Intro Press Conference
 
     /// Generate 4-5 questions for the introductory press conference.
@@ -264,7 +311,7 @@ enum PressConferenceEngine {
             questions.append(generateMediaPressureQuestion(team: team))
         }
 
-        return questions
+        return dealDistinctOutlets(questions)
     }
 
     // MARK: - Weekly Press Conference
@@ -288,7 +335,7 @@ enum PressConferenceEngine {
                     // Beating a division rival gets the rivalry variant (R19).
                     questions.append(generateDivisionWinQuestion(team: team, rivalAbbr: rivalAbbr))
                 } else {
-                    questions.append(generatePostWinQuestion(team: team, week: week))
+                    questions.append(generatePostWinQuestion(team: team, week: week, facts: facts))
                 }
             } else if let facts, !facts.won, facts.margin > 0, facts.margin <= narrowLossMargin {
                 // A one-score heartbreaker gets its own question.
@@ -327,7 +374,7 @@ enum PressConferenceEngine {
                     questions.append(generateLooseWeeklyQuestion(team: team))
                 }
             }
-            return questions
+            return dealDistinctOutlets(questions)
         }
 
         // Situational question — pick the most relevant one
@@ -378,7 +425,7 @@ enum PressConferenceEngine {
             }
         }
 
-        return questions
+        return dealDistinctOutlets(questions)
     }
 
     // MARK: - Aggregate Results
@@ -456,7 +503,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "We're going to bring a championship to \(team.city). That's the only goal.",
                     tone: .confident,
-                    mediaReaction: "\(r.outlet): \"Bold promise from the new front office leader!\"",
+                    mediaReaction: "\(r.outlet): \u{201C}Bold promise from the new front office leader!\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: ownerWinNow ? 4 : -6,
                         playerMorale: -2,
@@ -469,7 +516,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "First, I need to understand what we have. Then we build, brick by brick.",
                     tone: .humble,
-                    mediaReaction: "\(r.outlet): \"New leader takes measured approach in \(team.city).\"",
+                    mediaReaction: "\(r.outlet): \u{201C}New leader takes measured approach in \(team.city).\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 10,
                         playerMorale: 6,
@@ -482,7 +529,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "This roster needs a complete overhaul. There are going to be a lot of changes.",
                     tone: .aggressive,
-                    mediaReaction: "\(r.outlet): \"New GM already critical of \(team.name) roster!\"",
+                    mediaReaction: "\(r.outlet): \u{201C}New GM already critical of \(team.name) roster!\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: ownerWinNow ? -10 : 2,
                         playerMorale: -12,
@@ -495,7 +542,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "There's talent here. We'll evaluate everything and add the right pieces.",
                     tone: .diplomatic,
-                    mediaReaction: "\(r.outlet): \"Steady hand takes the reins in \(team.city).\"",
+                    mediaReaction: "\(r.outlet): \u{201C}Steady hand takes the reins in \(team.city).\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 4,
                         playerMorale: 4,
@@ -521,7 +568,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "We'll be aggressive. You have to spend money to win in this league.",
                     tone: .confident,
-                    mediaReaction: "\(r.outlet): \"\(team.name) expected to be big spenders this offseason.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}\(team.name) expected to be big spenders this offseason.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: capTight ? -8 : 2,
                         playerMorale: 4,
@@ -534,7 +581,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "The cap is a tool. We need to be smart, not reckless.",
                     tone: .diplomatic,
-                    mediaReaction: "\(r.outlet): \"New front office preaches fiscal discipline.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}New front office preaches fiscal discipline.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: 3,
@@ -547,7 +594,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "Some of these contracts are... let's just say I have a lot of work to do.",
                     tone: .aggressive,
-                    mediaReaction: "\(r.outlet): \"Shots fired? New GM hints at roster purge.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}Shots fired? New GM hints at roster purge.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: -6,
                         playerMorale: -10,
@@ -560,7 +607,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "I inherited a situation. I'll learn the books, then make my moves.",
                     tone: .humble,
-                    mediaReaction: "\(r.outlet): \"Patience is the word in \(team.city).\"",
+                    mediaReaction: "\(r.outlet): \u{201C}Patience is the word in \(team.city).\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 10,
                         playerMorale: 6,
@@ -586,7 +633,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "Start planning the parade route.",
                     tone: .confident,
-                    mediaReaction: "\(r.outlet): \"PARADE ROUTE?! New GM goes all-in on championship promise.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}PARADE ROUTE?! New GM goes all-in on championship promise.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: -7,
                         playerMorale: -4,
@@ -599,7 +646,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "Trust the process. We're going to earn your support every single day.",
                     tone: .humble,
-                    mediaReaction: "\(r.outlet): \"New leadership asks fans for patience and trust.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}New leadership asks fans for patience and trust.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 9,
                         playerMorale: 6,
@@ -612,7 +659,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "I promise -- the hot dogs at the stadium are going to be better this year.",
                     tone: .funny,
-                    mediaReaction: "\(r.outlet): \"LOL -- new GM wins over the press room with humor.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}LOL -- new GM wins over the press room with humor.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 1,
                         playerMorale: 7,
@@ -625,7 +672,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "This is your team. I'm just here to make sure we give you something to cheer about.",
                     tone: .diplomatic,
-                    mediaReaction: "\(r.outlet): \"Humble words from the new man in charge.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}Humble words from the new man in charge.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 4,
                         playerMorale: 4,
@@ -650,7 +697,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "We're going to take the best player available. Period. No reaching.",
                     tone: .confident,
-                    mediaReaction: "\(r.outlet): \"BPA philosophy for the new \(team.name) regime.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}BPA philosophy for the new \(team.name) regime.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: -5,
                         playerMorale: 2,
@@ -663,7 +710,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "I need to study the tape. I don't want to commit to a strategy before I've done my homework.",
                     tone: .humble,
-                    mediaReaction: "\(r.outlet): \"New GM wants to see film before making draft plans.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}New GM wants to see film before making draft plans.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 8,
                         playerMorale: 5,
@@ -676,7 +723,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "If we can trade back and stockpile picks, that's what we're doing. Quantity has a quality of its own.",
                     tone: .aggressive,
-                    mediaReaction: "\(r.outlet): \"Trade-back strategy on the table for \(team.city).\"",
+                    mediaReaction: "\(r.outlet): \u{201C}Trade-back strategy on the table for \(team.city).\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: -7,
                         playerMorale: -8,
@@ -689,7 +736,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "The draft is how you build dynasties. We're going to nail this.",
                     tone: .diplomatic,
-                    mediaReaction: "\(r.outlet): \"\(team.name) putting emphasis on the draft.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}\(team.name) putting emphasis on the draft.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 4,
                         playerMorale: 4,
@@ -714,7 +761,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "I thrive in it. The bigger the stage, the better I perform.",
                     tone: .confident,
-                    mediaReaction: "\(r.outlet): \"Fearless attitude from the new front office boss.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}Fearless attitude from the new front office boss.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: -4,
                         playerMorale: -3,
@@ -727,7 +774,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "I don't read the papers. I just do my job.",
                     tone: .aggressive,
-                    mediaReaction: "\(r.outlet): \"New GM seems uninterested in cozy media relationships.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}New GM seems uninterested in cozy media relationships.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: -6,
                         playerMorale: 6,
@@ -740,7 +787,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "I respect the media. You have a job to do, and so do I. Let's work together.",
                     tone: .diplomatic,
-                    mediaReaction: "\(r.outlet): \"Refreshing transparency from the new regime.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}Refreshing transparency from the new regime.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 6,
                         playerMorale: 3,
@@ -753,7 +800,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "Pressure? I've been under pressure my whole career. This is Tuesday for me.",
                     tone: .funny,
-                    mediaReaction: "\(r.outlet): \"Ha! New GM keeps it cool under the bright lights.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}Ha! New GM keeps it cool under the bright lights.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 2,
                         playerMorale: 8,
@@ -768,18 +815,67 @@ enum PressConferenceEngine {
 
     // MARK: - Weekly Question Generators
 
-    private static func generatePostWinQuestion(team: Team, week: Int) -> PressQuestion {
+    /// One authored line out of several. Variadic so a pool cannot be empty and
+    /// the call sites never force-unwrap `randomElement()`.
+    private static func oneOf(_ first: String, _ rest: String...) -> String {
+        ([first] + rest).randomElement() ?? first
+    }
+
+    /// The opener after a win — the one question the coach faces most weeks of
+    /// his career, and therefore the worst slot in this file to author once.
+    /// A single line and a single triple of answers made Week 2 and Week 18
+    /// byte-identical apart from the number, while `PressEngine`'s repetition
+    /// ratchet was busy penalising the player for repeating a TONE.
+    ///
+    /// Nothing here moves an effect: the three answers keep their tones, their
+    /// reactions and their numbers, and only the wording is drawn from a pool.
+    /// The margin picks the register when `WeekAdvancer` handed the conference
+    /// a box score; without one, the phrasing is the generic pool.
+    private static func generatePostWinQuestion(team: Team, week: Int, facts: GameFacts? = nil) -> PressQuestion {
         let r = randomReporter()
+
+        // The margin is only the margin when the box score agrees this was the
+        // win — `facts` is nil on the legacy call path.
+        let margin = facts.map { $0.won ? $0.margin : 0 } ?? 0
+        let question: String = {
+            let pool: [String]
+            switch margin {
+            case 17...:
+                pool = [
+                    "You were never threatened out there. What does a \(margin)-point win say about this team?",
+                    "That one was decided by the fourth quarter. Where is this team ahead of where you expected?",
+                    "\(margin) points in Week \(week) — what is clicking right now?",
+                ]
+            case 1...3:
+                pool = [
+                    "You survived that one by \(margin). Comfortable with how close it got?",
+                    "One score, right to the whistle. What won it for you?",
+                    "Week \(week) came down to the last drive. What does that tell you about your team?",
+                ]
+            default:
+                pool = [
+                    "Great win in Week \(week). What worked out there?",
+                    "You got it done in Week \(week). What are you taking out of it?",
+                    "Week \(week) goes in the win column. What pleased you most?",
+                    "A win in Week \(week) — where did this one turn?",
+                ]
+            }
+            return pool.randomElement() ?? "Great win in Week \(week). What worked out there?"
+        }()
 
         return PressQuestion(
             reporterName: r.name,
             outlet: r.outlet,
-            question: "Great win in Week \(week). What worked out there?",
+            question: question,
             responses: [
                 PressResponse(
-                    text: "The guys executed the game plan perfectly. That's what happens when you prepare.",
+                    text: oneOf(
+                        "The guys executed the game plan perfectly. That's what happens when you prepare.",
+                        "We executed. That is what preparation looks like on a Sunday afternoon.",
+                        "That's the version of this team we practise every week. Nobody in our building is surprised."
+                    ),
                     tone: .confident,
-                    mediaReaction: "\(r.outlet): \"\(team.name) clicking on all cylinders.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}\(team.name) clicking on all cylinders.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: 10,
@@ -789,9 +885,13 @@ enum PressConferenceEngine {
                     )
                 ),
                 PressResponse(
-                    text: "Credit goes to the players and coaches. They put in the work all week.",
+                    text: oneOf(
+                        "Credit goes to the players and coaches. They put in the work all week.",
+                        "That's the players and the assistants. They did the work; I watched it pay off.",
+                        "I had very little to do with that. Those men earned it on Wednesday and Thursday."
+                    ),
                     tone: .humble,
-                    mediaReaction: "\(r.outlet): \"Humble leader deflects credit to the locker room.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}Humble leader deflects credit to the locker room.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: 15,
@@ -801,9 +901,13 @@ enum PressConferenceEngine {
                     )
                 ),
                 PressResponse(
-                    text: "We won but we left a lot on the table. We need to be better.",
+                    text: oneOf(
+                        "We won but we left a lot on the table. We need to be better.",
+                        "We left points out there. A win is a win, but that tape is going to be uncomfortable.",
+                        "I'm not going to stand up here and call that clean. We have to be sharper than that."
+                    ),
                     tone: .aggressive,
-                    mediaReaction: "\(r.outlet): \"Even after a win, \(team.name) boss demands more.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}Even after a win, \(team.name) boss demands more.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: -5,
@@ -827,7 +931,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "That's on me. I'll take responsibility. We'll fix it.",
                     tone: .humble,
-                    mediaReaction: "\(r.outlet): \"\(team.name) leader falls on the sword after loss.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}\(team.name) leader falls on the sword after loss.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: 10,
@@ -839,7 +943,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "We got outplayed. Simple as that. Time to look in the mirror.",
                     tone: .aggressive,
-                    mediaReaction: "\(r.outlet): \"Frustration mounting in the \(team.name) building.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}Frustration mounting in the \(team.name) building.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 0,
                         playerMorale: -10,
@@ -851,7 +955,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "One game doesn't define us. We'll respond next week.",
                     tone: .confident,
-                    mediaReaction: "\(r.outlet): \"\(team.name) GM confident despite setback.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}\(team.name) GM confident despite setback.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: 5,
@@ -863,7 +967,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "I'm not going to throw anyone under the bus. We win and lose as a team.",
                     tone: .diplomatic,
-                    mediaReaction: "\(r.outlet): \"United front in \(team.city) despite the loss.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}United front in \(team.city) despite the loss.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: 10,
@@ -891,7 +995,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "One play here or there. Finding those \(margin) \(pointWord) is my job, and I'll find them.",
                     tone: .humble,
-                    mediaReaction: "\(r.outlet): \"\(team.name) leader owns the fine margins after narrow defeat.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}\(team.name) leader owns the fine margins after narrow defeat.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: 10,
@@ -903,7 +1007,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "We're right there. Flip one snap and we're having a very different conversation.",
                     tone: .confident,
-                    mediaReaction: "\(r.outlet): \"\(team.name) see themselves a play away.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}\(team.name) see themselves a play away.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: 5,
@@ -915,7 +1019,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "Close doesn't count in this league. Nobody in that locker room gets a pass for 'almost'.",
                     tone: .aggressive,
-                    mediaReaction: "\(r.outlet): \"No moral victories in \(team.city).\"",
+                    mediaReaction: "\(r.outlet): \u{201C}No moral victories in \(team.city).\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 0,
                         playerMorale: -10,
@@ -940,7 +1044,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "That's on all of us — scheme, calls, execution. We'll get it fixed in the protection meetings this week.",
                     tone: .humble,
-                    mediaReaction: "\(r.outlet): \"\(team.name) promise answers up front after \(sacks)-sack afternoon.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}\(team.name) promise answers up front after \(sacks)-sack afternoon.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: 8,
@@ -952,7 +1056,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "\(sacks) sacks is unacceptable. Jobs are on the line up front, and everybody knows it.",
                     tone: .aggressive,
-                    mediaReaction: "\(r.outlet): \"\(team.name) boss puts the offensive line on notice.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}\(team.name) boss puts the offensive line on notice.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 0,
                         playerMorale: -10,
@@ -964,7 +1068,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "Credit their rush — they brought looks we hadn't seen. Our quarterback is fine, and we have the answers.",
                     tone: .confident,
-                    mediaReaction: "\(r.outlet): \"\(team.name) unshaken despite the pressure numbers.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}\(team.name) unshaken despite the pressure numbers.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: 5,
@@ -993,7 +1097,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "He's a bell cow. When he runs like that, we're a very tough team to beat.",
                     tone: .confident,
-                    mediaReaction: "\(r.outlet): \"\(team.name) commit to the ground game behind \(rusherName).\"",
+                    mediaReaction: "\(r.outlet): \u{201C}\(team.name) commit to the ground game behind \(rusherName).\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: 10,
@@ -1005,7 +1109,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "We ride the hot hand. \(rusherName) earned every one of those yards, but it stays a committee.",
                     tone: .diplomatic,
-                    mediaReaction: "\(r.outlet): \"\(team.name) keeping the backfield plan flexible.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}\(team.name) keeping the backfield plan flexible.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: 5,
@@ -1017,7 +1121,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "I might hand it to him 40 times next week. Somebody should probably warn his agent.",
                     tone: .funny,
-                    mediaReaction: "\(r.outlet): \"Ha — \(team.city) falling in love with its running back.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}Ha — \(team.city) falling in love with its running back.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 0,
                         playerMorale: 8,
@@ -1044,7 +1148,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "Division games are worth double — them losing, us winning. That's how you take the \(team.conference.rawValue) \(team.division.rawValue).",
                     tone: .confident,
-                    mediaReaction: "\(r.outlet): \"\(team.name) planting a flag in the division race.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}\(team.name) planting a flag in the division race.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: 10,
@@ -1056,7 +1160,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "They know us, we know them — those are the hardest wins in football. Credit the locker room.",
                     tone: .humble,
-                    mediaReaction: "\(r.outlet): \"Respect for the rivalry from the \(team.name) boss.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}Respect for the rivalry from the \(team.name) boss.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: 15,
@@ -1068,7 +1172,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "One division win doesn't hang a banner. Ask me again when we've swept the round-robin.",
                     tone: .aggressive,
-                    mediaReaction: "\(r.outlet): \"\(team.city) wants more than a rivalry scalp.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}\(team.city) wants more than a rivalry scalp.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: -5,
@@ -1093,7 +1197,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "Division losses are on the head coach. I'll wear this one, and we'll be ready for the rematch.",
                     tone: .humble,
-                    mediaReaction: "\(r.outlet): \"\(team.name) leader owns the division stumble.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}\(team.name) leader owns the division stumble.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: 10,
@@ -1105,7 +1209,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "The race is long. Nobody wins the \(team.conference.rawValue) \(team.division.rawValue) in one afternoon — and nobody loses it in one either.",
                     tone: .confident,
-                    mediaReaction: "\(r.outlet): \"\(team.name) GM unshaken by the rivalry defeat.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}\(team.name) GM unshaken by the rivalry defeat.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: 5,
@@ -1117,7 +1221,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "Circle the rematch. That result is going up on the wall of our building, and they know it.",
                     tone: .aggressive,
-                    mediaReaction: "\(r.outlet): \"Rivalry heat rising between \(team.city) and \(rivalAbbr).\"",
+                    mediaReaction: "\(r.outlet): \u{201C}Rivalry heat rising between \(team.city) and \(rivalAbbr).\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 0,
                         playerMorale: -5,
@@ -1181,7 +1285,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "Rankings in \(rank <= 5 ? "November" : "midseason") don't hang banners. The only list that matters is the one in January.",
                     tone: .aggressive,
-                    mediaReaction: "\(r.outlet): \"\(team.name) boss dismisses the rankings talk.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}\(team.name) boss dismisses the rankings talk.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: 5,
@@ -1193,7 +1297,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "It's a nice nod to the work the players put in, but we know how fast those lists flip.",
                     tone: .humble,
-                    mediaReaction: "\(r.outlet): \"Level heads in \(team.city) despite the rankings buzz.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}Level heads in \(team.city) despite the rankings buzz.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: 10,
@@ -1205,7 +1309,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "Honestly? I had us higher.",
                     tone: .funny,
-                    mediaReaction: "\(r.outlet): \"Ha — \(team.name) front office wants an even better seed on the board.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}Ha — \(team.name) front office wants an even better seed on the board.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 0,
                         playerMorale: 8,
@@ -1237,7 +1341,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "He's the best player in football, and it's not particularly close. Watch the tape.",
                     tone: .confident,
-                    mediaReaction: "\(r.outlet): \"\(team.name) go all-in on \(playerName)'s MVP campaign.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}\(team.name) go all-in on \(playerName)'s MVP campaign.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: 12,
@@ -1249,7 +1353,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "Individual awards follow team success. He'd tell you the same thing — wins first.",
                     tone: .diplomatic,
-                    mediaReaction: "\(r.outlet): \"Team-first message around \(playerName)'s award chatter.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}Team-first message around \(playerName)'s award chatter.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: 5,
@@ -1261,7 +1365,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "We don't talk about it in the building. The minute you chase trophies, you stop chasing wins.",
                     tone: .humble,
-                    mediaReaction: "\(r.outlet): \"\(team.city) keeping the MVP noise outside the walls.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}\(team.city) keeping the MVP noise outside the walls.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: 5,
@@ -1285,7 +1389,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "Pressure is a privilege. We want to be in these moments.",
                     tone: .confident,
-                    mediaReaction: "\(r.outlet): \"\(team.name) embracing the playoff spotlight.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}\(team.name) embracing the playoff spotlight.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: 10,
@@ -1297,7 +1401,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "We're taking it one week at a time. That hasn't changed.",
                     tone: .diplomatic,
-                    mediaReaction: "\(r.outlet): \"Steady as she goes for \(team.city).\"",
+                    mediaReaction: "\(r.outlet): \u{201C}Steady as she goes for \(team.city).\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: 5,
@@ -1309,7 +1413,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "Playoffs? I'm already thinking about the Championship.",
                     tone: .aggressive,
-                    mediaReaction: "\(r.outlet): \"CHAMPIONSHIP?! \(team.name) GM looking past the competition?\"",
+                    mediaReaction: "\(r.outlet): \u{201C}CHAMPIONSHIP?! \(team.name) GM looking past the competition?\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: 5,
@@ -1333,7 +1437,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "We're evaluating everything. Nothing is off the table.",
                     tone: .aggressive,
-                    mediaReaction: "\(r.outlet): \"Shakeup looming in \(team.city)?\"",
+                    mediaReaction: "\(r.outlet): \u{201C}Shakeup looming in \(team.city)?\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: -10,
@@ -1345,7 +1449,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "I still believe in this group. We have the talent to turn it around.",
                     tone: .confident,
-                    mediaReaction: "\(r.outlet): \"\(team.name) boss standing behind the roster.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}\(team.name) boss standing behind the roster.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 0,
                         playerMorale: 15,
@@ -1357,7 +1461,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "We knew this might be a tough year. We're building for the long term.",
                     tone: .humble,
-                    mediaReaction: "\(r.outlet): \"Patience remains the word in \(team.city).\"",
+                    mediaReaction: "\(r.outlet): \u{201C}Patience remains the word in \(team.city).\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: -5,
                         playerMorale: 0,
@@ -1381,7 +1485,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "Same as every week. We prepare, we compete, we execute.",
                     tone: .confident,
-                    mediaReaction: "\(r.outlet): \"Business as usual for the \(team.name).\"",
+                    mediaReaction: "\(r.outlet): \u{201C}Business as usual for the \(team.name).\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 0,
                         playerMorale: 5,
@@ -1393,7 +1497,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "We've identified some things we need to clean up. The focus is on fundamentals.",
                     tone: .humble,
-                    mediaReaction: "\(r.outlet): \"\(team.name) focused on details heading into next week.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}\(team.name) focused on details heading into next week.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: 5,
@@ -1405,7 +1509,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "I can't give away our game plan! Nice try though.",
                     tone: .funny,
-                    mediaReaction: "\(r.outlet): \"Ha -- good luck getting secrets out of this front office.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}Ha -- good luck getting secrets out of this front office.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 0,
                         playerMorale: 5,
@@ -1429,7 +1533,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "Focused. This group is locked in.",
                     tone: .confident,
-                    mediaReaction: "\(r.outlet): \"\(team.name) locker room united, per sources.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}\(team.name) locker room united, per sources.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 0,
                         playerMorale: 10,
@@ -1441,7 +1545,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "We're having fun out there. When you're having fun, good things happen.",
                     tone: .funny,
-                    mediaReaction: "\(r.outlet): \"Good vibes in \(team.city) -- players enjoying the season.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}Good vibes in \(team.city) -- players enjoying the season.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 0,
                         playerMorale: 15,
@@ -1453,7 +1557,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "I'll keep that between us and the locker room.",
                     tone: .diplomatic,
-                    mediaReaction: "\(r.outlet): \"Tight-lipped approach from \(team.name) front office.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}Tight-lipped approach from \(team.name) front office.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 0,
                         playerMorale: 5,
@@ -1479,7 +1583,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "We built this roster to win. It's no surprise -- this is what we expected.",
                     tone: .confident,
-                    mediaReaction: "\(r.outlet): \"\(team.name) boss expected nothing less than dominance.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}\(team.name) boss expected nothing less than dominance.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: 5,
@@ -1491,7 +1595,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "The players deserve all the credit. They've been grinding every single day.",
                     tone: .humble,
-                    mediaReaction: "\(r.outlet): \"Selfless leadership fueling the \(team.name) surge.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}Selfless leadership fueling the \(team.name) surge.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: 15,
@@ -1503,7 +1607,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "We're not satisfied yet. Winning streaks don't mean anything in January.",
                     tone: .aggressive,
-                    mediaReaction: "\(r.outlet): \"Even on a roll, \(team.name) front office wants more.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}Even on a roll, \(team.name) front office wants more.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: -5,
@@ -1527,7 +1631,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "Absolutely. We know what the issues are and we're addressing them.",
                     tone: .confident,
-                    mediaReaction: "\(r.outlet): \"\(team.name) insists the turnaround is coming.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}\(team.name) insists the turnaround is coming.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: 10,
@@ -1539,7 +1643,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "We need to look in the mirror. Everyone. Starting with me.",
                     tone: .humble,
-                    mediaReaction: "\(r.outlet): \"\(team.name) leader takes accountability amid losing streak.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}\(team.name) leader takes accountability amid losing streak.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: 10,
@@ -1551,7 +1655,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "Changes are coming. I can promise you that.",
                     tone: .aggressive,
-                    mediaReaction: "\(r.outlet): \"SHAKEUP? \(team.name) boss hints at major changes.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}SHAKEUP? \(team.name) boss hints at major changes.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: -15,
@@ -1563,7 +1667,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "Rome wasn't built in a day. We're building something here.",
                     tone: .diplomatic,
-                    mediaReaction: "\(r.outlet): \"Patience is the message in \(team.city) despite struggles.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}Patience is the message in \(team.city) despite struggles.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: -5,
                         playerMorale: 5,
@@ -1587,7 +1691,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "We're all-in. If there's a move that makes us better, we're making it.",
                     tone: .confident,
-                    mediaReaction: "\(r.outlet): \"\(team.name) going for it at the trade deadline!\"",
+                    mediaReaction: "\(r.outlet): \u{201C}\(team.name) going for it at the trade deadline!\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: 10,
@@ -1599,7 +1703,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "We're evaluating. We won't mortgage the future for a rental.",
                     tone: .diplomatic,
-                    mediaReaction: "\(r.outlet): \"\(team.name) taking measured approach to deadline.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}\(team.name) taking measured approach to deadline.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: 0,
@@ -1611,7 +1715,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "We're listening to offers on everyone. Nobody is untouchable.",
                     tone: .aggressive,
-                    mediaReaction: "\(r.outlet): \"FIRE SALE? \(team.name) open for business at the deadline.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}FIRE SALE? \(team.name) open for business at the deadline.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 0,
                         playerMorale: -15,
@@ -1623,7 +1727,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "I'm not going to tip my hand. You'll see what we do on deadline day.",
                     tone: .funny,
-                    mediaReaction: "\(r.outlet): \"\(team.name) keeping trade plans close to the vest.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}\(team.name) keeping trade plans close to the vest.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 0,
                         playerMorale: 5,
@@ -1647,7 +1751,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "We're here to compete for a championship. Anything less is a failure.",
                     tone: .confident,
-                    mediaReaction: "\(r.outlet): \"Championship or bust for the \(team.name)!\"",
+                    mediaReaction: "\(r.outlet): \u{201C}Championship or bust for the \(team.name)!\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: 5,
@@ -1659,7 +1763,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "We want to improve every week and see where the season takes us.",
                     tone: .humble,
-                    mediaReaction: "\(r.outlet): \"\(team.name) taking it one step at a time.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}\(team.name) taking it one step at a time.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: 5,
@@ -1671,7 +1775,7 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "The offseason work is done. Now it's time to let the football do the talking.",
                     tone: .diplomatic,
-                    mediaReaction: "\(r.outlet): \"Confidence in \(team.city) as the new season kicks off.\"",
+                    mediaReaction: "\(r.outlet): \u{201C}Confidence in \(team.city) as the new season kicks off.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: 10,
@@ -1701,8 +1805,8 @@ enum PressConferenceEngine {
                         : "There were growing pains, but the foundation is stronger now.",
                     tone: .confident,
                     mediaReaction: madePlayoffs
-                        ? "\(r.outlet): \"\(team.name) ready for the postseason stage.\""
-                        : "\(r.outlet): \"\(team.name) boss sees progress despite the record.\"",
+                        ? "\(r.outlet): \u{201C}\(team.name) ready for the postseason stage.\u{201D}"
+                        : "\(r.outlet): \u{201C}\(team.name) boss sees progress despite the record.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: madePlayoffs ? 5 : 0,
                         playerMorale: 10,
@@ -1717,8 +1821,8 @@ enum PressConferenceEngine {
                         : "I owe the fans better. We'll work harder this offseason.",
                     tone: .humble,
                     mediaReaction: madePlayoffs
-                        ? "\(r.outlet): \"Focused mindset from \(team.city) heading into January.\""
-                        : "\(r.outlet): \"\(team.name) leader vows to do better next year.\"",
+                        ? "\(r.outlet): \u{201C}Focused mindset from \(team.city) heading into January.\u{201D}"
+                        : "\(r.outlet): \u{201C}\(team.name) leader vows to do better next year.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 5,
                         playerMorale: madePlayoffs ? 5 : 5,
@@ -1733,8 +1837,8 @@ enum PressConferenceEngine {
                         : "I've already started making calls. Big changes are coming.",
                     tone: .aggressive,
                     mediaReaction: madePlayoffs
-                        ? "\(r.outlet): \"\(team.name) treating playoffs as their true stage.\""
-                        : "\(r.outlet): \"Offseason overhaul incoming in \(team.city)?\"",
+                        ? "\(r.outlet): \u{201C}\(team.name) treating playoffs as their true stage.\u{201D}"
+                        : "\(r.outlet): \u{201C}Offseason overhaul incoming in \(team.city)?\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: madePlayoffs ? 5 : 0,
                         playerMorale: madePlayoffs ? 5 : -10,

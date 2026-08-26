@@ -34,7 +34,10 @@ enum SeasonPhaseGroup: String, CaseIterable, Codable {
         case .postseason:    return "Postseason"
         case .offseason:     return "Offseason"
         case .preDraft:      return "Pre-Draft"
-        case .preSeason:     return "Pre Season"
+        // Not "Pre Season": the group holds `.preseason` as one of its four
+        // sub-phases, so the rail printed "PRESEASON … PRE SEASON · STEP 3 OF 4"
+        // — the group and one of its members under two spellings of one word.
+        case .preSeason:     return "Summer"
         case .regularSeason: return "Regular Season"
         }
     }

@@ -125,21 +125,41 @@ enum OwnerBriefingCopy {
             : "Supports a long-term plan. Draft picks and player development are valued over quick fixes."
     }
 
+    /// The one patience band table. The priorities row and the patience card
+    /// sit on the same screen a few hundred points apart and used to band
+    /// differently: patience 4 was "about average — steady progress" in the row
+    /// and "wants results sooner rather than later" in the card. Every patience
+    /// readout asks this instead.
+    ///
+    /// The breaks come from the league average the row already quotes: with an
+    /// average of 5 seasons, 4–6 is the middle of the league, which is what
+    /// makes 4 average rather than impatient.
+    enum PatienceBand {
+        case shortFuse
+        case average
+        case patient
+    }
+
+    static func patienceBand(_ value: Int) -> PatienceBand {
+        if value <= 3 { return .shortFuse }
+        if value <= 6 { return .average }
+        return .patient
+    }
+
     static func patienceImplication(_ owner: Owner) -> String {
         let leagueAvg = 5
         let comparison: String
-        if owner.patience < leagueAvg - 1 {
-            comparison = "Less patient than most owners"
-        } else if owner.patience > leagueAvg + 1 {
-            comparison = "More patient than most owners"
-        } else {
-            comparison = "About average patience"
-        }
         let tail: String
-        switch owner.patience {
-        case ...3:    tail = "Win fast or face consequences."
-        case 4...6:   tail = "Steady progress expected each year."
-        default:      tail = "Time to build through the draft."
+        switch patienceBand(owner.patience) {
+        case .shortFuse:
+            comparison = "Less patient than most owners"
+            tail = "Win fast or face consequences."
+        case .average:
+            comparison = "About average patience"
+            tail = "Steady progress expected each year."
+        case .patient:
+            comparison = "More patient than most owners"
+            tail = "Time to build through the draft."
         }
         return "League avg: \(leagueAvg) seasons \u{2014} \(comparison). \(tail)"
     }
@@ -147,14 +167,21 @@ enum OwnerBriefingCopy {
     static func budgetImplication(_ owner: Owner) -> String {
         let budgetM = money(owner.coachingBudget)
         let leagueAvgM = "$38.0M"
+        // The 25 / 50 / 75 breaks are `spendingLabel`'s. Label and explainer are
+        // printed as one row, and on their own breaks the 50–60 band was handed
+        // the headline "Willing to Spend" over the tail "Modest spending".
         let tail: String
         switch owner.spendingWillingness {
-        case ...30:   tail = "Build through the draft \u{2014} free agency will be tight."
-        case 31...60: tail = "Modest spending \u{2014} be strategic with signings."
-        case 61...80: tail = "Significant resources for roster upgrades."
+        case ...24:   tail = "Build through the draft \u{2014} free agency will be tight."
+        case 25...49: tail = "Modest spending \u{2014} be strategic with signings."
+        case 50...74: tail = "Significant resources for roster upgrades."
         default:      tail = "Money is no object \u{2014} the owner backs any move."
         }
-        return "Budget: \(budgetM) (league avg: \(leagueAvgM)). \(tail)"
+        // The figure is the COACHING pot and the tail is about players. Printed
+        // as one sentence ("Budget: $47.0M … be strategic with signings") they
+        // read as one pot, so the staff envelope looked like the money that buys
+        // free agents — which is cap room, on the screen after this one.
+        return "\(tail) Coaching staff budget: \(budgetM) (league avg: \(leagueAvgM)), separate from the cap."
     }
 
     static func meddlingImplication(_ owner: Owner) -> String {
@@ -213,10 +240,14 @@ enum OwnerBriefingCopy {
     }
 
     static func patienceDescription(_ value: Int) -> String {
-        if value >= 8 { return "This owner is very patient and will give you time to build a winner through any strategy." }
-        if value >= 6 { return "The owner is moderately patient but expects steady improvement each season." }
-        if value >= 4 { return "The owner wants results sooner rather than later. Missing the playoffs repeatedly will cost you." }
-        return "This owner has a short fuse. You need wins now or your tenure will be brief."
+        switch patienceBand(value) {
+        case .patient:
+            return "This owner is patient and will give you time to build a winner through any strategy."
+        case .average:
+            return "The owner expects steady improvement every season. Missing the playoffs repeatedly will cost you."
+        case .shortFuse:
+            return "This owner has a short fuse. You need wins now or your tenure will be brief."
+        }
     }
 
     static func warnings(owner: Owner, career: Career) -> [String] {
@@ -249,9 +280,11 @@ enum OwnerBriefingCopy {
     }
 
     static func patienceColor(_ value: Int) -> Color {
-        if value >= 7 { return Color.success }
-        if value >= 4 { return Color.warning }
-        return Color.dangerText
+        switch patienceBand(value) {
+        case .patient:   return Color.success
+        case .average:   return Color.warning
+        case .shortFuse: return Color.dangerText
+        }
     }
 
     static func jobSecurityColor(_ level: OwnerPersonaEngine.JobSecurityLevel) -> Color {
@@ -611,11 +644,6 @@ struct OwnerPatienceCard: View {
     let owner: Owner
     let career: Career
 
-    private var seasonsBeforeReview: String {
-        let remaining = max(0, owner.patience - career.yearsFired)
-        return remaining == 0 ? "This Season" : "\(remaining)"
-    }
-
     var body: some View {
         OwnerCard(icon: "hourglass", title: "Owner Patience") {
             VStack(alignment: .leading, spacing: DSSpacing.sm) {
@@ -625,9 +653,16 @@ struct OwnerPatienceCard: View {
                         value: "\(owner.patience)/10",
                         color: OwnerBriefingCopy.patienceColor(owner.patience)
                     )
+                    // `OwnerPersonaEngine.evaluateSeason` runs once a year, in
+                    // the `.superBowl` phase, for every owner — patience sets
+                    // how harsh the verdict is, not how long until it comes.
+                    // This column used to print `patience - yearsFired`, a
+                    // countdown that could never move: `yearsFired` is
+                    // incremented at the moment the coach is fired, and that
+                    // same moment ends the career.
                     statColumn(
-                        label: "Seasons before review",
-                        value: seasonsBeforeReview,
+                        label: "Owner review",
+                        value: "Every Season",
                         color: Color.textPrimary
                     )
                     statColumn(
@@ -674,8 +709,14 @@ struct OwnerBudgetCard: View {
     /// The hub links to the reallocation screen; the intro cannot.
     var link: OwnerBriefingLink?
 
-    private var total: Int {
-        owner.coachingBudget + owner.scoutingBudget + owner.medicalBudget
+    /// The sum of what the three columns SHOW, not the exact sum rounded once.
+    /// Each column rounds to a tenth of a million on its own, so a total
+    /// rounded independently can print a figure the columns visibly contradict:
+    /// $47.0M + $4.1M + $2.8M under a head that read $53.8M.
+    private var shownTotal: String {
+        let shown = [owner.coachingBudget, owner.scoutingBudget, owner.medicalBudget]
+            .reduce(0.0) { $0 + (Double(String(format: "%.1f", Double($1) / 1_000.0)) ?? 0) }
+        return String(format: "$%.1fM", shown)
     }
 
     var body: some View {
@@ -683,7 +724,7 @@ struct OwnerBudgetCard: View {
             icon: "dollarsign.circle.fill",
             title: "Staff Budget Envelope",
             trailing: AnyView(
-                Text(OwnerBriefingCopy.money(total))
+                Text(shownTotal)
                     .font(DSType.display(DSType.Size.callout, .heavy))
                     .foregroundStyle(Color.textPrimary)
             )
@@ -703,7 +744,14 @@ struct OwnerBudgetCard: View {
 
                 // TODO §5.4: the facilities envelope is a separate pot from the
                 // three above, and the owner meeting is where he says what he
-                // thinks of the buildings he pays for.
+                // thinks of the buildings he pays for. The quote names a fourth
+                // figure inside a card whose total excludes it, so the label
+                // says so before he speaks.
+                Text("FACILITIES \u{00B7} SEPARATE ENVELOPE")
+                    .font(DSType.display(11, .semibold))
+                    .tracking(0.5)
+                    .foregroundStyle(Color.textTertiaryReadable)
+
                 HStack(alignment: .top, spacing: DSSpacing.xs) {
                     Image(systemName: "quote.opening")
                         .font(.system(size: 11))
@@ -745,12 +793,22 @@ struct OwnerGoalsCard: View {
 
     private var met: Int { goals.filter(\.isAchieved).count }
 
+    /// Whether the season has produced anything for the counter to count. The
+    /// intro's briefing builds both goals unmet and untracked, so the first
+    /// owner meeting of a career headed itself "0/2 met" — a zero score for a
+    /// season nobody has played yet.
+    private var hasReading: Bool {
+        goals.contains { $0.isAchieved || $0.progress != nil }
+    }
+
     var body: some View {
         OwnerCard(
             icon: "target",
             title: "Season Goals",
             trailing: AnyView(
-                Text("\(met)/\(goals.count) met")
+                Text(hasReading
+                     ? "\(met)/\(goals.count) met"
+                     : "\(goals.count) goal\(goals.count == 1 ? "" : "s")")
                     .font(DSType.display(DSType.Size.footnote, .heavy))
                     .foregroundStyle(Color.textSecondary)
             )

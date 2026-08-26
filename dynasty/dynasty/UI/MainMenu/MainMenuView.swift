@@ -253,10 +253,21 @@ struct MainMenuView: View {
         if isGameWeek && career.currentWeek > 0 {
             progressFragment = String(localized: "Week \(career.currentWeek), \(seasonText) season")
         } else {
-            progressFragment = "\(phaseLabel(career.currentPhase)) — \(String(localized: "\(seasonText) season"))"
+            // A bare phase name is no anchor: "Coaching Changes" does not tell a
+            // returning player that the season is over, the way "Week 9" tells
+            // him where he is. The group does. The regular-season group is left
+            // bare on purpose — "Regular Season · Playoffs" contradicts itself.
+            let phaseText = phaseLabel(career.currentPhase)
+            let anchored = career.currentPhase.group == .regularSeason
+                ? phaseText
+                : "\(career.currentPhase.group.displayName) \u{00B7} \(phaseText)"
+            progressFragment = "\(anchored), \(String(localized: "\(seasonText) season"))"
         }
 
-        return String(localized: "CONTINUE: \(teamName)  -  \(progressFragment)").uppercased()
+        // One separator level, the right way round: the em-dash makes the big
+        // break (team → progress) and the middot the small ones inside it. It
+        // used to be a thin hyphen outside and an em-dash inside.
+        return String(localized: "CONTINUE: \(teamName) \u{2014} \(progressFragment)").uppercased()
     }
 
     private func phaseLabel(_ phase: SeasonPhase) -> String {

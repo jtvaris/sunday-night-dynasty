@@ -183,7 +183,15 @@ struct DraftPrepStageCell: Identifiable, Equatable {
                 : "\(stage.counter) \u{00B7} spends 1 scouting week"
         case .locked:
             self.subcaption = DraftPrepStageCell.unlockCaption(for: step, stage: stage)
-        case .done, .open:
+        case .open:
+            // A stage the club walked past but may still work in was the only
+            // slat drawing nothing at all — no tick, no counter, no caption —
+            // sitting between two that did. It is also the one state where the
+            // number changes a decision, because the ration is unspent and the
+            // screen behind it is live. A read has no ration to report, so it
+            // keeps its bare label.
+            self.subcaption = stage.isCounted ? "\(stage.counter) \u{00B7} still open" : nil
+        case .done:
             self.subcaption = nil
         }
         // A counted stage says what it banked; a read says nothing beyond its

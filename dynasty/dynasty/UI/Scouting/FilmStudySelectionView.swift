@@ -116,6 +116,9 @@ struct FilmStudySelectionView<Board: View>: View {
     /// The lowest next-report price anywhere in the class that still has room.
     /// `nil` when every man is at three reports. Drives ``cycleIsSpent``.
     @State private var cheapestWorkableCost: Int?
+    /// The same figure over the RECOMMENDED block alone. Drives
+    /// ``recommendedHasAffordableMan``.
+    @State private var cheapestRecommendedCost: Int?
 
     // MARK: - Screen state
 
@@ -249,19 +252,21 @@ struct FilmStudySelectionView<Board: View>: View {
 
     /// Everyone the filter shows, in consensus board order.
     ///
-    /// Ordered by `draftProjection` — public, media information — and never by
-    /// anything derived from `trueOverall`. Sorting a list by the generator's own
-    /// number is the quietest disclosure channel there is: nothing prints, the
+    /// `DraftIntel.mediaConsensusOrder` is the board every other screen quotes,
+    /// and every key it reads is published: the latest mock's slot, the
+    /// projected round, the combine invite, college production. Never anything
+    /// derived from `trueOverall` — sorting a list by the generator's own number
+    /// is the quietest disclosure channel there is: nothing prints, the
     /// unscouted stud just happens to be at the top.
+    ///
+    /// The local sort this replaced was the projected round and then SURNAME,
+    /// and a round is a seven-value key over 350 men — so the tie-break did all
+    /// the work and the block headed "top of the consensus board" was an
+    /// alphabet running Ackerly, Broadwater, Brockway.
     private func computeOrderedProspects() -> [CollegeProspect] {
         prospects
             .filter { positionFilter.matches($0.position) }
-            .sorted {
-                let a = $0.draftProjection ?? 99
-                let b = $1.draftProjection ?? 99
-                if a != b { return a < b }
-                return $0.lastName < $1.lastName
-            }
+            .sorted(by: DraftIntel.mediaConsensusOrder)
     }
 
     /// Reports already on a man, counted the way the price ladder counts them.
@@ -288,10 +293,16 @@ struct FilmStudySelectionView<Board: View>: View {
         ScoutEvaluationBudget.cost(existingReports: reportsOnFile(prospect))
     }
 
-    /// A tape report THIS regime ordered — the same predicate the prospect
-    /// card's Film Study pill uses. The pre-scout "Previous Staff" rows are
-    /// inherited intel and the workout files its own `.personalWorkout` report,
-    /// so neither may claim work this staff paid for.
+    /// A tape report somebody in THIS building filed — the same predicate the
+    /// prospect card's Film Study pill uses. The pre-scout "Previous Staff" rows
+    /// are inherited intel and the workout files its own `.personalWorkout`
+    /// report, so neither may claim work this department did.
+    ///
+    /// It is NOT "a report the user ordered here". A season of free weekly
+    /// regional work (`ScoutingEngine.generateWeeklyReports`), the combine trip
+    /// and the Showcase all file under a real scout's name and all land in this
+    /// count, which is why nothing built on it may be labelled as this cycle's
+    /// ORDER — see ``computeFiledEntries``.
     private func hasOwnFilmReport(_ prospect: CollegeProspect) -> Bool {
         prospect.scoutingReports.contains {
             $0.scoutName != "Previous Staff" && $0.phase != .personalWorkout
@@ -332,12 +343,7 @@ struct FilmStudySelectionView<Board: View>: View {
     private var selectedProspects: [CollegeProspect] {
         prospects
             .filter { selectedIDs.contains($0.id) }
-            .sorted {
-                let a = $0.draftProjection ?? 99
-                let b = $1.draftProjection ?? 99
-                if a != b { return a < b }
-                return $0.lastName < $1.lastName
-            }
+            .sorted(by: DraftIntel.mediaConsensusOrder)
     }
 
     /// Thousands this order would cost, priced per man at his own next-report
@@ -375,6 +381,23 @@ struct FilmStudySelectionView<Board: View>: View {
         }
     }
 
+    /// Whether "Select All Recommended" can still add anybody.
+    ///
+    /// The two limits `canAdd` applies, asked once of the CHEAPEST man in the
+    /// block rather than of every man in it: if he does not fit, nobody in the
+    /// block does. Cached for the same reason ``cycleIsSpent`` is — this is read
+    /// on every body pass.
+    ///
+    /// Without it the pill stayed live and gold over thirteen greyed rows and
+    /// inserted nothing when tapped: `selectAllRecommended` walks the block with
+    /// `guard canAdd else { continue }`, so an unaffordable block makes the
+    /// screen's one mass action a no-op with no feedback at all.
+    private var recommendedHasAffordableMan: Bool {
+        guard canAct, selectedIDs.count < evaluationSlotsLeft else { return false }
+        guard let cheapest = cheapestRecommendedCost else { return false }
+        return selectedSpend + cheapest <= remainingScoutingBudget
+    }
+
     /// Fills the selection from `recommendedProspects`, in order, stopping at
     /// whichever limit binds first.
     ///
@@ -410,7 +433,12 @@ struct FilmStudySelectionView<Board: View>: View {
             return "All \(ScoutEvaluationBudget.slotsPerCycle) evaluations are spent this cycle"
         }
         if selectedIDs.isEmpty {
-            return "Select Prospects to Put on Tape"
+            // THE VERB STAYS ON THE BUTTON. This read "Select Prospects to Put
+            // on Tape" — an instruction printed on a disabled control, which
+            // tells the user to go and do something the thing he is looking at
+            // will not do. Every other case here names the order and then the
+            // obstacle; the empty selection is not the exception.
+            return "Order Film Study \u{2014} nobody ticked yet"
         }
         // The ledger can move UNDER a standing selection — the combine trip
         // and the card's own order both spend this pot — so the bar must
@@ -444,6 +472,15 @@ struct FilmStudySelectionView<Board: View>: View {
     // MARK: - Filed reports (the steady state)
 
     /// Every man this regime has tape on, as report entries.
+    ///
+    /// The department's file on the class, and deliberately wider than the
+    /// evaluation ledger: the free weekly regional reports and the combine trip
+    /// are in here too. So the counter this feeds and the "\(evaluationsUsed)/25
+    /// used" pill measure two different things, and the screen shipped saying
+    /// both — "0/25 reports" eight points from "View Report (46)", over a saved
+    /// report headed "FILM STUDY — THIS CYCLE · 46 reports filed · $0K spent".
+    /// Every label over this list names the FILE now; only the ledger's own
+    /// numbers may say "ordered" or "this cycle".
     ///
     /// Rebuilt from what is STAMPED ON THE PROSPECTS rather than remembered
     /// across a batch, so the summary survives a tab switch and a relaunch
@@ -697,11 +734,14 @@ struct FilmStudySelectionView<Board: View>: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Complete Film Study \u{2014} Advance")
                                 .font(.subheadline.weight(.bold))
-                            Text(filedCache.isEmpty
+                            // The EVALUATION LEDGER, not the department's file:
+                            // this sentence says "this cycle", and `filedCache`
+                            // counts a season of free regional work as well.
+                            Text(evaluationsUsed == 0
                                  ? "No tape ordered this cycle \u{2014} \(target.displayName) next"
-                                 : (filedCache.count == 1
-                                    ? "1 report filed \u{2014} \(target.displayName) next"
-                                    : "\(filedCache.count) reports filed \u{2014} \(target.displayName) next"))
+                                 : (evaluationsUsed == 1
+                                    ? "1 report ordered \u{2014} \(target.displayName) next"
+                                    : "\(evaluationsUsed) reports ordered \u{2014} \(target.displayName) next"))
                                 .font(.caption)
                                 .opacity(0.85)
                         }
@@ -877,12 +917,7 @@ struct FilmStudySelectionView<Board: View>: View {
                     tableHeader
 
                     if !recommendedCache.isEmpty {
-                        sectionHeader(
-                            "RECOMMENDED",
-                            subtitle: recommendedCache.contains(where: isOnUserBoard)
-                                ? "The men on your board who still have room for a report"
-                                : "Top of the consensus board \u{2014} mark men to make this your own"
-                        )
+                        sectionHeader("RECOMMENDED", subtitle: recommendedSubtitle)
                         ForEach(recommendedCache) { prospect in
                             prospectRow(prospect)
                             Divider().overlay(Color.surfaceBorder.opacity(0.3))
@@ -925,8 +960,11 @@ struct FilmStudySelectionView<Board: View>: View {
 
             Spacer()
 
-            // Surfaces the reports already filed so the "Order film study"
-            // dashboard task can be reviewed mid-cycle, before the slots run out.
+            // The department's whole file on the class, reviewable mid-cycle.
+            // Labelled as the FILE and not as a report this staff ordered: it
+            // counts the free weekly regional work too, so "View Report (46)"
+            // beside a "25/25 evaluations remaining" that had never been spent
+            // read as forty-six orders nobody placed.
             if !filedCache.isEmpty {
                 Button {
                     viewingFiledReport = true
@@ -934,7 +972,7 @@ struct FilmStudySelectionView<Board: View>: View {
                     HStack(spacing: 3) {
                         Image(systemName: "doc.text.magnifyingglass")
                             .font(.system(size: DSType.Size.caption))
-                        Text("View Report (\(filedCache.count))")
+                        Text("Department File (\(filedCache.count))")
                             .font(.system(size: DSType.Size.footnote, weight: .bold))
                     }
                     .foregroundStyle(Color.accentGold)
@@ -946,18 +984,7 @@ struct FilmStudySelectionView<Board: View>: View {
             }
 
             if !recommendedCache.isEmpty {
-                Button {
-                    selectAllRecommended()
-                } label: {
-                    Text("Select All Recommended")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(Color.accentGold)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Capsule().fill(Color.accentGold.opacity(0.12)))
-                }
-                .buttonStyle(.plain)
-                .accessibilityHint("Fills the order from the recommended list until the slots or the budget run out")
+                selectAllRecommendedPill
             }
 
             if !selectedIDs.isEmpty {
@@ -977,6 +1004,50 @@ struct FilmStudySelectionView<Board: View>: View {
         .padding(.horizontal, 20)
         .padding(.vertical, 6)
         .background(Color.backgroundTertiary.opacity(0.4))
+    }
+
+    /// The RECOMMENDED block's subtitle, and the sentence it owes the user when
+    /// the block is dead.
+    ///
+    /// Thirteen greyed rows under a header promising the top of the board said
+    /// nothing about WHY none of them could be ticked, while the action bar a
+    /// few points above read a healthy white "25/25 evaluations remaining". The
+    /// slots were never the binding limit there; the pot was, and this is where
+    /// it gets said.
+    private var recommendedSubtitle: String {
+        if canAct, selectedIDs.count < evaluationSlotsLeft, !recommendedHasAffordableMan {
+            if let cheapest = cheapestWorkableCost, cheapest <= budgetLeftAfterOrder {
+                return "$\(budgetLeftAfterOrder)K left \u{2014} none of these fit. The cheapest first look in the class is $\(cheapest)K, further down."
+            }
+            return "$\(budgetLeftAfterOrder)K left \u{2014} not enough for another report this cycle."
+        }
+        return recommendedCache.contains(where: isOnUserBoard)
+            ? "The men on your board who still have room for a report"
+            : "Top of the consensus board \u{2014} mark men to make this your own"
+    }
+
+    /// The mass-selection pill, and the state where it cannot do anything.
+    ///
+    /// A pill that is still gold when every recommended man is over budget is a
+    /// button that lies twice: it invites the tap, and then it says nothing when
+    /// the tap adds nobody.
+    private var selectAllRecommendedPill: some View {
+        let canFill = recommendedHasAffordableMan
+        return Button {
+            selectAllRecommended()
+        } label: {
+            Text(canFill ? "Select All Recommended" : "None Affordable")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(canFill ? Color.accentGold : Color.textTertiary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Capsule().fill(canFill ? Color.accentGold.opacity(0.12) : Color.backgroundTertiary))
+        }
+        .buttonStyle(.plain)
+        .disabled(!canFill)
+        .accessibilityHint(canFill
+                           ? "Fills the order from the recommended list until the slots or the budget run out"
+                           : "Nothing in the recommended list fits what is left of the budget")
     }
 
     private func sectionHeader(_ title: String, subtitle: String?) -> some View {
@@ -1336,6 +1407,14 @@ struct FilmStudySelectionView<Board: View>: View {
         reportsByID = filed
         costByID = costs
         cheapestWorkableCost = cheapest
+        // The block's own cheapest man, off the map the walk above just built.
+        // `cycleIsSpent` asks the whole class and so only fires when NOTHING is
+        // buyable; the common dead end is a ranked block nobody can afford with
+        // a $15K first look three hundred rows further down.
+        cheapestRecommendedCost = recommended
+            .filter { (filed[$0.id] ?? 0) < ScoutEvaluationBudget.maxReportsPerProspect }
+            .compactMap { costs[$0.id] }
+            .min()
         filedCache = computeFiledEntries()
 
         // A man the batch just took to three reports must not keep charging the
@@ -1468,14 +1547,19 @@ struct FilmStudyBatchReportView: View {
 
     private var reportHeader: some View {
         HStack {
-            Text(isSavedReport ? "FILM STUDY \u{2014} THIS CYCLE" : "FILM STUDY REPORT")
+            Text(isSavedReport ? "YOUR DEPARTMENT'S FILE" : "FILM STUDY REPORT")
                 .font(.system(size: 16, weight: .heavy))
                 .foregroundStyle(Color.accentGold)
                 .tracking(0.5)
 
             Spacer()
 
-            Text("\(batch.entries.count) report\(batch.entries.count == 1 ? "" : "s") filed")
+            // The saved list is every man the building has graded — the free
+            // weekly regional work included — so it counts MEN, and leaves
+            // "filed" to the batch that was actually ordered and paid for.
+            Text(isSavedReport
+                 ? (batch.entries.count == 1 ? "1 man graded" : "\(batch.entries.count) men graded")
+                 : "\(batch.entries.count) report\(batch.entries.count == 1 ? "" : "s") filed")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(Color.textSecondary)
         }
@@ -1493,7 +1577,9 @@ struct FilmStudyBatchReportView: View {
             HStack(spacing: 12) {
                 summaryPill(
                     icon: "doc.text.magnifyingglass",
-                    text: "\(batch.entries.count) filed by \(batch.scoutName)",
+                    text: isSavedReport
+                        ? (batch.entries.count == 1 ? "1 man on file" : "\(batch.entries.count) men on file")
+                        : "\(batch.entries.count) filed by \(batch.scoutName)",
                     color: .accentGold
                 )
                 summaryPill(icon: "calendar", text: batch.occasion, color: .textSecondary)

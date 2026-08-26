@@ -90,7 +90,13 @@ struct DSStatusPill: View {
                     .font(DSType.display(11, .heavy))
             }
         }
-        .foregroundStyle(tone.isEmpty ? Color.textTertiary.opacity(0.75) : tone.tint)
+        // NO DIM ON `empty`. `textTertiary` was retuned to #8A96A8 precisely so
+        // it clears AA on every surface the app paints it on (4.87 : 1 at
+        // worst); 75 % of it measures 3.69 : 1 on a card, which puts the one
+        // tone that exists to be READ back under the floor the token was
+        // lightened to clear. The dash and the missing dot already say
+        // "unfilled" — the ink does not have to say it a third time.
+        .foregroundStyle(tone.tint)
         .lineLimit(1)
         .fixedSize(horizontal: true, vertical: false)
         .padding(.horizontal, 4)

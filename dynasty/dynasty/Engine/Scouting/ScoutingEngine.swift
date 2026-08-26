@@ -3662,38 +3662,66 @@ enum ScoutingEngine {
         return pcts.reduce(0, +) / pcts.count
     }
 
+    /// The wire line for a standout.
+    ///
+    /// Surname, not `fullName`: the combine report row and the media popover
+    /// both draw the man's full name directly above this sentence, so opening
+    /// with it printed "Jamari Goddard / Jamari Goddard posts elite combine
+    /// numbers…". Dropping the name entirely is not available — the same string
+    /// is the standalone headline of a news item
+    /// (`NewsGenerator.combineMediaNews`), where a subjectless sentence has
+    /// nobody in it — and a surname is how a wire desk writes the second
+    /// reference anyway.
+    ///
+    /// The branches also asked a different question than the selection did. A
+    /// man reaches this function because `isElite` found one of his drills in
+    /// the top 5% FOR HIS POSITION, and the copy then tested absolute numbers —
+    /// a sub-4.40 forty, 35 bench reps, a 40" vertical — which an interior
+    /// lineman elite on the bench FOR A LINEMAN never meets. Three standouts in
+    /// four fell through to the one generic sentence. Each drill now has its
+    /// own line, gated on the same test that put him on the list.
     private static func standoutHeadline(for p: CollegeProspect) -> String {
-        if let ft = p.fortyTime, ft < 4.40 {
-            return "\(p.fullName) blazes \(String(format: "%.2f", ft)) 40-yard dash — first round stock!"
+        let bm = CombineBenchmarks.benchmarks(for: p.position)
+        if let ft = p.fortyTime, isElite(ft, benchmark: bm.fortyYard) {
+            return "\(p.lastName) blazes a \(String(format: "%.2f", ft)) forty — first-round wheels"
         }
-        if let bp = p.benchPress, bp >= 35 {
-            return "\(p.fullName) powers through \(bp) bench reps, dominates strength testing"
+        if let vj = p.verticalJump, isElite(vj, benchmark: bm.verticalJump) {
+            return "\(p.lastName) soars to a \(String(format: "%.1f", vj))\" vertical, rare explosion off the ground"
         }
-        if let vj = p.verticalJump, vj >= 40.0 {
-            return "\(p.fullName) soars with \(String(format: "%.1f", vj))\" vertical, elite athleticism on display"
+        if let bj = p.broadJump, isElite(Double(bj), benchmark: bm.broadJump) {
+            return "\(p.lastName) broad jumps \(bj / 12)'\(bj % 12)\", top of the class in lower-body power"
         }
-        return "\(p.fullName) posts elite combine numbers across the board"
+        if let bp = p.benchPress, isElite(Double(bp), benchmark: bm.benchPress) {
+            return "\(p.lastName) powers out \(bp) bench reps, dominating the strength testing"
+        }
+        if let cone = p.coneDrill, isElite(cone, benchmark: bm.threeCone) {
+            return "\(p.lastName) bends a \(String(format: "%.2f", cone)) three-cone, elite change of direction for the position"
+        }
+        if let shuttle = p.shuttleTime, isElite(shuttle, benchmark: bm.shuttle) {
+            return "\(p.lastName) fires a \(String(format: "%.2f", shuttle)) short shuttle, elite short-area quickness"
+        }
+        return "\(p.lastName) posts elite combine numbers across the board"
     }
 
     private static func riserHeadline(for p: CollegeProspect) -> String {
         if let ft = p.fortyTime {
-            return "\(p.fullName) surprises with \(String(format: "%.2f", ft)) 40, vaults up draft boards"
+            return "\(p.lastName) surprises with a \(String(format: "%.2f", ft)) forty, vaults up draft boards"
         }
-        return "\(p.fullName) impresses at combine, stock soaring"
+        return "\(p.lastName) impresses at the combine, stock soaring"
     }
 
     private static func fallerHeadline(for p: CollegeProspect) -> String {
         if let ft = p.fortyTime, ft > 4.70 {
-            return "\(p.fullName) disappoints with \(String(format: "%.2f", ft)) 40-time, stock drops"
+            return "\(p.lastName) disappoints with a \(String(format: "%.2f", ft)) forty, stock drops"
         }
-        return "\(p.fullName) underwhelms at combine, raising red flags for scouts"
+        return "\(p.lastName) underwhelms at the combine, raising red flags for scouts"
     }
 
     private static func surpriseHeadline(for p: CollegeProspect) -> String {
         if let ft = p.fortyTime, ft < 4.50 {
-            return "Unknown \(p.position.rawValue) \(p.fullName) runs \(String(format: "%.2f", ft)) 40, turns heads at combine"
+            return "Unheralded \(p.position.rawValue) \(p.lastName) runs a \(String(format: "%.2f", ft)), turns heads at the combine"
         }
-        return "Late-round prospect \(p.fullName) steals the show with elite testing"
+        return "Late-round projection \(p.lastName) steals the show with elite testing"
     }
 
     // MARK: - Risk Profile (Medical & Character)

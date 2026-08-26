@@ -12,7 +12,7 @@ struct FACompleteView: View {
     @State private var recentSignings: [SigningDetail] = []
     @State private var lostPlayers: [LostPlayerDetail] = []
     @State private var leagueSignings: [LeagueSigningDetail] = []
-    @State private var faGrade: FAGradeResult = .init(grade: "C", explanation: "Evaluating...", score: 50)
+    @State private var faGrade: FAGradeResult = .init(grade: "C", explanation: "Evaluating...", score: 50, components: [])
     @State private var beforeAfter: BeforeAfterComparison?
     @State private var remainingNeeds: [(position: Position, level: String)] = []
     @State private var compPickEstimate: [String] = []
@@ -30,7 +30,10 @@ struct FACompleteView: View {
         let annualSalary: Int
         let years: Int
         let totalValue: Int
-        let guaranteedMoney: Int
+        /// The deal's real guarantee, off the `Contract` row. `nil` in simple and
+        /// sandbox mode, which carry no contract row and therefore no guarantee to
+        /// quote — the chip is dropped rather than invented.
+        let guaranteedMoney: Int?
         let marketValue: Int
         let replacesPlayer: String?
         let ovrUpgrade: Int?
@@ -67,6 +70,22 @@ struct FACompleteView: View {
         let grade: String
         let explanation: String
         let score: Int
+        /// The signed terms the score was built from. `calculateFAGrade` had them
+        /// as locals and threw them away for a canned sentence, which is how a "D"
+        /// ends up unarguable. Empty when there is no arithmetic worth showing —
+        /// the "nobody moved" baseline.
+        let components: [GradeComponent]
+    }
+
+    /// One line of the grade's working.
+    struct GradeComponent {
+        let label: String
+        let points: Double
+
+        var pointsText: String {
+            let rounded = Int(points.rounded())
+            return rounded > 0 ? "+\(rounded)" : "\(rounded)"
+        }
     }
 
     struct BeforeAfterComparison {
@@ -241,18 +260,25 @@ struct FACompleteView: View {
 
             // Quick highlight bar: top signing or biggest loss
             if let topSigning = recentSignings.first {
+                // The capsule used to be green with an up-arrow whatever the deal
+                // was, so a "Big Overpay" got celebrated three inches under a
+                // "critical needs went unaddressed" headline and beside its own
+                // red chip — one man, three verdicts, one screen. The deal's own
+                // value tag paints it now, and says which verdict it is.
+                let tone = headlineTone(topSigning.valueTag)
+                let tint = valueTagColor(topSigning.valueTag)
                 HStack(spacing: 6) {
-                    Image(systemName: "arrow.up.right.circle.fill")
+                    Image(systemName: tone.icon)
                         .font(.caption)
-                        .foregroundStyle(Color.success)
-                    Text("Headline signing: \(topSigning.name) (\(topSigning.position.rawValue), \(topSigning.overall) OVR)")
+                        .foregroundStyle(tint)
+                    Text("\(tone.lead): \(topSigning.name) (\(topSigning.position.rawValue), \(topSigning.overall) OVR) \u{2014} \(topSigning.valueTag.rawValue)")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(Color.textPrimary)
                         .lineLimit(1)
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
-                .background(Color.success.opacity(0.10), in: Capsule())
+                .background(tint.opacity(0.10), in: Capsule())
             } else if let topLoss = lostPlayers.first {
                 HStack(spacing: 6) {
                     Image(systemName: "arrow.down.right.circle.fill")
@@ -331,7 +357,13 @@ struct FACompleteView: View {
                     label: "Cap Used",
                     before: formatMillions(ba.capUsedBefore),
                     after: formatMillions(ba.capUsedAfter),
-                    improved: true
+                    // Spending has no good direction on this page. It used to be
+                    // hardcoded `improved: true`, so a club that saved its room by
+                    // signing nobody and a club that spent it on a starter both got
+                    // the same green — even under a "critical needs went
+                    // unaddressed" headline. The rows either side carry the verdict;
+                    // this one carries the number.
+                    improved: nil
                 )
                 comparisonRow(
                     label: "Starter Gaps",
@@ -346,7 +378,9 @@ struct FACompleteView: View {
         .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.surfaceBorder, lineWidth: 1))
     }
 
-    private func comparisonRow(label: String, before: String, after: String, improved: Bool) -> some View {
+    /// `improved` is optional: `nil` is a row whose movement carries no verdict,
+    /// and it renders in plain text rather than borrowing success or warning paint.
+    private func comparisonRow(label: String, before: String, after: String, improved: Bool?) -> some View {
         HStack {
             Text(label)
                 .font(.subheadline)
@@ -360,7 +394,7 @@ struct FACompleteView: View {
                 .foregroundStyle(Color.textTertiary)
             Text(after)
                 .font(.subheadline.weight(.bold).monospacedDigit())
-                .foregroundStyle(improved ? Color.success : Color.warning)
+                .foregroundStyle(improved.map { $0 ? Color.success : Color.warning } ?? Color.textPrimary)
         }
     }
 
@@ -384,13 +418,44 @@ struct FACompleteView: View {
                         .font(.subheadline)
                         .foregroundStyle(Color.textPrimary)
                         .fixedSize(horizontal: false, vertical: true)
+
+                    // The half of this card that used to be empty. The letter is
+                    // built from four separable terms and the user is entitled to
+                    // see which one cost him the grade.
+                    if !faGrade.components.isEmpty {
+                        Divider().overlay(Color.surfaceBorder)
+                            .padding(.vertical, 2)
+
+                        ForEach(Array(faGrade.components.enumerated()), id: \.offset) { _, term in
+                            gradeTermRow(label: term.label, value: term.pointsText,
+                                         tint: term.points < 0 ? Color.warning : Color.textSecondary)
+                        }
+
+                        Divider().overlay(Color.surfaceBorder)
+                            .padding(.vertical, 2)
+
+                        gradeTermRow(label: "Score", value: "\(faGrade.score)", tint: Color.textPrimary)
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 16)
         }
         .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.surfaceBorder, lineWidth: 1))
+    }
+
+    private func gradeTermRow(label: String, value: String, tint: Color) -> some View {
+        HStack {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(Color.textSecondary)
+            Spacer()
+            Text(value)
+                .font(.caption.weight(.bold).monospacedDigit())
+                .foregroundStyle(tint)
+        }
     }
 
     // MARK: - Your FA Signings
@@ -412,7 +477,7 @@ struct FACompleteView: View {
                             .foregroundStyle(Color.textPrimary)
                             .frame(width: 30)
                             .padding(.vertical, 3)
-                            .background(Color.accentBlue, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
+                            .background(positionSideColor(signing.position), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
 
                         Text(signing.name)
                             .font(.subheadline.weight(.semibold))
@@ -439,7 +504,9 @@ struct FACompleteView: View {
                     HStack(spacing: 12) {
                         Label("\(signing.years)yr", systemImage: "calendar")
                         Label(formatMillions(signing.totalValue) + " total", systemImage: "dollarsign.circle")
-                        Label(formatMillions(signing.guaranteedMoney) + " gtd", systemImage: "lock.fill")
+                        if let guaranteed = signing.guaranteedMoney {
+                            Label(formatMillions(guaranteed) + " gtd", systemImage: "lock.fill")
+                        }
                     }
                     .font(.caption2)
                     .foregroundStyle(Color.textTertiary)
@@ -482,7 +549,7 @@ struct FACompleteView: View {
                         .foregroundStyle(Color.textPrimary)
                         .frame(width: 30)
                         .padding(.vertical, 3)
-                        .background(Color.danger.opacity(0.6), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
+                        .background(positionSideColor(player.position), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
 
                     Text(player.name)
                         .font(.subheadline)
@@ -528,7 +595,7 @@ struct FACompleteView: View {
                         .foregroundStyle(Color.textPrimary)
                         .frame(width: 30)
                         .padding(.vertical, 3)
-                        .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
+                        .background(positionSideColor(signing.position), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
 
                     Text(signing.playerName)
                         .font(.subheadline)
@@ -696,6 +763,29 @@ struct FACompleteView: View {
         }
     }
 
+    /// The header capsule's glyph and lead-in. A deal the club paid over the odds
+    /// for is not a "headline signing", it is the biggest cheque written.
+    private func headlineTone(_ tag: ValueTag) -> (icon: String, lead: String) {
+        switch tag {
+        case .steal, .goodValue: return ("arrow.up.right.circle.fill", "Headline signing")
+        case .fairDeal:          return ("checkmark.circle.fill", "Headline signing")
+        case .overpay:           return ("exclamationmark.circle.fill", "Biggest commitment")
+        case .bigOverpay:        return ("arrow.down.right.circle.fill", "Biggest commitment")
+        }
+    }
+
+    /// Side of ball, the one thing a position chip means everywhere else in the
+    /// app (`RosterView.positionSideColor`, the cap sheet, the roster screens).
+    /// This screen used to paint the chip by SIGNED / LOST instead, so the same
+    /// MLB badge was blue here and red on Cap Review one tap earlier.
+    private func positionSideColor(_ position: Position) -> Color {
+        switch position.side {
+        case .offense:      return .accentBlue
+        case .defense:      return .danger
+        case .specialTeams: return .accentGold
+        }
+    }
+
     // MARK: - Load Data
 
     private func loadData() {
@@ -713,6 +803,20 @@ struct FACompleteView: View {
         ))) ?? []
         let myPlayers = allPlayers.filter { $0.teamID == teamID }
         baseSalaryCap = FASigningTracker.getBaseSalaryCap()
+
+        // The guarantee is a TERM of the deal, not a fraction of it. This card
+        // used to print 55 % of total value, so every signing in the game read
+        // exactly 55 % guaranteed and none of them matched what walking away
+        // would actually cost — `Contract.deadCap` charges the real guarantee
+        // (F-61), and a summary screen that quotes a different number is a
+        // screen the user plans against and loses.
+        let contractRows = (try? modelContext.fetch(FetchDescriptor<Contract>(
+            predicate: #Predicate<Contract> { $0.teamID == teamID }
+        ))) ?? []
+        let contractsByPlayer = Dictionary(
+            contractRows.map { ($0.playerID, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
 
         // --- Signings ---
         let signingIDs = FASigningTracker.getSigningIDs()
@@ -748,7 +852,7 @@ struct FACompleteView: View {
                 annualSalary: player.annualSalary,
                 years: player.contractYearsRemaining,
                 totalValue: player.annualSalary * player.contractYearsRemaining,
-                guaranteedMoney: Int(Double(player.annualSalary * player.contractYearsRemaining) * 0.55),
+                guaranteedMoney: contractsByPlayer[player.id]?.guaranteedMoney,
                 marketValue: marketVal,
                 replacesPlayer: replacesName,
                 ovrUpgrade: ovrUpgrade,
@@ -889,6 +993,11 @@ struct FACompleteView: View {
         remainingNeeds: [(position: Position, level: String)]
     ) -> FAGradeResult {
         var score = 50.0
+        // Every term is recorded as it lands so the card can print its working.
+        // `mark` is the running total at the end of the previous term — the
+        // arithmetic below is untouched, the ledger just watches it.
+        var components: [GradeComponent] = [GradeComponent(label: "Baseline", points: score)]
+        var mark = score
 
         // Needs addressed: each signing that fills a starter spot or replaces someone = +8
         let highNeedPositions = remainingNeeds.filter { $0.level == "High" }.map(\.position)
@@ -901,6 +1010,8 @@ struct FACompleteView: View {
                 score += 4
             }
         }
+        components.append(GradeComponent(label: "Needs addressed", points: score - mark))
+        mark = score
 
         // Value analysis: steals boost, overpays reduce
         for signing in signings {
@@ -912,27 +1023,43 @@ struct FACompleteView: View {
             case .bigOverpay: score -= 6
             }
         }
+        components.append(GradeComponent(label: "Contract value", points: score - mark))
+        mark = score
 
         // OVR improvement
         if let ba = beforeAfter {
             let ovrDelta = ba.rosterOVRAfter - ba.rosterOVRBefore
             score += Double(ovrDelta) * 3.0
+            components.append(GradeComponent(label: "Roster OVR", points: Double(ovrDelta) * 3.0))
 
             let gapReduction = ba.starterGapsBefore - ba.starterGapsAfter
             score += Double(gapReduction) * 4.0
+            components.append(GradeComponent(label: "Starter gaps", points: Double(gapReduction) * 4.0))
+            mark = score
         }
 
         // Penalty for remaining high needs
         let remainingHigh = remainingNeeds.filter { $0.level == "High" }.count
         score -= Double(remainingHigh) * 5.0
+        components.append(GradeComponent(label: "High needs still open", points: score - mark))
 
         // Bonus if no signings were needed and none made (maintained a good team)
         if signings.isEmpty && lostPlayers.isEmpty {
             score = 70 // B- baseline for a team that didn't need FA
+            // Nothing was added up — a ledger here would be arithmetic the club
+            // never did.
+            components = []
         }
 
         // Clamp
+        let uncapped = score
         score = max(20, min(100, score))
+        if score != uncapped, !components.isEmpty {
+            components.append(GradeComponent(
+                label: score > uncapped ? "Floor (20)" : "Ceiling (100)",
+                points: score - uncapped
+            ))
+        }
 
         let grade: String
         let explanation: String
@@ -973,7 +1100,12 @@ struct FACompleteView: View {
             explanation = "Poor free agency. Major roster holes remain with limited cap flexibility."
         }
 
-        return FAGradeResult(grade: grade, explanation: explanation, score: Int(score))
+        return FAGradeResult(
+            grade: grade,
+            explanation: explanation,
+            score: Int(score),
+            components: components
+        )
     }
 
     // MARK: - Media Quote Generation

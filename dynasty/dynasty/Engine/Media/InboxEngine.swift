@@ -116,7 +116,7 @@ enum InboxEngine {
         // Owner: roster analysis request
         messages.append(InboxMessage(
             sender: .owner(name: ownerName),
-            subject: "Welcome -- Roster Assessment Needed",
+            subject: "Welcome \u{2014} Roster Assessment Needed",
             body: """
             Coach,
 

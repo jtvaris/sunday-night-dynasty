@@ -74,6 +74,10 @@ struct RosterCutView: View {
     /// Detailed deals for this club, so the release split prices a real
     /// `Contract` where one exists instead of always using the proxy.
     @State private var contractsByPlayer: [UUID: Contract] = [:]
+    /// Cut priority, worst first, as a rank per player. Held rather than
+    /// derived per render: `keepScore` reads a dozen properties per man and the
+    /// list re-renders on every tap. Refreshed with the roster it ranks.
+    @State private var cutOrder: [UUID: Int] = [:]
     /// Releases already booked this cutdown, keyed by the stage that booked
     /// them — what each finished slat reports (§2.1's `done` row).
     @State private var releasesByStage: [CutDay: Int] = [:]
@@ -98,12 +102,17 @@ struct RosterCutView: View {
         /// later phase, so the sheet names that phase rather than presenting it
         /// as work in hand.
         let nextRung: CutDay?
+        /// Starter slots this commit emptied and the chart re-filled on the
+        /// spot. Named on the receipt, because a silently rewritten depth chart
+        /// is exactly the thing the old blocking dialog was standing in for.
+        let lineupRefilled: [DepthChartSlot]
     }
 
     var body: some View {
         VStack(spacing: 0) {
             band
             tabBar
+            listHeader
             list
             actionBar
         }
@@ -182,9 +191,19 @@ struct RosterCutView: View {
         return isDueStageComplete ? "\(label) \u{00B7} banked" : label
     }
 
+    /// **What nothing else on the screen says.** The remainder had three
+    /// phrasings in one viewport — the meter on the rule above ("0 spent · 12
+    /// left"), this line ("12 more to release") and the action bar ("You are 12
+    /// over the 53-man limit. Tap a player to mark him for release."). The bar
+    /// is the one that says what to DO and the meter is the band's own grammar,
+    /// so the remainder lives in those two and this line keeps the facts they
+    /// cannot carry: how many men are on the roster, and how many are marked.
     private var currentSubcaption: String {
         guard requiredCuts > 0 else { return "At the limit \u{2014} bank it and move on" }
-        return "\(activeRoster.count) on the roster \u{00B7} \(remaining) more to release"
+        guard !selectedIDs.isEmpty else {
+            return "\(activeRoster.count) on the roster"
+        }
+        return "\(activeRoster.count) on the roster \u{00B7} \(selectedIDs.count) marked"
     }
 
     /// A filled pip is a spent cut — the meter's one meaning, everywhere.
@@ -208,22 +227,29 @@ struct RosterCutView: View {
                     Button {
                         positionGroup = group
                     } label: {
-                        Text(group.label)
-                            .font(DSType.text(DSType.Size.footnote, .semibold))
-                            .padding(.horizontal, DSSpacing.sm)
-                            .padding(.vertical, DSSpacing.xs)
-                            .background(
-                                RoundedRectangle(cornerRadius: DSCornerRadius.inline)
-                                    .fill(positionGroup == group ? Color.backgroundTertiary : Color.backgroundSecondary)
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: DSCornerRadius.inline)
-                                    .strokeBorder(
-                                        positionGroup == group ? Color.accentBlue : Color.surfaceBorder,
-                                        lineWidth: positionGroup == group ? 2 : 1
-                                    )
-                            )
-                            .foregroundStyle(positionGroup == group ? Color.textPrimary : Color.textSecondary)
+                        // The room's size, on the chip. A bare "DL" makes you tap
+                        // it to find out how deep the group is, and depth is the
+                        // whole question this screen is asking.
+                        HStack(spacing: DSSpacing.xxs) {
+                            Text(group.label)
+                            Text("\(count(in: group))")
+                                .foregroundStyle(Color.textTertiaryReadable)
+                        }
+                        .font(DSType.text(DSType.Size.footnote, .semibold))
+                        .padding(.horizontal, DSSpacing.sm)
+                        .padding(.vertical, DSSpacing.xs)
+                        .background(
+                            RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                                .fill(positionGroup == group ? Color.backgroundTertiary : Color.backgroundSecondary)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                                .strokeBorder(
+                                    positionGroup == group ? Color.accentBlue : Color.surfaceBorder,
+                                    lineWidth: positionGroup == group ? 2 : 1
+                                )
+                        )
+                        .foregroundStyle(positionGroup == group ? Color.textPrimary : Color.textSecondary)
                     }
                     .buttonStyle(.plain)
                     .accessibilityAddTraits(positionGroup == group ? [.isButton, .isSelected] : .isButton)
@@ -231,6 +257,33 @@ struct RosterCutView: View {
             }
             .padding(.horizontal, DSSpacing.md)
             .padding(.vertical, DSSpacing.xs)
+        }
+        .background(Color.backgroundPrimary)
+    }
+
+    /// **What order the rows are in, and what the marks are doing to the
+    /// rooms.**
+    ///
+    /// The list shipped in whatever order SwiftData handed it back and said
+    /// nothing about either, so the ranking was invisible and the position
+    /// depth — the actual decision variable — was named for the first time
+    /// inside the confirm alert, after all twelve men were already picked. Both
+    /// read here now, off data the screen has held since it loaded.
+    private var listHeader: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: DSSpacing.xs) {
+                Text("Worst first \u{00B7} your staff's cut order".uppercased())
+                    .font(DSType.display(11, .heavy))
+                    .tracking(0.7)
+                    .foregroundStyle(Color.textTertiaryReadable)
+                ForEach(selectionImpacts) { impact in
+                    Text(impact.line)
+                        .font(DSType.display(11, .heavy))
+                        .foregroundStyle(impact.isViolation ? Color.danger : Color.textSecondary)
+                }
+            }
+            .padding(.horizontal, DSSpacing.md)
+            .padding(.bottom, DSSpacing.xxs)
         }
         .background(Color.backgroundPrimary)
     }
@@ -253,6 +306,7 @@ struct RosterCutView: View {
         let isSelected = selectedIDs.contains(player.id)
         let isPS = practiceSquadIDs.contains(player.id)
         let blockReason = releaseBlockReason(for: player)
+        let split = releaseSplit(for: player)
         return HStack(spacing: DSSpacing.sm) {
             // Avatar placeholder
             Circle()
@@ -276,22 +330,42 @@ struct RosterCutView: View {
                         )
                         .foregroundStyle(Color.textSecondary)
                     Text(player.fullName)
-                        .font(DSType.text(DSType.Size.body, .semibold, prose: true))
+                        .font(DSType.text(DSType.Size.body, .medium, prose: true))
                         .foregroundStyle(Color.textPrimary)
                         .lineLimit(1)
                 }
+                // **The numbers outrank the name here.** The name was body
+                // semibold over a meta line where OVR, the camp letter and the
+                // age all sat at the 11 pt floor — so the eye landed first on
+                // the one thing the user already knows and last on the two
+                // gradings the cut is actually made on. The two verdicts move a
+                // step up; the age, which decides nothing on its own, stays put.
                 HStack(spacing: DSSpacing.xs) {
                     Text("OVR \(player.overall)")
-                        .font(DSType.display(11, .semibold))
+                        .font(DSType.display(DSType.Size.footnote, .heavy))
                         .foregroundStyle(Color.forRating(player.overall))
+                    if let grade = player.campGrade {
+                        Text("Camp \(grade.displayLabel)")
+                            .font(DSType.display(DSType.Size.footnote, .heavy))
+                            .foregroundStyle(gradeColor(grade))
+                    } else {
+                        // A blank where every neighbouring row carries a letter
+                        // reads as a data hole rather than as a fact. Men
+                        // acquired after camp broke were never graded, and the
+                        // absence is stated rather than left to be inferred.
+                        Text("Camp \u{2014}")
+                            .font(DSType.display(DSType.Size.footnote, .heavy))
+                            .foregroundStyle(Color.textTertiaryReadable)
+                            .accessibilityLabel("No camp grade")
+                    }
                     Text("Age \(player.age)")
                         .font(DSType.display(11, .semibold))
                         .foregroundStyle(Color.textTertiaryReadable)
-                    if let grade = player.campGrade {
-                        Text("Camp \(grade.displayLabel)")
-                            .font(DSType.display(11, .heavy))
-                            .foregroundStyle(Color.accentGold)
-                    }
+                    // Years left on the deal — the third thing a cut is decided
+                    // on, and the row had no room problem: it was 70 % empty.
+                    Text("Yrs \(player.contractYearsRemaining)")
+                        .font(DSType.display(11, .semibold))
+                        .foregroundStyle(Color.textTertiaryReadable)
                 }
                 // §2.12 — a closed row says why it is closed, in the row. A
                 // greyed line with no reason is the thing the guard exists to
@@ -310,14 +384,39 @@ struct RosterCutView: View {
 
             Spacer()
 
-            VStack(alignment: .trailing, spacing: 2) {  // ds-lint:allow(spacing) value-over-control lockup inside one row
-                Text(capSavingsLabel(for: player))
+            // **The money, with its sign and with its other half.**
+            //
+            // One unlabelled figure, always prefixed "+" and always painted
+            // success green, is two lies on one row: `capSavings` is signed, so
+            // a release that COSTS cap space rendered in the same green as one
+            // that freed $25M; and a man on a minimum deal rounded to "+$0.0M",
+            // which reads as "free to cut" rather than "saves nothing". The
+            // dead cap the same release leaves behind — the number the confirm
+            // dialog and the receipt both lead with — appeared nowhere on the
+            // row where the decision is actually made.
+            VStack(alignment: .trailing, spacing: 2) {  // ds-lint:allow(spacing) two-line money column inside one row
+                Text(capSavingsLabel(split))
                     .font(DSType.display(DSType.Size.footnote, .heavy))
-                    .foregroundStyle(Color.success)
+                    .foregroundStyle(capSavingsColor(split))
+                Text(split.deadCap > 0 ? "\(money(split.deadCap)) dead" : "no dead cap")
+                    .font(DSType.display(11, .semibold))
+                    .foregroundStyle(split.deadCap > 0 ? Color.dangerText : Color.textTertiaryReadable)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(capSavingsAccessibilityLabel(split))
+
+            // **The flag only means anything on a man who is leaving.** It is
+            // stamped onto his release receipt and read back by the practice
+            // squad's keeper pass; on a man you keep it was a toggle that lit
+            // up, changed nothing, and was wiped on commit. So it appears when
+            // he is marked and goes with him when he is un-marked — and it says
+            // what it does, rather than two letters that are expanded nowhere
+            // on the screen.
+            if isSelected {
                 Button {
                     togglePracticeSquad(player)
                 } label: {
-                    Text(isPS ? "PS \u{2713}" : "PS")
+                    Text(isPS ? "On PS \u{2713}" : "Stash on PS")
                         .font(DSType.display(11, .heavy))
                         .padding(.horizontal, DSSpacing.xs)
                         .padding(.vertical, 3)  // ds-lint:allow(spacing) inline toggle inside a fixed row height
@@ -326,17 +425,33 @@ struct RosterCutView: View {
                                 .fill(isPS ? Color.accentBlue : Color.backgroundTertiary)
                         )
                         .foregroundStyle(isPS ? Color.textPrimary : Color.textSecondary)
+                        // 44 pt of finger around a 19 pt pill: this control
+                        // shares a hit area with the row's own tap, and that tap
+                        // is the destructive one. A miss must not be a release.
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                // A man who cannot be released cannot be stashed either — the
-                // flag only means anything on the way out.
-                .disabled(blockReason != nil)
                 .accessibilityLabel(
                     isPS
                         ? "\(player.fullName) is flagged for the practice squad"
                         : "Flag \(player.fullName) for the practice squad"
                 )
             }
+
+            // The row carries four numbers and the tap on it is an irreversible
+            // release, so the man himself was one thing the screen would not
+            // show you. His card pushes onto the shell's own stack and pops
+            // straight back onto the sheet, marks intact.
+            NavigationLink(destination: PlayerDetailView(player: player)) {
+                Image(systemName: "info.circle")
+                    .font(DSType.display(DSType.Size.footnote, .semibold))
+                    .foregroundStyle(Color.textTertiaryReadable)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open \(player.fullName)'s player card")
         }
         .padding(DSSpacing.sm)
         .background(
@@ -365,6 +480,31 @@ struct RosterCutView: View {
         )
     }
 
+    /// The camp grade, on the same five-tier ladder as the OVR beside it.
+    ///
+    /// Every grade used to be one flat `accentGold`, so a Camp F and a Camp C
+    /// were pixel-identical and the letter was the only thing carrying the
+    /// reading — on the one number this phase actually generated. Gold is also
+    /// the screen's primary button and its current slat, and a per-row badge in
+    /// the call-to-action colour is the colour discipline §2.13 exists to keep.
+    /// C sits on neutral rather than on a tier: it is the middle of the ladder,
+    /// and neither a warning nor a recommendation.
+    private func gradeColor(_ grade: CampGrade) -> Color {
+        switch grade {
+        case .aPlus: return .forRatingTier(.elite)
+        case .a:     return .forRatingTier(.good)
+        case .b:     return .forRatingTier(.solid)
+        case .c:     return .textSecondary
+        case .d:     return .forRatingTier(.average)
+        case .f:     return .forRatingTier(.poor)
+        }
+    }
+
+    /// Bodies a filter chip's room holds right now.
+    private func count(in group: CutPositionGroup) -> Int {
+        activeRoster.filter { group.includes($0.position) }.count
+    }
+
     // MARK: - The commit surface (§2.5)
 
     /// **The bar is keyed on the selection first, the rung second.**
@@ -389,6 +529,7 @@ struct RosterCutView: View {
         let isLegal = selectionViolations.isEmpty
         return DSActionBar(
             explainer: explainer,
+            ghost: suggestAction,
             secondary: isDueStageComplete && hasSelection ? doneAction : nil,
             primary: isDueStageComplete && !hasSelection
                 ? doneAction
@@ -399,6 +540,26 @@ struct RosterCutView: View {
                     isEnabled: hasSelection && isLegal,
                     handler: { showCutConfirm = true }
                 )
+        )
+    }
+
+    /// **The staff's plan, offered before the user builds one by hand.**
+    ///
+    /// `RosterCutEvaluator.recommendCuts` has scored the whole roster since it
+    /// was written and had no caller anywhere in the app: the bar said "tap a
+    /// player to mark him for release" over 87 unranked rows, twelve times, and
+    /// the answer sat one function away. This seeds the sheet with it — nothing
+    /// is committed, every row stays editable, and the confirm still has to be
+    /// tapped.
+    ///
+    /// Withdrawn as soon as anything is marked: it starts a selection, it never
+    /// overwrites one.
+    private var suggestAction: DSActionBar.Action? {
+        guard selectedIDs.isEmpty, requiredCuts > 0, loadedTeam != nil else { return nil }
+        return .init(
+            title: "Suggest \(requiredCuts)",
+            caption: "worst first \u{2014} yours to edit",
+            handler: { suggestCuts() }
         )
     }
 
@@ -507,27 +668,60 @@ struct RosterCutView: View {
                     context: "flagged"
                 )
             ],
-            cost: result.deadMoney > 0
-                ? "**\(money(result.deadMoney))** of dead cap stays on this year's books, and a flagged man can still be claimed off waivers before you sign him."
-                : "Nothing accelerated onto this year's cap. Flagged men can still be claimed off waivers before you sign them.",
-            continueTitle: result.stillOwed > 0 ? "Continue" : "Done",
+            cost: costLine(result),
+            // **Not "Done".** The action bar underneath this sheet already
+            // carries a gold "Done — back to <phase>" that leaves the screen,
+            // and both were visible in the same frame: one word, one colour,
+            // two destinations. This control only ever puts the list back, so
+            // it says so.
+            continueTitle: result.stillOwed > 0 ? "Keep cutting" : "Back to the list",
             onContinue: { self.result = nil }
         )
+    }
+
+    /// What the commit cost — and, **only when somebody was actually flagged**,
+    /// what the flag risks.
+    ///
+    /// Both branches used to append the waiver clause unconditionally, so a
+    /// sheet whose own chip read "practice squad · 0 flagged" warned in the next
+    /// line that "a flagged man can still be claimed off waivers" — a risk the
+    /// user had not taken, priced against a cut he had.
+    private func costLine(_ result: CutResult) -> String {
+        let dead = result.deadMoney > 0
+            ? "**\(money(result.deadMoney))** of dead cap stays on this year's books."
+            : "Nothing accelerated onto this year's cap."
+        guard result.practiceSquadFlagged > 0 else { return dead }
+        let claim = result.practiceSquadFlagged == 1
+            ? "**1** flagged man can still be claimed off waivers before you sign him."
+            : "**\(result.practiceSquadFlagged)** flagged men can still be claimed off waivers before you sign them."
+        return "\(dead) \(claim)"
     }
 
     /// What the club owes after the commit, in the order it matters: this cut
     /// day first, then the next rung and the phase it falls due in, then the
     /// end of the arc.
     private func resultMessage(_ result: CutResult) -> String {
+        var line: String
         if result.stillOwed > 0 {
-            return "Your roster is at **\(result.rosterAfter)**. "
+            line = "Your roster is at **\(result.rosterAfter)**. "
                 + "**\(result.stillOwed) more** to release to reach \(result.stage.target)."
-        }
-        if let next = result.nextRung {
-            return "Your roster is at **\(result.rosterAfter)**. "
+        } else if let next = result.nextRung {
+            line = "Your roster is at **\(result.rosterAfter)**. "
                 + "\(result.stage.slatTitle) is banked \u{2014} next is **\(next.slatTitle)**\(dueClause(for: next))."
+        } else {
+            line = "Your roster is at **\(result.rosterAfter)**. The cutdown is done."
         }
-        return "Your roster is at **\(result.rosterAfter)**. The cutdown is done."
+        // A release that emptied a starter slot used to surface one screen
+        // later as a blocking dialog. It is stated here instead, on the receipt
+        // for the cut that caused it, and it names the rooms.
+        if !result.lineupRefilled.isEmpty {
+            let names = result.lineupRefilled.prefix(3).map(\.displayName).joined(separator: ", ")
+            let extra = result.lineupRefilled.count > 3 ? " and \(result.lineupRefilled.count - 3) more" : ""
+            line += result.lineupRefilled.count == 1
+                ? " Your depth chart lost its **\(names)** starter \u{2014} the next man up has been promoted."
+                : " Your depth chart lost **\(result.lineupRefilled.count)** starters (\(names)\(extra)) \u{2014} the next men up have been promoted."
+        }
+        return line
     }
 
     /// ", due when camp breaks" — but only while that is still in the future.
@@ -602,8 +796,22 @@ struct RosterCutView: View {
     /// Men still to be marked after the current selection.
     private var remaining: Int { max(0, activeRoster.count - selectedIDs.count - stage.target) }
 
+    /// The rows, worst first.
+    ///
+    /// The list used to come out in whatever order SwiftData handed back — not
+    /// by rating, not by name, not by room — so finding the twelve worst men in
+    /// 87 rows meant scanning all of them and holding the answer in your head,
+    /// three times a cutdown. `cutOrder` is the evaluator's ranking, taken once
+    /// per fetch; the name breaks a tie so two men on one score cannot swap
+    /// places between renders.
     private var filteredRoster: [Player] {
-        activeRoster.filter { positionGroup.includes($0.position) }
+        activeRoster
+            .filter { positionGroup.includes($0.position) }
+            .sorted { lhs, rhs in
+                let left = cutOrder[lhs.id] ?? Int.max
+                let right = cutOrder[rhs.id] ?? Int.max
+                return left == right ? lhs.fullName < rhs.fullName : left < right
+            }
     }
 
     // MARK: - Positional integrity (#208a)
@@ -618,13 +826,17 @@ struct RosterCutView: View {
     /// commit then silently refuses. `team` is only in reach once the club has
     /// loaded; until then no row can be ticked anyway (`performCuts` needs it
     /// too), so an unguarded render is not a reachable commit.
-    private func releaseBlockReason(for player: Player) -> String? {
+    ///
+    /// `given` is the live selection unless a caller is building one of its own
+    /// — `suggestCuts` walks the evaluator's plan through the same door one man
+    /// at a time, so the floors close on it exactly as they close on a row.
+    private func releaseBlockReason(for player: Player, given selection: Set<UUID>? = nil) -> String? {
         guard let team = loadedTeam else { return nil }
         return CapManagementEngine.releaseBlockReason(
             player: player,
             team: team,
             roster: activeRoster,
-            alreadySelected: selectedIDs
+            alreadySelected: selection ?? selectedIDs
         )
     }
 
@@ -644,11 +856,34 @@ struct RosterCutView: View {
         selectionImpacts.filter(\.isViolation)
     }
 
-    /// What the confirm dialog says: the money, then the rooms.
+    /// What the confirm dialog says: **who** is going, then the money, then the
+    /// rooms — and the clause that cannot be taken back, alone on the last line.
+    ///
+    /// All of it used to run together as one paragraph whose seventh wrapped
+    /// line ended "Releases cannot be undone.", and it never named a man: the
+    /// only record of who was leaving was twelve red outlines behind the dimmed
+    /// alert, most of them scrolled off. A system alert is the wrong shape for a
+    /// table, but it holds a list and it holds paragraph breaks, and those are
+    /// the two things the sentence was missing.
     private var confirmMessage: String {
-        var lines = [
-            "This frees \(money(selectionSavings)) and leaves \(money(selectionDeadMoney)) of dead money on this year's books."
-        ]
+        var lines: [String] = []
+        let leaving = selectedIDs
+            .compactMap { id in activeRoster.first(where: { $0.id == id }) }
+            .sorted { lhs, rhs in
+                lhs.position.rawValue == rhs.position.rawValue
+                    ? lhs.fullName < rhs.fullName
+                    : lhs.position.rawValue < rhs.position.rawValue
+            }
+        // Named in full up to a sheet the alert can still show whole; past that
+        // the tail is counted rather than allowed to push the money off-screen.
+        let named = leaving.prefix(15).map { "\($0.position.rawValue) \($0.fullName)" }
+        if !named.isEmpty {
+            let overflow = leaving.count - named.count
+            lines.append(named.joined(separator: "\n") + (overflow > 0 ? "\n+ \(overflow) more" : ""))
+        }
+        lines.append(
+            "Frees \(money(selectionSavings)) and leaves \(money(selectionDeadMoney)) of dead money on this year's books."
+        )
         let impacts = selectionImpacts
         if !impacts.isEmpty {
             lines.append("Position groups after this: " + impacts.map(\.line).joined(separator: " \u{00B7} ") + ".")
@@ -661,7 +896,7 @@ struct RosterCutView: View {
         } else {
             lines.append("Releases cannot be undone.")
         }
-        return lines.joined(separator: " ")
+        return lines.joined(separator: "\n\n")
     }
 
     // MARK: - Selection
@@ -669,9 +904,33 @@ struct RosterCutView: View {
     private func toggleSelection(_ player: Player) {
         if selectedIDs.contains(player.id) {
             selectedIDs.remove(player.id)
+            // The flag rides on the release, so taking the man off the sheet
+            // takes his flag with him rather than leaving a tick nothing draws
+            // and the next mark would silently restore.
+            practiceSquadIDs.remove(player.id)
         } else {
             selectedIDs.insert(player.id)
         }
+    }
+
+    /// Fills the sheet from the evaluator's worst-first plan.
+    ///
+    /// The plan is re-checked man by man on the way in rather than trusted
+    /// wholesale: `recommendCuts` guards a room down to one body, while the
+    /// release door is stricter (two at QB, and never the last healthy man), so
+    /// a plan taken at face value could seed a selection the commit would then
+    /// refuse.
+    private func suggestCuts() {
+        var picked: Set<UUID> = []
+        for player in RosterCutEvaluator.recommendCuts(
+            roster: activeRoster,
+            targetCount: stage.target,
+            modelContext: modelContext
+        ) {
+            guard releaseBlockReason(for: player, given: picked) == nil else { continue }
+            picked.insert(player.id)
+        }
+        selectedIDs = picked
     }
 
     private func togglePracticeSquad(_ player: Player) {
@@ -730,9 +989,34 @@ struct RosterCutView: View {
 
     /// Net cap effect of releasing this man — relief minus the dead money that
     /// stays behind.
-    private func capSavingsLabel(for player: Player) -> String {
-        let savings = releaseSplit(for: player).capSavings
-        return (savings < 0 ? "\u{2212}" : "+") + money(abs(savings))
+    ///
+    /// `money` quotes tenths of a million, so anything under $50K collapsed to
+    /// "$0.0M" on a third of the list. A floor is quoted instead: a saving too
+    /// small to print is still a saving, and it is not the same reading as a
+    /// release that frees exactly nothing.
+    private func capSavingsLabel(_ split: CapManagementEngine.ReleaseCapSplit) -> String {
+        let savings = split.capSavings
+        guard savings != 0 else { return "$0.0M" }
+        let sign = savings < 0 ? "\u{2212}" : "+"
+        return abs(savings) < 50 ? "\(sign)<$0.1M" : sign + money(abs(savings))
+    }
+
+    /// Green frees room, red costs it, grey does neither.
+    private func capSavingsColor(_ split: CapManagementEngine.ReleaseCapSplit) -> Color {
+        if split.capSavings < 0 { return .dangerText }
+        return split.capSavings == 0 ? .textTertiaryReadable : .success
+    }
+
+    /// The money column names what it is, for a reader who cannot see that the
+    /// figure is green and sitting above a dead-cap line.
+    private func capSavingsAccessibilityLabel(_ split: CapManagementEngine.ReleaseCapSplit) -> String {
+        let cap = split.capSavings < 0
+            ? "Releasing him costs \(money(abs(split.capSavings))) of cap space"
+            : "Releasing him frees \(money(split.capSavings)) of cap space"
+        let dead = split.deadCap > 0
+            ? "and leaves \(money(split.deadCap)) of dead money"
+            : "and leaves no dead money"
+        return "\(cap) \(dead)"
     }
 
     private func money(_ thousands: Int) -> String {
@@ -754,9 +1038,16 @@ struct RosterCutView: View {
     /// list and moves the stage on.
     private func loadLedger() {
         guard let teamID = career.teamID else { return }
-        liveRoster = (try? modelContext.fetch(FetchDescriptor<Player>(
+        let fetched = (try? modelContext.fetch(FetchDescriptor<Player>(
             predicate: #Predicate<Player> { $0.teamID == teamID }
         ))) ?? []
+        liveRoster = fetched
+        cutOrder = Dictionary(
+            uniqueKeysWithValues: fetched
+                .sorted { RosterCutEvaluator.keepScore(for: $0) < RosterCutEvaluator.keepScore(for: $1) }
+                .enumerated()
+                .map { ($0.element.id, $0.offset) }
+        )
         // #208 G1 — the club the row guard measures against, fetched once here
         // rather than per row.
         loadedTeam = try? modelContext.fetch(
@@ -865,6 +1156,16 @@ struct RosterCutView: View {
         // the count below all move on together.
         loadLedger()
         let rosterAfter = activeRoster.count
+        // Releasing a starter used to invalidate the depth chart silently: the
+        // only feedback was the blocking "Lineup Incomplete" dialog one screen
+        // later, on the next Advance — three rungs of the ladder, three blocks,
+        // with nothing on THIS screen saying a marked man was somebody's
+        // starter. The chart is reconciled against the surviving roster here,
+        // where the hole is made, and the receipt below names the slots that
+        // moved. `reconcile` only fills slots the release EMPTIED — a standing
+        // starter is never re-ordered, so this cannot quietly undo the user's
+        // own chart.
+        let refilled = reconcileDepthChart()
 
         // Every man in the selection was already gone (a stale tap): nothing was
         // booked, so there is nothing to report. The refreshed list above is the
@@ -887,8 +1188,22 @@ struct RosterCutView: View {
             // count rolls to "cut to 65" the moment the club touches 75, and
             // reporting ten men still owed there would invent work.
             stillOwed: max(0, rosterAfter - max(bankedStage.target, after.target)),
-            nextRung: nextIndex < CutDay.allCases.count ? CutDay.allCases[nextIndex] : nil
+            nextRung: nextIndex < CutDay.allCases.count ? CutDay.allCases[nextIndex] : nil,
+            lineupRefilled: refilled
         )
+    }
+
+    /// Prunes the released men out of the saved depth chart and re-fills the
+    /// starter slots that leaves empty. Returns the slots it filled.
+    ///
+    /// No chart saved means nothing to reconcile: `depthChartData == nil` is the
+    /// state the required "Set depth chart" task owns, and writing one here
+    /// would silently complete somebody else's task.
+    @discardableResult
+    private func reconcileDepthChart() -> [DepthChartSlot] {
+        let filled = DepthChart.reconcileSaved(career: career, roster: activeRoster)
+        try? modelContext.save()
+        return filled
     }
 
     /// Turns the engine's release receipt into a **camp cutdown** row.

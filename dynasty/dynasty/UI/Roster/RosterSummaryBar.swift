@@ -142,9 +142,17 @@ struct RosterSummaryBar: View {
                 isBinding: false
             )
         default:
+            // TWO CEILINGS, ONE SCREEN. The cutdown banner directly above this
+            // column says "22 players over the 53-man active roster"; the
+            // column said "75 / 90 · offseason", which reads as room to spare
+            // one line under a warning that the roster is over the limit. When
+            // the roster is already past 53 the caption names the deadline
+            // ceiling instead of the phase, so the two lines agree.
             return RosterLimit(
                 ceiling: TradeValueEngine.offseasonRosterCeiling,
-                caption: "offseason",
+                caption: totalCount > PracticeSquadEngine.activeRosterCeiling
+                    ? "53 by cutdown"
+                    : "offseason",
                 isBinding: false
             )
         }

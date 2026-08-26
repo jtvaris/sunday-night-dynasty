@@ -231,7 +231,16 @@ private struct DSOptionalColumnWidth: ViewModifier {
         if let width {
             content.dsColumn(width, alignment: alignment)
         } else {
-            content.lineLimit(1).minimumScaleFactor(0.7)
+            // The flexible case is only ever the NAME column, and it has to
+            // take the slack the way the row's identity slot does — a header
+            // that sizes to its own label puts every column after it at an x
+            // no row agrees with. Big Board builds its header by hand from
+            // these same parts, so the fix has to live here and not only in
+            // `DSListHeaderRow`.
+            content
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .frame(maxWidth: .infinity, alignment: alignment)
         }
     }
 }
@@ -618,7 +627,13 @@ struct DSListRow<Portrait: View, Identity: View, Columns: View>: View {
                 .dsColumn(portraitWidth ?? density.portraitColumn, alignment: .leading)
 
             identity()
-                .frame(minWidth: DSListColumn.identityMin, alignment: .leading)
+                // Flexible in BOTH directions. `minWidth` alone left the slot
+                // sized to its CONTENT, so the first column after it started at
+                // a different x on every line: the board's OVR badge tracked the
+                // length of the starter comparison under the name and ran from
+                // 558 to 685 down one screen, which is a column that cannot be
+                // scanned. Claiming the slack fixes the offset for the list.
+                .frame(minWidth: DSListColumn.identityMin, maxWidth: .infinity, alignment: .leading)
                 .padding(.leading, DSListColumn.identityGap)
                 // The identity block is the flexible column, so it is also the
                 // one that has to give way — without this it pushes the fixed
@@ -707,7 +722,10 @@ struct DSListHeaderRow<Identity: View, Columns: View>: View {
                 .frame(width: portraitWidth ?? density.portraitColumn, height: 1)
 
             identity()
-                .frame(minWidth: DSListColumn.identityMin, alignment: .leading)
+                // The same slack the row's identity slot takes, or the header
+                // resolves to the width of the word "NAME" and every label
+                // lands well left of the column it names.
+                .frame(minWidth: DSListColumn.identityMin, maxWidth: .infinity, alignment: .leading)
                 .padding(.leading, DSListColumn.identityGap)
 
             columns()

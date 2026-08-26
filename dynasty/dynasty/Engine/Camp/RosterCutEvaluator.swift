@@ -251,10 +251,15 @@ enum RosterCutEvaluator {
         return nil
     }
 
-    // MARK: - Private Helpers
+    // MARK: - Cut priority
 
     /// Composite "keep this player" score. Higher = safer; lower = closer to cut block.
-    private static func keepScore(for player: Player) -> Double {
+    ///
+    /// Published rather than private because the cut sheet orders its rows by
+    /// it. A screen that asks the user to find the twelve worst men in 87
+    /// unordered rows is asking him to hold the roster in his head while the
+    /// answer sits one function away.
+    static func keepScore(for player: Player) -> Double {
         // OVR contribution (0..50)
         let ovrScore = Double(player.overall) * 0.55
 

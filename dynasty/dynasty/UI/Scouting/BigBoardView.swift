@@ -1408,14 +1408,18 @@ struct BigBoardView<Header: View>: View {
                 }
                 .accessibilityLabel("Sort by, currently \(boardSortOrder.label)")
             }
+            // Both boards, with the one you are on filled. As a single word of
+            // plain grey text this printed the board you were ALREADY on — the
+            // state, never the destination — in a header that already carries
+            // four scout-prefixed labels, so it read as a fifth heading rather
+            // than as the control it is.
             ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    showMyBoard.toggle()
-                } label: {
-                    Text(showMyBoard ? "My Board" : "Scout Board")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(showMyBoard ? Color.accentGold : Color.textSecondary)
+                Picker("Board", selection: $showMyBoard) {
+                    Text("Scout Board").tag(false)
+                    Text("My Board").tag(true)
                 }
+                .pickerStyle(.segmented)
+                .fixedSize()
                 .accessibilityHint("Switch between your custom-ranked board and the scouts' board")
             }
             // #2: MyBoard vs Media Board comparison toggle
@@ -1506,9 +1510,18 @@ struct BigBoardView<Header: View>: View {
     /// save can sit in `DraftPrepStep.combineReview` — the stage whose whole job
     /// is reading the numbers — after `SeasonPhase.combine` has rolled over.
     ///
+    /// Both signals are then gated on the numbers actually existing. Neither one
+    /// proves they do: `Career.prepStep` reads `.combineReview` for the whole
+    /// stretch between draft cycles (its stored stamp is a season old, so the
+    /// getter falls back to the first stage), which opened the board on seven
+    /// columns of "—" through Coaching Changes — 45% of every row's width
+    /// carrying no information, months before anyone runs a 40. The same
+    /// `fortyTime != nil` test the combine table and `DraftPrepProgress` use.
+    ///
     /// The host can still override: `initialAttributeTab` wins whenever it is
     /// non-`nil`, which is how the film-study stage keeps its `.workup`.
     private var defaultAttributeTab: ProspectAttributeTab {
+        guard prospects.contains(where: { $0.fortyTime != nil }) else { return .overview }
         if career.currentPhase == .combine { return .physical }
         if career.prepStep == .combineReview { return .physical }
         return .overview
@@ -1850,7 +1863,13 @@ struct BigBoardView<Header: View>: View {
                     HStack(spacing: 2) {
                         Image(systemName: "percent")
                             .font(.system(size: DSType.Size.micro))
-                        Text("\(availCount)/\(count) avail @#\(pick.pickNumber) (\(Int(avgProb * 100))%)")
+                        // Two different statistics, so two clauses. Glued
+                        // together as "11/17 avail @#19 (76%)" the parenthetical
+                        // read as the fraction's own percentage, which it never
+                        // was — 11/17 is 65%. The count is "how many are better
+                        // than a coin flip", the percentage is the mean across
+                        // the whole tier.
+                        Text("\(availCount)/\(count) likely @#\(pick.pickNumber) · \(Int(avgProb * 100))% avg")
                             .font(.system(size: DSType.Size.caption, weight: .semibold))
                     }
                     .foregroundStyle(avgProb >= 0.6 ? Color.success : (avgProb >= 0.3 ? Color.accentBlue : Color.warning))
@@ -1861,6 +1880,18 @@ struct BigBoardView<Header: View>: View {
                 .font(.system(size: DSType.Size.caption))
                 .foregroundStyle(Color.textTertiary)
                 .textCase(nil)
+
+            // Two orderings are on this list and the screen used to present
+            // them as one: `#` is the board's own order (the media consensus
+            // until the user reorders), the tier band is `scoutedOverall`. A
+            // #224 sitting inside "Blue Chip" is that disagreement, not a bug —
+            // but only if the list says so. Once, over the first tier.
+            if tier == cachedTieredBoard.first?.tier {
+                Text("# is the board's order — your scouts' grade sets the tier, so the two can disagree.")
+                    .font(.system(size: DSType.Size.micro))
+                    .foregroundStyle(Color.textTertiary)
+                    .textCase(nil)
+            }
         }
     }
 
@@ -2246,21 +2277,41 @@ struct BigBoardView<Header: View>: View {
     }
 
     /// Compute starter comparison text for a prospect.
+    ///
+    /// Read off the FOGGED band, never off `scoutedOverall`. The signed integer
+    /// this used to print — "vs Barrett Brockway: +18 OVR" — sat six pixels from
+    /// the same man's "A-/A+" OVR badge on a board whose own header said 0%
+    /// scouted: the roster screen prints the starter's overall in the clear, so
+    /// adding the delta recovered the one number the band exists to hide, and
+    /// the band was decoration. (The inherited `Previous Staff` paper writes
+    /// `scoutedOverall` for the top ~250 of every class, which is why the line
+    /// appeared at all before a dollar had been spent.)
+    ///
+    /// So the verdict is only ever as sharp as the band: it calls an upgrade or
+    /// a depth add only when the WHOLE band clears the starter's own grade, and
+    /// a band that straddles him says so instead. Widening the band walks the
+    /// answer back to "in the mix" on its own, so there is no second gate to
+    /// keep in step with the badge.
+    ///
+    /// Still gated on the paper, as `schemeFitLabel` beside it is: a man whose
+    /// only band is the media's projected round has nothing to compare, and the
+    /// OVR cell already prints "?" for him.
     private func starterComparison(for prospect: CollegeProspect) -> String? {
-        guard let prospectOVR = prospect.scoutedOverall else { return nil }
+        let read = ProspectFog.read(prospect)
+        guard read.source == .scouts, let band = read.band else { return nil }
         let starters = teamRoster
             .filter { $0.position == prospect.position }
             .sorted { $0.overall > $1.overall }
         guard let starter = starters.first else {
             return "No \(prospect.position.rawValue) on roster"
         }
-        let diff = prospectOVR - starter.overall
-        if diff > 0 {
-            return "vs \(starter.fullName): +\(diff) OVR"
-        } else if diff == 0 {
-            return "vs \(starter.fullName): lateral"
+        let starterGrade = LetterGrade.from(numericValue: starter.overall)
+        if band.low.rank > starterGrade.rank {
+            return "Upgrade on \(starter.lastName)"
+        } else if band.high.rank < starterGrade.rank {
+            return "Depth behind \(starter.lastName)"
         } else {
-            return "Depth add (\(diff) OVR)"
+            return "In the mix with \(starter.lastName)"
         }
     }
 }
@@ -2543,8 +2594,8 @@ struct BigBoardRowView: View {
     /// (an upgrade on the man in front of him / a depth body), never the rating
     /// ladder — P7 rule 2.
     private func starterComparisonColor(_ comparison: String) -> Color {
-        if comparison.hasPrefix("+") { return .success }
-        if comparison.contains("Depth") { return .dangerText }
+        if comparison.hasPrefix("Upgrade") { return .success }
+        if comparison.hasPrefix("Depth") { return .dangerText }
         return .textTertiaryReadable
     }
 
@@ -2642,7 +2693,9 @@ struct BigBoardRowView: View {
                     .font(DSType.display(11, .bold))
                     .foregroundStyle(Color.textPrimary)
             } else {
-                Text("--")
+                // The em dash the shared prospect cells print. This column was
+                // the one place in the row that said "no data" with two hyphens.
+                Text("\u{2014}")
                     .font(DSType.display(11, .medium))
                     .foregroundStyle(Color.textTertiary)
             }

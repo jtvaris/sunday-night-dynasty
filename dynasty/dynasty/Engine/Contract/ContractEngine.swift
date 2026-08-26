@@ -657,6 +657,14 @@ enum ContractEngine {
     /// decide whether the deal can be tabled at all. They call this; neither
     /// builds a schedule of its own.
     ///
+    /// **Neither shape is renormalised, so the schedule does NOT sum to
+    /// `annualSalary × years`** — measured: a 2-year veteran deal pays 10.4 %
+    /// over the negotiated total (1.15 + 1.15 × 0.92 = 2.208×), a 1-year 15 %
+    /// over, a 6-year veteran deal 5.7 % under, and a 2-year deal for an
+    /// under-28 12 % under. A caller must therefore price a deal off the
+    /// schedule this returns; a flat "salary + bonus ÷ years" quoted as the cap
+    /// hit is a different number from the one that gets booked.
+    ///
     /// - Parameter firstYearCeiling: the most year one may cost in BASE salary.
     ///   Only the tag-and-extend passes one — see ``cappedFirstYear(_:ceiling:)``.
     static func negotiatedBaseSalaries(

@@ -76,7 +76,7 @@ struct RosterEvaluationView: View {
     @State private var sortAscending: Bool = true
 
     private enum SortColumn: String {
-        case group, avgOVR, starter, depth, avgAge, capAllocation
+        case group, avgOVR, starter, depth, expiring, avgAge, capAllocation
     }
 
     // MARK: - Cap Detail Popover (#253)
@@ -177,11 +177,11 @@ struct RosterEvaluationView: View {
                             keyDecisionsSection
                             strengthsWeaknessesSection
                             capOutlookSection
-                            confirmEvaluationButton
                         }
                         .padding(24)
                         .frame(maxWidth: .infinity)
                     }
+                    .safeAreaInset(edge: .bottom) { confirmEvaluationBar }
                 } else {
                     ProgressView()
                         .tint(Color.accentGold)
@@ -209,32 +209,30 @@ struct RosterEvaluationView: View {
         }
     }
 
-    // MARK: - Confirm Evaluation Button
+    // MARK: - Confirm Evaluation Bar
 
-    private var confirmEvaluationButton: some View {
-        Button {
-            rosterEvaluationConfirmed = true
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: rosterEvaluationConfirmed ? "checkmark.circle.fill" : "checkmark.circle")
-                    .font(.title3)
-                Text(rosterEvaluationConfirmed ? "Evaluation Confirmed" : "Confirm Evaluation Complete")
-                    .font(.headline)
-            }
-            .foregroundStyle(rosterEvaluationConfirmed ? Color.success : Color.backgroundPrimary)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
-            .background(
-                rosterEvaluationConfirmed ? Color.success.opacity(0.15) : Color.accentGold,
-                in: RoundedRectangle(cornerRadius: 12)
+    /// The screen's commit surface, pinned (§2.5).
+    ///
+    /// It used to be the sixth and last child of the scroll stack, below up to
+    /// fifteen key-decision rows — the first screenful offered no primary action
+    /// at all, and the two rail tasks that close from here ("Review Position
+    /// Group Grades" and "Analyze Contract Situations", both keyed off
+    /// `rosterEvaluationConfirmed`) could be missed entirely. The explainer says
+    /// what committing does, because a button labelled "confirm" does not.
+    private var confirmEvaluationBar: some View {
+        DSActionBar(
+            explainer: .init(
+                title: rosterEvaluationConfirmed ? "Evaluation confirmed" : "When you have read the roster",
+                message: rosterEvaluationConfirmed
+                    ? "**Review Position Group Grades** and **Analyze Contract Situations** are checked off."
+                    : "Checks off **Review Position Group Grades** and **Analyze Contract Situations**."
+            ),
+            primary: .init(
+                title: rosterEvaluationConfirmed ? "Evaluation Confirmed" : "Confirm Evaluation Complete",
+                isEnabled: !rosterEvaluationConfirmed,
+                handler: { rosterEvaluationConfirmed = true }
             )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .strokeBorder(rosterEvaluationConfirmed ? Color.success.opacity(0.4) : Color.clear, lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
-        .disabled(rosterEvaluationConfirmed)
+        )
     }
 
     // MARK: - Section 0: Owner Demands (#248)
@@ -353,6 +351,8 @@ struct RosterEvaluationView: View {
         let depthOVR: Int
         let avgAge: Int
         let capAllocation: Int
+        /// Players in the group whose deal is up after this season.
+        let expiringCount: Int
         let needs: [NeedInfo]
         /// Auto-promoted from "Solid" to "Strength" when starter is A-tier and depth is at least B-tier.
         let isStrength: Bool
@@ -371,19 +371,27 @@ struct RosterEvaluationView: View {
             let needs = assessNeeds(group: group, players: groupPlayers, grades: grades)
             let avgAge = groupPlayers.isEmpty ? 0 : groupPlayers.map(\.age).reduce(0, +) / groupPlayers.count
             let capAllocation = groupPlayers.reduce(0) { $0 + $1.annualSalary }
-            // Headline "Starter" number = best player in the group.
+            let expiringCount = groupPlayers.filter { $0.contractYearsRemaining <= 1 }.count
+            // Headline number = BEST player in the group, which is why its column
+            // is called "Best" and not "Starter": the S: grade on the same row is
+            // the whole starting unit's average, so a 94 beside a B+ is a top
+            // receiver in front of two ordinary ones, not a contradiction.
             // RB shows the actual RB starter (e.g. 81), not the avg of RB+FB starters.
             let topOVR = groupPlayers.map(\.overall).max() ?? 0
             // Auto-promote to "Strength" only when starter is A-tier and depth is healthy.
+            // A room with nobody behind the starters carries no depth grade at all
+            // (ST wants exactly one K and one P), so there is nothing for it to
+            // clear — otherwise a perfectly stocked group could never be a strength.
             let starterIsA = grades.starterGrade.hasPrefix("A")
-            let depthIsB_or_better = grades.depthGrade.hasPrefix("A") || grades.depthGrade.hasPrefix("B")
+            let depthIsB_or_better = grades.depthGrade == PositionGradeCalculator.noDepthGrade
+                || grades.depthGrade.hasPrefix("A") || grades.depthGrade.hasPrefix("B")
             let isStrength = needs.isEmpty && starterIsA && depthIsB_or_better
             return GroupRowData(
                 id: group.id, group: group, avgOvr: avgOvr,
                 starterGrade: grades.starterGrade, depthGrade: grades.depthGrade,
                 starterOVR: topOVR, depthOVR: grades.depthOVR,
-                avgAge: avgAge, capAllocation: capAllocation, needs: needs,
-                isStrength: isStrength
+                avgAge: avgAge, capAllocation: capAllocation, expiringCount: expiringCount,
+                needs: needs, isStrength: isStrength
             )
         }
 
@@ -396,6 +404,8 @@ struct RosterEvaluationView: View {
             return rows.sorted { sortAscending ? $0.starterOVR < $1.starterOVR : $0.starterOVR > $1.starterOVR }
         case .depth:
             return rows.sorted { sortAscending ? $0.depthOVR < $1.depthOVR : $0.depthOVR > $1.depthOVR }
+        case .expiring:
+            return rows.sorted { sortAscending ? $0.expiringCount < $1.expiringCount : $0.expiringCount > $1.expiringCount }
         case .avgAge:
             return rows.sorted { sortAscending ? $0.avgAge < $1.avgAge : $0.avgAge > $1.avgAge }
         case .capAllocation:
@@ -416,6 +426,12 @@ struct RosterEvaluationView: View {
                 Text(title)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(sortColumn == column ? Color.accentGold : Color.textTertiary)
+                    // The caret appears inside the same fixed-width frame the
+                    // label sits in, so whichever column is sorted has ~10pt less
+                    // room than the rest. That is how "Group" broke to "Grou" /
+                    // "p" and left the header row taller than every row under it.
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
                 if sortColumn == column {
                     Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
                         .font(.caption2)
@@ -578,9 +594,11 @@ struct RosterEvaluationView: View {
             if avgAge > peakUpper { score += 1 }
         }
 
-        // Already a strength — the same A-starter / B-depth test as the row badge.
+        // Already a strength — the same A-starter / B-depth test as the row badge,
+        // including its allowance for a group with nobody behind the starters.
         let starterIsA = grades.starterGrade.hasPrefix("A")
-        let depthIsBOrBetter = grades.depthGrade.hasPrefix("A") || grades.depthGrade.hasPrefix("B")
+        let depthIsBOrBetter = grades.depthGrade == PositionGradeCalculator.noDepthGrade
+            || grades.depthGrade.hasPrefix("A") || grades.depthGrade.hasPrefix("B")
         if starterIsA && depthIsBOrBetter { score -= 2 }
 
         let isSpecialTeams = group.positions.first?.side == .specialTeams
@@ -597,7 +615,7 @@ struct RosterEvaluationView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(alignment: .top, spacing: 12) {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("Setting priorities affects draft board rankings and scouting focus")
+                            Text("Tap any position group to set your own priority — priorities affect draft board rankings and scouting focus")
                                 .font(.caption)
                                 .foregroundStyle(Color.textSecondary)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -639,10 +657,14 @@ struct RosterEvaluationView: View {
 
                 // Column headers — sortable (#250)
                 HStack {
-                    sortableHeader("Group", column: .group, width: 44, alignment: .leading)
-                    sortableHeader("Starter", column: .starter, width: 64)
-                    sortableHeader("Strt / Depth", column: .starter, width: 80)
+                    // 56, not 44: "Group" plus its sort chevron does not fit in 44
+                    // and the header wrapped to "Grou" / "p". The row's own label
+                    // below is framed to match, or every column drifts.
+                    sortableHeader("Group", column: .group, width: 56, alignment: .leading)
+                    sortableHeader("Best", column: .starter, width: 64)
+                    sortableHeader("Strt / Depth", column: .depth, width: 80)
                     if isIPad {
+                        sortableHeader("Expiring", column: .expiring, width: 64)
                         sortableHeader("Avg Age", column: .avgAge, width: 60)
                         sortableHeader("Cap $", column: .capAllocation, width: 72)
                     }
@@ -666,6 +688,16 @@ struct RosterEvaluationView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 8)
+
+                // The number and the letters beside it measure different men.
+                // Without this line a WR room reading "94 · S: B+" looks like the
+                // app disagreeing with itself.
+                Text("Best = top player in the group \u{00B7} S: = projected starters' average \u{00B7} D: = everyone behind them")
+                    .font(.system(size: DSType.Size.footnote, weight: .medium))
+                    .foregroundStyle(Color.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
 
                 Divider().overlay(Color.surfaceBorder)
 
@@ -699,9 +731,9 @@ struct RosterEvaluationView: View {
                 Text(group.label)
                     .font(.subheadline.weight(.bold))
                     .foregroundStyle(Color.textPrimary)
-                    .frame(width: 44, alignment: .leading)
+                    .frame(width: 56, alignment: .leading)
 
-                // Starter OVR — what's actually starting at this position.
+                // Best OVR in the group — the ceiling, not the starting unit.
                 Text(rowData.starterOVR == 0 ? "\u{2014}" : "\(rowData.starterOVR)")
                     .font(.subheadline.weight(.semibold).monospacedDigit())
                     .foregroundStyle(rowData.starterOVR == 0 ? Color.textTertiary : Color.forRating(rowData.starterOVR))
@@ -729,6 +761,14 @@ struct RosterEvaluationView: View {
 
                 // iPad extra columns (#250)
                 if isIPad {
+                    // Which rooms are about to leak. It was computable from the
+                    // roster but only ever surfaced player-by-player under Key
+                    // Decisions, while half of every row here sat empty.
+                    Text("\(rowData.expiringCount)")
+                        .font(.subheadline.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(rowData.expiringCount == 0 ? Color.textTertiary : Color.accentGold)
+                        .frame(width: 64, alignment: .center)
+
                     Text(rowData.avgAge == 0 ? "\u{2014}" : "\(rowData.avgAge)")
                         .font(.subheadline.monospacedDigit())
                         .foregroundStyle(Color.textSecondary)
@@ -772,9 +812,10 @@ struct RosterEvaluationView: View {
                         let priority: String? = storedPriority == "none" ? nil : storedPriority
 
                         if ownAssessment == nil && priority == nil {
-                            Text("—")
-                                .font(.system(size: DSType.Size.micro, weight: .medium))
-                                .foregroundStyle(Color.textTertiary)
+                            // A grey dash is the only thing nine rows offered for
+                            // a job the card counts ("Priorities set: 0/9"), and
+                            // it reads as "nothing here" rather than "tap me".
+                            needBadge(label: "Set", color: .accentGold)
                         } else {
                             VStack(alignment: .trailing, spacing: 2) {
                                 if let ownAssessment {
@@ -926,7 +967,14 @@ struct RosterEvaluationView: View {
     }
 
     private func keyDecisionRow(_ decision: KeyDecision) -> some View {
-        HStack(spacing: 12) {
+        // An expiring row asks "re-sign him at what?" and then printed only what
+        // he earns today — the market number the recommendation quotes lived one
+        // tap down, inside the financial details.
+        let market: Int? = decision.type == .expiringContract
+            ? ContractEngine.estimateMarketValue(player: decision.player, salaryCap: salaryCap)
+            : nil
+
+        return HStack(spacing: 12) {
             // Position badge
             Text(decision.player.position.rawValue)
                 .font(.caption.weight(.bold))
@@ -959,9 +1007,20 @@ struct RosterEvaluationView: View {
                 Text("\(decision.player.overall) OVR")
                     .font(.caption.weight(.semibold).monospacedDigit())
                     .foregroundStyle(Color.forRating(decision.player.overall))
-                Text(formatMillions(decision.player.annualSalary))
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(Color.textTertiary)
+                if let market {
+                    Text("\(formatMillions(decision.player.annualSalary)) now")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(Color.textTertiary)
+                        .lineLimit(1)
+                    Text("\(formatMillions(market)) market")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(Color.accentBlue)
+                        .lineLimit(1)
+                } else {
+                    Text(formatMillions(decision.player.annualSalary))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(Color.textTertiary)
+                }
             }
 
             // Expand chevron
@@ -2199,17 +2258,60 @@ struct RosterEvaluationView: View {
             .map { $0 }
     }
 
+    /// The line printed under an expiring contract.
+    ///
+    /// Every clause about money here now has to be paid for by an actual
+    /// comparison. `marketValue` was a parameter this body never read, so a
+    /// $950K backup and a $5.3M starter were both told their output was
+    /// "declining relative to cost" — one of them is on the minimum and cannot
+    /// be a cost problem at all. And the franchise tag was the final `else`,
+    /// reachable only at 65-69 OVR: the app offered a raise to the one player
+    /// whose deal sits under the tag floor, and never mentioned the tag to the
+    /// star it exists for.
     private func expiringRecommendation(player: Player, marketValue: Int) -> String {
         let isPastPeak = player.age > player.position.peakAgeRange.upperBound
+        let salary = player.annualSalary
+
         if player.overall >= 80 && !isPastPeak {
+            // The tag is worth naming only when an extension does not fit: it
+            // costs the top-5 average at the position, so it is the expensive
+            // way to keep a man one more year, not the cheap one.
+            if let team, team.availableCap < marketValue {
+                let tag = franchiseTagValue(for: player.position)
+                if tag > 0 {
+                    return "Elite and in his prime, with no room to extend him. The tag holds him a year at \(formatMillions(tag))."
+                }
+            }
             return "Elite player still in his prime. Prioritize extension before free agency."
         } else if player.overall >= 70 && !isPastPeak {
-            return "Solid contributor with value. Re-sign at or slightly above market."
+            return "Solid contributor with value. Re-sign at or near his \(formatMillions(marketValue)) market value."
         } else if isPastPeak || player.overall < 65 {
-            return "Declining output relative to cost. Consider letting him walk."
+            // A deal is a COST problem only when the overpay is itself worth
+            // more than a minimum contract. At $950K against a $750K market
+            // value there is no money to save, whatever his age — which is why
+            // the old copy told the user to walk away from his own cheap depth.
+            let overpay = salary - marketValue
+            return overpay > ContractEngine.veteranMinimum(cap: salaryCap)
+                ? "Paying \(formatMillions(salary)) against a \(formatMillions(marketValue)) market value. Consider letting him walk."
+                : "\(isPastPeak ? "Past peak" : "Rotational") at \(formatMillions(salary)) — no money to save here. Re-sign as depth if he'll take it."
         } else {
-            return "Franchise tag is an option to buy time before committing long-term."
+            return "Fringe starter. Let him reach the market and re-sign only near \(formatMillions(marketValue))."
         }
+    }
+
+    /// Tag cost for a position: the average of the league's top-5 salaries
+    /// there, the same number `FinalPushView` quotes and `ContractEngine`
+    /// charges — including the cap-relative floor, and 0 in sandbox mode.
+    private func franchiseTagValue(for position: Position) -> Int {
+        let positionSalaries = allPlayers
+            .filter { $0.position == position && $0.annualSalary > 0 }
+            .map(\.annualSalary)
+        return ContractEngine.franchiseTagValue(
+            position: position,
+            topSalaries: positionSalaries,
+            capMode: career.capMode,
+            salaryCap: salaryCap
+        )
     }
 
     // MARK: - Cap Helpers

@@ -205,6 +205,21 @@ final class Career {
     /// Inline default → SwiftData lightweight migration; never an init parameter.
     var campFillSeason: Int = 0
 
+    // MARK: - Fan support
+    /// The city's read on the front office, 0…100, neutral at 50.
+    ///
+    /// The home the podium's FANS number never had. `PressEffects.fanExcitement`
+    /// was the second-biggest number on the press screen and was written
+    /// nowhere at all — a meter the user was asked to play against and that no
+    /// state ever held. It moves through
+    /// ``PressConferenceEngine/applyRoomEffects(result:career:roster:)`` and is
+    /// read by the hub's TEAM card.
+    ///
+    /// Inline default → SwiftData lightweight migration; never an init parameter.
+    /// An old save opens at the neutral 50 rather than at 0, which would read as
+    /// a city that had already given up on a coach it has never seen speak.
+    var fanSupport: Int = 50
+
     // MARK: - Development Reports (R26)
     /// JSON-encoded `[DevelopmentReport]` — weekly development digests for
     /// the user's team, newest first, capped at 10.

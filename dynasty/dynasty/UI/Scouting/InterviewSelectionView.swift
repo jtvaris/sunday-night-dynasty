@@ -41,7 +41,6 @@ struct InterviewSelectionView: View {
     @State private var filterMyGradeFirstRound: Bool = false
     @State private var teamRoster: [Player] = []
     @State private var coaches: [Coach] = []
-    @AppStorage("interviewBannerDismissed") private var bannerDismissed = false
     @CareerScopedStorage("prospectWatchlist") private var prospectWatchlistJSON: String = "[]"
     @ObservedObject private var userGradeStore = UserProspectGradeStore.shared
     @State private var isLoading: Bool = true
@@ -152,6 +151,17 @@ struct InterviewSelectionView: View {
         prospects.contains { $0.interviewCompleted }
     }
 
+    /// Whether the body is drawing the selection list rather than a report.
+    ///
+    /// `header` is rendered above the branch, so it is shared by both states.
+    /// The chrome that only steers a selection — the filter menu, the slot
+    /// meter — asks this before drawing itself, rather than sitting live over a
+    /// report where there is nothing left to select or filter. Mirrors the
+    /// branch order in `body`.
+    private var isSelecting: Bool {
+        !showResults && !(viewingPastReport && hasCompletedInterviews) && remainingSlots > 0
+    }
+
     // MARK: - Body
 
     var body: some View {
@@ -244,16 +254,17 @@ struct InterviewSelectionView: View {
 
                 Spacer()
 
-                // #19: Interview capacity counter
-                Text("\(career.interviewsUsed)/\(maxInterviews) used")
-                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
-                    .foregroundStyle(career.interviewsUsed >= maxInterviews ? Color.danger : Color.textSecondary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(Capsule().fill(Color.backgroundTertiary))
-
-                // #16: Sort/filter icon
-                positionFilterMenu
+                // The ration used to be printed here as "N/60 used" on top of
+                // the list's own meter and its "N/60 remaining" row — three
+                // counters for one fact, two of them on different denominators.
+                // `selectionProgress` states it once, and the list owns it.
+                //
+                // #16: the filter only has a list to filter. This header is
+                // shared with the report, where a live Filter pill steered
+                // nothing at all.
+                if isSelecting {
+                    positionFilterMenu
+                }
             }
 
             // #17: Interview info tooltip
@@ -261,7 +272,7 @@ struct InterviewSelectionView: View {
                 Image(systemName: "sparkles")
                     .font(.system(size: DSType.Size.caption))
                     .foregroundStyle(Color.accentGold)
-                Text("Reveals: Football IQ (exact) \u{00B7} Awareness, Learning, Compete, Leadership, Work Ethic grades \u{00B7} personality & character")
+                Text("Reveals: Football IQ (exact) \u{00B7} Awareness, Learning, Compete, Leadership, Work Ethic grades \u{00B7} personality & character \u{2014} which is what reduces bust risk")
                     .font(.system(size: DSType.Size.footnote, weight: .medium))
                     .foregroundStyle(Color.textTertiary)
                     .lineLimit(2)
@@ -272,9 +283,6 @@ struct InterviewSelectionView: View {
                     .font(.system(size: DSType.Size.footnote))
                     .foregroundStyle(Color.textTertiary)
             }
-
-            // #83: Selection progress
-            selectionProgress
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
@@ -282,32 +290,55 @@ struct InterviewSelectionView: View {
 
     // MARK: - Selection Progress (#83)
 
+    /// The one place this screen prints the interview ration.
+    ///
+    /// The words and the bar used to run on a different denominator from the
+    /// header pill beside them: this line counted ticks against slots REMAINING
+    /// while the pill counted spend against the 60, so "0/7 selected" could sit
+    /// one line under "53/60 used" and mean a different scale. Both halves
+    /// measure the same 60 now — the bar fills with what is already spent plus
+    /// what is ticked, so it never rebases mid-cycle.
     private var selectionProgress: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        let slotsLeft = max(0, remainingSlots - selectedProspectIDs.count)
+        let committed = min(maxInterviews, career.interviewsUsed + selectedProspectIDs.count)
+        return VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text("\(selectedProspectIDs.count)/\(remainingSlots) selected")
+                Text("\(selectedProspectIDs.count) selected \u{00B7} \(slotsLeft) of \(maxInterviews) left")
                     .font(.system(size: 14, weight: .bold).monospacedDigit())
                     .foregroundStyle(Color.textPrimary)
 
                 Spacer()
 
-                Text("League teams typically interview 15\u{2013}20 prospects")
+                // This used to read "League teams typically interview 15-20
+                // prospects", which advised the user into a strictly worse
+                // choice than the screen's own "Select All Recommended" gives
+                // him: a slot is the ONLY cost — `conductInterviews` spends no
+                // money and the stage takes its one week whether you meet one
+                // man or sixty — and `WeekAdvancer.startNewSeason` zeroes
+                // `interviewsUsed` with the class, so restraint buys nothing
+                // and destroys forty reads. The line says the fact instead.
+                Text("Unused slots expire with this draft class")
                     .font(.system(size: DSType.Size.footnote, weight: .medium))
                     .foregroundStyle(Color.textTertiary)
             }
 
             GeometryReader { geo in
+                let unit = geo.size.width / CGFloat(max(1, maxInterviews))
                 ZStack(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 3)
                         .fill(Color.backgroundTertiary)
                         .frame(height: 6)
 
+                    // Gold is what this batch would spend; the spent prefix is
+                    // drawn over its head in the muted tint, so one bar shows
+                    // both halves of the same 60.
                     RoundedRectangle(cornerRadius: 3)
-                        .fill(selectedProspectIDs.isEmpty ? Color.textTertiary : Color.accentGold)
-                        .frame(width: remainingSlots > 0
-                               ? geo.size.width * CGFloat(selectedProspectIDs.count) / CGFloat(remainingSlots)
-                               : 0,
-                               height: 6)
+                        .fill(Color.accentGold)
+                        .frame(width: unit * CGFloat(committed), height: 6)
+
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(Color.textTertiary)
+                        .frame(width: unit * CGFloat(career.interviewsUsed), height: 6)
                 }
             }
             .frame(height: 6)
@@ -368,6 +399,9 @@ struct InterviewSelectionView: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(Capsule().fill(Color.accentGold.opacity(0.12)))
+            // The pill keeps its density; the tap target gets the 44 pt floor.
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
         }
     }
 
@@ -375,68 +409,78 @@ struct InterviewSelectionView: View {
 
     private var selectionList: some View {
         VStack(spacing: 0) {
-            // Task 18: Interview capacity counter (prominent)
-            HStack(spacing: 8) {
-                Image(systemName: "bubble.left.and.bubble.right")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Color.accentGold)
-                Text("\(remainingSlots)/\(maxInterviews) interviews remaining")
-                    .font(.system(size: 12, weight: .bold).monospacedDigit())
-                    .foregroundStyle(remainingSlots < 10 ? Color.danger : Color.textPrimary)
+            // Task 18: the ration and the controls that spend it, in one block.
+            // The meter states the count once (see `selectionProgress`) and this
+            // row acts on it; the row used to restate the same 60 in its own
+            // words, two lines under a header pill saying it a third time.
+            VStack(alignment: .leading, spacing: 8) {
+                selectionProgress
 
-                Spacer()
+                // Every capsule in this row carries `minHeight: 44` under a
+                // small pill: "Select All Recommended" is the highest-leverage
+                // control on the screen — one tap for a whole batch — and it
+                // shipped as a ~21 pt target, under half the HIG floor.
+                HStack(spacing: 8) {
+                    Spacer()
 
-                // View Past Report button — surfaces prior interview results
-                // so the dashboard "Review interview report" task can be completed
-                // mid-combine, before all slots are used.
-                if hasCompletedInterviews {
-                    Button {
-                        viewingPastReport = true
-                    } label: {
-                        HStack(spacing: 3) {
-                            Image(systemName: "doc.text.magnifyingglass")
-                                .font(.system(size: DSType.Size.caption))
-                            Text("View Report (\(completedInterviewResults.count))")
-                                .font(.system(size: DSType.Size.footnote, weight: .bold))
-                        }
-                        .foregroundStyle(Color.accentGold)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Capsule().fill(Color.accentGold.opacity(0.12)))
-                    }
-                    .buttonStyle(.plain)
-                }
-
-                // Task 20: Select All Recommended
-                if !recommendedProspects.isEmpty {
-                    Button {
-                        let available = recommendedProspects.filter { !selectedProspectIDs.contains($0.id) }
-                        for p in available.prefix(remainingSlots - selectedProspectIDs.count) {
-                            selectedProspectIDs.insert(p.id)
-                        }
-                    } label: {
-                        Text("Select All Recommended")
-                            .font(.system(size: 10, weight: .bold))
+                    // View Past Report button — surfaces prior interview results
+                    // so the dashboard "Review interview report" task can be completed
+                    // mid-combine, before all slots are used.
+                    if hasCompletedInterviews {
+                        Button {
+                            viewingPastReport = true
+                        } label: {
+                            HStack(spacing: 3) {
+                                Image(systemName: "doc.text.magnifyingglass")
+                                    .font(.system(size: DSType.Size.caption))
+                                Text("View Report (\(completedInterviewResults.count))")
+                                    .font(.system(size: DSType.Size.footnote, weight: .bold))
+                            }
                             .foregroundStyle(Color.accentGold)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
                             .background(Capsule().fill(Color.accentGold.opacity(0.12)))
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
-                }
 
-                if !selectedProspectIDs.isEmpty {
-                    Button {
-                        selectedProspectIDs.removeAll()
-                    } label: {
-                        Text("Deselect All")
-                            .font(.system(size: DSType.Size.caption, weight: .bold))
-                            .foregroundStyle(Color.textSecondary)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Capsule().fill(Color.backgroundTertiary))
+                    // Task 20: Select All Recommended
+                    if !recommendedProspects.isEmpty {
+                        Button {
+                            let available = recommendedProspects.filter { !selectedProspectIDs.contains($0.id) }
+                            for p in available.prefix(remainingSlots - selectedProspectIDs.count) {
+                                selectedProspectIDs.insert(p.id)
+                            }
+                        } label: {
+                            Text("Select All Recommended")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(Color.accentGold)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Capsule().fill(Color.accentGold.opacity(0.12)))
+                                .frame(minHeight: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
+
+                    if !selectedProspectIDs.isEmpty {
+                        Button {
+                            selectedProspectIDs.removeAll()
+                        } label: {
+                            Text("Deselect All")
+                                .font(.system(size: DSType.Size.caption, weight: .bold))
+                                .foregroundStyle(Color.textSecondary)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Capsule().fill(Color.backgroundTertiary))
+                                .frame(minHeight: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
             }
             .padding(.horizontal, 20)
@@ -463,10 +507,12 @@ struct InterviewSelectionView: View {
 
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    // #82: Explanation banner
-                    if !bannerDismissed {
-                        infoBanner
-                    }
+                    // The gold "interviews reveal personality, football IQ and
+                    // character" banner used to open the list. The header's
+                    // Reveals line names the exact attributes three rows above
+                    // it, so the banner was the same sentence with less in it —
+                    // and the only gold card in the upper half of the screen,
+                    // taking the emphasis that belongs to the ration.
 
                     // #78: Table header
                     tableHeader
@@ -492,41 +538,6 @@ struct InterviewSelectionView: View {
 
             conductButton
         }
-    }
-
-    // MARK: - Info Banner (#82)
-
-    private var infoBanner: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "info.circle.fill")
-                .font(.system(size: 14))
-                .foregroundStyle(Color.accentGold)
-
-            Text("Interviews reveal personality, football IQ, and character \u{2014} reducing bust risk.")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(Color.textSecondary)
-
-            Spacer()
-
-            Button {
-                bannerDismissed = true
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(Color.textTertiary)
-            }
-            .accessibilityLabel("Dismiss info banner")
-        }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.accentGold.opacity(0.08))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(Color.accentGold.opacity(0.2))
-                )
-        )
-        .padding(.vertical, 8)
     }
 
     // MARK: - Section Header (#81)
@@ -556,9 +567,15 @@ struct InterviewSelectionView: View {
     /// block between them follows the mode chips.
     private var tableHeader: some View {
         HStack(spacing: 0) {
-            // Mark button + checkbox placeholders.
-            Color.clear.frame(width: 36)
-            Color.clear.frame(width: 22)
+            // The two leading controls are BOTH circles — `ProspectMarkButton`
+            // draws `circle.dashed` when a man is unmarked, and the selection
+            // checkbox is an empty circle — so a row reads "○ ✓" with nothing
+            // saying which one spends the interview slot. The gutter is named
+            // rather than left as two blank placeholders.
+            Text("MARK")
+                .frame(width: 36, alignment: .center)
+            Image(systemName: "checkmark")
+                .frame(width: 22)
 
             Text("POS")
                 .frame(width: 36, alignment: .center)
@@ -579,7 +596,7 @@ struct InterviewSelectionView: View {
             // `interviewCompleted = true`, so the column could print nothing but
             // a dash on every row of every page.
             Text("RISK")
-                .frame(width: 48, alignment: .center)
+                .frame(width: 80, alignment: .center)
             Text("OVR")
                 .frame(width: 50, alignment: .center)
         }
@@ -708,9 +725,13 @@ struct InterviewSelectionView: View {
                     // dashes charging 34 pt for a fact the screen's own filter
                     // already guarantees. See `tableHeader`.
 
-                    // #18: bust risk preview.
+                    // #18: bust risk preview. 80 pt, not 48: the shared Overview
+                    // block measured that floor (`ProspectColumns.cells`) and
+                    // anything under it truncates "Boom/Bust" and "Ceiling" to
+                    // an ellipsis. The width comes out of the elastic NAME
+                    // column, same as it does there.
                     ProspectRiskBadge(risk: prospect.riskLevel)
-                        .frame(width: 48, alignment: .center)
+                        .frame(width: 80, alignment: .center)
 
                     // #14: OVR — the fogged band, widened by the department's
                     // confidence, exactly as the Big Board's OVR column reads
@@ -729,6 +750,13 @@ struct InterviewSelectionView: View {
                     .strokeBorder(Color.accentGold.opacity(priority == .must ? 0.4 : 0), lineWidth: 1)
             )
             .opacity(priority == .optional && !isSelected ? 0.7 : 1.0)
+            // Additive on purpose: an `accessibilityLabel` here would replace
+            // the row's name, position and grades with one sentence. The row
+            // needs to say which of its two circles is the slot, not less.
+            .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+            .accessibilityHint(isSelected
+                               ? "Removes him from this interview batch"
+                               : "Adds him to this interview batch")
         }
         .buttonStyle(.plain)
         .opacity(canSelect || isSelected ? 1.0 : 0.4)
@@ -1191,12 +1219,17 @@ struct InterviewReportView: View {
                         Text("Complete Review \u{2192} Return to Interviews")
                             .font(.system(size: 14, weight: .bold))
                     }
-                    .foregroundStyle(Color.backgroundPrimary)
+                    // Bordered, not filled. This bar is a dismiss — it goes
+                    // BACK to the selection list — and it was drawing a
+                    // full-width gold primary directly above the hub's stage
+                    // advance, which is the actual forward move and the one
+                    // gold the action bar's own rule allows.
+                    .foregroundStyle(Color.accentGold)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
                     .background(
                         RoundedRectangle(cornerRadius: 12)
-                            .fill(Color.accentGold)
+                            .strokeBorder(Color.accentGold.opacity(0.5), lineWidth: 1)
                     )
                 }
                 .padding(.horizontal, 16)
@@ -1214,18 +1247,30 @@ struct InterviewReportView: View {
     // MARK: - Report Header (Task 5: Unified interview counts)
 
     private var reportHeader: some View {
-        HStack {
-            Text("INTERVIEW REPORT")
-                .font(.system(size: 16, weight: .heavy))
-                .foregroundStyle(Color.accentGold)
-                .tracking(0.5)
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text("INTERVIEW REPORT")
+                    .font(.system(size: 16, weight: .heavy))
+                    .foregroundStyle(Color.accentGold)
+                    .tracking(0.5)
 
-            Spacer()
+                Spacer()
 
-            // Task 5: Unified count display
-            Text("\(results.count) interview\(results.count == 1 ? "" : "s") completed")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Color.textSecondary)
+                // Task 5: Unified count display
+                Text("\(results.count) interview\(results.count == 1 ? "" : "s") completed")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.textSecondary)
+            }
+
+            // The cards are stamped #1…#53 with no stated basis, so a projected
+            // seventh-rounder sitting second reads as a bug until you know the
+            // ordinal is `interviewScore` — which is not the board's grade and
+            // is not what the club drafts on. Say what the order means.
+            if results.count > 1 {
+                Text("Ranked by interview score \u{2014} football IQ, personality and character")
+                    .font(.system(size: DSType.Size.footnote, weight: .medium))
+                    .foregroundStyle(Color.textTertiary)
+            }
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
@@ -1263,6 +1308,10 @@ struct InterviewReportView: View {
             }
         }
         .padding(12)
+        // Without this the card hugged its own text in a centre-aligned
+        // LazyVStack — the densest block on the screen drew at ~40 % width,
+        // sharing no left edge with the full-bleed result cards under it.
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 10)
                 .fill(Color.accentGold.opacity(0.06))
@@ -1299,11 +1348,21 @@ struct InterviewReportView: View {
         return VStack(alignment: .leading, spacing: 10) {
             // Top row: rank, name, position, interview grade
             HStack {
-                // Task 4: Ranking number
-                Text("#\(rank)")
-                    .font(.system(size: 14, weight: .heavy).monospacedDigit())
-                    .foregroundStyle(isTopPick ? Color.accentGold : Color.textTertiary)
-                    .frame(width: 28)
+                // Task 4: Ranking number, with the number it ranks on. Two men
+                // can hold the same letter grade — the summary's "Best: …" is
+                // undecidable from a page of A's — so the score that decided
+                // the order is printed where the order is.
+                VStack(spacing: 1) {
+                    Text("#\(rank)")
+                        .font(.system(size: 14, weight: .heavy).monospacedDigit())
+                        .foregroundStyle(isTopPick ? Color.accentGold : Color.textTertiary)
+                    Text("\(result.interviewScore)")
+                        .font(.system(size: DSType.Size.micro, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(Color.textTertiary)
+                }
+                .frame(width: 28)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Rank \(rank), interview score \(result.interviewScore)")
 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
@@ -1479,60 +1538,41 @@ struct InterviewReportView: View {
         )
     }
 
-    // MARK: - Task 8: Bust Risk Impact
+    // MARK: - Task 8: Risk, in the board's words
 
+    /// What this meeting did to the club's risk read on him.
+    ///
+    /// It used to print "Bust risk: 35 % → 15 % after interview" off a
+    /// view-local `estimateBustRisk` — a THIRD risk model in a feature that
+    /// already had two, and the weakest of them: its before-figure was a flat
+    /// 35 for every prospect who was not a QB, WR or CB, so a 53-man report
+    /// printed the identical delta on man after man, while the RISK chip on the
+    /// selection list called that same prospect "Safe" and the summary line at
+    /// the top of this report called him "low". Nothing in the engine ever read
+    /// the percentage — the only bust concept the sim has is post-hoc
+    /// (`DraftGradeEngine.isBust`), so it could not have been a forecast of
+    /// anything.
+    ///
+    /// `riskLevel` is the model the chip, the Big Board and the prospect card
+    /// all speak, and the interview genuinely moves it: `conductInterview`
+    /// records the personality read, which is one of its terms. So the report
+    /// shows the same badge the row showed, re-read after the meeting — one
+    /// claim the user can carry back to the board.
     private func bustRiskRow(_ result: InterviewResult) -> some View {
-        let prospect = result.prospect
-        // Estimate pre-interview bust risk based on prospect profile
-        let baseRiskPct = estimateBustRisk(prospect: prospect, hasInterview: false)
-        let postRiskPct = estimateBustRisk(prospect: prospect, hasInterview: true, iq: result.footballIQ, personality: result.personality, hasOffField: result.hasOffFieldConcerns)
-
+        let risk = result.prospect.riskLevel
         return Group {
-            if baseRiskPct != postRiskPct {
+            if risk != .unknown {
                 HStack(spacing: 6) {
-                    Image(systemName: "chart.line.downtrend.xyaxis")
-                        .font(.system(size: 10))
-                        .foregroundStyle(postRiskPct < baseRiskPct ? Color.success : Color.danger)
-                    Text("Bust risk: \(baseRiskPct)%")
-                        .font(.system(size: 11, weight: .semibold).monospacedDigit())
-                        .foregroundStyle(Color.textSecondary)
-                    Image(systemName: "arrow.right")
-                        .font(.system(size: DSType.Size.micro))
+                    Text("BOARD RISK")
+                        .font(.system(size: DSType.Size.micro, weight: .heavy))
                         .foregroundStyle(Color.textTertiary)
-                    Text("\(postRiskPct)% after interview")
-                        .font(.system(size: 11, weight: .bold).monospacedDigit())
-                        .foregroundStyle(postRiskPct < baseRiskPct ? Color.success : Color.danger)
+                    ProspectRiskBadge(risk: risk)
+                    Text("updated with this meeting")
+                        .font(.system(size: DSType.Size.footnote, weight: .medium))
+                        .foregroundStyle(Color.textTertiary)
                 }
             }
         }
-    }
-
-    private func estimateBustRisk(prospect: CollegeProspect, hasInterview: Bool, iq: Int = 65, personality: PersonalityArchetype = .steadyPerformer, hasOffField: Bool = false) -> Int {
-        var risk = 35 // Base bust risk
-
-        // Position-based
-        if prospect.position == .QB { risk += 10 }
-        else if prospect.position == .WR || prospect.position == .CB { risk += 5 }
-
-        // Age — younger = more risk
-        if prospect.age <= 20 { risk += 5 }
-
-        if hasInterview {
-            // IQ reduces risk
-            if iq >= 85 { risk -= 15 }
-            else if iq >= 75 { risk -= 10 }
-            else if iq >= 65 { risk -= 5 }
-            else if iq < 50 { risk += 10 }
-
-            // Personality
-            if personality.tier == .positive { risk -= 5 }
-            else if personality.tier == .risky { risk += 5 }
-
-            // Off-field
-            if hasOffField { risk += 10 }
-        }
-
-        return max(5, min(80, risk))
     }
 
     // MARK: - Task 12: Red/Green Flags Summary

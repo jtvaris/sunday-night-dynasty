@@ -132,6 +132,16 @@ final class DraftDayCoordinator: ObservableObject {
     /// contract as `activeRunBeatID` (task #94).
     private var activeCapWarningBeatID: UUID?
 
+    /// The round whose "is under way" beat has already been posted.
+    ///
+    /// `announceCurrentRoundIfNeeded` used to decide purely from
+    /// `picks[i - 1].round`, which is a function of the index and remembers
+    /// nothing — and at index 0 there IS no predecessor, so the test passed on
+    /// every call. `start()` posted round one, then the first turn of the
+    /// skip-to-my-pick loop posted it again: two identical "Round 1 is under
+    /// way / #1" cards at the bottom of the live feed.
+    private var lastAnnouncedRound: Int?
+
     /// Year-one money the USER's own class has cost so far tonight, in
     /// thousands — the sum of the slots charged at his podium turns.
     ///
@@ -382,15 +392,15 @@ final class DraftDayCoordinator: ObservableObject {
             draftClass = generated
         }
 
-        let draftedNames: Set<String> = Set(draftPicks.compactMap { $0.playerName })
-        // Build the player-facing pool: declared, not already drafted by name
-        // (across this and any earlier sessions persisted in SwiftData), and
-        // deduplicated by UUID (SwiftData can carry stale dupes from earlier
+        // Build the player-facing pool: declared, not already taken by a
+        // completed pick of this or any earlier session persisted in SwiftData,
+        // and deduplicated by UUID (SwiftData can carry stale dupes from earlier
         // generation cycles).
+        let draftedIDs = Self.draftedProspectIDs(picks: draftPicks, draftClass: draftClass)
         var seenIDs = Set<UUID>()
         let availablePool = draftClass
             .filter { $0.isDeclaringForDraft }
-            .filter { !draftedNames.contains("\($0.firstName) \($0.lastName)") }
+            .filter { !draftedIDs.contains($0.id) }
             .filter { seenIDs.insert($0.id).inserted }
 
         self.teamsByID = Dictionary(uniqueKeysWithValues: teams.map { ($0.id, $0) })
@@ -478,6 +488,47 @@ final class DraftDayCoordinator: ObservableObject {
             prepareUDFAStage()
         }
         clockSeconds = 120
+    }
+
+    /// The men the completed picks actually took, resolved back to their
+    /// prospect rows.
+    ///
+    /// `DraftPick` carries no prospect id, so the only way back is the fields
+    /// the commit path stamps on it — name, position, college. A full name on
+    /// its own is NOT an identity: a class can hold two men with the same one,
+    /// and the name-keyed set this replaces removed both of them, so the twin
+    /// nobody drafted silently left the class on the next load and could never
+    /// be picked. Each completed pick therefore claims exactly ONE prospect —
+    /// the closest match it can find, preferring a man the commit path has
+    /// already flagged out of the class (`isDeclaringForDraft` is cleared on the
+    /// man it drafts) over one who is still on the board, the same tie-break the
+    /// big board's `recentlyTaken()` uses for the same hazard.
+    private static func draftedProspectIDs(
+        picks: [DraftPick],
+        draftClass: [CollegeProspect]
+    ) -> Set<UUID> {
+        func matchScore(_ prospect: CollegeProspect, for pick: DraftPick) -> Int {
+            var score = 0
+            if pick.playerPosition == prospect.position.rawValue { score += 4 }
+            if pick.playerCollege == prospect.college { score += 2 }
+            if !prospect.isDeclaringForDraft { score += 1 }
+            return score
+        }
+
+        var byName: [String: [CollegeProspect]] = [:]
+        for prospect in draftClass {
+            byName["\(prospect.firstName) \(prospect.lastName)", default: []].append(prospect)
+        }
+
+        var claimed: Set<UUID> = []
+        for pick in picks {
+            guard let name = pick.playerName, let candidates = byName[name] else { continue }
+            let match = candidates
+                .filter { !claimed.contains($0.id) }
+                .max { matchScore($0, for: pick) < matchScore($1, for: pick) }
+            if let match { claimed.insert(match.id) }
+        }
+        return claimed
     }
 
     // MARK: - Control
@@ -1484,7 +1535,22 @@ final class DraftDayCoordinator: ObservableObject {
             // We never apply these to the user's DraftReputation — they exist purely for
             // UI flavour so the news-ticker stays alive between user picks.
             let aiReactions = ReactionsEngine.reactions(to: result, isUserTeam: false)
-            let mediaOnly = aiReactions.filter { $0.actor == .media }
+            // Stamped with the card it is about. The rail drops its subject line
+            // for AI picks by design (`reactedToPick` returns nil unless the pick
+            // was the user's), so an unstamped toast is a sentence about a man
+            // nobody on screen is discussing — "Kenji Shelburne?" surfacing
+            // fifteen slots after Shelburne went. The LIVE FEED cards beside it
+            // have carried their pick number all along.
+            let mediaOnly = aiReactions
+                .filter { $0.actor == .media }
+                .map {
+                    ReactionsEngine.Reaction(
+                        actor: $0.actor,
+                        sentiment: $0.sentiment,
+                        message: "#\(pick.pickNumber) \u{00B7} \($0.message)",
+                        mechanicalDelta: $0.mechanicalDelta
+                    )
+                }
             pendingReactions.append(contentsOf: mediaOnly)
         }
 
@@ -1734,6 +1800,12 @@ final class DraftDayCoordinator: ObservableObject {
     private func autoAdvanceUntil(_ predicate: (DraftDayCoordinator) -> Bool) {
         // Process AI picks immediately (no clock). Stop when predicate met or
         // user pick reached.
+        //
+        // Whatever is already queued belongs to the card the user has just been
+        // shown — his own pick's quartet, most often — and is his to see. What
+        // the skip itself generates is collapsed afterwards; see
+        // `trimFastForwardReactions`.
+        let reactionsBeforeSkip = pendingReactions.count
         var safety = 0
         while !predicate(self) && currentPickIndex < picks.count {
             safety += 1
@@ -1775,6 +1847,7 @@ final class DraftDayCoordinator: ObservableObject {
                 break
             }
         }
+        trimFastForwardReactions(keeping: reactionsBeforeSkip)
         if currentPickIndex >= picks.count {
             completeDraft()
             return
@@ -1784,13 +1857,29 @@ final class DraftDayCoordinator: ObservableObject {
         beginCurrentPick()
     }
 
+    /// A media reaction is a comment on the card that just turned over, and the
+    /// rail dwells on one cluster at a time. Skip-to-my-pick burns sixteen cards
+    /// in the time that queue drains two, so the toast for pick #2 surfaced while
+    /// the room was on #17 — a queue, but it reads as a bug. Everything the skip
+    /// itself queued is collapsed to its newest line; the backlog that was
+    /// waiting before it started is left alone, because that one is the user's
+    /// own pick being reacted to.
+    private func trimFastForwardReactions(keeping preserved: Int) {
+        guard pendingReactions.count > preserved + 1 else { return }
+        pendingReactions = Array(pendingReactions.prefix(preserved)) + [pendingReactions[pendingReactions.count - 1]]
+    }
+
     private func announceCurrentRoundIfNeeded() {
         guard let pick = currentPick else { return }
+        // Already said out loud — see `lastAnnouncedRound`. Without this the
+        // opening pick announces round one once per caller.
+        guard lastAnnouncedRound != pick.round else { return }
         // Check whether the previous completed pick was in a different round.
         let prevRound: Int? = currentPickIndex == 0
             ? nil
             : picks[currentPickIndex - 1].round
         if prevRound != pick.round {
+            lastAnnouncedRound = pick.round
             recordEvent(type: .roundTransition, round: pick.round)
             appendStoryBeat(StoryBeat(
                 kind: .round,
@@ -1908,6 +1997,18 @@ final class DraftDayCoordinator: ObservableObject {
         // wide enough to be a genuine deviation rather than ranking noise.
         let boardDelta = boardRank.map { result.pickNumber - $0 }
 
+        // ONE ROW PER CARD. A steal grade and a slide are the same fact told
+        // twice — "J. Winchester's slide ends at #51 — the mock had him at #19.
+        // He fell 32 picks past it" sat directly above "HOU steal K J.
+        // Winchester — consensus board had him #19; he lasted to #51 — 32 slots
+        // of value", quoting the same three numbers, and four of the nine
+        // visible feed rows were two events each. So the blocks below yield to
+        // each other: the value beat, which names the club and the position,
+        // wins over the slide's bare "he fell", and the vague gem line ("the
+        // room likes the value") yields to the slide, which at least says how
+        // far he fell and from where.
+        var toldTheValueStory = false
+
         // 1) Value beats — the grade the pick was given, confirmed by the board.
         switch result.grade {
         case .stealAPlus, .hofTrack:
@@ -1918,6 +2019,7 @@ final class DraftDayCoordinator: ObservableObject {
                     headline: "\(result.teamAbbrev) steal \(result.position.rawValue) \(name)",
                     detail: "Consensus board had him #\(boardRank); he lasted to #\(result.pickNumber) — \(boardDelta) slots of value."
                 ))
+                toldTheValueStory = true
             }
         case .reach, .bigReach:
             if let boardRank, let boardDelta, boardDelta <= -Self.boardBeatSlots {
@@ -1927,19 +2029,23 @@ final class DraftDayCoordinator: ObservableObject {
                     headline: "\(result.teamAbbrev) reach for \(result.position.rawValue) \(name)",
                     detail: "Consensus board had him #\(boardRank) — taken \(-boardDelta) slots ahead of it."
                 ))
+                toldTheValueStory = true
             }
         default:
-            if result.isGem {
+            if result.isGem && !result.isBigDrop {
                 appendStoryBeat(StoryBeat(
                     kind: .steal,
                     pickNumber: result.pickNumber,
                     headline: "\(result.teamAbbrev) may have found one in \(name)",
                     detail: "The room likes the value at #\(result.pickNumber)."
                 ))
+                toldTheValueStory = true
             }
         }
 
-        // 2) The slide — past the slot the media gave him, by a margin.
+        // 2) The slide — past the slot the media gave him, by a margin. The
+        //    event is written whether or not the row is (it is the persisted
+        //    record of the night, not a feed line).
         if result.isBigDrop {
             recordEvent(
                 type: .bigDrop,
@@ -1948,20 +2054,22 @@ final class DraftDayCoordinator: ObservableObject {
                 round: pick.round,
                 prospectID: prospect.id
             )
-            let slide = DraftIntel.slideMagnitude(
-                for: prospect,
-                pickNumber: result.pickNumber,
-                consensusRank: boardRank
-            )
-            let expectation = prospect.mockDraftPickNumber.map { "The mock had him at #\(String($0))." }
-                ?? prospect.draftProjection.map { "Media had him going in Round \($0)." }
-                ?? "The room had him well ahead of this."
-            appendStoryBeat(StoryBeat(
-                kind: .slide,
-                pickNumber: result.pickNumber,
-                headline: "\(name)'s slide ends at #\(result.pickNumber)",
-                detail: "\(expectation) He fell \(slide) picks past it — \(result.teamAbbrev) let him come to them."
-            ))
+            if !toldTheValueStory {
+                let slide = DraftIntel.slideMagnitude(
+                    for: prospect,
+                    pickNumber: result.pickNumber,
+                    consensusRank: boardRank
+                )
+                let expectation = prospect.mockDraftPickNumber.map { "The mock had him at #\(String($0))." }
+                    ?? prospect.draftProjection.map { "Media had him going in Round \($0)." }
+                    ?? "The room had him well ahead of this."
+                appendStoryBeat(StoryBeat(
+                    kind: .slide,
+                    pickNumber: result.pickNumber,
+                    headline: "\(name)'s slide ends at #\(result.pickNumber)",
+                    detail: "\(expectation) He fell \(slide) picks past it — \(result.teamAbbrev) let him come to them."
+                ))
+            }
         }
 
         // 3) The run — three straight cards at the same position. A run that

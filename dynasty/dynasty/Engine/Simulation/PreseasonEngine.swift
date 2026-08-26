@@ -240,7 +240,29 @@ enum PreseasonEngine {
     /// task row's completion and `performShellAdvance`'s precheck).
     static func canLeavePreseason(_ state: PreseasonState?) -> Bool {
         guard let state else { return true }
-        return state.isComplete || state.slate.isEmpty
+        return state.isComplete || state.slate.isEmpty || slatePlayedOut(state)
+    }
+
+    /// Every exhibition on the slate has a filed result.
+    ///
+    /// The gate's third answer, and the reason it exists: `isComplete` reads the
+    /// STEP, not the games. A user who played all three exhibitions and left the
+    /// last recap sheet by any route other than its own Continue button sat on
+    /// `step == .recap(2)` with `results.count == 3` — the rail row read
+    /// "Play the preseason slate (3/3 played) · Required" and the Advance button
+    /// stayed gone, with nothing on screen naming the one control (the slate's
+    /// in-screen "Close the slate") that would tick it. A counter that says 3/3
+    /// beside a gate that says not yet is the panel/gate split this phase's own
+    /// comments claim to have closed, so the count is now an answer in its own
+    /// right.
+    ///
+    /// This does not skip the recap: `acknowledgeRecap` still drives the step
+    /// machine and the sheet still owes its tape. It only stops the STEP from
+    /// being a second, invisible requirement on top of the games.
+    static func slatePlayedOut(_ state: PreseasonState) -> Bool {
+        !state.slate.isEmpty && state.slate.allSatisfy { matchup in
+            state.results.contains { $0.gameIndex == matchup.gameIndex }
+        }
     }
 
     /// Games still on the slate, for the refusal's copy and the task counter.

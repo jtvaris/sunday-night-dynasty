@@ -86,9 +86,9 @@ enum DepthChartSlot: String, Codable, CaseIterable, Identifiable, Hashable {
         case .LE:   return "Left End"
         case .RE:   return "Right End"
         case .DT:   return "Defensive Tackle"
-        case .LOLB: return "Left OLB"
+        case .LOLB: return "Left Outside Linebacker"
         case .MLB:  return "Middle Linebacker"
-        case .ROLB: return "Right OLB"
+        case .ROLB: return "Right Outside Linebacker"
         case .CB1:  return "Cornerback 1"
         case .CB2:  return "Cornerback 2"
         case .FS:   return "Free Safety"
@@ -329,18 +329,31 @@ struct DepthChart: Codable {
             positionGroups[player.position, default: []].append(player)
         }
 
-        // Sort each group by overall descending
+        // Sort each group by overall descending. Overall alone is not a total
+        // order — two 79s at the same position are common, and Swift's sort is
+        // not stable, so Auto-Set could hand back a different starter from the
+        // same roster twice. Years pro then id breaks the tie the same way every
+        // run: at equal rating the younger man gets the reps.
         for key in positionGroups.keys {
-            positionGroups[key]?.sort { $0.overall > $1.overall }
+            positionGroups[key]?.sort {
+                if $0.overall != $1.overall { return $0.overall > $1.overall }
+                if $0.yearsPro != $1.yearsPro { return $0.yearsPro < $1.yearsPro }
+                return $0.id.uuidString < $1.id.uuidString
+            }
         }
 
         // Fill each slot
         for slot in DepthChartSlot.allCases {
-            guard var available = positionGroups[slot.basePosition], !available.isEmpty else {
-                continue
-            }
-
-            // For special teams returners, pick from fast players
+            // Returners first, and BEFORE the base-position guard.
+            //
+            // KR and PR draw from the whole roster by speed and agility — their
+            // `basePosition` (RB, WR) is only a display default. They used to sit
+            // below the guard, which reads that same pool AFTER the RB and WR1-3
+            // slots have consumed it: a club with three running backs and three
+            // receivers emptied both groups before the loop ever reached the
+            // returners, so `continue` fired and Auto-Set left them unassigned —
+            // while the "Lineup Incomplete" dialog told the user Auto-Set fills
+            // every empty slot in one tap, and the phase would not advance.
             if slot == .KR {
                 let fastPlayers = players
                     .sorted { $0.physical.speed > $1.physical.speed }
@@ -356,6 +369,10 @@ struct DepthChart: Codable {
                 continue
             }
 
+            guard var available = positionGroups[slot.basePosition], !available.isEmpty else {
+                continue
+            }
+
             // Take players for this slot's depth, removing them from the pool
             let count = min(slot.maxDepth, available.count)
             let assigned = Array(available.prefix(count))
@@ -368,6 +385,110 @@ struct DepthChart: Codable {
         }
 
         storage = newStorage
+    }
+
+    // MARK: - Reconcile after a roster change
+
+    /// Drops released/retired men from every slot and re-fills the starter
+    /// holes that leaves, in one pass.
+    ///
+    /// Why this exists: a cut-down round used to invalidate the chart silently.
+    /// Releasing twelve men to reach 75 could empty a starter slot, and the only
+    /// feedback was the blocking "Lineup Incomplete" dialog one screen later, on
+    /// the next Advance — three rounds, three blocks, with nothing on the cut
+    /// screen warning that a marked man was somebody's starter.
+    ///
+    /// Deliberately conservative, because the chart is the user's own work:
+    ///
+    /// * **Prune is unconditional** — an ID that is no longer on the roster is a
+    ///   dangling reference and every reader already treats it as empty.
+    /// * **Back-fill only reaches EMPTY slots.** A slot whose starter survived is
+    ///   never re-ordered, even if the cut left a better body behind. Auto-Set is
+    ///   still the one control that rewrites a standing chart.
+    /// * **Only a slot the club can actually cover**, using the same spare-body
+    ///   accounting as `CareerShellView.depthChartGaps`, so this fills exactly
+    ///   the slots that gate would have flagged and can never assign one man to
+    ///   two rooms.
+    ///
+    /// Returns the slots it filled, so a caller can tell the user what moved.
+    @discardableResult
+    mutating func reconcile(with roster: [Player]) -> [DepthChartSlot] {
+        let available = roster.filter { !$0.isRetired }
+        let onRoster = Set(available.map(\.id))
+
+        // 1. Prune. Survivors keep their order.
+        for key in storage.keys {
+            storage[key] = (storage[key] ?? []).filter { onRoster.contains($0) }
+        }
+
+        guard !available.isEmpty else { return [] }
+
+        // 2. What is left over per room, after the slots still standing.
+        var spareByPosition: [Position: [Player]] = [:]
+        for player in available {
+            spareByPosition[player.position, default: []].append(player)
+        }
+        for key in spareByPosition.keys {
+            spareByPosition[key]?.sort { $0.overall > $1.overall }
+        }
+
+        var assigned = Set<UUID>()
+        for slot in DepthChartSlot.allCases {
+            for id in storage[slot.rawValue] ?? [] { assigned.insert(id) }
+        }
+        for slot in DepthChartSlot.allCases where !slot.acceptsAnyPosition {
+            guard let starter = storage[slot.rawValue]?.first else { continue }
+            spareByPosition[slot.basePosition]?.removeAll { $0.id == starter }
+        }
+
+        // 3. Back-fill the empties.
+        var filled: [DepthChartSlot] = []
+        for slot in DepthChartSlot.allCases
+        where (storage[slot.rawValue] ?? []).isEmpty {
+            if slot == .KR || slot == .PR {
+                // The returners draw from the whole roster, by the same trait
+                // `autoGenerate` ranks them on — their `basePosition` is a
+                // display default, not a pool.
+                let pool = available.sorted {
+                    slot == .KR
+                        ? $0.physical.speed > $1.physical.speed
+                        : $0.physical.agility > $1.physical.agility
+                }
+                guard let pick = pool.first else { continue }
+                storage[slot.rawValue] = [pick.id]
+                filled.append(slot)
+                continue
+            }
+            guard var room = spareByPosition[slot.basePosition], !room.isEmpty else { continue }
+            let pick = room.removeFirst()
+            spareByPosition[slot.basePosition] = room
+            storage[slot.rawValue] = [pick.id]
+            assigned.insert(pick.id)
+            filled.append(slot)
+        }
+        return filled
+    }
+
+    /// Reconciles the chart the CAREER has saved, and writes it back.
+    ///
+    /// The shared half of the fix: every user-facing release path — the cut
+    /// screen, the cap-compliance sweep, a player card, a contract page — used
+    /// to leave the released man's UUID sitting in his slot. Nothing resolves it
+    /// afterwards, so the slot reads as empty and the next offseason advance
+    /// stops on "Lineup Incomplete", one screen and sometimes one phase away
+    /// from the release that caused it.
+    ///
+    /// Returns the starter slots that had to be re-filled (an empty list when
+    /// the prune alone was enough, which is the common case — dropping a
+    /// dangling ID promotes the backup behind it).
+    @discardableResult
+    static func reconcileSaved(career: Career, roster: [Player]) -> [DepthChartSlot] {
+        guard let data = career.depthChartData,
+              var chart = try? JSONDecoder().decode(DepthChart.self, from: data) else { return [] }
+        let filled = chart.reconcile(with: roster)
+        guard let encoded = try? JSONEncoder().encode(chart) else { return [] }
+        career.depthChartData = encoded
+        return filled
     }
 
     // MARK: - Analytics

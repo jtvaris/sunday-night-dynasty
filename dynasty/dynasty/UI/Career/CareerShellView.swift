@@ -64,6 +64,13 @@ struct CareerShellView: View {
     @State private var shellSheet: ShellSheet?
     @State private var shellCover: ShellCover?
 
+    /// The Season Guide's open height. Bound rather than left to SwiftUI, which
+    /// picks the SMALLEST detent in the set: on a 13" iPad the sheet opened at
+    /// `.medium` and cut the required-task row in half at the card's bottom
+    /// edge, with the task list, the optional section and Advance all below the
+    /// fold. Opens at `.large`; `.medium` stays draggable.
+    @State private var calendarDetent: PresentationDetent = .large
+
     /// What was in the slot last, so the single `onDismiss` can tell which
     /// modal just left. `item`-driven presentation nils the binding *before*
     /// `onDismiss` runs, so the case has to be remembered on the way in.
@@ -206,13 +213,28 @@ struct CareerShellView: View {
 
     /// #158: the club's staff gate, refreshed alongside the task statuses.
     ///
-    /// The Season Guide sheet gates its Advance button on this, and
-    /// `performShellAdvance` refuses on it — the same predicate the dashboard's
-    /// own button already reads (`CareerDashboardView.advanceBlocker`), because
-    /// all three now come off ``StaffLedger/advanceBlocker(phase:)``. Before,
-    /// the sheet knew nothing about staff at all and called
-    /// `performShellAdvance` straight past the dashboard's gate.
+    /// `performShellAdvance` refuses on it, and the predicate itself lives on
+    /// ``StaffLedger/advanceBlocker(phase:)`` so the dashboard's own button
+    /// reads the same one rather than a private copy that knew only about the
+    /// budget — before that, the Season Guide sheet knew nothing about staff at
+    /// all and called `performShellAdvance` straight past the dashboard's gate.
+    /// Both Advance buttons are drawn from `advanceGateBlocker` below now, which
+    /// folds this gate in as the first of four.
     @State private var staffAdvanceBlocker: AdvanceBlocker?
+
+    /// #208g: the FIRST gate an advance would hit right now, staff included —
+    /// the value both Advance buttons are drawn from.
+    ///
+    /// The staff blocker was the only refusal wired to the button, so a club
+    /// with an empty starter slot, an over-limit roster or illegal books drew a
+    /// solid-gold enabled CTA over a rail with every required row ticked, and
+    /// only learned about the gate from the modal that landed after the tap.
+    /// Refreshed by `refreshTaskCompletionStatus`, which is the one function
+    /// that already runs on every screen entry, every advance and every task
+    /// refresh. `performShellAdvance` still runs the gates itself: it is the
+    /// authority, and each of its alerts carries copy and a deep link this
+    /// one-line banner cannot.
+    @State private var advanceGateBlocker: AdvanceBlocker?
 
     /// The blocker the sheet is refused with, if the user opened it right after
     /// an unrelated alert cleared. Presented as an alert from the sheet path.
@@ -341,7 +363,7 @@ struct CareerShellView: View {
     private static func depthChartGapMessage(for gap: DepthChartGap) -> String {
         let named: String = gap.lines.joined(separator: "\n")
         let more: String = gap.overflow > 0 ? "\n\u{2026} and \(gap.overflow) more." : ""
-        let close: String = "\n\nOpen the depth chart and assign them \u{2014} Auto-Set fills every empty slot in one tap."
+        let close: String = "\n\nFill & Advance puts the best available body in each one and carries on \u{2014} or open the depth chart and choose them yourself."
         return named + more + close
     }
 
@@ -400,6 +422,59 @@ struct CareerShellView: View {
             gaps.append(slot)
         }
         return gaps
+    }
+
+    /// #208g — the non-staff gates as a one-line banner, asked BEFORE the tap.
+    ///
+    /// Same three prechecks `performShellAdvance` runs, in the same order, so
+    /// the banner names the gate the tap would actually hit. Read-only by
+    /// construction: the preseason gate is deliberately not here, because
+    /// answering it means SEEDING the slate (`ensuredPreseasonState`) and a
+    /// refresh must not write — and the unplayed slate is already a required
+    /// row in the rail, which is the pre-tap refusal this wave is about.
+    ///
+    /// The roster the caller has already fetched is reused for the lineup check;
+    /// the other two run their own cheap guarded prechecks.
+    private func nonStaffAdvanceBlocker(roster: [Player]) -> AdvanceBlocker? {
+        if let violation = WeekAdvancer.userRosterLimitViolation(
+            career: career,
+            modelContext: modelContext
+        ) {
+            return AdvanceBlocker(
+                title: "Roster over the limit",
+                detail: "\(violation.rosterCount) under contract — release \(violation.excess) more "
+                    + "to reach \(violation.ceiling) before advancing."
+            )
+        }
+
+        if let violation = WeekAdvancer.userCapComplianceViolation(
+            career: career,
+            modelContext: modelContext
+        ) {
+            return AdvanceBlocker(
+                title: "Over the salary cap",
+                detail: "\(CommittedCapLedger.money(violation.overage)) over. Release, restructure "
+                    + "or renegotiate until the books balance."
+            )
+        }
+
+        if Self.lineupPhases.contains(career.currentPhase),
+           let data = career.depthChartData,
+           let chart = try? JSONDecoder().decode(DepthChart.self, from: data) {
+            let gaps = Self.depthChartGaps(chart: chart, roster: roster)
+            if !gaps.isEmpty {
+                let named = gaps.prefix(3).map(\.displayName).joined(separator: ", ")
+                let more = gaps.count > 3 ? ", and \(gaps.count - 3) more" : ""
+                let plural = gaps.count == 1 ? "" : "s"
+                return AdvanceBlocker(
+                    title: "Lineup incomplete",
+                    detail: "\(gaps.count) starting slot\(plural) unassigned — \(named)\(more). "
+                        + "Auto-Set fills every empty slot in one tap."
+                )
+            }
+        }
+
+        return nil
     }
 
     private static func preseasonSlateMessage(for state: PreseasonState?) -> String {
@@ -466,6 +541,11 @@ struct CareerShellView: View {
                 // with work the user did ten seconds ago.
                 onCalendarTapped: {
                     refreshTaskCompletionStatus()
+                    // Full height on EVERY open, not just the first. The detent
+                    // is view state that outlives the sheet, so one drag down to
+                    // `.medium` stuck for the rest of the career and every later
+                    // open cut the required row in half again.
+                    calendarDetent = .large
                     shellSheet = .calendar
                 },
                 onQuitTapped: { showQuitConfirmation = true },
@@ -523,7 +603,12 @@ struct CareerShellView: View {
                     onWeekResultRecorded: {
                         reloadSeasonFixtures()
                     },
-                    launchCoachedGame: $requestCoachedLaunch
+                    launchCoachedGame: $requestCoachedLaunch,
+                    // #208g: the lineup / roster / cap refusals this screen
+                    // cannot see for itself, so the rail's gold CTA greys out
+                    // and names the gate instead of throwing a modal after the
+                    // tap.
+                    shellAdvanceBlocker: advanceGateBlocker
                 )
                     .onAppear {
                         // Refresh task completion when returning to the dashboard
@@ -612,6 +697,10 @@ struct CareerShellView: View {
             isPresented: depthChartGapAlertBinding,
             presenting: pendingDepthChartGap
         ) { _ in
+            Button("Fill & Advance") {
+                pendingDepthChartGap = nil
+                fillLineupGapsAndAdvance()
+            }
             Button("Go to Depth Chart") {
                 pendingDepthChartGap = nil
                 navigationPath.append(ShellDestination.depthChart)
@@ -761,7 +850,10 @@ struct CareerShellView: View {
                 upcomingGames: upcomingGames,
                 allTeams: allTeamsByID,
                 tasks: $currentTasks,
-                advanceBlocker: staffAdvanceBlocker,
+                // The superset the hub's button reads (#208g) — the sheet's
+                // Advance calls straight into `performShellAdvance`, so it has
+                // to refuse on everything that call refuses on.
+                advanceBlocker: advanceGateBlocker,
                 onTaskSelected: { destination in
                     handleTaskNavigation(destination)
                 },
@@ -774,7 +866,7 @@ struct CareerShellView: View {
                 },
                 onDismiss: { shellSheet = nil }
             )
-            .presentationDetents([.large, .medium])
+            .presentationDetents([.large, .medium], selection: $calendarDetent)
             .presentationDragIndicator(.visible)
 
         case .voluntaryWorkout:
@@ -1603,6 +1695,32 @@ struct CareerShellView: View {
         stageWorkoutPromptIfFree()
     }
 
+    /// The lineup gate's one-tap exit: fill the empty starter slots and carry on
+    /// with the advance the gap refused.
+    ///
+    /// `reconcileSaved` rather than `DepthChart.autoGenerate` — the alert names
+    /// three slots and the user did not ask for the other twenty-three to be
+    /// re-ordered behind his back. Reconcile fills exactly the empties, by the
+    /// same spare-body accounting `depthChartGaps` flags them with, and leaves
+    /// every standing slot alone.
+    private func fillLineupGapsAndAdvance() {
+        guard let teamID = career.teamID else { return }
+        let descriptor = FetchDescriptor<Player>(
+            predicate: #Predicate<Player> { $0.teamID == teamID }
+        )
+        let roster = (try? modelContext.fetch(descriptor)) ?? []
+        DepthChart.reconcileSaved(career: career, roster: roster)
+        try? modelContext.save()
+
+        // Off this runloop: the advance is allowed to stage the next modal (the
+        // camp rookie reveal, the workout prompt, a holdout), and the alert this
+        // button belongs to is still leaving the screen. Same reason
+        // `pendingAdvanceAfterCalendar` waits for the sheet's dismissal.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            performShellAdvance()
+        }
+    }
+
     // MARK: - Rookie Class Reveal (TRACK B)
 
     /// Presents "Rookies Report to Camp" when `WeekAdvancer` armed it for this
@@ -1841,6 +1959,23 @@ struct CareerShellView: View {
 
         // Legacy points and media reputation (via LegacyTracker helper)
         career.legacy.applyPressConferenceResult(result, season: career.currentSeason)
+
+        // The two numbers the podium printed biggest and booked nowhere: the
+        // team-wide morale read lands on the user's roster and the fan read on
+        // `Career.fanSupport`. Both are scaled inside the engine — a session
+        // sums four ±20 answers, and `Player.morale` is a 0…100 stat the sim
+        // reads directly.
+        if let teamID = career.teamID {
+            let descriptor = FetchDescriptor<Player>(
+                predicate: #Predicate<Player> { $0.teamID == teamID }
+            )
+            let roster = (try? modelContext.fetch(descriptor)) ?? []
+            PressConferenceEngine.applyRoomEffects(
+                result: result,
+                career: career,
+                roster: roster
+            )
+        }
 
         // Save changes
         try? modelContext.save()
@@ -2591,7 +2726,8 @@ struct CareerShellView: View {
             scouts: teamScouts(),
             owner: team?.owner
         )
-        staffAdvanceBlocker = staffLedger.advanceBlocker(phase: career.currentPhase)
+        let staffBlocker = staffLedger.advanceBlocker(phase: career.currentPhase)
+        staffAdvanceBlocker = staffBlocker
 
         let hasHC = staffLedger.filledCoachRoles.contains(.headCoach)
         let hasOC = staffLedger.filledCoachRoles.contains(.offensiveCoordinator)
@@ -2601,6 +2737,11 @@ struct CareerShellView: View {
         let playerDescriptor = FetchDescriptor<Player>(predicate: #Predicate { $0.teamID == teamID })
         let players = (try? modelContext.fetch(playerDescriptor)) ?? []
         let rosterCount = players.count
+
+        // #208g: what the Advance buttons are drawn from. Staff first, then the
+        // roster ceiling, the cap and the depth chart — the refusal order in
+        // `performShellAdvance`, so the banner names the gate the tap would hit.
+        advanceGateBlocker = staffBlocker ?? nonStaffAdvanceBlocker(roster: players)
 
         // Draft prep — ONE authority for every stage task (#104).
         //

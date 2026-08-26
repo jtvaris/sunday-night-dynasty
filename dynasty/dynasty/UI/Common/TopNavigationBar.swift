@@ -198,7 +198,12 @@ struct TopNavigationBar: View {
                     .contentShape(Rectangle())
 
                 if unreadInboxCount > 0 {
-                    Text("\(min(unreadInboxCount, 99))")
+                    // "99+", not a bare clamp. `min(count, 99)` printed an
+                    // exact-looking 99 against an inbox panel reading 203 on
+                    // the same screen, and against this button's own
+                    // accessibility label, which has always said the true
+                    // number.
+                    Text(unreadInboxCount > 99 ? "99+" : "\(unreadInboxCount)")
                         .font(.system(size: 10, weight: .bold).monospacedDigit())
                         .foregroundStyle(.white)
                         .padding(.horizontal, 5)

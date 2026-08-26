@@ -370,8 +370,10 @@ struct PressConferenceView: View {
         VStack(spacing: DSSpacing.md) {
             // The person about to take the podium is the player, so the podium
             // screen opens on the player's own face with the microphone tucked
-            // under it.
-            UserPortraitView(career: career, size: .large)
+            // under it. `.hero` and not `.large`: this face IS the screen's
+            // subject, and at detail-header size the plate floated in the middle
+            // of a portrait iPad with nothing above or below it.
+            UserPortraitView(career: career, size: .hero)
                 .shadow(color: Color.black.opacity(0.5), radius: 10, y: 4)
                 .overlay(alignment: .bottom) {
                     Image(systemName: "mic.fill")
@@ -409,6 +411,11 @@ struct PressConferenceView: View {
                 .padding(.horizontal, DSSpacing.xl)
                 .fixedSize(horizontal: false, vertical: true)
 
+            // Where he stands before he says anything — the same card the
+            // questioning phase carries, so the podium is a reading of the room
+            // rather than a title card with a button under it.
+            standingStrip
+
             // The same band the questioning phase runs on, drawn ahead of the
             // first question so the shape of the session is known before it
             // starts. Every slat is `.future`; nothing is current yet.
@@ -418,7 +425,7 @@ struct PressConferenceView: View {
                     headline: "\(questions.count) questions",
                     meter: DSResourceMeter(spent: 0, total: questions.count, unit: "questions")
                 )
-                .frame(maxWidth: DSLayout.contentMeasure)
+                .frame(maxWidth: DSLayout.wideMeasure)
                 .padding(.top, DSSpacing.xs)
             }
         }
@@ -435,7 +442,11 @@ struct PressConferenceView: View {
                 slats: questionSlats(previewOnly: false),
                 headline: "Question \(min(currentQuestionIndex + 1, max(questions.count, 1))) of \(max(questions.count, 1))",
                 meter: DSResourceMeter(
-                    spent: selectedIndices.count,
+                    // `DSResourceMeter` counts the unit *in progress* as spent —
+                    // that is what makes the brightest pip the live one. Counting
+                    // answers instead left the meter a question behind the
+                    // headline beside it, with no pip on the question being asked.
+                    spent: min(currentQuestionIndex + 1, max(questions.count, 1)),
                     total: max(questions.count, 1),
                     unit: "questions"
                 )
@@ -527,15 +538,37 @@ struct PressConferenceView: View {
 
             let stance = PressConferenceEngine.stance(for: question)
 
+            // On the podium every slat carries its reporter and stance: the rail
+            // is the only thing that says who is in the room, and the player is
+            // about to decide how to talk to them. That has to hold for the
+            // questions still to come, too — the stance is an engine input, so a
+            // hostile writer waiting at question 3 is the whole reason to hold a
+            // tone back at question 1. A future slat carries the stance alone
+            // because it is a fraction of the current slat's width and the
+            // caption is one 11 pt line: a full reporter name truncates there.
+            let subcaption: String?
+            switch state {
+            case .done:
+                subcaption = nil
+            case .current:
+                subcaption = "\(question.reporterName) \u{00B7} \(stance.label.lowercased())"
+            default:
+                subcaption = previewOnly
+                    ? "\(question.reporterName) \u{00B7} \(stance.label.lowercased())"
+                    : stance.label.lowercased()
+            }
+
             return DSSlat(
                 id: question.id.uuidString,
                 index: "\(index + 1)",
                 title: question.outlet,
-                subcaption: state == .current
-                    ? "\(question.reporterName) \u{00B7} \(stance.label.lowercased())"
-                    : nil,
+                subcaption: subcaption,
                 state: state,
-                outcome: answeredTone?.label,
+                // Prefixed, because a done slat and a live one print their second
+                // line in the same slot and the two vocabularies collide there:
+                // bare "Humble" is the tone he answered in, "neutral" is the
+                // reporter's stance.
+                outcome: answeredTone.map { "Said \($0.label.lowercased())" },
                 isLive: state == .current,
                 accessibilityText: slatSpeech(
                     index: index,
@@ -586,19 +619,25 @@ struct PressConferenceView: View {
                     value: "\(career.legacy.mediaReputation)",
                     color: career.legacy.mediaReputation >= 0 ? Color.success : Color.dangerText
                 )
-                // #117: "Satisfaction", not "Comp".
+                // #117: the owner's satisfaction, not his "Comp" — and labelled
+                // OWNER, because the legend under it, the running strip and every
+                // hint chip on this screen call that audience the owner. The tile
+                // was the only place it was called anything else.
                 if let owner {
                     standingItem(
                         icon: "building.2.fill",
-                        label: "Satisfaction",
+                        label: "Owner",
                         value: "\(owner.satisfaction)%",
                         color: Color.forRating(owner.satisfaction, scale: .percent)
                     )
                 }
             }
 
-            // #119: what each of those actually does.
-            Text("Owner affects job security \u{00B7} Media shapes the narrative \u{00B7} Legacy affects career rating")
+            // #119: what each of those actually does — in the tiles' own order,
+            // and covering the two meters this session moves that the tiles have
+            // no room for. The legend used to explain three of the five numbers
+            // the screen goes on to report.
+            Text("Legacy affects career rating \u{00B7} Media shapes the narrative \u{00B7} Owner affects job security \u{00B7} Morale is the locker room's read \u{00B7} Fans are the city's")
                 .font(DSType.text(DSType.Size.footnote, .regular, prose: true))
                 .foregroundStyle(Color.textSecondary)
                 .multilineTextAlignment(.center)
@@ -646,6 +685,10 @@ struct PressConferenceView: View {
                 deltaChip(icon: "person.3.fill", label: "Morale", value: totals.playerMorale)
                 deltaChip(icon: "hands.clap.fill", label: "Fans", value: totals.fanExcitement)
                 deltaChip(icon: "newspaper.fill", label: "Media", value: totals.mediaPerception)
+                // The summary books legacy too, so the running strip has to
+                // track it — otherwise the session meters and the summary
+                // ledger are two different lists of what this presser moved.
+                deltaChip(icon: "star.fill", label: "Legacy", value: totals.legacyPoints)
                 Spacer(minLength: 0)
             }
 
@@ -828,19 +871,26 @@ struct PressConferenceView: View {
 
                 Text("\u{201C}\(response.text)\u{201D}")
                     .font(DSType.text(DSType.Size.callout, .medium, prose: true))
-                    .foregroundStyle(isDisabled ? Color.textTertiaryReadable : Color.textPrimary)
+                    .foregroundStyle(isDisabled ? Color.textSecondary : Color.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
                     .multilineTextAlignment(.leading)
 
                 // #161 B: fogged reaction hints — direction, never numbers.
                 hintRow(preview)
 
-                headlinePreviewSection(
-                    response: response,
-                    index: index,
-                    isExpanded: isHeadlineExpanded,
-                    isDisabled: isDisabled
-                )
+                // Only while the answer is still a choice. After the commit the
+                // reveal below prints the same `mediaReaction` verbatim, so the
+                // card he picked was offering to "preview" a headline that had
+                // already run and was quoted an inch beneath it — and the two
+                // cards he did not pick kept a full capsule control that could
+                // not be opened.
+                if selectedResponseIndex == nil {
+                    headlinePreviewSection(
+                        response: response,
+                        index: index,
+                        isExpanded: isHeadlineExpanded
+                    )
+                }
             }
             .padding(DSSpacing.md)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -865,10 +915,17 @@ struct PressConferenceView: View {
                         .frame(width: 4)
                     }
             )
-            .opacity(isDisabled ? 0.4 : 1.0)
+            // One dim, not two multiplied. The quote's own colour is already a
+            // step down; a 0.4 card opacity on top of it composited the label to
+            // ~1.8 : 1 on the backdrop, and the answers he did NOT give are the
+            // record he reads back. Measured at 0.8 with `textSecondary`: 4.6 : 1,
+            // clear of the AA floor the palette commits to.
+            .opacity(isDisabled ? 0.8 : 1.0)
         }
         .buttonStyle(.plain)
-        .disabled(selectedResponseIndex != nil)
+        // No `.disabled` on the card: SwiftUI propagates it to every descendant
+        // and a child cannot re-enable itself. `pickResponse` already refuses
+        // once an answer is committed, so the guard is the lock.
         .accessibilityLabel("\(response.tone.label) answer. \(response.text)")
         .accessibilityHint(hintSpeech(preview))
         .animation(.easeInOut(duration: 0.25), value: pendingResponseIndex)
@@ -882,8 +939,21 @@ struct PressConferenceView: View {
     /// his owner's known persona, the mood in his own building, the stance on
     /// the reporter's chip — and a dash for the audiences he cannot.
     private func hintRow(_ preview: PressConferenceEngine.ReactionPreview) -> some View {
+        // Five audiences do not always clear one line at this measure, and each
+        // capsule is `lineLimit(1)` — so an overflow truncates a phrase rather
+        // than wrapping it. Two rows are better than "they'll poun…".
+        ViewThatFits(in: .horizontal) {
+            hintLine(Array(preview.hints))
+            VStack(alignment: .leading, spacing: DSSpacing.xxs) {
+                hintLine(Array(preview.hints.prefix(3)))
+                hintLine(Array(preview.hints.dropFirst(3)))
+            }
+        }
+    }
+
+    private func hintLine(_ hints: [PressConferenceEngine.ReactionHint]) -> some View {
         HStack(spacing: DSSpacing.xxs) {
-            ForEach(preview.hints) { hint in
+            ForEach(hints) { hint in
                 let color = hintColor(hint.direction)
                 HStack(spacing: DSSpacing.xxs) {
                     Image(systemName: hint.audience.icon)
@@ -950,8 +1020,7 @@ struct PressConferenceView: View {
     private func headlinePreviewSection(
         response: PressResponse,
         index: Int,
-        isExpanded: Bool,
-        isDisabled: Bool
+        isExpanded: Bool
     ) -> some View {
         VStack(alignment: .leading, spacing: DSSpacing.xs) {
             // A separate gesture so it does not trigger the card's selection.
@@ -970,10 +1039,14 @@ struct PressConferenceView: View {
                 .background(
                     Capsule().strokeBorder(Color.textTertiary.opacity(0.35), lineWidth: 1)
                 )
-                .contentShape(Capsule())
+                // §2.12: 11 pt text on 4 pt padding is a 21 pt target, and this
+                // is the only per-option control on the screen — it sits in a row
+                // of hint chips the same height that cannot be tapped at all. The
+                // capsule keeps its size; the hit area is padded out around it.
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .disabled(isDisabled)
 
             if isExpanded {
                 HStack(alignment: .top, spacing: DSSpacing.xs) {
@@ -1030,7 +1103,10 @@ struct PressConferenceView: View {
             if let effects = revealedEffects {
                 Divider().overlay(Color.accentGold.opacity(0.2))
 
-                Text("WHAT IT ACTUALLY COST")
+                // "Cost" over a row of five green gains reads as five losses, or
+                // as a broken label. The heading follows the signs the pills
+                // paint from the same data.
+                Text(hasCost(effects) ? "WHAT IT ACTUALLY COST" : "WHAT IT ACTUALLY MOVED")
                     .font(DSType.display(DSType.Size.caption, .heavy))
                     .tracking(0.7)
                     .foregroundStyle(Color.textSecondary)
@@ -1048,6 +1124,17 @@ struct PressConferenceView: View {
                         .strokeBorder(Color.accentGold.opacity(0.2), lineWidth: 1)
                 )
         )
+    }
+
+    /// Whether the answer actually charged anybody. The reveal heading and the
+    /// commit bar both name the transaction, and neither may call a row of gains
+    /// a cost.
+    private func hasCost(_ effects: PressEffects) -> Bool {
+        effects.ownerSatisfaction < 0
+            || effects.playerMorale < 0
+            || effects.fanExcitement < 0
+            || effects.mediaPerception < 0
+            || effects.legacyPoints < 0
     }
 
     private func effectPillRow(effects: PressEffects) -> some View {
@@ -1131,9 +1218,10 @@ struct PressConferenceView: View {
         isCommitted: Bool
     ) -> DSActionBar.Explainer {
         if isCommitted {
+            let didCost = revealedEffects.map(hasCost) ?? true
             return .init(
                 title: "On the record",
-                message: "That is what ran, and what it cost. It cannot be taken back."
+                message: "That is what ran, and what it \(didCost ? "cost" : "moved"). It cannot be taken back."
             )
         }
         guard let question,
@@ -1182,13 +1270,17 @@ struct PressConferenceView: View {
                 }
                 .padding(DSSpacing.lg)
                 .frame(maxWidth: DSLayout.wideMeasure, alignment: .leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                // Centred, like the podium and the questioning phase. The inner
+                // frame keeps the cards left-aligned *within* the measure; the
+                // outer one used to pin the measure itself to the left edge, so
+                // the summary jumped sideways from the screen before it.
+                .frame(maxWidth: .infinity)
             }
             .scrollIndicators(.hidden)
 
             DSActionBar(
                 explainer: .init(
-                    title: "What it cost",
+                    title: hasCost(result.totalEffects) ? "What it cost" : "What it moved",
                     message: summaryCostLine(result: result)
                 ),
                 primary: .init(
@@ -1199,8 +1291,19 @@ struct PressConferenceView: View {
         }
     }
 
+    /// The outcome headline, and where the media read actually lands.
+    ///
+    /// The reputation is projected here rather than read back, for the same
+    /// reason `summaryFrontOffice` computes its identity: nothing is written
+    /// until `onComplete` fires, which is after this screen is done. The clamp
+    /// mirrors `LegacyTracker.applyPressConferenceResult` so the band this
+    /// screen names is the band the save will hold a moment later.
     private func summaryHeadline(result: PressConferenceResult) -> some View {
-        VStack(alignment: .leading, spacing: DSSpacing.xs) {
+        let media = result.totalEffects.mediaPerception
+        var projected = career.legacy
+        projected.mediaReputation = max(-100, min(100, projected.mediaReputation + media))
+
+        return VStack(alignment: .leading, spacing: DSSpacing.xs) {
             HStack(spacing: DSSpacing.xs) {
                 Image(systemName: "checkmark.seal.fill")
                     .font(.system(size: DSType.Size.body, weight: .semibold))
@@ -1212,7 +1315,7 @@ struct PressConferenceView: View {
                     .lineLimit(1)
             }
 
-            Text(mediaPerceptionLabel(for: result.dominantTone))
+            Text(mediaOutcomeHeadline(tone: result.dominantTone, media: media))
                 .font(DSType.display(DSType.Size.title2, .heavy))
                 .foregroundStyle(Color.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -1221,6 +1324,13 @@ struct PressConferenceView: View {
             Text("That is how the room writes you up. It shapes free-agent interest, fan engagement and the tone of your coverage.")
                 .font(DSType.text(DSType.Size.body, .regular, prose: true))
                 .foregroundStyle(Color.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text("Media reputation \(career.legacy.mediaReputation) \u{2192} \(projected.mediaReputation) \u{00B7} \(projected.reputationLabel)")
+                .font(DSType.display(DSType.Size.footnote, .heavy))
+                .foregroundStyle(
+                    media > 0 ? Color.success : media < 0 ? Color.dangerText : Color.textTertiaryReadable
+                )
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -1279,9 +1389,13 @@ struct PressConferenceView: View {
                     text: FranchiseIdentityDeclaration.costsLine(identity)
                 )
 
+                // Not "that answer": `podiumRead` switches on the dominant tone
+                // of the whole session, so the line that pointed at a single
+                // answer sent the reader looking for a quote that is not marked
+                // anywhere — and on a five-diplomatic session there were five.
                 Text(heldTheLine
                      ? "Nothing you said at this podium changed that — it is the front office you described when you took the job."
-                     : "That is the answer that did it. It is not what your staff file said when you were hired.")
+                     : "The room heard one note more than any other — \(result.dominantTone.label.lowercased()) — and priced you on it. It is not what your staff file said when you were hired.")
                     .font(DSType.text(DSType.Size.footnote, .regular, prose: true))
                     .foregroundStyle(Color.textTertiaryReadable)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1318,8 +1432,28 @@ struct PressConferenceView: View {
             ("Owner", effects.ownerSatisfaction, owner.map { base in
                 "\(base.satisfaction)% \u{2192} \(min(100, max(0, base.satisfaction + effects.ownerSatisfaction)))%"
             }),
-            ("Morale", effects.playerMorale, nil),
-            ("Fans", effects.fanExcitement, nil),
+            // Both of these used to carry NO context line, for the honest
+            // reason that neither number was written anywhere: the podium's two
+            // biggest meters were painted and dropped. They land now, scaled by
+            // the engine (a session sums four ±20 answers; `Player.morale` is a
+            // 0…100 stat the sim reads), and the context line states the value
+            // that actually lands rather than the headline the user cannot act
+            // on.
+            ("Morale", effects.playerMorale, {
+                let delta = PressConferenceEngine.rosterMoraleDelta(for: effects)
+                if delta == 0 { return "room unmoved" }
+                return "every man \(delta > 0 ? "+" : "")\(delta)"
+            }()),
+            ("Fans", effects.fanExcitement, {
+                let delta = PressConferenceEngine.fanSupportDelta(for: effects)
+                if delta == 0 { return "city unmoved" }
+                return "\(career.fanSupport)% \u{2192} \(max(0, min(100, career.fanSupport + delta)))%"
+            }()),
+            // Media was the one meter the running strip tracked and this card
+            // dropped — usually the largest delta of the session, and the one
+            // the headline above is now derived from.
+            ("Media", effects.mediaPerception,
+             "\(career.legacy.mediaReputation) \u{2192} \(max(-100, min(100, career.legacy.mediaReputation + effects.mediaPerception)))"),
             ("Legacy", effects.legacyPoints,
              "\(career.legacy.totalPoints) \u{2192} \(career.legacy.totalPoints + effects.legacyPoints)")
         ]
@@ -1401,7 +1535,34 @@ struct PressConferenceView: View {
                 }
                 Spacer(minLength: 0)
             }
+
+            // The chips count this session; the repetition ratchet counts the
+            // career. "2 DIPLOMATIC" can be the fourth diplomatic answer the room
+            // has heard, which is the point where the engine starts taking the
+            // payoff away — so the window it actually scores is printed beside
+            // them. Only when there is a history: on a first presser the line
+            // would just re-count the chips above it.
+            if !context.recentTones.isEmpty {
+                Text("The room remembers your last \(PressConferenceEngine.toneRepetitionWindow) answers: \(toneLedgerLine).")
+                    .font(DSType.text(DSType.Size.footnote, .regular, prose: true))
+                    .foregroundStyle(Color.textTertiaryReadable)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
+    }
+
+    /// The tones inside the ratchet's own window, counted the way the ratchet
+    /// counts them — this session's picks included, since `liveContext` has
+    /// already folded them in.
+    private var toneLedgerLine: String {
+        var table: [ResponseTone: Int] = [:]
+        for tone in liveContext.recentTones.prefix(PressConferenceEngine.toneRepetitionWindow) {
+            table[tone, default: 0] += 1
+        }
+        return table
+            .sorted { $0.value > $1.value }
+            .map { "\($0.key.label.lowercased()) \($0.value)" }
+            .joined(separator: ", ")
     }
 
     private func summaryQuotes(result: PressConferenceResult) -> some View {
@@ -1493,17 +1654,34 @@ struct PressConferenceView: View {
     private func summaryCostLine(result: PressConferenceResult) -> String {
         let effects = result.totalEffects
         let owner = effects.ownerSatisfaction
+        let media = effects.mediaPerception
         let legacy = effects.legacyPoints
         let ownerPart = owner == 0
             ? "left the owner where he was"
             : "moved the owner **\(owner > 0 ? "+" : "")\(owner)**"
+        let mediaPart = media == 0
+            ? "no movement in the press"
+            : "**\(media > 0 ? "+" : "")\(media)** media"
         let legacyPart = legacy == 0
             ? "no legacy points"
             : "**\(legacy > 0 ? "+" : "")\(legacy)** legacy"
         let promisePart = result.promises.isEmpty
             ? "no promises on the ledger"
             : "**\(result.promises.count)** promise\(result.promises.count == 1 ? "" : "s") on the ledger"
-        return "\(result.selectedResponses.count) answers \u{00B7} \(ownerPart) \u{00B7} \(legacyPart) \u{00B7} \(promisePart)."
+        // The locker room and the city are named only when they moved — but they
+        // ARE named. WHAT CHANGED shows all five meters, so a bar that lists
+        // three of them can head "what it cost" over a session whose only cost
+        // was the fans, and the two summaries on one screen then disagree.
+        var parts = ["\(result.selectedResponses.count) answers", ownerPart, mediaPart]
+        if effects.playerMorale != 0 {
+            parts.append("**\(effects.playerMorale > 0 ? "+" : "")\(effects.playerMorale)** locker room")
+        }
+        if effects.fanExcitement != 0 {
+            parts.append("**\(effects.fanExcitement > 0 ? "+" : "")\(effects.fanExcitement)** fans")
+        }
+        parts.append(legacyPart)
+        parts.append(promisePart)
+        return parts.joined(separator: " \u{00B7} ") + "."
     }
 
     // MARK: - Actions
@@ -1676,18 +1854,42 @@ struct PressConferenceView: View {
         case .humble:     return Color.accentBlue
         case .aggressive: return Color.danger
         case .diplomatic: return Color.success
-        case .funny:      return Color.warning
+        // NOT `warning`. #C9A94E and #EAB308 are one degree of hue apart, so the
+        // CONFIDENT and FUNNY rails were the same yellow and two of the three
+        // cards on a question could not be told apart by tint — which is the
+        // only job the tint has. `alertOrange` is the palette's remaining
+        // separable hue, and the two are 20° apart at very different saturation.
+        case .funny:      return Color.alertOrange
         }
     }
 
-    private func mediaPerceptionLabel(for tone: ResponseTone) -> String {
+    /// How he sounded — the tone he used, not the verdict it earned.
+    ///
+    /// This switch used to BE the outcome headline, which is how a session that
+    /// booked Media -21 could open with "The media sees a steady, professional
+    /// operator": the screen that reports the arithmetic was contradicting it.
+    /// Tone is now the subject of the sentence and the media delta is the
+    /// predicate, so the headline can never disagree with the ledger under it.
+    private func toneReadLabel(for tone: ResponseTone) -> String {
         switch tone {
-        case .confident:  return "The media sees a bold, confident leader"
-        case .humble:     return "The media sees a measured, thoughtful builder"
-        case .aggressive: return "The media sees a controversial firebrand"
-        case .diplomatic: return "The media sees a steady, professional operator"
-        case .funny:      return "The media sees a charismatic fan favorite"
+        case .confident:  return "You sounded bold and certain"
+        case .humble:     return "You sounded measured and self-effacing"
+        case .aggressive: return "You came out swinging"
+        case .diplomatic: return "You kept every answer safe"
+        case .funny:      return "You played the room for laughs"
         }
+    }
+
+    private func mediaOutcomeHeadline(tone: ResponseTone, media: Int) -> String {
+        let verdict: String
+        switch media {
+        case 12...:      verdict = "and the room loved it"
+        case 4..<12:     verdict = "and the room came away sold"
+        case -3..<4:     verdict = "and the room found nothing to write"
+        case -12 ..< -3: verdict = "and the room is not buying it"
+        default:         verdict = "and the room has turned on you"
+        }
+        return "\(toneReadLabel(for: tone)) \u{2014} \(verdict)."
     }
 }
 

@@ -480,13 +480,17 @@ struct RosterView: View {
     /// Entry point into the 32-roster browser (plan finding S8: the other 31
     /// teams had no surface at all). Needs the career for the "your team" mark
     /// and the trade route, so lightweight call sites/previews simply omit it.
+    ///
+    /// A club glyph rather than the three-person one: this sits directly beside
+    /// the practice-squad button in the toolbar, and the two shipped pixel
+    /// identical. What distinguishes this one is that it browses *teams*.
     @ViewBuilder
     private var leagueRostersButton: some View {
         if let career {
             NavigationLink {
                 LeagueRostersView(career: career)
             } label: {
-                Label("League Rosters", systemImage: "person.3.sequence.fill")
+                Label("League Rosters", systemImage: "building.2")
             }
         }
     }
@@ -899,7 +903,7 @@ struct RosterView: View {
                 sortButton("Age", sort: .age, width: PlayerRowView.Column.age)
                 headerLabel("Frm", width: 24)
                 sortButton("OVR", sort: .overall, width: PlayerRowView.Column.ovr)
-                headerLabel("↗", width: 20)
+                headerLabel("Pot", width: 20)
                 sortButton("Salary", sort: .salary, width: 52)
                 headerLabel("Yrs", width: 30)
                 headerIcon("face.smiling", width: 24)
@@ -945,10 +949,18 @@ struct RosterView: View {
             }
         case .attributes:
             Group {
-                headerLabel("Skill 1", width: 32)
-                headerLabel("Skill 2", width: 32)
-                headerLabel("Skill 3", width: 32)
-                headerLabel("Skill 4", width: 32)
+                // ONE label over the whole block, because the columns under it
+                // are not the same four attributes on every row: a QB's are ACC
+                // / ARM / AWR, a corner's are MAN / ZON / PRS, and each cell
+                // already prints its own ident under the number
+                // (`PlayerRowView.colorCodedMiniAttribute`). Four per-column
+                // headers cannot be right for more than one position at a time,
+                // which is why they shipped as "Skill 1"…"Skill 4" — a
+                // placeholder header is worse than none.
+                //
+                // The width is the four 32 pt cells plus the three gaps between
+                // them, so the OVR label after it still lands on OVR.
+                headerLabel("Position skills", width: 32 * 4 + PlayerRowView.Column.gap * 3)
                 sortButton("OVR", sort: .overall, width: PlayerRowView.Column.ovr)
             }
         case .depth:
@@ -1590,6 +1602,11 @@ enum PositionGradeCalculator {
         return positions.reduce(0) { $0 + (counts[$1] ?? 1) }
     }
 
+    /// Printed where a depth grade would go when a group carries no backups at
+    /// all. Not a letter, deliberately — there is nobody behind the starters to
+    /// grade, and the em dash keeps it out of `Color.forGrade`'s red.
+    static let noDepthGrade = "\u{2014}"
+
     /// Converts an average OVR to a letter grade using the #235 thresholds.
     static func letterGrade(for avgOVR: Int) -> String {
         switch avgOVR {
@@ -1616,7 +1633,10 @@ enum PositionGradeCalculator {
     /// have to reach into the roster's grade calculator to do it. Kept as the
     /// name ~25 call sites already spell.
     static func gradeColorForLetter(_ grade: String) -> Color {
-        Color.forGrade(grade)
+        // `noDepthGrade` is the one string here that is not a grade, so it does
+        // not get a grade's colour — `Color.forGrade` would drop it into the
+        // same red as an F, which is the verdict it exists to avoid.
+        grade == noDepthGrade ? .textTertiary : Color.forGrade(grade)
     }
 
     /// Calculate starter grade + depth grade for a group of positions.
@@ -1644,7 +1664,10 @@ enum PositionGradeCalculator {
         let depthAvg = backups.isEmpty ? 0 : backups.map(\.overall).reduce(0, +) / backups.count
 
         let sGrade = starters.isEmpty ? "F" : letterGrade(for: starterAvg)
-        let dGrade = backups.isEmpty ? "F" : letterGrade(for: depthAvg)
+        // No backups is nothing to grade, not a failing grade. Special teams
+        // wants exactly one kicker and one punter, so every club in the league
+        // carried a permanent red "D: F" on a room that was fully stocked.
+        let dGrade = backups.isEmpty ? noDepthGrade : letterGrade(for: depthAvg)
 
         return (sGrade, dGrade, starterAvg, depthAvg)
     }
@@ -1685,9 +1708,10 @@ struct PositionGroupHeader: View {
     /// Development trend for the position group. A real season-over-season
     /// delta requires stored group OVR history (aggregated from
     /// `PlayerSeasonHistory.overallAtEndOfSeason` across the group's starters),
-    /// which is not yet plumbed into this row. Until that data exists we show a
-    /// neutral placeholder rather than inventing a number from a hash — a fake
-    /// "-4" that reflects nothing breaks player trust.
+    /// which is not yet plumbed into this row. Until that data exists the row
+    /// draws no chip at all — neither a number invented from a hash nor the
+    /// neutral dash it used to print, which sat in a tinted capsule between the
+    /// live cap and expiring chips and so read as a measured "flat" verdict.
     /// TODO(TODO.md): wire to actual season-over-season group OVR delta.
     private var developmentTrend: (icon: String, color: Color, label: String, delta: Int) {
         ("minus", .textTertiary, "—", 0)
@@ -1723,36 +1747,53 @@ struct PositionGroupHeader: View {
 
             Spacer()
 
-            // Starter grade / Depth grade — prominent sizing
+            // Starter grade / depth grade — prominent sizing.
+            //
+            // Spelled out, and with the average it was cut from beside it: "S:"
+            // and "D:" were the largest type on the row and the two labels on
+            // the screen that nothing expanded, and the letter alone could not
+            // be reconciled with the OVRs printed in the rows directly below.
             HStack(spacing: 3) {
-                Text("S:")
+                Text("Starters")
                     .font(.system(size: DSType.Size.caption, weight: .semibold))
                     .foregroundStyle(Color.textTertiary)
                 Text(g.starterGrade)
                     .font(.system(size: DSType.Size.title3, weight: .black))
                     .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(g.starterGrade))
-                Text("/")
+                Text("\(g.starterOVR) avg")
+                    .font(.system(size: DSType.Size.micro, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(Color.textTertiary)
+                Text("·")
                     .font(.system(size: DSType.Size.body))
                     .foregroundStyle(Color.textTertiary)
-                Text("D:")
+                Text("Depth")
                     .font(.system(size: DSType.Size.caption, weight: .semibold))
                     .foregroundStyle(Color.textTertiary)
                 Text(g.depthGrade)
                     .font(.system(size: DSType.Size.title3, weight: .black))
                     .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(g.depthGrade))
+                if g.depthGrade != PositionGradeCalculator.noDepthGrade {
+                    Text("\(g.depthOVR) avg")
+                        .font(.system(size: DSType.Size.micro, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(Color.textTertiary)
+                }
             }
 
-            // Development trend — neutral placeholder until real
-            // season-over-season group history is available (see developmentTrend).
+            // Development trend — drawn only once there is a real delta to draw.
+            // Styled as a data chip beside the live cap and expiring chips, the
+            // placeholder dash read as a measured "flat" verdict on every group
+            // in every season (see developmentTrend).
             let trend = developmentTrend
-            Text(trend.label)
-                .font(.system(size: DSType.Size.micro, weight: .bold).monospacedDigit())
-                .foregroundStyle(trend.color)
-                .padding(.horizontal, 5)
-                .padding(.vertical, 2)
-                .background(trend.color.opacity(0.12), in: Capsule())
-                .overlay(Capsule().strokeBorder(trend.color.opacity(0.3), lineWidth: 0.5))
-                .accessibilityLabel("Development trend not yet available")
+            if trend.delta != 0 {
+                Text(trend.label)
+                    .font(.system(size: DSType.Size.micro, weight: .bold).monospacedDigit())
+                    .foregroundStyle(trend.color)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(trend.color.opacity(0.12), in: Capsule())
+                    .overlay(Capsule().strokeBorder(trend.color.opacity(0.3), lineWidth: 0.5))
+                    .accessibilityLabel("Development trend \(trend.label)")
+            }
 
             // Cap allocation
             Text(formattedCap)
@@ -1764,8 +1805,9 @@ struct PositionGroupHeader: View {
                 .padding(.vertical, 2)
                 .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
 
-            // Starter / total count
-            Text("\(starterCount)/\(players.count)")
+            // Starter / total count. The bare ratio was the one chip here that
+            // named neither of its two numbers.
+            Text("\(starterCount) of \(players.count) starting")
                 .font(.system(size: DSType.Size.micro, weight: .semibold).monospacedDigit())
                 .foregroundStyle(Color.textTertiary)
                 .padding(.horizontal, 4)
@@ -1774,7 +1816,7 @@ struct PositionGroupHeader: View {
 
             // Expiring contracts
             if expiringCount > 0 {
-                Text("\(expiringCount) exp")
+                Text("\(expiringCount) expiring")
                     .font(.system(size: DSType.Size.micro, weight: .bold))
                     .foregroundStyle(Color.warning)
                     .padding(.horizontal, 4)

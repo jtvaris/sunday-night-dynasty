@@ -785,12 +785,25 @@ struct DraftStickyHeader: View {
             .prefix(5)
         let pressure = showsBoardPressure ? boardPressure : [:]
         return HStack(spacing: DSSpacing.xxs) {
-            Text(showsBoardPressure ? "NEEDS \u{00B7} MY TOP \(Self.pressureDepth)" : "NEEDS")
-                .font(DSType.display(DSType.Size.caption, .heavy))
-                .tracking(0.7)
-                .foregroundStyle(Color.textSecondary)
-                .lineLimit(1)
-                .padding(.trailing, DSSpacing.xxs)
+            HStack(spacing: 2) {
+                Text(showsBoardPressure ? "NEEDS \u{00B7} MY NEXT \(Self.pressureDepth)" : "NEEDS")
+                    .font(DSType.display(DSType.Size.caption, .heavy))
+                    .tracking(0.7)
+                    .foregroundStyle(Color.textSecondary)
+                    .lineLimit(1)
+                if showsBoardPressure {
+                    // The digit on a pill is a count with no denominator on it,
+                    // and the reveal card 700 pt to the right prints "DT LEFT
+                    // 24" off the WHOLE class for the same position. Two honest
+                    // numbers that disagree teach the reader to trust neither,
+                    // so the strip says out loud which one it is counting.
+                    InfoTooltipButton(
+                        text: "Of the next \(Self.pressureDepth) men still up on YOUR board, how many play each position of need. Not the class \u{2014} the reveal card's \"LEFT\" counts every undrafted man at a position, which is a much bigger number.",
+                        size: 10
+                    )
+                }
+            }
+            .padding(.trailing, DSSpacing.xxs)
             ForEach(Array(needs), id: \.key) { entry in
                 let left = pressure[entry.key]
                 DSStatusPill(
@@ -811,20 +824,28 @@ struct DraftStickyHeader: View {
 
     // MARK: - Board pressure (#198 (4))
 
-    /// **How deep "the top of my board" is.** Twenty is the read that decides
-    /// trade-up versus sit: inside twenty slots a man is somebody the user's own
-    /// building filed a real opinion on, and past it the arithmetic of moving up
-    /// stops paying for itself.
+    /// **How deep "the next men up on my board" reaches.** Twenty is the read
+    /// that decides trade-up versus sit: inside twenty slots a man is somebody
+    /// the user's own building filed a real opinion on, and past it the
+    /// arithmetic of moving up stops paying for itself.
     private static let pressureDepth = 20
 
-    /// **Per position of need, how many men are LEFT inside the top
-    /// ``pressureDepth`` of the user's own board** (#198 (4)).
+    /// **Per position of need, how many of the next ``pressureDepth`` men still
+    /// up on the user's own board play it** (#198 (4)).
     ///
     /// This is the one number the needs strip was missing and the only number on
-    /// this screen that answers "do I move up or do I sit": three tackles inside
-    /// his top twenty means the run can come to him, one means the phone is the
-    /// only way to get him, and zero means the need is not solvable tonight at
-    /// any price and the strip is telling him to stop planning around it.
+    /// this screen that answers "do I move up or do I sit": three tackles among
+    /// the next twenty means the run can come to him, one means the phone is the
+    /// only way to get him, and zero means the need is not solvable off this
+    /// card and the strip is telling him to stop planning around it.
+    ///
+    /// **The window walks down the board with the draft.** It used to be the top
+    /// twenty SLOTS, absolutely — a window that is empty by the user's second
+    /// card, because twenty men are gone by pick twenty. The strip printed five
+    /// zeroes from round two to the end of the night and answered nothing.
+    /// Counting the next twenty men still AVAILABLE keeps the denominator
+    /// twenty for the whole draft, which is what makes the five digits
+    /// comparable to each other.
     ///
     /// ## Fog discipline
     ///
@@ -837,16 +858,20 @@ struct DraftStickyHeader: View {
     /// the correct answer — the board cannot be under pressure over a name it
     /// has never heard.
     private var boardPressure: [Position: Int] {
+        let nextUp = coordinator.availableProspects
+            .compactMap { prospect in
+                coordinator.userBoardRanks[prospect.id].map { (prospect.position, $0) }
+            }
+            .sorted { $0.1 < $1.1 }
+            .prefix(Self.pressureDepth)
         var counts: [Position: Int] = [:]
-        for prospect in coordinator.availableProspects {
-            guard let rank = coordinator.userBoardRanks[prospect.id],
-                  rank <= Self.pressureDepth else { continue }
-            counts[prospect.position, default: 0] += 1
+        for (position, _) in nextUp {
+            counts[position, default: 0] += 1
         }
         return counts
     }
 
-    /// **A top twenty needs twenty men in it.**
+    /// **A next twenty needs twenty men on the board to draw from.**
     ///
     /// `UserDraftBoard.order` ranks the men the user's building has actually
     /// filed on — his stored board order plus every scouted man behind it — so a
@@ -863,9 +888,9 @@ struct DraftStickyHeader: View {
         let need = "\(position), \(spokenNeed(score)) need"
         guard let left else { return need }
         switch left {
-        case 0:  return need + ", none left in your top \(Self.pressureDepth)"
-        case 1:  return need + ", 1 man left in your top \(Self.pressureDepth)"
-        default: return need + ", \(left) men left in your top \(Self.pressureDepth)"
+        case 0:  return need + ", none in your next \(Self.pressureDepth)"
+        case 1:  return need + ", 1 man in your next \(Self.pressureDepth)"
+        default: return need + ", \(left) men in your next \(Self.pressureDepth)"
         }
     }
 

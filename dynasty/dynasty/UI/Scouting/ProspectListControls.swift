@@ -1185,8 +1185,14 @@ enum ProspectColumns {
                     .frame(width: 34, alignment: .center)
                 Text("WORK")
                     .frame(width: 34, alignment: .center)
-                Text("FILE")
-                    .frame(width: 44, alignment: .center)
+                HStack(spacing: 2) {
+                    Text("FILE")
+                    InfoTooltipButton(
+                        text: "Medical and character flags, at the disclosure your club has earned. \"?\": the file is shut. \"\u{2014}\": you know the count and it is zero. \"2?\": that many flags on him, contents unknown. \"CLEAN\": the file is open and there is nothing in it. \"2\": the file is open and that is what is in it.",
+                        size: 9
+                    )
+                }
+                .frame(width: 44, alignment: .center)
             case .physical:
                 // ONE span over the six drill cells plus the Pos Drill grade.
                 // Each drill cell prints its own 40YD / BENCH / … label under

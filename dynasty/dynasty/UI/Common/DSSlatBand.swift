@@ -274,6 +274,15 @@ struct DSSlat: Identifiable, Equatable {
     /// against the plate first.
     var accent: Color? = nil
 
+    /// The mark a `done` slat draws where a live one draws its position numeral.
+    ///
+    /// Defaults to the check, which is right for a task that was completed and
+    /// wrong for a schedule: the season band drew this glyph in red on a defeat,
+    /// and a tick recoloured red still says "done well". A band whose finished
+    /// steps have outcomes of their own passes `xmark` for a loss and `minus`
+    /// for a tie.
+    var doneGlyph: String = "checkmark"
+
     /// A destination slat: an icon, a word, and no state channels (#165).
     ///
     /// A factory rather than a memberwise call because `state` has no default
@@ -311,8 +320,8 @@ struct DSSlat: Identifiable, Equatable {
 /// §2.13: across three screens the same pips meant "spent" twice and "remaining"
 /// once, and one of the fills was gold — a fourth job for a colour that has
 /// three. Here the brightest filled pip is the one being spent now, a tick marks
-/// half-way, and the value line always reads `<spent> spent · <left> left`, so
-/// the pips and the words can never disagree.
+/// half-way, and the value line always reads `<spent> spent · <left> <unit>
+/// left`, so the pips and the words can never disagree.
 struct DSResourceMeter: Equatable {
     /// Units already committed, **including the one in progress** — the brightest
     /// pip is spent, not pending, which is what makes `spent + left == total`.
@@ -323,7 +332,11 @@ struct DSResourceMeter: Equatable {
 
     var left: Int { max(0, total - spent) }
 
-    var valueLine: String { "\(spent) spent \u{00B7} \(left) left" }
+    /// The unit rides on the "left" half. Without it the meter named nothing
+    /// anywhere on the screen — the noun lived only in the VoiceOver string —
+    /// and "0 spent · 6 left" over six locked stages read as an invitation to
+    /// spend six of something now.
+    var valueLine: String { "\(spent) spent \u{00B7} \(left) \(unit) left" }
 
     var accessibilityText: String { "\(unit): \(spent) spent, \(left) left" }
 }
@@ -410,12 +423,24 @@ struct DSSlatBand: View {
         // has three jobs and a pip fill is not one of them (§2.13).
         let isFilled = index < meter.spent
         let isCurrent = index == meter.spent - 1
-        let fill: Color = isCurrent ? .textPrimary : (isFilled ? .textSecondary : .clear)
+        // A hollow pip is not a quiet pip. At 5x11 pt a rail of empty outlines
+        // split by the half-way tick reads as missing-glyph tofu with a stray
+        // pipe in it, so an unspent pip carries a dim fill inside its stroke.
+        // Brightness is the channel, not emptiness: tertiary track, secondary
+        // spent, primary now.
+        let fill: Color = isCurrent
+            ? .textPrimary
+            : (isFilled ? .textSecondary : Color.textTertiary.opacity(0.30))
         return DSSlatShape(slant: DSSlatGeometry.slant(height: 11))
             .fill(fill)
             .overlay(
+                // An empty pip is the BUDGET, and the budget has to be visible
+                // before it is spent: a 1 pt `surfaceBorder` stroke on the plate
+                // is 1.35:1, so every band opened with its meter drawn as
+                // nothing at all. `textTertiary` is the value the half-way tick
+                // already carries on the same rail.
                 DSSlatShape(slant: DSSlatGeometry.slant(height: 11))
-                    .strokeBorder(isFilled ? Color.clear : Color.surfaceBorder, lineWidth: 1)
+                    .strokeBorder(isFilled ? Color.clear : Color.textTertiary, lineWidth: 1)
             )
             .frame(width: 5, height: 11)
     }
@@ -558,16 +583,26 @@ private struct DSSlatButton: View {
     let action: (() -> Void)?
 
     var body: some View {
-        Button {
-            action?()
-        } label: {
+        slatBody
+            .frame(width: width, height: height)
+            .accessibilityLabel(slat.accessibilityText.isEmpty ? slat.title : slat.accessibilityText)
+    }
+
+    /// A band with no `onSelect` is a READOUT, and it stops claiming otherwise:
+    /// no press state, and no `.isButton` trait. The roster-cut ladder drew its
+    /// three rungs in the app's most interactive-looking language and announced
+    /// three buttons to VoiceOver, and not one of them did anything.
+    @ViewBuilder
+    private var slatBody: some View {
+        if let action {
+            Button(action: action) { content }
+                .buttonStyle(DSSlatPressStyle())
+                .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+        } else {
             content
+                .accessibilityElement(children: .ignore)
+                .accessibilityAddTraits(isSelected ? [.isSelected] : [])
         }
-        .buttonStyle(DSSlatPressStyle())
-        .disabled(action == nil)
-        .frame(width: width, height: height)
-        .accessibilityLabel(slat.accessibilityText.isEmpty ? slat.title : slat.accessibilityText)
-        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 
     /// A place, not a step (#165). Short-circuits every state channel.
@@ -681,7 +716,7 @@ private struct DSSlatButton: View {
                 // + the outcome" — the position of finished work is carried by
                 // where the slat sits and by the accessibility sentence.
                 if slat.state == .done {
-                    Image(systemName: "checkmark")
+                    Image(systemName: slat.doneGlyph)
                         .font(DSType.display(11, .black))
                         .foregroundStyle(slat.tint ?? Color.textSecondary)
                 } else if let index = slat.index {
@@ -710,21 +745,51 @@ private struct DSSlatButton: View {
                 }
                 Spacer(minLength: 0)
             }
-            if !isCompact, let line = secondLine {
-                Text(line)
+            if !isCompact, let line = secondLineText {
+                line
                     .font(DSType.display(11, .semibold))
-                    .foregroundStyle(Color.textTertiaryReadable)
+                    .foregroundStyle(secondLineColor)
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
         }
     }
 
-    /// The done slat says what it produced; every other state says what it costs
-    /// or what opens it.
+    /// A slat that produced something says so; every other one says what it
+    /// costs or what opens it.
+    ///
+    /// **A played-but-current step is a real state**, and gating the outcome on
+    /// `.done` made the band pretend otherwise: the preseason ledger sat on the
+    /// game whose tape was on the screen and printed "read the tape before the
+    /// next one" while the card below it read "14–40 at Detroit (L)". A current
+    /// slat with a result carries both, result first.
     private var secondLine: String? {
-        if slat.state == .done, let outcome = slat.outcome, !outcome.isEmpty { return outcome }
-        return slat.subcaption
+        guard let outcome = slat.outcome, !outcome.isEmpty else { return slat.subcaption }
+        guard slat.state == .current,
+              let subcaption = slat.subcaption, !subcaption.isEmpty
+        else { return outcome }
+        return "\(outcome) \u{00B7} \(subcaption)"
+    }
+
+    /// The second line, with the padlock IN it on a locked slat.
+    ///
+    /// The lock goes here rather than in the leading glyph slot because that
+    /// slot holds the position numeral, and a locked stage that cannot say where
+    /// it sits in the run is worse off than one whose hatch is easy to miss. Six
+    /// dimmed stages under a meter reading "6 left" need a second signal that
+    /// they are shut, and the line naming the gate is where a reader hunting for
+    /// one already is.
+    private var secondLineText: Text? {
+        guard let line = secondLine else { return nil }
+        guard slat.state == .locked else { return Text(line) }
+        return Text(Image(systemName: "lock.fill")) + Text(" " + line)
+    }
+
+    /// The current slat's line is the one the club has to act on — on a cut band
+    /// it is the number of men still owed — so it does not take the dimmest ink
+    /// in the palette.
+    private var secondLineColor: Color {
+        slat.state == .current ? .textSecondary : .textTertiaryReadable
     }
 
     /// Two lines, always.

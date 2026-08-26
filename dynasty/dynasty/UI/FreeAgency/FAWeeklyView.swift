@@ -120,6 +120,17 @@ struct FAWeeklyView: View {
     /// backstop's verdict, surfaced at signing time instead of being discarded.
     @State private var capBreachViolation: WeekAdvancer.CapComplianceViolation?
     @State private var allPlayers: [Player] = []
+    /// Who the club already starts at each spot. Built with the board rather
+    /// than per row: the reading is drawn on every line and `allPlayers` is the
+    /// whole league.
+    @State private var incumbentByPosition: [Position: Incumbent] = [:]
+    /// Rows whose sheet has been opened this sitting.
+    ///
+    /// Session state, deliberately — the view outlives all six market days, so
+    /// it carries a pass over the board for as long as the pass lasts, and the
+    /// only way it can be wrong (after leaving free agency and coming back) is
+    /// by forgetting a row the user saw, never by claiming one he did not.
+    @State private var openedPlayerIDs: Set<UUID> = []
 
     // FA Drama Phase 5 — Milestone signing sheet
     @State private var milestonePlayer: Player?
@@ -175,6 +186,13 @@ struct FAWeeklyView: View {
         let years: Int
         /// Cap room left after the pen went down — the "what it cost" number.
         let capAfter: Int
+    }
+
+    /// The best man already on the roster at one position — the half of "is he
+    /// an upgrade" the market board never had.
+    struct Incumbent {
+        let lastName: String
+        let overall: Int
     }
 
     // Position filter
@@ -316,7 +334,7 @@ struct FAWeeklyView: View {
             Button("Skip", role: .destructive) { skipRemainingFA() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("AI teams will sign remaining free agents based on their needs. You won't be able to make any more signings.")
+            Text(skipConfirmMessage)
         }
         // ONE presentation point (house rule / wave 3). Everything modal this
         // screen can show is a case of `ActiveSheet`.
@@ -556,9 +574,12 @@ struct FAWeeklyView: View {
     }
 
     private func phaseInfo(for round: Int) -> PhaseInfo {
+        // The frenzy rounds do not name the frenzy themselves: `isFrenzy` makes
+        // `signingSubcaption` prefix the word, and both halves saying it printed
+        // "Day 1 · Frenzy · Frenzy: top FAs sign fast".
         switch round {
-        case 1: return PhaseInfo(label: "Day 1", description: "Frenzy: top FAs sign fast", isFrenzy: true)
-        case 2: return PhaseInfo(label: "Day 2", description: "Frenzy: bidding wars peak", isFrenzy: true)
+        case 1: return PhaseInfo(label: "Day 1", description: "top FAs sign fast", isFrenzy: true)
+        case 2: return PhaseInfo(label: "Day 2", description: "bidding wars peak", isFrenzy: true)
         case 3: return PhaseInfo(label: "Day 3", description: "Mid-tier FAs settle", isFrenzy: false)
         case 4: return PhaseInfo(label: "Week 2", description: "Bargains begin to appear", isFrenzy: false)
         case 5: return PhaseInfo(label: "Week 3", description: "Late market: depth signings", isFrenzy: false)
@@ -1177,6 +1198,9 @@ struct FAWeeklyView: View {
                             .foregroundStyle(isSelected ? Color.textPrimary : Color.textSecondary)
                             .padding(.horizontal, DSSpacing.sm)
                             .padding(.vertical, DSSpacing.xs)
+                            // The vertical padding alone drew a 31 pt chip. The
+                            // rule is a measured rect, not a declared style.
+                            .frame(minHeight: 44)
                             .background(
                                 isSelected ? Color.backgroundTertiary : Color.backgroundSecondary,
                                 in: Capsule()
@@ -1218,6 +1242,11 @@ struct FAWeeklyView: View {
         // 60-second ticker.
         let agents = filteredAgents
 
+        // The room every row's cap badge is measured against, read once for the
+        // whole board: `availableCapAfterOffers` goes through the ledger, and
+        // the badge is drawn on every line.
+        let room = reservesCap ? availableCapAfterOffers : (team?.availableCap ?? 0)
+
         return VStack(spacing: 0) {
             // The board's own pinned head: what we can spend, then what the
             // columns mean. Both sit OUTSIDE the `ScrollView`, so neither can
@@ -1226,6 +1255,7 @@ struct FAWeeklyView: View {
                 capRoomStrip
                 if !agents.isEmpty {
                     marketHeader
+                    slotLegend
                 }
             }
             .padding(.horizontal, DSSpacing.md)
@@ -1238,7 +1268,7 @@ struct FAWeeklyView: View {
             ScrollView {
                 LazyVStack(spacing: 0) {
                     ForEach(Array(agents.enumerated()), id: \.element.player.id) { index, fa in
-                        freeAgentRow(fa: fa)
+                        freeAgentRow(fa: fa, room: room)
 
                         if index < agents.count - 1 {
                             Divider()
@@ -1405,6 +1435,23 @@ struct FAWeeklyView: View {
         }
     }
 
+    /// What the row's four state slots mean, in one line.
+    ///
+    /// The idents are a good scanning system once learned, and nothing else on
+    /// the board taught them: `BID`, `VST` and `HEAT` were expanded only in
+    /// their spoken labels, and the grey word beside the name (`motivationLabel`)
+    /// is a bare noun. The line sits with the header, outside the scroll, so it
+    /// cannot be lost the moment the list moves.
+    private var slotLegend: some View {
+        Text("SEEN opened \u{00B7} BID your offer \u{00B7} VST visited you \u{00B7} "
+             + "HEAT rival bidding \u{00B7} grey word is what he chases")
+            .font(DSType.text(11, .regular))
+            .foregroundStyle(Color.textTertiaryReadable)
+            .lineLimit(1)
+            .minimumScaleFactor(0.75)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     /// One free agent.
     ///
     /// The tap target is still the whole row and it still opens the offer dial;
@@ -1413,21 +1460,30 @@ struct FAWeeklyView: View {
     /// under it, indented to the row's own identity gutter rather than to a
     /// hand-typed `40`.
     ///
-    /// The row reserves **three state slots** (§2.2), chosen once for the whole
-    /// list and drawn on every line whether or not the fact behind them exists:
+    /// The row reserves **four state slots** (§2.2), chosen once for the whole
+    /// list and drawn on every line whether or not the fact behind them exists.
+    /// The first three are ours, in the order the decision is made; the last is
+    /// the rest of the league's:
     ///
+    ///   * `SEEN` — have we opened his sheet at all
     ///   * `BID`  — is our money on the table, and how much
     ///   * `VST`  — have we had him in the building
     ///   * `HEAT` — how hard the rest of the league is chasing him
+    ///
+    /// `SEEN` is there because 126 names, seven rows to a screen and six market
+    /// days is a pass nobody finishes in one go, and the board carried no mark
+    /// of where the last one stopped — returning from a sheet left the row
+    /// pixel-identical to before the tap.
     ///
     /// All three used to be conditional inline badges of three different
     /// shapes, so the answer the user actually scans a market for — *who has
     /// nobody on him yet* — was a column of gaps that were invisible because
     /// nothing was drawn in them.
-    private func freeAgentRow(fa: FreeAgencyEngine.FreeAgent) -> some View {
+    private func freeAgentRow(fa: FreeAgencyEngine.FreeAgent, room: Int) -> some View {
         let hasOffer = myOffers[fa.player.id] != nil
 
         return Button {
+            openedPlayerIDs.insert(fa.player.id)
             activeSheet = .offer(fa)
         } label: {
             VStack(alignment: .leading, spacing: DSSpacing.xxs) {
@@ -1474,7 +1530,8 @@ struct FAWeeklyView: View {
                 // What signing him would do to the books, and what the room is
                 // saying about him.
                 HStack(spacing: DSSpacing.xxs + 2) {
-                    capImpactBadge(asking: fa.askingPrice)
+                    capImpactBadge(asking: fa.askingPrice, room: room)
+                    depthLabel(fa: fa)
                     if let rumor = rumorText(for: fa) {
                         HStack(spacing: 3) {
                             Image(systemName: rumor.icon)
@@ -1523,6 +1580,7 @@ struct FAWeeklyView: View {
         )
         let offer = myOffers[fa.player.id]
         let visited = visitedPlayerIDs.contains(fa.player.id)
+        let opened = openedPlayerIDs.contains(fa.player.id)
 
         return VStack(alignment: .leading, spacing: 1) {  // ds-lint:allow(spacing) name-over-slots lockup inside one row
             HStack(spacing: DSSpacing.xxs) {
@@ -1546,6 +1604,14 @@ struct FAWeeklyView: View {
             }
 
             DSStateSlotRow(slots: [
+                // Neutral, not info: having looked at a man is a bookmark, not
+                // a recommendation.
+                .slot(
+                    "SEEN",
+                    isSet: opened,
+                    tone: .neutral,
+                    spoken: opened ? "You have opened his sheet" : "Not opened yet"
+                ),
                 .slot(
                     "BID",
                     isSet: hasOffer,
@@ -1608,7 +1674,10 @@ struct FAWeeklyView: View {
                 }
                 .foregroundStyle(visitsRemaining > 0 ? Color.accentBlue : Color.textTertiary)
                 .padding(.horizontal, DSSpacing.xs)
-                .frame(minHeight: 32)
+                // 44, not 32: this button sits INSIDE a row that is itself a
+                // button to the offer sheet, so every pixel it is short of the
+                // rule opens the wrong surface instead of missing.
+                .frame(minHeight: 44)
                 .background(
                     (visitsRemaining > 0 ? Color.accentBlue : Color.textTertiary).opacity(0.12),
                     in: Capsule()
@@ -1665,23 +1734,77 @@ struct FAWeeklyView: View {
 
     // MARK: - Cap Impact Badge (preview)
 
-    private func capImpactBadge(asking: Int) -> some View {
-        // Task #87 / U13: the fallback was a fourth cap constant ($260M).
-        let cap = team?.salaryCap ?? ContractEngine.openingSalaryCap
-        let pct = cap > 0 ? Double(asking) / Double(cap) * 100 : 0
-        let pctRounded = Int(pct.rounded())
+    /// What the ask costs out of **the room the club still has** — the same
+    /// number the strip at the top of the board labels `AVAILABLE`, handed in
+    /// so the badge does not re-read the ledger once per row.
+    ///
+    /// It used to divide by `salaryCap`, so an $18.1M ask on a club with $64.8M
+    /// of room read "Will use 6 % of cap": true of a ~$264M total that appears
+    /// nowhere on this screen, and a quarter of the answer to the only question
+    /// the row is ever asked — can I afford him out of what is left.
+    private func capImpactBadge(asking: Int, room: Int) -> some View {
+        let pctRounded = room > 0 ? Int((Double(asking) / Double(room) * 100).rounded()) : 0
+        let unaffordable = asking > room
         let color: Color = {
-            if pct >= 12 { return .danger }
-            if pct >= 7 { return .warning }
+            if unaffordable { return .danger }
+            if pctRounded >= 50 { return .warning }
             return .textSecondary
         }()
-        let labelText = pctRounded <= 0 ? "<1% of cap" : "Will use \(pctRounded)% of cap"
+        let labelText: String = {
+            if room <= 0 { return "No room left" }
+            if unaffordable { return "More than your room" }
+            return pctRounded <= 0 ? "<1% of your room" : "Will use \(pctRounded)% of your room"
+        }()
         return Text(labelText)
             .font(DSType.display(11, .semibold))
             .foregroundStyle(color)
             .padding(.horizontal, DSSpacing.xxs + 2)
             .padding(.vertical, 2)
             .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
+    }
+
+    // MARK: - Depth Reading
+
+    /// **What signing him would actually change.**
+    ///
+    /// The board's columns are POS / OVR / AGE / ASKS / YRS, so the highest
+    /// rating left is always the apparent right answer: two strong safeties at
+    /// the top of the list read as the two best buys on the screen whether the
+    /// club already starts an 88 there or has nobody at all. Nothing else on
+    /// this screen names the man he would be replacing — the position filter
+    /// narrows the board but never ranks it by need — so the trade-off the
+    /// market exists to pose was fake, and "sort by OVR, buy the top name you
+    /// can afford" was the whole game.
+    ///
+    /// Cheap by construction: `incumbentByPosition` is one dictionary lookup,
+    /// built once per load rather than by scanning the roster per row.
+    @ViewBuilder
+    private func depthLabel(fa: FreeAgencyEngine.FreeAgent) -> some View {
+        let (icon, text, color) = { () -> (String, String, Color) in
+            guard let held = incumbentByPosition[fa.player.position] else {
+                // Nobody at the spot is the strongest reason on the board to
+                // sign a man, and it is the one case the OVR column cannot say.
+                return ("person.badge.plus", "No \(fa.player.position.rawValue) on your roster", .success)
+            }
+            let delta = fa.player.overall - held.overall
+            if delta > 0 {
+                return ("arrow.up.right", "+\(delta) over \(held.lastName) (\(held.overall))", .success)
+            }
+            if delta == 0 {
+                return ("equal", "Same as \(held.lastName) (\(held.overall))", .textTertiaryReadable)
+            }
+            // `abs`, not the raw delta: "-3 behind" is a double negative.
+            return ("arrow.down.right", "\(abs(delta)) behind \(held.lastName) (\(held.overall))", .textTertiaryReadable)
+        }()
+
+        HStack(spacing: 3) {  // ds-lint:allow(spacing) icon-to-text gap, same as the rumour beside it
+            Image(systemName: icon)
+                .font(DSType.text(DSType.Size.caption))
+            Text(text)
+                .font(DSType.display(11, .semibold))
+                .lineLimit(1)
+        }
+        .foregroundStyle(color)
     }
 
     // MARK: - Rumor System
@@ -1698,12 +1821,18 @@ struct FAWeeklyView: View {
         if fa.player.personality.motivation == .loyalty {
             return Rumor(text: "Hometown discount possible", icon: "house.fill", color: .accentBlue)
         }
-        // 2. Heavy market interest -> bidding war chatter
+        // 2. Heavy market interest -> bidding war chatter.
+        //
+        // The COUNT is not ours to print: `aiInterestLabel` is the next element
+        // in the same HStack and it exists to say how many clubs are in, in
+        // whatever detail the user's scouting has earned. Both of us naming the
+        // number produced "7 teams interested — bidding war  7 teams interested"
+        // on every row above the threshold. A rumour carries the flavour the
+        // count cannot — that the room is bidding — and nothing else. Below
+        // that, a bare count is not a rumour at all, so the chain falls through
+        // to the motivation reads, which say something the number does not.
         if fa.marketInterest >= 7 {
-            return Rumor(text: "\(fa.marketInterest) teams interested — bidding war", icon: "flame.fill", color: .danger)
-        }
-        if fa.marketInterest >= 4 {
-            return Rumor(text: "\(fa.marketInterest) teams interested", icon: "person.3.fill", color: .warning)
+            return Rumor(text: "Bidding war", icon: "flame.fill", color: .danger)
         }
         // 3. Money motivation -> wants top dollar
         if fa.player.personality.motivation == .money && fa.askingPrice > 8_000 {
@@ -1766,6 +1895,13 @@ struct FAWeeklyView: View {
     /// never adjacent to the primary.
     private var actionBar: some View {
         let nextLabel = currentRound < 6 ? FreeAgencyStep.roundLabel(currentRound + 1) : "Complete"
+        // The commit names what the tap actually does. It used to read "Submit
+        // offers" on a day with nothing on the table, directly beside an
+        // explainer warning that nothing was on the table — the gold button
+        // promising a submission the screen's own ledger said could not happen.
+        let commit = myOffers.isEmpty
+            ? "Advance"
+            : "Submit \(myOffers.count) offer\(myOffers.count == 1 ? "" : "s")"
         return DSActionBar(
             explainer: submitExplainer,
             destructive: .init(
@@ -1775,7 +1911,7 @@ struct FAWeeklyView: View {
                 handler: { showSkipConfirm = true }
             ),
             primary: .init(
-                title: currentRound < 6 ? "Submit offers \u{2192} \(nextLabel)" : "Close the market",
+                title: currentRound < 6 ? "\(commit) \u{2192} \(nextLabel)" : "Close the market",
                 handler: { processRound() }
             )
         )
@@ -2065,6 +2201,30 @@ struct FAWeeklyView: View {
 
     // MARK: - Skip
 
+    /// What skipping actually forfeits, counted.
+    ///
+    /// The static version said only that the AI would sign the rest — which is
+    /// true of every market day and so tells the user nothing about the one he
+    /// is about to give away permanently. All four numbers are already on the
+    /// screen behind the alert; the confirm step is where they matter.
+    private var skipConfirmMessage: String {
+        let room = reservesCap ? availableCapAfterOffers : (team?.availableCap ?? 0)
+        let daysLeft = max(6 - currentRound, 0)
+        var stakes: [String] = []
+        if room > 0 { stakes.append("\(formatMillions(room)) in cap room") }
+        if visitsRemaining > 0 {
+            stakes.append("\(visitsRemaining) facility visit\(visitsRemaining == 1 ? "" : "s")")
+        }
+        stakes.append("\(freeAgents.count) free agent\(freeAgents.count == 1 ? "" : "s")")
+
+        let listed = stakes.count > 1
+            ? stakes.dropLast().joined(separator: ", ") + " and " + (stakes.last ?? "")
+            : (stakes.first ?? "")
+        return "You are leaving \(listed) to the rest of the league, with "
+            + "\(daysLeft) market day\(daysLeft == 1 ? "" : "s") unplayed. "
+            + "The AI clubs will sign whoever is left, and this cannot be undone."
+    }
+
     private func skipRemainingFA() {
         let cid = career.id
         let allPlayers = (try? modelContext.fetch(FetchDescriptor<Player>(
@@ -2156,6 +2316,17 @@ struct FAWeeklyView: View {
         allPlayers = (try? modelContext.fetch(FetchDescriptor<Player>(
             predicate: #Predicate { $0.careerID == cid }
         ))) ?? []
+
+        // Our own depth chart, one entry per spot. Rebuilt on every load, so a
+        // man signed this morning is the incumbent every row is measured
+        // against this afternoon.
+        var incumbents: [Position: Incumbent] = [:]
+        for p in allPlayers where p.teamID == teamID && !p.isRetired {
+            if let held = incumbents[p.position], held.overall >= p.overall { continue }
+            incumbents[p.position] = Incumbent(lastName: p.lastName, overall: p.overall)
+        }
+        incumbentByPosition = incumbents
+
         // Task #87 / F9: this whole screen's asking prices used to be generated
         // against `generateFreeAgentMarket`'s season-one default while `team` sat
         // in scope eleven lines above, so from season two onward this screen
@@ -2252,6 +2423,17 @@ struct FAWeeklyView: View {
                 }
                 .padding(.horizontal, DSSpacing.md)
             }
+            // The strip holds more than fits, and the viewport cut the last
+            // chip flat mid-word — which reads as a rendering fault rather than
+            // as "there is more this way". The fade is on the SCROLL only, so
+            // the bar's own background and rule below it stay solid.
+            .mask(
+                HStack(spacing: 0) {
+                    Color.white
+                    LinearGradient(colors: [.white, .clear], startPoint: .leading, endPoint: .trailing)
+                        .frame(width: 20)
+                }
+            )
             .padding(.vertical, DSSpacing.xs)
             .background(Color.backgroundSecondary)
             .overlay(
@@ -2325,15 +2507,51 @@ struct FAWeeklyView: View {
             items.append(TickerItem(icon: "flame.fill", tint: tint, text: text))
         }
 
-        // 4. Stub fallback so the UI is visible during early FA when no bid data exists
+        // 4. Day 1 has no bids, no visits and no heat, so items 1-3 are empty on
+        // the first and most consequential market day of every season. The stub
+        // that used to fill that gap was five fixed sentences, and one of them
+        // ("bidding wars expected on premier QBs") contradicted any board whose
+        // top names are safeties. These read the board instead, which exists
+        // before a single bid is cast.
         if items.isEmpty {
-            items = [
-                TickerItem(icon: "newspaper", tint: .accentGold, text: "FA market opens — top FAs hitting the wire"),
-                TickerItem(icon: "flame.fill", tint: .danger, text: "Bidding wars expected on premier QBs"),
-                TickerItem(icon: "airplane", tint: .accentBlue, text: "Visit schedules being arranged league-wide"),
-                TickerItem(icon: "dollarsign.circle.fill", tint: .accentGold, text: "Cap-rich teams ready to spend"),
-                TickerItem(icon: "clock.fill", tint: .warning, text: "Early movers shape the market")
-            ]
+            items.append(TickerItem(
+                icon: "newspaper",
+                tint: .accentGold,
+                text: "\(freeAgents.count) free agent\(freeAgents.count == 1 ? "" : "s") on the wire"
+            ))
+
+            var named: Set<UUID> = []
+            let byInterest = freeAgents.sorted { $0.marketInterest > $1.marketInterest }
+            for fa in byInterest.prefix(2) where fa.marketInterest >= 2 {
+                named.insert(fa.player.id)
+                items.append(TickerItem(
+                    icon: "flame.fill",
+                    tint: fa.marketInterest >= 7 ? .danger : .warning,
+                    text: "\(fa.player.fullName) (\(fa.player.position.rawValue), \(fa.player.overall)) "
+                        + "draws \(fa.marketInterest) clubs \u{2014} \(formatMillions(fa.askingPrice)) ask"
+                ))
+            }
+
+            if let priciest = freeAgents.max(by: { $0.askingPrice < $1.askingPrice }),
+               !named.contains(priciest.player.id) {
+                items.append(TickerItem(
+                    icon: "dollarsign.circle.fill",
+                    tint: .accentGold,
+                    text: "Biggest ask on the board: \(priciest.player.fullName) at "
+                        + "\(formatMillions(priciest.askingPrice))/yr over \(priciest.desiredYears) yrs"
+                ))
+            }
+
+            if let team, allTeams.count > 1 {
+                let rivals = allTeams.filter { $0.id != team.id }
+                let poorer = rivals.filter { $0.availableCap < team.availableCap }.count
+                items.append(TickerItem(
+                    icon: "chart.bar.fill",
+                    tint: .accentBlue,
+                    text: "\(team.abbreviation) opens with \(formatMillions(team.availableCap)) \u{2014} "
+                        + "more room than \(poorer) of \(rivals.count) clubs"
+                ))
+            }
         }
 
         return Array(items.prefix(8))

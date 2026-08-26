@@ -74,13 +74,36 @@ struct IntroSequenceView: View {
                     ReadyToBeginStep(
                         career: career,
                         team: team,
-                        teamOverall: players.isEmpty ? 60 : players.map(\.overall).reduce(0, +) / players.count,
+                        // The closing line is graded on `RosterStrength`, the
+                        // one sanctioned definition. The whole-roster mean this
+                        // used to take reads eight points low on a camp roster,
+                        // so an 80-OVR contender was being told to write its
+                        // legacy while the hub called it a contender.
+                        teamOverall: RosterStrength.starterAverage(players) ?? 60,
                         onEnter: { completeIntro() }
                     )
                     .tag(4)
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
                 .animation(.easeInOut(duration: 0.4), value: currentStep)
+                // HOW MUCH BRIEFING IS LEFT. Three screens in a row end in a
+                // bare "Continue" with nothing on them saying the intro is
+                // finite, so it reads as an unbounded corridor. A counter
+                // rather than the page dots this style turns off, because a
+                // count states the length and a row of dots only implies it.
+                // It starts after the press conference, which prints its own
+                // "QUESTION n OF 5" rail across this exact strip.
+                .overlay(alignment: .topTrailing) {
+                    if currentStep > 0 {
+                        Text("STEP \(currentStep + 1) OF \(totalSteps)")
+                            .font(.system(size: DSType.Size.caption, weight: .heavy))
+                            .tracking(1.0)
+                            .foregroundStyle(Color.textTertiary)
+                            .padding(.horizontal, DSSpacing.md)
+                            .padding(.top, DSSpacing.sm)
+                            .accessibilityLabel("Step \(currentStep + 1) of \(totalSteps)")
+                    }
+                }
             } else {
                 ProgressView()
                     .tint(Color.accentGold)
@@ -125,6 +148,20 @@ struct IntroSequenceView: View {
         if let teamID = career.teamID {
             FranchiseIdentityDeclaration.amend(
                 tone: result.dominantTone, teamID: teamID
+            )
+
+            // Same two writes the weekly podium makes (`CareerShellView`), so
+            // the introduction cannot book a different set than every session
+            // after it: the team-wide morale read onto the roster, the fan read
+            // onto `Career.fanSupport`.
+            let descriptor = FetchDescriptor<Player>(
+                predicate: #Predicate<Player> { $0.teamID == teamID }
+            )
+            let roster = (try? modelContext.fetch(descriptor)) ?? []
+            PressConferenceEngine.applyRoomEffects(
+                result: result,
+                career: career,
+                roster: roster
             )
         }
 
@@ -287,10 +324,11 @@ private struct OwnerMeetingStep: View {
                     .scrollIndicators(.hidden)
                 }
 
-                // §2.5: the one commit surface. The intro's shared
-                // `IntroContinueButton` is a floating gold capsule in a
-                // `safeAreaInset`; the two screens this wave merged both commit
-                // on the bar, and the owner meeting is one of them.
+                // §2.5: the one commit surface, and now every intro step that
+                // has a Continue uses it. The floating gold capsule the two
+                // later steps used moved the button the player had just tapped
+                // from bottom-right to bottom-centre between consecutive
+                // screens, and it could carry no explainer.
                 DSActionBar(
                     explainer: .init(
                         title: "Owner meeting",
@@ -625,6 +663,16 @@ private struct TeamOverviewStep: View {
                     VStack(alignment: .leading, spacing: 14) {
                         SectionLabel(text: "POSITION GROUP STRENGTHS")
 
+                        // Without this the card is arithmetically impossible on
+                        // its face: every group reads above the 53-man "Average
+                        // Overall" on the card above, because every number here
+                        // is a top-N starter average and none of them is a mean
+                        // of the players counted underneath it.
+                        Text("S is the starters, D the depth behind them. Each group's OVR is its starters' average \u{2014} which is why they read above the 53-man Average Overall.")
+                            .font(.caption)
+                            .foregroundStyle(Color.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+
                         LazyVGrid(columns: [
                             GridItem(.flexible()),
                             GridItem(.flexible()),
@@ -653,13 +701,17 @@ private struct TeamOverviewStep: View {
                                     Text(group.name)
                                         .font(.subheadline.weight(.bold))
                                         .foregroundStyle(Color.textSecondary)
-                                    Text("\(group.starterAverage) OVR")
+                                    Text("Starters \(group.starterAverage) OVR")
                                         .font(.subheadline.monospacedDigit())
                                         .foregroundStyle(Color.textTertiary)
                                     // #131/#134: Show count vs ideal with color
                                     let ideal = Self.idealGroupSize[group.name] ?? 4
                                     let staffColor: Color = group.playerCount >= ideal ? .success : group.playerCount >= ideal - 1 ? .warning : .dangerText
-                                    Text("\(group.playerCount)/\(ideal) players")
+                                    // Not "7/6 players": a numerator larger than
+                                    // its denominator reads as a broken
+                                    // fraction, not as a roster count against
+                                    // an ideal.
+                                    Text("\(group.playerCount) (need \(ideal))")
                                         .font(.caption.weight(.medium))
                                         .foregroundStyle(staffColor)
                                     if !group.need.isEmpty {
@@ -799,14 +851,20 @@ private struct TeamOverviewStep: View {
             .frame(maxWidth: .infinity)
             .frame(minHeight: geometry.size.height)
         }
-        .scrollIndicators(.hidden)
+        // The briefing is taller than one screen, and the commit bar used to be
+        // a capsule on a 0.95 background: the DRAFT PICKS head showed through it
+        // as a rendering artefact rather than as "there is more below". Visible
+        // indicators, an opaque bar, and an explainer that names what is still
+        // down there.
+        .scrollIndicators(.visible)
         .safeAreaInset(edge: .bottom) {
-            IntroContinueButton(action: onContinue)
-                .padding(.horizontal, 24)
-                .padding(.bottom, 16)
-                .padding(.top, 12)
-                .frame(maxWidth: .infinity)
-                .background(Color.backgroundPrimary.opacity(0.95))
+            DSActionBar(
+                explainer: .init(
+                    title: "Team overview",
+                    message: "Keep scrolling — the **salary cap** and the **draft picks** you inherit are below."
+                ),
+                primary: .init(title: "Continue", handler: onContinue)
+            )
         }
         }
         }
@@ -864,8 +922,11 @@ private struct YourRoadmapStep: View {
                 ForEach(Array(Self.offseasonCalendarEntries.enumerated()), id: \.offset) { index, entry in
                     let isCurrent = index == 0
                     let totalEntries = Self.offseasonCalendarEntries.count
-                    // #137: Fade distant phases progressively
-                    let distanceFade: Double = isCurrent ? 1.0 : max(0.4, 1.0 - Double(index) * 0.08)
+                    // #137: Fade distant phases progressively. The floor is
+                    // 0.7, not 0.4 — the rows now carry a line of prose each,
+                    // and a description has to stay readable at the far end of
+                    // the timeline in a way a two-word phase name did not.
+                    let distanceFade: Double = isCurrent ? 1.0 : max(0.7, 1.0 - Double(index) * 0.08)
 
                     HStack(alignment: .top, spacing: 10) {
                         // Timeline connector
@@ -923,13 +984,15 @@ private struct YourRoadmapStep: View {
                                     .foregroundStyle(Color.textTertiary)
                             }
 
-                            // Description — only for current phase
-                            if isCurrent {
-                                Text(entry.description)
-                                    .font(.caption2)
-                                    .foregroundStyle(Color.textSecondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
+                            // Every phase says what it is. Nine of the ten
+                            // descriptions used to be withheld, which left the
+                            // screen that sells the shape of the whole offseason
+                            // ending at half a portrait iPad with a name and a
+                            // month per row.
+                            Text(entry.description)
+                                .font(.caption2)
+                                .foregroundStyle(Color.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
 
                         Spacer()
@@ -964,6 +1027,10 @@ private struct YourRoadmapStep: View {
             TaskRow(number: 2, text: "Evaluate the roster")
             TaskRow(number: 3, text: "Prepare for the Combine and Free Agency")
         }
+        // The calendar card above is stretched by the `Spacer()` in its rows;
+        // without this the tasks card hugs its longest task and neither edge
+        // lines up with the card it sits under.
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(20)
         .cardBackground()
     }
@@ -1025,12 +1092,13 @@ private struct YourRoadmapStep: View {
         }
         .scrollIndicators(.hidden)
         .safeAreaInset(edge: .bottom) {
-            IntroContinueButton(action: onContinue)
-                .padding(.horizontal, 24)
-                .padding(.bottom, 16)
-                .padding(.top, 12)
-                .frame(maxWidth: .infinity)
-                .background(Color.backgroundPrimary.opacity(0.95))
+            DSActionBar(
+                explainer: .init(
+                    title: "Your roadmap",
+                    message: "Ten phases, February to January. The **required** ones you work through; the **optional** ones you can skip."
+                ),
+                primary: .init(title: "Continue", handler: onContinue)
+            )
         }
         }
         .onAppear { runAnimations() }
@@ -1102,8 +1170,12 @@ private struct ReadyToBeginStep: View {
                                 .foregroundStyle(Color.accentGold)
                                 .shadow(color: Color.accentGold.opacity(glowAmount), radius: 20, y: 0)
 
+                            // `hero` is the size the token scale reserves for
+                            // full-bleed moments, and this is the only one in
+                            // the app: a title screen on a 13" portrait iPad
+                            // with two thirds of the page empty around it.
                             Text("Your Journey Begins")
-                                .font(.system(size: DSType.Size.display, weight: .bold))
+                                .font(.system(size: DSType.Size.hero, weight: .bold))
                                 .foregroundStyle(Color.textPrimary)
 
                             if let team = team {
@@ -1177,6 +1249,10 @@ private struct ReadyToBeginStep: View {
 
 // MARK: - Shared Components
 
+/// §2.9: section heads are `textSecondary` and tracked, not gold — gold has
+/// three jobs and "every heading on the screen" is not one of them. The owner
+/// meeting already obeyed this (see `OwnerCard`); the two steps that follow it
+/// put gold on every card head, so the intro contradicted itself mid-sequence.
 private struct SectionLabel: View {
     let text: String
 
@@ -1184,7 +1260,7 @@ private struct SectionLabel: View {
         Text(text)
             .font(.system(size: DSType.Size.footnote, weight: .black))
             .tracking(2)
-            .foregroundStyle(Color.accentGold)
+            .foregroundStyle(Color.textSecondary)
     }
 }
 
@@ -1225,14 +1301,25 @@ private struct TaskRow: View {
     }
 }
 
-/// Stat row that shows a value compared to a league average, with green/red indicator (#19).
+/// Stat row that shows a value against a league average (#19).
+///
+/// One carrier for the verdict, and it is the delta. The row used to paint the
+/// value with `Color.forRating` *and* flag it with a red arrow, so "70" read
+/// good and failing in the same breath — and a 2-point shortfall wore the same
+/// saturated red a 20-point one would. The signed number shows the magnitude
+/// the arrow could not.
 private struct ComparisonStatRow: View {
     let label: String
     let value: Int
     let leagueAvg: Int
     let format: (Int) -> String
 
-    private var isAbove: Bool { value >= leagueAvg }
+    private var delta: Int { value - leagueAvg }
+
+    private var deltaText: String {
+        guard delta != 0 else { return "level with league avg \(format(leagueAvg))" }
+        return "\(delta > 0 ? "+" : "")\(delta) vs league avg \(format(leagueAvg))"
+    }
 
     var body: some View {
         HStack {
@@ -1242,35 +1329,10 @@ private struct ComparisonStatRow: View {
             Spacer()
             Text(format(value))
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Color.forRating(value))
-            Text("(Avg: \(format(leagueAvg)))")
+                .foregroundStyle(Color.textPrimary)
+            Text(deltaText)
                 .font(.caption)
-                .foregroundStyle(Color.textTertiary)
-            Image(systemName: isAbove ? "arrow.up.circle.fill" : "arrow.down.circle.fill")
-                .font(.caption)
-                .foregroundStyle(isAbove ? Color.success : Color.danger)
-        }
-    }
-}
-
-private struct IntroContinueButton: View {
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                Text("Continue")
-                    .font(.headline.weight(.semibold))
-                Image(systemName: "chevron.right")
-                    .font(.subheadline.weight(.semibold))
-            }
-            .foregroundStyle(Color.backgroundPrimary)
-            .padding(.horizontal, 36)
-            .padding(.vertical, 14)
-            .background(
-                Capsule()
-                    .fill(Color.accentGold)
-            )
+                .foregroundStyle(delta == 0 ? Color.textTertiary : delta > 0 ? Color.success : Color.warning)
         }
     }
 }

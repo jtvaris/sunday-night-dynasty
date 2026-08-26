@@ -36,10 +36,9 @@ struct DSActionBar: View {
 
         /// The message with its markdown emphasis removed.
         ///
-        /// The visible label is a `LocalizedStringKey`, which renders `**…**` as
-        /// bold; an accessibility label is a plain `String`, which reads the
-        /// asterisks out loud. Every call site that hands this copy to
-        /// VoiceOver goes through here.
+        /// The visible label resolves `**…**` into a bold run; an accessibility
+        /// label is a plain `String`, which would read the asterisks out loud.
+        /// Every call site that hands this copy to VoiceOver goes through here.
         static func spoken(_ message: String) -> String {
             message.replacingOccurrences(of: "**", with: "")
         }
@@ -110,15 +109,53 @@ struct DSActionBar: View {
                 // of "small dim text I can't read". Body step, medium weight,
                 // `textPrimary` — the bar has no fixed height, so the extra
                 // ~2 pt of line box is absorbed by the 44 pt button row.
-                Text(LocalizedStringKey(explainer.message))
-                    .font(DSType.text(DSType.Size.body, .medium))
+                Text(styledMessage(explainer.message))
                     .foregroundStyle(Color.textPrimary)
-                    .lineLimit(2)
+                    .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .frame(maxWidth: 420, alignment: .leading)
+        // The measure is capped so the line stays readable next to a 1000 pt
+        // bar, but 420 pt over two lines ate the second half of preseason's
+        // cost sentence — the clause that stated the trade-off. Three lines at
+        // 620 pt still leaves the button row its width on the widest screens.
+        .frame(maxWidth: 620, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// The explainer line with its `**…**` resolved into a real bold run.
+    ///
+    /// `Text(LocalizedStringKey(runtimeString))` did strip the asterisks, so the
+    /// markdown was being parsed — but a `.font(…)` carrying an explicit weight
+    /// wins over the strong-emphasis trait, and every emphasised noun in the bar
+    /// shipped at the same weight as the rest of the line. That is the whole
+    /// point of the emphasis: "spends **1 of 6** scouting weeks", "the league
+    /// signs **unopposed**", "nothing is said until you **say it**" all put the
+    /// load-bearing words in the emphasised run. Setting the two fonts on the
+    /// runs ourselves is the only way that survives.
+    ///
+    /// Inline-only parsing: a message is one or two sentences, never a block, and
+    /// block syntax would let a leading `#` in interpolated copy become a heading.
+    private func styledMessage(_ message: String) -> AttributedString {
+        let body = DSType.text(DSType.Size.body, .medium, prose: true)
+        guard var styled = try? AttributedString(
+            markdown: message,
+            options: AttributedString.MarkdownParsingOptions(
+                interpretedSyntax: .inlineOnlyPreservingWhitespace
+            )
+        ) else {
+            var plain = AttributedString(message)
+            plain.font = body
+            return plain
+        }
+        styled.font = body
+        let emphasised: [Range<AttributedString.Index>] = styled.runs.compactMap { run in
+            run.inlinePresentationIntent?.contains(.stronglyEmphasized) == true ? run.range : nil
+        }
+        for range in emphasised {
+            styled[range].font = DSType.text(DSType.Size.body, .bold, prose: true)
+        }
+        return styled
     }
 
     // MARK: Buttons — one order, everywhere
@@ -171,9 +208,12 @@ private struct DSActionLabel: View {
                 .font(DSType.text(14, .semibold))
                 .lineLimit(1)
             if let caption, !caption.isEmpty {
+                // No dim: on a ghost this line is `textSecondary`, and 75 %
+                // of it over the plate measures 4.32:1 — under AA for a
+                // sentence that states what an irreversible skip forfeits.
+                // Size alone separates it from the title.
                 Text(caption)
                     .font(DSType.display(11, .semibold))
-                    .opacity(0.75)
                     .lineLimit(2)
                     .frame(maxWidth: 210, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)

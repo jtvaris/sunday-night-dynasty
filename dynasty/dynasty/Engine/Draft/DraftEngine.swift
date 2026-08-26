@@ -616,6 +616,11 @@ enum DraftEngine {
         player.draftTruePotential = player.truePotential
         player.hometownState = prospect.hometownState
         player.hometownCity = prospect.hometownCity
+        // The school was surviving onto `DraftPick.playerCollege` and the pick
+        // dossier but never onto the man himself, so every row that reads
+        // `Player.college` — the rookie-class reveal, the profile header — went
+        // blank the moment he stopped being a prospect.
+        player.college = prospect.college
         // Phase 4 faces: the prospect only ever held a PREVIEW face (a class is
         // 350 prospects, so reserving them would drain the pool every spring).
         // Signing him is the moment it becomes real — he keeps the face the

@@ -353,12 +353,15 @@ struct TradeView: View {
                                                 : Color.backgroundTertiary
                                         )
                                 )
+                                .frame(minHeight: 44)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                     }
                 }
                 .padding(.vertical, 2)
             }
+            .railEdgeFade()
         }
     }
 
@@ -1241,7 +1244,7 @@ struct TradeView: View {
         VStack(alignment: .leading, spacing: 14) {
             sectionHeader(title: "Pick Trade Simulator", icon: "wand.and.stars")
 
-            Text("Choose one of your picks and a partner team — see Trade Up / Trade Down packages from their available picks.")
+            Text("Choose one of your picks and a club to simulate against — see Trade Up / Trade Down packages from their available picks. The club chosen here is independent of the trade partner above.")
                 .font(.caption)
                 .foregroundStyle(Color.textTertiary)
 
@@ -1254,7 +1257,7 @@ struct TradeView: View {
             } else {
                 HStack {
                     Spacer()
-                    Text("Pick a draft pick and a partner team.")
+                    Text("Pick one of your picks and a club to simulate against.")
                         .font(.caption)
                         .foregroundStyle(Color.textTertiary)
                     Spacer()
@@ -1287,6 +1290,7 @@ struct TradeView: View {
                         }
                     }
                 }
+                .railEdgeFade()
             }
         }
     }
@@ -1329,13 +1333,19 @@ struct TradeView: View {
                 RoundedRectangle(cornerRadius: 8)
                     .fill(isSelected ? Color.accentGold : Color.backgroundTertiary)
             )
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
 
     private var wizardPartnerPicker: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Partner Team")
+            // Not "Partner Team": the proposal builder above already asks for a
+            // "Trade Partner", the two rails look identical, and the two
+            // selections are separate state — so the near-synonym read as the
+            // same control asked twice.
+            Text("Club to Simulate Against")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(Color.textSecondary)
 
@@ -1358,11 +1368,14 @@ struct TradeView: View {
                                     RoundedRectangle(cornerRadius: 16)
                                         .fill(wizardPartnerID == team.id ? Color.accentBlue : Color.backgroundTertiary)
                                 )
+                                .frame(minHeight: 44)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                     }
                 }
             }
+            .railEdgeFade()
         }
     }
 
@@ -2251,11 +2264,24 @@ struct TradeView: View {
             .sorted { $0.overall > $1.overall }
     }
 
+    /// Board order across years, not slot number.
+    ///
+    /// Every future pick is minted at its round's midpoint (`round × 32 − 16`,
+    /// see `DraftPick.isProjectedSlot`), so all three of a club's future firsts
+    /// carry the SAME `pickNumber` and sorting on it alone shuffled the years —
+    /// the pick strip read "2029 1st, 2030 1st, 2028 1st, 2027 1st". Year first,
+    /// then round, then the slot inside the round.
+    private static func draftOrder(_ a: DraftPick, _ b: DraftPick) -> Bool {
+        if a.seasonYear != b.seasonYear { return a.seasonYear < b.seasonYear }
+        if a.round != b.round { return a.round < b.round }
+        return a.pickNumber < b.pickNumber
+    }
+
     private var myPicks: [DraftPick] {
         guard let myTeam = playerTeam else { return [] }
         return allPicks
             .filter { $0.currentTeamID == myTeam.id }
-            .sorted { $0.pickNumber < $1.pickNumber }
+            .sorted(by: Self.draftOrder)
     }
 
     private func theirPlayers(partner: Team) -> [Player] {
@@ -2267,7 +2293,7 @@ struct TradeView: View {
     private func theirPicks(partner: Team) -> [DraftPick] {
         allPicks
             .filter { $0.currentTeamID == partner.id }
-            .sorted { $0.pickNumber < $1.pickNumber }
+            .sorted(by: Self.draftOrder)
     }
 
     private var currentProposalValues: (sendingValue: Int, receivingValue: Int) {
@@ -2502,6 +2528,25 @@ struct TradeView: View {
 }
 
 // MARK: - Local Helper Types
+
+private extension View {
+    /// Trailing fade on a horizontal chip rail.
+    ///
+    /// The team rails hold 31 clubs and the pick rail every pick the club owns,
+    /// and neither shows an indicator — so a chip sliced by the card's edge read
+    /// as a broken chip rather than as "there is more of this to the right".
+    /// The gradient only bites in the last few points, so a rail scrolled to its
+    /// end loses nothing legible.
+    func railEdgeFade() -> some View {
+        mask(
+            HStack(spacing: 0) {
+                Color.white
+                LinearGradient(colors: [.white, .clear], startPoint: .leading, endPoint: .trailing)
+                    .frame(width: 20)
+            }
+        )
+    }
+}
 
 private struct BreakdownLine: Identifiable {
     let id = UUID()

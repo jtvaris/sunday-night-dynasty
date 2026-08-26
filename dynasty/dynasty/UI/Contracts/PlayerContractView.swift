@@ -515,6 +515,14 @@ struct PlayerContractView: View {
         // reason to leave the screen — the disabled button and its reason are
         // still on it.
         guard !split.isRefused else { return }
+        // Same sweep the other three release doors run: the man leaves the
+        // saved depth chart with his contract, and the slot he vacated is
+        // re-filled from behind him rather than reading empty until the next
+        // advance refuses on it.
+        DepthChart.reconcileSaved(
+            career: career,
+            roster: roster.filter { $0.teamID == team.id }
+        )
         try? modelContext.save()
         dismiss()
     }

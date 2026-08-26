@@ -22,6 +22,12 @@ struct CareerDashboardView: View {
     /// pops back to the dashboard, so the coached game launches from here (the
     /// owner of `coachedSession` / the fullScreenCover). Reset on consumption.
     var launchCoachedGame: Binding<Bool> = .constant(false)
+    /// The gates only the SHELL can see — the roster ceiling, the cap and the
+    /// depth-chart holes `performShellAdvance` refuses on. Handed down so the
+    /// rail's Advance button can grey itself out and NAME the refusal instead of
+    /// rendering solid gold and then throwing a modal after the tap. Nil in
+    /// standalone use, where the staff ledger below is the only gate there is.
+    var shellAdvanceBlocker: AdvanceBlocker? = nil
     @Environment(\.modelContext) private var modelContext
 
     // MARK: - State
@@ -162,6 +168,17 @@ struct CareerDashboardView: View {
     /// from `PositionBattleTracker` — the tile used to hard-code "0 active".
     @State private var openPositionBattles: [PositionBattle] = []
 
+    /// The saved camp `TrainingPlan` split and the saved `OpponentPrepWeek`
+    /// split for the current key, as plain values.
+    ///
+    /// Both tiles printed their OPTIONS ("Tactical / Physical / Technical",
+    /// "General vs opponent focus") where the decision belongs, so the hub was
+    /// the one surface that never reflected the choice the user had just made
+    /// on the screen it links to. Loaded beside the battles in
+    /// `refreshRosterDerived`, which is also the pop-back path.
+    @State private var savedTrainingSplit: (tactical: Int, physical: Int, technical: Int)?
+    @State private var savedPrepSplit: (general: Int, opponent: Int)?
+
     /// #106: false until the first appear. `.task` owns the opening load; every
     /// later appear (popping back from staff, cap, scouting…) reloads instead,
     /// so no tile is left showing numbers a pushed screen already changed.
@@ -218,7 +235,7 @@ struct CareerDashboardView: View {
 
     /// The non-task reason the advance is refused (#154f, #158).
     ///
-    /// Read by BOTH `coachingBudgetBlockerBanner` and the tasks panel, so the
+    /// Handed to the tasks panel, which is the ONE place it is printed, so the
     /// rail cannot go on printing "Complete 0 required tasks to advance" beside
     /// a banner naming a $49K staff overage. Nil when the required-task list is
     /// the only gate.
@@ -229,8 +246,13 @@ struct CareerDashboardView: View {
     /// a private copy that only knew about the budget, so the sidebar (which
     /// knew about neither the budget nor the vacant coordinator seats) offered
     /// an advance this one would have declined.
+    ///
+    /// #208g: the shell's copy wins when there is one. It is computed from the
+    /// same prechecks `performShellAdvance` refuses on and already folds the
+    /// staff gate in, so the local ledger below is the standalone fallback and
+    /// never a second opinion.
     private var advanceBlocker: AdvanceBlocker? {
-        staffLedger?.advanceBlocker(phase: career.currentPhase)
+        shellAdvanceBlocker ?? staffLedger?.advanceBlocker(phase: career.currentPhase)
     }
 
     private var canAdvance: Bool {
@@ -496,17 +518,30 @@ struct CareerDashboardView: View {
         .onAppear {
             // #106: `.task` only fires on the first open, so hiring staff on a
             // pushed screen and popping back left the tiles on stale budget and
-            // slot numbers. The re-appear path refreshes ONLY the staff tile's
-            // inputs — the full `loadAllData` refetches every game of two
-            // seasons on the main thread mid-pop animation, and its
+            // slot numbers. The re-appear path refreshes the staff tile's
+            // inputs and the roster's — the full `loadAllData` refetches every
+            // game of two seasons on the main thread mid-pop animation, and its
             // `loadLatestHardKnocksEvent` would clear a toast the user may
             // still be reading. First appear is left to `.task` above.
             if hasAppearedOnce {
                 refreshStaffTile()
+                refreshRosterDerived()
             } else {
                 hasAppearedOnce = true
             }
         }
+        // The advance belongs to the shell (`onAdvance`), and when the shell
+        // runs it NOTHING on this screen re-fires: `.task` is first-open only
+        // and `onAppear` needs a pop back onto the hub. So every tile went on
+        // quoting the roster and the schedule fetched before free agency, the
+        // draft class and the cutdown — a "Players 56" tile beside a rail asking
+        // for 12 more cuts off an 87-man roster, on the same screen. The
+        // calendar moving is precisely the moment the whole snapshot is stale,
+        // so it gets the full load and not the `onAppear` slice. The phase and
+        // the week each move without the other: offseason phases advance on a
+        // frozen week counter, and Weeks 1-18 never change phase.
+        .onChange(of: career.currentPhase) { _, _ in loadAllData() }
+        .onChange(of: career.currentWeek) { _, _ in loadAllData() }
         // ONE sheet modifier for the whole screen. See ``ActiveSheet`` — four
         // presentations used to hang off this one chain and only the last of
         // them was guaranteed to be the one SwiftUI presented.
@@ -558,6 +593,13 @@ struct CareerDashboardView: View {
                     }
                 )
                 .presentationDetents([.large])
+                // On a regular-width iPad a sheet presents as a fixed-size form
+                // sheet and detents are ignored, so `.large` never applied: the
+                // review came up ~574x654 pt inside a 1032x1376 screen and its
+                // bottom edge sliced horizontally through the "SCHEMES &
+                // EXPERTISE" heading. `.page` is the sizing that honours the
+                // request on iPad.
+                .presentationSizing(.page)
             }
         }
         .fullScreenCover(item: $coachedSession) { session in
@@ -594,13 +636,17 @@ struct CareerDashboardView: View {
             startCoachedGame()
         }
         // Advance-with-unplayed-game guard rail.
-        .confirmationDialog(
+        //
+        // An alert, not a `.confirmationDialog`: on iPad the dialog presents as
+        // a popover and iPadOS drops the cancel row from a popover, so a
+        // yes/no question about a result the copy calls final shipped with only
+        // "yes" on screen and an undiscoverable tap-outside for "no".
+        .alert(
             skipGameConfirmTitle,
-            isPresented: $showSkipGameConfirm,
-            titleVisibility: .visible
+            isPresented: $showSkipGameConfirm
         ) {
-            Button("Sim & Advance") { runAdvance() }
             Button("Cancel", role: .cancel) { }
+            Button("Sim & Advance") { runAdvance() }
         } message: {
             Text("You haven't coached this game yet. Advancing plays it for you and the result is final.")
         }
@@ -653,7 +699,6 @@ struct CareerDashboardView: View {
                     #if DEBUG
                     debugSkipToFABanner
                     #endif
-                    coachingBudgetBlockerBanner
                     TimelineTasksPanel(
                         career: career,
                         tasks: $tasks,
@@ -1016,7 +1061,12 @@ struct CareerDashboardView: View {
         case .offseason:
             return [
                 QuickAction(icon: "person.fill", label: "Coaching", destination: .coachingStaff),
-                QuickAction(icon: "list.dash", label: "Roster Review", destination: .rosterEvaluation),
+                // "Roster Evaluation" is the destination's own title. It used
+                // to read "Roster Review", one character away from the phase
+                // named "Review Roster" and from the rail's irreversible
+                // "Advance to Review Roster" — two controls, one name, two
+                // meanings.
+                QuickAction(icon: "list.dash", label: "Roster Evaluation", destination: .rosterEvaluation),
                 QuickAction(icon: "chart.line.uptrend.xyaxis", label: "Cap", destination: .capOverview),
                 QuickAction(icon: "building.columns.fill", label: "History", destination: .history)
             ]
@@ -1176,6 +1226,13 @@ struct CareerDashboardView: View {
         return String(format: "$%.0fM \u{2192} $%.0fM", Double(now) / 1_000.0, then / 1_000.0)
     }
 
+    /// One rung of that projection — the club's cap `yearsAhead` league years out.
+    private func projectedCap(yearsAhead: Int) -> String {
+        let now = team?.salaryCap ?? ContractEngine.openingSalaryCap
+        let then = Double(now) * pow(1.0 + ContractEngine.capGrowthPerSeason, Double(yearsAhead))
+        return String(format: "$%.0fM", then / 1_000.0)
+    }
+
     private var cap3yearForecastTile: some View {
         Button {
             onTaskSelected(.capOverview)
@@ -1192,6 +1249,24 @@ struct CareerDashboardView: View {
                         .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(Color.textSecondary)
                         .lineLimit(1)
+                    // The two lines above were stretched to the height of the
+                    // six-row Contracts tile beside them, leaving ~180 pt of
+                    // empty plate. The ladder the headline compresses into one
+                    // arrow is what the free height is for. Labelled in years
+                    // rather than league years: the phase this tile renders in
+                    // straddles the rollover, and a wrong season number would
+                    // be worse than none.
+                    ForEach(1...3, id: \.self) { yearsAhead in
+                        HStack {
+                            Text("+\(yearsAhead) yr")
+                                .font(.system(size: DSType.Size.caption))
+                                .foregroundStyle(Color.textTertiary)
+                            Spacer()
+                            Text(projectedCap(yearsAhead: yearsAhead))
+                                .font(.system(size: DSType.Size.caption, weight: .semibold).monospacedDigit())
+                                .foregroundStyle(Color.textSecondary)
+                        }
+                    }
                 }
             }
         }
@@ -1199,10 +1274,15 @@ struct CareerDashboardView: View {
     }
 
     private var offseasonGoalsTile: some View {
-        Button {
+        // The card titled itself "Season Review" in a career whose first season
+        // has not been played: no goals, no verdict, and a 0-0 record on the
+        // same screen. Until a review exists it is the owner's mandates it
+        // shows, so that is what it is called.
+        let hasReview = career.ownerSeasonReview != nil
+        return Button {
             onTaskSelected(.ownerMeeting)
         } label: {
-            DashboardTile(icon: "target", title: "Season Review") {
+            DashboardTile(icon: "target", title: hasReview ? "Season Review" : "Owner Mandates") {
                 VStack(alignment: .leading, spacing: 4) {
                     // R31: real numbers from the last owner review / goal log
                     if let review = career.ownerSeasonReview {
@@ -1213,7 +1293,7 @@ struct CareerDashboardView: View {
                             .font(.system(size: DSType.Size.footnote))
                             .foregroundStyle(Color.textSecondary)
                     } else {
-                        Text("Owner mandates")
+                        Text("No season reviewed yet")
                             .font(.system(size: DSType.Size.footnote, weight: .bold))
                             .foregroundStyle(Color.textPrimary)
                         Text("Meet the owner")
@@ -1300,7 +1380,11 @@ struct CareerDashboardView: View {
                     Text(needs.isEmpty ? "Loading\u{2026}" : needs.joined(separator: " "))
                         .font(.system(size: DSType.Size.body, weight: .bold))
                         .foregroundStyle(needs.isEmpty ? Color.textSecondary : Color.warning)
-                    Text("Thinnest groups on your roster")
+                    // Says what `weakestPositionGroups` actually ranks. It sorts
+                    // on `starterOVR` and never reads `depthOVR`, so "thinnest"
+                    // named a different column from the one the Position Grades
+                    // tile prints beside it — S: B- flagged, D: B- unflagged.
+                    Text("Weakest starters on your roster")
                         .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(Color.textSecondary)
                         .lineLimit(1)
@@ -1348,10 +1432,52 @@ struct CareerDashboardView: View {
                 $0.careerID == cid && $0.seasonYear == season && $0.winnerID == nil
             }
         )
+        // TWO survivors, not one. The competitor set is frozen at detection, so
+        // releasing one of a pair on cut day left a battle with a single man in
+        // it — and the row, which joins the survivors with " vs ", printed
+        // "CB Broadwater … Broadwater" with the same surname in the matchup
+        // column and in the leader chip, still counted in "9 active". A contest
+        // with one entrant is over; `PositionBattleTracker` writes the winner at
+        // the end of camp.
         let rosterIDs = Set(players.map(\.id))
         openPositionBattles = ((try? modelContext.fetch(descriptor)) ?? [])
-            .filter { battle in battle.competitorIDs.contains { rosterIDs.contains($0) } }
+            .filter { battle in battle.competitorIDs.filter { rosterIDs.contains($0) }.count >= 2 }
             .sorted { $0.positionRaw < $1.positionRaw }
+    }
+
+    /// The saved camp training split and week-prep split for the current key.
+    ///
+    /// Both are keyed exactly the way their editors key them — `TrainingPlan`
+    /// on (team, season, week, phase) as `TrainingPlanView.fetchExistingPlan`
+    /// does, `OpponentPrepWeek` on (season, week, team) as `WeekAdvancer` does
+    /// when it reads the slider — so the hub cannot print a split the engine
+    /// will not use. Nil means nothing is saved, and the tiles say so.
+    private func loadSavedPlans() {
+        guard let teamID = career.teamID else { return }
+        let season = career.currentSeason
+        let week = career.currentWeek
+
+        let phaseRaw = career.currentPhase.rawValue
+        let planDescriptor = FetchDescriptor<TrainingPlan>(
+            predicate: #Predicate<TrainingPlan> {
+                $0.teamID == teamID
+                    && $0.seasonYear == season
+                    && $0.weekNumber == week
+                    && $0.phaseRaw == phaseRaw
+            }
+        )
+        savedTrainingSplit = (try? modelContext.fetch(planDescriptor))?.first.map {
+            (tactical: $0.tacticalPct, physical: $0.physicalPct, technical: $0.technicalPct)
+        }
+
+        let prepDescriptor = FetchDescriptor<OpponentPrepWeek>(
+            predicate: #Predicate<OpponentPrepWeek> {
+                $0.seasonYear == season && $0.weekNumber == week && $0.teamID == teamID
+            }
+        )
+        savedPrepSplit = (try? modelContext.fetch(prepDescriptor))?.first.map {
+            (general: $0.generalPct, opponent: $0.opponentPct)
+        }
     }
 
     /// Roster players taking part in a battle, in depth-chart order.
@@ -1368,7 +1494,15 @@ struct CareerDashboardView: View {
                     Text("None active")
                         .font(.system(size: DSType.Size.footnote, weight: .bold))
                         .foregroundStyle(Color.textSecondary)
-                    Text("Camp competitions open in Training Camp")
+                    // Phase-aware: the old line was unconditional, so standing
+                    // in Training Camp — rail reading "TRAINING CAMP · NOW" —
+                    // the tile told the player competitions open in Training
+                    // Camp. Inside camp the real answer is *when*:
+                    // `PositionBattleTracker.detectBattles` only runs on a camp
+                    // week advance.
+                    Text(career.currentPhase == .trainingCamp || career.currentPhase == .otas
+                         ? "Battles open after the first camp week — advance to see them"
+                         : "Camp competitions open in Training Camp")
                         .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(Color.textSecondary)
                         .lineLimit(2)
@@ -1394,9 +1528,22 @@ struct CareerDashboardView: View {
         }
     }
 
+    /// Surname, or first-initial + surname when the club carries more than one
+    /// man by that name.
+    ///
+    /// Battles are grouped by position, so "DT Bolliger vs Braithwaite" on a
+    /// roster whose 93 OVR receiver is also a Braithwaite names two different
+    /// men with one word — and the leader chip repeats it. Surname collisions
+    /// are normal in a generated league (two Hinsdales on one roster).
+    private func battleName(_ player: Player) -> String {
+        let shared = players.filter { $0.lastName == player.lastName }.count > 1
+        guard shared, let initial = player.firstName.first else { return player.lastName }
+        return "\(initial). \(player.lastName)"
+    }
+
     private func positionBattleRow(_ battle: PositionBattle) -> some View {
         let roster = competitors(for: battle)
-        let names = roster.prefix(2).map(\.lastName).joined(separator: " vs ")
+        let names = roster.prefix(2).map { battleName($0) }.joined(separator: " vs ")
         let leader = battle.currentLeaderID.flatMap { id in roster.first { $0.id == id } }
         return HStack(spacing: 4) {
             Text(battle.positionRaw)
@@ -1409,7 +1556,7 @@ struct CareerDashboardView: View {
                 .lineLimit(1)
             Spacer(minLength: 2)
             if let leader {
-                Text(leader.lastName)
+                Text(battleName(leader))
                     .font(.system(size: DSType.Size.caption, weight: .semibold))
                     .foregroundStyle(Color.success)
                     .lineLimit(1)
@@ -1443,8 +1590,20 @@ struct CareerDashboardView: View {
         return Array(graded.prefix(3))
     }
 
+    /// How many men carry a camp grade at all — the number that separates "camp
+    /// has not been graded" from "camp was graded and nobody earned an A".
+    ///
+    /// `topCampGraded` keeps only A+ and A, so an empty list was being read as
+    /// an ungraded camp by three surfaces at once: the hub said "Camp standouts
+    /// — None graded yet" while the cut list two taps away printed "Camp D" on
+    /// nine of fourteen men.
+    private var campGradedCount: Int {
+        players.reduce(0) { $0 + ($1.campGrade == nil ? 0 : 1) }
+    }
+
     private var campGradesTile: some View {
         let top = topCampGraded
+        let graded = campGradedCount
         return Button {
             // The workload board's per-player detail is the one surface that
             // prints a camp grade outside the cut room.
@@ -1453,10 +1612,16 @@ struct CareerDashboardView: View {
             DashboardTile(icon: "graduationcap.fill", title: "Camp Grades") {
                 VStack(alignment: .leading, spacing: 4) {
                     if top.isEmpty {
-                        Text("Not graded yet")
+                        // Graded, but nobody reached an A: say so. "Not graded
+                        // yet" over a squad the cut room is already showing
+                        // "Camp D" for is the tile calling the grades missing
+                        // because it only looks at the top two letters.
+                        Text(graded == 0 ? "Not graded yet" : "No A grades")
                             .font(.system(size: DSType.Size.caption, weight: .medium))
                             .foregroundStyle(Color.textSecondary)
-                        Text("Grades land during Training Camp")
+                        Text(graded == 0
+                             ? "Grades land during Training Camp"
+                             : "\(graded) graded — best is a B or lower")
                             .font(.system(size: DSType.Size.footnote))
                             .foregroundStyle(Color.textSecondary)
                             .lineLimit(1)
@@ -1605,10 +1770,20 @@ struct CareerDashboardView: View {
         } label: {
             DashboardTile(icon: "rosette", title: "Playoff Bracket") {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("WC / DIV / CONF / SB")
-                        .font(.system(size: DSType.Size.caption, weight: .bold))
-                        .foregroundStyle(Color.accentGold)
-                    Text("Postseason path")
+                    // The four stage codes were byte-identical in every round —
+                    // Wild Card, Divisional and Conference all read the same
+                    // tile. `playoffRoundKey` is the same mapping the hero card
+                    // highlights its strip with, so the live round is marked
+                    // here too instead of being left for the player to work out.
+                    let liveKey = playoffRoundKey(forWeek: career.currentWeek)
+                    HStack(spacing: 4) {
+                        ForEach(["WC", "DIV", "CONF", "SB"], id: \.self) { stage in
+                            Text(stage)
+                                .font(.system(size: DSType.Size.caption, weight: stage == liveKey ? .heavy : .medium))
+                                .foregroundStyle(stage == liveKey ? Color.accentGold : Color.textTertiary)
+                        }
+                    }
+                    Text(playoffRoundName(forWeek: career.currentWeek))
                         .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(Color.textSecondary)
                         .lineLimit(1)
@@ -1620,13 +1795,18 @@ struct CareerDashboardView: View {
 
     // MARK: - Camp Tiles
 
+    /// The saved split, or the engine's own default. Camp runs 34/33/33 when
+    /// nothing is saved (`TrainingPlanView` seeds its sliders from the same
+    /// numbers), so the tile can name what will happen if the user never opens
+    /// the screen rather than listing the three options as if they were a value.
     private var trainingPlanTile: some View {
-        NavigationLink(value: CareerShellView.ShellDestination.trainingPlan) {
+        let split = savedTrainingSplit
+        return NavigationLink(value: CareerShellView.ShellDestination.trainingPlan) {
             DashboardTile(icon: "figure.run.circle.fill", title: "Training Plan") {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Set focus")
-                        .font(.system(size: DSType.Size.caption, weight: .medium))
-                        .foregroundStyle(Color.accentGold)
+                    Text(split.map { "\($0.tactical) / \($0.physical) / \($0.technical)" } ?? "Not set \u{2014} 34 / 33 / 33")
+                        .font(.system(size: DSType.Size.footnote, weight: .bold).monospacedDigit())
+                        .foregroundStyle(split == nil ? Color.textSecondary : Color.accentGold)
                     Text("Tactical / Physical / Technical")
                         .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(Color.textSecondary)
@@ -1638,12 +1818,16 @@ struct CareerDashboardView: View {
     }
 
     private var workloadTile: some View {
-        NavigationLink(value: CareerShellView.ShellDestination.workloadDashboard) {
+        // `overloadedShare` is the figure the camp hero card three cards above
+        // already prints, so the tile that owns the subject no longer sends the
+        // player elsewhere to learn its one number.
+        let overloaded = overloadedShare
+        return NavigationLink(value: CareerShellView.ShellDestination.workloadDashboard) {
             DashboardTile(icon: "heart.text.square.fill", title: "Workload") {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Monitor camp load")
-                        .font(.system(size: DSType.Size.caption, weight: .medium))
-                        .foregroundStyle(Color.accentGold)
+                    Text("\(overloaded)% overloaded")
+                        .font(.system(size: DSType.Size.footnote, weight: .bold).monospacedDigit())
+                        .foregroundStyle(overloaded >= 20 ? Color.warning : Color.textSecondary)
                     Text("Injury & burnout risk")
                         .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(Color.textSecondary)
@@ -1678,14 +1862,21 @@ struct CareerDashboardView: View {
     }
 
     private var gameWeekPrepTile: some View {
-        NavigationLink(value: CareerShellView.ShellDestination.gameWeekPrep) {
+        // The second line used to be the literal "General vs opponent focus" —
+        // the axis, not the value — and it read identically in Week 1 and Week
+        // 2 on a decision the task list calls per-opponent. With no saved row
+        // `WeekAdvancer` runs a zero delta off `OpponentPrep.neutralFocus`,
+        // which is the 50/50 the empty state names.
+        let split = savedPrepSplit
+        return NavigationLink(value: CareerShellView.ShellDestination.gameWeekPrep) {
             DashboardTile(icon: "scope", title: "Week Prep") {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Week \(career.currentWeek) prep")
                         .font(.system(size: DSType.Size.caption, weight: .medium))
                         .foregroundStyle(Color.accentGold)
-                    Text("General vs opponent focus")
-                        .font(.system(size: DSType.Size.footnote))
+                    Text(split.map { "\($0.general) general / \($0.opponent) opponent" }
+                         ?? "Not set \u{2014} 50 / 50")
+                        .font(.system(size: DSType.Size.footnote, weight: split == nil ? .regular : .bold).monospacedDigit())
                         .foregroundStyle(Color.textSecondary)
                         .lineLimit(1)
                 }
@@ -1777,8 +1968,19 @@ struct CareerDashboardView: View {
                     .font(.caption)
                     .foregroundStyle(Color.textSecondary)
             } else if isPreSeasonNoGamesPlayed {
-                // Empty state — replace 0-0 rows with a "Week 1 in N" countdown.
-                preSeasonCountdownRow
+                // Empty state. The countdown that used to live here said what
+                // the Upcoming card directly beneath it already says — the two
+                // ran a "no games yet" placeholder each, back to back — while
+                // the question this card is asked in the offseason is who has
+                // to be beaten and by how much. `Team` carries one year of that
+                // (`lastSeasonWins`, sentinel -1 until a season has finished),
+                // so the countdown stays for a first career and the table takes
+                // every one after it.
+                if divisionTeams.contains(where: \.hasLastSeasonRecord) {
+                    lastSeasonDivisionTable
+                } else {
+                    preSeasonCountdownRow
+                }
             } else {
                 // Header row
                 HStack {
@@ -1928,9 +2130,19 @@ struct CareerDashboardView: View {
                             .font(.title2.weight(.bold).monospacedDigit())
                             .foregroundStyle(Color.textPrimary)
 
-                        Text(divisionRank)
-                            .font(.system(size: DSType.Size.body, weight: .semibold).monospacedDigit())
-                            .foregroundStyle(Color.textSecondary)
+                        // Before Week 1 every club in the division is 0-0-0 and
+                        // the sort has nothing to separate them, so the badge
+                        // printed whichever slot the id tiebreak fell into —
+                        // the same reason the standings panel below shows a
+                        // countdown instead of four 0-0 rows. And when the rank
+                        // IS earned, name what it ranks: a bare "#4" reads just
+                        // as well as a power ranking, a seed or a draft slot.
+                        if let rank = divisionRank, !isPreSeasonNoGamesPlayed, let myTeam = team {
+                            Text("\(rank) in \(myTeam.conference.rawValue) \(myTeam.division.rawValue)")
+                                .font(.system(size: DSType.Size.body, weight: .semibold).monospacedDigit())
+                                .foregroundStyle(Color.textSecondary)
+                                .lineLimit(1)
+                        }
                     }
 
                     // Win/loss streak indicator
@@ -2017,6 +2229,13 @@ struct CareerDashboardView: View {
                             .foregroundStyle(Color.textSecondary)
                     }
 
+                    // The two men the Coaching Changes phase exists to hire.
+                    // Hiring a whole staff used to move ONE number on this hub —
+                    // the slot counter — and name nobody: the coordinators, and
+                    // the schemes they bring, appeared on no tile at all.
+                    coordinatorRow(.offensiveCoordinator)
+                    coordinatorRow(.defensiveCoordinator)
+
                     // Fix #61: Prominent filled/total staff display (coaches + scouts)
                     // #106: read the scouting department off the enum — it grew
                     // two extra slots (chief + 5 regional + 2 extra) and the
@@ -2072,19 +2291,32 @@ struct CareerDashboardView: View {
                     // until the owner has actually resolved (#133).
                     if let ledger, ledger.isResolved, ledger.coachingBudget > 0 {
                         let remaining = ledger.remainingCoaching
-                        let budgetColor = remaining > 10_000 ? Color.success : remaining > 5_000 ? Color.accentGold : Color.warning
+                        // Green means "you can still spend this". Once every
+                        // seat is hired it buys nothing — a green figure over a
+                        // green tick read the club's biggest unmade upgrade as
+                        // an unambiguous win, so a full staff prints its
+                        // surplus as unspent money, not as headroom.
+                        let budgetColor = isFullyStaffed
+                            ? Color.textTertiary
+                            : (remaining > 10_000 ? Color.success : remaining > 5_000 ? Color.accentGold : Color.warning)
                         HStack(spacing: 4) {
                             Image(systemName: "dollarsign.square.fill")
                                 .font(.system(size: DSType.Size.micro))
                                 .foregroundStyle(budgetColor)
-                            Text("Budget")
+                            // "Budget · $26.5M / $47.0M" read as the slot
+                            // counter four points above it ("23 / 23 Staff"),
+                            // i.e. as money SPENT — it is money LEFT, and the
+                            // two fractions filled in opposite directions. Say
+                            // which, and drop the slash that mimicked the row
+                            // above.
+                            Text(isFullyStaffed ? "Budget unspent" : "Budget left")
                                 .font(.system(size: DSType.Size.caption))
                                 .foregroundStyle(Color.textTertiary)
                             Spacer()
                             Text(StaffLedger.money(remaining))
                                 .font(.system(size: DSType.Size.caption, weight: .bold).monospacedDigit())
                                 .foregroundStyle(budgetColor)
-                            Text("/")
+                            Text("of")
                                 .font(.system(size: DSType.Size.caption))
                                 .foregroundStyle(Color.textTertiary)
                             Text(StaffLedger.money(ledger.coachingBudget))
@@ -2096,6 +2328,34 @@ struct CareerDashboardView: View {
             }
         }
         .buttonStyle(.plain)
+    }
+
+    /// One coordinator seat on the Staff tile: abbreviation, name, and the
+    /// scheme he runs (which is the club's scheme on that side). "VACANT" in
+    /// warning amber while the seat is the thing holding the advance shut.
+    @ViewBuilder
+    private func coordinatorRow(_ role: CoachRole) -> some View {
+        let coach = allCoaches.first { $0.role == role }
+        let scheme = role == .offensiveCoordinator
+            ? coach?.offensiveScheme?.displayName
+            : coach?.defensiveScheme?.displayName
+        HStack(spacing: 4) {
+            Text(role.abbreviation)
+                .font(.system(size: DSType.Size.micro, weight: .bold))
+                .foregroundStyle(Color.accentGold)
+                .frame(width: 22, alignment: .leading)
+            Text(coach?.fullName ?? "VACANT")
+                .font(.system(size: DSType.Size.caption, weight: coach == nil ? .bold : .medium))
+                .foregroundStyle(coach == nil ? Color.warning : Color.textPrimary)
+                .lineLimit(1)
+            Spacer(minLength: 2)
+            if let scheme {
+                Text(scheme)
+                    .font(.system(size: DSType.Size.micro, weight: .semibold))
+                    .foregroundStyle(Color.textTertiary)
+                    .lineLimit(1)
+            }
+        }
     }
 
     // MARK: - Scouting Tile
@@ -2134,9 +2394,14 @@ struct CareerDashboardView: View {
                                 .lineLimit(1)
                         }
 
-                        // Prospect count by side
+                        // Prospect count by side. The specialists used to fall
+                        // out of a row that reads as a partition: "350 total /
+                        // OFF 196 / DEF 148" is six kickers and punters short of
+                        // adding up, and three numbers where two are meant to
+                        // sum to the third is a bug on sight.
                         let offenseCount = draftClass.filter { $0.position.side == .offense }.count
                         let defenseCount = draftClass.filter { $0.position.side == .defense }.count
+                        let specialCount = draftClass.filter { $0.position.side == .specialTeams }.count
                         HStack(spacing: 12) {
                             Text("\(draftClass.count) total")
                                 .font(.system(size: DSType.Size.micro, weight: .semibold).monospacedDigit())
@@ -2147,7 +2412,43 @@ struct CareerDashboardView: View {
                             Text("DEF \(defenseCount)")
                                 .font(.system(size: DSType.Size.caption, weight: .medium).monospacedDigit())
                                 .foregroundStyle(Color.textTertiary)
+                            if specialCount > 0 {
+                                Text("ST \(specialCount)")
+                                    .font(.system(size: DSType.Size.caption, weight: .medium).monospacedDigit())
+                                    .foregroundStyle(Color.textTertiary)
+                            }
                         }
+
+                        // How much of the class the department actually has a
+                        // report on — the one line on this tile that answers
+                        // "is another week here worth buying", and the reason
+                        // the card is on screen in the stage it highlights.
+                        // `scoutedOverallGrade` is written only by a filed
+                        // report, so an unworked class reads 0, not 350.
+                        let scoutedCount = draftClass.filter { $0.scoutedOverallGrade != nil }.count
+                        HStack {
+                            Text("Scouted")
+                                .font(.system(size: DSType.Size.caption))
+                                .foregroundStyle(Color.textSecondary)
+                            Spacer()
+                            Text("\(scoutedCount) of \(draftClass.count)")
+                                .font(.system(size: DSType.Size.caption, weight: .bold).monospacedDigit())
+                                .foregroundStyle(scoutedCount > 0 ? Color.accentGold : Color.textTertiary)
+                        }
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(Color.backgroundTertiary)
+                                    .frame(height: 5)
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(Color.accentGold)
+                                    .frame(
+                                        width: geo.size.width * Double(scoutedCount) / Double(max(draftClass.count, 1)),
+                                        height: 5
+                                    )
+                            }
+                        }
+                        .frame(height: 5)
                     }
                 }
             }
@@ -2215,9 +2516,14 @@ struct CareerDashboardView: View {
                                 .font(.system(size: DSType.Size.caption))
                                 .foregroundStyle(Color.textSecondary)
                             Spacer()
+                            // Same thresholds as the bar directly above it.
+                            // "Available" used to be a binary above/below zero,
+                            // so a red 92.0% bar, a CAP TIGHT chip and a green
+                            // "$22.7M" described one fact in three colours
+                            // inside 60 pt.
                             Text(formatCap(t.availableCap))
                                 .font(.system(size: DSType.Size.callout, weight: .bold).monospacedDigit())
-                                .foregroundStyle(t.availableCap > 0 ? Color.success : Color.dangerText)
+                                .foregroundStyle(availableCapColor(available: t.availableCap, usedFraction: usedFraction))
                         }
 
                         // Total cap line
@@ -2251,6 +2557,12 @@ struct CareerDashboardView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     // Chemistry tier — same engine label + same 0-100 value the
                     // Locker Room screen prints ("Elite 100/100").
+                    //
+                    // No bar under it any more. The bar plotted the stat that
+                    // was already maxed while morale — the number the club can
+                    // still move — got none, so the card's whole visual weight
+                    // sat on the one figure nobody has to act on. The four
+                    // readings sit as a matched set instead.
                     HStack {
                         Text("Chemistry")
                             .font(.system(size: DSType.Size.caption))
@@ -2260,20 +2572,6 @@ struct CareerDashboardView: View {
                             .font(.system(size: DSType.Size.footnote, weight: .semibold))
                             .foregroundStyle(chemistryColor(teamChemistry))
                     }
-
-                    // The bar belongs to the CHEMISTRY row above it — it used to
-                    // plot morale under a "Chemistry" label.
-                    GeometryReader { geo in
-                        ZStack(alignment: .leading) {
-                            RoundedRectangle(cornerRadius: 5)
-                                .fill(Color.backgroundTertiary)
-                                .frame(height: 12)
-                            RoundedRectangle(cornerRadius: 5)
-                                .fill(chemistryColor(teamChemistry))
-                                .frame(width: geo.size.width * (Double(teamChemistry) / 100.0), height: 12)
-                        }
-                    }
-                    .frame(height: 12)
 
                     // Morale percentage
                     HStack {
@@ -2286,7 +2584,25 @@ struct CareerDashboardView: View {
                             .foregroundStyle(moraleColor(teamMorale))
                     }
 
-                    // Star players morale indicator
+                    // The city's read, beside the room's. `Career.fanSupport`
+                    // is where the podium's FANS number lands — it used to be
+                    // the second-biggest figure on the press screen and was
+                    // written to no state at all, so it had nowhere to be read
+                    // back. This is that place.
+                    HStack {
+                        Text("Fan Support")
+                            .font(.system(size: DSType.Size.caption))
+                            .foregroundStyle(Color.textSecondary)
+                        Spacer()
+                        Text("\(career.fanSupport)%")
+                            .font(.system(size: DSType.Size.body, weight: .bold).monospacedDigit())
+                            .foregroundStyle(moraleColor(career.fanSupport))
+                    }
+
+                    // Star players morale indicator. The face alone stood in for
+                    // a 0-100 the engine models exactly, on the same card that
+                    // prints three other moods as percentages — so it carries
+                    // the number too, and the glyph is the quick read.
                     if let qb = startingQB {
                         HStack(spacing: 4) {
                             Text("QB")
@@ -2297,6 +2613,9 @@ struct CareerDashboardView: View {
                                 .foregroundStyle(Color.textSecondary)
                                 .lineLimit(1)
                             Spacer()
+                            Text("\(qb.morale)%")
+                                .font(.system(size: DSType.Size.footnote, weight: .semibold).monospacedDigit())
+                                .foregroundStyle(moraleColor(qb.morale))
                             Image(systemName: qb.morale >= 70 ? "face.smiling" : (qb.morale >= 40 ? "face.dashed" : "cloud.rain"))
                                 .font(.system(size: DSType.Size.micro))
                                 .foregroundStyle(moraleColor(qb.morale))
@@ -2330,12 +2649,16 @@ struct CareerDashboardView: View {
                         keyPlayerRow(label: defPlayer.position.rawValue, player: defPlayer)
                     }
 
-                    // Best overall if different from QB and defensive star (#144)
+                    // Best overall if different from QB and defensive star (#144).
+                    // Labelled "TOP", not "MVP": `bestPlayer` is simply the
+                    // highest OVR on the roster, so the row read as a season
+                    // award in Week 1 before a snap and never moved by Week 18.
+                    // The other two rows are depth-chart slots; this one is too.
                     if let best = bestPlayer,
                        best.id != startingQB?.id,
                        best.id != bestDefensivePlayer?.id {
                         Divider().overlay(Color.surfaceBorder.opacity(0.4))
-                        keyPlayerRow(label: "MVP", player: best)
+                        keyPlayerRow(label: "TOP", player: best)
                     }
                 }
             }
@@ -2373,8 +2696,15 @@ struct CareerDashboardView: View {
                         .font(.system(size: DSType.Size.caption))
                         .foregroundStyle(Color.textSecondary)
                 } else {
-                    // Find weakest group (#146)
-                    let weakestGroup = positionGroupGrades.min(by: { $0.starterOVR < $1.starterOVR })?.group
+                    // The weakest group — flagged only when it is weak in
+                    // ABSOLUTE terms (#146). A bare `min` stamps NEED on exactly
+                    // one group no matter how strong the roster is, so a club of
+                    // straight A's still carried a red flag and the badge said
+                    // nothing. 70 is `PositionGradeCalculator`'s own B-/C+ line:
+                    // below it the starters really are under the league bar.
+                    // "No need on this roster" is a real and useful answer.
+                    let weakest = positionGroupGrades.min(by: { $0.starterOVR < $1.starterOVR })
+                    let weakestGroup: String? = (weakest?.starterOVR ?? 100) < 70 ? weakest?.group : nil
                     // Show in two columns
                     let halfCount = (positionGroupGrades.count + 1) / 2
                     let leftCol = Array(positionGroupGrades.prefix(halfCount))
@@ -2391,8 +2721,12 @@ struct CareerDashboardView: View {
                             }
                         }
                     }
-                    // Key first: "S: A / D: B-" was unreadable without it.
-                    Text("S = starters \u{00B7} D = depth \u{00B7} tap a grade for details")
+                    // Key first: "S: A / D: B-" was unreadable without it. NEED
+                    // is keyed too, and only while one is on screen — it was
+                    // the one mark on the tile the legend never defined.
+                    Text(weakestGroup == nil
+                         ? "S = starters \u{00B7} D = depth \u{00B7} tap a grade for details"
+                         : "S = starters \u{00B7} D = depth \u{00B7} NEED = weakest starters \u{00B7} tap a grade")
                         .font(.system(size: DSType.Size.footnote, weight: .medium))
                         .foregroundStyle(Color.textTertiary)
                         .lineLimit(2)
@@ -2445,10 +2779,16 @@ struct CareerDashboardView: View {
         return Button {
             positionGradePopoverID = id
         } label: {
+            // A fixed cell rather than a hugging label, for two reasons. The
+            // column: a one-character starter grade used to shove the rest of
+            // its row left, so "/ D:" landed ~35 px apart down a tile whose
+            // whole job is a side-by-side scan. The target: the caption promises
+            // "tap a grade" and the bare glyph was roughly 14x17 pt.
             Text(grade)
                 .font(.system(size: DSType.Size.body, weight: .bold))
                 .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(grade))
-                .padding(.horizontal, 2)
+                .padding(.leading, 2)
+                .frame(width: 26, height: 32, alignment: .leading)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -2495,9 +2835,14 @@ struct CareerDashboardView: View {
                 Text(percentile)
                     .font(.system(size: DSType.Size.caption))
                     .foregroundStyle(Color.textSecondary)
-                Text("Average OVR: \(ovr)")
-                    .font(.system(size: DSType.Size.caption, weight: .medium).monospacedDigit())
-                    .foregroundStyle(Color.textTertiary)
+                // Nothing averaged is not an average of zero: the ST room's
+                // depth grade is `noDepthGrade` precisely because there is no
+                // bench behind a kicker and a punter.
+                if ovr > 0 {
+                    Text("Average OVR: \(ovr)")
+                        .font(.system(size: DSType.Size.caption, weight: .medium).monospacedDigit())
+                        .foregroundStyle(Color.textTertiary)
+                }
             }
         }
         .padding(12)
@@ -2581,8 +2926,11 @@ struct CareerDashboardView: View {
                     .padding(.vertical, 3)
                     .background(Capsule().fill(Color.danger))
                 } else if !expiringContractPlayers.isEmpty {
-                    // Outside the window: an amber chip, not a red alarm.
-                    Text("\(expiringContractPlayers.count) expiring")
+                    // Outside the window: an amber chip, not a red alarm. With
+                    // the denominator, because "42 expiring" alone is most of a
+                    // roster stated as if it were a small number — "42 of 53" is
+                    // the planning fact, and it is the same count either way.
+                    Text("\(expiringContractPlayers.count) of \(players.count) expiring")
                         .font(.system(size: DSType.Size.caption, weight: .heavy))
                         .foregroundStyle(Color.warning)
                         .padding(.horizontal, 6)
@@ -2600,7 +2948,7 @@ struct CareerDashboardView: View {
                             Text("\(expiringContractPlayers.count)")
                                 .font(.system(size: DSType.Size.title2, weight: .bold).monospacedDigit())
                                 .foregroundStyle(Color.dangerText)
-                            Text("expiring contract\(expiringContractPlayers.count == 1 ? "" : "s")")
+                            Text("of \(players.count) expiring")
                                 .font(.system(size: DSType.Size.caption, weight: .medium))
                                 .foregroundStyle(Color.textSecondary)
                         }
@@ -2727,8 +3075,20 @@ struct CareerDashboardView: View {
                         }
                         .frame(height: 5)
 
-                        // Primary goal progress (goals vs reality)
-                        if let primary = evaluatedOwnerGoals.first(where: { $0.priority == .primary }) {
+                        // Primary goal progress (goals vs reality). Bound once:
+                        // `evaluatedOwnerGoals` re-runs the whole goal
+                        // evaluation on every read.
+                        let goals = evaluatedOwnerGoals
+                        if let primary = goals.first(where: { $0.priority == .primary }) {
+                            // The card shows ONE goal; the Season Review tile two
+                            // rows down reports "4 of 4 met" off the same set, so
+                            // without this caption the owner card reads as the
+                            // complete mandate and the two disagree.
+                            if goals.count > 1 {
+                                Text("Primary goal \u{00B7} \(goals.filter(\.isAchieved).count) of \(goals.count) met")
+                                    .font(.system(size: DSType.Size.micro, weight: .medium))
+                                    .foregroundStyle(Color.textTertiary)
+                            }
                             HStack(spacing: 4) {
                                 Image(systemName: primary.isAchieved ? "star.fill" : "target")
                                     .font(.system(size: DSType.Size.micro))
@@ -2943,7 +3303,25 @@ struct CareerDashboardView: View {
     /// Loops `WeekAdvancer.advanceWeek` until the career reaches `.freeAgency`
     /// or a safety cap is hit. Allows fast iteration on FA flow during Loop 2.
     private var debugSkipToFABanner: some View {
-        HStack(spacing: 8) {
+        // Shut in-season (both regular-season phases): from here the skip would
+        // grind a whole season of play-by-play on the main actor. It used to be
+        // shut in full gold — indistinguishable from the live chips under it,
+        // so the first thing QA taps in-season is a control that does nothing.
+        let blockedInSeason = career.currentPhase == .regularSeason
+            || career.currentPhase == .tradeDeadline
+        let chipTitle: String
+        let chipIcon: String
+        if blockedInSeason {
+            chipTitle = "Skip unavailable in-season"
+            chipIcon = "nosign"
+        } else if debugSkipRunning {
+            chipTitle = "Skipping…"
+            chipIcon = "hourglass"
+        } else {
+            chipTitle = "Skip → \(debugSkipTargetLabel)"
+            chipIcon = "forward.end.fill"
+        }
+        return HStack(spacing: 8) {
             Image(systemName: "wrench.and.screwdriver.fill")
                 .font(.system(size: DSType.Size.caption, weight: .bold))
                 .foregroundStyle(Color.accentGold)
@@ -2955,21 +3333,16 @@ struct CareerDashboardView: View {
                 guard !debugSkipRunning else { return }
                 Task { await skipToFreeAgency() }
             } label: {
-                Label(debugSkipRunning ? "Skipping…" : "Skip → \(debugSkipTargetLabel)",
-                      systemImage: debugSkipRunning ? "hourglass" : "forward.end.fill")
+                Label(chipTitle, systemImage: chipIcon)
                     .font(.system(size: DSType.Size.caption, weight: .semibold))
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(Color.accentGold.opacity(0.18))
-                    .foregroundStyle(Color.accentGold)
+                    .background(blockedInSeason ? Color.backgroundTertiary : Color.accentGold.opacity(0.18))
+                    .foregroundStyle(blockedInSeason ? Color.textTertiary : Color.accentGold)
                     .clipShape(Capsule())
             }
             .buttonStyle(.plain)
-            // Disabled in-season (both regular-season phases): from here the skip
-            // would grind a whole season of play-by-play on the main actor.
-            .disabled(debugSkipRunning
-                      || career.currentPhase == .regularSeason
-                      || career.currentPhase == .tradeDeadline)
+            .disabled(debugSkipRunning || blockedInSeason)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
@@ -3030,32 +3403,12 @@ struct CareerDashboardView: View {
     }
     #endif
 
-    /// Blocker banner shown when advance is gated by coaching-budget overage. (#54)
-    @ViewBuilder
-    private var coachingBudgetBlockerBanner: some View {
-        if let blocker = advanceBlocker {
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "exclamationmark.octagon.fill")
-                    .font(.system(size: DSType.Size.body, weight: .bold))
-                    .foregroundStyle(Color.danger)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(blocker.title)
-                        .font(.system(size: DSType.Size.footnote, weight: .bold))
-                        .foregroundStyle(Color.dangerText)
-                    Text(blocker.detail)
-                        .font(.system(size: DSType.Size.caption))
-                        .foregroundStyle(Color.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(Color.danger.opacity(0.10))
-            .accessibilityElement(children: .combine)
-            .accessibilityHint(blocker.title)
-        }
-    }
+    // The coaching-budget blocker banner (#54) that used to head this rail is
+    // gone. It printed `advanceBlocker.title` + `.detail` word for word, and
+    // the tasks panel prints the same two sentences again ~700 pt below it —
+    // the copy that sits directly above the disabled Advance button it
+    // explains. One blocker, one host, and the host is the one beside the
+    // control it is about.
 
     // #105 wave 2: `nextActionHero` is gone.
     //
@@ -3093,11 +3446,16 @@ struct CareerDashboardView: View {
                 value: career.legacy.reputationLabel,
                 color: mediaReputationColor(mediaRep)
             )
+            // Legacy is a SIGNED running total (broken press promises subtract),
+            // so it takes the same "+15" the Team Accolades tile prints for the
+            // same number, and it is coloured by that sign. It was painted
+            // permanent gold at any value: the row's loudest colour, and the
+            // screen's emphasis hue, spent on its one tile that made no claim.
             satisfactionCard(
                 icon: "trophy.fill",
                 label: "Legacy",
-                value: "\(legacyPts)",
-                color: Color.accentGold
+                value: signedLegacy(legacyPts),
+                color: legacyPts > 0 ? Color.success : (legacyPts < 0 ? Color.dangerText : Color.textSecondary)
             )
         }
     }
@@ -3193,6 +3551,15 @@ struct CareerDashboardView: View {
         return Color.success
     }
 
+    /// The "Available" figure's colour, on `capBarColor`'s thresholds so the
+    /// number and the bar above it cannot disagree. `dangerText` rather than
+    /// `danger` because this one is text on the card, not a fill.
+    private func availableCapColor(available: Int, usedFraction: Double) -> Color {
+        if available <= 0 || usedFraction > 0.9 { return Color.dangerText }
+        if usedFraction > 0.8 { return Color.warning }
+        return Color.success
+    }
+
     /// Owner satisfaction is printed as a percentage and read alongside morale
     /// and chemistry in the same row of tiles, so it takes the same ladder.
     private func satisfactionColor(_ value: Int) -> Color {
@@ -3238,21 +3605,11 @@ struct CareerDashboardView: View {
     @ViewBuilder
     private var preSeasonCountdownRow: some View {
         let weeks = weeksUntilWeek1
-        let phaseLabel: String = {
-            switch career.currentPhase {
-            case .coachingChanges: return "Coaching Changes"
-            case .reviewRoster:    return "Roster Review"
-            case .combine:         return "Combine"
-            case .freeAgency:      return "Free Agency"
-            case .proDays:         return "Pro Days"
-            case .draft:           return "Draft"
-            case .otas:            return "OTAs"
-            case .trainingCamp:    return "Training Camp"
-            case .preseason:       return "Preseason"
-            case .rosterCuts:      return "Roster Cuts"
-            default:               return "Offseason"
-            }
-        }()
+        // `SeasonPhase.displayName`, not a fifth private table. This switch was
+        // one of five maps for the same enum and the only one that called
+        // `.reviewRoster` "Roster Review" — the phase the rail, the guide and
+        // the enum itself all call "Review Roster".
+        let phaseLabel = career.currentPhase.displayName
 
         HStack(spacing: 10) {
             Image(systemName: "calendar.badge.clock")
@@ -3281,6 +3638,50 @@ struct CareerDashboardView: View {
             RoundedRectangle(cornerRadius: 6)
                 .fill(Color.accentGold.opacity(0.08))
         )
+    }
+
+    /// Last season's final division table — what the DIVISION card shows while
+    /// this season's rows would all read 0-0.
+    ///
+    /// Ordered on wins alone, with the id tiebreaker the rest of this screen
+    /// uses for stability (#134), and deliberately uncrowned: the club that
+    /// actually won the division was decided by tiebreakers `Team`'s one-year
+    /// memory does not carry, and a crown on the wrong badge is worse than no
+    /// crown.
+    @ViewBuilder
+    private var lastSeasonDivisionTable: some View {
+        let ranked = divisionTeams
+            .filter(\.hasLastSeasonRecord)
+            .sorted {
+                $0.lastSeasonWins != $1.lastSeasonWins
+                    ? $0.lastSeasonWins > $1.lastSeasonWins
+                    : $0.id.uuidString < $1.id.uuidString
+            }
+
+        Text("Last season \u{00B7} final")
+            .font(.system(size: DSType.Size.caption, weight: .bold))
+            .foregroundStyle(Color.textTertiary)
+            .tracking(0.5)
+
+        ForEach(ranked, id: \.id) { t in
+            let isMyTeam = t.id == team?.id
+            HStack(spacing: 4) {
+                Text(t.abbreviation)
+                    .font(.system(size: DSType.Size.caption, weight: isMyTeam ? .heavy : .medium))
+                    .foregroundStyle(isMyTeam ? Color.accentGold : Color.textSecondary)
+                    .frame(width: 44, alignment: .leading)
+                Text(t.fullName)
+                    .font(.system(size: DSType.Size.caption))
+                    .foregroundStyle(isMyTeam ? Color.textSecondary : Color.textTertiaryReadable)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                Text("\(t.lastSeasonWins)-\(t.lastSeasonLosses)")
+                    .font(.system(size: DSType.Size.caption, weight: .bold).monospacedDigit())
+                    .foregroundStyle(isMyTeam ? Color.accentGold : Color.textSecondary)
+                    .frame(width: 48, alignment: .trailing)
+            }
+            .padding(.vertical, 2)
+        }
     }
 
     /// Streak info derived from recent played games.
@@ -3321,8 +3722,10 @@ struct CareerDashboardView: View {
         return (label, streakCount, latestIsWin)
     }
 
-    private var divisionRank: String {
-        guard let myTeam = team else { return "\u{2014}" }
+    /// Nil when the club's slot in the division cannot be read — the tile then
+    /// prints the record alone rather than an em dash where a rank belongs.
+    private var divisionRank: String? {
+        guard let myTeam = team else { return nil }
         if !divisionRecords.isEmpty {
             if let idx = divisionRecords.firstIndex(where: { $0.teamID == myTeam.id }) {
                 return "#\(idx + 1)"
@@ -3338,7 +3741,7 @@ struct CareerDashboardView: View {
         if let idx = sorted.firstIndex(where: { $0.id == myTeam.id }) {
             return "#\(idx + 1)"
         }
-        return "\u{2014}"
+        return nil
     }
 
     private var currentPhaseHighlightedTiles: Set<String> {
@@ -3444,19 +3847,16 @@ struct CareerDashboardView: View {
         refreshDraftPrepCache()
     }
 
-    private func loadAllDataBody() {
+    /// The roster fetch and every tile derived from it.
+    ///
+    /// Split out of `loadAllDataBody` for the same reason `refreshStaffTile`
+    /// was (#106): the pop-back path has to re-read the roster, and the full
+    /// load refetches every game of two seasons to do it. The hub's Position
+    /// Grades tile and the Roster Evaluation screen run the identical
+    /// calculator, so a stale snapshot here does not read as stale — it reads
+    /// as the two screens disagreeing about the same room's depth.
+    private func refreshRosterDerived() {
         guard let teamID = career.teamID else { return }
-
-        // All teams
-        let cid = career.id
-        let allTeamsDescriptor = FetchDescriptor<Team>(
-            predicate: #Predicate { $0.careerID == cid }
-        )
-        let allTeams = (try? modelContext.fetch(allTeamsDescriptor)) ?? []
-        allTeamsByID = Dictionary(uniqueKeysWithValues: allTeams.map { ($0.id, $0) })
-
-        // My team
-        team = allTeamsByID[teamID]
 
         // Roster count and players
         let playerDescriptor = FetchDescriptor<Player>(predicate: #Predicate { $0.teamID == teamID })
@@ -3474,6 +3874,11 @@ struct CareerDashboardView: View {
         // Camp position battles (real rows, see `loadPositionBattles`).
         loadPositionBattles()
 
+        // The training / week-prep splits the Camp and Week Prep tiles print.
+        // Here rather than in the full load because both are set on a PUSHED
+        // screen: the pop-back path is exactly the trip that changes them.
+        loadSavedPlans()
+
         // Team morale (#82) — average of all player morale
         if !players.isEmpty {
             teamMorale = players.reduce(0) { $0 + $1.morale } / players.count
@@ -3487,6 +3892,24 @@ struct CareerDashboardView: View {
 
         // Position group grades (#17)
         positionGroupGrades = calculatePositionGroupGrades(players: players)
+    }
+
+    private func loadAllDataBody() {
+        guard let teamID = career.teamID else { return }
+
+        // All teams
+        let cid = career.id
+        let allTeamsDescriptor = FetchDescriptor<Team>(
+            predicate: #Predicate { $0.careerID == cid }
+        )
+        let allTeams = (try? modelContext.fetch(allTeamsDescriptor)) ?? []
+        allTeamsByID = Dictionary(uniqueKeysWithValues: allTeams.map { ($0.id, $0) })
+
+        // My team
+        team = allTeamsByID[teamID]
+
+        // The roster and everything read off it.
+        refreshRosterDerived()
 
         // Coach count + head coach + the staff tile's budget numbers.
         refreshStaffTile()
@@ -3595,6 +4018,13 @@ struct CareerDashboardView: View {
     }
 
     /// Calculate starter + depth grades by position group (#235).
+    ///
+    /// **The nine groups are the Roster Evaluation screen's nine**, down to the
+    /// labels. This table used to split the secondary into CB and S and leave
+    /// the K/P room off the hub entirely, so the two screens graded different
+    /// rooms under the same heading — a hub safety grade that no row on the
+    /// priorities screen could be reconciled with, and a specialist room the
+    /// hub could not flag at all. Change one taxonomy and change the other.
     private func calculatePositionGroupGrades(players: [Player]) -> [(group: String, starterGrade: String, depthGrade: String, starterOVR: Int, depthOVR: Int)] {
         let groups: [(label: String, positions: [Position])] = [
             ("QB", [.QB]),
@@ -3604,8 +4034,8 @@ struct CareerDashboardView: View {
             ("OL", [.LT, .LG, .C, .RG, .RT]),
             ("DL", [.DE, .DT]),
             ("LB", [.OLB, .MLB]),
-            ("CB", [.CB]),
-            ("S", [.FS, .SS]),
+            ("DB", [.CB, .FS, .SS]),
+            ("ST", [.K, .P]),
         ]
 
         var results: [(group: String, starterGrade: String, depthGrade: String, starterOVR: Int, depthOVR: Int)] = []
@@ -3740,7 +4170,13 @@ struct CareerDashboardView: View {
             faHeroCard
         case .draft:
             draftHeroCard
-        case .coachingChanges, .reviewRoster:
+        // The two phases used to share one card, and it pointed its gold at
+        // Roster Review — step 2 — while the rail beside it said the staff
+        // seats hold step 1 shut. A card whose only route is the one the
+        // screen refuses is worse than no card.
+        case .coachingChanges:
+            coachingChangesHeroCard
+        case .reviewRoster:
             offseasonOpenerHeroCard
         case .proBowl, .superBowl:
             seasonClimaxHeroCard
@@ -3881,14 +4317,31 @@ struct CareerDashboardView: View {
     /// names the phase and the rows carry the real numbers.
     private var campHeroCard: some View {
         let topGrade = topCampGraded.first
+        // Same A-only reading as the Preseason card's standouts row: with no A
+        // in camp there is still a grade on every man, so the only ungraded camp
+        // is the one where `campGradedCount` is zero.
+        let topGradeValue: String = {
+            if let topGrade { return "\(topGrade.name) · \(topGrade.grade.displayLabel)" }
+            let graded = campGradedCount
+            return graded == 0 ? "Not graded yet" : "No A grades — \(graded) graded"
+        }()
+        let battles = openPositionBattles.count
         return phaseCardBase(icon: "figure.strengthtraining.traditional", accent: .accentGold) {
             heroHeader("Training Camp · Install & Evaluation")
-            heroStatRow("Workload heatmap",
+            // Camp is one visit, and on that visit all three outcome rows are
+            // structurally empty — so the roster the player HAS goes first, and
+            // gold is kept off the blanks. "Workload heatmap" also named a
+            // screen where the label should name the metric beside it.
+            heroStatRow("Roster", value: "\(players.count) in camp")
+            heroStatRow("Squad workload",
                         value: "\(overloadedShare)% overloaded",
-                        accent: overloadedShare >= 20 ? .warning : .accentGold)
-            heroStatRow("Active battles", value: "\(openPositionBattles.count)")
+                        accent: overloadedShare >= 20 ? .warning : .textSecondary)
+            heroStatRow("Active battles",
+                        value: "\(battles)",
+                        accent: battles == 0 ? .textSecondary : .accentGold)
             heroStatRow("Top camp grade",
-                        value: topGrade.map { "\($0.name) · \($0.grade.displayLabel)" } ?? "Not graded yet")
+                        value: topGradeValue,
+                        accent: topGrade == nil ? .textSecondary : .accentGold)
             heroActionLink(title: "Open Training Plan", destination: .trainingPlan)
         }
     }
@@ -3912,6 +4365,14 @@ struct CareerDashboardView: View {
         let gameNum = min(PreseasonFlowBand.gameCount, max(1, flow?.step.gameIndex ?? 1))
         let injuredCount = players.filter(\.isInjured).count
         let standouts = topCampGraded.count
+        // "None graded yet" was printed off a count that only ever holds A and
+        // A+ men, so a fully graded camp of Cs and Ds read as an ungraded one —
+        // while the cut list two taps away was showing the letters.
+        let standoutsValue: String = {
+            if standouts > 0 { return "\(standouts) at A or better" }
+            let graded = campGradedCount
+            return graded == 0 ? "Not graded yet" : "No A grades — \(graded) graded"
+        }()
         return phaseCardBase(icon: "sportscourt.fill", accent: .accentGold) {
             heroHeader(slateComplete
                        ? "Preseason · Slate complete"
@@ -3920,7 +4381,7 @@ struct CareerDashboardView: View {
                         value: "\(flow?.results.count ?? 0) of \(flow?.slate.count ?? PreseasonFlowBand.gameCount)",
                         accent: slateComplete ? .success : .accentGold)
             heroStatRow("Roster", value: "\(players.count) in camp")
-            heroStatRow("Camp standouts", value: standouts == 0 ? "None graded yet" : "\(standouts) at A or better")
+            heroStatRow("Camp standouts", value: standoutsValue)
             heroStatRow("Injuries",
                         value: injuredCount == 0 ? "Fully healthy" : "\(injuredCount) OUT",
                         accent: injuredCount == 0 ? .success : .warning)
@@ -4630,6 +5091,50 @@ struct CareerDashboardView: View {
         return "\(current) → \(projected) if none re-signed"
     }
 
+    /// The Coaching Changes card: the seats that gate the phase, the pot they
+    /// are hired out of, and one route — the Staff screen.
+    ///
+    /// The shared "Offseason Begins" card sent its gold at Roster Review, which
+    /// is the step AFTER this one and the one `advanceBlocker` refuses while a
+    /// coordinator seat is empty, and it offered no route to the screen that
+    /// clears the block. It also opened on "Coach contracts expiring 0", which
+    /// on a club with no staff at all is not news — it is the absence of a
+    /// staff — so that row waits until there is someone to lose.
+    private var coachingChangesHeroCard: some View {
+        let vacantRequired = staffLedger?.missingRequiredRoles ?? []
+        return phaseCardBase(icon: "person.2.fill", accent: .accentGold) {
+            heroHeader("Coaching Changes")
+            if vacantRequired.isEmpty {
+                heroStatRow("Required seats", value: "All filled")
+            } else {
+                heroStatRow(
+                    "Required seats vacant",
+                    value: vacantRequired.map(\.abbreviation).joined(separator: ", "),
+                    accent: .warning
+                )
+            }
+            if let ledger = staffLedger, ledger.isResolved, ledger.coachingBudget > 0 {
+                heroStatRow(
+                    "Coaching budget left",
+                    value: StaffLedger.money(ledger.remainingCoaching)
+                        + " of " + StaffLedger.money(ledger.coachingBudget)
+                )
+            }
+            if !allCoaches.isEmpty {
+                heroStatRow("Coach contracts expiring", value: "\(expiringCoachCount)")
+            }
+            HStack(spacing: DSSpacing.sm) {
+                heroActionLink(
+                    title: vacantRequired.isEmpty ? "Review Staff" : "Hire Coordinators",
+                    destination: .coachingStaff
+                )
+                heroSecondaryButton(title: "Salary Cap") {
+                    onTaskSelected(.capOverview)
+                }
+            }
+        }
+    }
+
     private var offseasonOpenerHeroCard: some View {
         phaseCardBase(icon: "arrow.triangle.2.circlepath", accent: .accentGold) {
             heroHeader("Offseason Begins")
@@ -4642,8 +5147,12 @@ struct CareerDashboardView: View {
             // side by side, which made the screen ask the user to pick between
             // two primaries; the cap read supports the roster review, so it
             // wears the secondary treatment.
+            // Named for the screen it opens, not for the phase. "Roster Review"
+            // sat one character from the rail's "Advance to Review Roster" —
+            // which commits the phase change and cannot be undone — so two
+            // controls on one screen shared a name and meant different things.
             HStack(spacing: DSSpacing.sm) {
-                heroActionLink(title: "Roster Review", destination: .rosterEvaluation)
+                heroActionLink(title: "Open Roster Evaluation", destination: .rosterEvaluation)
                 heroSecondaryButton(title: "Salary Cap") {
                     onTaskSelected(.capOverview)
                 }
@@ -4791,9 +5300,11 @@ private struct CoachingStaffReviewSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    // Header
-                    headerSection
-
+                    // No header block: it printed "COACHING STAFF REVIEW" 90 pt
+                    // below the navigation bar that already says exactly that,
+                    // with "COACHING STAFF" a third heading under it. The bar
+                    // names the sheet; the space goes to the list.
+                    //
                     // Staff listing
                     staffSection
 
@@ -4835,21 +5346,6 @@ private struct CoachingStaffReviewSheet: View {
         }
     }
 
-    // MARK: - Header
-
-    private var headerSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("COACHING STAFF REVIEW")
-                .font(.system(size: DSType.Size.body, weight: .black))
-                .foregroundStyle(Color.accentGold)
-                .tracking(1.0)
-
-            Rectangle()
-                .fill(Color.accentGold.opacity(0.3))
-                .frame(height: 1)
-        }
-    }
-
     // MARK: - Staff Section
 
     private var staffSection: some View {
@@ -4868,13 +5364,18 @@ private struct CoachingStaffReviewSheet: View {
                     .foregroundStyle(Color.accentGold)
                     .tracking(0.5)
                 Spacer()
-                Text("\(ledger.filledCoachSlots)/\(ledger.totalCoachSlots) filled")
+                // "hired", not "filled": as GM+HC the head-coach chair is yours
+                // and `StaffSlots.coachRoles(for:)` leaves it out of the
+                // denominator, so "15/15 filled" was printed over sixteen
+                // green-ticked rows. The seats you hire are the ones counted.
+                Text("\(ledger.filledCoachSlots)/\(ledger.totalCoachSlots) hired")
                     .font(.system(size: DSType.Size.caption, weight: .semibold).monospacedDigit())
                     .foregroundStyle(Color.textSecondary)
             }
             .padding(.bottom, 8)
 
-            // Player as HC (if GM+HC role)
+            // Player as HC (if GM+HC role) — ruled off from the counted seats
+            // below it, because it is not one of them.
             if isGMAndHC {
                 staffRow(
                     role: .headCoach,
@@ -4884,6 +5385,9 @@ private struct CoachingStaffReviewSheet: View {
                     isFilled: true,
                     isRequired: true
                 )
+                Divider()
+                    .overlay(Color.surfaceBorder.opacity(0.6))
+                    .padding(.vertical, 4)
             }
 
             // All roles in sort order
@@ -4972,7 +5476,7 @@ private struct CoachingStaffReviewSheet: View {
             if let ovr = overall {
                 Text("\(ovr)")
                     .font(.system(size: DSType.Size.body, weight: .bold).monospacedDigit())
-                    .foregroundStyle(Color.forRating(ovr))
+                    .foregroundStyle(coachRatingColor(ovr))
                     .frame(width: 30, alignment: .trailing)
             }
         }
@@ -5502,6 +6006,27 @@ private struct CoachingStaffReviewSheet: View {
     }
 
     // MARK: - Coach Overall Helper
+
+    /// A coach number is NOT a player OVR, and it must not be painted on the
+    /// player ladder.
+    ///
+    /// `coachOverall` is the mean of nine attributes, and `LeagueGenerator`
+    /// gives a position coach only one to five of them in the 70-85 band and
+    /// the rest in 40-60 — so his mean is pinned around 50-58 by construction
+    /// and `Color.forRating` (<60 = danger) rendered twelve of fifteen seats,
+    /// including coordinators hired seconds earlier, as failing grades. These
+    /// bands are the same five colours read against the distribution the game
+    /// actually generates: a coordinator lands mid-60s, a strong one high-60s
+    /// up, and red is reserved for a man who is genuinely below his peers.
+    private func coachRatingColor(_ overall: Int) -> Color {
+        switch overall {
+        case 78...:   return .eliteGreen
+        case 69..<78: return .success
+        case 56..<69: return .accentBlue
+        case 45..<56: return .warning
+        default:      return .danger
+        }
+    }
 
     private func coachOverall(_ coach: Coach) -> Int {
         let sum = coach.playCalling + coach.playerDevelopment + coach.gamePlanning

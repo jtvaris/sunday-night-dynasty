@@ -149,6 +149,13 @@ enum DraftClassBuilder {
             }
         }
 
+        // One class draws 350 names from a 55 × 55 product, so independent draws
+        // put roughly twenty pairs of identically-named men on the same board.
+        // The draft feed abbreviates to "N. Abernathy" and the board shows only
+        // the full name, so a duplicate inside one class is unresolvable by any
+        // screen that displays it — the draw has to be rejection-sampled.
+        var usedNames: Set<String> = []
+
         for (index, token) in tokens.enumerated() {
             let slot = index + 1
             let band = token.band
@@ -158,7 +165,8 @@ enum DraftClassBuilder {
                 slot: slot,
                 band: band,
                 talent: talent,
-                forceEliteTrait: forcedEliteSlots.contains(slot)
+                forceEliteTrait: forcedEliteSlots.contains(slot),
+                usedNames: &usedNames
             )
             prospects.append(prospect)
         }
@@ -461,7 +469,8 @@ enum DraftClassBuilder {
         slot: Int,
         band: Int,
         talent: Double,
-        forceEliteTrait: Bool = false
+        forceEliteTrait: Bool = false,
+        usedNames: inout Set<String>
     ) -> CollegeProspect {
         let target = min(97.0, max(30.0, talent))
 
@@ -583,7 +592,7 @@ enum DraftClassBuilder {
 
         // --- Body ------------------------------------------------------------
         let hw = PositionPhysicalProfile.heightWeightRange(for: position)
-        let name = RandomNameGenerator.randomName()
+        let name = RandomNameGenerator.uniqueName(used: &usedNames)
         let personality = PlayerPersonality(
             archetype: personalityArchetype,
             motivation: Motivation.allCases.randomElement()!

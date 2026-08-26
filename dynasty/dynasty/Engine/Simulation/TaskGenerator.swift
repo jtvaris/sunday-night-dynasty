@@ -470,6 +470,7 @@ enum TaskGenerator {
                 hasScoutsAssigned: hasScoutsAssigned,
                 hasPendingEvents: hasPendingEvents,
                 ownerSatisfaction: ownerSatisfaction,
+                injuredCount: injuredCount(on: team),
                 week: career.currentWeek
             )
         case .tradeDeadline:
@@ -486,6 +487,7 @@ enum TaskGenerator {
                 hasScoutsAssigned: hasScoutsAssigned,
                 hasPendingEvents: hasPendingEvents,
                 ownerSatisfaction: ownerSatisfaction,
+                injuredCount: injuredCount(on: team),
                 week: career.currentWeek
             ) + tradeDeadlineTasks(hasPendingTradeOffers: hasPendingTradeOffers)
         case .playoffs:
@@ -1219,22 +1221,23 @@ enum TaskGenerator {
                 isRequired: true
             ),
             // Optional
-            GameTask(
-                phase: .trainingCamp,
-                title: "Review camp grades",
-                description: "See which players are earning roster spots based on camp performance.",
-                icon: "graduationcap.fill",
-                destination: .roster,
-                isRequired: false
-            ),
-            GameTask(
-                phase: .trainingCamp,
-                title: "Resolve position battles",
-                description: "Track daily winners in position competitions and lock in starters.",
-                icon: "figure.wrestling",
-                destination: .depthChart,
-                isRequired: false
-            ),
+            //
+            // "Review camp grades" and "Resolve position battles" used to sit
+            // here, and they are gone for the same reason the dashboard's "Camp
+            // Grades" and "Battles" quick-action chips were deleted: a row that
+            // cannot service its own label.
+            //
+            // * Camp grades pointed at `.roster`, which never renders
+            //   `Player.campGrade` — and during camp there is no grade to
+            //   render on any screen: `WeekAdvancer.applyCampGrades` runs on
+            //   entry to `.rosterCuts` and nowhere else, so the value the row
+            //   promised does not exist until two phases later, on the cut sheet
+            //   that shows it anyway.
+            // * Position battles pointed at `.depthChart`, which has no battle
+            //   UI in it at all. Camp battles live in the dashboard's own
+            //   Position Battles tile, which opens `PositionBattleSheet` — a
+            //   sheet that needs a battle CHOSEN, so no destination can reach it
+            //   and the tile is the only honest route.
             GameTask(
                 phase: .trainingCamp,
                 title: "Monitor workload",
@@ -1299,13 +1302,26 @@ enum TaskGenerator {
             // preseason fixture has ever existed. A ghost pointer at a thing
             // that does not exist (#134b). The slate row above is its
             // replacement, and it points at a screen that exists.
+
+            // REQUIRED, because the advance out of this phase already refuses
+            // on it: `CareerShellView`'s lineup gate blocks the move to the cut
+            // room while any fillable starter slot is empty. Shipped optional,
+            // the rail drew a hollow bullet and the word "Optional" over the one
+            // row the primary button then hard-refused on.
+            //
+            // `completesOnVisit` because nothing in the save re-derives it —
+            // `career.depthChartData != nil` already belongs to OTAs' "Set depth
+            // chart", and this row is the second look, after the preseason snaps
+            // moved the order. Without it a required row with no completion path
+            // would brick the phase.
             GameTask(
                 phase: .preseason,
                 title: "Finalize depth chart",
                 description: "Lock in starters and backups before final roster cuts begin.",
                 icon: "list.bullet.rectangle.portrait.fill",
                 destination: .depthChart,
-                isRequired: false
+                isRequired: true,
+                completesOnVisit: true
             ),
             GameTask(
                 phase: .preseason,
@@ -1360,31 +1376,61 @@ enum TaskGenerator {
         return tasks
     }
 
+    /// Men currently unavailable, **derived from `team`** the way
+    /// `capComplianceTasks` derives the cap overage — no new `generateTasks`
+    /// parameter for a number the shell would only have to fetch a second time.
+    ///
+    /// `injuryWeeksRemaining > 0`, not `isInjured`: that is the predicate the
+    /// hub's INJURIES tile counts with, and a task row disagreeing with the tile
+    /// on the same screen is worse than no row at all.
+    private static func injuredCount(on team: Team?) -> Int {
+        guard let team else { return 0 }
+        return team.currentRoster().filter { $0.injuryWeeksRemaining > 0 }.count
+    }
+
     private static func regularSeasonTasks(
         opponentName: String?,
         hasPendingTradeOffers: Bool,
         hasScoutsAssigned: Bool,
         hasPendingEvents: Bool,
         ownerSatisfaction: Int,
+        injuredCount: Int,
         week: Int
     ) -> [GameTask] {
         // Regular season: no required tasks — advance always allowed
         var tasks: [GameTask] = []
 
-        let opponent = opponentName ?? "your opponent"
+        // No "your opponent" fallback. On the FIRST generation of a week's list
+        // the shell has not resolved the fixture yet, so `opponentName` is nil —
+        // and the list is only rebuilt on a phase/week change, so Week 1 kept the
+        // placeholder all week while the band, the Opponent Scout tile and the
+        // skip popover on the same screen all named JAX. An unqualified title is
+        // true in that state; a pronoun for a club whose name is three inches
+        // away is not.
+        let gamePlanSuffix = opponentName.map { " for \($0)" } ?? ""
+        let weekPrepSuffix = opponentName.map { " vs \($0)" } ?? ""
+        // Payoff first, like the week-prep row below: the old sentence named the
+        // screen ("choose your offensive and defensive strategy") and not one
+        // thing the choice buys, so behind the rail's "Optional · " prefix it
+        // read as pure housekeeping. What the plan actually reaches is
+        // `PlaySimulator.decidePlayCall` — the run/pass shading and the two
+        // fourth-down branches — and that is what the row now says.
         tasks.append(GameTask(
             phase: .regularSeason,
-            title: "Set game plan for \(opponent)",
-            description: "Choose your offensive and defensive strategy for this week's matchup.",
+            title: "Set game plan\(gamePlanSuffix)",
+            description: "Shades your run–pass mix and fourth-down calls on Sunday.",
             icon: "sportscourt.fill",
             destination: .gamePlan,
             isRequired: false
         ))
 
+        // Payoff first. This sentence is read in a narrow rail behind an
+        // "Optional · " prefix, and the old word order spent the width on the
+        // trade-off and lost the REASON to the ellipsis ("opponent-speci…").
         tasks.append(GameTask(
             phase: .regularSeason,
-            title: "Tune week prep vs \(opponent)",
-            description: "Balance general training vs opponent-specific prep — drives audible / read bonuses.",
+            title: "Tune week prep\(weekPrepSuffix)",
+            description: "Buys audible and read bonuses on Sunday — paid for out of general training.",
             icon: "scope",
             destination: .gameWeekPrep,
             isRequired: false
@@ -1393,20 +1439,28 @@ enum TaskGenerator {
         tasks.append(GameTask(
             phase: .regularSeason,
             title: "Review depth chart",
-            description: "Make sure your best players are starting and backups are set.",
+            description: "Confirm your starters, and who is next up behind them.",
             icon: "list.bullet.rectangle.portrait.fill",
             destination: .depthChart,
             isRequired: false
         ))
 
-        tasks.append(GameTask(
-            phase: .regularSeason,
-            title: "Check injury report",
-            description: "Review player injuries and adjust your lineup if needed.",
-            icon: "cross.case.fill",
-            destination: .roster,
-            isRequired: false
-        ))
+        // Guarded for exactly the reason the scouting row below is: shipped
+        // unconditionally, this row asked the user to review injuries on weeks
+        // when the hub's INJURIES tile read "0 out" in green two inches away.
+        // A rail of five is honest progress; a rail of six stuck at 0/6 is not.
+        if injuredCount > 0 {
+            tasks.append(GameTask(
+                phase: .regularSeason,
+                title: "Check injury report",
+                description: injuredCount == 1
+                    ? "One player is out. Adjust the lineup before kickoff."
+                    : "\(injuredCount) players are out. Adjust the lineup before kickoff.",
+                icon: "cross.case.fill",
+                destination: .roster,
+                isRequired: false
+            ))
+        }
 
         // Week 9 is when the class is generated (`WeekAdvancer`, midseason mock).
         // Before that the scouting hub has an empty board, and this row sent the
@@ -1438,7 +1492,10 @@ enum TaskGenerator {
             tasks.append(GameTask(
                 phase: .regularSeason,
                 title: "Handle pending events",
-                description: "Important events need your attention before advancing.",
+                // An optional row cannot also claim the week is waiting on it:
+                // the advance does not stop for these, and nothing is applied
+                // when they go unread.
+                description: "Off-field stories broke around the club. Nothing here blocks the advance.",
                 icon: "exclamationmark.bubble.fill",
                 destination: .news,
                 isRequired: false

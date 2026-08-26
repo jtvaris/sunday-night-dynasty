@@ -103,9 +103,13 @@ struct DraftRecapView: View {
     private var headerCard: some View {
         VStack(alignment: .leading, spacing: DSSpacing.xs) {
             HStack(spacing: DSSpacing.xs) {
-                Image(systemName: "checkmark.seal.fill")
+                // The filled seal in `Color.success` is the app's "this is
+                // done" mark. It was drawn unconditionally, so it also sealed
+                // "No draft on the books yet" — a green tick over the absence
+                // of the thing.
+                Image(systemName: recapSeason == nil ? "calendar" : "checkmark.seal.fill")
                     .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(Color.success)
+                    .foregroundStyle(recapSeason == nil ? Color.textTertiary : Color.success)
                 // #152 — printed as the class year (see `DraftYearLabel`).
                 Text(recapSeason.map { "\(String(DraftYearLabel.classYear(forStamped: $0))) Draft complete" } ?? "No draft on the books yet")
                     .font(.headline.weight(.bold))
@@ -120,23 +124,23 @@ struct DraftRecapView: View {
 
             classMoneyCard
 
-            NavigationLink(value: CareerShellView.ShellDestination.draftReportCard) {
-                HStack(spacing: 6) {
-                    Image(systemName: "chart.bar.doc.horizontal")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("Draft Report Card")
-                        .font(.footnote.weight(.semibold))
-                }
-                .foregroundStyle(Color.accentGold)
-                .padding(.horizontal, DSSpacing.sm)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: DSCornerRadius.inline)
-                        .fill(Color.accentGold.opacity(0.12))
+            // The report card grades classes in hindsight, so before the club's
+            // first draft it can only render its own empty state — and it was
+            // this screen's ONLY action. Until there is a class to grade the
+            // card offers the work that is actually pending instead.
+            if recapSeason == nil {
+                headerAction(
+                    .scouting,
+                    icon: "binoculars.fill",
+                    title: "Open Scouting"
+                )
+            } else {
+                headerAction(
+                    .draftReportCard,
+                    icon: "chart.bar.doc.horizontal",
+                    title: "Draft Report Card"
                 )
             }
-            .buttonStyle(.plain)
-            .padding(.top, DSSpacing.xxs)
         }
         .padding(DSSpacing.sm)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -148,6 +152,30 @@ struct DraftRecapView: View {
                         .strokeBorder(Color.surfaceBorder, lineWidth: 1)
                 )
         )
+    }
+
+    private func headerAction(
+        _ destination: CareerShellView.ShellDestination,
+        icon: String,
+        title: String
+    ) -> some View {
+        NavigationLink(value: destination) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 12, weight: .semibold))
+                Text(title)
+                    .font(.footnote.weight(.semibold))
+            }
+            .foregroundStyle(Color.accentGold)
+            .padding(.horizontal, DSSpacing.sm)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                    .fill(Color.accentGold.opacity(0.12))
+            )
+        }
+        .buttonStyle(.plain)
+        .padding(.top, DSSpacing.xxs)
     }
 
     private var headerSubtitle: String {
@@ -275,19 +303,37 @@ struct DraftRecapView: View {
         VStack(alignment: .leading, spacing: DSSpacing.xs) {
             SectionHeaderText(title: "Your Draft Capital")
 
-            ForEach(upcomingCapital, id: \.season) { entry in
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(String(DraftYearLabel.classYear(forStamped: entry.season)))
-                        .font(.subheadline.weight(.bold).monospacedDigit())
-                        .foregroundStyle(Color.accentGold)
+            // The Trade Center prices these same assets in chart points and this
+            // screen printed a bare round number, so the one place a manager
+            // evaluates capital was the one place it could not be compared.
+            Text("A slot marked ~ is projected — a future year's order is not set until that season is played. Points are the trade-chart value the Trade Center quotes, discounted for the years out.")
+                .font(.caption2)
+                .foregroundStyle(Color.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
 
-                    // Rounds owned, as compact chips.
-                    let rounds = entry.picks.map(\.round).sorted()
+            ForEach(upcomingCapital, id: \.season) { entry in
+                let picks = entry.picks.sorted { ($0.round, $0.pickNumber) < ($1.round, $1.pickNumber) }
+                let yearPoints = picks.reduce(0) {
+                    $0 + TradeValueEngine.pickTradeValue(pick: $1, currentSeason: career.currentSeason)
+                }
+                VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 6) {
-                        ForEach(Array(rounds.enumerated()), id: \.offset) { _, round in
-                            Text("R\(round)")
+                        Text(String(DraftYearLabel.classYear(forStamped: entry.season)))
+                            .font(.subheadline.weight(.bold).monospacedDigit())
+                            .foregroundStyle(Color.accentGold)
+                        Spacer(minLength: 0)
+                        Text("\(picks.count) pick\(picks.count == 1 ? "" : "s") · \(yearPoints) pts")
+                            .font(.caption2.weight(.medium).monospacedDigit())
+                            .foregroundStyle(Color.textTertiary)
+                    }
+
+                    // Round AND slot, as compact chips.
+                    HStack(spacing: 6) {
+                        ForEach(picks) { pick in
+                            Text("R\(pick.round) \(pick.isProvisionalOrder ? "~" : "")#\(pick.pickNumber)")
                                 .font(.caption.weight(.bold).monospacedDigit())
                                 .foregroundStyle(Color.textPrimary)
+                                .lineLimit(1)
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 4)
                                 .background(
@@ -295,9 +341,6 @@ struct DraftRecapView: View {
                                 )
                         }
                         Spacer(minLength: 0)
-                        Text("\(entry.picks.count) pick\(entry.picks.count == 1 ? "" : "s")")
-                            .font(.caption2.weight(.medium).monospacedDigit())
-                            .foregroundStyle(Color.textTertiary)
                     }
                 }
                 .padding(DSSpacing.sm)
@@ -307,6 +350,13 @@ struct DraftRecapView: View {
                         .fill(Color.backgroundSecondary)
                 )
             }
+
+            // Where a manager acts on what he has just read.
+            headerAction(
+                .trades,
+                icon: "arrow.left.arrow.right",
+                title: "Trade These Picks"
+            )
         }
     }
 

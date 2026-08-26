@@ -3902,6 +3902,214 @@ korjaaminen eläkeputkea säätämällä rikkoisi toimivan mallin oireen peittä
       Siirretty luku muuttaisi hiljaa sen mitä `overall` tarkoittaa yhdellä ruudulla —
       juuri se vikatyyppi jota tämä koodikanta toistaa (#154, QA-03, QA-05).
 
+## PÄIVÄ 2026-08-24 — AJETTU KAUSI SIMULLA: 4 LINSSIN AUDIT JOKA RUUDULLE
+
+Käyttäjä: "pelaa yksi kausi, ota kuvakaappaukset, aja /analyze-app jokaiselle kuvalle,
+tee todo:t ja korjaa huomiot."
+
+Ajo: tuore Debug-buildi (`24.8. 14:17`) iPad Pro 13" -simuun, **uusi ura — Houston
+Astronauts**, generoitu liiga, Quick Start. Koko offseason ajettiin läpi oikeasti
+(valmentajien palkkaus → roster-arvio → franchise tag → sopimusneuvottelu → combine →
+haastattelut → FA:n final push → cap compliance → FA-markkina → pro dayt → draft),
+kuvakaappaus jokaisesta ruudusta.
+
+**Audit: 120 erillistä ruutua neljässä aallossa, 40 rinnakkaista analyysiagenttia**, kukin
+neljällä linssillä (designer / casual / tosipelaaja / pelinkehittäjä) — ja jokainen
+*blocking*/*high*-väite annettiin erilliselle vastaväittäjälle, jonka tehtävä oli KUMOTA se
+koodia vasten. Vastaväittäjä kaatoi 28; läpi meni **606 löydöstä: 10 blocking, 143 high,
+342 medium, 111 low**.
+Koko lista rivitasolla: **`docs/QA_SEASON_RUN_2026-08-24.md`** (jokaisessa kohdassa
+näyttö, todiste, tiedosto:rivi ja korjausehdotus).
+
+Kaksi blockeria:
+- **Lehdistötilaisuuden lopputulosotsikko johdetaan sävystä, ei medialuvusta.** Ruutu
+  sanoo "The media sees a steady, professional operator" samalla kun moottori kirjaa
+  `mediaReputation −21` = "Scrutinized". `PressConferenceView.swift:1215`.
+- **Roster-arvion "Starter"-sarake tulostaa ryhmän PARHAAN pelaajan, kun sen vieressä
+  oleva `S:`-arvosana on aloittajien KESKIARVO** — 9 rivistä 7 on ristiriidassa saman
+  ruudun oman arvosanataulukon kanssa. `RosterEvaluationView.swift:377`.
+
+Toistuvat viat, jotka näkyvät useassa ruudussa (eivät yksittäistapauksia):
+- **Portrait-iPad ottaa landscape-haaran.** `viewWidth > 900` on tosi 1032 pt:n
+  portraitissa, joten tiimivalitsin, tiimidetalji, podium, roadmap, Draft-välilehti ja
+  neuvotteluruutu jättävät 40–64 % ruudusta tyhjäksi.
+- **Luku ja sen selitys eivät täsmää samalla ruudulla** (OC-kandidaatin +0.5 % vs −0.1 %,
+  staff-kortin "N / M" kahdessa vastakkaisessa merkityksessä, tag vs re-sign eri
+  kausissa hinnoiteltuna).
+- **Vuosiluku menee lokaalin numeroformatterin läpi**: "CARRIED INTO 2 027".
+- **Leikkautuva teksti**: RISK-chipit "Ce…"/"Bo…", "Above A…", "Grou/p", tehtävärivin
+  ohje katkeaa juuri ennen välilehden nimeä.
+
+### Korjattu tässä sessiossa (buildi vihreä joka kierroksen jälkeen)
+
+**61 korjausta 38 tiedostoon**, kaikki minimaalisia ja kohdennettuja. Isoimmat:
+- **PRESSER-BLOCKER:** lopputulosotsikko johdetaan nyt medialuvusta, ei sävystä
+  (`PressConferenceView`), ja ruutu näyttää `mediaReputation N → M · <bandi>`.
+- **ROSTER-BLOCKER:** `Starter`-sarake ja `S:`-arvosana puhuvat samasta joukosta; commit-nappi
+  nostettiin `DSActionBar`iin `safeAreaInset`illä (oli 15 rivin alla scrollissa).
+- **`DepthChart.autoGenerate`:** KR/PR jäivät tyhjiksi aina kun RB- tai WR-pooli ehti loppua —
+  haarat ajetaan nyt ENNEN base-position-guardia. Tämä esti vaiheesta etenemisen kokonaan
+  ("Lineup Incomplete" -dialogi lupasi että Auto-Set täyttää kaiken yhdellä napautuksella).
+- **`CapComplianceView`:** negatiivinen säästö tulosti `$-20.5M`; merkki on nyt sigilin edessä.
+- **`CapOverviewView`:** `CARRIED INTO 2 027` — vuosiluku meni lokaalin numeroformatterin läpi.
+- **`TradeView`:** omat varausvuorot listautuivat sekaisin (2029, 2030, 2028, 2027…), koska
+  tulevat pickit lyödään kierroksen keskipisteeseen ja lajittelu katsoi vain `pickNumber`ia.
+- **`TeamSelectionView` / `NewCareerView`:** `viewWidth > 900` oli tosi 1032 pt:n PORTRAITISSA,
+  joten tiimivalitsin ajoi landscape-haaraa ja jätti 43 % ruudusta tyhjäksi. Nyt verrataan
+  akseleita keskenään.
+- **`FAWeeklyView`:** rivi tulosti kiinnostusluvun kahdesti ("7 teams interested — bidding war
+  7 teams interested") — rumor kantaa nyt vain maun, `aiInterestLabel` omistaa luvun.
+- **`FinalPushView.finalizeReSign` kirjasi sopimuksen `guaranteedPercent: 0`** — juuri
+  uusittu tähtisopimus oli ainoa rivi cap-ruudulla jonka saattoi katkaista **$0 dead
+  moneylla**. Ilmainen lounas, ja se löytyi ajamalla oikea uusinta läpi.
+- **Neuvottelun kuitti hinnoiteltiin lennossa** ("2 vuotta, $108.0M, cap $54.0M/yr") kun
+  moottori kirjoitti etupainotteisen aikataulun: $117.0M ja **$60.5M** ekan vuoden cap-hit.
+  Kuitti lukee nyt saman `Plan`in josta sopimus kirjoitetaan.
+- Lisäksi: omistajabriiffin kolme ristiriitaa, auto-hiren kaksi väärää lupausta, valmentajien
+  värit pelaaja-OVR-asteikolla, RISK-chippien leikkautuminen, Big Boardin fog-vuoto ja
+  haamu-FIT-sarake, tehtävärivin katkeava ohje, hire-listan lomakearkin koko, "Offer Contract"
+  taitteen alla.
+
+**Tarkoituksella jätetty (11 kpl):** kaikki jotka siirtäisivät simuloituja lopputuloksia —
+franchise tagin 120 %:n lattia, chemistryn normalisointi, omistaja-arkkityypin johto,
+auto-hiren budjetin skaalaus, `frontLoadedBaseSalaries`-uudelleennormalisointi. Nämä vaativat
+oman mitatun aaltonsa balanssirigiä vasten; jokainen on kirjattu syineen.
+
+### Tila
+- [x] Kuvakaappaukset + kahden aallon audit + `docs/QA_SEASON_RUN_2026-08-24.md` (344 löydöstä)
+- [x] Korjausaalto 1: 47 korjausta, buildi vihreä
+- [x] Korjausaalto 2 (yritys 1): 10 agentista 9 jumitti koneen ollessa täynnä kauden ajoa;
+      ajettu uudelleen erissä kauden jälkeen
+- [x] **Kausi 2027 pelattu loppuun simulla.** Houston Astronauts **14-3**, AFC South;
+      Wild Card ja Divisional voitettu, putosi Conference Championshipissä. Omistajan
+      tavoite "Make the Playoffs" = Met, työpaikka Secure, Legacy +85. 18 runkosarjaviikkoa
+      + 4 pudotuspelikierrosta, **385 kuvakaappausta** koko ajolta.
+- [x] Aalto 3: peliviikon, pudotuspelien ja kauden lopun ruudut auditoitu (118 löydöstä lisää)
+- [x] Korjausaalto 2 loppuun ajettu erissä: **+11 korjausta**, mm. Final Pushin Quick Offer
+      kirjasi sopimuksen NOLLA-takuulla (juuri leikattu tähti oli ilmainen katkaista),
+      neuvottelun kuitti hinnoiteltiin lennossa eikä kirjatusta maksuaikataulusta,
+      draft-luokan nimikaksoiskappaleet, draft-syötteen tuplarivit ja haamu-FIT-sarake.
+- [x] **Camp + preseason ajettu erikseen (2026-08-26, KORJATULLA buildilla).** 2028:n
+      offseason ajettiin FA:sta läpi (final push → new league year → cap → FA → pro dayt →
+      koko 7 kierroksen draft), sitten OTAt, **training camp**, **kolmen ottelun preseason-slate**
+      ja **75 → 65 → 53 -leikkausportaikko**. Ura seisoo nyt 2028:n runkosarjan ovella.
+      Uusi auditaalto: 30 ruutua, 20 agenttia, **144 löydöstä lisää** (2 blocking, 46 high).
+      Kolme aiempaa korjausta VERIFIOITU elävässä ajossa: Auto-Set täyttää palauttajat
+      (0/2 → 2/2 yhdellä napautuksella), pro day -arkki avautuu sivukokoisena, ja hub sanoo
+      "Budget left … of …" ja "#1 in AFC South".
+- [x] **Korjausaalto 4 ajettu (7 agenttia, 45 blocking/high-löydöstä camp+preseason-ajosta).**
+      Buildi vihreä. Isoimmat:
+      - **Hub-ruudut näyttivät vanhentunutta roster-tilannekuvaa** (`Players 56` sen vieressä
+        että `Cut to 75 (87 currently)`): dashboardin `@State` päivittyi vain `.task`/`onAppear`,
+        eikä kumpikaan laukea kun shell omistaa advancen — nyt `onChange(of: currentPhase/currentWeek)`.
+      - **Kulta-Advance näytti valmiilta ja kieltäytyi vasta napautuksen jälkeen.** Shell laskee
+        nyt samat esitarkistukset ENNEN napautusta ja hub piirtää eston nimeltä
+        ("Lineup incomplete — 8 starting slots unassigned — Running Back, …").
+      - **Leikkauslista:** huonoin ensin (`RosterCutEvaluator.keepScore` sai ensimmäisen kutsujansa),
+        suodatinchipeissä pelaajamäärät, jokaisella rivillä 44 pt info-nappi pelaajakorttiin,
+        PS-chip vain merkityillä riveillä, "Suggest 12" -ehdotus, ja positioryhmien syvyys
+        näkyy listalla eikä vasta vahvistusdialogissa.
+      - **Preseason:** kolmen ottelun yhteenvetotaulukko (G1/G2/G3 per mies), sivun leveys
+        `wideMeasure` keskitettynä, modaalin "Plan game 2"/"Close the slate" -kaksoisnapit
+        nimetty uudelleen ("Read the tape").
+      - **Draft:** jokainen pickki #224:n jälkeen oli automaattinen A+ STEAL — `consensusWindow`
+        katkaisi kierroksen tasan 32 pickkiin vaikka comp-pickit venyttävät draftin ~256:een.
+      - **Camp-tehtävät:** "Review camp grades" ja "Resolve position battles" osoittivat dataan
+        jota ei ollut ja näyttöön jossa sitä ei renderöidä — poistettu; "Finalize depth chart"
+        on nyt `isRequired` koska Advance jo hard-blokkasi siihen.
+- [x] **Omat ajossa nähdyt viat korjattu (O-22, O-23) + verifioitu elävässä ajossa.**
+      - `DepthChart.reconcile(with:)` / `reconcileSaved(career:roster:)`: julkaistu pelaaja
+        siivotaan pois syvyyskaaviosta ja tyhjentynyt aloittajapaikka täytetään takaa —
+        kutsutaan kaikista neljästä käyttäjän julkaisuovesta (RosterCut, CapCompliance,
+        PlayerDetail, PlayerContract). Ennen tätä jokainen leikkauskierros mitätöi kaavion
+        hiljaa ja ainoa palaute oli seuraavan ruudun "Lineup Incomplete" -dialogi (3/3 kertaa).
+      - `PreseasonEngine.slatePlayedOut`: portti vastaa nyt myös pelattujen otteluiden määrään,
+        joten "3/3 played" ja portti eivät voi olla eri mieltä.
+- [x] **N-01 (blocking, uusi) — leikkausruudun camp-arvosana oli VIIME kauden.**
+      `advanceOffseasonPhase` ajaa switchin nykyisen vaiheen logiikan vaiheesta POISTUTTAESSA
+      (sen oma kommentti sanoo niin, :3928), joten `applyCampGrades` `case .rosterCuts`issa
+      laukesi vasta kun leikkaukset oli jo tehty. Mitattu elävästä tallennuksesta, 53 miestä:
+      **25 d / 2 c / 26 täysin ilman arvosanaa** — ja ne 26 ovat täsmälleen ne jotka eivät olleet
+      mukana edellisessä campissa (kaikki 11 rookieta ja kaikki 15 camp bodyä, eli koko se
+      kupla josta leikkaus tehdään). Siirretty `nextPhase == .rosterCuts` -sisääntulokoukkuun.
+- [ ] **N-02 (high, TARKOITUKSELLA JÄTETTY — balanssi) — arvosanakäyrä on degeneroitunut.**
+      `applyCampGrades` laskee `trainingPts = cumulativeLoad / 6` eli olettaa 0..180 kuorman,
+      kun `WorkloadEngine`n omat bandit ovat healthy 30..80 ja mitattu vaihteluväli tällä
+      tallennuksella on **7..42 (ka 26.5)**. 40 pisteen treeniosuus tuottaa siis 1..9/40 ja
+      loput ratkaisee `OVR/4` + kiinteä snap-pistemäärä — siksi 27 arvostellusta miehestä tuli
+      kaksi kirjainta eikä yhtään A:ta, B:tä tai F:ää. Kalibrointi siirtää leikkaussuosittelijan
+      järjestystä, joten se odottaa mitattua balanssiaaltoa. Varsinainen juurisyy on aallon 4
+      löydös: treenifokuksen jako ei koskaan päädy `WorkloadEngine.tickDay`iin.
+- [ ] **N-03 (med, uusi) — "worst first" ei ole worst-first.** Uuden otsikon alla järjestys oli
+      OVR 54, **93**, 61, 61, 62, 63, 69 … 83, 87: seuran MVP (Braithwaite, OVR 93, −$20.5M) on
+      viidentenä leikkauslistalla ja OVR 87 LT viimeisenä. `keepScore`a dominoi cap-luku, joten
+      lista lukee "halvin säästö ensin" otsikon alla joka lupaa valmennuksen leikkausjärjestyksen.
+- [x] **BLOKKERIT SULJETTU (2026-08-26, käyttäjän pyynnöstä).**
+      - **MORALE ja FANS eivät ole enää haamulukuja.** Podiumin kaksi suurinta lukua
+        kirjoitetaan nyt oikeaan tilaan: `PressConferenceEngine.applyRoomEffects` levittää
+        joukkuemoraalin käyttäjän rosterille (`Player.morale`, sama muoto kuin
+        `LockerRoomEngine.applyEventEffects`) ja fanilukeman uuteen kenttään
+        `Career.fanSupport` (0…100, neutraali 50, lightweight migration).
+        **Skaalaus:** istunto summaa neljä ±20:n vastausta eli ±80, kun `Player.morale` on
+        0…100 stat jota simu lukee suoraan — siksi `moraleDivisor = 6` / katto ±5 (täysin
+        onnistunut istunto = ±5 joka miehelle, sekava = ±1) ja `fanDivisor = 5` / katto ±6.
+        Ilman jakajaa yksi lehdistötilaisuus olisi pelin suurin moraalitapahtuma.
+        Molemmat apply-sitet (`CareerShellView`, `IntroSequenceView`) kutsuvat samaa
+        moottorifunktiota, joten kaksi ruutua ei voi kirjata eri asioita. "WHAT CHANGED"
+        -taulukon MORALE- ja FANS-soluissa oli tyhjä kontekstirivi juuri siksi ettei mitään
+        kirjoitettu — nyt ne lukevat "every man +5" ja "52% → 58%". Fan Support näkyy hubin
+        LOCKER ROOM -kortilla Team Moralen vieressä.
+        **Huom: tämä siirtää simuloituja lopputuloksia** (moraali syöttää simua) — käyttäjän
+        nimenomaisesta pyynnöstä, ja balanssirigi kannattaa ajaa tämän jälkeen.
+      - **Workout Request ei ole enää inertti.** `VoluntaryWorkoutPrompt.submit` kirjasi vain
+        `VoluntaryWorkout`-rivin; `VoluntaryWorkoutEngine.apply`lla ja `participation`illa ei
+        ollut yhtään kutsujaa koko puussa. Nyt osallistuminen arvotaan oikeaa rosteria vasten
+        (arkkityyppi + työmoraali per mies), rivi kirjataan SILLÄ luvulla, ja `apply` maksaa
+        sen: skeematuntemus paikalle tulleille, piilokuorma kovien treenien osallistujille ja
+        pukukoppidelta koko rosterille.
+- [x] **MEDIUM-AALTO AJETTU LOPPUUN — 3 kierrosta, 26 agenttia, 333 löydöstä.**
+      **214 korjausta, 127 skipattua.** Buildi vihreä jokaisen kierroksen jälkeen.
+      - R1 (9 agenttia, 156 löydöstä): 107 korjausta. Hubin NEED-merkki oli ehdoton argmin
+        (hyvin rakennettu rosteri sai silti punaisen lipun — nyt raja 70 OVR, jonka
+        `PositionGradeCalculator` itse vetää); "Team Needs" lupasi ohuimmat ryhmät mutta
+        lajitteli aloittajien laadulla; "15/15 filled" 16 vihreän tikin päällä (päävalmentajan
+        tuolia ei ole palkattu); scoutingin 350 = 196 + 148 jätti 6 miestä tyhjän päälle
+        (ST-chip); yksi vaihe neljällä eri nimellä.
+      - R2 (9 agenttia, 91 löydöstä): 41 korjausta. Lehdistömoottori antoi vihreän
+        "Front office and locker room aligned" -tuomion istunnolle jossa FANS −11 ja
+        MEDIA −21 olivat punaisina vieressä; toistoratchet oli 35 % piiloveroa ennen kuin
+        se oli näkyvä merkki (chip viidennellä toistolla, vaimennus neljännellä);
+        legacy-vihjeen ±3 kuollut alue teki koko akselista lukukelvottoman (legacy on
+        kirjoitettu 1–3:een, muut akselit yltävät ±20:een); "Media ? —" 12/12 rivillä.
+      - R3 (8 agenttia, 96 löydöstä): 66 korjausta. **`Player.assessedPotential` ei voinut
+        koskaan renderöityä sillä ruudulla joka sen lupasi** — kenttä kirjoitetaan
+        `PlayerDevelopmentEngine.processOffseason`issa jonka `WeekAdvancer` ajaa
+        `case .trainingCamp`issa eli campista POISTUTTAESSA, kun rookie-paljastus viritetään
+        campiin SAAVUTTAESSA (sama vaihe-exit/entry-ansa kuin camp-arvosanoissa);
+        "the room's favourite pick" oli tasapelin ratkaisu eikä mielipide; aloittava QB oli
+        liigan ainoa pelaaja jonka etunimi oli tallennettu alkukirjaimena ("M. Wimberly");
+        INJ-sarakkeen koko dynaaminen vaihteluväli oli 4–6 % pyöristyksen takia.
+- [x] **LOW-AALTO AJETTU LOPPUUN — 2 kierrosta, 10 agenttia, 102 löydöstä.**
+      **55 korjausta, 41 skipattua.** Buildi vihreä.
+      Ajettiin osin RINNAKKAIN medium-aallon kanssa: löydökset jaettiin uudelleen
+      tiedostotasolla kahteen joukkoon (16 vapaata tiedostoa / 28 mediumin varaamaa), joten
+      leikkaus ajossa olevien agenttien kanssa oli tyhjä eikä kukaan kirjoittanut toistensa
+      päälle. Kärkeä: "SEASON REVIEW" -kortti näytti täytetekstiä koska kautta ei ollut vielä
+      pelattu; Locker Room piirsi palkin maksimissaan olevalle statille eikä sille joka kaipaa
+      huomiota; "Skip your Week 1 game?" -popover tarjosi yhden vastauksen eikä ulospääsyä
+      (iPadOS pudottaa cancel-rivin popover-dialogista → `.alert`); aikajanan vaiheet
+      juoksivat ajassa taaksepäin ("Sep–Jan", "Oct", "Jan") ja "Oct" oli väärin muutenkin,
+      koska trade deadline on viikko 9 eli marraskuussa; CONFIDENT ja FUNNY olivat yhden
+      sävyasteen päässä toisistaan; 80 lehdistöotsikkoa käytti suoria lainausmerkkejä kun
+      koko muu ruutu käyttää kaarevia.
+- [x] **Skipatut kirjattu: `docs/QA_SKIPPED_2026-08-26.md`** (168 kpl syineen).
+      Jakauma: **peruttu tai jo korjattu 70** (löydöksen premissi oli väärä, tai aiempi aalto
+      oli jo sulkenut sen), **toisen agentin tiedostossa 35**, **muu 33**,
+      **feature-kokoinen 15**, **balanssia siirtävä 15**.
+      Se että 70/168 on perumisia on itsessään tulos: neljän linssin auditti tuottaa
+      vanhentuneita ja vääriä väitteitä, ja vastaväittäjävaihe ei nappaa niitä kaikkia.
+
+
 ## Visual design loop: coach-mode 3D (2026-07-09, /visual-design-loop, 2 iteraatiota)
 - [x] Iter 1: goalposts thicker + duller gold (glow-stick look fixed); end zone tint deepened; dark apron strips ground the sideline walls; defense-card zone bubbles tightened (PlayDiagramView)
 - [x] Iter 2: end zones deepened further (darken 0.45 — no more neon vs muted turf); floating jersey numbers 0.75→0.62 + calmer emission (no more label collisions in line traffic); helmets shaded 20% darker than jerseys (heads read as gear, NFL look); broadcast plate / result toast vertical separation

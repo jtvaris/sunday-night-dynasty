@@ -842,7 +842,13 @@ struct DraftTickerPanel: View {
                                 : DSType.text(DSType.Size.footnote, .semibold, prose: true)
                         )
                         .foregroundStyle(isMuted ? Color.textTertiary : Color.textPrimary)
-                        .lineLimit(isMuted ? 1 : nil)
+                        // The headline reads "{buyer} move up to #{n}, sending
+                        // {assets} to {seller}", so a single line spends itself on
+                        // the club and the slot and ellipses exactly the price —
+                        // "+ 2…" — which is the only half that tells a GM what
+                        // the market costs tonight. Two lines carry the whole deal
+                        // and the demoted row is still a caption, not a card.
+                        .lineLimit(isMuted ? 2 : nil)
                         .fixedSize(horizontal: false, vertical: !isMuted)
                 }
                 if !isMuted {
@@ -1506,13 +1512,19 @@ private struct PickRevealCard: View {
     /// this file's own rule is that such a row must carry a smaller variant or
     /// it overruns the card rather than truncating (the "SELE / CTS" lesson).
     /// Every variant carries the grade, so no arrangement can print it twice or
-    /// lose it: the ladder gives up the qualifier first (`A SMART PICK` → `A`)
-    /// and the two connective words second (`PICK … SELECTS`), because the
-    /// numeral, the club and the verdict are the call and the rest is grammar.
+    /// lose it: the ladder gives up the two connective words first
+    /// (`PICK … SELECTS`) and the qualifier only when even that is not enough,
+    /// because the numeral, the club and the verdict are the call and the rest
+    /// is grammar.
+    ///
+    /// The ladder used to spend the qualifier before the grammar, so a card at
+    /// this width printed a bare orange `D` beside the word `SELECTS` — the
+    /// letter with none of the sentence that says which kind of D it is, while
+    /// VoiceOver read out "Grade D, big reach" off the same chip.
     private var callLine: some View {
         ViewThatFits(in: .horizontal) {
             callLineRow(showsConnectives: true, showsGradeQualifier: true)
-            callLineRow(showsConnectives: true, showsGradeQualifier: false)
+            callLineRow(showsConnectives: false, showsGradeQualifier: true)
             callLineRow(showsConnectives: false, showsGradeQualifier: false)
         }
     }

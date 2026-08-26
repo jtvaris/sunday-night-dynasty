@@ -666,7 +666,7 @@ extension PressConferenceEngine {
     /// entire point.
     struct ReactionHint: Identifiable, Equatable {
         enum Audience: String, CaseIterable, Identifiable {
-            case owner, lockerRoom, fans, media
+            case owner, lockerRoom, fans, media, legacy
             var id: String { rawValue }
 
             var label: String {
@@ -675,6 +675,7 @@ extension PressConferenceEngine {
                 case .lockerRoom: return "Locker room"
                 case .fans:       return "Fans"
                 case .media:      return "Media"
+                case .legacy:     return "Legacy"
                 }
             }
 
@@ -684,6 +685,7 @@ extension PressConferenceEngine {
                 case .lockerRoom: return "person.3.fill"
                 case .fans:       return "hands.clap.fill"
                 case .media:      return "newspaper.fill"
+                case .legacy:     return "star.fill"
                 }
             }
         }
@@ -704,14 +706,17 @@ extension PressConferenceEngine {
         var id: String { audience.rawValue }
         let audience: Audience
         let direction: Direction
-        /// Short qualitative phrase. "likely approves", "risky", "—".
+        /// Short qualitative phrase. "likely approves", "risky",
+        /// "can't read this writer".
         let phrase: String
     }
 
     /// What a card shows BEFORE the answer is committed.
     struct ReactionPreview: Equatable {
         let hints: [ReactionHint]
-        /// The press already has a name for this note.
+        /// The repetition ratchet is showing on this card — i.e. the answer's
+        /// upside is already being taxed, whether or not the press has a name
+        /// for it yet.
         let isVanilla: Bool
         let vanillaLabel: String?
     }
@@ -719,6 +724,15 @@ extension PressConferenceEngine {
     /// Anything inside ±`hintDeadBand` reads as "no strong reaction" rather than
     /// as a direction — a 2-point nudge is not something a coach can feel.
     static let hintDeadBand = 3
+
+    /// Legacy's own band. It is authored on a far smaller scale than the four
+    /// audience axes — 1…3 on all but a handful of the answers in the file,
+    /// against the ±20 those axes run to — so the shared ±3 band printed
+    /// "won't be remembered" on the legacy chip of very nearly every card in
+    /// the game, and the axis could never differ between two options. Legacy is
+    /// also the one axis that is NOT context-modulated, so a tighter band
+    /// cannot leak hidden state the fog is protecting.
+    static let legacyHintDeadBand = 1
 
     /// The fogged preview. Derived from the SAME resolution the commit will run,
     /// then coarsened to direction and gated by what the coach could plausibly
@@ -738,15 +752,24 @@ extension PressConferenceEngine {
         //   • Fans: readable when the moment is loud enough to have a mood.
         //   • Media: readable when the reporter has declared a stance, or when
         //     the story writes itself (a crisis, a beating).
+        //   • Legacy: always readable, and the one audience where that is not a
+        //     judgement call — legacy points are NOT context-modulated, so the
+        //     direction marker cannot leak hidden state. It was the widest
+        //     spread on the card and the only axis with no hint at all.
         let fansReadable = context.situation != .routine
         let mediaReadable = stance != .neutral || context.situation.demandsAStance
 
         func hint(_ audience: ReactionHint.Audience, _ delta: Int, readable: Bool) -> ReactionHint {
             guard readable else {
-                return ReactionHint(audience: audience, direction: .unknown, phrase: "\u{2014}")
+                return ReactionHint(
+                    audience: audience,
+                    direction: .unknown,
+                    phrase: phrase(for: audience, direction: .unknown)
+                )
             }
+            let band = audience == .legacy ? legacyHintDeadBand : hintDeadBand
             let direction: ReactionHint.Direction =
-                delta > hintDeadBand ? .up : (delta < -hintDeadBand ? .down : .neutral)
+                delta > band ? .up : (delta < -band ? .down : .neutral)
             return ReactionHint(
                 audience: audience,
                 direction: direction,
@@ -754,17 +777,27 @@ extension PressConferenceEngine {
             )
         }
 
+        // The ratchet took a third of the payoff at three repeats and most of it
+        // at four, but the card only ever marked the second of those — so the
+        // repeat that FIRST cost the coach something carried no mark at all,
+        // and the tax was paid before it was ever named. The chip now appears as
+        // soon as the payoff starts decaying; the press's own label is held back
+        // for the point where it has actually coined one.
+        let hasAName = isVanilla(tone: response.tone, recentTones: context.recentTones)
+        let isRatcheted = repetitionScale(tone: response.tone, recentTones: context.recentTones) < 1.0
+
         return ReactionPreview(
             hints: [
                 hint(.owner, resolved.ownerSatisfaction, readable: true),
                 hint(.lockerRoom, resolved.playerMorale, readable: true),
                 hint(.fans, resolved.fanExcitement, readable: fansReadable),
                 hint(.media, resolved.mediaPerception, readable: mediaReadable),
+                hint(.legacy, resolved.legacyPoints, readable: true),
             ],
-            isVanilla: isVanilla(tone: response.tone, recentTones: context.recentTones),
-            vanillaLabel: isVanilla(tone: response.tone, recentTones: context.recentTones)
+            isVanilla: isRatcheted,
+            vanillaLabel: hasAName
                 ? vanillaLabel(for: response.tone)
-                : nil
+                : (isRatcheted ? "They've heard this one" : nil)
         )
     }
 
@@ -785,7 +818,16 @@ extension PressConferenceEngine {
         case (.media, .up):           return "good copy"
         case (.media, .down):         return "they'll pounce"
         case (.media, .neutral):      return "a shrug"
-        case (_, .unknown):           return "\u{2014}"
+        // Authored legacy points are never negative, but the case has to exist.
+        case (.legacy, .up):          return "worth remembering"
+        case (.legacy, .down):        return "a stain on the record"
+        case (.legacy, .neutral):     return "won't be remembered"
+        // The fog needs WORDS. Beside the question-mark glyph a bare em-dash
+        // read as a column the screen had failed to fill rather than as the
+        // state it is — an audience this room does not let the coach read.
+        case (.media, .unknown):      return "can't read this writer"
+        case (.fans, .unknown):       return "can't read the crowd"
+        case (_, .unknown):           return "no read"
         }
     }
 
@@ -835,6 +877,20 @@ extension PressConferenceEngine {
                 icon: "hands.clap.fill", severity: .good)
         }
         if owner >= 10 && morale >= 5 {
+            // This branch sits above every net test, so the green check used to
+            // fire on a session of +18 / +15 / -11 / -21 — net +1 — and tell the
+            // coach it was going well while half the board burned. Alignment is
+            // still the strongest signal in the room, but it is not good news on
+            // its own: when another audience is being lost the verdict names it
+            // and drops out of green.
+            let burned = [(who: "the fans", total: fans), (who: "the press", total: media)]
+                .filter { $0.total <= -10 }
+            if !burned.isEmpty {
+                let cost = burned.map { "\($0.who) (\($0.total))" }.joined(separator: " or ")
+                return SessionFeedback(
+                    text: "Front office and locker room aligned \u{2014} but not \(cost)",
+                    icon: "exclamationmark.triangle.fill", severity: .warning)
+            }
             return SessionFeedback(
                 text: "Front office and locker room aligned",
                 icon: "checkmark.seal.fill", severity: .good)
@@ -964,6 +1020,69 @@ extension PressConferenceEngine {
             ledger.append(promise)
         }
         career.pressPromiseLedger = ledger
+    }
+
+    /// How a press conference's team-wide morale total lands on the roster.
+    ///
+    /// **The gap this closes.** `PressEffects.playerMorale` and
+    /// `fanExcitement` were the two biggest numbers on the podium screen — a
+    /// running "MORALE +28" over a session — and neither was ever written to
+    /// any game state. Owner satisfaction, media reputation and legacy all had
+    /// apply-sites; these two were painted and thrown away.
+    ///
+    /// **Why the total is divided.** A session sums four answers, each clamped
+    /// to ±20, so the total runs to ±80 while `Player.morale` is a 0…100 stat
+    /// the sim reads directly. Landing +28 on every man would make one press
+    /// conference the largest morale event in the game — bigger than winning a
+    /// playoff round. The divisor puts a podium session in the same league as
+    /// the events that already move the room: `LockerRoomEngine` spreads ±1…3
+    /// team-wide, a holdout resolution a little more. A full-throated, perfectly
+    /// judged session is worth ±5 to every man; a mixed one is worth ±1.
+    ///
+    /// Returns the per-man delta so a caller can report it.
+    static let moraleDivisor = 6.0
+    static let moraleTeamCap = 5
+
+    static func rosterMoraleDelta(for effects: PressEffects) -> Int {
+        let scaled = Int((Double(effects.playerMorale) / moraleDivisor).rounded())
+        return Swift.max(-moraleTeamCap, Swift.min(moraleTeamCap, scaled))
+    }
+
+    /// Same shape for the fan number, against `Career.fanSupport` — a 0…100
+    /// meter rather than a per-man stat, so it takes the delta once.
+    static let fanDivisor = 5.0
+    static let fanCap = 6
+
+    static func fanSupportDelta(for effects: PressEffects) -> Int {
+        let scaled = Int((Double(effects.fanExcitement) / fanDivisor).rounded())
+        return Swift.max(-fanCap, Swift.min(fanCap, scaled))
+    }
+
+    /// Books the two effects that used to be painted and dropped.
+    ///
+    /// Called from both apply-sites (`CareerShellView.applyPressConferenceEffects`
+    /// and `IntroSequenceView.applyPressConferenceResult`) beside the owner and
+    /// legacy writes, so no screen can book a different set than another.
+    ///
+    /// `roster` is the USER's club only. A press conference moves the room the
+    /// coach stood in front of; nothing about it should touch the other 31.
+    @discardableResult
+    static func applyRoomEffects(
+        result: PressConferenceResult,
+        career: Career,
+        roster: [Player]
+    ) -> (morale: Int, fans: Int) {
+        let moraleDelta = rosterMoraleDelta(for: result.totalEffects)
+        if moraleDelta != 0 {
+            for player in roster {
+                player.morale = Swift.max(1, Swift.min(100, player.morale + moraleDelta))
+            }
+        }
+        let fanDelta = fanSupportDelta(for: result.totalEffects)
+        if fanDelta != 0 {
+            career.fanSupport = Swift.max(0, Swift.min(100, career.fanSupport + fanDelta))
+        }
+        return (moraleDelta, fanDelta)
     }
 
     // MARK: - Promise Resolution (the check site)

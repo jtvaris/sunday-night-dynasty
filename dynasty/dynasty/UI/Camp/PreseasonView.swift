@@ -71,6 +71,9 @@ struct PreseasonView: View {
     /// The policy the user is about to commit for the game he is planning.
     @State private var selectedPolicy: PreseasonPolicy = .starterSeries
     @State private var isSimulating = false
+    /// Why the last attempt to play produced nothing, if it did — surfaced in
+    /// the action bar's explainer as a warning rather than swallowed.
+    @State private var playFailure: String?
     /// `false` until the first fetch lands — see the `body`'s first branch.
     @State private var didLoad = false
     @State private var cohort: PreseasonBubbleTable.Cohort = .bubble
@@ -131,7 +134,14 @@ struct PreseasonView: View {
             case let .recap(recap):
                 PreseasonRecapSheet(
                     recap: recap,
-                    continueTitle: continueTitle(after: recap.gameIndex),
+                    // NOT `continueTitle(after:)`. This button dismisses and
+                    // nothing else — the step only moves on the action bar
+                    // behind it, which is §2.5's one commit — so printing the
+                    // bar's words on it put two identical gold "Plan game 2"
+                    // buttons on the screen at once, and the one the user
+                    // reaches first does not plan game 2. It says what it does:
+                    // it leaves the modal into the evidence.
+                    continueTitle: "Read the tape",
                     onContinue: { activeSheet = nil }
                 )
                 // The sheet is the ending, and the evidence is behind it. It
@@ -199,8 +209,15 @@ struct PreseasonView: View {
                 }
             }
             .padding(DSSpacing.md)
-            .frame(maxWidth: DSLayout.contentMeasure, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            // `wideMeasure`, centred. The screen's body is the tape — a
+            // six-column table of every man the cut reaches — which is exactly
+            // what that token is for; `contentMeasure` is the reading column
+            // for a stack of prose cards. And the leading pin dumped all the
+            // slack on one side, so a third of a portrait iPad was flat
+            // background down the right edge while the band above and the
+            // action bar below ran full width.
+            .frame(maxWidth: DSLayout.wideMeasure)
+            .frame(maxWidth: .infinity)
         }
     }
 
@@ -211,15 +228,20 @@ struct PreseasonView: View {
         gameCard
         policyPicker
         rosterStanding
+        // Who to dress for game 2 is a question about what the men have already
+        // done, so the tape so far belongs on the page the decision is made on
+        // — three cards and half an empty screen was not the evidence.
+        if !playedIndices.isEmpty {
+            slateCaseTable(title: "Across the slate so far")
+        }
     }
 
     private var gameCard: some View {
         VStack(alignment: .leading, spacing: DSSpacing.xs) {
-            Text("Game \(currentGame) of \(PreseasonFlowBand.gameCount)".uppercased())
-                .font(DSType.display(11, .heavy))
-                .tracking(0.7)
-                .foregroundStyle(Color.accentGold)
-
+            // No "GAME n OF 3" eyebrow. §2.1 gives the count exactly one home
+            // and `PreseasonFlowBand` is it; the eyebrow printed the slate's
+            // position a third time on the same screen, in gold, i.e. at higher
+            // emphasis than the authority. The opponent is the card's headline.
             HStack(alignment: .firstTextBaseline, spacing: DSSpacing.xs) {
                 Text(upcomingFixtureLabel)
                     .font(DSType.display(DSType.Size.title2, .heavy))
@@ -276,21 +298,25 @@ struct PreseasonView: View {
         } label: {
             DSListRow(
                 density: .study,
-                badge: DSRowBadge(
-                    text: isSelected ? "\u{2022}" : " ",
-                    tint: isSelected ? Color.accentGold : Color.backgroundTertiary,
-                    accessibilityLabel: isSelected ? "Selected" : "Not selected"
-                ),
-                portraitWidth: 0,
+                portraitWidth: DSListColumn.position,
                 affordance: .none
             ) {
-                EmptyView()
+                // A real radio, in the badge slot's own width. This was a
+                // `DSRowBadge` whose unselected text was a literal space, so an
+                // unchosen row rendered as an empty dark rectangle and the only
+                // thing saying what WAS chosen was a gold fill — a colour cue
+                // with no shape behind it, in the one colour P5 reserves for the
+                // commit and the band's current slat.
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: DSType.Size.callout, weight: .semibold))
+                    .foregroundStyle(isSelected ? Color.textPrimary : Color.textTertiary)
+                    .accessibilityLabel(isSelected ? "Selected" : "Not selected")
             } identity: {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: DSSpacing.xxs) {
                         Image(systemName: policy.icon)
                             .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(isSelected ? Color.accentGold : Color.textTertiary)
+                            .foregroundStyle(isSelected ? Color.textPrimary : Color.textTertiary)
                         Text(policy.displayTitle)
                             .font(DSType.text(16, .semibold, prose: true))
                             .foregroundStyle(Color.textPrimary)
@@ -318,8 +344,13 @@ struct PreseasonView: View {
                 // the flexible identity block gives way instead — which is the
                 // one column `DSListRow` documents as the one that yields. The
                 // row is `.study` density, so the two lines cost no height.
+                //
+                // Both pills ramp. Flat blue on all three installs beside a
+                // green → orange → red risk ramp said only the cost varied, and
+                // pointed the eye at the one row carrying the screen's only
+                // green chip.
                 VStack(alignment: .trailing, spacing: 3) {
-                    DSStatusPill(label: policy.familiarityNote, tone: .info, showsDot: false)
+                    DSStatusPill(label: policy.familiarityNote, tone: policy.familiarityTone, showsDot: false)
                     DSStatusPill(label: policy.riskNote, tone: policy.riskTone, showsDot: false)
                 }
                 .fixedSize()
@@ -382,6 +413,11 @@ struct PreseasonView: View {
             reviewHeader(built)
             moversCard(built)
             PreseasonBubbleTable(recap: built, cohort: $cohort)
+            // The band's earlier slats are not navigable, so without this the
+            // last game's box score is the only tape reachable from here.
+            if playedIndices.count > 1 {
+                slateCaseTable(title: "Across the slate")
+            }
         } else {
             // The step says a game was played and no payload exists for it.
             // Rather than render an empty table that looks like a quiet game,
@@ -397,10 +433,14 @@ struct PreseasonView: View {
 
     private func reviewHeader(_ recap: PreseasonRecap) -> some View {
         VStack(alignment: .leading, spacing: DSSpacing.xs) {
-            Text("Game \(recap.gameIndex) \u{00B7} \(recap.policy.displayTitle)".uppercased())
+            // The band above says which game this is (§2.1), so the eyebrow says
+            // only what it was played under — and it says it in the section-head
+            // colour, because gold is the commit fill and the band's current
+            // slat, never a header (P5).
+            Text(recap.policy.displayTitle.uppercased())
                 .font(DSType.display(11, .heavy))
                 .tracking(0.7)
-                .foregroundStyle(Color.accentGold)
+                .foregroundStyle(Color.textSecondary)
 
             HStack(alignment: .firstTextBaseline, spacing: DSSpacing.xs) {
                 Text(recap.scoreText)
@@ -443,6 +483,14 @@ struct PreseasonView: View {
         var line = "\(recap.helpedCount) helped \(recap.helpedCount == 1 ? "his" : "their") case"
         if recap.hurtCount > 0 {
             line += ", \(recap.hurtCount) hurt \(recap.hurtCount == 1 ? "his" : "theirs")"
+        }
+        // Both counts are the cut cohort's, and `moversCard` under this sentence
+        // lists starters too — so without this clause the card said "4 helped,
+        // 1 hurt" over a list of six named men and the arithmetic on screen did
+        // not close.
+        if recap.starterMoverCount > 0 {
+            line += " \u{2014} plus \(recap.starterMoverCount) starter"
+                + (recap.starterMoverCount == 1 ? " who moved" : "s who moved")
         }
         return line + ". This is the sheet the cut to \(preseasonExitCeiling) gets written from."
     }
@@ -553,6 +601,256 @@ struct PreseasonView: View {
         }
     }
 
+    // MARK: Across the slate — the sheet the cut is actually written from
+
+    /// One man's whole preseason, on one row.
+    ///
+    /// Every other table on this screen is a single exhibition's box score, and
+    /// the cut to 65 is not taken against one afternoon: the same receiver read
+    /// HELPED in game 1 and HELD in game 2 with nothing anywhere adding the two
+    /// together, and the `.complete` step showed the LAST game's table under
+    /// copy calling it the cut sheet. This is the addition.
+    private struct SlateCase: Identifiable {
+        let id: UUID
+        var name: String
+        var position: Position
+        /// Where he stands NOW: taken from the last game he dressed for, which
+        /// is the lineup the club carries into the cut.
+        var tier: PreseasonRecap.Tier
+        var overall: Int
+        /// Verdict per game index. A game he did not dress for has no entry,
+        /// which is not the same statement as a quiet one.
+        var verdicts: [Int: PreseasonCampCase.Verdict] = [:]
+        /// Case points summed across the slate.
+        var total: Double = 0
+        /// The sentence from the game that carried his case, and which game it
+        /// was — the evidence, kept in the man's own row rather than stranded
+        /// in a recap that is three screens back.
+        var reason = ""
+        var reasonGame = 0
+        /// True once any game produced a box score at all.
+        ///
+        /// `PreseasonEngine.CampCase.read` leaves `delta` at exactly zero when
+        /// a man had no visible chances, so a run of quiet-and-zero is the
+        /// engine saying the box score cannot see this position — a tackle, a
+        /// guard — rather than saying he was poor. The row says that in words
+        /// instead of grading him on an empty line.
+        var hasTape = false
+        var injured = false
+
+        private var reasonWeight = -1.0
+
+        init(_ line: PreseasonRecap.Line, game: Int) {
+            id = line.id
+            name = line.name
+            position = line.position
+            tier = line.tier
+            overall = line.overall
+            absorb(line, game: game)
+        }
+
+        mutating func absorb(_ line: PreseasonRecap.Line, game: Int) {
+            tier = line.tier
+            overall = line.overall
+            verdicts[game] = line.verdict
+            total += line.caseScore
+            injured = injured || line.injured
+            if line.verdict != .quiet || line.caseScore != 0 { hasTape = true }
+            if abs(line.caseScore) > reasonWeight {
+                reasonWeight = abs(line.caseScore)
+                reason = line.reason
+                reasonGame = game
+            }
+        }
+    }
+
+    /// The cut cohort, every played game folded in, best case first.
+    private var slateCases: [SlateCase] {
+        var order: [UUID] = []
+        var built: [UUID: SlateCase] = [:]
+        for index in playedIndices {
+            guard let recap = recapsByGame[index] else { continue }
+            for line in recap.lines {
+                if var existing = built[line.id] {
+                    existing.absorb(line, game: index)
+                    built[line.id] = existing
+                } else {
+                    order.append(line.id)
+                    built[line.id] = SlateCase(line, game: index)
+                }
+            }
+        }
+        return order.compactMap { built[$0] }
+            .filter { $0.tier.isCutCohort }
+            .sorted {
+                // A man the box score cannot see is not evidence either way, so
+                // he sits under everyone who left something on tape rather than
+                // in the middle of the list on a zero.
+                if $0.hasTape != $1.hasTape { return $0.hasTape }
+                return $0.total > $1.total
+            }
+    }
+
+    private var slateCaseCaption: String {
+        playedIndices.count == 1
+            ? "Every man the cut to \(preseasonExitCeiling) reaches, one game in."
+            : "Every man the cut to \(preseasonExitCeiling) reaches, all \(playedIndices.count) games added up."
+    }
+
+    @ViewBuilder
+    private func slateCaseTable(title: String) -> some View {
+        let cases = slateCases
+        if !cases.isEmpty {
+            VStack(alignment: .leading, spacing: DSSpacing.xs) {
+                Text(title)
+                    .font(DSType.display(11, .heavy))
+                    .tracking(0.7)
+                    .foregroundStyle(Color.textSecondary)
+
+                Text(slateCaseCaption)
+                .font(DSType.text(13, .regular, prose: true))
+                .foregroundStyle(Color.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+                slateCaseHeader
+                VStack(spacing: 0) {
+                    ForEach(cases) { item in
+                        slateCaseRow(item)
+                        if item.id != cases.last?.id {
+                            Divider().overlay(Color.surfaceBorder)
+                        }
+                    }
+                }
+                .padding(.horizontal, DSSpacing.sm)
+                .cardBackground()
+            }
+        }
+    }
+
+    private var slateCaseHeader: some View {
+        DSListHeaderRow(
+            density: .scan,
+            reservesBadge: true,
+            portraitWidth: 0,
+            identityLabel: "Player \u{00B7} the case he made"
+        ) {
+            DSColumnHeader("OVR", width: DSListColumn.ovr)
+            // Derived from the count so the strip and the label over it cannot
+            // disagree about how many exhibitions there are.
+            DSColumnHeader(
+                (1...PreseasonFlowBand.gameCount).map { "G\($0)" }.joined(separator: " "),
+                width: DSListColumn.state
+            )
+            DSColumnHeader("Case", width: DSListColumn.value)
+            DSColumnHeader("Standing", width: DSListColumn.label)
+        }
+        .padding(.horizontal, DSSpacing.sm)
+    }
+
+    private func slateCaseRow(_ item: SlateCase) -> some View {
+        DSListRow(
+            density: .scan,
+            badge: DSRowBadge(
+                text: item.position.rawValue,
+                tint: positionTint(item.position),
+                accessibilityLabel: "\(item.position.rawValue), \(item.position.side.rawValue)"
+            ),
+            portraitWidth: 0
+        ) {
+            EmptyView()
+        } identity: {
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: DSSpacing.xxs) {
+                    Text(item.name)
+                        .font(DSType.text(DSListDensity.scan.nameSize, .semibold, prose: true))
+                        .foregroundStyle(Color.textPrimary)
+                        .lineLimit(1)
+                    if item.injured {
+                        Image(systemName: "cross.case.fill")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(Color.dangerText)
+                            .accessibilityLabel("Left a game hurt")
+                    }
+                }
+                Text(
+                    item.hasTape
+                        ? "G\(item.reasonGame) \u{00B7} \(item.reason)"
+                        : "Nothing the box score can show \u{2014} judge him on camp and OVR."
+                )
+                .font(DSType.text(12, .regular, prose: true))
+                .foregroundStyle(Color.textSecondary)
+                .lineLimit(1)
+            }
+        } columns: {
+            Text("\(item.overall)")
+                .font(DSType.display(DSType.Size.body, .heavy))
+                .foregroundStyle(Color.forRating(item.overall))
+                .dsColumn(DSListColumn.ovr)
+
+            verdictStrip(item)
+                .dsColumn(DSListColumn.state)
+
+            Text(item.hasTape ? String(format: "%+.1f", item.total) : "\u{2013}")
+                .font(DSType.display(DSType.Size.footnote, .heavy))
+                .foregroundStyle(slateCaseTint(item))
+                .dsColumn(DSListColumn.value)
+
+            DSStatusPill(label: item.tier.pillLabel, tone: item.tier.tone, showsDot: false)
+                .dsColumn(DSListColumn.label)
+        }
+    }
+
+    private func slateCaseTint(_ item: SlateCase) -> Color {
+        guard item.hasTape, item.total != 0 else { return .textTertiaryReadable }
+        return item.total > 0 ? .success : .dangerText
+    }
+
+    /// One cell per exhibition, in the verdict's own colour — the three games
+    /// side by side, which is the whole reason this table exists.
+    private func verdictStrip(_ item: SlateCase) -> some View {
+        HStack(spacing: 3) {
+            ForEach(1...PreseasonFlowBand.gameCount, id: \.self) { game in
+                verdictCell(item.verdicts[game], game: game)
+            }
+        }
+    }
+
+    private func verdictCell(_ verdict: PreseasonCampCase.Verdict?, game: Int) -> some View {
+        // An empty cell borrows `DSStatusPill`'s `.empty` treatment — dashed,
+        // dimmed, no fill — because it means the same thing: the slot exists
+        // and nothing filled it.
+        let tint = verdict?.tone.tint ?? Color.textTertiary
+        return RoundedRectangle(cornerRadius: DSCornerRadius.tight)
+            .fill(verdict == nil ? Color.clear : tint.opacity(0.16))
+            .overlay {
+                if let verdict {
+                    Image(systemName: verdictGlyph(verdict))
+                        .font(.system(size: 10, weight: .heavy))
+                        .foregroundStyle(tint)
+                }
+            }
+            .overlay(
+                RoundedRectangle(cornerRadius: DSCornerRadius.tight)
+                    .strokeBorder(
+                        tint.opacity(verdict == nil ? 0.35 : 0.45),
+                        style: StrokeStyle(lineWidth: 1, dash: verdict == nil ? [2, 2] : [])
+                    )
+            )
+            .frame(width: 22, height: 18)
+            .accessibilityElement()
+            .accessibilityLabel("Game \(game)")
+            .accessibilityValue(verdict?.spoken ?? "did not dress")
+    }
+
+    private func verdictGlyph(_ verdict: PreseasonCampCase.Verdict) -> String {
+        switch verdict {
+        case .helped: return "arrow.up"
+        case .held:   return "equal"
+        case .hurt:   return "arrow.down"
+        case .quiet:  return "minus"
+        }
+    }
+
     // MARK: Complete — the slate, read back
 
     @ViewBuilder
@@ -577,10 +875,11 @@ struct PreseasonView: View {
             .cardBackground()
         }
 
-        if let lastIndex = playedIndices.last, let built = recapsByGame[lastIndex] {
-            moversCard(built)
-            PreseasonBubbleTable(recap: built, cohort: $cohort)
-        }
+        // The slate is closed, so the last exhibition's box score is not the
+        // cut sheet — the three games added together are. This step used to
+        // mount `moversCard` and the bubble table for `playedIndices.last`
+        // alone, under copy that called it the sheet the 65 is written from.
+        slateCaseTable(title: "Across the slate")
 
         rosterStanding
     }
@@ -606,7 +905,7 @@ struct PreseasonView: View {
                 .foregroundStyle(Color.textSecondary)
                 .lineLimit(1)
             DSStatusPill(label: "Helped", tone: .ok, value: "\(recap.helpedCount)", showsDot: false)
-            DSStatusPill(label: "Hurt", tone: .bad, value: "\(recap.hurtCount)", showsDot: false)
+            DSStatusPill(label: "Slipped", tone: .bad, value: "\(recap.hurtCount)", showsDot: false)
         }
         .frame(minHeight: 44)
     }
@@ -619,9 +918,18 @@ struct PreseasonView: View {
         case .planning:
             DSActionBar(
                 explainer: .init(
-                    title: "What this costs",
-                    message: planExplainer
+                    title: playFailure == nil ? "What this costs" : "Could not play it",
+                    message: playFailure ?? planExplainer,
+                    isWarning: playFailure != nil
                 ),
+                // `rosterStanding` above states the obligation ("10 still to
+                // release before the phase closes") and until this existed the
+                // only route to it was the `.complete` bar's primary — so for
+                // all three planning steps the screen named the job and offered
+                // no way to do it.
+                secondary: onOpenRosterCuts.map {
+                    DSActionBar.Action(title: "Roster cuts", handler: $0)
+                },
                 primary: .init(
                     title: isSimulating ? "Playing\u{2026}" : "Play game \(currentGame)",
                     isEnabled: !isSimulating,
@@ -700,22 +1008,45 @@ struct PreseasonView: View {
     /// and in `refreshFixture`, so the engine's surface is wired in exactly two
     /// places and an integration fix lands in two lines.
     ///
-    /// The sim runs on the main actor, synchronously, because SwiftData models
-    /// are main-actor bound and every other commit in this app (an FA round, a
-    /// week advance) does the same. One preseason game is one `GameSimulator`
-    /// run — the same cost as a regular-season game the user coaches.
+    /// The sim runs on the main actor because SwiftData models are bound to it
+    /// and every other commit in this app (an FA round, a week advance) does the
+    /// same. One preseason game is one `GameSimulator` run — the same cost as a
+    /// regular-season game the user coaches.
     private func playGame(_ index: Int) {
         guard !isSimulating, let current = flow else { return }
-        guard let matchup = current.matchup(at: index) else { return }
+        // Both of these used to be a bare `else { return }`: the user pressed
+        // the one commit on the screen and absolutely nothing happened — no
+        // sheet, no message, no state change. A commit that cannot run says so.
+        guard let matchup = current.matchup(at: index) else {
+            playFailure = "Game \(index) has no opponent on the slate."
+            return
+        }
         isSimulating = true
-        defer { isSimulating = false }
+        // The flag used to be cleared by a `defer` in this same synchronous
+        // body, so SwiftUI never drew a frame between the two writes: the
+        // disabled "Playing…" title the bar already declares was unreachable,
+        // and a `GameSimulator` run held the main thread with the button still
+        // reading "Play game 1". One turn of the loop before the sim is what
+        // makes the state the bar declares the state it shows.
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms — let the button paint
+            play(index, matchup: matchup, into: current)
+            isSimulating = false
+        }
+    }
 
+    /// The commit itself, once the button has had its frame.
+    private func play(_ index: Int, matchup: PreseasonMatchup, into current: PreseasonState) {
         guard let result = PreseasonEngine.simulateGame(
             career: career,
             matchup: matchup,
             policy: selectedPolicy,
             modelContext: modelContext
-        ) else { return }
+        ) else {
+            playFailure = "The exhibition could not be played. Nothing was banked \u{2014} try it again."
+            return
+        }
+        playFailure = nil
 
         // The engine owns the step machine: `recordResult` overwrites a replayed
         // game's own slot and moves the step to `.recap(index)`. The policy the
@@ -739,6 +1070,7 @@ struct PreseasonView: View {
     /// Moves the step machine on from a played game.
     private func advance(from game: Int) {
         guard let current = flow else { return }
+        playFailure = nil
         // The engine decides whether another exhibition is owed — it reads the
         // persisted slate, so the step machine has one authority.
         let next = PreseasonEngine.acknowledgeRecap(current)

@@ -28,7 +28,15 @@ struct NewCareerView: View {
     }
 
     @State private var flowMode: FlowMode = .quickStart
-    @State private var playerName: String = ""
+    /// The wizard opens on a name rather than on an empty field, because the
+    /// only forward action on this screen is gated on one: an untouched Quick
+    /// Start met the player with a dead "Choose Your Team" and a hint telling
+    /// him why. A drawn name makes the field an edit instead of a gate, and it
+    /// comes from the same pools the league itself is named from.
+    @State private var playerName: String = {
+        let drawn = RandomNameGenerator.randomName()
+        return "\(drawn.first) \(drawn.last)"
+    }()
     /// Which league the career is built from. `.generated` keeps the classic
     /// random path, so an untouched flow behaves exactly as before.
     @State private var leagueSource: LeagueSource = .generated
@@ -53,17 +61,24 @@ struct NewCareerView: View {
     @State private var showSetupExplainer = false
 
     @State private var viewWidth: CGFloat = 0
+    @State private var viewHeight: CGFloat = 0
 
-    /// iPad always reports .regular for both size classes, so use actual width
-    private var isLandscape: Bool { viewWidth > 900 }
+    /// iPad always reports .regular for both size classes, so orientation has to
+    /// be measured. It used to be `viewWidth > 900`, which a 13-inch iPad
+    /// satisfies in PORTRAIT (1032 pt) — the two-column branch then ran on a
+    /// tall screen and left 40-45 % of it empty. Compare the two axes instead.
+    private var isLandscape: Bool { viewWidth > viewHeight }
 
     private var isNameValid: Bool {
         playerName.trimmingCharacters(in: .whitespaces).count >= 2
     }
 
-    /// Quick Start collapses to a single step; Custom League runs the full
-    /// three-step flow (Career → Game Mode → Identity).
-    private var totalSteps: Int { flowMode == .quickStart ? 1 : 3 }
+    /// Quick Start collapses to a single step on this screen; Custom League runs
+    /// the full three (Career → Game Mode → Identity). Both counts include the
+    /// team pick that follows, because it is a mandatory screen and a bar that
+    /// reads "Step 1 of 1", filled edge to edge, over a button that pushes a
+    /// whole further step is simply not true.
+    private var totalSteps: Int { flowMode == .quickStart ? 2 : 4 }
 
     /// Step titles for the indicator and the navigation bar.
     private func stepTitle(_ step: Int) -> String {
@@ -112,10 +127,11 @@ struct NewCareerView: View {
                 }
             }
         }
-        .onGeometryChange(for: CGFloat.self) { proxy in
-            proxy.size.width
-        } action: { newWidth in
-            viewWidth = newWidth
+        .onGeometryChange(for: CGSize.self) { proxy in
+            proxy.size
+        } action: { newSize in
+            viewWidth = newSize.width
+            viewHeight = newSize.height
         }
         .navigationTitle(stepTitle(currentStep))
         .navigationBarTitleDisplayMode(.large)
@@ -129,17 +145,12 @@ struct NewCareerView: View {
 
     private var stepIndicator: some View {
         VStack(spacing: 8) {
-            HStack(spacing: 8) {
-                Text("Step \(currentStep) of \(totalSteps)")
-                    .font(.callout.weight(.bold))
-                    .foregroundStyle(Color.textPrimary)
-
-                Spacer()
-
-                Text(stepTitle(currentStep))
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Color.textSecondary)
-            }
+            // The step's own title used to sit at the trailing end of this row.
+            // It is the large navigation title two rows above it, verbatim.
+            Text("Step \(currentStep) of \(totalSteps)")
+                .font(.callout.weight(.bold))
+                .foregroundStyle(Color.textPrimary)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             // Progress bar
             GeometryReader { geo in
@@ -148,10 +159,7 @@ struct NewCareerView: View {
                         .fill(Color.surfaceBorder)
                         .frame(height: 6)
 
-                    let progress: CGFloat = {
-                        if totalSteps == 1 { return 1.0 }
-                        return CGFloat(currentStep) / CGFloat(totalSteps)
-                    }()
+                    let progress = CGFloat(currentStep) / CGFloat(totalSteps)
 
                     RoundedRectangle(cornerRadius: 3)
                         .fill(Color.accentBlue)

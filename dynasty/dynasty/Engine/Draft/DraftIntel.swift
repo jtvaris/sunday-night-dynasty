@@ -218,6 +218,27 @@ enum DraftIntel {
     /// future expansion league does not silently re-tune every slide beat.
     static let picksPerRound = 32
 
+    /// How far past `round * picksPerRound` a round actually runs.
+    ///
+    /// Compensatory awards land at the END of rounds 3–7
+    /// (`CompensatoryPickEngine.round(forSalary:)`) and `applyAwards` renumbers
+    /// the whole pool 1…N, so a normal league year finishes somewhere between
+    /// #224 and #256 — the same measurement `DraftEngine`'s rookie slot curve
+    /// documents — and every round from the third onward ends LATER than flat
+    /// 32-a-round arithmetic says.
+    ///
+    /// Grading against the flat number turned that drift into value the club had
+    /// not earned. The deepest band ended at #224, so every pick from #237 on
+    /// cleared the +12 `PickGradeCalculator` reads as an unconditional A+ STEAL,
+    /// whoever was on the card: a whole rookie class of identical steal chips,
+    /// a seventh-round kicker graded the best pick in the draft.
+    ///
+    /// Only the LATE edge moves. Comp picks push a round later, never earlier,
+    /// so the early edge cannot lie in the club's favour — and widening rather
+    /// than shifting is the honest statement: outside the pick pool nobody knows
+    /// where round N really ends, only that it ends no sooner than 32 N.
+    static let compensatoryDriftPerRound = 6
+
     /// The window of pick numbers the media's published opinion covers.
     ///
     /// - a mock slot is a *point* opinion ("he goes 14th");
@@ -234,8 +255,10 @@ enum DraftIntel {
             return (mock, mock)
         }
         if let round = prospect.draftProjection, round > 0 {
-            let late = round * picksPerRound
-            return (late - picksPerRound + 1, late)
+            let flatLate = round * picksPerRound
+            // Rounds 1–2 carry no compensatory awards, so their bands are exact.
+            let drift = max(0, round - 2) * compensatoryDriftPerRound
+            return (flatLate - picksPerRound + 1, flatLate + drift)
         }
         if let rank = consensusRank ?? Self.consensusRank(for: prospect.id), rank > 0 {
             return (rank, rank)

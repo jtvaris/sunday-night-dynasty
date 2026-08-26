@@ -59,20 +59,25 @@ enum DraftCapital {
         return thisYear + future
     }
 
-    /// The bottom bar's one line: `R3 · #83 · 3624 pts`.
+    /// The bottom bar's one line: `R3 · #83 · 3624 pts of capital`.
     ///
     /// The next slot leads because it is the fact with a deadline; the total is
     /// last because it is the one you check rather than react to. A club with
     /// nothing left tonight still has future years to trade, so the line drops
     /// the slot and keeps the number rather than going blank.
+    ///
+    /// **The total is labelled**, because the trade bar prints `Keep #19 (R1) ·
+    /// 875 pts` at the other end of the same strip and that is the chart value
+    /// of that ONE slot. Unlabelled, the two strings both read as "#19 · N pts"
+    /// and the trade looks like handing over 3620 to get 921 back.
     static func chipText(_ coordinator: DraftDayCoordinator) -> String {
         let points = totalPoints(coordinator)
         guard let next = nextSlot(coordinator) else {
             return points > 0
-                ? "No cards left \u{00B7} \(points) pts"
+                ? "No cards left \u{00B7} \(points) pts of capital"
                 : "No cards left"
         }
-        return "R\(next.round) \u{00B7} #\(next.pickNumber) \u{00B7} \(points) pts"
+        return "R\(next.round) \u{00B7} #\(next.pickNumber) \u{00B7} \(points) pts of capital"
     }
 
     static func chipAccessibilityText(_ coordinator: DraftDayCoordinator) -> String {

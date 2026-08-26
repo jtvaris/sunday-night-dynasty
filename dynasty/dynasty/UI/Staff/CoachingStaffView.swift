@@ -229,6 +229,15 @@ struct CoachingStaffView: View {
         return stored.filter { $0.careerID == career.id && $0.teamID == teamID }
     }
 
+    /// The same read-back for coaches — the hire result needs the man himself,
+    /// not just his name and price, and `@Query` is not guaranteed to have seen
+    /// him when the hire view reports him.
+    private func coachesFromStore() -> [Coach] {
+        guard let teamID = career.teamID else { return [] }
+        let stored = (try? modelContext.fetch(FetchDescriptor<Coach>())) ?? []
+        return stored.filter { $0.careerID == career.id && $0.teamID == teamID }
+    }
+
     /// Players on this team's roster.
     private var rosterPlayers: [Player] {
         guard let teamID = career.teamID else { return [] }
@@ -364,6 +373,12 @@ struct CoachingStaffView: View {
     // Every staff section leads with the same 18pt disc so the hiring hierarchy
     // reads as one column. Numbered discs mark the 1-2-3 priority ladder; the
     // hollow variant marks a section that sits outside it (assistant HC).
+    //
+    // The discs are NEUTRAL. Gold has three jobs on this screen — identity (the
+    // club chip, the HC badge), money at risk, and "act here" (a vacant seat and
+    // its ⊕) — and "which section is this" is a fourth. Five gold discs down the
+    // page were the loudest thing on it while saying nothing the band at the top
+    // does not already say with the same numbers.
 
     enum StaffTierBadge {
         case tier(Int)
@@ -378,13 +393,13 @@ struct CoachingStaffView: View {
                 .font(.system(size: DSType.Size.micro, weight: .black))
                 .foregroundStyle(Color.backgroundPrimary)
                 .frame(width: 18, height: 18)
-                .background(Circle().fill(Color.accentGold))
+                .background(Circle().fill(Color.textSecondary))
         case .optional(let icon):
             Image(systemName: icon)
                 .font(.system(size: DSType.Size.micro, weight: .bold))
-                .foregroundStyle(Color.accentGold)
+                .foregroundStyle(Color.textSecondary)
                 .frame(width: 18, height: 18)
-                .background(Circle().strokeBorder(Color.accentGold.opacity(0.5), lineWidth: 1.5))
+                .background(Circle().strokeBorder(Color.textSecondary.opacity(0.5), lineWidth: 1.5))
         }
     }
 
@@ -658,7 +673,19 @@ struct CoachingStaffView: View {
             .reduce(0) { $0 + (allocations[$1.id] ?? 0) }
     }
 
-    /// "spends ~$31.0M of $38.4M coaching · ~$1.7M of $2.5M medical"
+    /// "Budgets ~$31.0M of $38.4M coaching · ~$1.7M of $2.5M medical"
+    ///
+    /// Deliberately not "spends". This is the plan the FIRST pass works to, and
+    /// the Task #106 retry re-offers what the wallet still holds to any seat the
+    /// plan could not buy — so the bill the pass ends on can land above these
+    /// figures. The line used to read "Spends ~$10.8M" and the pass then signed
+    /// $13.9M of coaches out of a $47.0M pot, i.e. the button lying about its
+    /// own arithmetic.
+    ///
+    /// The tail states the two things the number alone does not: the plan buys
+    /// at the going rate rather than the best man the pot could reach, and the
+    /// surplus is not banked — `WeekAdvancer.startNewSeason` recomputes the pot
+    /// from `BudgetEngine` every year rather than carrying the remainder.
     private var autoHireSpendSubtitle: String {
         var parts: [String] = []
         for (pot, name) in [(StaffPot.coaching, "coaching"), (.medical, "medical"), (.scouting, "scouting")] {
@@ -666,7 +693,9 @@ struct CoachingStaffView: View {
             guard projected > 0 else { continue }
             parts.append("~$\(formatBudget(projected))M of $\(formatBudget(total(pot)))M \(name)")
         }
-        return parts.isEmpty ? "" : "Spends " + parts.joined(separator: " · ")
+        guard !parts.isEmpty else { return "" }
+        return "Budgets " + parts.joined(separator: " · ")
+            + " — the going rate for each seat. A seat the market prices higher is topped up from what is left; unspent budget does not carry into next season."
     }
 
     // MARK: - Auto-Hire Execution
@@ -697,6 +726,10 @@ struct CoachingStaffView: View {
         /// will badge ✗ Conflict. Counted so the toast can say so — a hole is
         /// worse than a clash, but an unannounced clash is worse than both.
         var conflictHires = 0
+        /// Seats filled by a man the staff screen will badge ⚠ Tension. Counted
+        /// for the same reason: the result sheet said "clashes: none" over a
+        /// coordinator row wearing a warning triangle.
+        var tensionHires = 0
 
         // Jobs the planned allocation could not buy, kept in priority order
         // for the second pass below.
@@ -721,6 +754,13 @@ struct CoachingStaffView: View {
             else {
                 unfilled.append(vacancy)
                 continue
+            }
+            // Read BEFORE `hcPersonality` moves below: every man is judged
+            // against the head coach he will work for, and for the head coach's
+            // own seat that is nobody yet.
+            if !result.wasConflict, let hired = result.hired,
+               autoHireBand(hired, hcPersonality: hcPersonality) == .tension {
+                tensionHires += 1
             }
             if case .coach(.headCoach) = vacancy, let hired = result.hired {
                 hcPersonality = hired.personality
@@ -762,6 +802,10 @@ struct CoachingStaffView: View {
             guard let result = signBest(
                 for: vacancy, cap: cap, teamID: teamID, hcPersonality: hcPersonality
             ) else { continue }
+            if !result.wasConflict, let hired = result.hired,
+               autoHireBand(hired, hcPersonality: hcPersonality) == .tension {
+                tensionHires += 1
+            }
             if case .coach(.headCoach) = vacancy, let hired = result.hired {
                 hcPersonality = hired.personality
             }
@@ -789,7 +833,7 @@ struct CoachingStaffView: View {
         let stillOpen = plan.count - hires
         var message = hires == 0
             ? "Nothing in the market was affordable inside your budget."
-            : "The pass worked down the ladder, most decisive job first."
+            : "Filled the most important jobs first \u{2014} head coach, then coordinators, then the rest."
         if hires > 0 && stillOpen > 0 {
             message += " **\(stillOpen)** role\(stillOpen == 1 ? "" : "s") stayed open — no room in the budget."
         }
@@ -801,6 +845,18 @@ struct CoachingStaffView: View {
             message += " **\(conflictHires)** hire\(conflictHires == 1 ? "" : "s") clash with your head coach"
                 + " — nobody else was affordable for those chairs."
         }
+
+        // "Conflicts", not "Clashes": the number counts the ✗ band alone, and a
+        // sheet reading "Clashes 0 · none" sat directly above a coordinator row
+        // badged ⚠ Tension. The middle band gets its own words rather than
+        // being silently folded into a count that never included it.
+        let fitContext: String = {
+            let tension = tensionHires > 0 ? "\(tensionHires) tension" : nil
+            if conflictHires > 0 {
+                return tension.map { "with your HC \u{00B7} \($0)" } ?? "with your HC"
+            }
+            return tension ?? "none"
+        }()
 
         presentOutcome(StaffOutcome(
             tone: hires == 0 ? .bad : (stillOpen > 0 || conflictHires > 0 ? .neutral : .good),
@@ -815,7 +871,7 @@ struct CoachingStaffView: View {
                     id: "spent",
                     label: "Spent",
                     value: "$\(formatBudget(spent))M",
-                    context: "across three pots"
+                    context: "coaching + medical + scouting"
                 ),
                 .init(
                     id: "open",
@@ -826,9 +882,9 @@ struct CoachingStaffView: View {
                 ),
                 .init(
                     id: "clash",
-                    label: "Clashes",
+                    label: "Conflicts",
                     value: "\(conflictHires)",
-                    context: conflictHires > 0 ? "with your HC" : "none",
+                    context: fitContext,
                     valueColor: conflictHires > 0 ? .dangerText : .textPrimary
                 )
             ],
@@ -1069,29 +1125,39 @@ struct CoachingStaffView: View {
     // Shows total salary band for the group: hired coaches use actual salary,
     // vacant slots use role salary range.  As coaches are hired the range narrows.
 
-    /// Salary range helper: returns (min, max) in thousands for a set of roles.
-    private func sectionSalaryRange(roles: [CoachRole]) -> (min: Int, max: Int)? {
-        var totalMin = 0
-        var totalMax = 0
+    /// What a section's seats cost, in thousands: money already signed, and the
+    /// band the empty chairs are still to be paid.
+    ///
+    /// **Kept apart on purpose.** Added together and printed unlabelled, the
+    /// coordinators' header read "$8.0M–$17.1M  1/3" — the group total,
+    /// including the $6.6M coordinator already on the books — and beside "1/3"
+    /// that reads as the price of the two seats left. It also contradicted the
+    /// hiring rail's "~$3.7M" plan for exactly those two chairs by 2–4×.
+    private func sectionSalaryRange(roles: [CoachRole]) -> (signed: Int, min: Int, max: Int)? {
+        var signed = 0
+        var openMin = 0
+        var openMax = 0
         for role in roles {
             if let coach = coaches.first(where: { $0.role == role }) {
-                totalMin += coach.salary
-                totalMax += coach.salary
+                signed += coach.salary
             } else {
-                totalMin += role.salaryRange.min
-                totalMax += role.salaryRange.max
+                openMin += role.salaryRange.min
+                openMax += role.salaryRange.max
             }
         }
-        guard totalMax > 0 else { return nil }
-        return (totalMin, totalMax)
+        guard signed > 0 || openMax > 0 else { return nil }
+        return (signed, openMin, openMax)
     }
 
-    /// Format a salary range as a compact string.
-    private func formatSalaryRange(_ range: (min: Int, max: Int)) -> String {
-        if range.min == range.max {
-            return "$\(formatBudget(range.min))M"
-        }
-        return "$\(formatBudget(range.min))M–$\(formatBudget(range.max))M"
+    /// Format a section's cost as a compact string.
+    private func formatSalaryRange(_ range: (signed: Int, min: Int, max: Int)) -> String {
+        let signed = range.signed > 0 ? "$\(formatBudget(range.signed))M signed" : nil
+        let open: String? = {
+            guard range.max > 0 else { return nil }
+            if range.min == range.max { return "$\(formatBudget(range.min))M to fill" }
+            return "$\(formatBudget(range.min))M–$\(formatBudget(range.max))M to fill"
+        }()
+        return [signed, open].compactMap { $0 }.joined(separator: " \u{00B7} ")
     }
 
     /// Coordinator section salary range.
@@ -1115,26 +1181,22 @@ struct CoachingStaffView: View {
         return formatSalaryRange(range)
     }
 
-    /// Scouting section salary range.
+    /// Scouting section salary range. Signed money and the band still to fill,
+    /// kept apart for the reason `sectionSalaryRange` gives.
     private var scoutingCostRange: String? {
-        // Sum hired scout salaries + vacant scout role ranges
-        var totalMin = 0
-        var totalMax = 0
-        let allRoles = ScoutRole.allCases
-        for role in allRoles {
+        var signed = 0
+        var openMin = 0
+        var openMax = 0
+        for role in ScoutRole.allCases {
             if let scout = scouts.first(where: { $0.scoutRole == role }) {
-                totalMin += scout.salary
-                totalMax += scout.salary
+                signed += scout.salary
             } else {
-                totalMin += estimatedMinimumScoutSalary(for: role)
-                totalMax += (role == .chiefScout ? 600 : 250)
+                openMin += estimatedMinimumScoutSalary(for: role)
+                openMax += (role == .chiefScout ? 600 : 250)
             }
         }
-        guard totalMax > 0 else { return nil }
-        if totalMin == totalMax {
-            return "$\(formatBudget(totalMin))M"
-        }
-        return "$\(formatBudget(totalMin))M–$\(formatBudget(totalMax))M"
+        guard signed > 0 || openMax > 0 else { return nil }
+        return formatSalaryRange((signed: signed, min: openMin, max: openMax))
     }
 
     /// Description of what position group a position coach improves.
@@ -1184,40 +1246,55 @@ struct CoachingStaffView: View {
     }
 
     /// Hiring impact description for a coaching role (#51).
+    ///
+    /// These are the CEILING an elite hire reaches, not what the seat pays out
+    /// on average — the figure is per-role and knows nothing about who is
+    /// actually on the market. Phrased "up to" because the vacancy row read a
+    /// flat "+12% offensive efficiency" while the best OC in that very pool
+    /// projected -0.1% on his own profile one tap later.
     private func hiringImpactDescription(for role: CoachRole) -> String? {
         switch role {
-        case .offensiveCoordinator:    return "+12% offensive efficiency"
-        case .defensiveCoordinator:    return "+12% defensive efficiency"
-        case .specialTeamsCoordinator: return "+8% special teams performance"
-        case .qbCoach:                 return "+10% QB development speed"
-        case .rbCoach:                 return "+10% RB development speed"
-        case .wrCoach:                 return "+10% WR development speed"
-        case .olCoach:                 return "+10% OL development speed"
-        case .dlCoach:                 return "+10% DL development speed"
-        case .lbCoach:                 return "+10% LB development speed"
-        case .dbCoach:                 return "+10% DB development speed"
-        case .strengthCoach:           return "-15% injury risk across roster"
-        case .teamDoctor:              return "-30% injury severity"
-        case .physio:                  return "+25% recovery speed"
+        case .offensiveCoordinator:    return "Up to +12% offensive efficiency"
+        case .defensiveCoordinator:    return "Up to +12% defensive efficiency"
+        case .specialTeamsCoordinator: return "Up to +8% special teams performance"
+        case .qbCoach:                 return "Up to +10% QB development speed"
+        case .rbCoach:                 return "Up to +10% RB development speed"
+        case .wrCoach:                 return "Up to +10% WR development speed"
+        case .olCoach:                 return "Up to +10% OL development speed"
+        case .dlCoach:                 return "Up to +10% DL development speed"
+        case .lbCoach:                 return "Up to +10% LB development speed"
+        case .dbCoach:                 return "Up to +10% DB development speed"
+        case .strengthCoach:           return "Up to -15% injury risk across roster"
+        case .teamDoctor:              return "Up to -30% injury severity"
+        case .physio:                  return "Up to +25% recovery speed"
         case .headTrainer:             return "Fewer rehab setbacks, lower re-injury risk"
-        case .assistantHeadCoach:      return "+5% staff chemistry bonus"
-        case .headCoach:               return "+15% overall team performance"
+        case .assistantHeadCoach:      return "Up to +5% staff chemistry bonus"
+        case .headCoach:               return "Up to +15% overall team performance"
         }
     }
 
     /// Suggestion for what coordinators complement a given coaching style.
+    ///
+    /// Each line has to name the archetypes the fit table actually rewards —
+    /// `chemistryWithHC` maps the style to a personality and scores it through
+    /// `CoachingEngine.coachChemistry`, and the hire sheet draws its Strong /
+    /// Weak verdict off the same pairing. The tactician's line used to ask for
+    /// "creative" coordinators while both of those rate his strongest fits the
+    /// steady, quiet ones, and the motivator's asked for "detail-oriented"
+    /// coordinators — a quiet professional, which pairs with a fiery competitor
+    /// at −0.3. Two screens, opposite directions.
     private func coordinatorComplementNote(for style: CoachingStyle) -> String {
         switch style {
         case .tactician:
-            return "Pair with creative coordinators who can execute complex schemes"
+            return "Pair with steady, low-drama coordinators who will run your system exactly"
         case .playersCoach:
             return "Pair with disciplined coordinators to balance player freedom"
         case .disciplinarian:
-            return "Pair with adaptable coordinators who thrive in structured systems"
+            return "Pair with dependable coordinators who thrive in structured systems"
         case .innovator:
-            return "Pair with experienced coordinators who can ground bold ideas"
+            return "Pair with instinctive coordinators who can improvise on your ideas"
         case .motivator:
-            return "Pair with detail-oriented coordinators to complement big-picture leadership"
+            return "Pair with vocal team leaders who carry your energy into the room"
         }
     }
 
@@ -1367,6 +1444,14 @@ struct CoachingStaffView: View {
                         for: .navigationBar
                     )
                 }
+                // #157's rule, applied to the list as well as the detail: on
+                // iPad the default form sheet is ~580 pt wide, and the hire
+                // table below it lays out at `minWidth: 780`, so Salary — the
+                // column the budget header is gating on — sat off the right
+                // edge and the filter chip rendered as "Perso…". Page sizing is
+                // also what stops the list and the full-screen candidate
+                // profile one tap deeper from being two different sizes.
+                .presentationSizing(.page)
             }
         }
         // Lock-in alerts moved to Dashboard workflow (CoachingStaffReviewSheet)
@@ -1387,7 +1472,13 @@ struct CoachingStaffView: View {
                 teamWins: team?.wins ?? 8,
                 teamReputation: career.reputation,
                 onHired: { name, roleName, salary in
-                    showHireResult(name: name, roleName: roleName, salary: salary, pot: .coaching)
+                    showHireResult(
+                        name: name,
+                        roleName: roleName,
+                        salary: salary,
+                        pot: .coaching,
+                        coach: coachesFromStore().first { $0.role == role }
+                    )
                 }
             )
         case .scout(let role):
@@ -1831,12 +1922,22 @@ struct CoachingStaffView: View {
                 } header: {
                     staffTierHeader(badge: .tier(1), title: "Head Coach")
                 }
+                // The gold ring is this screen's "act here" mark, so the seat
+                // keeps it only while the seat is open. Filled — and a GM who
+                // coaches the team himself has it filled before the screen ever
+                // opens — it made the one row the player cannot act on the
+                // largest, brightest object on a page about 23 empty chairs.
                 .listRowBackground(
                     RoundedRectangle(cornerRadius: 8)
                         .fill(Color.backgroundSecondary)
                         .overlay(
                             RoundedRectangle(cornerRadius: 8)
-                                .strokeBorder(Color.accentGold.opacity(0.4), lineWidth: 1.5)
+                                .strokeBorder(
+                                    filledSeats(in: .headCoach) > 0
+                                        ? Color.clear
+                                        : Color.accentGold.opacity(0.4),
+                                    lineWidth: 1.5
+                                )
                         )
                         .padding(2)
                 )
@@ -1846,14 +1947,23 @@ struct CoachingStaffView: View {
                     if let ahc = assistantHeadCoach {
                         coachRowWithChemistry(coach: ahc)
                     } else {
-                        vacantRow(role: .assistantHeadCoach)
+                        vacantRow(role: .assistantHeadCoach, showsRoleName: false)
                     }
                 } header: {
                     // Hollow badge, same 18pt disc as the numbered tiers: the
                     // assistant sits outside the 1-2-3 hiring ladder, but a bare
                     // inline icon made this header the odd one out in a column
                     // of otherwise identical section heads.
-                    staffTierHeader(badge: .optional(icon: "person.2.fill"), title: "Assistant Head Coach")
+                    //
+                    // "Optional" is the word the hollow disc was trying to say on
+                    // its own: this is the only section with no step number, and
+                    // between step 1 and step 2 a missing rung reads as a bug.
+                    HStack(spacing: 6) {
+                        staffTierHeader(badge: .optional(icon: "person.2.fill"), title: "Assistant Head Coach")
+                        Text("Optional")
+                            .font(.system(size: DSType.Size.micro, weight: .semibold))
+                            .foregroundStyle(Color.textTertiary)
+                    }
                 }
                 .listRowBackground(Color.backgroundSecondary)
 
@@ -2751,15 +2861,17 @@ struct CoachingStaffView: View {
                             .foregroundStyle(Color.textPrimary)
                     }
 
-                    HStack {
-                        Spacer()
-                        Text(budgetContext.label)
-                            .font(.system(size: DSType.Size.micro, weight: .semibold))
-                            .foregroundStyle(budgetContext.color)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(budgetContext.color.opacity(0.15), in: Capsule())
-                            .overlay(Capsule().strokeBorder(budgetContext.color.opacity(0.4), lineWidth: 1))
+                    if let context = budgetContext {
+                        HStack {
+                            Spacer()
+                            Text(context.label)
+                                .font(.system(size: DSType.Size.micro, weight: .semibold))
+                                .foregroundStyle(context.color)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(context.color.opacity(0.15), in: Capsule())
+                                .overlay(Capsule().strokeBorder(context.color.opacity(0.4), lineWidth: 1))
+                        }
                     }
 
                     HStack {
@@ -3314,7 +3426,9 @@ struct CoachingStaffView: View {
               let index = StaffTier.allCases.firstIndex(of: current) else {
             return "Staff complete"
         }
-        return "Hiring \u{2014} tier \(index + 1) of \(StaffTier.allCases.count)"
+        // "Step", not "tier": a tier is a word from the design doc, and the
+        // band is telling a football fan how far through the hiring he is.
+        return "Hiring \u{2014} step \(index + 1) of \(StaffTier.allCases.count)"
     }
 
     private func hiringSlat(
@@ -3335,10 +3449,19 @@ struct CoachingStaffView: View {
         }
 
         let planned = open.reduce(0) { $0 + (allocations[$1.id] ?? 0) }
+        // Jobs and money on EVERY unfinished rung, not only the one the club
+        // stands on: a GM splitting $40M across the staff could not see that
+        // eight position coaches, three medical and five scouting seats were
+        // still to be funded without tapping each rung in turn.
+        //
+        // The money is NAMED, too. It is the auto-hire plan — the going rate for
+        // each seat — and not a market quote, which is how a rung could read
+        // "~$6.1M" for three coordinators above a list whose first OC asked
+        // $6.6M for one of them.
         let subcaption: String? = {
-            guard state == .current else { return nil }
+            guard !open.isEmpty else { return nil }
             let jobs = "\(open.count) open"
-            return planned > 0 ? "\(jobs) \u{00B7} ~$\(formatBudget(planned))M" : jobs
+            return planned > 0 ? "\(jobs) \u{00B7} plan ~$\(formatBudget(planned))M" : jobs
         }()
         let outcome: String? = {
             guard state == .done else { return nil }
@@ -3358,7 +3481,7 @@ struct CoachingStaffView: View {
             isAvailable: state == .future,
             outcome: outcome,
             accessibilityText: [
-                "Hiring tier \(position) of \(StaffTier.allCases.count)",
+                "Hiring step \(position) of \(StaffTier.allCases.count)",
                 tier.spokenTitle,
                 open.isEmpty
                     ? "filled"
@@ -3453,7 +3576,10 @@ struct CoachingStaffView: View {
                         .foregroundStyle(Color.textPrimary)
                     Text(isAutoHiring
                          ? (autoHireStatus ?? "Working through the vacancies…")
-                         : "Fills all \(orderedVacancies.count) vacant roles with the best affordable candidate who fits your staff.")
+                         // Not "the best affordable candidate": every offer is
+                         // capped at that seat's slice of the plan, so a fat pot
+                         // buys the going rate, not the best man it could reach.
+                         : "Fills all \(orderedVacancies.count) vacant roles with the best candidate each seat's slice of the budget can sign, weighing fit with your staff.")
                         .font(.caption)
                         .foregroundStyle(Color.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -3510,12 +3636,16 @@ struct CoachingStaffView: View {
     /// - Parameter book: the staff reading the chips are composed from. Defaults
     ///   to this screen's `ledger`; the scout path passes a freshly fetched one
     ///   because its callback fires before `@Query` has seen the hire.
+    /// - Parameter coach: the man just signed, where the caller can name him.
+    ///   Carries the one thing the sheet had nothing to say about — how good he
+    ///   is (see the chip below).
     private func showHireResult(
         name: String,
         roleName: String,
         salary: Int,
         pot: StaffPot,
-        book: StaffLedger? = nil
+        book: StaffLedger? = nil,
+        coach: Coach? = nil
     ) {
         let book = book ?? ledger
         // Keep every section open so the newly filled row is visible behind the
@@ -3527,6 +3657,40 @@ struct CoachingStaffView: View {
 
         let left = remaining(pot, in: book)
         let stillOpen = orderedVacancies(in: book).count
+        var chips: [DSResultSheet.Chip] = [
+            .init(id: "role", label: "Role", value: roleName),
+            .init(id: "salary", label: "Salary", value: coachSalaryText(salary)),
+            .init(
+                id: "left",
+                label: "\(potName(pot)) left",
+                value: "$\(formatBudget(max(0, left)))M",
+                context: left < 0 ? "over budget" : "this season",
+                valueColor: left < 0 ? .dangerText : .textPrimary
+            )
+        ]
+        // The sheet confirming a $6.6M/yr coordinator used to print his role,
+        // his price and the money left, and not one number about how good he
+        // is — while the row it uncovered rendered the same man as a red 56.
+        // Same attribute, same ladder and the same fit band as that row, so the
+        // celebration and the staff list cannot say different things.
+        if let coach {
+            let key: (name: String, value: Int) = {
+                switch coach.role {
+                case .headCoach, .assistantHeadCoach,
+                     .offensiveCoordinator, .defensiveCoordinator, .specialTeamsCoordinator:
+                    return ("Play Calling", coach.playCalling)
+                default:
+                    return ("Development", coach.playerDevelopment)
+                }
+            }()
+            chips.append(.init(
+                id: "grade",
+                label: key.name,
+                value: "\(key.value)",
+                context: chemistryWithHC(coach: coach).map { CoachingEngine.chemistryLabel(score: $0) },
+                valueColor: Color.forRating(key.value)
+            ))
+        }
         sheetOutcome = StaffOutcome(
             tone: .good,
             eyebrow: "Staff hiring",
@@ -3534,17 +3698,7 @@ struct CoachingStaffView: View {
             message: stillOpen == 0
                 ? "Every chair on your staff is filled."
                 : "**\(stillOpen)** job\(stillOpen == 1 ? "" : "s") still open on the staff.",
-            chips: [
-                .init(id: "role", label: "Role", value: roleName),
-                .init(id: "salary", label: "Salary", value: coachSalaryText(salary)),
-                .init(
-                    id: "left",
-                    label: "\(potName(pot)) left",
-                    value: "$\(formatBudget(max(0, left)))M",
-                    context: left < 0 ? "over budget" : "this season",
-                    valueColor: left < 0 ? .dangerText : .textPrimary
-                )
-            ],
+            chips: chips,
             cost: "Charges **\(coachSalaryText(salary))** against your \(potName(pot).lowercased()) budget "
                 + "for \(pot == .scouting ? "as long as he is on staff" : "the length of his deal")."
         )
@@ -3575,23 +3729,34 @@ struct CoachingStaffView: View {
         return delta == 0 ? nil : delta
     }
 
-    /// League-average coaching budget in thousands. Used for context indicator.
-    /// Hardcoded to $35M for now — see `LeagueGenerator.swift` (default 35) and `LeagueTeamData.swift`.
-    private static let leagueAverageCoachingBudget: Int = 35_000
+    /// Every club's coaching budget this season, in thousands.
+    private var leagueCoachingBudgets: [Int] {
+        allTeams.compactMap { $0.owner?.coachingBudget }.filter { $0 > 0 }
+    }
 
     /// Context for the team's coaching budget vs the league average.
-    private var budgetContext: (label: String, color: Color) {
-        let avg = Self.leagueAverageCoachingBudget
+    ///
+    /// **Measured, not authored.** The average used to be a `35_000` literal,
+    /// and `BudgetEngine` recomputes all 32 pots every season — the authored
+    /// rows alone already mean $42.2M, so the chip badged five clubs at or
+    /// below the real mean "above league avg" and printed a figure $7M short.
+    /// It also says "Budget": it sits under the "Used $X of $Y" line and was
+    /// read as a verdict on the money spent rather than on the envelope.
+    private var budgetContext: (label: String, color: Color)? {
+        let budgets = leagueCoachingBudgets
+        guard budgets.count > 1 else { return nil }
+        let avg = budgets.reduce(0, +) / budgets.count
         let lowerThreshold = Int(Double(avg) * 0.9)   // within 10% = league avg
         let upperThreshold = Int(Double(avg) * 1.1)
-        let avgM = avg / 1_000
+        let rank = budgets.filter { $0 > coachingBudget }.count + 1
+        let place = "($\(formatBudget(avg))M) \u{00B7} #\(rank) of \(budgets.count)"
 
         if coachingBudget < lowerThreshold {
-            return ("Below league avg (~$\(avgM)M)", Color.warning)
+            return ("Budget below league avg \(place)", Color.warning)
         } else if coachingBudget > upperThreshold {
-            return ("Above league avg (~$\(avgM)M)", Color.success)
+            return ("Budget above league avg \(place)", Color.success)
         } else {
-            return ("League avg (~$\(avgM)M)", Color.textTertiary)
+            return ("Budget at league avg \(place)", Color.textTertiary)
         }
     }
 
@@ -3638,13 +3803,15 @@ struct CoachingStaffView: View {
                     }
 
                     // League-average context indicator
-                    Text(budgetContext.label)
-                        .font(.system(size: DSType.Size.micro, weight: .semibold))
-                        .foregroundStyle(budgetContext.color)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(budgetContext.color.opacity(0.15), in: Capsule())
-                        .overlay(Capsule().strokeBorder(budgetContext.color.opacity(0.4), lineWidth: 1))
+                    if let context = budgetContext {
+                        Text(context.label)
+                            .font(.system(size: DSType.Size.micro, weight: .semibold))
+                            .foregroundStyle(context.color)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(context.color.opacity(0.15), in: Capsule())
+                            .overlay(Capsule().strokeBorder(context.color.opacity(0.4), lineWidth: 1))
+                    }
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 2) {
@@ -3804,12 +3971,20 @@ struct CoachingStaffView: View {
                 .font(.caption)
                 .foregroundStyle(Color.textTertiary)
 
-            // Fix #36: Coaching style bonus for player-as-HC
+            // Fix #36: Coaching style bonus for player-as-HC.
+            //
+            // Named as a RATING and given the same glyph the vacancy rows use for
+            // their "Up to +12% offensive efficiency" line. A bare "+10 Play-Calling"
+            // sat two rows above those percentages with no unit at all, inviting a
+            // comparison it could not settle; play-calling is a 0-100 coach rating,
+            // and saying so is the smallest thing that puts the two on speaking terms.
             HStack(spacing: 4) {
-                Text("+\(career.coachingStyle.bonusValue) \(career.coachingStyle.bonusAttribute)")
+                Image(systemName: "chart.line.uptrend.xyaxis")
+                    .font(.system(size: DSType.Size.micro))
+                Text("+\(career.coachingStyle.bonusValue) \(career.coachingStyle.bonusAttribute) rating")
                     .font(.system(size: DSType.Size.caption, weight: .semibold))
-                    .foregroundStyle(Color.success)
             }
+            .foregroundStyle(Color.success)
 
             HStack(spacing: 4) {
                 Image(systemName: "lightbulb.fill")
@@ -4092,44 +4267,45 @@ struct CoachingStaffView: View {
 
     // MARK: - Vacant row
 
+    /// `showsRoleName` is false in a section that holds this one seat and is
+    /// already titled with its name — the assistant head coach's, where the row
+    /// printed "Assistant Head Coach" directly under the header saying the same
+    /// thing. There the invitation leads instead.
     @ViewBuilder
-    private func vacantRow(role: CoachRole) -> some View {
+    private func vacantRow(role: CoachRole, showsRoleName: Bool = true) -> some View {
         Button {
             activeHireSheet = .coach(role)
         } label: {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 6) {
-                            Text(role.displayName)
-                                .font(.subheadline.weight(.medium))
-                                .foregroundStyle(Color.textTertiary)
+                        if showsRoleName {
+                            HStack(spacing: 6) {
+                                Text(role.displayName)
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(Color.textTertiary)
 
-                            // Fix #32: Hiring priority indicator
-                            switch hiringPriority(for: role) {
-                            case .high:
-                                Text("High Priority")
-                                    .font(.system(size: DSType.Size.caption, weight: .bold))
-                                    .foregroundStyle(.white)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(Color.danger, in: Capsule())
-                            case .recommended:
-                                Text("Recommended")
-                                    .font(.system(size: DSType.Size.caption, weight: .semibold))
-                                    .foregroundStyle(Color.warning)
-                            case .normal:
-                                EmptyView()
+                                // Fix #32: Hiring priority indicator
+                                switch hiringPriority(for: role) {
+                                case .high:
+                                    Text("High Priority")
+                                        .font(.system(size: DSType.Size.caption, weight: .bold))
+                                        .foregroundStyle(.white)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(Color.danger, in: Capsule())
+                                case .recommended:
+                                    Text("Recommended")
+                                        .font(.system(size: DSType.Size.caption, weight: .semibold))
+                                        .foregroundStyle(Color.warning)
+                                case .normal:
+                                    EmptyView()
+                                }
                             }
                         }
 
                         Text("Vacant \u{2014} Tap to hire")
-                            .font(.caption)
+                            .font(showsRoleName ? Font.caption : Font.subheadline.weight(.medium))
                             .foregroundStyle(Color.accentGold)
-
-                        // Fix #35: Estimated salary range
-                        Text(estimatedSalaryRange(for: role))
-                            .font(.system(size: DSType.Size.micro))
-                            .foregroundStyle(Color.textTertiary)
 
                         // Fix #32: Position group boost description
                         if let boost = positionGroupBoost(for: role) {
@@ -4150,6 +4326,15 @@ struct CoachingStaffView: View {
                         }
                     }
                     Spacer()
+                    // Fix #35's going rate, moved to the trailing edge — where a
+                    // filled row prints its number. On a portrait iPad the row
+                    // runs to ~1440 pt and everything it said sat inside the
+                    // first 280, with a lone ⊕ on the far edge; with 23 seats to
+                    // fill that is the screen's dominant shape, and the money is
+                    // the one thing a GM triages 23 seats on.
+                    Text(estimatedSalaryRange(for: role))
+                        .font(.system(size: DSType.Size.micro))
+                        .foregroundStyle(Color.textTertiary)
                     Image(systemName: "plus.circle")
                         .foregroundStyle(Color.accentGold)
                 }
@@ -4508,12 +4693,22 @@ private struct CoachRowWithDescriptionView: View {
                     .monospacedDigit()
                     .foregroundStyle(Color.textSecondary)
 
-                    // Mini star rating + primary strength
+                    // Mini star rating + primary strength.
+                    //
+                    // The stars are CAPTIONED because they are the twelve-
+                    // attribute mean and the big number on the trailing edge is
+                    // one attribute: unlabelled and side by side, "★★★★☆ Game
+                    // Planning" reads as a rating OF game planning, next to a
+                    // red 56 saying the opposite. The two ladders disagree as
+                    // well — `starString` calls 41–60 three stars where
+                    // `Color.forRating` calls anything under 60 poor — so a
+                    // four-star coach legitimately shows a red number, and the
+                    // words have to say why.
                     HStack(spacing: 6) {
                         Text(CoachingEngine.starString(for: averageAttribute))
                             .font(.system(size: DSType.Size.micro))
                             .foregroundStyle(Color.accentGold)
-                        Text(primaryStrength)
+                        Text("overall \u{00B7} best: \(primaryStrength)")
                             .font(.system(size: DSType.Size.micro, weight: .medium))
                             .foregroundStyle(Color.textTertiary)
                     }

@@ -29,10 +29,16 @@ enum OwnerPersonaEngine {
             return .patientBuilder
         }
 
+        /// `.patientBuilder` is the fallback bucket, not a patience reading:
+        /// a win-now owner with a mid-range wallet (spending 36–54) lands in it
+        /// too, and calling him "Patient Builder" put that badge directly above
+        /// his own "Win Now" philosophy and a 4/10 patience score. The label
+        /// says what the whole bucket has in common — no extreme in any
+        /// direction — and leaves patience to the card that measures it.
         var displayName: String {
             switch self {
             case .winNowTycoon:  return "Win-Now Tycoon"
-            case .patientBuilder: return "Patient Builder"
+            case .patientBuilder: return "Steady Hand"
             case .pennyPincher:  return "Penny Pincher"
             case .meddler:       return "Meddler"
             }

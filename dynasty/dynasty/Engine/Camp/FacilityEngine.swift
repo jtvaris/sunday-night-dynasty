@@ -447,8 +447,17 @@ enum FacilityEngine {
         let best = Track.allCases.max { levels[$0] < levels[$1] } ?? .training
 
         if levels == .standard {
-            return "The buildings are league standard across the board — \(money). "
+            let line = "The buildings are league standard across the board — \(money). "
                 + "That's what everybody else has, so it buys us nothing and costs us nothing."
+            // Tier 2 is neutral by design, so the null sentence is the only true
+            // thing to say about the buildings — and on its own it reads as "this
+            // system does nothing". The headroom is the affordance: at
+            // all-standard the envelope often already covers one track going
+            // state-of-the-art, which is the whole decision.
+            if budget - spend >= annualCost(tier: maxTier) - annualCost(tier: 2) {
+                return line + " There's room in the envelope for one of them to go state-of-the-art — tell me when you want it."
+            }
+            return line
         }
         if levels[worst] == minTier {
             return "I'm putting \(money) into the buildings and the \(worst.displayName.lowercased()) is still dated. "

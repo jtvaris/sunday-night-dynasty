@@ -742,7 +742,7 @@ enum WeekAdvancer {
                 + "\(violation.ceiling)-man limit. Release \(violation.excess) more: the roster "
                 + "must be at \(violation.ceiling) \(violation.rung.dueWhen), and the league "
                 + "will not certify a club over the limit.",
-            date: "\(violation.rung.duePhase.displayName), Season \(season)",
+            date: InboxEngine.dateLabel(week: 0, season: season, phase: violation.rung.duePhase),
             category: .leagueNotice,
             actionRequired: true,
             actionDestination: .rosterCuts
@@ -1196,6 +1196,7 @@ enum WeekAdvancer {
         emitGroupTransitionMessageIfNeeded(
             oldPhase: previousPhase,
             newPhase: .regularSeason,
+            week: career.currentWeek,
             season: career.currentSeason
         )
 
@@ -2929,23 +2930,57 @@ enum WeekAdvancer {
             modelContext: modelContext
         )
 
-        // R32: user's playoff exit is worth a note (win news comes via the
-        // round staging below and the Championship phase).
+        // The user's own playoff result is worth a letter EITHER WAY. Only the
+        // exit note used to be written, so a run that won two rounds left the
+        // mailbox showing week 18 as its newest message through the whole
+        // postseason — the loudest weeks of the year, silent.
+        //
+        // The lookup is over every playoff game of the week rather than
+        // `unplayedGames`, because a game the user COACHED was already played
+        // before this method ran (#20) and never appears in that list.
         if let userTeamID = career.teamID,
-           let userGame = unplayedGames.first(where: {
+           let userGame = fetchAllPlayoffGames(
+               week: week,
+               seasonYear: career.currentSeason,
+               modelContext: modelContext
+           ).first(where: {
                $0.homeTeamID == userTeamID || $0.awayTeamID == userTeamID
            }),
-           let loser = userGame.loserID, loser == userTeamID,
            let winnerID = userGame.winnerID,
-           let opponent = teamsByID[winnerID] {
-            let roundName = week == 19 ? "Wild Card round" : (week == 20 ? "Divisional Round" : "Conference Championship")
-            lastInboxMessages.append(InboxMessage(
-                sender: .leagueOffice,
-                subject: "Season Over: Eliminated in the \(roundName)",
-                body: "The \(opponent.fullName) ended your playoff run \(max(userGame.homeScore ?? 0, userGame.awayScore ?? 0))-\(min(userGame.homeScore ?? 0, userGame.awayScore ?? 0)). Time to regroup — the offseason starts soon.",
-                date: "Week \(week), Season \(career.currentSeason)",
-                category: .leagueNotice
-            ))
+           let loserID = userGame.loserID {
+            let stamp = InboxEngine.dateLabel(
+                week: week,
+                season: career.currentSeason,
+                phase: .playoffs
+            )
+            let winningScore = max(userGame.homeScore ?? 0, userGame.awayScore ?? 0)
+            let losingScore = min(userGame.homeScore ?? 0, userGame.awayScore ?? 0)
+
+            if loserID == userTeamID, let opponent = teamsByID[winnerID] {
+                let roundName = week == 19 ? "Wild Card round" : (week == 20 ? "Divisional Round" : "Conference Championship")
+                lastInboxMessages.append(InboxMessage(
+                    sender: .leagueOffice,
+                    subject: "Season Over: Eliminated in the \(roundName)",
+                    body: "The \(opponent.fullName) ended your playoff run \(winningScore)-\(losingScore). Time to regroup — the offseason starts soon.",
+                    date: stamp,
+                    category: .leagueNotice
+                ))
+            } else if winnerID == userTeamID, let opponent = teamsByID[loserID] {
+                let roundName = week == 19 ? "Wild Card" : (week == 20 ? "Divisional Round" : "Conference Championship")
+                let nextUp: String
+                switch week {
+                case 19: nextUp = "The Divisional Round is next."
+                case 20: nextUp = "The Conference Championship is next."
+                default: nextUp = "You are conference champions. The Championship game is next."
+                }
+                lastInboxMessages.append(InboxMessage(
+                    sender: .leagueOffice,
+                    subject: "\(roundName) Won — You Advance",
+                    body: "You beat the \(opponent.fullName) \(winningScore)-\(losingScore) and your season continues. \(nextUp)",
+                    date: stamp,
+                    category: .leagueNotice
+                ))
+            }
         }
 
         if week >= 21 {
@@ -2959,6 +2994,7 @@ enum WeekAdvancer {
             emitGroupTransitionMessageIfNeeded(
                 oldPhase: oldPhase,
                 newPhase: .proBowl,
+                week: career.currentWeek,
                 season: career.currentSeason
             )
         } else {
@@ -3256,7 +3292,7 @@ enum WeekAdvancer {
                     sender: .leagueOffice,
                     subject: "All-Star Game Results",
                     body: "\(resultText) \(selectionsText)",
-                    date: "Offseason - All-Star Game, Season \(career.currentSeason)",
+                    date: InboxEngine.dateLabel(week: 0, season: career.currentSeason, phase: .proBowl),
                     category: .leagueNotice
                 )
                 lastInboxMessages.append(proBowlMessage)
@@ -3290,7 +3326,7 @@ enum WeekAdvancer {
                     sender: .media(outlet: "League Network"),
                     subject: "Hidden Gem: \(flashback.playerName)",
                     body: body,
-                    date: "Offseason - All-Star Game, Season \(career.currentSeason)",
+                    date: InboxEngine.dateLabel(week: 0, season: career.currentSeason, phase: .proBowl),
                     category: .scoutingReport
                 )
                 lastInboxMessages.append(gemMessage)
@@ -3402,7 +3438,7 @@ enum WeekAdvancer {
                                 + "\(tenure) season\(tenure == 1 ? "" : "s") on your staff. "
                                 + "The \(coach.role.rawValue) job is now vacant — fill it "
                                 + "before the season starts or the position goes uncoached.",
-                            date: "Offseason - Coaching Changes, Season \(career.currentSeason)",
+                            date: InboxEngine.dateLabel(week: 0, season: career.currentSeason, phase: .coachingChanges),
                             category: .staffUpdate
                         ))
                     }
@@ -3467,7 +3503,7 @@ enum WeekAdvancer {
                             + "\(coach.contractYearsRemaining) years on it at $"
                             + "\(coach.salary / 1000)M a season. If you want him gone before that "
                             + "runs out, the severance comes out of your coaching budget.",
-                        date: "Offseason - Coaching Changes, Season \(career.currentSeason)",
+                        date: InboxEngine.dateLabel(week: 0, season: career.currentSeason, phase: .coachingChanges),
                         category: .staffUpdate
                     ))
                 }
@@ -3493,7 +3529,7 @@ enum WeekAdvancer {
                             sender: .leagueOffice,
                             subject: "\(coach.fullName) Announces Retirement",
                             body: "\(coach.fullName), your \(coach.role.rawValue), has announced their retirement after \(coach.yearsExperience) seasons in coaching. Their position is now vacant.",
-                            date: "Offseason - Coaching Changes, Season \(career.currentSeason)",
+                            date: InboxEngine.dateLabel(week: 0, season: career.currentSeason, phase: .coachingChanges),
                             category: .staffUpdate
                         )
                         newMessages.append(message)
@@ -3552,7 +3588,7 @@ enum WeekAdvancer {
                     sender: .leagueOffice,
                     subject: "Interview Request: \(request.coachName)",
                     body: "The \(request.requestingTeamName) have requested permission to interview your \(request.coachRole.displayName.lowercased()) \(request.coachName) for their head coach vacancy. Your team's success has made your staff hot names around the league.\n\nGo to your Coaching Staff screen to allow or block the interview. If you allow it and \(request.coachName) is hired, they join your coaching tree — and you will receive a compensatory 3rd round draft pick.",
-                    date: "Offseason - Coaching Changes, Season \(career.currentSeason)",
+                    date: InboxEngine.dateLabel(week: 0, season: career.currentSeason, phase: .coachingChanges),
                     category: .staffUpdate,
                     actionRequired: true,
                     actionDestination: .coachingStaff
@@ -3791,7 +3827,7 @@ enum WeekAdvancer {
                     sender: .leagueOffice,
                     subject: "Interview Window Closed: \(request.coachName)",
                     body: "The \(request.requestingTeamName) have withdrawn their interview request for \(request.coachName) and filled their head coach vacancy elsewhere. \(request.coachName) remains on your staff.",
-                    date: "Offseason - Combine, Season \(career.currentSeason)",
+                    date: InboxEngine.dateLabel(week: 0, season: career.currentSeason, phase: .combine),
                     category: .staffUpdate
                 ))
                 career.pendingInterviewRequest = nil
@@ -4042,7 +4078,7 @@ enum WeekAdvancer {
                         sender: .scout(name: "Scouting Department"),
                         subject: "Undrafted Market Closed",
                         body: "\(settlement.leagueSigningCount) undrafted players signed across the league. \(yours)",
-                        date: "Offseason - OTAs, Season \(career.currentSeason)",
+                        date: InboxEngine.dateLabel(week: 0, season: career.currentSeason, phase: .otas),
                         category: .staffUpdate
                     ))
                 }
@@ -4084,7 +4120,7 @@ enum WeekAdvancer {
                         + "report with the veterans. Camp contracts are one-year minimum deals "
                         + "that do not count against the cap while they are carried, and the "
                         + "roster must be down to \(CutDay.cut90To75.target) when camp breaks.",
-                    date: "Offseason - OTAs, Season \(career.currentSeason)",
+                    date: InboxEngine.dateLabel(week: 0, season: career.currentSeason, phase: .otas),
                     category: .leagueNotice
                 ))
             }
@@ -4252,10 +4288,16 @@ enum WeekAdvancer {
             )
 
         case .rosterCuts:
-            // Camp Phase 1 hook-up: compute final camp grade for every player on the
-            // user's team before they decide who to cut. AI teams skip the per-player
-            // grade since the UI never surfaces them.
-            applyCampGrades(career: career, modelContext: modelContext, allPlayers: allPlayers)
+            // The camp grade is NOT computed here. This switch runs the current
+            // phase's logic on EXIT, so grading at `case .rosterCuts` produced a
+            // grade the user could only see after every cut was already made —
+            // and the grade the cut screen DID show was the previous season's.
+            // Measured on a live save: of 53 men, the 27 who had been on the
+            // club during the previous camp carried grades and the 26 who
+            // arrived since (the whole rookie class and every camp body — the
+            // bubble the cutdown is actually about) carried none. It runs in the
+            // `nextPhase == .rosterCuts` ENTRY hook below instead, the same move
+            // the pro-days block documents above.
 
             // Resolve any open position battles -- the camp is over.
             let openBattles = fetchOpenPositionBattles(seasonYear: career.currentSeason, modelContext: modelContext)
@@ -4316,7 +4358,7 @@ enum WeekAdvancer {
                         sender: .owner(name: owner.name),
                         subject: "Unaddressed Roster Demands",
                         body: "I'm disappointed you didn't address the following: \(demandList). This is going to affect my confidence in your leadership. (-\(totalPenalty) satisfaction)",
-                        date: "Season \(career.currentSeason)",
+                        date: InboxEngine.dateLabel(week: 0, season: career.currentSeason, phase: currentPhase),
                         category: .ownerDirective
                     )
                     lastInboxMessages.append(message)
@@ -4394,6 +4436,7 @@ enum WeekAdvancer {
             emitGroupTransitionMessageIfNeeded(
                 oldPhase: currentPhase,
                 newPhase: nextPhase,
+                week: career.currentWeek,
                 season: career.currentSeason
             )
         }
@@ -4671,6 +4714,15 @@ enum WeekAdvancer {
         // user is allowed to see them (`RookieFog`), so this arms the
         // once-per-season reveal `CareerShellView` presents and files the press
         // grade with the news feed and the mailbox.
+        // Camp Phase 1 hook-up: the final camp grade for every man on the user's
+        // club, computed on the way IN to the cutdown so it is on the screen the
+        // user cuts from. The preseason slate has been played by now, so the
+        // snap and performance terms have something to read. AI teams skip the
+        // per-player grade since the UI never surfaces them.
+        if nextPhase == .rosterCuts, currentPhase != .rosterCuts {
+            applyCampGrades(career: career, modelContext: modelContext, allPlayers: allPlayers)
+        }
+
         if nextPhase == .trainingCamp,
            currentPhase != .trainingCamp,
            let playerTeamID = career.teamID,
@@ -5466,7 +5518,7 @@ enum WeekAdvancer {
 
                     Compensatory picks slot in at the end of their round.
                     """,
-                    date: "Offseason - Free Agency, Season \(career.currentSeason)",
+                    date: InboxEngine.dateLabel(week: 0, season: career.currentSeason, phase: .freeAgency),
                     category: .leagueNotice
                 ))
             }
@@ -5499,6 +5551,7 @@ enum WeekAdvancer {
     private static func emitGroupTransitionMessageIfNeeded(
         oldPhase: SeasonPhase,
         newPhase: SeasonPhase,
+        week: Int,
         season: Int
     ) {
         guard oldPhase.group != newPhase.group else { return }
@@ -5529,7 +5582,7 @@ enum WeekAdvancer {
             sender: .leagueOffice,
             subject: title,
             body: body,
-            date: "Season \(season) — \(group.displayName)",
+            date: InboxEngine.dateLabel(week: week, season: season, phase: newPhase),
             category: .leagueNotice
         )
         lastInboxMessages.append(msg)
@@ -6367,7 +6420,7 @@ enum WeekAdvancer {
                 sender: .leagueOffice,
                 subject: "WORLD CHAMPIONS",
                 body: "Your team has won the Championship. The city is planning the parade — enjoy this one, coach. It goes on your legacy forever.",
-                date: "The Championship, Season \(season)",
+                date: InboxEngine.dateLabel(week: 0, season: season, phase: .superBowl),
                 category: .leagueNotice
             ))
         }
@@ -6610,7 +6663,7 @@ enum WeekAdvancer {
                         sender: .leagueOffice,
                         subject: "\(player.fullName) Announces Retirement",
                         body: "\(player.fullName) (\(player.position.rawValue), age \(player.age)) is hanging up his cleats after \(max(1, player.yearsPro)) pro seasons. He asked that the organization — and you personally — be thanked for the way his final chapter was handled. The locker room will feel his absence.\(production)\(retirement.isHallOfFamer ? "\n\nExpect the call: he retires as a Hall of Famer." : "")",
-                        date: "Offseason - Coaching Changes, Season \(season)",
+                        date: dateString,
                         category: .leagueNotice
                     ))
                 }

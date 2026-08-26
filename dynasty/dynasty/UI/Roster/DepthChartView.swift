@@ -43,11 +43,28 @@ struct DepthChartView: View {
     // MARK: - Slot groups
 
     private var activeSlots: [DepthChartSlot] {
-        switch selectedTab {
+        slots(on: selectedTab)
+    }
+
+    private func slots(on side: PositionSide) -> [DepthChartSlot] {
+        switch side {
         case .offense:      return DepthChartSlot.offenseSlots
         case .defense:      return DepthChartSlot.defenseSlots
         case .specialTeams: return DepthChartSlot.specialTeamsSlots
         }
+    }
+
+    /// Starter slots on a side with nobody standing in them.
+    ///
+    /// The same test the group pills use one level down, lifted to the tab bar.
+    /// The Lineup Incomplete gate names the missing slots in a dialog and then
+    /// navigates here, where the chart opens on Offense and neither of the
+    /// other two tabs carries any mark — so a manager told "Defense: Left OLB
+    /// unassigned" arrives on a screen that shows him the offensive line.
+    private func unfilledStarters(on side: PositionSide) -> Int {
+        slots(on: side).filter {
+            depthChart.depthOrder(for: $0).first.flatMap { playerLookup[$0] } == nil
+        }.count
     }
 
     // MARK: - Grouped Slots
@@ -320,25 +337,42 @@ struct DepthChartView: View {
                         selectedTab = side
                     }
                 } label: {
-                    Text(side.rawValue)
-                        .font(.subheadline)
-                        .fontWeight(selectedTab == side ? .heavy : .medium)
-                        .foregroundStyle(selectedTab == side ? Color.backgroundPrimary : Color.textSecondary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .padding(.horizontal, 8)
-                        .background(
-                            selectedTab == side ? Color.accentBlue : Color.clear,
-                            in: RoundedRectangle(cornerRadius: 10)
-                        )
-                        .overlay(
-                            selectedTab == side
-                                ? nil
-                                : RoundedRectangle(cornerRadius: 10)
-                                    .strokeBorder(Color.surfaceBorder, lineWidth: 1)
-                        )
+                    HStack(spacing: 5) {
+                        Text(side.rawValue)
+                            .font(.subheadline)
+                            .fontWeight(selectedTab == side ? .heavy : .medium)
+                            .foregroundStyle(selectedTab == side ? Color.backgroundPrimary : Color.textSecondary)
+                        let gaps = unfilledStarters(on: side)
+                        if gaps > 0 {
+                            HStack(spacing: 2) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .font(.system(size: DSType.Size.micro, weight: .bold))
+                                Text("\(gaps)")
+                                    .font(.system(size: DSType.Size.micro, weight: .heavy).monospacedDigit())
+                            }
+                            .foregroundStyle(selectedTab == side ? Color.backgroundPrimary : Color.warning)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .padding(.horizontal, 8)
+                    .background(
+                        selectedTab == side ? Color.accentBlue : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 10)
+                    )
+                    .overlay(
+                        selectedTab == side
+                            ? nil
+                            : RoundedRectangle(cornerRadius: 10)
+                                .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+                    )
                 }
                 .contentShape(RoundedRectangle(cornerRadius: 10))
+                .accessibilityLabel(
+                    unfilledStarters(on: side) > 0
+                        ? "\(side.rawValue), \(unfilledStarters(on: side)) starter slots unfilled"
+                        : side.rawValue
+                )
             }
         }
         .padding(5)
@@ -349,19 +383,22 @@ struct DepthChartView: View {
 
     /// The one-tap way out of an empty chart.
     ///
-    /// `.labelStyle(.titleAndIcon)` is load-bearing: a toolbar `Label` collapses
-    /// to icon-only by default, and a bare wand glyph in the corner is not a
-    /// discoverable action for a first-time manager staring at eleven empty
-    /// slots.
+    /// The title is composed by hand rather than left to `Label`: the toolbar
+    /// collapses a `Label` to icon-only even with `.labelStyle(.titleAndIcon)`,
+    /// and the blocker dialog that sends a first-time manager here promises a
+    /// button called "Auto-Set" — a bare wand glyph in the corner is not that.
     private var autoFillButton: some View {
         Button {
             applyAutoSet()
         } label: {
-            Label("Auto-Set Lineup", systemImage: "wand.and.stars")
-                .labelStyle(.titleAndIcon)
-                .font(.subheadline.weight(.semibold))
+            HStack(spacing: 5) {
+                Image(systemName: "wand.and.stars")
+                Text("Auto-Set")
+            }
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(Color.accentGold)
         }
-        .foregroundStyle(Color.accentGold)
+        .tint(Color.accentGold)
         .accessibilityLabel("Auto-set lineup")
         .accessibilityHint("Fills every depth slot with the best available player by overall rating")
     }
@@ -471,6 +508,15 @@ struct DepthChartView: View {
             Text("\(activeSlotGroups.count) groups · \(activeSlots.count) positions")
                 .font(.system(size: DSType.Size.caption, weight: .medium))
                 .foregroundStyle(Color.textTertiary)
+            // The bolt meter on the rows is the one indicator with no legend
+            // anywhere on the screen, and its ladder is inverted against every
+            // other 0-100 bar in the app. This is the only place that says so.
+            Image(systemName: "bolt.fill")
+                .font(.system(size: DSType.Size.micro))
+                .foregroundStyle(Color.textTertiary)
+            Text("fatigue \u{00B7} lower is better")
+                .font(.system(size: DSType.Size.caption, weight: .medium))
+                .foregroundStyle(Color.textTertiary)
             Spacer()
             Button {
                 withAnimation(.easeInOut(duration: 0.2)) {
@@ -503,6 +549,21 @@ struct DepthChartView: View {
         let isCollapsed = collapsedGroups.contains(group.id)
         let groupSlots = group.slots
         let filledStarters = groupSlots.filter { depthChart.depthOrder(for: $0).first.flatMap { playerLookup[$0] } != nil }.count
+        // A full starter line is not the same as a room that survives a
+        // September injury, and the cut decision needs the second number too:
+        // "1/1" over a card with an empty 3rd-string row was the only
+        // completeness signal the header had. `prefix(maxDepth)` because that
+        // is exactly what the card draws — a name parked past the last rendered
+        // row is not depth the user can see.
+        let filledDepth = groupSlots.reduce(0) { running, slot in
+            running + depthChart.depthOrder(for: slot).prefix(slot.maxDepth).compactMap { playerLookup[$0] }.count
+        }
+        let totalDepth = groupSlots.reduce(0) { $0 + $1.maxDepth }
+        let hasThinRoom = groupSlots.contains { slot in
+            slot.maxDepth > 1
+                && depthChart.depthOrder(for: slot).prefix(slot.maxDepth).compactMap { playerLookup[$0] }.count < 2
+        }
+        let isGroupSound = filledStarters == groupSlots.count && !hasThinRoom
         let starterAvg: Int = {
             let starters = groupSlots.compactMap { slot -> Int? in
                 guard let pid = depthChart.depthOrder(for: slot).first, let p = playerLookup[pid] else { return nil }
@@ -534,18 +595,18 @@ struct DepthChartView: View {
                         .font(.system(size: DSType.Size.body, weight: .bold))
                         .foregroundStyle(Color.textPrimary)
                     Spacer()
-                    // Filled count
+                    // Filled count — starters, then bodies behind them
                     HStack(spacing: 3) {
-                        Image(systemName: filledStarters == groupSlots.count ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                        Image(systemName: isGroupSound ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
                             .font(.system(size: DSType.Size.micro))
-                        Text("\(filledStarters)/\(groupSlots.count)")
+                        Text("\(filledStarters)/\(groupSlots.count) \u{00B7} \(filledDepth)/\(totalDepth) deep")
                             .font(.system(size: DSType.Size.caption, weight: .bold).monospacedDigit())
                     }
-                    .foregroundStyle(filledStarters == groupSlots.count ? Color.success : Color.warning)
+                    .foregroundStyle(isGroupSound ? Color.success : Color.warning)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(
-                        (filledStarters == groupSlots.count ? Color.success : Color.warning).opacity(0.12),
+                        (isGroupSound ? Color.success : Color.warning).opacity(0.12),
                         in: Capsule()
                     )
                     // Average starter OVR
@@ -571,7 +632,7 @@ struct DepthChartView: View {
                 )
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("\(group.name), \(filledStarters) of \(groupSlots.count) starters filled, \(isCollapsed ? "collapsed, tap to expand" : "expanded, tap to collapse")")
+            .accessibilityLabel("\(group.name), \(filledStarters) of \(groupSlots.count) starters filled, \(filledDepth) of \(totalDepth) depth slots filled\(hasThinRoom ? ", a position here has no backup" : ""), \(isCollapsed ? "collapsed, tap to expand" : "expanded, tap to collapse")")
 
             // Slots — only render when expanded
             if !isCollapsed {
@@ -634,6 +695,12 @@ struct DepthChartView: View {
         totalInSlot: Int
     ) -> some View {
         let isStarter = index == 0
+        // A hole in the STARTER line is the thing the lineup gate blocks on, and
+        // it used to look exactly like a spare depth row: same plate, same
+        // "Tap to assign". Twelve positions deep in a scroll that is the
+        // difference between finding it and being told again on the next
+        // Advance.
+        let isGap = isStarter && player == nil
 
         return HStack(spacing: 10) {
             // Reorder buttons
@@ -673,10 +740,11 @@ struct DepthChartView: View {
             }
 
             // Slot label
-            Text(depthLabel(index: index))
+            Text(depthLabelShort(index: index))
                 .font(.system(size: DSType.Size.micro, weight: .bold))
                 .foregroundStyle(isStarter ? Color.accentGold : Color.textTertiary)
                 .textCase(.uppercase)
+                .lineLimit(1)
                 .frame(width: 48, alignment: .leading)
 
             // Player info or empty
@@ -695,11 +763,15 @@ struct DepthChartView: View {
         .padding(.horizontal, 8)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(isStarter ? Color.accentGold.opacity(0.06) : Color.backgroundTertiary.opacity(0.3))
+                .fill(
+                    isGap ? Color.warning.opacity(0.10)
+                        : (isStarter ? Color.accentGold.opacity(0.06) : Color.backgroundTertiary.opacity(0.3))
+                )
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
                         .strokeBorder(
-                            isStarter ? Color.accentGold.opacity(0.3) : Color.surfaceBorder.opacity(0.5),
+                            isGap ? Color.warning.opacity(0.7)
+                                : (isStarter ? Color.accentGold.opacity(0.3) : Color.surfaceBorder.opacity(0.5)),
                             lineWidth: isStarter ? 1 : 0.5
                         )
                 )
@@ -728,7 +800,10 @@ struct DepthChartView: View {
                         .font(.system(size: DSType.Size.micro))
                         .foregroundStyle(Color.textTertiary)
 
-                    Text("$\(player.annualSalary / 1000)M")
+                    // `annualSalary` is in thousands, so integer division
+                    // printed "$0M" for everyone on a rookie deal — the ledger's
+                    // own formatter says "$750K" / "$12.5M".
+                    Text(CommittedCapLedger.money(player.annualSalary))
                         .font(.system(size: DSType.Size.micro))
                         .foregroundStyle(Color.textTertiary)
                 }
@@ -776,13 +851,17 @@ struct DepthChartView: View {
 
     private func emptySlotContent() -> some View {
         HStack {
-            Image(systemName: "plus.circle.dashed")
-                .font(.system(size: DSType.Size.body))
-                .foregroundStyle(Color.textTertiary)
+            // The glyph led the row, which started "Tap to assign" a glyph's
+            // width right of where the names above it start. It sits in the
+            // trailing indicator column now, where the OVR badge sits on a
+            // filled row, so the two kinds of row share one left edge.
             Text("Tap to assign")
                 .font(.system(size: DSType.Size.footnote))
                 .foregroundStyle(Color.textTertiary)
             Spacer()
+            Image(systemName: "plus.circle.dashed")
+                .font(.system(size: DSType.Size.body))
+                .foregroundStyle(Color.textTertiary)
         }
         .contentShape(Rectangle())
     }
@@ -820,10 +899,11 @@ struct DepthChartView: View {
                         .frame(width: geo.size.width * CGFloat(value) / 100.0)
                 }
             }
-            .frame(width: 20, height: 3)
+            .frame(width: 28, height: 5)
         }
         // P7 rule 3: a lower-is-better metric has to say so somewhere, and a
-        // 20×3 meter has no room for words. It says so here.
+        // 28×5 meter has no room for words. It says so here, and in print on
+        // the screen's own legend row (`groupCollapseControls`).
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Fatigue \(value) percent, lower is better")
     }
@@ -865,6 +945,14 @@ struct DepthChartView: View {
         case 2: return "3rd String"
         default: return "Depth \(index + 1)"
         }
+    }
+
+    /// The printed label. "3RD STRING" is the one label too wide for the 48 pt
+    /// column, and it wrapped to two lines — which pushed its row's reorder
+    /// chevrons and its player's name out of line with every row above it.
+    /// `depthLabel` still says the whole thing out loud.
+    private func depthLabelShort(index: Int) -> String {
+        index == 2 ? "3rd" : depthLabel(index: index)
     }
 
     private func slotAccessibilityLabel(index: Int, player: Player?) -> String {

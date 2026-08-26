@@ -22,11 +22,14 @@ import SwiftData
 //     carry `layoutPriority(1)` and are laid out before it.
 //
 // The widest column set (the drills) still fits a portrait iPad without a
-// sideways scroll: 40+32+132+8+40+56+46+38+96+380+16 = 884, plus 16 pt of list
+// sideways scroll: 40+44+132+8+40+56+46+38+96+380+16 = 896, plus 16 pt of list
 // insets, inside 1024.
 private enum CombineW {
     static let mark: CGFloat = 40
-    static let rank: CGFloat = 32
+    /// "Rank" AND its sort chevron. At 32 the label wrapped to "Ra" / "nk" with
+    /// the chevron floating between the two halves, which is what the table
+    /// draws by default: `.rank` is the column it opens sorted on.
+    static let rank: CGFloat = 44
     /// A floor, not a width — enough for a short name plus its chips in portrait.
     static let nameMin: CGFloat = 132
     /// The elastic gap. Everything after it is fixed and trailing-anchored.
@@ -234,10 +237,33 @@ struct CombineResultsView<Header: View>: View {
     }
 
     private var sortedProspects: [CollegeProspect] {
-        let sorted = filteredProspects.sorted { a, b in
+        let base = filteredProspects
+        // `ProspectFog.read` walks the man's report rows, so the rank tie-break
+        // takes it once per prospect here rather than twice per comparison
+        // inside the sort.
+        let boardReads: [UUID: Int] = sortColumn == .rank
+            ? Dictionary(uniqueKeysWithValues: base.map { ($0.id, ProspectFog.rank($0)) })
+            : [:]
+        let sorted = base.sorted { a, b in
             switch sortColumn {
             case .rank:
-                return compare(a.draftProjection ?? 999, b.draftProjection ?? 999)
+                // The projected ROUND is the only thing the class ships with, and
+                // inside round one that is ~32 men carrying the identical number:
+                // sorting on it alone left a third of the table in fetch order
+                // under a column that claims to be a ranking. Break the tie on
+                // this club's own read — `ProspectFog.rank` is the fog-safe band
+                // the GRD cell prints — then on the scouted overall behind it,
+                // then on the name so the numbering is stable between redraws.
+                let aRound = a.draftProjection ?? 999
+                let bRound = b.draftProjection ?? 999
+                if aRound != bRound { return aRound < bRound }
+                let aRead = boardReads[a.id] ?? 0
+                let bRead = boardReads[b.id] ?? 0
+                if aRead != bRead { return aRead > bRead }
+                let aOVR = a.scoutedOverall ?? 0
+                let bOVR = b.scoutedOverall ?? 0
+                if aOVR != bOVR { return aOVR > bOVR }
+                return a.lastName < b.lastName
             case .name:
                 return compare(a.lastName, b.lastName)
             case .position:
@@ -289,8 +315,16 @@ struct CombineResultsView<Header: View>: View {
 
     // MARK: - Team Needs
 
+    /// The positions this club has an actual hole at — the chip on a name.
+    ///
+    /// `teamNeedDeficits`, NOT `topTeamNeeds`: the latter ranks by positional
+    /// VALUE and its own doc says a full 53-man roster hands back the identical
+    /// {QB, DE, CB, WR, LT} for all 32 clubs. So this table stamped NEED on
+    /// ends and quarterbacks in the same minute the hub's Team Needs tile —
+    /// which reads the deficit model — named the thin groups on the roster.
+    /// Two screens, one club, disjoint answers.
     private var teamNeeds: Set<Position> {
-        Set(DraftEngine.topTeamNeeds(roster: teamPlayers, limit: 5))
+        Set(DraftEngine.teamNeedDeficits(roster: teamPlayers, limit: 5))
     }
 
     // MARK: - Combine Risers & Fallers
@@ -540,40 +574,48 @@ struct CombineResultsView<Header: View>: View {
         )
     }
 
+    /// The optional purchase, drawn as an OUTLINE rather than a gold fill.
+    ///
+    /// It used to be a full-width gold slab in the middle of the table while the
+    /// pinned action bar carried the stage's own gold primary — two gold fills on
+    /// one screen, which `dsPrimary` ("the one gold fill on a screen") exists to
+    /// prevent. The trip is a side purchase; the advance is the commit, and the
+    /// commit keeps the fill.
     private func sendScoutsCTA(action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 12) {
                 Image(systemName: "binoculars.fill")
                     .font(.title3)
-                    .foregroundStyle(canAffordTrip ? Color.backgroundPrimary : Color.textTertiary)
+                    .foregroundStyle(canAffordTrip ? Color.accentGold : Color.textTertiary)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Send Scouts to the Combine")
                         .font(.subheadline.weight(.bold))
-                        .foregroundStyle(canAffordTrip ? Color.backgroundPrimary : Color.textSecondary)
+                        .foregroundStyle(canAffordTrip ? Color.accentGold : Color.textSecondary)
                     Text(canAffordTrip
                          ? "Exact times and drill grades, plus fresh reports on your board \u{2014} $\(tripCost)K from the scouting budget"
                          : "Not enough scouting budget ($\(tripCost)K needed) \u{2014} reallocate in Owner Relations")
                         .font(.caption)
-                        .foregroundStyle(canAffordTrip
-                                         ? Color.backgroundPrimary.opacity(0.85)
-                                         : Color.textTertiary)
+                        .foregroundStyle(canAffordTrip ? Color.textSecondary : Color.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
                 if canAffordTrip {
                     Image(systemName: "arrow.right.circle.fill")
                         .font(.title3)
-                        .foregroundStyle(Color.backgroundPrimary)
+                        .foregroundStyle(Color.accentGold)
                 }
             }
             .padding(12)
             .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(canAffordTrip ? Color.accentGold : Color.backgroundTertiary)
+                RoundedRectangle(cornerRadius: DSCornerRadius.card)
+                    .fill(canAffordTrip ? Color.accentGold.opacity(0.10) : Color.backgroundTertiary)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(canAffordTrip ? Color.clear : Color.surfaceBorder, lineWidth: 1)
+                RoundedRectangle(cornerRadius: DSCornerRadius.card)
+                    .strokeBorder(
+                        canAffordTrip ? Color.accentGold.opacity(0.5) : Color.surfaceBorder,
+                        lineWidth: 1
+                    )
             )
         }
         .buttonStyle(.plain)
@@ -798,6 +840,12 @@ struct CombineResultsView<Header: View>: View {
             Text(title)
                 .font(.caption.weight(.bold))
                 .foregroundStyle(sortColumn == column ? Color.accentGold : Color.textSecondary)
+                // Same guard `staticHeader` carries: a sortable header gains a
+                // chevron the moment it becomes the active column, and a label
+                // that wraps inside its own fixed cell collides with the one
+                // beside it.
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
 
             if sortColumn == column {
                 Image(systemName: sortAscending ? "chevron.up" : "chevron.down")

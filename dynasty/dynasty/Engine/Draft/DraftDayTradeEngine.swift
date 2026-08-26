@@ -696,7 +696,17 @@ enum DraftDayTradeEngine {
                 buyerGives: package,
                 sellerGives: [onClock],
                 headline: "TRADE — \(buyer.abbreviation) move up to #\(onClock.pickNumber), sending \(assets) to \(seller.abbreviation)",
-                motive: "\(buyer.persona.name) jumped the line for a \(slider.prospect.position.rawValue): \(slider.prospect.lastName) was BB #\(slider.rank) and is still on the board.",
+                // The motive reports the MARKET, not the buyer's intent.
+                //
+                // Nothing binds the club's next pick to `slider.prospect`: the
+                // slot changes hands here and `aiMakePick` then runs off the
+                // buyer's own board, which is ordered differently from the media
+                // board this slider comes off. Naming him as the target printed a
+                // promise the very next pick could break — the shipped line had a
+                // club "jump the line for a RT" and take a guard with the slot,
+                // while the tackle sat there. What is true when the phones ring
+                // is that the board is falling and the buyer has the hole.
+                motive: "\(buyer.persona.name) moved up with the board falling: \(slider.prospect.lastName) was BB #\(slider.rank) and is still there, and \(buyer.abbreviation) needs a \(slider.prospect.position.rawValue).",
                 buyerValue: buyerValue,
                 sellerValue: sellerValue,
                 targetPickNumber: onClock.pickNumber

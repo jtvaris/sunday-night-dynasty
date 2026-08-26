@@ -186,6 +186,10 @@ struct ContractNegotiationView: View {
     /// the values at the moment of the handshake is the only honest way to state
     /// the before and the after.
     @State private var salaryBeforeClose: Int = 0
+    /// Years left on the deal he was on, for the same reason and read at the
+    /// same instant: the signature rewrites the clock, so a sheet headed WHAT
+    /// CHANGED cannot ask the player what it used to say.
+    @State private var yearsBeforeClose: Int = 0
     @State private var capChargeAtClose: Int?
     /// The plan the deal was signed under (#186), snapshotted for the same
     /// reason: the shape is read off the player, and the signature changes the
@@ -208,7 +212,13 @@ struct ContractNegotiationView: View {
             VStack(spacing: 0) {
                 playerHeader
                 if showsRoundBand { roundBand }
+                // Bottom-anchored, because a round-one thread holds exactly one
+                // bubble and the transcript absorbs every point of slack in the
+                // body: the agent's opening ask sat a third of the way down a
+                // 13-inch page with the rest of it empty. The newest line
+                // belongs against the composer that answers it.
                 NegotiationTranscript(lines: chatLines, scrollTarget: scrollTarget)
+                    .defaultScrollAnchor(.bottom)
                 if isComposerLive {
                     if isPayCut { payCutComposer } else { offerBuilder }
                     commitBar
@@ -422,6 +432,44 @@ struct ContractNegotiationView: View {
         )
     }
 
+    /// **The deal as it will be WRITTEN, which is not the deal as it averages.**
+    ///
+    /// `ContractEngine.negotiatedBaseSalaries` is deliberately not renormalised
+    /// — its own doc measures a 2-year veteran schedule at 10.4 % over
+    /// `annualSalary × years` — so `NegotiationOffer.totalValue` and
+    /// `.annualCapHit` are the numbers the two sides BARGAINED, not the numbers
+    /// `applyNegotiatedDeal` puts on the `Contract` row. Quoting the flat pair as
+    /// the cost is the lie the screen used to tell: it printed "$108.0M total,
+    /// $54.0M/yr" over a booking of $117.0M whose first year charged $60.5M, and
+    /// its own cap sentence ("Charges $23.0M") was measured off the $60.5M.
+    ///
+    /// Simple and sandbox write no schedule, and a deferred extension is
+    /// re-summed off the flat rate when it binds (see `Plan.firstYearCapHit`), so
+    /// in those three cases the bargained numbers already are the written ones.
+    private struct WrittenDeal {
+        let firstYearCapHit: Int
+        let total: Int
+        /// Guaranteed DOLLARS, not the percent. The percent is a percent of the
+        /// bargained package, so it overstates the guarantee against the written
+        /// one; the money is the same either way and is what gets persisted.
+        let guaranteed: Int
+    }
+
+    private func writtenDeal(_ offer: NegotiationOffer, plan: DealTargetYear.Plan) -> WrittenDeal {
+        guard !plan.booksForward, !plan.baseSalaries.isEmpty else {
+            return WrittenDeal(
+                firstYearCapHit: offer.annualCapHit,
+                total: offer.totalValue,
+                guaranteed: offer.guaranteedMoney
+            )
+        }
+        return WrittenDeal(
+            firstYearCapHit: plan.firstYearCapHit,
+            total: plan.baseSalaries.reduce(0, +) + offer.signingBonus,
+            guaranteed: offer.guaranteedMoney
+        )
+    }
+
     /// Whether the new league year is already open — the six offseason phases
     /// between `executeNewLeagueYear` and the season counter's bump, where
     /// `season` is one BEHIND the year the club's books are in. Without it an
@@ -494,11 +542,6 @@ struct ContractNegotiationView: View {
 
     private var builderExceedsCap: Bool { builderGate.verdict.isBlocked }
 
-    private var pendingOfferExceedsCap: Bool {
-        guard let snapshot = thread?.pendingAgentOffer else { return false }
-        return exceedsCap(snapshot.offer)
-    }
-
     /// The bonus ceiling. Unbounded before, and because only `annualSalary` was
     /// ever written to the player, a $500K salary with a $200M bonus read as a
     /// $50.5M/yr offer to the agent and as the veteran minimum to the league.
@@ -536,10 +579,24 @@ struct ContractNegotiationView: View {
             .init(id: "age", text: "Age \(player.age)"),
             .init(id: "pay", text: "\(formatMillions(player.annualSalary))/yr")
         ]
-        if player.contractYearsRemaining > 0 {
-            chips.append(.init(id: "yrs", text: "\(player.contractYearsRemaining)yr left"))
+        if contractYearsLeft > 0 {
+            chips.append(.init(id: "yrs", text: "\(contractYearsLeft)yr left"))
         }
         return chips
+    }
+
+    /// The term chip's number — **the deal the man is actually on**.
+    ///
+    /// `player.contractYearsRemaining` stops being that the moment an offseason
+    /// deal is signed. The re-sign hosts add a year to that counter so
+    /// `executeNewLeagueYear`'s decrement cannot expire a deal the day it was
+    /// agreed (`FranchiseTagView.onDealCompleted`, `FinalPushView.applyReSignOffer`),
+    /// and the compensation lands on the one field this header reads: a 2-year
+    /// deal closed in Review Roster printed "3yr left" directly above a receipt
+    /// that said "2 years", i.e. a $162M commitment where $117M was signed.
+    /// After a signature the plan's own term is the honest answer.
+    private var contractYearsLeft: Int {
+        planAtClose?.contractYears ?? player.contractYearsRemaining
     }
 
     /// Who is on the phone: his name, how he bargains, how he talks — and the
@@ -679,14 +736,15 @@ struct ContractNegotiationView: View {
                 offerStat("Gtd", "\(offer.guaranteedPercent)%")
             }
 
-            HStack(spacing: 16) {
-                Text("Total: \(formatMillions(offer.totalValue))")
-                    .font(.caption.weight(.bold).monospacedDigit())
-                    .foregroundStyle(isAgent ? Color.textPrimary : Color.accentGold)
-                Text("Cap Hit: \(formatMillions(offer.annualCapHit))/yr")
-                    .font(.caption.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(Color.textSecondary)
-            }
+            // The AVERAGE, and labelled as one. `annualCapHit` is the number the
+            // agent grades on (`closeTone(signedPerYear:)`), not the charge the
+            // books take — see `writtenDeal` — and this bubble is the one money
+            // surface here with no `Plan` in hand to price the schedule from. So
+            // it states the term it can state truthfully and leaves the cost to
+            // the composer's footer and the receipt, which both have the plan.
+            Text("Avg: \(formatMillions(offer.annualCapHit))/yr")
+                .font(.caption.weight(.bold).monospacedDigit())
+                .foregroundStyle(isAgent ? Color.textPrimary : Color.accentGold)
 
             // §5.5: clauses ride under the money so both bubbles show the same
             // deal the engine graded.
@@ -819,16 +877,46 @@ struct ContractNegotiationView: View {
     }
 
     /// "Accept Theirs", but only while there IS a standing number to accept.
+    ///
+    /// It carries its OWN cost as the button's caption. `DSActionBar` shows one
+    /// explainer and that explainer belongs to the primary, so the only money
+    /// sentence beside this button described the package in the composer — a
+    /// different deal, and on a round-one thread routinely a third of the
+    /// money. A commit that quotes the wrong number is worse than one that
+    /// quotes none.
     private var acceptAction: DSActionBar.Action? {
-        guard thread?.pendingAgentOffer != nil else { return nil }
+        guard let snapshot = thread?.pendingAgentOffer else { return nil }
+        let gate = capGate(for: snapshot.offer)
+        let cost = acceptCostLine(for: gate)
         return DSActionBar.Action(
             title: "Accept Theirs",
-            isEnabled: !pendingOfferExceedsCap,
-            accessibilityLabel: pendingOfferExceedsCap
+            caption: cost,
+            isEnabled: !gate.verdict.isBlocked,
+            accessibilityLabel: gate.verdict.isBlocked
                 ? "Accept their offer. Disabled: the agent's number exceeds your available cap space."
-                : "Signs the agent's standing offer.",
+                : ["Signs the agent's standing offer.", cost].compactMap { $0 }.joined(separator: " "),
             handler: { acceptAgentOffer() }
         )
+    }
+
+    /// The agent's package priced, in the two short lines a button caption has.
+    ///
+    /// Deliberately terser than ``capSentence(for:)`` — that one is a full
+    /// sentence for the explainer slot — but it keeps the discipline #127 bought:
+    /// it names the year whenever the year is not the one that is open.
+    private func acceptCostLine(for gate: DealGate) -> String? {
+        guard capMode != .sandbox else { return nil }
+        if let block = gate.verdict.block {
+            return "Over \(String(block.season)) by \(formatMillions(block.overage))"
+        }
+        let net = gate.plan.netChargeInStartYear
+        if net < 0 {
+            return "Frees \(formatMillions(-net)) in \(String(gate.space.season))"
+        }
+        if gate.space.isProjected {
+            return "Charges \(formatMillions(net)) of \(String(gate.space.season))'s \(formatMillions(gate.space.available))"
+        }
+        return "Charges \(formatMillions(net)) of your \(formatMillions(gate.space.available))"
     }
 
     /// The pay-cut bar's cost line: what the ask buys, and where it sits against
@@ -925,15 +1013,24 @@ struct ContractNegotiationView: View {
         .background(Color.backgroundSecondary)
     }
 
+    /// **The one market anchor on this screen**, in one set of words.
+    ///
+    /// Both composers open on it: the pay cut asks how far under it the man will
+    /// go, the offer builder asks how far over it the club has to reach. Written
+    /// once so the two branches cannot quote the same man at two prices.
+    private var marketClause: String {
+        "Market for a \(player.overall) OVR \(player.position.rawValue) is \(formatMillions(liveDemand.marketValue))/yr"
+    }
+
     /// Where the dial sits against what the league would pay him.
     private var payCutMarketNote: String {
         let market = liveDemand.marketValue
         let delta = payCutSalary - market
         if delta >= 0 {
-            return "Market for a \(player.overall) OVR \(player.position.rawValue) is \(formatMillions(market))/yr — you're still at or above it."
+            return "\(marketClause) — you're still at or above it."
         }
         let pct = market > 0 ? Int((Double(-delta) / Double(market) * 100).rounded()) : 0
-        return "Market for a \(player.overall) OVR \(player.position.rawValue) is \(formatMillions(market))/yr — this asks him to play \(pct)% under it."
+        return "\(marketClause) — this asks him to play \(pct)% under it."
     }
 
     /// The standing answer, kept under the composer so a release demand does not
@@ -1005,6 +1102,21 @@ struct ContractNegotiationView: View {
                     .disabled(offerSalary >= maxSalary)
                 }
 
+                // The salary dial's slider — the same one the pay-cut composer
+                // has had since #102, for the same reason. At $500K a step, the
+                // distance between a seeded counter and a top receiver's ask is
+                // a dozen presses; the slider crosses it in one gesture and the
+                // steppers stay for the last $500K.
+                Slider(
+                    value: Binding(
+                        get: { Double(offerSalary) },
+                        set: { offerSalary = roundToStep(Int($0.rounded())) }
+                    ),
+                    in: Double(minSalary)...Double(maxSalary),
+                    step: Double(salaryStep)
+                )
+                .tint(Color.accentGold)
+
                 // Signing bonus
                 builderRow(label: "Bonus", value: formatMillions(offerBonus)) {
                     stepperButton(systemImage: "minus") {
@@ -1032,6 +1144,38 @@ struct ContractNegotiationView: View {
                 }
             }
 
+            // The anchor the dials are measured against, in the shape the
+            // pay-cut composer states its own ("Current: … / Saves …"). The
+            // offer builder shipped with no price context whatever: the only
+            // numbers on the page were the agent's ask and whatever the
+            // composer happened to be seeded with, so "is this close?" had no
+            // answer anywhere on the screen.
+            HStack {
+                Text(marketClause)
+                    .font(DSType.display(11, .semibold))
+                    .foregroundStyle(Color.textSecondary)
+                Spacer()
+                Text(offerMarketNote)
+                    .font(DSType.display(11, .heavy))
+                    .foregroundStyle(Color.textSecondary)
+            }
+            .padding(.horizontal, DSSpacing.xxs)
+
+            // The market is the league's price; the ASK is the number the gold
+            // button is answering, and the composer opens seeded well under it
+            // (`primeComposer`). Nothing said so, so the one obvious action on
+            // the screen tabled a lowball the user never chose to make — and a
+            // tabled lowball costs morale and hardens a refusing camp's ask.
+            if let askNote = askGapNote {
+                HStack {
+                    Text(askNote)
+                        .font(DSType.display(11, .semibold))
+                        .foregroundStyle(Color.textTertiary)
+                    Spacer()
+                }
+                .padding(.horizontal, DSSpacing.xxs)
+            }
+
             // Cap impact preview
             capPreview
 
@@ -1049,6 +1193,34 @@ struct ContractNegotiationView: View {
         .frame(maxWidth: DSLayout.contentMeasure)
         .frame(maxWidth: .infinity)
         .background(Color.backgroundSecondary)
+    }
+
+    /// Where the composer sits against ``marketClause``.
+    ///
+    /// Measured on `annualCapHit`, not on the salary dial alone, because that is
+    /// the number the agent grades — an offer that looks $7M light on salary and
+    /// carries a $30M bonus is not light at all, and saying so off the salary
+    /// dial would be a price the engine does not agree with.
+    private var offerMarketNote: String {
+        let delta = builderOffer.annualCapHit - liveDemand.marketValue
+        if delta == 0 { return "Your offer is at market" }
+        return delta > 0
+            ? "Your offer is \(formatMillions(delta)) over it"
+            : "Your offer is \(formatMillions(-delta)) under it"
+    }
+
+    /// Where the composer sits against the number his camp actually asked for,
+    /// or `nil` when no ask is standing (a pay cut, a camp that never tabled
+    /// one). Graded on `annualCapHit` for the same reason ``offerMarketNote``
+    /// is: that is the figure the agent reads.
+    private var askGapNote: String? {
+        guard !isPayCut,
+              let ask = (thread?.pendingAgentOffer ?? thread?.openingAsk)?.offer else { return nil }
+        let delta = builderOffer.annualCapHit - ask.annualCapHit
+        if delta == 0 { return "Matches his \(formatMillions(ask.annualCapHit))/yr ask" }
+        return delta > 0
+            ? "\(formatMillions(delta))/yr over his \(formatMillions(ask.annualCapHit)) ask"
+            : "\(formatMillions(-delta))/yr under his \(formatMillions(ask.annualCapHit)) ask"
     }
 
     /// What his camp said, and the one thing that would change it.
@@ -1118,14 +1290,19 @@ struct ContractNegotiationView: View {
     private var capPreview: some View {
         let offer = builderOffer
         let plan = builderGate.plan
+        // The written pair, not the flat one — otherwise this footer quotes an
+        // average while the sentence under it quotes the charge derived from
+        // year one, and the two cannot be reconciled by anyone reading them.
+        // See `writtenDeal`.
+        let written = writtenDeal(offer, plan: plan)
 
         return VStack(spacing: 4) {
             HStack {
-                Text("Cap Hit: \(formatMillions(offer.annualCapHit))/yr")
+                Text("Year 1: \(formatMillions(written.firstYearCapHit))")
                     .font(.caption.weight(.semibold).monospacedDigit())
                     .foregroundStyle(Color.accentGold)
                 Spacer()
-                Text("Total: \(formatMillions(offer.totalValue))")
+                Text("Total: \(formatMillions(written.total))")
                     .font(.caption.weight(.semibold).monospacedDigit())
                     .foregroundStyle(Color.textSecondary)
             }
@@ -1215,6 +1392,18 @@ struct ContractNegotiationView: View {
         if plan.shape == .tagReplacement {
             return "Charges \(formatMillions(net)) of your \(formatMillions(space.available)) in room, "
                 + "net of the \(formatMillions(plan.replacedCharge)) tag it retires."
+        }
+
+        // A re-sign nets what the club is ALREADY carrying for this man, and the
+        // bare sentence never said so: "$46.0M/yr" in gold 40 pt above and
+        // "Charges $14.2M" here read as a contradiction, with the $31.8M gap —
+        // his old charge coming off the books — stated nowhere on the screen.
+        // The other two shapes name what they net; this one now does too. A
+        // free agent carries nothing, so he keeps the short sentence.
+        if plan.replacedCharge > 0 {
+            return "Charges \(formatMillions(net)) of your \(formatMillions(space.available)) in room — "
+                + "\(formatMillions(plan.firstYearCapHit)) in year one, net of the "
+                + "\(formatMillions(plan.replacedCharge)) he already carries."
         }
 
         return "Charges \(formatMillions(net)) of your \(formatMillions(space.available)) in room."
@@ -2346,6 +2535,16 @@ struct ContractNegotiationView: View {
         // the most natural way to close a deal was not.
         close(&live, with: snapshot.offer, round: round, demand: liveDemand,
               sel: sel, recordToLedger: true)
+        // The handshake spent the round the user was standing in. Without this
+        // the band RETRACTED on signing — "Round 2 of 3" became "1 round
+        // spoken" with round 2 hatched as never used, under a transcript that
+        // now held a second YOU bubble and the close — and the result sheet
+        // said "closed it after 1 round" about the same two exchanges.
+        //
+        // Advanced AFTER `close`, deliberately: the engine's close tone (and
+        // through it the morale it books) grades the round the accepted offer
+        // was made in, and that is the round it was made in.
+        live.round = round + 1
         commit(live, sel: sel)
     }
 
@@ -2379,6 +2578,17 @@ struct ContractNegotiationView: View {
         sel: DialogueSelector,
         recordToLedger: Bool = false
     ) {
+        // Presentation-only snapshot (#105 Wave 3c) — see `capChargeAtClose`.
+        // Taken FIRST, before the receipt is written and before the host's
+        // contract write moves `player.annualSalary`: the receipt is priced off
+        // this plan's schedule, and the shape is read off a player the signature
+        // is about to change.
+        salaryBeforeClose = player.annualSalary
+        yearsBeforeClose = player.contractYearsRemaining
+        let signedPlan = dealPlan(for: offer)
+        planAtClose = signedPlan
+        capChargeAtClose = signedPlan.netChargeInStartYear
+
         // ECONOMY owns the verdict; this file only decides how it is said and
         // what it does to the man.
         let openerPerYear = live.openingAsk.map { $0.offer.annualCapHit } ?? offer.annualCapHit
@@ -2402,7 +2612,7 @@ struct ContractNegotiationView: View {
         ))
         live.append(NegotiationThreadMessage(
             sender: .system,
-            text: signedSummary(offer),
+            text: signedSummary(offer, plan: signedPlan),
             offer: NegotiationOfferSnapshot(offer),
             round: round,
             isSignedCard: true
@@ -2438,13 +2648,6 @@ struct ContractNegotiationView: View {
             live.moraleApplied = true
             live.lingeringNote = applyCloseEffects(tone: tone, desire: want, ctx: ctx, sel: sel)
         }
-
-        // Presentation-only snapshot (#105 Wave 3c) — see `capChargeAtClose`.
-        // Taken before the host's contract write moves `player.annualSalary`.
-        salaryBeforeClose = player.annualSalary
-        let signedPlan = dealPlan(for: offer)
-        planAtClose = signedPlan
-        capChargeAtClose = signedPlan.netChargeInStartYear
 
         onDealCompleted?(offer)
     }
@@ -2534,10 +2737,18 @@ struct ContractNegotiationView: View {
 
     /// The receipt copy — names the clause ceiling when the deal has one, so the
     /// GM never signs clauses without seeing what they can cost.
-    private func signedSummary(_ offer: NegotiationOffer) -> String {
-        let base = "\(player.fullName) — \(offer.years) year\(offer.years == 1 ? "" : "s"), \(formatMillions(offer.totalValue)) total, \(offer.guaranteedPercent)% guaranteed."
+    ///
+    /// Priced off the plan the deal is BOOKED with, not off the bargained
+    /// average (`writtenDeal`), and the guarantee is stated in money for the
+    /// same reason: the percent is a percent of a package the row never holds.
+    private func signedSummary(_ offer: NegotiationOffer, plan: DealTargetYear.Plan) -> String {
+        let written = writtenDeal(offer, plan: plan)
+        let base = "\(player.fullName) — \(offer.years) year\(offer.years == 1 ? "" : "s"), \(formatMillions(written.total)) total, \(formatMillions(written.guaranteed)) guaranteed."
         guard !offer.incentives.isEmpty else { return base }
-        return base + " \(offer.incentives.count) performance clause\(offer.incentives.count == 1 ? "" : "s") take it to \(formatMillions(offer.maxValue)) if he hits them all."
+        // The clause ceiling rides on the written total, so the two numbers in
+        // the sentence are measured the same way.
+        let ceiling = written.total + (offer.maxValue - offer.totalValue)
+        return base + " \(offer.incentives.count) performance clause\(offer.incentives.count == 1 ? "" : "s") take it to \(formatMillions(ceiling)) if he hits them all."
     }
 
     // MARK: - Persistence
@@ -2606,15 +2817,46 @@ struct ContractNegotiationView: View {
 
         case .signed:
             let offer = signed ?? builderOffer
+            let plan = planAtClose ?? dealPlan(for: offer)
+            let written = writtenDeal(offer, plan: plan)
+            // He was already on this club's books, so the sheet has a BEFORE to
+            // state. A free agent has none — nothing on these books changed
+            // when his old club's deal ran out.
+            let wasUnderContract = yearsBeforeClose > 0 && salaryBeforeClose > 0
+            // Year one, because year one is what the books take and what the
+            // cost line under these chips is netted from. The average survives
+            // as the context line when the two differ — see `writtenDeal` and
+            // `Plan.flatCapHit` — but the BEFORE outranks it when there is one:
+            // the section is headed WHAT CHANGED and every figure under it was
+            // an absolute, so the one thing it never said was what changed.
+            let payContext: String?
+            if wasUnderContract {
+                payContext = "was \(formatMillions(salaryBeforeClose))/yr"
+            } else if offer.years > 1, written.firstYearCapHit != plan.flatCapHit {
+                payContext = "then \(formatMillions(plan.flatCapHit))/yr"
+            } else {
+                payContext = nil
+            }
             return NegotiationOutcome(
                 tone: .good,
                 headline: "\(player.fullName) signs for \(offer.years) year\(offer.years == 1 ? "" : "s")",
                 message: "\(thread?.agentName ?? agentName) closed it after \(roundsSpoken) round\(roundsSpoken == 1 ? "" : "s").",
                 chips: [
-                    .init(id: "years", label: "Years", value: "\(offer.years)"),
-                    .init(id: "aav", label: "Cap hit", value: "\(formatMillions(offer.annualCapHit))/yr", valueColor: .accentGold),
-                    .init(id: "total", label: "Total", value: formatMillions(offer.totalValue)),
-                    .init(id: "gtd", label: "Guaranteed", value: "\(offer.guaranteedPercent)%")
+                    .init(
+                        id: "years",
+                        label: "Years",
+                        value: "\(offer.years)",
+                        context: wasUnderContract ? "was \(yearsBeforeClose) left" : nil
+                    ),
+                    .init(
+                        id: "aav",
+                        label: "Year 1 cap",
+                        value: formatMillions(written.firstYearCapHit),
+                        context: payContext,
+                        valueColor: .accentGold
+                    ),
+                    .init(id: "total", label: "Total", value: formatMillions(written.total)),
+                    .init(id: "gtd", label: "Guaranteed", value: formatMillions(written.guaranteed))
                 ],
                 cost: signedCostLine(offer)
             )
@@ -2714,6 +2956,10 @@ struct ContractNegotiationView: View {
         }
     }
 
+    /// A 28 pt chip inside a 44 pt target. The chip is what the composer's rows
+    /// are drawn to; the target is what a thumb needs, and the dial a GM presses
+    /// a dozen times to cross a salary range is the last control in the app that
+    /// should be under it.
     private func stepperButton(systemImage: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemImage)
@@ -2721,6 +2967,8 @@ struct ContractNegotiationView: View {
                 .foregroundStyle(Color.textPrimary)
                 .frame(width: 28, height: 28)
                 .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 6))
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }

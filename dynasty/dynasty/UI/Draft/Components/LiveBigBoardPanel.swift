@@ -615,10 +615,19 @@ struct LiveBigBoardPanel: View {
         .accessibilityHidden(true)
     }
 
-    /// Headers read only these two fields; everything else on the context is a
-    /// per-row fact. Static so the header row does not rebuild a context that
-    /// cannot change.
-    private static let headerContext = ProspectColumnContext(includesRisk: true)
+    /// Headers read only the two column switches; everything else on the
+    /// context is a per-row fact. Static so the header row does not rebuild a
+    /// context that cannot change.
+    ///
+    /// Both switches must match `columnContext` exactly. `includesSchemeFit`
+    /// defaults to `true` and the rows pass `false` (see the FIT note there), so
+    /// leaving it off here printed a "FIT" label over a column no row filled —
+    /// and because NAME is elastic in both blocks, the header's copy came out
+    /// 32 pt narrower and every label left of NEED sat off its own data.
+    private static let headerContext = ProspectColumnContext(
+        includesSchemeFit: false,
+        includesRisk: true
+    )
 
     // MARK: - The pool
 
@@ -1036,6 +1045,14 @@ struct LiveBigBoardPanel: View {
                                     .strokeBorder(Color.accentGold.opacity(0.7), lineWidth: 1)
                             )
                     )
+                    // THE COLUMN IS THE TARGET, NOT THE CHIP. `Col.action` is
+                    // reserved for this verb on every row, so the 32 pt to the
+                    // chip's left was dead plate beside a 44 pt-wide control
+                    // that has to be hit accurately while a clock runs. The
+                    // visible chip does not move by a pixel, and the height
+                    // stays 26 so the row does not reflow — the 44 pt vertical
+                    // needs a row-height decision this board has not taken.
+                    .frame(width: Col.action, height: 26, alignment: .trailing)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -1049,6 +1066,11 @@ struct LiveBigBoardPanel: View {
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(Color.draftStealGold.opacity(0.85))
                     .frame(width: 30, height: 26)
+                    // Same column, same reasoning as the PICK chip above: a
+                    // 30 x 26 glyph repeated down twenty-five rows was the
+                    // smallest target in the room, with 46 pt of its own
+                    // reserved column doing nothing beside it.
+                    .frame(width: Col.action, height: 26, alignment: .trailing)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
