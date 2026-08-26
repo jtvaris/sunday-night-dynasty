@@ -4032,6 +4032,64 @@ oman mitatun aaltonsa balanssirigiä vasten; jokainen on kirjattu syineen.
       **25 d / 2 c / 26 täysin ilman arvosanaa** — ja ne 26 ovat täsmälleen ne jotka eivät olleet
       mukana edellisessä campissa (kaikki 11 rookieta ja kaikki 15 camp bodyä, eli koko se
       kupla josta leikkaus tehdään). Siirretty `nextPhase == .rosterCuts` -sisääntulokoukkuun.
+- [x] **FEATURE-AALTO (10 agenttia, 12 työtä) — kaikki 15 "feature-kokoista" skippausta käsitelty.**
+      Kolme oli jo korjattu aiemmissa aalloissa, yksi (CONFIDENT dominoi FUNNYa) osoittautui
+      balanssiksi ja meni sinne. Rakennettu: leikkausruudun oikea taulukko `DSListRow`illa +
+      tarttuva sarakeotsikko + neljä johdettua saraketta (REPS/CASE/OVR±/DEPTH, kukin kartta
+      joka rakennetaan kerran per haku eikä per rivi), haastatteluraporttien pillit
+      suodattimiksi + kompakti taulukkotila `@AppStorage`illa, playoff-palkin täyttö,
+      lehdistön kolme tyhjää aluetta yhtenä työnä, staff-portin arkki, Coaching Staff Review
+      toiminnalliseksi, kandidaattien rinnakkaisvertailu, Tag Cost -drill-down + delta,
+      rookie-paljastuksen luokkayhteenveto, Cap-ruudun suurimmat hitit.
+- [x] **BALANSSIAALTO (9 agenttia) — 14 muutosta, 29 hylättyä, jokainen ennusteineen.**
+      - **Chemistry normalisoitu per capita.** `calculateChemistry` laski rosterin
+        leadership/toxicity-summat suoraan pohjan 50 päälle, joten mittari skaalautui
+        pelaajamäärällä eikä koplasta: keskiarvo 98.0, 83 % seuroista tasan 100:ssa.
+        Uusi `chemistryRating(net:headcount:)` jakaa pään mukaan, skaalavakio
+        `50.0/8.0` kirjoitettuna jakolaskuna koska moottorin oma arkkityyppitaulukko
+        huipentuu ±8/pää. Mitattu: keskiarvo 57.8, katossa 0 %, liikkumavara 62.9 pistettä
+        (Drama Queen 24.8 → Team Leader 87.6).
+      - **Moraalikynnykset ankkuroitu `chemistryLabel`in rajoihin** (75/50/35 → 65/50/35,
+        70/40 → 65/50). Ne oli viritetty arvolle joka oli aina 100, joten ylin haara laukesi
+        joka seuralle ja loput olivat saavuttamattomia; normalisoinnin jälkeen 75 olisi
+        tarkoittanut "ei ketään". Nyt jokainen haara tarkoittaa sitä sanaa jonka sovellus
+        näyttää samasta luvusta.
+      - **`LockerRoomView.netTier`** olisi lukenut "Elite" "Average"-palkin alla — se peilasi
+        vanhaa kaavaa raakasummalla. Kulkee nyt saman `chemistryRating`in läpi.
+      - **WorkloadEngine bandit uudelleenankkuroitu** (.overloaded 80→56, .burnedOut 130→63)
+        siihen mitä campin ajastin oikeasti voi tuottaa. Ennen: 100 % liigasta LIGHT-bandissa
+        ja vammakerroin tasan 1.000 kaikille. Nyt 14.4 % yli healthyn, keskikerroin 1.101.
+      - Lisäksi: lehdistön mediamaine syötteeksi podiumille (portti |rep| ≥ 30), sumun
+        avaus kun vastaus ITSE on uutinen, scoutin fallback + alueellinen kattavuus,
+        liiganlaajuinen nimien dedup (törmäykset 5.50 → 0.00 viiden kauden uralla).
+      - **Kolme perusteltua peruutusta:** 60 haastattelupaikkaa (premissi väärä — pooli on
+        ~330), oman taulun syöttö pick gradeen (`publicOVR` tulee jo `DraftIntel`istä),
+        avatarpersoonien sitominen (labelit eivät ole per kasvo kirjoitettuja).
+- [x] **HARNESS LAAJENNETTU — se ei mitannut sitä mikä muuttui.**
+      `LockerRoomEngine` ja `WorkloadEngine` eivät olleet peilattujen 16 tiedoston joukossa,
+      joten aallon kaksi oikeasti lopputuloksia liikuttavaa muutosta oli varmennettu vain
+      agentin omalla Python-peilillä. Se on täsmälleen se vikamuoto jota vastaan tämä rigi on
+      rakennettu (README:n "stale-shim-tapaus": käsinkopioidut `AdaptiveOpponentAI`-vakiot
+      ajautuivat erilleen, `paKeyCompletion` 0.18 vs todellinen 0.035, ja jokainen niiden
+      päällä "varmennettu" luku oli väärin). Nyt staged: `LockerRoomExtract`,
+      `WorkloadEngineExtract`, `CampScheduleExtract`, + `SeasonPhase.swift` verbatim.
+      Uusi `./run.sh lockerroom` -skenaario raportoi chemistryn jakauman ja campin
+      kuormajakauman, **5 kovaa porttia** jotka vartioivat molempia mitattuja vikoja, ja
+      README kirjaa muutosta edeltävät arvot jotta regressio ei voi palata hiljaa.
+- [x] **Harness ajettu: EI REGRESSIOTA.** 94 assertiota, kaikki samassa tilassa kuin
+      baselinessa (`baseline_ed4e9a1.txt`). Kaksi rajatapausta ovat molemmat aallon EDELTÄ:
+      `6.9g` 33+ ikäosuus (repossa merkitty "retirement-calibration follow-up") ja `6.9b`
+      80+ osuus, joka istuu kattonsa päällä siemenestä riippuen (baseline 18.90 %, mitattu
+      hajonta 18.36–19.31, katto 19.0). Kumpikaan ei liikkunut tästä aallosta.
+- [ ] **UUSI LÖYDÖS rigiltä — vahvuusvalmentajan arvo on suurelta osin plasebo.**
+      `applyDailyLoad` pyöristää päivän molemmat puoliskot erikseen kokonaisluvuiksi, ja
+      palautuminen on `recoveryRate * 10`, joten valmentajan koko 1–99 asteikko litistyy
+      viideksi tavoitettavaksi arvoksi (4/5/6/7/8 pistettä päivässä). Mitattu `lockerroom`
+      B2 -pyyhkäisyllä: playerDevelopment **50, 60 ja 70 tuottavat identtisen campin**
+      (12.7/74.3/11.4/1.6, meanLoad 40.7 desimaalilleen). EI korjattu tässä aallossa:
+      `WorkloadEngine`n oma dokumentaatio kertoo hilasta ja bandit 30/56/63 on ankkuroitu
+      juuri sille, joten kvantisoinnin poisto vaatii bandien uudelleenankkuroinnin samassa
+      mitatussa vedossa. Oma passinsa.
 - [ ] **N-02 (high, TARKOITUKSELLA JÄTETTY — balanssi) — arvosanakäyrä on degeneroitunut.**
       `applyCampGrades` laskee `trainingPts = cumulativeLoad / 6` eli olettaa 0..180 kuorman,
       kun `WorkloadEngine`n omat bandit ovat healthy 30..80 ja mitattu vaihteluväli tällä

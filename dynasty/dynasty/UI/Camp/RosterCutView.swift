@@ -46,6 +46,51 @@ import SwiftData
 // `releaseBlockReason` closes a row the moment ticking it would take a room
 // under its floor, and `positionImpacts` puts the rooms the plan touches in the
 // confirm dialog beside the money.
+//
+// **And then there was nothing to read on the row.** A name, four figures at
+// the 11 pt floor and a money column, with ~770 pt of every line left blank —
+// on the screen where a GM decides which twelve of eighty-seven men lose their
+// jobs. Every fact the decision actually turns on was already in the save and
+// none of it was on the row: what the exhibitions showed of the man, whether he
+// has grown or fallen off since the season ended, where he sits on the club's
+// own depth chart, and where the staff ranked him. So the rows are a table now,
+// built on the shared list standard (§2.2 — `DSListRow` / `DSListHeaderRow`,
+// the same components the preseason evidence table is drawn with), and five
+// decisions hold it together:
+//
+//  1. **Every new column is a dictionary built once per fetch.** `REPS`/`CASE`
+//     roll up the exhibition box scores the preseason already banked on
+//     `Career.preseasonState`; `OVR±` is the man's swing since his last
+//     `PlayerSeasonHistory` row closed; `DEPTH` is his slot on the saved chart;
+//     and the cap split — which the row used to ask the engine for twice a
+//     render, 87 times — is priced with the contracts it needs. The list
+//     re-renders on every tap, so nothing here may be derived per row.
+//  2. **The depth column is a CHART POSITION, not a room count.** A per-position
+//     depth tally is the thing this screen must NOT print twice: the list header
+//     above already prints selection-adjusted room sizes ("QB 3 → 2"), and a
+//     second, un-adjusted count of the same room on every row would contradict
+//     it the moment anything was ticked. A man's slot on the club's own depth
+//     chart is a different fact, it does not move when a row is ticked, and it
+//     is the one the cut is actually made on — a starter, a backup, or nobody's
+//     answer at any position.
+//  3. **A column with nothing to say for anybody is not drawn.** The cut to 75
+//     falls due in training camp, before a single exhibition is played, so REPS
+//     and CASE would be eighty-seven identical "no tape" cells there; the depth
+//     column is the same when the club has no saved chart. Both are keyed off
+//     the data's presence rather than shipped empty — the DS reserves its
+//     `empty` tone for a hole the user should ACT on, not for a column that is
+//     not this rung's business.
+//  4. **The rank is drawn rather than implied.** `cutOrder` has ordered these
+//     rows since the ranking shipped and the only thing that said so was a strip
+//     of prose above the list. It is the leading column now, and the men inside
+//     the rung's own cut count are tinted so the reader can see where the staff
+//     would stop.
+//  5. **The header does not scroll.** It sits outside the `ScrollView` rather
+//     than pinned inside it: this list is already a fixed band + tabs + strip
+//     over a scroller, and one more always-visible row is both cheaper and
+//     steadier than a pinned section. Its columns read the same `DSListColumn`
+//     constants the cells do, and one gutter constant keeps the two on the same
+//     x.
 
 struct RosterCutView: View {
 
@@ -81,6 +126,29 @@ struct RosterCutView: View {
     /// Releases already booked this cutdown, keyed by the stage that booked
     /// them — what each finished slat reports (§2.1's `done` row).
     @State private var releasesByStage: [CutDay: Int] = [:]
+    /// What releasing each man would do to the cap, priced once per fetch.
+    ///
+    /// `releaseCapSplit` re-reads the deal, the cap mode and the share of the
+    /// league year still owed on every call, and the row asked it for a figure
+    /// that cannot move until the next commit — 87 engine calls on every tap of
+    /// every row. It is priced in the same pass that fetches the contracts it
+    /// needs. `releaseSplit(for:)` still falls back to the engine for a man who
+    /// is not in the map, so the opening render off the shell's snapshot is
+    /// unchanged.
+    @State private var releaseSplits: [UUID: CapManagementEngine.ReleaseCapSplit] = [:]
+    /// The man's overall swing since his last finished season closed.
+    @State private var ovrTrend: [UUID: OVRTrend] = [:]
+    /// Where each man stands on the club's SAVED depth chart. Empty, and
+    /// `hasDepthChart` false, when the club has not set one — see the file
+    /// header, decision 3.
+    @State private var depthByPlayer: [UUID: DepthSpot] = [:]
+    @State private var hasDepthChart = false
+    /// What the exhibitions showed of each man, rolled up across the slate.
+    @State private var tapeByPlayer: [UUID: PreseasonTape] = [:]
+    /// Exhibitions actually played, i.e. how much tape there is to have. Zero
+    /// until the preseason has been simmed, which is what hides the two tape
+    /// columns at the cut-to-75 rung.
+    @State private var slateGamesPlayed = 0
     /// The commit is irreversible, so it asks first.
     @State private var showCutConfirm = false
     /// **The one modal slot.** One `.sheet(item:)`, per the house rule.
@@ -108,11 +176,61 @@ struct RosterCutView: View {
         let lineupRefilled: [DepthChartSlot]
     }
 
+    // MARK: - What the new columns hold
+
+    /// One man's overall swing across the offseason.
+    ///
+    /// `PlayerSeasonHistory.overallAtEndOfSeason` is snapshotted at week 18
+    /// *before* any offseason development or age regression runs, so the
+    /// difference against his live `overall` is exactly what the offseason and
+    /// camp did to him — the one reading on this screen that is a direction
+    /// rather than a level. A man with no finished season on record (a rookie,
+    /// or an import with no backstory) has no trend at all, and the cell says
+    /// so rather than printing a zero he did not earn.
+    struct OVRTrend {
+        let delta: Int
+        /// The season the comparison is against, for the spoken label.
+        let sinceSeason: Int
+    }
+
+    /// Where a man sits on the club's saved depth chart, display-ready.
+    struct DepthSpot {
+        /// The slot's own name for a starter ("QB", "WR2"), "Backup" for anyone
+        /// behind one, the return job when that is all the chart says about him.
+        let label: String
+        let tone: DSStatusPill.Tone
+        let spoken: String
+    }
+
+    /// What the exhibition slate showed of one man, rolled up.
+    ///
+    /// The **verdict is the engine's, once per game.** `PreseasonEngine.CampCase`
+    /// measures a box score against what the position asks of a man with that
+    /// many chances *on one afternoon*; handing it a three-game total would score
+    /// a slate against a single game's bar. So each game is read on its own and
+    /// this type counts the readings — which is arithmetic over the engine's
+    /// answers, not a second opinion about football.
+    struct PreseasonTape {
+        /// Exhibitions he was in uniform for.
+        let games: Int
+        /// Chances the box score could see, summed — throws, touches, targets,
+        /// credited defensive events, kicks. The sim keeps no snap counter
+        /// (`PlayerGameStats` has no such column and `SeasonStatLine.snapsPlayed`
+        /// is a regular-season figure), so this is the honest spelling of "how
+        /// much of him did we actually get to see".
+        let opportunities: Int
+        let verdict: PreseasonCampCase.Verdict
+        /// The slate's box score in the club's own shorthand, or `nil` when he
+        /// dressed and never appeared in one.
+        let line: String?
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             band
             tabBar
             listHeader
+            columnHeader
             list
             actionBar
         }
@@ -288,172 +406,143 @@ struct RosterCutView: View {
         .background(Color.backgroundPrimary)
     }
 
-    // MARK: - List
+    // MARK: - The table (§2.2)
+
+    /// The distance from the screen edge to the first cell: the list's own
+    /// inset plus the card's. **The header and the rows both read it**, which is
+    /// the only thing keeping a fixed-width column header over the numbers it
+    /// labels — §2.2 records that exact defect twice, once on the board and once
+    /// on the roster.
+    private static let rowGutter: CGFloat = DSSpacing.md + DSSpacing.sm
+
+    /// Whether the exhibitions have produced anything to read yet. False at the
+    /// cut-to-75 rung, which falls due in training camp.
+    private var hasPreseasonTape: Bool { slateGamesPlayed > 0 }
+
+    /// **The column header, and it does not scroll.**
+    ///
+    /// Built from `DSListHeaderRow` rather than by hand so the leading gutters —
+    /// rank, position badge, portrait — are reserved by the same component that
+    /// draws them on the row. A header that labels only the columns it can name
+    /// puts every label one slot left of the numbers underneath it.
+    private var columnHeader: some View {
+        VStack(spacing: 0) {
+            headerRow
+                .padding(.horizontal, Self.rowGutter)
+                .padding(.bottom, DSSpacing.xxs)
+            // The band's bottom edge. Without it a header that never moves and a
+            // list that does look like one stack that has stopped scrolling.
+            Divider().overlay(Color.surfaceBorder)
+        }
+        .background(Color.backgroundPrimary)
+    }
+
+    private var headerRow: some View {
+        DSListHeaderRow(
+            density: .scan,
+            // Tied to the same map the rows read. The very first frame draws the
+            // shell's snapshot before `loadLedger` has ranked anybody, and a
+            // header that reserved a column the rows below it were not drawing
+            // would put every label 24 pt right of its numbers for that frame.
+            reservesRank: !cutOrder.isEmpty,
+            rankLabel: "Cut",
+            reservesBadge: true,
+            badgeLabel: "Pos",
+            portraitWidth: DSListColumn.scanPortrait,
+            identityLabel: hasPreseasonTape ? "Player \u{00B7} preseason tape" : "Player"
+        ) {
+            Group {
+                DSColumnHeader("OVR", width: DSListColumn.ovr)
+                DSColumnHeader("OVR\u{00B1}", width: DSListColumn.value)
+                DSColumnHeader("Camp", width: DSListColumn.tight)
+                if hasPreseasonTape {
+                    DSColumnHeader("Reps", width: DSListColumn.attribute)
+                    DSColumnHeader("Case", width: DSListColumn.label)
+                }
+                if hasDepthChart {
+                    DSColumnHeader("Depth", width: DSListColumn.label)
+                }
+            }
+            Group {
+                DSColumnHeader("Age", width: DSListColumn.tight)
+                DSColumnHeader("Yrs", width: DSListColumn.tight)
+                DSColumnHeader("Frees", width: DSListColumn.money, alignment: .trailing)
+                DSColumnHeader("Dead", width: DSListColumn.money, alignment: .trailing)
+                DSColumnHeader("PS", width: DSListColumn.state)
+                // The card column has no label — a header word over a row of
+                // info buttons names the control, not the reading.
+                Color.clear.frame(width: DSListColumn.leadingAction, height: 1)
+            }
+        }
+    }
 
     private var list: some View {
         ScrollView {
-            LazyVStack(spacing: DSSpacing.xs) {
+            LazyVStack(spacing: DSSpacing.xxs) {
                 ForEach(filteredRoster, id: \.id) { player in
                     row(for: player)
                 }
             }
             .padding(.horizontal, DSSpacing.md)
-            .padding(.vertical, DSSpacing.sm)
+            .padding(.top, DSSpacing.xs)
+            .padding(.bottom, DSSpacing.sm)
         }
     }
 
+    /// One man, as a table line.
+    ///
+    /// The row is `DSListRow`'s anatomy with nothing invented on top of it:
+    /// [cut rank][position][portrait][name + what the tape says][the columns].
+    /// The two controls that were always here — the practice-squad flag and the
+    /// player card — are the last two columns rather than free-floating
+    /// trailing views, so they hold an x instead of drifting with the length of
+    /// the name above them.
     private func row(for player: Player) -> some View {
         let isSelected = selectedIDs.contains(player.id)
         let isPS = practiceSquadIDs.contains(player.id)
         let blockReason = releaseBlockReason(for: player)
         let split = releaseSplit(for: player)
-        return HStack(spacing: DSSpacing.sm) {
-            // Avatar placeholder
-            Circle()
-                .fill(Color.backgroundTertiary)
-                .frame(width: 36, height: 36)
-                .overlay(
-                    Text(initials(for: player))
-                        .font(DSType.display(DSType.Size.footnote, .bold))
-                        .foregroundStyle(Color.textSecondary)
-                )
-
-            VStack(alignment: .leading, spacing: 2) {  // ds-lint:allow(spacing) name-over-meta lockup inside one row
-                HStack(spacing: DSSpacing.xxs) {
-                    Text(player.position.rawValue)
-                        .font(DSType.display(11, .heavy))
-                        .padding(.horizontal, DSSpacing.xxs)
-                        .padding(.vertical, 2)  // ds-lint:allow(spacing) position badge must not grow the row
-                        .background(
-                            RoundedRectangle(cornerRadius: DSCornerRadius.tight)
-                                .fill(Color.backgroundTertiary)
-                        )
-                        .foregroundStyle(Color.textSecondary)
-                    Text(player.fullName)
-                        .font(DSType.text(DSType.Size.body, .medium, prose: true))
-                        .foregroundStyle(Color.textPrimary)
-                        .lineLimit(1)
+        let tape = tapeByPlayer[player.id]
+        return DSListRow(
+            density: .scan,
+            rank: cutRank(for: player),
+            badge: DSRowBadge(
+                text: player.position.rawValue,
+                tint: positionTint(player.position),
+                accessibilityLabel: "\(player.position.rawValue), \(player.position.side.rawValue)"
+            ),
+            portraitWidth: DSListColumn.scanPortrait
+        ) {
+            portrait(for: player)
+        } identity: {
+            identityBlock(for: player, blockReason: blockReason, tape: tape)
+        } columns: {
+            Group {
+                ovrCell(player)
+                trendCell(player)
+                campCell(player)
+                if hasPreseasonTape {
+                    repsCell(tape)
+                    caseCell(tape)
                 }
-                // **The numbers outrank the name here.** The name was body
-                // semibold over a meta line where OVR, the camp letter and the
-                // age all sat at the 11 pt floor — so the eye landed first on
-                // the one thing the user already knows and last on the two
-                // gradings the cut is actually made on. The two verdicts move a
-                // step up; the age, which decides nothing on its own, stays put.
-                HStack(spacing: DSSpacing.xs) {
-                    Text("OVR \(player.overall)")
-                        .font(DSType.display(DSType.Size.footnote, .heavy))
-                        .foregroundStyle(Color.forRating(player.overall))
-                    if let grade = player.campGrade {
-                        Text("Camp \(grade.displayLabel)")
-                            .font(DSType.display(DSType.Size.footnote, .heavy))
-                            .foregroundStyle(gradeColor(grade))
-                    } else {
-                        // A blank where every neighbouring row carries a letter
-                        // reads as a data hole rather than as a fact. Men
-                        // acquired after camp broke were never graded, and the
-                        // absence is stated rather than left to be inferred.
-                        Text("Camp \u{2014}")
-                            .font(DSType.display(DSType.Size.footnote, .heavy))
-                            .foregroundStyle(Color.textTertiaryReadable)
-                            .accessibilityLabel("No camp grade")
-                    }
-                    Text("Age \(player.age)")
-                        .font(DSType.display(11, .semibold))
-                        .foregroundStyle(Color.textTertiaryReadable)
-                    // Years left on the deal — the third thing a cut is decided
-                    // on, and the row had no room problem: it was 70 % empty.
-                    Text("Yrs \(player.contractYearsRemaining)")
-                        .font(DSType.display(11, .semibold))
-                        .foregroundStyle(Color.textTertiaryReadable)
-                }
-                // §2.12 — a closed row says why it is closed, in the row. A
-                // greyed line with no reason is the thing the guard exists to
-                // stop being.
-                if let blockReason {
-                    HStack(spacing: DSSpacing.xxs) {
-                        Image(systemName: "lock.fill")
-                            .font(DSType.display(10, .bold))
-                        Text(blockReason)
-                            .font(DSType.text(DSType.Size.caption, .semibold, prose: true))
-                            .lineLimit(2)
-                    }
-                    .foregroundStyle(Color.warning)
+                if hasDepthChart {
+                    depthCell(player)
                 }
             }
-
-            Spacer()
-
-            // **The money, with its sign and with its other half.**
-            //
-            // One unlabelled figure, always prefixed "+" and always painted
-            // success green, is two lies on one row: `capSavings` is signed, so
-            // a release that COSTS cap space rendered in the same green as one
-            // that freed $25M; and a man on a minimum deal rounded to "+$0.0M",
-            // which reads as "free to cut" rather than "saves nothing". The
-            // dead cap the same release leaves behind — the number the confirm
-            // dialog and the receipt both lead with — appeared nowhere on the
-            // row where the decision is actually made.
-            VStack(alignment: .trailing, spacing: 2) {  // ds-lint:allow(spacing) two-line money column inside one row
-                Text(capSavingsLabel(split))
-                    .font(DSType.display(DSType.Size.footnote, .heavy))
-                    .foregroundStyle(capSavingsColor(split))
-                Text(split.deadCap > 0 ? "\(money(split.deadCap)) dead" : "no dead cap")
-                    .font(DSType.display(11, .semibold))
-                    .foregroundStyle(split.deadCap > 0 ? Color.dangerText : Color.textTertiaryReadable)
+            Group {
+                ageCell(player)
+                contractYearsCell(player)
+                capFreedCell(split)
+                deadCapCell(split)
+                practiceSquadCell(player, isSelected: isSelected, isPS: isPS)
+                playerCardCell(player)
             }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(capSavingsAccessibilityLabel(split))
-
-            // **The flag only means anything on a man who is leaving.** It is
-            // stamped onto his release receipt and read back by the practice
-            // squad's keeper pass; on a man you keep it was a toggle that lit
-            // up, changed nothing, and was wiped on commit. So it appears when
-            // he is marked and goes with him when he is un-marked — and it says
-            // what it does, rather than two letters that are expanded nowhere
-            // on the screen.
-            if isSelected {
-                Button {
-                    togglePracticeSquad(player)
-                } label: {
-                    Text(isPS ? "On PS \u{2713}" : "Stash on PS")
-                        .font(DSType.display(11, .heavy))
-                        .padding(.horizontal, DSSpacing.xs)
-                        .padding(.vertical, 3)  // ds-lint:allow(spacing) inline toggle inside a fixed row height
-                        .background(
-                            RoundedRectangle(cornerRadius: DSCornerRadius.tight)
-                                .fill(isPS ? Color.accentBlue : Color.backgroundTertiary)
-                        )
-                        .foregroundStyle(isPS ? Color.textPrimary : Color.textSecondary)
-                        // 44 pt of finger around a 19 pt pill: this control
-                        // shares a hit area with the row's own tap, and that tap
-                        // is the destructive one. A miss must not be a release.
-                        .frame(minHeight: 44)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(
-                    isPS
-                        ? "\(player.fullName) is flagged for the practice squad"
-                        : "Flag \(player.fullName) for the practice squad"
-                )
-            }
-
-            // The row carries four numbers and the tap on it is an irreversible
-            // release, so the man himself was one thing the screen would not
-            // show you. His card pushes onto the shell's own stack and pops
-            // straight back onto the sheet, marks intact.
-            NavigationLink(destination: PlayerDetailView(player: player)) {
-                Image(systemName: "info.circle")
-                    .font(DSType.display(DSType.Size.footnote, .semibold))
-                    .foregroundStyle(Color.textTertiaryReadable)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Open \(player.fullName)'s player card")
         }
-        .padding(DSSpacing.sm)
+        // A table line, not a card stack: at 87 rows the old 12 pt inset and
+        // 8 pt gutter spent a third of the viewport on air between men who are
+        // meant to be compared to one another.
+        .padding(.horizontal, DSSpacing.sm)
+        .padding(.vertical, DSSpacing.xxs)
         .background(
             RoundedRectangle(cornerRadius: DSCornerRadius.card)
                 .fill(isSelected ? Color.danger.opacity(0.18) : Color.backgroundSecondary)
@@ -478,6 +567,392 @@ struct RosterCutView: View {
             blockReason
                 ?? (isSelected ? "Tap to keep him" : "Tap to mark him for release")
         )
+    }
+
+    // MARK: - The leading slots
+
+    /// **The rank the list is already sorted by, finally drawn.**
+    ///
+    /// `cutOrder` is the evaluator's worst-first ranking over the WHOLE roster,
+    /// so the number survives the position tabs: filtering to the receivers does
+    /// not renumber them 1..9, it shows where each of them sits among all
+    /// eighty-seven. The men inside the rung's own cut count carry the warn
+    /// tint — orange, because it is caution at a stated threshold, and because
+    /// the row's own selected state owns red and the action bar owns gold.
+    /// `DSRank`'s default tint would have painted the most-cuttable man on the
+    /// roster in the call-to-action colour.
+    private func cutRank(for player: Player) -> DSRank? {
+        guard let index = cutOrder[player.id] else { return nil }
+        let rank = index + 1
+        let isInsideTheCut = requiredCuts > 0 && rank <= requiredCuts
+        let tint: Color = isInsideTheCut ? .alertOrange : .textSecondary
+        return DSRank(value: rank, tint: tint)
+    }
+
+    private func portrait(for player: Player) -> some View {
+        Circle()
+            .fill(Color.backgroundTertiary)
+            // 30 pt, which is the content height a scan row is built around —
+            // the rank slot's two reserved rows measure 26 inside it.
+            .frame(width: 30, height: 30)
+            .overlay(
+                Text(initials(for: player))
+                    .font(DSType.display(DSType.Size.caption, .bold))
+                    .foregroundStyle(Color.textSecondary)
+            )
+            .accessibilityHidden(true)
+    }
+
+    /// The name, and the one line underneath it that is worth the width.
+    ///
+    /// Three candidates in priority order, and only ever one of them: the reason
+    /// this row is closed (§2.12 — a closed row says why, in the row), the tape
+    /// the exhibitions produced, or where he stands on the roster. A man who is
+    /// blocked has a lock line; a man with a box score has his box score; a man
+    /// in August of his rookie year has "Rookie".
+    private func identityBlock(
+        for player: Player,
+        blockReason: String?,
+        tape: PreseasonTape?
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 1) {  // ds-lint:allow(spacing) name-over-subline lockup inside one row
+            HStack(spacing: DSSpacing.xxs) {
+                Text(player.fullName)
+                    .font(DSType.text(DSListDensity.scan.nameSize, .semibold, prose: true))
+                    .foregroundStyle(Color.textPrimary)
+                    .lineLimit(1)
+                if player.isInjured {
+                    // An injury is a fact about the MAN, not a column reading,
+                    // so it travels with the name — the same place the preseason
+                    // evidence table puts it. `keepScore` docks him six points
+                    // for it and the row used to show nothing at all.
+                    Image(systemName: "cross.case.fill")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(Color.dangerText)
+                        .accessibilityLabel("Injured")
+                }
+            }
+            subline(for: player, blockReason: blockReason, tape: tape)
+        }
+    }
+
+    @ViewBuilder
+    private func subline(
+        for player: Player,
+        blockReason: String?,
+        tape: PreseasonTape?
+    ) -> some View {
+        if let blockReason {
+            HStack(spacing: DSSpacing.xxs) {
+                Image(systemName: "lock.fill")
+                    .font(DSType.display(10, .bold))
+                Text(blockReason)
+                    .font(DSType.text(DSType.Size.caption, .semibold, prose: true))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(Color.warning)
+        } else if let line = tape?.line {
+            Text(line)
+                .font(DSType.display(DSType.Size.caption, .semibold))
+                .foregroundStyle(Color.textSecondary)
+                .lineLimit(1)
+        } else {
+            Text(standingLine(for: player))
+                .font(DSType.display(DSType.Size.caption, .semibold))
+                .foregroundStyle(Color.textTertiaryReadable)
+                .lineLimit(1)
+        }
+    }
+
+    /// Where a man with no tape stands, in the club's own words.
+    ///
+    /// Service time leads it because it is the fact the cut sheet reads and the
+    /// table has no column for: a rookie and an eighth-year veteran on the same
+    /// OVR are not the same decision. The practice-squad clause is deliberately
+    /// NOT here — the PS column carries it, and saying it twice on one line was
+    /// what the old row did with the camp grade.
+    private func standingLine(for player: Player) -> String {
+        var parts: [String] = []
+        parts.append(player.yearsPro <= 0 ? "Rookie" : "\(player.yearsPro) yr pro")
+        if player.isInjured {
+            parts.append(player.injuryWeeksRemaining > 0 ? "out \(player.injuryWeeksRemaining) wk" : "injured")
+        }
+        if player.isHoldingOut { parts.append("holding out") }
+        if player.rosterStatus != .active { parts.append(player.rosterStatus.displayName.lowercased()) }
+        return parts.joined(separator: " \u{00B7} ")
+    }
+
+    // MARK: - The columns
+
+    private func ovrCell(_ player: Player) -> some View {
+        Text("\(player.overall)")
+            .font(DSType.display(DSType.Size.body, .heavy))
+            .foregroundStyle(Color.forRating(player.overall))
+            .dsColumn(DSListColumn.ovr)
+            .accessibilityLabel("Overall \(player.overall)")
+    }
+
+    /// **The direction, next to the level.** An OVR of 72 means one thing on a
+    /// man who was 68 in December and the opposite on a man who was 77.
+    @ViewBuilder
+    private func trendCell(_ player: Player) -> some View {
+        if let trend = ovrTrend[player.id] {
+            Text(trendLabel(trend.delta))
+                .font(DSType.display(DSType.Size.caption, .heavy))
+                .foregroundStyle(trendColor(trend.delta))
+                .dsColumn(DSListColumn.value)
+                .accessibilityLabel(trendSpoken(trend))
+        } else {
+            Text("\u{2014}")
+                .font(DSType.display(DSType.Size.caption, .semibold))
+                .foregroundStyle(Color.textTertiaryReadable)
+                .dsColumn(DSListColumn.value)
+                .accessibilityLabel("No finished season on record")
+        }
+    }
+
+    private func trendLabel(_ delta: Int) -> String {
+        if delta > 0 { return "+\(delta)" }
+        if delta < 0 { return "\u{2212}\(abs(delta))" }
+        return "0"
+    }
+
+    private func trendColor(_ delta: Int) -> Color {
+        if delta > 0 { return .success }
+        if delta < 0 { return .dangerText }
+        return .textTertiaryReadable
+    }
+
+    private func trendSpoken(_ trend: OVRTrend) -> String {
+        guard trend.delta != 0 else { return "Unchanged since the end of \(trend.sinceSeason)" }
+        let direction = trend.delta > 0 ? "Up" : "Down"
+        return "\(direction) \(abs(trend.delta)) since the end of \(trend.sinceSeason)"
+    }
+
+    @ViewBuilder
+    private func campCell(_ player: Player) -> some View {
+        if let grade = player.campGrade {
+            Text(grade.displayLabel)
+                .font(DSType.display(DSType.Size.footnote, .heavy))
+                .foregroundStyle(gradeColor(grade))
+                .dsColumn(DSListColumn.tight)
+                .accessibilityLabel("Camp grade \(grade.displayLabel)")
+        } else {
+            // A blank where every neighbouring row carries a letter reads as a
+            // data hole rather than as a fact. Men acquired after camp broke
+            // were never graded, and the absence is stated rather than inferred.
+            Text("\u{2014}")
+                .font(DSType.display(DSType.Size.footnote, .heavy))
+                .foregroundStyle(Color.textTertiaryReadable)
+                .dsColumn(DSListColumn.tight)
+                .accessibilityLabel("No camp grade")
+        }
+    }
+
+    /// How much of him the slate actually showed: chances over exhibitions
+    /// dressed. A zero over a three is a real reading — he was in uniform for
+    /// the whole slate and the box score never once mentioned him.
+    @ViewBuilder
+    private func repsCell(_ tape: PreseasonTape?) -> some View {
+        if let tape {
+            VStack(spacing: 0) {
+                Text("\(tape.opportunities)")
+                    .font(DSType.display(DSType.Size.caption, .heavy))
+                    .foregroundStyle(tape.opportunities > 0 ? Color.textPrimary : Color.textTertiaryReadable)
+                Text("\(tape.games)/\(slateGamesPlayed)")
+                    .font(DSType.display(DSType.Size.caption, .semibold))
+                    .foregroundStyle(Color.textTertiaryReadable)
+            }
+            .dsColumn(DSListColumn.attribute)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(
+                "\(tape.opportunities) chances across \(tape.games) of \(slateGamesPlayed) exhibitions"
+            )
+        } else {
+            Text("\u{2014}")
+                .font(DSType.display(DSType.Size.caption, .semibold))
+                .foregroundStyle(Color.textTertiaryReadable)
+                .dsColumn(DSListColumn.attribute)
+                .accessibilityLabel("Did not dress in the preseason")
+        }
+    }
+
+    @ViewBuilder
+    private func caseCell(_ tape: PreseasonTape?) -> some View {
+        if let tape {
+            DSStatusPill(
+                label: tape.verdict.pillLabel,
+                tone: tape.verdict.tone,
+                showsDot: false,
+                spokenLabel: "The tape says he \(tape.verdict.spoken)"
+            )
+            .dsColumn(DSListColumn.label)
+        } else {
+            DSStatusPill(
+                label: "None",
+                tone: .empty,
+                showsDot: false,
+                spokenLabel: "No preseason tape"
+            )
+            .dsColumn(DSListColumn.label)
+        }
+    }
+
+    /// His slot on the club's own chart — see the file header, decision 2. Off
+    /// the chart is the `empty` tone on purpose: the DS reserves it for the hole
+    /// the reader is scanning FOR, and on this screen that is exactly what a man
+    /// nobody's lineup has a use for is.
+    @ViewBuilder
+    private func depthCell(_ player: Player) -> some View {
+        if let spot = depthByPlayer[player.id] {
+            DSStatusPill(label: spot.label, tone: spot.tone, showsDot: false, spokenLabel: spot.spoken)
+                .dsColumn(DSListColumn.label)
+        } else {
+            DSStatusPill(
+                label: "Off",
+                tone: .empty,
+                showsDot: false,
+                spokenLabel: "Not on the depth chart"
+            )
+            .dsColumn(DSListColumn.label)
+        }
+    }
+
+    private func ageCell(_ player: Player) -> some View {
+        Text("\(player.age)")
+            .font(DSType.display(DSType.Size.caption, .semibold))
+            .foregroundStyle(Color.textSecondary)
+            .dsColumn(DSListColumn.tight)
+            .accessibilityLabel("Age \(player.age)")
+    }
+
+    private func contractYearsCell(_ player: Player) -> some View {
+        Text(player.contractYearsRemaining > 0 ? "\(player.contractYearsRemaining)" : "\u{2013}")
+            .font(DSType.display(DSType.Size.caption, .semibold))
+            .foregroundStyle(Color.textSecondary)
+            .dsColumn(DSListColumn.tight)
+            .accessibilityLabel(
+                player.contractYearsRemaining > 0
+                    ? "\(player.contractYearsRemaining) years left on the deal"
+                    : "Expiring deal"
+            )
+    }
+
+    /// **The money, with its sign.** One unlabelled figure, always prefixed "+"
+    /// and always painted success green, was two lies on one row: `capSavings`
+    /// is signed, so a release that COSTS cap space rendered in the same green
+    /// as one that freed $25M; and a man on a minimum deal rounded to "+$0.0M",
+    /// which reads as "free to cut" rather than "saves nothing".
+    private func capFreedCell(_ split: CapManagementEngine.ReleaseCapSplit) -> some View {
+        Text(capSavingsLabel(split))
+            .font(DSType.display(DSType.Size.footnote, .heavy))
+            .foregroundStyle(capSavingsColor(split))
+            .dsColumn(DSListColumn.money, alignment: .trailing)
+            .accessibilityLabel(
+                split.capSavings < 0
+                    ? "Releasing him costs \(money(abs(split.capSavings))) of cap space"
+                    : "Releasing him frees \(money(split.capSavings)) of cap space"
+            )
+    }
+
+    /// The other half of the same release — the number the confirm dialog and
+    /// the receipt both lead with, and which appeared nowhere on the row where
+    /// the decision is actually made.
+    private func deadCapCell(_ split: CapManagementEngine.ReleaseCapSplit) -> some View {
+        Text(split.deadCap > 0 ? money(split.deadCap) : "\u{2013}")
+            .font(DSType.display(DSType.Size.footnote, .heavy))
+            .foregroundStyle(split.deadCap > 0 ? Color.dangerText : Color.textTertiaryReadable)
+            .dsColumn(DSListColumn.money, alignment: .trailing)
+            .accessibilityLabel(
+                split.deadCap > 0
+                    ? "Leaves \(money(split.deadCap)) of dead money"
+                    : "Leaves no dead money"
+            )
+    }
+
+    /// **The flag only means anything on a man who is leaving.** It is stamped
+    /// onto his release receipt and read back by the practice squad's keeper
+    /// pass; on a man you keep it was a toggle that lit up, changed nothing, and
+    /// was wiped on commit. So it appears when he is marked.
+    ///
+    /// What the column says the rest of the time is the fact the old row never
+    /// carried anywhere: `RosterCutEvaluator.isPracticeSquadEligible` gates the
+    /// stash on service time, so the button used to offer a vested veteran a
+    /// landing spot he was not entitled to. The eligible men are marked BEFORE
+    /// the tick, which is when it changes the plan. The button's own label can
+    /// shorten to "Stash" now that a column header says PS above it.
+    @ViewBuilder
+    private func practiceSquadCell(_ player: Player, isSelected: Bool, isPS: Bool) -> some View {
+        if isSelected {
+            Button {
+                togglePracticeSquad(player)
+            } label: {
+                Text(isPS ? "On PS \u{2713}" : "Stash")
+                    .font(DSType.display(DSType.Size.caption, .heavy))
+                    .padding(.horizontal, DSSpacing.xs)
+                    .padding(.vertical, 3)  // ds-lint:allow(spacing) inline toggle inside a fixed row height
+                    .background(
+                        RoundedRectangle(cornerRadius: DSCornerRadius.tight)
+                            .fill(isPS ? Color.accentBlue : Color.backgroundTertiary)
+                    )
+                    .foregroundStyle(isPS ? Color.textPrimary : Color.textSecondary)
+                    // 44 pt of finger around a 19 pt pill: this control shares a
+                    // hit area with the row's own tap, and that tap is the
+                    // destructive one. A miss must not be a release.
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .dsColumn(DSListColumn.state)
+            .accessibilityLabel(
+                isPS
+                    ? "\(player.fullName) is flagged for the practice squad"
+                    : "Flag \(player.fullName) for the practice squad"
+            )
+        } else if RosterCutEvaluator.isPracticeSquadEligible(player: player) {
+            // `neutral`, not `info`: a camp roster is half rookies, so this
+            // lands on forty of the eighty-seven rows and it is a stated fact
+            // rather than a recommendation. Forty blue chips would read as the
+            // screen pointing at them.
+            DSStatusPill(
+                label: "Eligible",
+                tone: .neutral,
+                showsDot: false,
+                spokenLabel: "Practice-squad eligible"
+            )
+            .dsColumn(DSListColumn.state)
+        } else {
+            // A vested veteran cannot be stashed at all, and an empty cell is
+            // the true statement. A dashed `empty` pill would advertise a hole
+            // the club has no way to fill.
+            Color.clear.frame(width: DSListColumn.state, height: 1)
+        }
+    }
+
+    /// The row carries a dozen numbers and the tap on it is an irreversible
+    /// release, so the man himself was one thing the screen would not show you.
+    /// His card pushes onto the shell's own stack and pops straight back onto
+    /// the sheet, marks intact.
+    private func playerCardCell(_ player: Player) -> some View {
+        NavigationLink(destination: PlayerDetailView(player: player)) {
+            Image(systemName: "info.circle")
+                .font(DSType.display(DSType.Size.footnote, .semibold))
+                .foregroundStyle(Color.textTertiaryReadable)
+                .frame(width: DSListColumn.leadingAction, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Open \(player.fullName)'s player card")
+    }
+
+    /// The badge tint, by side — the same three-colour split the preseason
+    /// evidence table uses, so a position badge means one thing across camp.
+    private func positionTint(_ position: Position) -> Color {
+        switch position.side {
+        case .offense:      return .accentBlue
+        case .defense:      return .danger
+        case .specialTeams: return .accentGold
+        }
     }
 
     /// The camp grade, on the same five-tier ladder as the OVR beside it.
@@ -960,8 +1435,14 @@ struct RosterCutView: View {
         )
     }
 
+    /// The release split, from the map priced at load — see `releaseSplits`.
+    ///
+    /// The engine is still the fallback rather than a precondition: the very
+    /// first render draws the shell's snapshot before any fetch has landed, and
+    /// a row with no priced split would show a man free to cut.
     private func releaseSplit(for player: Player) -> CapManagementEngine.ReleaseCapSplit {
-        CapManagementEngine.releaseCapSplit(
+        if let priced = releaseSplits[player.id] { return priced }
+        return CapManagementEngine.releaseCapSplit(
             player: player,
             contract: contractsByPlayer[player.id],
             capMode: career.capMode,
@@ -1007,18 +1488,6 @@ struct RosterCutView: View {
         return split.capSavings == 0 ? .textTertiaryReadable : .success
     }
 
-    /// The money column names what it is, for a reader who cannot see that the
-    /// figure is green and sitting above a dead-cap line.
-    private func capSavingsAccessibilityLabel(_ split: CapManagementEngine.ReleaseCapSplit) -> String {
-        let cap = split.capSavings < 0
-            ? "Releasing him costs \(money(abs(split.capSavings))) of cap space"
-            : "Releasing him frees \(money(split.capSavings)) of cap space"
-        let dead = split.deadCap > 0
-            ? "and leaves \(money(split.deadCap)) of dead money"
-            : "and leaves no dead money"
-        return "\(cap) \(dead)"
-    }
-
     private func money(_ thousands: Int) -> String {
         String(format: "$%.1fM", Double(thousands) / 1_000.0)
     }
@@ -1036,6 +1505,13 @@ struct RosterCutView: View {
     /// **And the roster itself**, because the whole ladder is derived from its
     /// count. This is the only hook that puts the released men back out of the
     /// list and moves the stage on.
+    ///
+    /// **And everything the table reads.** The four column maps are built here
+    /// and only here — the list re-renders on every tap of every one of ~87
+    /// rows, so a column that derived itself per row would run its derivation
+    /// eighty-seven times for a value that cannot move until the next commit.
+    /// They are refreshed with the roster they describe, which is what keeps the
+    /// table honest across a commit.
     private func loadLedger() {
         guard let teamID = career.teamID else { return }
         let fetched = (try? modelContext.fetch(FetchDescriptor<Player>(
@@ -1072,6 +1548,257 @@ struct RosterCutView: View {
             byStage[day, default: 0] += 1
         }
         releasesByStage = byStage
+
+        // The table's columns, in dependency order: the cap split needs the
+        // contracts fetched above it.
+        loadCapSplits(roster: fetched)
+        loadOVRTrend(roster: fetched)
+        loadDepthChart()
+        loadPreseasonTape()
+    }
+
+    /// Prices every release once, off the deals just fetched.
+    private func loadCapSplits(roster: [Player]) {
+        let capMode = career.capMode
+        let remaining = leagueYearRemaining
+        var priced: [UUID: CapManagementEngine.ReleaseCapSplit] = [:]
+        priced.reserveCapacity(roster.count)
+        for player in roster {
+            priced[player.id] = CapManagementEngine.releaseCapSplit(
+                player: player,
+                contract: contractsByPlayer[player.id],
+                capMode: capMode,
+                leagueYearRemaining: remaining
+            )
+        }
+        releaseSplits = priced
+    }
+
+    /// The offseason swing, off the newest finished season on record.
+    ///
+    /// One fetch for the whole roster — the same shape the development report
+    /// uses for tenure — rather than a fetch per row. Rows come back newest
+    /// first and the first row per player is the one the trend is measured
+    /// against; his `teamID` on it is deliberately not checked, because a
+    /// veteran signed this offseason still developed over it and the number is
+    /// about the MAN, not about who paid him in December.
+    private func loadOVRTrend(roster: [Player]) {
+        let ids = roster.map(\.id)
+        guard !ids.isEmpty else {
+            ovrTrend = [:]
+            return
+        }
+        let cid = career.id
+        let descriptor = FetchDescriptor<PlayerSeasonHistory>(
+            predicate: #Predicate<PlayerSeasonHistory> {
+                $0.careerID == cid && ids.contains($0.playerID)
+            },
+            sortBy: [SortDescriptor(\.season, order: .reverse)]
+        )
+        let rows = (try? modelContext.fetch(descriptor)) ?? []
+
+        var newest: [UUID: PlayerSeasonHistory] = [:]
+        for row in rows where newest[row.playerID] == nil { newest[row.playerID] = row }
+
+        var trend: [UUID: OVRTrend] = [:]
+        trend.reserveCapacity(roster.count)
+        for player in roster {
+            guard let row = newest[player.id] else { continue }
+            trend[player.id] = OVRTrend(
+                delta: player.overall - row.overallAtEndOfSeason,
+                sinceSeason: row.season
+            )
+        }
+        ovrTrend = trend
+    }
+
+    /// Reverses the saved depth chart into a per-player slot, once.
+    ///
+    /// `depthChartData == nil` is a real state — it is what the required "Set
+    /// depth chart" task owns — and the column is dropped rather than filled
+    /// with eighty-seven "unset" cells: a chart nobody has written says nothing
+    /// about any individual man, and the task row is where the user is told to
+    /// write one.
+    private func loadDepthChart() {
+        guard let data = career.depthChartData,
+              let chart = try? JSONDecoder().decode(DepthChart.self, from: data) else {
+            depthByPlayer = [:]
+            hasDepthChart = false
+            return
+        }
+
+        // **Three states, not a rung number.** A starter gets his slot's own
+        // name, because WR1 and WR3 are different jobs and the position badge
+        // cannot tell them apart. Everyone behind a starter gets the word
+        // "Backup" rather than "2nd" / "3rd": the chart distributes a room
+        // across sibling slots (WR1/WR2/WR3 each carry a starter AND a backup),
+        // so index 1 of WR1 is the club's FOURTH receiver and printing "2nd"
+        // beside him would be a number that means something different in every
+        // room. The exact rung is still spoken, where there is space to name the
+        // slot it belongs to.
+        var spots: [UUID: DepthSpot] = [:]
+        for slot in DepthChartSlot.allCases where !slot.acceptsAnyPosition {
+            for (index, id) in chart.depthOrder(for: slot).enumerated() {
+                // `DepthChart.assign` keeps a man in at most one position slot,
+                // so the first hit is normally the only hit. A chart written by
+                // an older build can still double-book, and `allCases` order is
+                // the lineup's own order — first hit wins is then the slot the
+                // simulator would field him in.
+                guard spots[id] == nil else { continue }
+                let isStarter = index == 0
+                let tone: DSStatusPill.Tone = isStarter ? .ok : .neutral
+                spots[id] = DepthSpot(
+                    label: isStarter ? slot.rawValue : "Backup",
+                    tone: tone,
+                    spoken: isStarter
+                        ? "Starting \(slot.displayName)"
+                        : "\(Self.depthOrdinal(index + 1)) \(slot.displayName)"
+                )
+            }
+        }
+
+        // The returners last, and only for a man no position slot has already
+        // placed. "KR" is the most useful thing the chart knows about a fourth
+        // running back and the least useful thing it knows about a starting one.
+        for slot in [DepthChartSlot.KR, .PR] {
+            guard let id = chart.starter(for: slot), spots[id] == nil else { continue }
+            spots[id] = DepthSpot(
+                label: slot.rawValue,
+                tone: .info,
+                spoken: "Starting \(slot.displayName)"
+            )
+        }
+
+        depthByPlayer = spots
+        hasDepthChart = true
+    }
+
+    private static func depthOrdinal(_ value: Int) -> String {
+        switch value {
+        case 2:  return "2nd"
+        case 3:  return "3rd"
+        default: return "\(value)th"
+        }
+    }
+
+    /// Rolls the exhibition slate up into one reading per man.
+    ///
+    /// Two things this deliberately does not do. It does not sum the box scores
+    /// and hand the total to `PreseasonEngine.CampCase` — that evaluator's bar
+    /// is one afternoon's positional expectation, and a three-game total scored
+    /// against it would call every man who dressed three times a riser. And it
+    /// does not decide anything about football itself: the verdict per game is
+    /// the engine's, and what happens here is counting them.
+    ///
+    /// The summed line IS used for the row's subline, because
+    /// `PreseasonCampCase.statLine` is pure formatting — "13/21, 158 yds" across
+    /// the slate is the same sentence in the same shorthand.
+    private func loadPreseasonTape() {
+        guard let state = career.preseasonState,
+              state.matches(career: career),
+              !state.results.isEmpty else {
+            tapeByPlayer = [:]
+            slateGamesPlayed = 0
+            return
+        }
+        slateGamesPlayed = state.results.count
+
+        var linesByPlayer: [UUID: [PlayerGameStats]] = [:]
+        var gamesByPlayer: [UUID: Int] = [:]
+        var chancesByPlayer: [UUID: Int] = [:]
+        var verdictsByPlayer: [UUID: [PreseasonEngine.CampCase.Verdict]] = [:]
+
+        for result in state.results {
+            // **Who was in uniform, not who registered.** `bubblePlayerIDs` is
+            // the dressed cohort minus the starters, so an interior lineman who
+            // played sixty snaps and touched nothing still counts a game of
+            // tape. Without it he reads identically to a man who never left the
+            // sideline, and those are opposite facts on a cut sheet.
+            let dressedBubble = Set(result.bubblePlayerIDs)
+            for id in dressedBubble { gamesByPlayer[id, default: 0] += 1 }
+            for line in result.userLines {
+                if !dressedBubble.contains(line.playerID) {
+                    gamesByPlayer[line.playerID, default: 0] += 1
+                }
+                linesByPlayer[line.playerID, default: []].append(line)
+                let read = PreseasonEngine.CampCase.read(line)
+                chancesByPlayer[line.playerID, default: 0] += read.opportunities
+                verdictsByPlayer[line.playerID, default: []].append(read.verdict)
+            }
+        }
+
+        var tape: [UUID: PreseasonTape] = [:]
+        tape.reserveCapacity(gamesByPlayer.count)
+        for (id, games) in gamesByPlayer {
+            tape[id] = PreseasonTape(
+                games: games,
+                opportunities: chancesByPlayer[id] ?? 0,
+                verdict: Self.slateVerdict(verdictsByPlayer[id] ?? []),
+                line: Self.slateLine(linesByPlayer[id] ?? []).map { PreseasonCampCase.statLine($0) }
+            )
+        }
+        tapeByPlayer = tape
+    }
+
+    /// The slate's verdict as a count of its games' verdicts. A man who helped
+    /// himself twice and hurt himself once has moved forward; a man who did both
+    /// once is a wash, which is what `held` means.
+    private static func slateVerdict(
+        _ verdicts: [PreseasonEngine.CampCase.Verdict]
+    ) -> PreseasonCampCase.Verdict {
+        let helped = verdicts.filter { $0 == .helped }.count
+        let hurt = verdicts.filter { $0 == .hurt }.count
+        let rolled: PreseasonEngine.CampCase.Verdict
+        if helped > hurt {
+            rolled = .helped
+        } else if hurt > helped {
+            rolled = .hurt
+        } else if helped > 0 || verdicts.contains(.held) {
+            // Moved both ways, or simply did his job: either slate is a wash.
+            rolled = .held
+        } else {
+            rolled = .quiet
+        }
+        // The count is kept in the ENGINE'S vocabulary and translated once, here
+        // — `PreseasonCampCase` states that its initializer is the only place
+        // the two meet, and a rollup that picked display cases directly would
+        // be a second crossing.
+        return PreseasonCampCase.Verdict(rolled)
+    }
+
+    /// The slate's box score, as one line to format. `nil` when he never
+    /// appeared in one.
+    private static func slateLine(_ lines: [PlayerGameStats]) -> PlayerGameStats? {
+        guard let first = lines.first else { return nil }
+        var total = PlayerGameStats(
+            playerID: first.playerID,
+            playerName: first.playerName,
+            position: first.position
+        )
+        for line in lines {
+            total.passingYards += line.passingYards
+            total.passingTDs += line.passingTDs
+            total.interceptions += line.interceptions
+            total.completions += line.completions
+            total.attempts += line.attempts
+            total.rushingYards += line.rushingYards
+            total.rushingTDs += line.rushingTDs
+            total.carries += line.carries
+            total.receivingYards += line.receivingYards
+            total.receivingTDs += line.receivingTDs
+            total.receptions += line.receptions
+            total.targets += line.targets
+            total.tackles += line.tackles
+            total.sacks += line.sacks
+            total.forcedFumbles += line.forcedFumbles
+            total.interceptionsCaught += line.interceptionsCaught
+            total.fieldGoalsMade += line.fieldGoalsMade
+            total.fieldGoalsAttempted += line.fieldGoalsAttempted
+        }
+        // Not an init parameter — it was added after the type shipped and is
+        // optional so older encoded lines still decode.
+        total.passDeflections = lines.reduce(0) { $0 + $1.passDeflectionCount }
+        return total
     }
 
     private func performCuts() {

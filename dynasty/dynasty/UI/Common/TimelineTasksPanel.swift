@@ -1,10 +1,13 @@
 import SwiftUI
+import SwiftData
 
 /// A unified vertical Timeline+Tasks panel inspired by Football Manager's
 /// Messages panel. Shows the current phase with its tasks expanded, plus the
 /// next 2-3 upcoming phases with preview tasks, and an advance button.
 /// Replaces the separate `phaseTasksSection` and advance button in the dashboard.
 struct TimelineTasksPanel: View {
+
+    @Environment(\.modelContext) private var modelContext
 
     let career: Career
     @Binding var tasks: [GameTask]
@@ -40,6 +43,14 @@ struct TimelineTasksPanel: View {
     /// Expanded, twelve struck-through rows ate most of the sidebar in Week 1
     /// and pushed the live phase (the only actionable part) below the fold.
     @State private var showCompletedPhases = false
+
+    /// The postseason field, rebuilt by ``reloadPostseasonIfNeeded()``. `nil`
+    /// outside the postseason, which is also when nothing is fetched for it.
+    @State private var postseason: PostseasonBracket?
+
+    /// The ``postseasonReloadKey`` the value above was built from. Empty until
+    /// the first load, which no real key can be.
+    @State private var loadedPostseasonKey = ""
 
     // MARK: - Ordered Phases
 
@@ -108,12 +119,23 @@ struct TimelineTasksPanel: View {
                     if remainingFutureCount > 0 {
                         remainingPhasesIndicator
                     }
+
+                    // The bracket — the rail's second panel, and the only place
+                    // in the app the postseason field is drawn at all. Nil in
+                    // every other phase, which is the whole of its cost then.
+                    if let postseason {
+                        postseasonSection(postseason)
+                    }
                 }
                 .padding(.bottom, 16)
             }
         }
         .frame(minWidth: 300)
         .background(Color.backgroundSecondary)
+        // Two doors into one loader: the first mount (and any change made while
+        // the rail was off screen) and the change made while it is on it.
+        .onAppear { reloadPostseasonIfNeeded() }
+        .onChange(of: postseasonReloadKey) { _, _ in reloadPostseasonIfNeeded() }
     }
 
     // MARK: - Panel Header
@@ -799,6 +821,32 @@ struct TimelineTasksPanel: View {
 
     // MARK: - Upcoming Phases
 
+    /// The phases the rail draws under the advance button as still ahead.
+    ///
+    /// Everywhere except the playoffs this is simply the next three rows of
+    /// `orderedPhases`. **From the PLAYOFFS it is the wrap-around**, and it
+    /// exists because `pastPhases` already refuses to call the All-Star Game and
+    /// the Championship complete while the club is still trying to reach them.
+    /// Without the wrap those two phases were drawn NOWHERE: excluded from
+    /// "Phases complete (14)" and never listed as upcoming, so the column that
+    /// promises to show the season had a hole exactly where the season's last
+    /// two weeks live — under an advance button whose own label offers to move
+    /// the club to the Championship.
+    ///
+    /// Only the postseason group wraps. Running the modulo out to three phases
+    /// would put COACHING CHANGES under the button while the collapsed row
+    /// above went on counting it as complete: the same phase in two places,
+    /// which is the bug the exclusion was written to fix.
+    private var upcomingPhases: [SeasonPhase] {
+        if career.currentPhase == .playoffs {
+            return SeasonPhaseGroup.postseason.subPhases
+        }
+        let start = currentIndex + 1
+        let end = min(start + upcomingPhaseCount, Self.orderedPhases.count)
+        guard start < end else { return [] }
+        return Array(Self.orderedPhases[start..<end])
+    }
+
     private var upcomingPhaseTasks: [(phase: SeasonPhase, name: String, date: String, tasks: [GameTask])] {
         var result: [(SeasonPhase, String, String, [GameTask])] = []
 
@@ -813,10 +861,7 @@ struct TimelineTasksPanel: View {
             ? Set(Self.actionableTasks(tasks).map(\.matchKey))
             : []
 
-        for i in 1...upcomingPhaseCount {
-            let nextIndex = currentIndex + i
-            guard nextIndex < Self.orderedPhases.count else { break }
-            let phase = Self.orderedPhases[nextIndex]
+        for phase in upcomingPhases {
             let previewTasks = TaskGenerator.generateTasks(
                 for: phase,
                 career: career,
@@ -958,6 +1003,320 @@ struct TimelineTasksPanel: View {
         .padding(.top, 8)
     }
 
+    // MARK: - Postseason Bracket
+    //
+    // The rail's second panel. It exists because of what the first one runs out
+    // of: at the playoffs the timeline is standing on the LAST row of
+    // `orderedPhases`, its phase list is three optional tasks long, and the
+    // advance button lands around 45% of the way down a portrait iPad. The
+    // bottom half of the column was empty for the four most consequential weeks
+    // of the year.
+    //
+    // What fills it is the one thing the app models and never draws. The
+    // bracket is real — `WeekAdvancer.ensurePlayoffGames` stages it as `Game`
+    // rows a round at a time — but no screen shows it: `ScheduleView` filters
+    // `!isPlayoff` out of its slate, `StandingsView` draws a seed ladder rather
+    // than pairings, and the dashboard's own playoffs hero card names the user's
+    // round, seed and opponent and then hands off with a "View Bracket" link
+    // that opens the standings table.
+    //
+    // So this panel deliberately does NOT restate the hero card. No "your
+    // seed", no "your matchup", no opponent dossier — the seed and the matchup
+    // are the hero card's job (#105 wave 2: one widget per fact), and the
+    // opponent's scouting readout is the Game Plan screen's, which the live
+    // phase's own first task links to. What is left is the part nobody owns:
+    // the whole field, both conferences, who is left, and where the user's own
+    // game sits inside it.
+
+    /// True while there is a bracket to draw: the three rounds of `.playoffs`,
+    /// plus the All-Star and Championship weeks, where the final is staged and
+    /// the rest of the field is settled history.
+    private var postseasonIsLive: Bool {
+        career.currentPhase == .playoffs || career.currentPhase.group == .postseason
+    }
+
+    /// Everything that can change what the bracket says.
+    ///
+    /// The week and the phase cover the advance, which is what plays a round.
+    /// `advanceIsPrimary` covers the other door: it is the dashboard's "your own
+    /// game for this week is still unplayed", so it flips the moment the user
+    /// COACHES a playoff game — the one way a score reaches the board without
+    /// the calendar moving. Without it the rail would draw the user's own game
+    /// as unstarted while the hero card six inches to its right printed the
+    /// final score, which is the #154 bug class exactly.
+    private var postseasonReloadKey: String {
+        "\(career.currentSeason)-\(career.currentWeek)-\(career.currentPhase.rawValue)-\(advanceIsPrimary)"
+    }
+
+    /// Rebuilds ``postseason`` — **once per change, never per body pass and
+    /// never on a bare re-appearance.**
+    ///
+    /// Seeding walks a full season of games through `StandingsCalculator`, and
+    /// this panel redraws every time a task is ticked. The key check is what
+    /// makes `.onAppear` safe to attach: the rail re-appears on every pop back
+    /// from a pushed screen, and a 280-row fetch on the main thread during a
+    /// pop animation is the jank the dashboard's own `refreshStaffTile` exists
+    /// to avoid. Nothing the user can do from another screen moves the
+    /// bracket, so an unchanged key is an unchanged answer.
+    ///
+    /// Outside the postseason the whole thing costs one enum comparison.
+    private func reloadPostseasonIfNeeded() {
+        let key = postseasonReloadKey
+        guard key != loadedPostseasonKey else { return }
+        loadedPostseasonKey = key
+
+        guard postseasonIsLive else {
+            postseason = nil
+            return
+        }
+        let cid = career.id
+        let season = career.currentSeason
+        // ONE fetch for both halves of the answer. Seeding is a regular-season
+        // question and `StandingsCalculator.calculate` drops the bracket rows
+        // itself — and the rows it drops are the pairings, so fetching the
+        // season whole is cheaper than fetching it twice with two predicates.
+        let gameDescriptor = FetchDescriptor<Game>(predicate: #Predicate<Game> {
+            $0.careerID == cid && $0.seasonYear == season
+        })
+        let games = (try? modelContext.fetch(gameDescriptor)) ?? []
+        let teamDescriptor = FetchDescriptor<Team>(predicate: #Predicate<Team> {
+            $0.careerID == cid
+        })
+        let teams = (try? modelContext.fetch(teamDescriptor)) ?? []
+        postseason = PostseasonBracket.build(
+            games: games,
+            teams: teams,
+            userTeamID: career.teamID
+        )
+    }
+
+    private func postseasonSection(_ bracket: PostseasonBracket) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Divider()
+                .overlay(Color.surfaceBorder.opacity(0.6))
+                .padding(.top, 14)
+
+            // Deliberately the same object as `panelHeader`: two panels stacked
+            // in one 300 pt rail only read as siblings if their headers do.
+            HStack(spacing: 8) {
+                Image(systemName: "trophy.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Color.textSecondary)
+
+                Text("THE BRACKET")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(Color.textSecondary)
+                    .textCase(.uppercase)
+                    .tracking(0.5)
+
+                Spacer()
+
+                // The unit is spelled out for the reason the task counter's is
+                // (see `panelHeader`): a bare figure in a column that also
+                // prints seeds and scores is a number with no noun.
+                Text("\(bracket.clubsLeft) alive")
+                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(Color.textSecondary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 12)
+
+            // Drawn only when the user is OUT — see `PostseasonBracket.userLine`.
+            if let line = bracket.userLine {
+                Text(line)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color.textTertiary)
+                    .textCase(.uppercase)
+                    .tracking(0.4)
+                    .padding(.horizontal, 14)
+                    .padding(.top, 3)
+            }
+
+            ForEach(bracket.rounds) { round in
+                bracketRoundSection(round)
+            }
+
+            // The panel's one exit. Same shape as a task row's scoped secondary
+            // chip: the bracket says who is playing, the table says why they are
+            // seeded where they are.
+            HStack {
+                Spacer()
+                Button {
+                    onTaskSelected(.standings)
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "list.bullet.rectangle")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("Full standings")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .foregroundStyle(Color.accentGold)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(
+                        Capsule().strokeBorder(Color.accentGold.opacity(0.35), lineWidth: 1)
+                    )
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Full standings, with conference seeding")
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 10)
+        }
+    }
+
+    private func bracketRoundSection(_ round: PostseasonBracket.Round) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Round header, ruled off to the panel edge so four rounds read as
+            // four bands rather than as one list of twelve games.
+            HStack(spacing: 8) {
+                // `SeasonWeekBand` already names these four weeks for the shell's
+                // week ladder. Borrowed rather than re-tabled: the ladder and the
+                // bracket are two views of one postseason and must not drift.
+                Text(SeasonWeekBand.playoffRoundName(week: round.week))
+                    .font(.system(size: DSType.Size.micro, weight: .heavy))
+                    .foregroundStyle(round.isStaged ? Color.textSecondary : Color.textTertiary)
+                    .textCase(.uppercase)
+                    .tracking(0.5)
+
+                Rectangle()
+                    .fill(Color.surfaceBorder)
+                    .frame(height: 1)
+            }
+            .padding(.top, 10)
+
+            if round.isStaged {
+                ForEach(round.groups) { group in
+                    VStack(alignment: .leading, spacing: 4) {
+                        if let conference = group.conference {
+                            Text(conference.rawValue)
+                                .font(.system(size: DSType.Size.micro, weight: .bold))
+                                .foregroundStyle(Color.textTertiaryReadable)
+                                .tracking(0.4)
+                        }
+                        ForEach(group.matchups) { matchup in
+                            bracketMatchupCard(matchup)
+                        }
+                    }
+                    .padding(.top, 6)
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 4) {
+                    // The clubs that are already through. Only the #1 seed sits
+                    // out a round, so this is at most one line per conference —
+                    // and it is the half of an unplayed round that IS knowable.
+                    if !round.byes.isEmpty {
+                        VStack(spacing: 3) {
+                            ForEach(round.byes) { side in
+                                bracketSideRow(side, isDimmed: false, badge: "BYE")
+                            }
+                        }
+                        .padding(.vertical, 6)
+                        .padding(.horizontal, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                                .fill(Color.backgroundPrimary.opacity(0.5))
+                        )
+                    }
+
+                    if let note = round.pendingNote {
+                        Text(note)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(Color.textTertiaryReadable)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(.top, 6)
+            }
+        }
+        .padding(.horizontal, 14)
+    }
+
+    private func bracketMatchupCard(_ matchup: PostseasonBracket.Matchup) -> some View {
+        VStack(spacing: 3) {
+            bracketSideRow(matchup.home, isDimmed: matchup.isPlayed && !matchup.home.isWinner)
+            bracketSideRow(matchup.away, isDimmed: matchup.isPlayed && !matchup.away.isWinner)
+        }
+        .padding(.vertical, 6)
+        .padding(.horizontal, 8)
+        .background(
+            RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                .fill(Color.backgroundPrimary.opacity(0.5))
+        )
+        .overlay(alignment: .leading) {
+            // The user's own game, marked once. A gold rule rather than gold
+            // text on both lines: the panel header's rule is that gold belongs
+            // to the live phase and the advance button, and one 2 pt bar is the
+            // smallest thing that can say "this one is yours" without joining
+            // the competition for the eye.
+            if matchup.involvesUser {
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(Color.accentGold)
+                    .frame(width: 2)
+                    .padding(.vertical, 4)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(matchup.spokenLabel)
+    }
+
+    /// One club on one line: seed, code, nickname, record, and either the score
+    /// or a badge.
+    private func bracketSideRow(
+        _ side: PostseasonBracket.Side,
+        isDimmed: Bool,
+        badge: String? = nil
+    ) -> some View {
+        // Hoisted out of the view builder: three nested ternaries inside
+        // `.foregroundStyle` is the shape that makes the type checker crawl.
+        let primaryInk: Color = isDimmed ? .textTertiary : .textPrimary
+        let codeInk: Color = side.isUser ? .accentGold : primaryInk
+        let nameInk: Color = isDimmed ? .textTertiary : .textSecondary
+
+        return HStack(spacing: 6) {
+            // No tone on the seed. `StandingsView` paints one because its ladder
+            // holds all 16 clubs in a conference and the pill states a threshold
+            // — top 7 are in. Every club on this panel cleared that threshold by
+            // being here, so the number is an ordinal and nothing else.
+            Text(side.seed.map { "#\($0)" } ?? "\u{2014}")
+                .font(DSType.display(DSType.Size.micro, .heavy))
+                .foregroundStyle(Color.textTertiaryReadable)
+                .frame(width: 22, alignment: .leading)
+
+            Text(side.abbreviation)
+                .font(DSType.display(DSType.Size.footnote, .bold))
+                .foregroundStyle(codeInk)
+                .frame(width: 34, alignment: .leading)
+
+            Text(side.nickname)
+                .font(.system(size: DSType.Size.caption, weight: .medium))
+                .foregroundStyle(nameInk)
+                .lineLimit(1)
+
+            Spacer(minLength: 4)
+
+            // The regular-season record, which is the only thing that separates
+            // two unplayed names on a card the user has no other read on.
+            Text(side.record)
+                .font(.system(size: DSType.Size.micro, weight: .medium).monospacedDigit())
+                .foregroundStyle(Color.textTertiaryReadable)
+
+            if let score = side.score {
+                Text("\(score)")
+                    .font(.system(size: DSType.Size.footnote, weight: side.isWinner ? .heavy : .medium).monospacedDigit())
+                    .foregroundStyle(primaryInk)
+                    .frame(width: 26, alignment: .trailing)
+            } else if let badge {
+                Text(badge)
+                    .font(.system(size: DSType.Size.micro, weight: .heavy))
+                    .foregroundStyle(Color.textTertiaryReadable)
+                    .frame(width: 26, alignment: .trailing)
+            }
+        }
+        .opacity(isDimmed ? 0.75 : 1)
+    }
+
     // MARK: - Static Helpers
 
     /// Drops `TaskGenerator`'s read-only group-banner pseudo-task (title
@@ -1077,6 +1436,246 @@ struct TimelineTasksPanel: View {
     }
 }
 
+// MARK: - Postseason Bracket Model
+
+/// The postseason reduced to what a 300 pt rail can draw.
+///
+/// Built once per load by `TimelineTasksPanel.reloadPostseason()` and held in
+/// `@State` — never assembled inside `body`, because the seeding pass it opens
+/// with reads a whole season of games.
+///
+/// The seeds are `StandingsCalculator.playoffTeams`, i.e. the same call
+/// `WeekAdvancer.ensurePlayoffGames` staged the bracket FROM. That is the point:
+/// a panel that derived seeding its own way could print "#5 at #4" over a
+/// pairing the engine had staged the other way round, and the two would both be
+/// telling the truth about different arithmetic.
+private struct PostseasonBracket {
+
+    /// One club on one line of the bracket.
+    struct Side: Identifiable {
+        /// The team id — a club appears at most once per round.
+        let id: UUID
+        let abbreviation: String
+        let nickname: String
+        /// Regular-season record. Playoff results never touch `Team.wins`
+        /// (R32), so this stays the seeding record all postseason.
+        let record: String
+        /// 1…7 in its own conference. `nil` only for a club the seeding pass
+        /// cannot place — the same legacy-save case `ensurePlayoffGames` falls
+        /// back on rather than refusing to stage a round.
+        let seed: Int?
+        let score: Int?
+        let isWinner: Bool
+        let isUser: Bool
+    }
+
+    struct Matchup: Identifiable {
+        /// The `Game` id.
+        let id: UUID
+        /// `nil` for the Championship — the one cross-conference game.
+        let conference: Conference?
+        let home: Side
+        let away: Side
+        let isPlayed: Bool
+
+        var involvesUser: Bool { home.isUser || away.isUser }
+
+        /// The seed this pairing sorts on: brackets read best-seed-first.
+        var bestSeed: Int { min(home.seed ?? 99, away.seed ?? 99) }
+
+        /// VoiceOver reads the card as one sentence — two names, two seeds and
+        /// the result — rather than as eight unlabelled fragments.
+        var spokenLabel: String {
+            func phrase(_ side: Side) -> String {
+                let seed = side.seed.map { "seed \($0) " } ?? ""
+                let score = side.score.map { ", \($0)" } ?? ""
+                return "\(seed)\(side.nickname)\(score)"
+            }
+            let pairing = "\(phrase(home)) versus \(phrase(away))"
+            guard isPlayed else { return pairing }
+            if home.isWinner { return "\(pairing). \(home.nickname) win." }
+            if away.isWinner { return "\(pairing). \(away.nickname) win." }
+            return "\(pairing). Tied."
+        }
+    }
+
+    /// One conference's half of a round. The Championship is the group with no
+    /// conference.
+    struct ConferenceGroup: Identifiable {
+        let conference: Conference?
+        let matchups: [Matchup]
+
+        var id: String { conference?.rawValue ?? "final" }
+    }
+
+    struct Round: Identifiable {
+        /// 19…22, the weeks `WeekAdvancer.ensurePlayoffGames` stages.
+        let week: Int
+        let groups: [ConferenceGroup]
+        /// Clubs already through with nobody to play yet — the #1 seeds during
+        /// Wild Card weekend. Only ever non-empty on an unstaged round.
+        let byes: [Side]
+        /// What decides this round, drawn while it has no games.
+        let pendingNote: String?
+
+        var id: Int { week }
+        var isStaged: Bool { !groups.isEmpty }
+    }
+
+    let rounds: [Round]
+    /// Seeded clubs that have not lost a playoff game.
+    let clubsLeft: Int
+    /// The user's standing in the field — **only when they are not in it.**
+    ///
+    /// A club still alive is already marked, on its own card, by the gold rule;
+    /// saying "you are the #2 seed" as well would be a third copy of a fact the
+    /// hero card also prints. What the highlight cannot express is its own
+    /// absence, so the two out-states get a line and the live one does not.
+    let userLine: String?
+
+    // MARK: Build
+
+    static func build(games: [Game], teams: [Team], userTeamID: UUID?) -> PostseasonBracket? {
+        guard !teams.isEmpty else { return nil }
+
+        let teamsByID = Dictionary(uniqueKeysWithValues: teams.map { ($0.id, $0) })
+        let records = StandingsCalculator.calculate(games: games, teams: teams)
+
+        var seedByTeam: [UUID: Int] = [:]
+        var topSeedByConference: [Conference: UUID] = [:]
+        for conference in Conference.allCases {
+            let seeded = StandingsCalculator.playoffTeams(
+                records: records,
+                teams: teams,
+                conference: conference
+            )
+            for (index, record) in seeded.enumerated() {
+                seedByTeam[record.teamID] = index + 1
+            }
+            topSeedByConference[conference] = seeded.first?.teamID
+        }
+        // A league whose seeding cannot be computed has no bracket to draw, and
+        // an empty panel is better than one full of em dashes.
+        guard !seedByTeam.isEmpty else { return nil }
+
+        let playoffGames = games.filter(\.isPlayoff)
+        let eliminated = Set(playoffGames.compactMap(\.loserID))
+
+        func makeSide(_ teamID: UUID, score: Int?, isWinner: Bool) -> Side? {
+            guard let team = teamsByID[teamID] else { return nil }
+            return Side(
+                id: teamID,
+                abbreviation: team.abbreviation,
+                nickname: team.name,
+                record: team.record,
+                seed: seedByTeam[teamID],
+                score: score,
+                isWinner: isWinner,
+                isUser: teamID == userTeamID
+            )
+        }
+
+        // The user's conference leads every round, because the half of the
+        // bracket he can still be in is the half he is reading for.
+        let userConference = userTeamID.flatMap { teamsByID[$0]?.conference }
+        let orderedConferences: [Conference] = {
+            guard let userConference else { return Conference.allCases }
+            return [userConference] + Conference.allCases.filter { $0 != userConference }
+        }()
+
+        var rounds: [Round] = []
+        for week in 19...22 {
+            var matchups: [Matchup] = []
+            for game in playoffGames where game.week == week {
+                guard
+                    let home = makeSide(
+                        game.homeTeamID,
+                        score: game.homeScore,
+                        isWinner: game.winnerID == game.homeTeamID
+                    ),
+                    let away = makeSide(
+                        game.awayTeamID,
+                        score: game.awayScore,
+                        isWinner: game.winnerID == game.awayTeamID
+                    )
+                else { continue }
+
+                let homeConference = teamsByID[game.homeTeamID]?.conference
+                let awayConference = teamsByID[game.awayTeamID]?.conference
+                matchups.append(Matchup(
+                    id: game.id,
+                    conference: homeConference == awayConference ? homeConference : nil,
+                    home: home,
+                    away: away,
+                    isPlayed: game.isPlayed
+                ))
+            }
+            matchups.sort { $0.bestSeed < $1.bestSeed }
+
+            var groups: [ConferenceGroup] = []
+            for conference in orderedConferences {
+                let inConference = matchups.filter { $0.conference == conference }
+                if !inConference.isEmpty {
+                    groups.append(ConferenceGroup(conference: conference, matchups: inConference))
+                }
+            }
+            let crossConference = matchups.filter { $0.conference == nil }
+            if !crossConference.isEmpty {
+                groups.append(ConferenceGroup(conference: nil, matchups: crossConference))
+            }
+
+            // Only the Divisional round has a knowable half before it is staged:
+            // the two #1 seeds are already in it, which is what their bye IS.
+            var byes: [Side] = []
+            if groups.isEmpty, week == 20 {
+                byes = orderedConferences.compactMap { conference in
+                    guard let teamID = topSeedByConference[conference] else { return nil }
+                    return makeSide(teamID, score: nil, isWinner: false)
+                }
+            }
+
+            rounds.append(Round(
+                week: week,
+                groups: groups,
+                byes: byes,
+                pendingNote: groups.isEmpty ? pendingNote(week: week) : nil
+            ))
+        }
+
+        let userSeed = userTeamID.flatMap { seedByTeam[$0] }
+        let userExitWeek = userTeamID.flatMap { teamID in
+            playoffGames.first { $0.loserID == teamID }?.week
+        }
+        let userLine: String? = {
+            guard userTeamID != nil else { return nil }
+            if let userExitWeek {
+                return "Eliminated \u{00B7} \(SeasonWeekBand.playoffRoundName(week: userExitWeek))"
+            }
+            return userSeed == nil ? "Your club is not in the field" : nil
+        }()
+
+        return PostseasonBracket(
+            rounds: rounds,
+            clubsLeft: max(0, seedByTeam.count - eliminated.count),
+            userLine: userLine
+        )
+    }
+
+    /// What an unstaged round is waiting on. Phrased as the rule that fills it,
+    /// not as "TBD" — the rule is the part the user can plan against.
+    private static func pendingNote(week: Int) -> String {
+        switch week {
+        // Week 19 is staged by the advance that ENTERS the playoffs, so this
+        // line only ever reaches a save that crossed into the postseason before
+        // the bracket was persisted (R32). `advancePlayoffWeek` self-heals it.
+        case 19:  return "Bracket not staged \u{2014} the next advance sets it."
+        case 20:  return "The three Wild Card winners join the top seed in each conference."
+        case 21:  return "The Divisional winners meet, better seed at home."
+        default:  return "The two conference champions meet."
+        }
+    }
+}
+
 // MARK: - Preview
 
 #Preview {
@@ -1098,4 +1697,8 @@ struct TimelineTasksPanel: View {
     )
     .frame(width: 340, height: 600)
     .background(Color.backgroundPrimary)
+    // The bracket panel reads the store through `@Environment(\.modelContext)`.
+    // The preview stands in `.coachingChanges`, so it never fetches — but the
+    // environment has to resolve for the view to build at all.
+    .modelContainer(for: [Career.self, Game.self, Team.self], inMemory: true)
 }

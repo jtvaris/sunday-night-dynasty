@@ -47,6 +47,11 @@ struct NewCareerView: View {
     /// skips the identity step, so that default was the *only* thing most
     /// careers ever stored).
     @State private var selectedAvatarID: String = UserPortrait.randomStartingID()
+    /// Q-M01 — the 20-portrait grid is collapsed behind a "Change" button.
+    /// It is the biggest block on the screen and the only choice with no
+    /// mechanical effect; the settings the sim actually reads now hold that
+    /// space. One tap still reaches every face.
+    @State private var showPortraitGrid = false
     @State private var selectedCoachingStyle: CoachingStyle = .tactician
     @State private var selectedRole: CareerRole = .gmAndHeadCoach
     @State private var capSelection: CapModeSelection = .realistic
@@ -185,18 +190,19 @@ struct NewCareerView: View {
             .pickerStyle(.segmented)
             .onChange(of: flowMode) { _, newValue in
                 if newValue == .quickStart {
-                    // Pre-fill sensible defaults so the team-selection screen
-                    // gets a coherent setup straight out of the gate.
-                    selectedRole = .gmAndHeadCoach
-                    capSelection = .realistic
-                    selectedCoachingStyle = .tactician
-                    selectedSetup = .standard
+                    // Q-M01: Quick Start now SHOWS role, cap mode, game mode and
+                    // coaching style as controls, so switching back to it must
+                    // not silently overwrite a choice the user can still see on
+                    // screen. What Quick Start does not show, it still resets —
+                    // injury frequency lives on the Custom League step, and a
+                    // value this screen never displays must not ride into the
+                    // career behind the user's back.
                     injuryFrequency = .normal
                 }
             }
 
             Text(flowMode == .quickStart
-                 ? "Jump straight in with sensible defaults: GM & Head Coach, Realistic cap, standard mode, Tactician style."
+                 ? "Jump straight in. The four settings the league actually runs on are pre-filled below — change any of them in place."
                  : "Tailor everything: role, cap rules, game mode or scenario, league settings, coaching style, and portrait.")
                 .font(.subheadline)
                 .foregroundStyle(Color.textSecondary)
@@ -213,15 +219,25 @@ struct NewCareerView: View {
             VStack(spacing: 0) {
                 VStack(spacing: 24) {
                     if flowMode == .quickStart {
-                        // Quick Start: name, league source, portrait — defaults
-                        // cover the rest of the configuration surface, but which
-                        // league you play is too fundamental to hide behind one,
-                        // and the portrait is the player's own face. It used to
-                        // be Custom-League-only, which is precisely how every
-                        // Quick Start career ended up wearing the default
-                        // illustration for the rest of its life.
+                        // Quick Start: name, league, the four settings the sim
+                        // reads — then the face, in a thumbnail.
+                        //
+                        // Q-M01: the portrait grid used to be the bottom ~40 % of
+                        // this screen and is the one choice with no mechanical
+                        // effect (the card's own copy says so), while the four
+                        // settings the engine consumes appeared exactly once, as
+                        // a grey sentence with no control on it. The mechanics
+                        // are above the fold now and the portrait is a row.
                         nameSection
-                        leagueSourceSection
+                        if isLandscape {
+                            HStack(alignment: .top, spacing: 16) {
+                                leagueSourceSection
+                                quickStartSettingsSection
+                            }
+                        } else {
+                            leagueSourceSection
+                            quickStartSettingsSection
+                        }
                         avatarSection
                     } else if isLandscape {
                         nameSection
@@ -436,17 +452,22 @@ struct NewCareerView: View {
                     )
                 }
 
-                Group {
-                    switch selectedRole {
-                    case .gm:
-                        Text("Focus on roster building and let your head coach handle game day.")
-                    case .gmAndHeadCoach:
-                        Text("Total control over every decision, from the roster to the play sheet.")
-                    }
-                }
-                .font(.subheadline)
-                .foregroundStyle(Color.textSecondary)
+                Text(roleBlurb)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.textSecondary)
             }
+        }
+    }
+
+    /// One line per role, hoisted out of `roleSection` so the Quick Start
+    /// settings card prints the same sentence for the same value. Two copies of
+    /// this string is exactly how the two cards would drift apart.
+    private var roleBlurb: String {
+        switch selectedRole {
+        case .gm:
+            return "Focus on roster building and let your head coach handle game day."
+        case .gmAndHeadCoach:
+            return "Total control over every decision, from the roster to the play sheet."
         }
     }
 
@@ -477,18 +498,9 @@ struct NewCareerView: View {
                                   simple: false, realistic: true, sandbox: false)
                 }
 
-                Group {
-                    switch capSelection {
-                    case .simple:
-                        Text("Great for new players. Straightforward salaries, no hidden penalties.")
-                    case .realistic:
-                        Text("Full League cap rules. Every dollar and bonus structure matters.")
-                    case .sandbox:
-                        Text("No salary cap restrictions. Sign whoever you want, however you want.")
-                    }
-                }
-                .font(.subheadline)
-                .foregroundStyle(Color.textSecondary)
+                Text(capBlurb)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.textSecondary)
 
                 // Rationale footnote for the Recommended badge shown on Simple.
                 if capSelection == .simple {
@@ -499,6 +511,152 @@ struct NewCareerView: View {
                 }
             }
         }
+    }
+
+    /// One line per cap mode — same hoist, same reason, as `roleBlurb`.
+    private var capBlurb: String {
+        switch capSelection {
+        case .simple:
+            return "Great for new players. Straightforward salaries, no hidden penalties."
+        case .realistic:
+            return "Full League cap rules. Every dollar and bonus structure matters."
+        case .sandbox:
+            return "No salary cap restrictions. Sign whoever you want, however you want."
+        }
+    }
+
+    // MARK: - Quick Start Settings (Q-M01)
+
+    /// The four settings the Quick Start path feeds the engine, as controls
+    /// instead of as a sentence.
+    ///
+    /// All four are read by the simulation: `CareerRole` gates play-calling and
+    /// staff management, `CapModeSelection.capMode` switches contract accounting
+    /// on and off end-to-end (`ContractEngine`, `CapManagementEngine`,
+    /// `FreeAgencyEngine`), `CareerSetup` picks both the roster build and the
+    /// scenario, and `CoachingStyle` carries the +10 staff bonus *and* the
+    /// `FranchiseIdentityDeclaration` seed the other 31 front offices price
+    /// against. Until now Quick Start named them in grey body text with nothing
+    /// to tap, so every Quick Start career in existence shipped the same four
+    /// values.
+    ///
+    /// The DEFAULTS are untouched: this is a control for a value the flow was
+    /// already committing to, not a retune of Quick Start.
+    private var quickStartSettingsSection: some View {
+        cardSection(icon: "slider.horizontal.3", title: "Quick Start Settings") {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("These are what the league runs on. They come pre-filled — change any of them here, or switch to Custom League for the side-by-side comparisons.")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.textSecondary)
+
+                quickSetting("Career Role", detail: roleBlurb) {
+                    Picker("Career Role", selection: $selectedRole) {
+                        Text("General Manager").tag(CareerRole.gm)
+                        Text("GM & Head Coach").tag(CareerRole.gmAndHeadCoach)
+                    }
+                    .pickerStyle(.segmented)
+                }
+
+                quickSetting("Salary Cap", detail: capBlurb) {
+                    Picker("Salary Cap", selection: $capSelection) {
+                        Text("Simple").tag(CapModeSelection.simple)
+                        Text("Realistic").tag(CapModeSelection.realistic)
+                        Text("Sandbox").tag(CapModeSelection.sandbox)
+                    }
+                    .pickerStyle(.segmented)
+                }
+
+                // Five options each, with names too long for a segmented row at
+                // half an iPad's width — a menu keeps them readable and keeps the
+                // card the height of the League card beside it.
+                quickSetting("Game Mode", detail: selectedSetup.blurb) {
+                    menuChip(
+                        title: "Game Mode",
+                        selection: $selectedSetup,
+                        options: CareerSetup.allCases,
+                        label: \.displayName
+                    )
+                }
+
+                quickSetting("Coaching Style", detail: coachingStyleEffect(selectedCoachingStyle)) {
+                    menuChip(
+                        title: "Coaching Style",
+                        selection: $selectedCoachingStyle,
+                        options: CoachingStyle.allCases,
+                        label: \.displayName
+                    )
+                }
+            }
+        }
+    }
+
+    /// Title above, control, then the one line that says what the current value
+    /// does. The detail line is the same string the Custom League card prints.
+    @ViewBuilder
+    private func quickSetting<Control: View>(
+        _ title: String,
+        detail: String,
+        @ViewBuilder control: () -> Control
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color.textPrimary)
+
+            control()
+
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(Color.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// A full-width menu button for a choice with too many options to segment.
+    ///
+    /// `Menu { Picker }` rather than `Picker(.menu)` so the whole chip — padding
+    /// and border included — is the tap target; a bare menu picker only accepts
+    /// taps on its own label text. The 44 pt height is `DSButtonChrome`'s
+    /// `minHeight`, so the chip matches every other control on the flow, and the
+    /// 8 pt radius matches the name field directly above it.
+    private func menuChip<Value: Hashable>(
+        title: String,
+        selection: Binding<Value>,
+        options: [Value],
+        label: KeyPath<Value, String>
+    ) -> some View {
+        Menu {
+            Picker(title, selection: selection) {
+                ForEach(options, id: \.self) { option in
+                    Text(option[keyPath: label]).tag(option)
+                }
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Text(selection.wrappedValue[keyPath: label])
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.textPrimary)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: DSType.Size.caption, weight: .semibold))
+                    .foregroundStyle(Color.textSecondary)
+            }
+            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity)
+            .frame(height: 44)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.backgroundPrimary)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .accessibilityLabel(title)
+        .accessibilityValue(selection.wrappedValue[keyPath: label])
     }
 
     // #106, #107, #111: Coaching style with gameplay effects and beginner tag
@@ -522,27 +680,75 @@ struct NewCareerView: View {
     }
 
     // #108, #109, #110, #113: portrait section with cosmetic label, cleaner headers
+    //
+    // Q-M01: the 20-face grid is behind a "Change" button now. It was the
+    // largest block on the setup screen and, by the card's own admission, the
+    // only choice with no mechanical effect — twenty loaded archetype names
+    // ("The Enforcer", "The Bulldog") that are not even authored per face, but
+    // applied in manifest order (`UserPortraitView.swift`). Collapsed, the
+    // section is one 56 pt row; expanded, it is exactly the grid that shipped,
+    // one tap away. Nothing about the choice itself changed.
     private var avatarSection: some View {
         cardSection(icon: "person.crop.circle.fill", title: "Your Portrait") {
-            VStack(spacing: 8) {
-                // #108: Clarify the portrait is cosmetic
-                // NOT "cosmetic only" any more, and it never quite was: the
-                // career's coaching STYLE carries a real modifier (the Tactician's
-                // +10 play-calling shows on the staff screen), and the
-                // introductory press conference builds a media read that its own
-                // recap says "shapes free-agent interest". Naming these portraits
-                // after archetypes while disclaiming any effect was the misleading
-                // half. The picture itself is still just a picture.
-                Text("The portrait is yours alone — your coaching style and your press answers are what the league reads.")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(Color.textTertiary)
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 14) {
+                    UserPortraitView(
+                        avatarID: selectedAvatarID,
+                        name: playerName,
+                        size: .medium
+                    )
 
-                UserPortraitPicker(selectedAvatarID: $selectedAvatarID, avatarSize: 56)
+                    VStack(alignment: .leading, spacing: 2) {
+                        // #105: the persona name, still the loudest thing in the row
+                        Text("\"\(UserPortrait.label(for: selectedAvatarID) ?? "Portrait")\"")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Color.textPrimary)
 
-                // #105: larger persona name under the grid
-                Text("\"\(UserPortrait.label(for: selectedAvatarID) ?? "Portrait")\"")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Color.textPrimary)
+                        // #108: Clarify the portrait is cosmetic
+                        // NOT "cosmetic only" any more, and it never quite was: the
+                        // career's coaching STYLE carries a real modifier (the Tactician's
+                        // +10 play-calling shows on the staff screen), and the
+                        // introductory press conference builds a media read that its own
+                        // recap says "shapes free-agent interest". Naming these portraits
+                        // after archetypes while disclaiming any effect was the misleading
+                        // half. The picture itself is still just a picture.
+                        Text("The portrait is yours alone — your coaching style and your press answers are what the league reads.")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(Color.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Spacer(minLength: 8)
+
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            showPortraitGrid.toggle()
+                        }
+                    } label: {
+                        Label(showPortraitGrid ? "Done" : "Change",
+                              systemImage: showPortraitGrid ? "checkmark" : "person.crop.circle.badge.plus")
+                    }
+                    .buttonStyle(.dsSecondary)
+                    .accessibilityHint(showPortraitGrid
+                                       ? "Closes the portrait grid"
+                                       : "Opens the grid of 20 portraits")
+                }
+
+                if showPortraitGrid {
+                    UserPortraitPicker(selectedAvatarID: $selectedAvatarID, avatarSize: 56)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+            }
+        }
+        .onAppear {
+            // The picker normalises a non-portrait id in its own `onAppear`.
+            // Behind a collapsed grid that no longer runs on the first frame, so
+            // the same guard lives here: the thumbnail must never be the one
+            // surface that draws a stale id. A wizard-fresh id is already valid
+            // (`randomStartingID`), so this only catches a build without extras.
+            if !UserPortrait.isPortraitID(selectedAvatarID) {
+                selectedAvatarID = UserPortrait.resolve(selectedAvatarID, seed: nil)
+                    ?? UserPortrait.fallbackID
             }
         }
     }
@@ -758,6 +964,11 @@ struct NewCareerView: View {
         Button {
             withAnimation(.easeInOut(duration: 0.3)) {
                 currentStep = 3
+                // The grid is collapsed on the *setup* screen (Q-M01), where it
+                // crowded out the settings the sim reads. This step is called
+                // "Your Identity" and has nothing else to spend the column on,
+                // so it opens on the full grid — the same screen that shipped.
+                showPortraitGrid = true
             }
         } label: {
             entryCommitLabel("Next", systemImage: "arrow.right", trailingIcon: true)
@@ -832,6 +1043,9 @@ struct NewCareerView: View {
         Button {
             withAnimation(.easeInOut(duration: 0.3)) {
                 currentStep = max(1, currentStep - 1)
+                // Step 1 is the screen Q-M01 is about; the expanded grid does
+                // not follow the user back onto it.
+                if currentStep == 1 { showPortraitGrid = false }
             }
         } label: {
             HStack(spacing: 10) {
@@ -1026,27 +1240,33 @@ private struct LeagueSourceCard: View {
 
 // MARK: - Coaching Style Card (#104, #106, #107, #111)
 
+/// Concrete, gameplay-facing effect for each style. Replaces the previous
+/// vague "+10 <Attribute>" badge so players understand the actual impact.
+///
+/// File scope rather than a member of `CoachingStyleCard` because the Quick
+/// Start settings card (Q-M01) prints the same sentence for the same style, and
+/// two copies of this string is exactly how the two cards would drift.
+private func coachingStyleEffect(_ style: CoachingStyle) -> String {
+    switch style {
+    case .tactician:
+        return "+10% play-call accuracy in close-game situations"
+    case .playersCoach:
+        return "+10% player development speed during practices"
+    case .disciplinarian:
+        return "-10% penalties and fumbles drawn each game"
+    case .innovator:
+        return "+10% scheme familiarity gain when teaching playbooks"
+    case .motivator:
+        return "+10% morale boost from wins and locker-room moments"
+    }
+}
+
 private struct CoachingStyleCard: View {
     let style: CoachingStyle
     let isSelected: Bool
     var isRecommended: Bool = false
 
-    /// Concrete, gameplay-facing effect for each style. Replaces the previous
-    /// vague "+10 <Attribute>" badge so players understand the actual impact.
-    private var gameplayEffect: String {
-        switch style {
-        case .tactician:
-            return "+10% play-call accuracy in close-game situations"
-        case .playersCoach:
-            return "+10% player development speed during practices"
-        case .disciplinarian:
-            return "-10% penalties and fumbles drawn each game"
-        case .innovator:
-            return "+10% scheme familiarity gain when teaching playbooks"
-        case .motivator:
-            return "+10% morale boost from wins and locker-room moments"
-        }
-    }
+    private var gameplayEffect: String { coachingStyleEffect(style) }
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {

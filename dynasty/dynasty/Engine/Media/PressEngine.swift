@@ -55,7 +55,7 @@ import Foundation
 //   • Funny wins fans when nothing is burning and is the worst answer in the
 //     two situations where something is.
 //
-// Three further axes ride on top of the matrix and are what make the same tone
+// Four further axes ride on top of the matrix and are what make the same tone
 // land differently twice in one career:
 //   • TEAM STATE vs GOALS (`standingAdjustment`) — a championship claim on a
 //     rebuilding roster costs owner trust even as it buys fans; humility on a
@@ -63,9 +63,27 @@ import Foundation
 //   • REPORTER STANCE (`stanceAdjustment`) — hostile punishes evasion
 //     (diplomatic/funny) and rewards candor (humble/aggressive); friendly
 //     amplifies confidence and humor.
+//   • PRESS REPUTATION (`reputationAdjustment`) — the room's STANDING opinion,
+//     as opposed to one writer's declared posture. Past the bands the career
+//     screen already labels "Controversial" (−30) and "Well-Liked" (+30) it
+//     leans every answer by half a stance step, on media only.
 //   • REPETITION (`repetitionScale`) — the career-scoped tone ledger decays a
 //     repeated tone's payoff and eventually earns a "sounding vanilla" media
 //     label, mirroring the negotiation engine's pestering ratchet.
+//
+// WHERE "NO TONE DOMINATES" WAS STILL FAILING, and it was not in the matrix.
+// A tone is only a real choice if it is not dominated on the axes the PLAYER
+// can see, and the fog was throwing two of those away. `.aggressive` buys its
+// headlines with morale and owner trust every single time — but the preview
+// coarsened its authored +20 media into the same up-arrow as a +5, and at
+// `.introduction` (every reporter a stranger, so `stance == .neutral`) fogged
+// the media axis out entirely. The result was a tone that previewed as
+// strictly worse than `.confident` on every intro question while actually
+// being the loudest answer on the board. The fix is in the PREVIEW, not the
+// numbers: `loudEffect` gives the four audience axes a second, much higher
+// band, and an answer that clears it unfogs its own media line, because a
+// coach who has just made the back page knows he made the back page. Nothing
+// in the matrix moved; the card stopped lying about it.
 //
 // MAGNITUDES stay inside the shipped ±4…±20 band (`effectFloor`/`effectCeiling`)
 // so Career morale/media/legacy tuning is not destabilised. Legacy points are
@@ -211,6 +229,13 @@ extension PressConferenceEngine {
         /// conference, so a player who answers Diplomatic four times in a row
         /// watches it stop working inside a single session.
         var recentTones: [ResponseTone]
+        /// `LegacyTracker.mediaReputation`, −100 (villain) … 100 (beloved).
+        /// The press room's standing opinion of this coach, as opposed to the
+        /// one writer's declared posture that `ReporterStance` carries. It was
+        /// narrative state that nothing in the presser read: a coach could sit
+        /// at −24 and the podium behaved exactly as it did on day one. See
+        /// `reputationAdjustment`.
+        var mediaReputation: Int
         var season: Int
         var week: Int
 
@@ -221,6 +246,7 @@ extension PressConferenceEngine {
             ownerPrefersWinNow: Bool = false,
             ownerPatience: Int = 5,
             recentTones: [ResponseTone] = [],
+            mediaReputation: Int = 0,
             season: Int = 0,
             week: Int = 0
         ) {
@@ -230,6 +256,7 @@ extension PressConferenceEngine {
             self.ownerPrefersWinNow = ownerPrefersWinNow
             self.ownerPatience = ownerPatience
             self.recentTones = recentTones
+            self.mediaReputation = mediaReputation
             self.season = season
             self.week = week
         }
@@ -277,6 +304,7 @@ extension PressConferenceEngine {
             ownerPrefersWinNow: owner?.prefersWinNow ?? false,
             ownerPatience: owner?.patience ?? 5,
             recentTones: career.pressToneHistory,
+            mediaReputation: career.legacy.mediaReputation,
             season: career.currentSeason,
             week: 0
         )
@@ -299,6 +327,7 @@ extension PressConferenceEngine {
             ownerPrefersWinNow: owner?.prefersWinNow ?? false,
             ownerPatience: owner?.patience ?? 5,
             recentTones: career.pressToneHistory,
+            mediaReputation: career.legacy.mediaReputation,
             season: career.currentSeason,
             week: week
         )
@@ -385,6 +414,7 @@ extension PressConferenceEngine {
             standingAdjustment(tone: tone, response: response, context: context),
             personaAdjustment(tone: tone, response: response, context: context),
             stanceAdjustment(tone: tone, stance: stance, situation: context.situation),
+            reputationAdjustment(tone: tone, context: context),
             lockerRoomAdjustment(tone: tone, band: context.lockerRoom),
         ] {
             owner += delta.ownerSatisfaction
@@ -597,6 +627,89 @@ extension PressConferenceEngine {
         }
     }
 
+    // MARK: The standing opinion of the room
+
+    /// The two band edges `LegacyTracker.reputationLabel` already prints, used
+    /// as-is: at −30 the game itself starts calling the coach "Controversial",
+    /// and at +30 "Well-Liked". Those are the points where the league has
+    /// decided what it thinks of him, so they are the points where the room
+    /// stops being a blank slate. Nothing new is invented here — the labels
+    /// were already on the career screen; only the podium ignored them.
+    static let souredReputation = -30
+    static let belovedReputation = 30
+
+    /// What the press room's STANDING opinion does to an answer, as distinct
+    /// from the one writer's declared posture (`stanceAdjustment`).
+    ///
+    /// **The gap this closes.** `LegacyTracker.mediaReputation` is written by
+    /// every conference (`applyPressConferenceResult`), settled against by every
+    /// broken promise (`settlePromises`), printed on the career dashboard and on
+    /// the presser's own header — and read by nothing that decides an outcome.
+    /// A coach at −24 stood in front of an identical room to a coach at 0.
+    ///
+    /// **Why it is a lean and not a stance flip.** The obvious fix is to turn a
+    /// neutral outlet hostile as reputation falls, and `stance(forOutlet:)`
+    /// notes exactly what that would cost: `Continental Sports` is 2 of the 8
+    /// national desks, so promoting one more outlet doubles how often evasion
+    /// eats the −10 crisis penalty. It would also break a harder invariant —
+    /// both press screens render the stance chip from
+    /// `PressConferenceEngine.stance(for:)`, which cannot see a career, so a
+    /// reputation-driven flip would make the chip disagree with the arithmetic
+    /// it advertises. This applies the same *shape* at HALF a stance step
+    /// instead, rounded toward zero (−6 → −3, −10 → −5, +4 → +2, +3 → +1,
+    /// ±2 → ±1): the room leaning is
+    /// half of a writer declaring, and it stacks on top of a declared stance
+    /// rather than replacing it, because a tough desk covering a coach the
+    /// league has turned on really is tougher than the same desk covering a
+    /// neutral one.
+    ///
+    /// It is deliberately media-only. Reputation IS the media axis; letting it
+    /// move owner or morale would be inventing a second channel for a number
+    /// that already has one.
+    static func reputationAdjustment(
+        tone: ResponseTone,
+        context: PressContext
+    ) -> PressEffects {
+        if context.mediaReputation <= souredReputation {
+            // A room that has already made its mind up: it reads evasion as
+            // more of the same, and gives a straight answer credit for being
+            // out of character.
+            switch tone {
+            case .diplomatic, .funny:
+                return PressEffects(mediaPerception: context.situation.demandsAStance ? -5 : -3)
+            case .humble, .aggressive:
+                return PressEffects(mediaPerception: 2)
+            case .confident:
+                return PressEffects(mediaPerception: -1)
+            }
+        }
+        if context.mediaReputation >= belovedReputation {
+            // Benefit of the doubt. Note it does NOT soften the tough desk:
+            // `stanceAdjustment` still runs, so a crisis presser always has a
+            // writer who punishes dodging. Handing a well-liked coach a room
+            // with nobody left to punish evasion would resurrect the dominant
+            // Diplomatic strategy this whole file exists to kill.
+            switch tone {
+            // Halved from `stanceAdjustment(.friendly)` and rounded TOWARD
+            // ZERO, so confident takes +1 off a +3 rather than +2: the beloved
+            // side is the one that feeds back on itself (a media gain buys
+            // more media gain), and the conservative rounding is where that
+            // loop should be trimmed.
+            case .confident:
+                return PressEffects(mediaPerception: 1)
+            case .funny:
+                return PressEffects(mediaPerception: 2)
+            case .humble:
+                return PressEffects(mediaPerception: 1)
+            case .aggressive:
+                return PressEffects(mediaPerception: -1)
+            case .diplomatic:
+                return PressEffects()
+            }
+        }
+        return PressEffects()
+    }
+
     /// A fragile room takes a whipping badly and an arm round the shoulder
     /// well; a buoyant one can absorb the whip.
     static func lockerRoomAdjustment(
@@ -734,6 +847,40 @@ extension PressConferenceEngine {
     /// cannot leak hidden state the fog is protecting.
     static let legacyHintDeadBand = 1
 
+    /// The second band: where an answer stops being a nudge and becomes the
+    /// thing the room is talking about.
+    ///
+    /// WHY A SECOND BAND EXISTS AT ALL. Direction-only coarsened a +20 media
+    /// answer and a +5 one into the same arrow, which is how `.aggressive` —
+    /// a tone whose entire authored payoff is media, bought with morale every
+    /// single time — could preview as no better than `.confident` anywhere.
+    /// A tone that is dominated on every axis the player can read is a tone
+    /// nobody rationally picks, and that is a defect in the fog, not in the
+    /// matrix: the magnitude WAS the differentiator and the fog erased it.
+    /// This is still not a number and still not a leak — an audience the room
+    /// will not let the coach read still shows "?" — it is one extra step of
+    /// coarseness on the audiences he can already read.
+    ///
+    /// WHY 15. It is `sessionFeedback`'s own bar, the only other place in this
+    /// file that names a magnitude out loud: media ≥ 15 prints "Media buzzing
+    /// — you're driving headlines" and fans ≥ 15 prints "Fans are fired up",
+    /// over a WHOLE four-answer session that runs to ±80. One answer that
+    /// clears it alone has tripped the session verdict by itself. It lands the
+    /// same way on the stored meters: 15 fans is +3 on `Career.fanSupport`
+    /// (`fanDivisor`, cap 6), 15 morale is +3 on every man (`moraleDivisor`,
+    /// cap 5), and 15 media clears the whole "Neutral" label on
+    /// `LegacyTracker.reputationLabel` (−10..<10) in one line.
+    static let loudEffect = 15
+
+    /// Legacy's own loud band, for the same reason it has its own dead band:
+    /// the axis is authored on a different scale, 1…3 on all but a handful of
+    /// answers. At 15 the loud tier would fire on exactly two responses in the
+    /// whole question file. Ten is where the handful actually starts, and it
+    /// is the scale `LegacyTracker` already books an ACHIEVEMENT at — the
+    /// promise payoffs run 8…25 and are documented as "season-scale" events.
+    /// A single podium line worth 10+ legacy is that, and should read as it.
+    static let legacyLoudEffect = 10
+
     /// The fogged preview. Derived from the SAME resolution the commit will run,
     /// then coarsened to direction and gated by what the coach could plausibly
     /// read in this room.
@@ -750,14 +897,28 @@ extension PressConferenceEngine {
         //   • Owner and locker room: always readable. He knows his boss's
         //     persona from the hiring meeting and he is in the building daily.
         //   • Fans: readable when the moment is loud enough to have a mood.
-        //   • Media: readable when the reporter has declared a stance, or when
-        //     the story writes itself (a crisis, a beating).
+        //   • Media: readable when the reporter has declared a stance, when the
+        //     story writes itself (a crisis, a beating) — or when the ANSWER is
+        //     the story. That last clause is new and it is the whole fix for the
+        //     dominated tone: a coach who has just called his own roster a
+        //     rebuild on day one does not need a read on the writer to know he
+        //     made the back page. The fog was hiding the single axis the loud
+        //     tones are BOUGHT for, in the one room (`.introduction`) where
+        //     every reporter is a stranger, so `.aggressive` paid morale and
+        //     owner trust for a payoff the card refused to show. It stays
+        //     narrow on purpose: it unfogs only answers clearing `loudEffect`,
+        //     roughly one option in six across the question file, and leaves
+        //     the quiet majority — every diplomatic line, every humble line,
+        //     most confident ones — exactly as fogged as before.
         //   • Legacy: always readable, and the one audience where that is not a
         //     judgement call — legacy points are NOT context-modulated, so the
         //     direction marker cannot leak hidden state. It was the widest
         //     spread on the card and the only axis with no hint at all.
         let fansReadable = context.situation != .routine
-        let mediaReadable = stance != .neutral || context.situation.demandsAStance
+        let mediaIsTheStory = abs(resolved.mediaPerception) >= loudEffect
+        let mediaReadable = stance != .neutral
+            || context.situation.demandsAStance
+            || mediaIsTheStory
 
         func hint(_ audience: ReactionHint.Audience, _ delta: Int, readable: Bool) -> ReactionHint {
             guard readable else {
@@ -768,12 +929,20 @@ extension PressConferenceEngine {
                 )
             }
             let band = audience == .legacy ? legacyHintDeadBand : hintDeadBand
+            let loudBand = audience == .legacy ? legacyLoudEffect : loudEffect
             let direction: ReactionHint.Direction =
                 delta > band ? .up : (delta < -band ? .down : .neutral)
+            // The glyph and the colour stay on the four-case `Direction` the
+            // two press screens switch over; the second band rides in the
+            // PHRASE, which is engine-owned copy. Same arrow, louder words.
             return ReactionHint(
                 audience: audience,
                 direction: direction,
-                phrase: phrase(for: audience, direction: direction)
+                phrase: phrase(
+                    for: audience,
+                    direction: direction,
+                    loud: abs(delta) >= loudBand
+                )
             )
         }
 
@@ -801,10 +970,33 @@ extension PressConferenceEngine {
         )
     }
 
+    /// `loud` is the second band (`loudEffect` / `legacyLoudEffect`): same
+    /// arrow, same colour, bigger words. Every loud variant is shorter than
+    /// "a stain on the record", which is the longest phrase the capsules
+    /// already fit at `lineLimit(1)`.
     private static func phrase(
         for audience: ReactionHint.Audience,
-        direction: ReactionHint.Direction
+        direction: ReactionHint.Direction,
+        loud: Bool = false
     ) -> String {
+        if loud {
+            switch (audience, direction) {
+            case (.owner, .up):           return "thrilled"
+            case (.owner, .down):         return "furious"
+            case (.lockerRoom, .up):      return "fully behind you"
+            case (.lockerRoom, .down):    return "you'll lose them"
+            case (.fans, .up):            return "the city erupts"
+            case (.fans, .down):          return "the city turns"
+            case (.media, .up):           return "the back page"
+            case (.media, .down):         return "a firestorm"
+            case (.legacy, .up):          return "career-defining"
+            case (.legacy, .down):        return "a permanent stain"
+            // A loud delta can never land in the dead band or behind the fog,
+            // so these are unreachable — they fall through to the ordinary
+            // copy rather than inventing a second way to say nothing.
+            default:                      break
+            }
+        }
         switch (audience, direction) {
         case (.owner, .up):           return "likely approves"
         case (.owner, .down):         return "won't like it"

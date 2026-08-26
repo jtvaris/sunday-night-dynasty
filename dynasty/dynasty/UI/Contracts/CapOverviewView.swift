@@ -29,6 +29,21 @@ struct CapOverviewView: View {
 
     @State private var contractSort: ContractSort = .capHit
 
+    @State private var cutSort: CutSort = .capHit
+
+    /// What releasing each man on the roster would cost and free — see
+    /// ``escapeCostCard()``.
+    ///
+    /// Priced in ``loadCutCosts()`` rather than inside the card, for the same
+    /// reason `releaseReceipts` is a snapshot: the card re-sorts on a tap, and
+    /// each row is an engine call (`Contract.deadCap` or the implied-guarantee
+    /// proxy, plus the restructure ledger). Sorting a 90-man roster through a
+    /// comparator that priced two releases per comparison would run that
+    /// arithmetic several hundred times to draw eight rows. Refreshed on the
+    /// same `loadData` beat as `players`, so it can never describe a roster the
+    /// rest of the screen no longer has.
+    @State private var cutCosts: [CutCost] = []
+
     /// The player whose agent is on the phone. Non-nil while the Contact Agent
     /// thread is open.
     @State private var negotiationPlayer: Player?
@@ -94,6 +109,76 @@ struct CapOverviewView: View {
         let name: String
         let deadCap: Int
         let seasonYear: Int
+    }
+
+    // MARK: - Escape Cost Sort
+
+    /// How the escape-cost table is ordered.
+    ///
+    /// Three orderings because the table answers three different questions and
+    /// **the biggest contract is frequently the answer to none of them**: Cap Hit
+    /// is "what are my largest commitments", Freed is "who can actually give me
+    /// room", Dead is "who am I stuck with". A bonus-heavy deal can cost more to
+    /// cut than to keep — `ReleaseCapSplit.capSavings` goes negative and the row
+    /// says so — so a shortlist ranked by size alone would put the least
+    /// escapable contract at the top and present it as an option.
+    enum CutSort: String, CaseIterable, Identifiable {
+        case capHit
+        case freed
+        case dead
+
+        var id: String { rawValue }
+
+        var label: String {
+            switch self {
+            case .capHit: return "Cap Hit"
+            case .freed:  return "Freed"
+            case .dead:   return "Dead"
+            }
+        }
+
+        /// The same ordering said in the card's own voice, for the "Top 8 by …"
+        /// caption. The segment label has to fit a picker; the caption does not.
+        var rankingPhrase: String {
+            switch self {
+            case .capHit: return "cap hit"
+            case .freed:  return "cap freed"
+            case .dead:   return "dead money"
+            }
+        }
+    }
+
+    /// One release, priced by the engine that prices releases.
+    struct CutCost: Identifiable {
+        let player: Player
+        /// The charge he carries today, on the same precedence the rest of this
+        /// screen reads (``capHit(for:)``).
+        let capHit: Int
+        /// What the club would still be charged for him after the release.
+        let deadCap: Int
+        /// Cap the release actually gives back. Negative when the bonus
+        /// acceleration outruns the salary relief.
+        let freed: Int
+        /// `freed + deadCap`, kept as its own term because that sum — and not
+        /// the cap hit beside it — is the pool the two columns divide: the part
+        /// of this league year's charge that has not been paid out yet. This
+        /// year's bonus slice is charged whether the man stays or goes, and
+        /// in-season so are the game checks already written.
+        let unpaidRemainder: Int
+
+        var id: UUID { player.id }
+    }
+
+    /// Column widths for the escape-cost table, declared once so the header row
+    /// and the value rows under it cannot drift apart — the same failure
+    /// `PlayerRowView`'s own `Column` block exists to prevent.
+    private enum CutColumn {
+        static let capHit: CGFloat = 62
+        static let deadCap: CGFloat = 72
+        static let freed: CGFloat = 66
+        /// The chevron's slot, reserved in the header so the numbers sit under
+        /// their labels rather than one glyph to the left of them.
+        static let chevron: CGFloat = 10
     }
 
     var body: some View {
@@ -241,11 +326,16 @@ struct CapOverviewView: View {
     /// Everything that is a FACT about the open league year: what the ceiling
     /// is, what has been charged against it, and what that charge is made of.
     ///
-    /// The three cards were already here and are unchanged — the heading is the
-    /// change. Without it the screen was six cards of numbers in which "used
-    /// cap" (today) and "committed" (a projection three bars down) looked like
-    /// the same kind of fact, and a GM reading the dead-money card had no way to
-    /// know it described a balance that the March rollover deletes.
+    /// The first three cards were already here and are unchanged — the heading
+    /// was #178's change. Without it the screen was six cards of numbers in
+    /// which "used cap" (today) and "committed" (a projection three bars down)
+    /// looked like the same kind of fact, and a GM reading the dead-money card
+    /// had no way to know it described a balance that the March rollover
+    /// deletes.
+    ///
+    /// ``escapeCostCard()`` is the fourth, and it belongs to this year for the
+    /// same reason the dead-money card does: a release priced today is priced
+    /// against today's ledger, at today's point in the league year.
     private func thisYearSection(team: Team) -> some View {
         VStack(spacing: 12) {
             yearSectionHeader(
@@ -256,6 +346,7 @@ struct CapOverviewView: View {
             capSummaryCard(team: team)
             capBarCard(team: team)
             deadMoneyCard(team: team)
+            escapeCostCard()
         }
     }
 
@@ -629,6 +720,293 @@ struct CapOverviewView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(20)
         .cardBackground()
+    }
+
+    // MARK: - Escape Cost Card
+
+    /// **What the club's biggest commitments cost to walk away from.**
+    ///
+    /// Everything above this card prices the roster as it stands. Nothing on the
+    /// screen priced the club's way OUT of it, so the only place a GM could
+    /// learn that his $34M quarterback is unmovable was to go over the cap and
+    /// be sent to `CapComplianceView` by the FIX IT banner — i.e. the screen
+    /// answered the question only once it was too late to be planning.
+    ///
+    /// It sits directly under the Dead Money card on purpose. That card names
+    /// money already owed to men who are gone; this one names the money that
+    /// would BECOME that if the club cut the men it still has. Same category,
+    /// one tense apart, and the second is the only one the GM can still decide.
+    ///
+    /// **Nothing here is re-derived.** Every figure comes from
+    /// `CapManagementEngine.releaseCapSplit` — the same call the cut ladder, the
+    /// player-detail cut, the contract screen and the compliance levers all
+    /// quote — priced at ``leagueYearRemaining`` so a Week 12 read is the Week 12
+    /// answer and not a March one. A card that ran its own release arithmetic
+    /// would be the fifth answer to "what does cutting this man cost", which is
+    /// the exact drift #68 spent a wave closing.
+    ///
+    /// **Absent in sandbox.** With cap rules off the engine returns zero dead cap
+    /// and relieves the whole salary, so every row would read "$0 dead, frees his
+    /// salary" — eight rows restating the salary column one card down. There is
+    /// nothing to escape from when nothing binds.
+    @ViewBuilder
+    private func escapeCostCard() -> some View {
+        let rows = topCutCosts
+
+        if !rows.isEmpty {
+            VStack(spacing: 0) {
+                HStack {
+                    HStack(spacing: 8) {
+                        Image(systemName: "scissors")
+                            .font(.system(size: DSType.Size.body, weight: .semibold))
+                            .foregroundStyle(Color.textSecondary)
+                        Text("Escape Cost")
+                            .font(.system(size: DSType.Size.callout, weight: .bold))
+                            .foregroundStyle(Color.textPrimary)
+                    }
+                    Spacer()
+                    Text("Top \(rows.count) by \(cutSort.rankingPhrase)")
+                        .font(.caption)
+                        .foregroundStyle(Color.textTertiary)
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 20)
+                .padding(.bottom, 12)
+
+                Picker("Rank releases by", selection: $cutSort) {
+                    ForEach(CutSort.allCases) { option in
+                        Text(option.label).tag(option)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 12)
+
+                cutColumnHeader
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 6)
+
+                Divider().overlay(Color.surfaceBorder)
+                    .padding(.horizontal, 20)
+
+                VStack(spacing: 0) {
+                    ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                        // Same destination as the contract ledger's rows: this
+                        // card ranks the decision, the player card is where the
+                        // decision gets made. Ranking and acting in one row would
+                        // put a release button on a screen whose whole job is to
+                        // be read, and would duplicate the compliance workspace.
+                        NavigationLink {
+                            PlayerDetailView(player: row.player)
+                        } label: {
+                            cutCostRow(row)
+                        }
+                        .buttonStyle(.plain)
+
+                        if index < rows.count - 1 {
+                            Divider()
+                                .overlay(Color.surfaceBorder.opacity(0.5))
+                                .padding(.horizontal, 20)
+                        }
+                    }
+                }
+
+                Divider().overlay(Color.surfaceBorder)
+                    .padding(.horizontal, 20)
+
+                escapeCostFooter(rows: rows)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 14)
+                    .padding(.bottom, 16)
+            }
+            .frame(maxWidth: .infinity)
+            .cardBackground()
+        }
+    }
+
+    /// The table's column labels. Display voice, uppercase and tracked — the same
+    /// band idiom the year headings and the "RECORDED RELEASES" strip use, so
+    /// three numeric columns are readable without a legend.
+    private var cutColumnHeader: some View {
+        HStack(spacing: 12) {
+            Text("PLAYER")
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text("CAP HIT")
+                .frame(width: CutColumn.capHit, alignment: .trailing)
+            Text("DEAD IF CUT")
+                .frame(width: CutColumn.deadCap, alignment: .trailing)
+            Text("FREED")
+                .frame(width: CutColumn.freed, alignment: .trailing)
+            // The chevron's slot. `Color.clear` rather than a Spacer: a spacer
+            // would be flexible and the header's numbers would slide off the
+            // row's numbers by whatever the chevron happened to measure.
+            Color.clear.frame(width: CutColumn.chevron, height: 1)
+        }
+        .font(.system(size: DSType.Size.micro, weight: .semibold))
+        .tracking(0.8)
+        .foregroundStyle(Color.textSecondary)
+        .lineLimit(1)
+        .minimumScaleFactor(0.75)
+        // The values below carry their own spoken labels, so reading the header
+        // aloud as well would announce every column name twice per row.
+        .accessibilityHidden(true)
+    }
+
+    private func cutCostRow(_ row: CutCost) -> some View {
+        let player = row.player
+        let years = player.contractYearsRemaining
+
+        return HStack(spacing: 12) {
+            Text(player.position.rawValue)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(Color.textPrimary)
+                .frame(width: 34)
+                .padding(.vertical, 4)
+                .background(positionColor(player.position), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
+
+            // Years sit UNDER the name rather than in their own column, which is
+            // what buys the room for a third numeric column at this measure. It
+            // is also the term that qualifies the two beside it: dead money is
+            // acceleration over the years still on the deal, so "1 yr left" is
+            // half the explanation of a small dead figure.
+            VStack(alignment: .leading, spacing: 1) {
+                Text(player.fullName)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.textPrimary)
+                    .lineLimit(1)
+                Text("\(years) yr\(years == 1 ? "" : "s") left")
+                    .font(.system(size: DSType.Size.micro).monospacedDigit())
+                    .foregroundStyle(yearsColor(years))
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text(formatMillions(row.capHit))
+                .font(.subheadline.weight(.semibold).monospacedDigit())
+                .foregroundStyle(Color.textSecondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .frame(width: CutColumn.capHit, alignment: .trailing)
+
+            Text(formatMillions(row.deadCap))
+                .font(.subheadline.weight(.semibold).monospacedDigit())
+                .foregroundStyle(row.deadCap > 0 ? Color.danger : Color.textTertiary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .frame(width: CutColumn.deadCap, alignment: .trailing)
+
+            Text("\(row.freed > 0 ? "+" : "")\(formatMillions(row.freed))")
+                .font(.subheadline.weight(.bold).monospacedDigit())
+                .foregroundStyle(freedColor(row.freed))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .frame(width: CutColumn.freed, alignment: .trailing)
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: DSType.Size.caption, weight: .semibold))
+                .foregroundStyle(Color.textTertiary)
+                .frame(width: CutColumn.chevron)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 10)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(player.fullName), \(player.position.rawValue), \(years) year\(years == 1 ? "" : "s") left, cap hit \(formatMillions(row.capHit)), dead money if cut \(formatMillions(row.deadCap)), frees \(formatMillions(row.freed))")
+        .accessibilityHint("Opens player detail")
+    }
+
+    /// The ratio the eight rows add up to, and the two sentences that stop it
+    /// being read as an equation with the cap-hit column.
+    ///
+    /// Deliberately NOT framed as "if you released all eight" — no club runs that
+    /// scenario, and a total nobody would ever act on is decoration. What the bar
+    /// states is a portfolio fact the individual rows cannot: how escapable the
+    /// club's largest commitments are as a group. `freed + deadCap` is exactly
+    /// `unpaidRemainder` per row (see ``CutCost``), so the split is a real
+    /// division of a real pool rather than two totals drawn side by side.
+    private func escapeCostFooter(rows: [CutCost]) -> some View {
+        let trapped = rows.reduce(0) { $0 + $1.deadCap }
+        let freed = rows.reduce(0) { $0 + $1.freed }
+        let unpaid = rows.reduce(0) { $0 + $1.unpaidRemainder }
+        // With nothing left unpaid there is nothing trapped either, and a
+        // fraction that defaulted to zero would paint that state as fully dead.
+        let freedFraction = unpaid > 0 ? min(1.0, clampedFraction(freed, of: unpaid)) : 1.0
+        let unpaidShare = Int((leagueYearRemaining * 100).rounded())
+        let stuckCount = rows.filter { $0.freed <= 0 }.count
+
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("HOW MUCH OF THIS MONEY COMES BACK")
+                .font(.system(size: DSType.Size.micro, weight: .semibold))
+                .tracking(0.8)
+                .foregroundStyle(Color.textSecondary)
+
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: DSCornerRadius.tight)
+                        .fill(Color.backgroundTertiary)
+                        .frame(height: 10)
+
+                    HStack(spacing: 0) {
+                        Rectangle()
+                            .fill(Color.success)
+                            .frame(width: geo.size.width * freedFraction)
+                        Rectangle()
+                            .fill(Color.danger)
+                            .frame(width: geo.size.width * (1.0 - freedFraction))
+                    }
+                    .frame(height: 10)
+                    .clipShape(RoundedRectangle(cornerRadius: DSCornerRadius.tight))
+                }
+            }
+            .frame(height: 10)
+
+            HStack(spacing: 12) {
+                legendDot(color: .success, label: "Freed \(freed >= 0 ? "+" : "")\(formatMillions(freed))")
+                legendDot(color: .danger, label: "Dead \(formatMillions(trapped))")
+                Spacer(minLength: 0)
+            }
+
+            if stuckCount > 0 {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: DSType.Size.micro))
+                        .foregroundStyle(Color.danger)
+                    Text("\(stuckCount) of these deals free\(stuckCount == 1 ? "s" : "") nothing: the acceleration is at least as big as the relief, so cutting costs the club as much as keeping — a negative figure means more.")
+                        .font(.system(size: DSType.Size.micro))
+                        .foregroundStyle(Color.danger)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            // Why the two columns need not add up to the cap hit next to them,
+            // stated before a GM tries the subtraction and concludes the screen
+            // is broken. They DO add up to it in the offseason on a plain deal —
+            // the sentence names the pool rather than denying the coincidence.
+            Text("Freed and dead always add up to \(formatMillions(unpaid)) across these \(rows.count) deals — the base salary still owed plus this year's bonus slice, which a release simply moves out of the cap hit and into the dead column. That pool, not the cap hit beside it, is what the two columns divide.")
+                .font(.system(size: DSType.Size.micro))
+                .foregroundStyle(Color.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if unpaidShare < 100 {
+                Text("Week \(career.currentWeek): only the \(unpaidShare)% of base salary still owed can be freed. The game checks already written stay charged — a cut gets cheaper to make, and worth less, every week.")
+                    .font(.system(size: DSType.Size.micro))
+                    .foregroundStyle(Color.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Green only when the release actually gives something back.
+    ///
+    /// A negative saving is not a small saving: the club would be charged MORE
+    /// for the man it no longer has than for the one it kept, which is the whole
+    /// mechanism dead money exists to enforce. It gets `danger`, the same colour
+    /// as the dead column that caused it, and the footer counts how many rows
+    /// are in that state.
+    private func freedColor(_ freed: Int) -> Color {
+        if freed > 0 { return .success }
+        return freed < 0 ? .danger : .textTertiary
     }
 
     // MARK: - Next Year Section (#178)
@@ -1444,6 +1822,51 @@ struct CapOverviewView: View {
         }
     }
 
+    /// The escape-cost card's rows.
+    ///
+    /// **Eight, and not the whole roster.** The full ledger is the Player
+    /// Contracts card at the bottom of this screen; a table long enough to need
+    /// its own scroll would just be that card with two more columns, and the
+    /// question this one answers ("where is my room, and what is it going to
+    /// cost me") is a shortlist question. Eight rows also keep the card inside a
+    /// single screenful at the iPad's portrait measure, which is what lets the
+    /// footer's ratio be read against the rows that produced it.
+    ///
+    /// The sort runs over the already-priced ``cutCosts``, so changing the
+    /// ordering costs one sort and not ninety engine calls.
+    private var topCutCosts: [CutCost] {
+        let ordered: [CutCost]
+        switch cutSort {
+        case .capHit:
+            ordered = cutCosts.sorted { $0.capHit > $1.capHit }
+        case .freed:
+            // Cap hit breaks the tie, for the same reason it does in
+            // `sortedContractPlayers`: a run of equal figures should still read
+            // biggest-contract-first rather than in fetch order.
+            ordered = cutCosts.sorted {
+                $0.freed == $1.freed ? $0.capHit > $1.capHit : $0.freed > $1.freed
+            }
+        case .dead:
+            ordered = cutCosts.sorted {
+                $0.deadCap == $1.deadCap ? $0.capHit > $1.capHit : $0.deadCap > $1.deadCap
+            }
+        }
+        return Array(ordered.prefix(8))
+    }
+
+    /// The share of the league year still unpaid, for the release split (#26).
+    ///
+    /// Same adapter, same spelling as `CapComplianceView`'s: the two screens
+    /// price the same release, and a Cap screen quoting a full-season saving
+    /// against a workspace quoting a Week 12 one would be two answers for one
+    /// cut.
+    private var leagueYearRemaining: Double {
+        CapManagementEngine.leagueYearRemaining(
+            phase: career.currentPhase,
+            week: career.currentWeek
+        )
+    }
+
     // MARK: - Helpers
 
     private func loadData() {
@@ -1465,7 +1888,55 @@ struct CapOverviewView: View {
         let contracts = (try? modelContext.fetch(contractDescriptor)) ?? []
         contractsByPlayer = Dictionary(contracts.map { ($0.playerID, $0) }, uniquingKeysWith: { first, _ in first })
 
+        // After the contracts, never before: a release is priced off the man's
+        // detailed deal where one exists, and pricing the roster against a stale
+        // (or empty) contract map would quote every structured deal at the
+        // implied-guarantee proxy instead of its own bonus schedule.
+        loadCutCosts()
         loadReleaseReceipts(teamID: fetchedTeamID)
+    }
+
+    /// Prices a release for every man on the roster, once per load.
+    ///
+    /// No fetch of its own — `players` and `contractsByPlayer` are already in
+    /// hand and the split is pure arithmetic over them, which is why this can
+    /// afford to run for the whole roster rather than for the eight rows that
+    /// will be drawn. Running it for eight would mean re-running it whenever the
+    /// sort changed, since a different ordering picks different eight.
+    private func loadCutCosts() {
+        // Sandbox has no cap rules to escape: the engine returns zero dead cap
+        // and relieves the whole salary, so every row would restate the salary
+        // column. An empty list is what makes ``escapeCostCard()`` absent.
+        guard career.capMode != .sandbox else {
+            cutCosts = []
+            return
+        }
+
+        let remaining = leagueYearRemaining
+
+        cutCosts = players.compactMap { player in
+            // A camp body's minimum salary was never added to
+            // `Team.currentCapUsage`, so the engine prices his release at zero
+            // in BOTH columns (#205a). A row of zeroes is not a lever, and
+            // ninety of them at the bottom of the ordering would still push real
+            // contracts off the list under the Freed sort.
+            guard !CampRosterEngine.isCampBody(player) else { return nil }
+
+            let split = CapManagementEngine.releaseCapSplit(
+                player: player,
+                contract: contractsByPlayer[player.id],
+                capMode: career.capMode,
+                leagueYearRemaining: remaining
+            )
+
+            return CutCost(
+                player: player,
+                capHit: capHit(for: player),
+                deadCap: split.deadCap,
+                freed: split.capSavings,
+                unpaidRemainder: split.salaryRelieved + split.proratedPerYear
+            )
+        }
     }
 
     /// Resolves this season's recorded releases into names + dead-cap charges.

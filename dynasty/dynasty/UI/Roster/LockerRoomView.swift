@@ -525,11 +525,19 @@ struct LockerRoomView: View {
         }
     }
 
-    /// Net is not a per-player figure — it is literally what the engine adds to
-    /// the base 50 to get team chemistry (`rawChemistry = 50 + leadership -
-    /// toxicity`), so it is worded with the engine's own chemistry ladder.
+    /// Net is not a per-player figure — it is the roster SUM the engine turns
+    /// into team chemistry, so it is worded with the engine's own ladder.
+    ///
+    /// It has to go through `chemistryRating(net:headcount:)`, not `50 + net`.
+    /// The engine used to add the raw sum straight onto the base, and this
+    /// column mirrored that line exactly; once chemistry was normalised per
+    /// capita the mirror broke, and a 53-man roster at net ≈ +8 would have
+    /// printed "Elite" in this column directly under an "Average" bar reading
+    /// the same roster. One number, one ladder, one reading.
     private func netTier(_ net: Int) -> String {
-        LockerRoomEngine.chemistryLabel(max(0, min(100, 50 + net)))
+        LockerRoomEngine.chemistryLabel(
+            LockerRoomEngine.chemistryRating(net: net, headcount: max(1, players.count))
+        )
     }
 
     // MARK: - Morale Distribution Card

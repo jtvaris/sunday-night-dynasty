@@ -85,6 +85,39 @@ import SwiftUI
 //     question 3 after it was already used on question 2.
 //
 // No timers remain on this screen.
+//
+// ## Wave 6 — the three findings the surgical pass could not take
+//
+// Three things were raised against this screen and then deliberately skipped as
+// "too big for a surgical fix". They were one thing.
+//
+//  1. **"BEFORE THIS SESSION" was frozen under all five questions.** It was
+//     honest — nothing is written until `onComplete` fires — and it was dead. It
+//     printed three career numbers that cannot move, while the card immediately
+//     beneath it printed the session's deltas with no baseline to hang them on:
+//     two cards, each holding one half of a sentence. They are `roomLedgerCard`
+//     now, one card in two states, and the baseline is not lost — it moves into
+//     the `72% → 76%`.
+//  2. **A band of empty navy under the last answer card.** The screen resolves
+//     every hint chip against a context the engine assembles before the first
+//     question — the situation, where the roster actually is, the mood in the
+//     building, the owner's known persona — and named none of it anywhere on
+//     the surface. `roomReadCard` fills the band with exactly that: the only
+//     answer this screen has ever had to "why does this card say they'll
+//     pounce". It reads the axes off `PressContext`, so an axis the engine
+//     grows later is a row added here, not a rewrite.
+//  3. **The bottom of the summary was empty.** `DSLayout.wideMeasure`'s own doc
+//     names "the press-conference transcript" as one of the three things the
+//     900 pt column exists for, and the app did not have one. It had a quote
+//     list with the question and the price both dropped, and between questions
+//     it had nothing: the reveal printed an answer's real cost once and then
+//     destroyed it when the coach moved on. `transcriptCard` is that
+//     transcript, at two densities.
+//
+// Nothing in `PressConferenceEngine` moved. Every number is still read out of
+// the same four calls, and the two new readings — the live projection and the
+// tone ledger — are the engine's own `rosterMoraleDelta`, `fanSupportDelta`,
+// `repetitionCount` and `repetitionScale`, printed rather than recomputed.
 
 struct PressConferenceView: View {
 
@@ -229,20 +262,60 @@ struct PressConferenceView: View {
 
     // MARK: - Derived (#161, unchanged)
 
-    /// Live deltas accumulated from the answers already on the record.
-    private var runningTotals: PressEffects {
-        var totals = PressEffects()
+    /// One answer already on the record: who asked, what he said, and what that
+    /// line actually cost in the context it was said in.
+    private struct SessionEntry: Identifiable {
+        let id: UUID
+        /// 1-based, so the transcript and the slat band count the same way.
+        let number: Int
+        let question: PressQuestion
+        let response: PressResponse
+        let effects: PressEffects
+    }
+
+    /// Every answer already given, resolved ONCE.
+    ///
+    /// The running totals, the live projection and the transcript all read this
+    /// one list, so none of them can book a different number than another — and
+    /// the fold is the same one `PressConferenceEngine.buildResult` runs when
+    /// the result is finally written, so the screen cannot disagree with the
+    /// save either. Five entries at most, and it is the only place
+    /// `resolvedEffects` is called for an answer that is already on the record.
+    private var sessionLedger: [SessionEntry] {
+        var entries: [SessionEntry] = []
         var live = context
         for (qIdx, respIdx) in selectedIndices.enumerated() {
             guard qIdx < questions.count,
                   respIdx < questions[qIdx].responses.count else { continue }
-            let response = questions[qIdx].responses[respIdx]
-            totals = totals + PressConferenceEngine.resolvedEffects(
-                for: response, question: questions[qIdx], context: live
-            )
+            let question = questions[qIdx]
+            let response = question.responses[respIdx]
+            entries.append(SessionEntry(
+                id: response.id,
+                number: qIdx + 1,
+                question: question,
+                response: response,
+                effects: PressConferenceEngine.resolvedEffects(
+                    for: response, question: question, context: live
+                )
+            ))
             live = live.appending(tone: response.tone)
         }
-        return totals
+        return entries
+    }
+
+    /// Live deltas accumulated from the answers already on the record.
+    private var runningTotals: PressEffects {
+        sessionLedger.reduce(PressEffects()) { $0 + $1.effects }
+    }
+
+    /// The answers from questions the coach has already walked away from.
+    ///
+    /// Deliberately NOT the whole ledger: the moment an answer is committed its
+    /// reveal is on screen with the same pills on it, so a receipt that included
+    /// the live question would print the current answer's cost twice, a hand's
+    /// width apart. The receipt is for the ones whose reveal has gone.
+    private var priorAnswers: [SessionEntry] {
+        sessionLedger.filter { $0.number <= currentQuestionIndex }
     }
 
     /// The context question N is answered in — the opening context plus every
@@ -414,7 +487,13 @@ struct PressConferenceView: View {
             // Where he stands before he says anything — the same card the
             // questioning phase carries, so the podium is a reading of the room
             // rather than a title card with a button under it.
-            standingStrip
+            roomLedgerCard
+
+            // And WHICH room it is. On the podium this is the whole brief: the
+            // coach is about to pick a note for a building, a roster and an
+            // owner he inherited ten minutes ago, and all three are already
+            // inputs to the first answer he gives.
+            roomReadCard
 
             // The same band the questioning phase runs on, drawn ahead of the
             // first question so the shape of the session is known before it
@@ -459,11 +538,7 @@ struct PressConferenceView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(spacing: DSSpacing.md) {
-                        standingStrip
-
-                        if !selectedIndices.isEmpty {
-                            runningImpactStrip
-                        }
+                        roomLedgerCard
 
                         if let question = currentQuestion {
                             if showReporter {
@@ -486,6 +561,26 @@ struct PressConferenceView: View {
                                     .id(Anchor.reveal.rawValue)
                                     .transition(.opacity.combined(with: .scale(scale: 0.97)))
                             }
+                        }
+
+                        // The band under the answers, which used to be most of a
+                        // portrait iPad's worth of empty navy. Reference material
+                        // is what belongs there: the room read is what the hint
+                        // chips above it are computed from, and the receipt is
+                        // what every earlier answer actually cost — numbers the
+                        // reveal printed once and then threw away the moment the
+                        // coach tapped Next question.
+                        //
+                        // It also finishes #166. `scrollTo(prompt, anchor: .top)`
+                        // can only pull the prompt to the top of the viewport if
+                        // there is a viewport's worth of content BELOW it; with
+                        // three short answer cards and nothing after them the
+                        // scroll ran against a content height that had no room
+                        // left to give, and the prompt stayed where it was.
+                        roomReadCard
+
+                        if !priorAnswers.isEmpty {
+                            transcriptCard(entries: priorAnswers, detail: .receipt)
                         }
 
                         Spacer(minLength: DSSpacing.lg)
@@ -594,50 +689,50 @@ struct PressConferenceView: View {
         }
     }
 
-    // MARK: Standing strip
+    // MARK: The room ledger — one card, two states
+    //
+    // "BEFORE THIS SESSION" was a true label on a dead card. The three numbers
+    // under it cannot move until `onComplete` fires, so it read identically
+    // beneath all five questions, while the card directly below it printed the
+    // session's deltas with no baseline to hang them on. Two cards, each holding
+    // one half of a sentence, and the half that answered "so where does that
+    // leave me" was in neither of them.
+    //
+    // One card now. Before a word is said it is the reading of the room it
+    // always was, widened from three tiles to the five meters the legend under
+    // it already promised to explain — the locker room and the city were being
+    // described there and shown nowhere. From the first committed answer it
+    // becomes the projection: the delta, and where the meter that delta feeds
+    // actually lands. The baseline is not lost; it moves into the `72% → 76%`.
+    //
+    // What it deliberately does NOT project is the PENDING pick. This screen is
+    // built on #161's fog rule — direction before the answer, arithmetic after —
+    // and a card that showed the owner landing on 76% while the coach was still
+    // choosing would hand back the spreadsheet the fog took away.
 
-    /// Where the coach stands *before* this session. Labelled, because a fresh
-    /// career reads "0 Legacy / 0 Media" and a bare zero looks like a fault.
-    private var standingStrip: some View {
-        VStack(spacing: DSSpacing.xs) {
-            Text("BEFORE THIS SESSION")
+    private var roomLedgerCard: some View {
+        let hasSpoken = !selectedIndices.isEmpty
+        let totals = runningTotals
+
+        return VStack(spacing: DSSpacing.xs) {
+            Text(hasSpoken ? "WHERE YOU STAND NOW" : "BEFORE THIS SESSION")
                 .font(DSType.display(DSType.Size.caption, .heavy))
                 .tracking(0.7)
                 .foregroundStyle(Color.textSecondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            HStack(spacing: 0) {
-                standingItem(
-                    icon: "star.fill",
-                    label: "Legacy",
-                    value: "\(career.legacy.totalPoints)",
-                    color: Color.accentGold
-                )
-                standingItem(
-                    icon: "newspaper.fill",
-                    label: "Media",
-                    value: "\(career.legacy.mediaReputation)",
-                    color: career.legacy.mediaReputation >= 0 ? Color.success : Color.dangerText
-                )
-                // #117: the owner's satisfaction, not his "Comp" — and labelled
-                // OWNER, because the legend under it, the running strip and every
-                // hint chip on this screen call that audience the owner. The tile
-                // was the only place it was called anything else.
-                if let owner {
-                    standingItem(
-                        icon: "building.2.fill",
-                        label: "Owner",
-                        value: "\(owner.satisfaction)%",
-                        color: Color.forRating(owner.satisfaction, scale: .percent)
-                    )
-                }
+            if hasSpoken {
+                meterLedgerGrid(cells: meterCells(for: totals))
+                sessionVerdict(totals: totals)
+            } else {
+                baselineTiles
             }
 
-            // #119: what each of those actually does — in the tiles' own order,
-            // and covering the two meters this session moves that the tiles have
-            // no room for. The legend used to explain three of the five numbers
-            // the screen goes on to report.
-            Text("Legacy affects career rating \u{00B7} Media shapes the narrative \u{00B7} Owner affects job security \u{00B7} Morale is the locker room's read \u{00B7} Fans are the city's")
+            // #119: what each of those actually does, in the card's own column
+            // order. It stays on BOTH states — these five words are defined
+            // nowhere else on the screen, and the state that would drop them is
+            // the one where the player has started spending them.
+            Text("Owner affects job security \u{00B7} Morale is the locker room's read \u{00B7} Fans are the city's \u{00B7} Media shapes the narrative \u{00B7} Legacy affects career rating")
                 .font(DSType.text(DSType.Size.footnote, .regular, prose: true))
                 .foregroundStyle(Color.textSecondary)
                 .multilineTextAlignment(.center)
@@ -648,7 +743,69 @@ struct PressConferenceView: View {
         .cardBackground()
     }
 
-    private func standingItem(icon: String, label: String, value: String, color: Color) -> some View {
+    /// The five meters before a word is said. Five, not the three the strip
+    /// printed: the legend under it already named the locker room and the city,
+    /// the session moves both, and the summary reports both — so the only card
+    /// that never showed them was the one the player reads first.
+    ///
+    /// Column order matches `meterLedgerGrid` exactly. The two states are one
+    /// card; if Owner sat third here and first there, the card would reshuffle
+    /// itself the moment the first answer landed.
+    private var baselineTiles: some View {
+        HStack(spacing: 0) {
+            // #117: the owner's satisfaction, not his "Comp" — and labelled
+            // OWNER, because the legend under it, the ledger grid and every hint
+            // chip on this screen call that audience the owner.
+            if let owner {
+                standingItem(
+                    icon: "building.2.fill",
+                    label: "Owner",
+                    value: "\(owner.satisfaction)%",
+                    caption: nil,
+                    color: Color.forRating(owner.satisfaction, scale: .percent)
+                )
+            }
+            // The band, not an average. `Player.morale` is a per-man stat and
+            // the engine reads the roster as one of three bands; printing a mean
+            // here would invent a meter the sim does not keep.
+            standingItem(
+                icon: "person.3.fill",
+                label: "Morale",
+                value: context.lockerRoom.label,
+                caption: nil,
+                color: lockerRoomColor(context.lockerRoom)
+            )
+            standingItem(
+                icon: "hands.clap.fill",
+                label: "Fans",
+                value: "\(career.fanSupport)%",
+                caption: nil,
+                color: Color.forRating(career.fanSupport, scale: .percent)
+            )
+            standingItem(
+                icon: "newspaper.fill",
+                label: "Media",
+                value: "\(career.legacy.mediaReputation)",
+                caption: career.legacy.reputationLabel,
+                color: career.legacy.mediaReputation >= 0 ? Color.success : Color.dangerText
+            )
+            standingItem(
+                icon: "star.fill",
+                label: "Legacy",
+                value: "\(career.legacy.totalPoints)",
+                caption: nil,
+                color: Color.accentGold
+            )
+        }
+    }
+
+    private func standingItem(
+        icon: String,
+        label: String,
+        value: String,
+        caption: String?,
+        color: Color
+    ) -> some View {
         VStack(spacing: DSSpacing.xxs) {
             Image(systemName: icon)
                 .font(.system(size: DSType.Size.footnote))
@@ -656,90 +813,455 @@ struct PressConferenceView: View {
             Text(value)
                 .font(DSType.display(DSType.Size.title3, .heavy))
                 .foregroundStyle(Color.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
             Text(label.uppercased())
                 .font(DSType.display(DSType.Size.caption, .semibold))
                 .tracking(0.6)
                 .foregroundStyle(Color.textTertiaryReadable)
+            // Reserved on every tile, exactly as the grid reserves its context
+            // row: a caption on one tile of five would leave that tile a line
+            // taller than its four neighbours and break the row's baseline.
+            Text(caption ?? " ")
+                .font(DSType.display(DSType.Size.caption, .semibold))
+                .foregroundStyle(color.opacity(0.85))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
         }
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(label): \(value)")
+        .accessibilityLabel(
+            caption.map { "\(label): \(value), \($0)" } ?? "\(label): \(value)"
+        )
     }
 
-    // MARK: Running impact
+    // MARK: The five-meter ledger
+    //
+    // ONE cell list and ONE grid, read by the card between questions and by the
+    // summary. The running strip used to print five bare deltas and the summary
+    // printed five projections of the same numbers: a player who wanted to know
+    // where his owner would actually end up had to finish the session to find
+    // out, and the two readings were free to drift apart in the meantime.
 
-    private var runningImpactStrip: some View {
-        let totals = runningTotals
+    /// One audience's line: what the session did to it, and where the meter that
+    /// delta feeds ends up.
+    private struct MeterCell: Identifiable {
+        var id: String { label }
+        let label: String
+        let icon: String
+        let value: Int
+        /// `before \u{2192} after` for the meter this axis actually moves, or the
+        /// sentence that stands in for it where that meter is not one number.
+        let context: String?
+    }
+
+    private func meterCells(for effects: PressEffects) -> [MeterCell] {
+        [
+            MeterCell(
+                label: "Owner",
+                icon: "building.2.fill",
+                value: effects.ownerSatisfaction,
+                context: owner.map { base in
+                    "\(base.satisfaction)% \u{2192} \(min(100, max(0, base.satisfaction + effects.ownerSatisfaction)))%"
+                }
+            ),
+            // Both of these used to carry NO context line, for the honest reason
+            // that neither number was written anywhere: the podium's two biggest
+            // meters were painted and dropped. They land now, scaled by the
+            // engine (a session sums four ±20 answers; `Player.morale` is a
+            // 0…100 stat the sim reads), and the context line states the value
+            // that actually lands rather than the headline the user cannot act
+            // on.
+            MeterCell(
+                label: "Morale",
+                icon: "person.3.fill",
+                value: effects.playerMorale,
+                context: { () -> String in
+                    let delta = PressConferenceEngine.rosterMoraleDelta(for: effects)
+                    if delta == 0 { return "room unmoved" }
+                    return "every man \(delta > 0 ? "+" : "")\(delta)"
+                }()
+            ),
+            MeterCell(
+                label: "Fans",
+                icon: "hands.clap.fill",
+                value: effects.fanExcitement,
+                context: { () -> String in
+                    let delta = PressConferenceEngine.fanSupportDelta(for: effects)
+                    if delta == 0 { return "city unmoved" }
+                    return "\(career.fanSupport)% \u{2192} \(max(0, min(100, career.fanSupport + delta)))%"
+                }()
+            ),
+            // Media was the one meter the running strip tracked and the summary
+            // card dropped — usually the largest delta of the session, and the
+            // one the summary headline is derived from.
+            MeterCell(
+                label: "Media",
+                icon: "newspaper.fill",
+                value: effects.mediaPerception,
+                context: "\(career.legacy.mediaReputation) \u{2192} \(max(-100, min(100, career.legacy.mediaReputation + effects.mediaPerception)))"
+            ),
+            MeterCell(
+                label: "Legacy",
+                icon: "star.fill",
+                value: effects.legacyPoints,
+                context: "\(career.legacy.totalPoints) \u{2192} \(career.legacy.totalPoints + effects.legacyPoints)"
+            )
+        ]
+    }
+
+    /// Laid out as a `Grid` for the same reason `DSResultSheet` is — an `HStack`
+    /// of stacks drops a numeral the moment one column grows a line.
+    private func meterLedgerGrid(cells: [MeterCell]) -> some View {
+        Grid(alignment: .leading, horizontalSpacing: DSSpacing.lg, verticalSpacing: DSSpacing.xxs) {
+            GridRow {
+                ForEach(cells) { cell in
+                    HStack(spacing: DSSpacing.xxs) {
+                        Image(systemName: cell.icon)
+                            .font(.system(size: DSType.Size.micro))
+                        Text(cell.label.uppercased())
+                            .font(DSType.display(DSType.Size.caption, .heavy))
+                            .tracking(0.6)
+                    }
+                    .foregroundStyle(Color.textTertiaryReadable)
+                    .lineLimit(1)
+                }
+            }
+            GridRow {
+                ForEach(cells) { cell in
+                    Text(cell.value > 0 ? "+\(cell.value)" : "\(cell.value)")
+                        .font(DSType.display(DSType.Size.title2, .heavy))
+                        .foregroundStyle(
+                            cell.value > 0 ? Color.success
+                                : cell.value < 0 ? Color.dangerText : Color.textTertiaryReadable
+                        )
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
+            }
+            GridRow {
+                ForEach(cells) { cell in
+                    // The row always reserves its context line so cells with and
+                    // without a baseline sit at one height (§2.2).
+                    Text(cell.context ?? " ")
+                        .font(DSType.display(DSType.Size.caption, .semibold))
+                        .foregroundStyle(Color.textTertiaryReadable)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                }
+            }
+        }
+    }
+
+    /// The engine's running verdict on the session so far. The thresholds that
+    /// decide "Owner growing impatient" are its; the view paints the severity's
+    /// colour and owns nothing else.
+    private func sessionVerdict(totals: PressEffects) -> some View {
         let feedback = PressConferenceEngine.sessionFeedback(for: totals)
         let color = feedbackColor(feedback.severity)
 
-        return VStack(spacing: DSSpacing.xs) {
-            Text("RUNNING IMPACT")
-                .font(DSType.display(DSType.Size.caption, .heavy))
-                .tracking(0.7)
-                .foregroundStyle(Color.textSecondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            HStack(spacing: DSSpacing.xs) {
-                deltaChip(icon: "building.2.fill", label: "Owner", value: totals.ownerSatisfaction)
-                deltaChip(icon: "person.3.fill", label: "Morale", value: totals.playerMorale)
-                deltaChip(icon: "hands.clap.fill", label: "Fans", value: totals.fanExcitement)
-                deltaChip(icon: "newspaper.fill", label: "Media", value: totals.mediaPerception)
-                // The summary books legacy too, so the running strip has to
-                // track it — otherwise the session meters and the summary
-                // ledger are two different lists of what this presser moved.
-                deltaChip(icon: "star.fill", label: "Legacy", value: totals.legacyPoints)
-                Spacer(minLength: 0)
-            }
-
-            // The engine decides the words and the severity; the view only
-            // paints the severity's colour.
-            HStack(spacing: DSSpacing.xxs) {
-                Image(systemName: feedback.icon)
-                    .font(.system(size: DSType.Size.caption, weight: .bold))
-                Text(feedback.text)
-                    .font(DSType.text(DSType.Size.footnote, .semibold))
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .foregroundStyle(color)
-            .padding(.horizontal, DSSpacing.xs)
-            .padding(.vertical, DSSpacing.xxs)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: DSCornerRadius.inline)
-                    .fill(color.opacity(0.10))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: DSCornerRadius.inline)
-                            .strokeBorder(color.opacity(0.3), lineWidth: 1)
-                    )
-            )
-        }
-        .padding(DSSpacing.sm)
-        .frame(maxWidth: .infinity)
-        .cardBackground()
-    }
-
-    private func deltaChip(icon: String, label: String, value: Int) -> some View {
-        let color: Color = value > 0 ? Color.success : value < 0 ? Color.dangerText : Color.textTertiaryReadable
         return HStack(spacing: DSSpacing.xxs) {
-            Image(systemName: icon)
-                .font(.system(size: DSType.Size.caption))
-            Text(label.uppercased())
-                .font(DSType.display(DSType.Size.caption, .semibold))
-                .tracking(0.4)
-            Text(value > 0 ? "+\(value)" : "\(value)")
-                .font(DSType.display(DSType.Size.caption, .heavy))
+            Image(systemName: feedback.icon)
+                .font(.system(size: DSType.Size.caption, weight: .bold))
+            Text(feedback.text)
+                .font(DSType.text(DSType.Size.footnote, .semibold))
+                .fixedSize(horizontal: false, vertical: true)
         }
         .foregroundStyle(color)
         .padding(.horizontal, DSSpacing.xs)
         .padding(.vertical, DSSpacing.xxs)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                .fill(color.opacity(0.10))
+                .overlay(
+                    RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                        .strokeBorder(color.opacity(0.3), lineWidth: 1)
+                )
+        )
+    }
+
+    // MARK: The room read
+    //
+    // Every hint chip on this screen is resolved against a context the engine
+    // assembles before the first question is asked — the situation, where the
+    // roster actually is, the mood in the building, the owner's known persona —
+    // and until this wave not one of those was named anywhere on the surface. A
+    // capsule that reads "they'll pounce" with no stated reason is a dice roll;
+    // the same capsule under "the year is coming apart, and this room wants a
+    // position" is a read the player can act on.
+    //
+    // One row per axis, so an axis the engine grows later is a row added here.
+    // All of them are fog-legal by #161's own rule, each for its own reason: the
+    // coach knows his owner's persona from the hiring meeting, he is in the
+    // building every day, he knows which of the three rosters he runs, and he
+    // watched Sunday's game. Nothing here is a number the fog is protecting —
+    // no per-audience delta, no per-tone table, no magnitudes. Every line is a
+    // qualitative statement of a rule that is already running, taken from the
+    // matrix's own doc comments, so it cannot advertise arithmetic the engine is
+    // not doing.
+
+    private var roomReadCard: some View {
+        VStack(alignment: .leading, spacing: DSSpacing.sm) {
+            Text("READ THE ROOM")
+                .font(DSType.display(DSType.Size.caption, .heavy))
+                .tracking(0.7)
+                .foregroundStyle(Color.textSecondary)
+
+            roomReadRow(
+                icon: "mic.fill",
+                axis: "The room",
+                value: situationLabel(context.situation),
+                read: situationRead(context.situation)
+            )
+            roomReadRow(
+                icon: "sportscourt.fill",
+                axis: "The roster",
+                value: context.standing.label,
+                read: standingRead(context.standing)
+            )
+            roomReadRow(
+                icon: "person.3.fill",
+                axis: "The building",
+                value: context.lockerRoom.label,
+                read: lockerRoomRead(context.lockerRoom)
+            )
+            roomReadRow(
+                icon: "building.2.fill",
+                axis: "The owner",
+                value: ownerPersonaLabel,
+                read: ownerRead
+            )
+
+            Divider().overlay(Color.surfaceBorder)
+
+            toneLedgerStrip
+        }
+        .padding(DSSpacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardBackground()
+    }
+
+    private func roomReadRow(
+        icon: String,
+        axis: String,
+        value: String,
+        read: String
+    ) -> some View {
+        HStack(alignment: .top, spacing: DSSpacing.sm) {
+            Image(systemName: icon)
+                .font(.system(size: DSType.Size.callout))
+                .foregroundStyle(Color.accentGold.opacity(0.8))
+                .frame(width: 24)
+
+            VStack(alignment: .leading, spacing: DSSpacing.xxs) {
+                HStack(spacing: DSSpacing.xs) {
+                    Text(axis.uppercased())
+                        .font(DSType.display(DSType.Size.caption, .heavy))
+                        .tracking(0.6)
+                        .foregroundStyle(Color.textTertiaryReadable)
+                    Text(value)
+                        .font(DSType.display(DSType.Size.footnote, .heavy))
+                        .foregroundStyle(Color.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Text(read)
+                    .font(DSType.text(DSType.Size.footnote, .regular, prose: true))
+                    .foregroundStyle(Color.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(axis): \(value). \(read)")
+    }
+
+    // MARK: The room read — copy
+    //
+    // One sentence per band, and each one is a restatement of a cell that is
+    // actually in `PressConferenceEngine`. Where a line names a tone it names
+    // the tone that cell singles out, never a magnitude.
+
+    private func situationLabel(_ situation: PressConferenceEngine.PressSituation) -> String {
+        switch situation {
+        case .introduction: return "Day one"
+        case .afterWin:     return "After a win"
+        case .afterBadLoss: return "After a beating"
+        case .crisis:       return "The year is coming apart"
+        case .highStakes:   return "The stakes are real"
+        case .routine:      return "A quiet week"
+        }
+    }
+
+    private func situationRead(_ situation: PressConferenceEngine.PressSituation) -> String {
+        switch situation {
+        case .introduction:
+            return "Nobody has a read on you yet. The one thing this room will not forgive is being boring."
+        case .afterWin:
+            return "The room is generous. Souring the win is the only reliable way to lose it."
+        case .afterBadLoss:
+            return "Sunny reads delusional and funny reads tone-deaf. Owning it is the answer that gains on every axis."
+        case .crisis:
+            return "They want a position, not a posture — and dodging costs double in a room like this one."
+        case .highStakes:
+            return "Belief plays here. Modesty reads as a coach who does not fancy it."
+        case .routine:
+            return "Nothing is burning, so nothing moves far — and neither the crowd nor the press has a mood you can read."
+        }
+    }
+
+    private func standingRead(_ standing: PressConferenceEngine.TeamStanding) -> String {
+        switch standing {
+        case .rebuilding:
+            return "A title claim here costs you with the owner: he hears an expectation he did not set and cannot meet."
+        case .middling:
+            return "Nothing about this roster pushes an answer either way. The room is judging the words alone."
+        case .contender:
+            return "Humility on a roster this good reads as a coach who does not believe in it."
+        }
+    }
+
+    private func lockerRoomRead(_ band: PressConferenceEngine.LockerRoomBand) -> String {
+        switch band {
+        case .fragile:
+            return "They are listening for whether you protect them. A public whipping lands twice as hard in here."
+        case .steady:
+            return "The room can take whatever you say about it, either way."
+        case .buoyant:
+            return "They can absorb a whipping, and confidence is cheap to hand them."
+        }
+    }
+
+    private var ownerPersonaLabel: String {
+        let stance = context.ownerPrefersWinNow ? "Wants to win now" : "Backing a build"
+        return "\(stance) \u{00B7} patience \(context.ownerPatience)/10"
+    }
+
+    private var ownerRead: String {
+        // The persona adjustment is deliberately SKIPPED on the intro presser:
+        // those four questions branch their authored effects on `prefersWinNow`
+        // themselves, and the engine refuses to count him twice. The read has to
+        // follow that split, or it would describe a rule that is not running.
+        if context.situation == .introduction {
+            return context.ownerPrefersWinNow
+                ? "He wants it now. Ambition buys him; talk of tearing it down does not."
+                : "He is backing a build. A title promise is a bill he never agreed to."
+        }
+        if context.ownerPrefersWinNow {
+            return "He rewards certainty, and hears humility as the lack of it."
+        }
+        return context.ownerPatience <= 3
+            ? "He is backing the plan, but thin-skinned — a promise you have not earned stings him hardest."
+            : "He is backing the plan. Humility buys credit with him; heat costs it."
+    }
+
+    // MARK: The tone ledger
+    //
+    // The repetition ratchet is the one piece of engine state that quietly eats
+    // the player's payoff, and the only trace of it on the surface was a chip
+    // that appeared on a card AFTER the decay had already started. Counted here
+    // the way the ratchet counts — `repetitionCount` over its own window, off
+    // `liveContext`, so an answer given a minute ago is in the total on the very
+    // next question rather than at the end of the session.
+
+    /// `ResponseTone` is not `CaseIterable` — it is a Codable content enum in
+    /// the engine, and adding a case list there is an engine change this wave is
+    /// not allowed to make — so the ledger fixes its own reading order.
+    private static let toneOrder: [ResponseTone] = [
+        .confident, .humble, .aggressive, .diplomatic, .funny
+    ]
+
+    private var toneLedgerStrip: some View {
+        let recent = liveContext.recentTones
+        let counted = Self.toneOrder
+            .map { tone in
+                (tone: tone, count: PressConferenceEngine.repetitionCount(tone: tone, recentTones: recent))
+            }
+            .filter { $0.count > 0 }
+            .sorted { $0.count > $1.count }
+
+        return VStack(alignment: .leading, spacing: DSSpacing.xs) {
+            Text("WHAT THEY HAVE HEARD FROM YOU")
+                .font(DSType.display(DSType.Size.caption, .heavy))
+                .tracking(0.7)
+                .foregroundStyle(Color.textTertiaryReadable)
+
+            if counted.isEmpty {
+                Text("Nothing yet. Whatever note you open on is the one the room starts counting.")
+                    .font(DSType.text(DSType.Size.footnote, .regular, prose: true))
+                    .foregroundStyle(Color.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                HStack(spacing: DSSpacing.xs) {
+                    ForEach(counted, id: \.tone) { item in
+                        toneCountChip(tone: item.tone, count: item.count)
+                    }
+                    Spacer(minLength: 0)
+                }
+
+                Text(ratchetLine(counted: counted))
+                    .font(DSType.text(DSType.Size.footnote, .regular, prose: true))
+                    .foregroundStyle(Color.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func toneCountChip(tone: ResponseTone, count: Int) -> some View {
+        let isTaxed = PressConferenceEngine.repetitionScale(
+            tone: tone, recentTones: liveContext.recentTones
+        ) < 1.0
+        // `alertOrange` is the vanilla chip's colour on the answer cards, and a
+        // taxed note here is the same fact one question earlier.
+        let tint = isTaxed ? Color.alertOrange : toneColor(tone)
+
+        return HStack(spacing: DSSpacing.xxs) {
+            Image(systemName: tone.icon)
+                .font(.system(size: DSType.Size.caption))
+            Text(tone.label.uppercased())
+                .font(DSType.display(DSType.Size.caption, .heavy))
+                .tracking(0.5)
+            Text("\(count)")
+                .font(DSType.display(DSType.Size.footnote, .heavy))
+            if isTaxed {
+                Image(systemName: "arrow.down.right")
+                    .font(.system(size: DSType.Size.micro, weight: .bold))
+            }
+        }
+        .foregroundStyle(tint)
+        .padding(.horizontal, DSSpacing.xs)
+        .padding(.vertical, DSSpacing.xxs)
         .background(
             Capsule()
-                .fill(color.opacity(0.12))
-                .overlay(Capsule().strokeBorder(color.opacity(0.3), lineWidth: 1))
+                .fill(tint.opacity(0.12))
+                .overlay(Capsule().strokeBorder(tint.opacity(isTaxed ? 0.45 : 0.28), lineWidth: 1))
         )
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(label) \(value > 0 ? "up" : value < 0 ? "down" : "unchanged") \(abs(value))")
+        .accessibilityLabel(
+            "\(tone.label), \(count) of the last \(PressConferenceEngine.toneRepetitionWindow) answers"
+                + (isTaxed ? ", already losing value" : "")
+        )
+    }
+
+    /// What the ratchet is doing right now, in the order it happens: the press
+    /// coins a name for the note first (`isVanilla`), and only the decay that is
+    /// already running (`repetitionScale`) if it has not.
+    private func ratchetLine(counted: [(tone: ResponseTone, count: Int)]) -> String {
+        let recent = liveContext.recentTones
+        let window = PressConferenceEngine.toneRepetitionWindow
+
+        if let named = counted.first(where: {
+            PressConferenceEngine.isVanilla(tone: $0.tone, recentTones: recent)
+        }) {
+            return "\u{201C}\(PressConferenceEngine.vanillaLabel(for: named.tone))\u{201D} \u{2014} the press has a name for it now, and a \(named.tone.label.lowercased()) answer is worth a fraction of what it was."
+        }
+        if let taxed = counted.first(where: {
+            PressConferenceEngine.repetitionScale(tone: $0.tone, recentTones: recent) < 1.0
+        }) {
+            return "\(taxed.tone.label) has come up \(taxed.count) times in the last \(window). The room is already discounting it; one more and most of the payoff goes."
+        }
+        return "No note repeated often enough to go stale. The room starts discounting one it has heard three times in \(window)."
     }
 
     // MARK: Prompt card
@@ -1193,6 +1715,134 @@ struct PressConferenceView: View {
         .accessibilityLabel("\(label) \(value > 0 ? "+" : "")\(value)")
     }
 
+    // MARK: - The transcript
+    //
+    // `DSLayout.wideMeasure`'s own doc names "the press-conference transcript"
+    // as one of the three things the 900 pt column exists for, and until this
+    // wave the app did not have one. What it had was a quote list on the summary
+    // — the line he gave and the headline that ran, with the question that
+    // provoked it and the price he paid for it both dropped — and, between
+    // questions, nothing at all: `resultReveal` printed an answer's real cost
+    // once and destroyed it the moment the coach tapped "Next question". The
+    // learning loop the reveal exists to run was handing the player the receipt
+    // and then taking it back.
+    //
+    // One component, two densities. Between questions it is a receipt: who
+    // asked, what he said, what it cost. On the summary it is the record: the
+    // question, the line, the headline that ran, and the price.
+
+    private enum TranscriptDetail {
+        /// Under the answer cards — a receipt, one line of question and two of
+        /// quote, because the live question is what the player is here to read.
+        case receipt
+        /// On the summary — the whole record, nothing truncated.
+        case record
+    }
+
+    private func transcriptCard(entries: [SessionEntry], detail: TranscriptDetail) -> some View {
+        VStack(alignment: .leading, spacing: DSSpacing.sm) {
+            Text(detail == .receipt ? "ON THE RECORD SO FAR" : "THE TRANSCRIPT")
+                .font(DSType.display(DSType.Size.caption, .heavy))
+                .tracking(0.7)
+                .foregroundStyle(Color.textSecondary)
+
+            ForEach(entries) { entry in
+                transcriptEntry(entry, detail: detail)
+            }
+        }
+        .padding(DSSpacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardBackground()
+    }
+
+    private func transcriptEntry(_ entry: SessionEntry, detail: TranscriptDetail) -> some View {
+        let tint = toneColor(entry.response.tone)
+        let isRecord = detail == .record
+
+        return VStack(alignment: .leading, spacing: DSSpacing.xs) {
+            HStack(spacing: DSSpacing.xs) {
+                Text("\(entry.number)")
+                    .font(DSType.display(DSType.Size.caption, .heavy))
+                    .foregroundStyle(Color.textTertiaryReadable)
+                Text(entry.question.outlet.uppercased())
+                    .font(DSType.display(DSType.Size.caption, .heavy))
+                    .tracking(0.6)
+                    .foregroundStyle(Color.accentGold)
+                    .lineLimit(1)
+
+                Spacer(minLength: DSSpacing.xs)
+
+                HStack(spacing: DSSpacing.xxs) {
+                    Image(systemName: entry.response.tone.icon)
+                        .font(.system(size: DSType.Size.caption, weight: .bold))
+                    Text(entry.response.tone.label.uppercased())
+                        .font(DSType.display(DSType.Size.caption, .heavy))
+                        .tracking(0.5)
+                }
+                .foregroundStyle(tint)
+                .padding(.horizontal, DSSpacing.xs)
+                .padding(.vertical, DSSpacing.xxs)
+                .background(Capsule().fill(tint.opacity(0.15)))
+            }
+
+            Text(entry.question.question)
+                .font(DSType.text(DSType.Size.footnote, .regular, prose: true))
+                .foregroundStyle(Color.textTertiaryReadable)
+                .lineLimit(isRecord ? nil : 1)
+                .fixedSize(horizontal: false, vertical: isRecord)
+
+            Text("\u{201C}\(entry.response.text)\u{201D}")
+                .font(DSType.text(isRecord ? DSType.Size.body : DSType.Size.footnote, .medium, prose: true))
+                .italic()
+                .foregroundStyle(Color.textPrimary)
+                .lineLimit(isRecord ? nil : 2)
+                .fixedSize(horizontal: false, vertical: isRecord)
+
+            if isRecord {
+                Text(entry.response.mediaReaction)
+                    .font(DSType.text(DSType.Size.footnote, .regular, prose: true))
+                    .foregroundStyle(Color.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            // A row of no pills is indistinguishable from a row the layout
+            // failed to draw, and "nothing moved" is a real outcome on a fully
+            // ratcheted answer — so it gets words rather than an empty line.
+            if didMoveAnything(entry.effects) {
+                effectPillRow(effects: entry.effects)
+            } else {
+                Text("Nothing in the room moved.")
+                    .font(DSType.display(DSType.Size.caption, .semibold))
+                    .foregroundStyle(Color.textTertiaryReadable)
+            }
+        }
+        .padding(DSSpacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                .fill(Color.backgroundTertiary.opacity(0.5))
+                .overlay(alignment: .leading) {
+                    UnevenRoundedRectangle(
+                        topLeadingRadius: DSCornerRadius.inline,
+                        bottomLeadingRadius: DSCornerRadius.inline
+                    )
+                    .fill(tint.opacity(0.7))
+                    .frame(width: 3)
+                }
+        )
+        .accessibilityElement(children: .combine)
+    }
+
+    /// Whether an answer moved anything at all — the mirror of `hasCost`, which
+    /// only ever asks about the negative half.
+    private func didMoveAnything(_ effects: PressEffects) -> Bool {
+        effects.ownerSatisfaction != 0
+            || effects.playerMorale != 0
+            || effects.fanExcitement != 0
+            || effects.mediaPerception != 0
+            || effects.legacyPoints != 0
+    }
+
     // MARK: - P5 commit bar
 
     /// Select-then-commit. An answer used to fire on first tap — irreversible,
@@ -1253,6 +1903,12 @@ struct PressConferenceView: View {
             context: context
         )
 
+        // The same ledger the questioning phase keeps its receipt from. The
+        // transcript at the end of the session and the receipt under the answer
+        // cards are one list, resolved once — and it is the list `buildResult`
+        // folds, so the record and the save agree by construction.
+        let ledger = sessionLedger
+
         return VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: DSSpacing.md) {
@@ -1262,7 +1918,9 @@ struct PressConferenceView: View {
                         summaryFrontOffice(result: result)
                     }
                     summaryApproach(result: result)
-                    summaryQuotes(result: result)
+                    if !ledger.isEmpty {
+                        transcriptCard(entries: ledger, detail: .record)
+                    }
                     if !result.promises.isEmpty {
                         summaryPromises(result: result)
                     }
@@ -1335,9 +1993,6 @@ struct PressConferenceView: View {
         }
     }
 
-    /// #120 / #122: the deltas, with `baseline \u{2192} final` where a baseline
-    /// exists. Laid out as a `Grid` for the same reason `DSResultSheet` is — an
-    /// `HStack` of stacks drops a numeral the moment one column grows a line.
     /// F-56 — the other read the room takes away, and the only one the TRADE
     /// market cares about.
     ///
@@ -1426,84 +2081,35 @@ struct PressConferenceView: View {
         }
     }
 
+    /// #120 / #122: the deltas, with `baseline \u{2192} final` where a baseline
+    /// exists.
+    ///
+    /// The cells and the grid are `meterCells` / `meterLedgerGrid` — the same
+    /// two the live card between questions draws, which is the whole point: the
+    /// reading the coach took after question three and the reading he takes at
+    /// the end are one card with more answers folded into it.
     private func summaryChanged(result: PressConferenceResult) -> some View {
-        let effects = result.totalEffects
-        let cells: [(label: String, value: Int, context: String?)] = [
-            ("Owner", effects.ownerSatisfaction, owner.map { base in
-                "\(base.satisfaction)% \u{2192} \(min(100, max(0, base.satisfaction + effects.ownerSatisfaction)))%"
-            }),
-            // Both of these used to carry NO context line, for the honest
-            // reason that neither number was written anywhere: the podium's two
-            // biggest meters were painted and dropped. They land now, scaled by
-            // the engine (a session sums four ±20 answers; `Player.morale` is a
-            // 0…100 stat the sim reads), and the context line states the value
-            // that actually lands rather than the headline the user cannot act
-            // on.
-            ("Morale", effects.playerMorale, {
-                let delta = PressConferenceEngine.rosterMoraleDelta(for: effects)
-                if delta == 0 { return "room unmoved" }
-                return "every man \(delta > 0 ? "+" : "")\(delta)"
-            }()),
-            ("Fans", effects.fanExcitement, {
-                let delta = PressConferenceEngine.fanSupportDelta(for: effects)
-                if delta == 0 { return "city unmoved" }
-                return "\(career.fanSupport)% \u{2192} \(max(0, min(100, career.fanSupport + delta)))%"
-            }()),
-            // Media was the one meter the running strip tracked and this card
-            // dropped — usually the largest delta of the session, and the one
-            // the headline above is now derived from.
-            ("Media", effects.mediaPerception,
-             "\(career.legacy.mediaReputation) \u{2192} \(max(-100, min(100, career.legacy.mediaReputation + effects.mediaPerception)))"),
-            ("Legacy", effects.legacyPoints,
-             "\(career.legacy.totalPoints) \u{2192} \(career.legacy.totalPoints + effects.legacyPoints)")
-        ]
-
-        return VStack(alignment: .leading, spacing: DSSpacing.xs) {
+        VStack(alignment: .leading, spacing: DSSpacing.xs) {
             Text("WHAT CHANGED")
                 .font(DSType.display(DSType.Size.caption, .heavy))
                 .tracking(0.7)
                 .foregroundStyle(Color.textSecondary)
 
-            Grid(alignment: .leading, horizontalSpacing: DSSpacing.lg, verticalSpacing: DSSpacing.xxs) {
-                GridRow {
-                    ForEach(cells, id: \.label) { cell in
-                        Text(cell.label.uppercased())
-                            .font(DSType.display(DSType.Size.caption, .heavy))
-                            .tracking(0.6)
-                            .foregroundStyle(Color.textTertiaryReadable)
-                            .lineLimit(1)
-                    }
-                }
-                GridRow {
-                    ForEach(cells, id: \.label) { cell in
-                        Text(cell.value > 0 ? "+\(cell.value)" : "\(cell.value)")
-                            .font(DSType.display(DSType.Size.title2, .heavy))
-                            .foregroundStyle(
-                                cell.value > 0 ? Color.success
-                                    : cell.value < 0 ? Color.dangerText : Color.textTertiaryReadable
-                            )
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.7)
-                    }
-                }
-                GridRow {
-                    ForEach(cells, id: \.label) { cell in
-                        // The row always reserves its context line so cells with
-                        // and without a baseline sit at one height (§2.2).
-                        Text(cell.context ?? " ")
-                            .font(DSType.display(DSType.Size.caption, .semibold))
-                            .foregroundStyle(Color.textTertiaryReadable)
-                            .lineLimit(1)
-                    }
-                }
-            }
-            .padding(DSSpacing.sm)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .cardBackground()
+            meterLedgerGrid(cells: meterCells(for: result.totalEffects))
+                .padding(DSSpacing.sm)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .cardBackground()
         }
     }
 
-    /// #123: the tone distribution — what kind of coach he sounded like.
+    /// #123: the tone distribution — what kind of coach he sounded like, and
+    /// what the room has now heard often enough to stop paying for.
+    ///
+    /// The chips count THIS session; the ratchet counts the career. "2
+    /// DIPLOMATIC" can be the fourth diplomatic answer the room has heard, which
+    /// is the point where the engine starts taking the payoff away — so the
+    /// window it actually scores sits under them, in the same strip the room
+    /// read carries between questions.
     private func summaryApproach(result: PressConferenceResult) -> some View {
         let counts: [(tone: ResponseTone, count: Int)] = {
             var table: [ResponseTone: Int] = [:]
@@ -1519,83 +2125,32 @@ struct PressConferenceView: View {
                 .tracking(0.7)
                 .foregroundStyle(Color.textSecondary)
 
-            HStack(spacing: DSSpacing.xs) {
-                ForEach(counts, id: \.tone) { item in
-                    HStack(spacing: DSSpacing.xxs) {
-                        Image(systemName: item.tone.icon)
-                            .font(.system(size: DSType.Size.caption))
-                        Text("\(item.count) \(item.tone.label.uppercased())")
-                            .font(DSType.display(DSType.Size.caption, .heavy))
-                            .tracking(0.5)
+            VStack(alignment: .leading, spacing: DSSpacing.sm) {
+                HStack(spacing: DSSpacing.xs) {
+                    ForEach(counts, id: \.tone) { item in
+                        HStack(spacing: DSSpacing.xxs) {
+                            Image(systemName: item.tone.icon)
+                                .font(.system(size: DSType.Size.caption))
+                            Text("\(item.count) \(item.tone.label.uppercased())")
+                                .font(DSType.display(DSType.Size.caption, .heavy))
+                                .tracking(0.5)
+                        }
+                        .foregroundStyle(toneColor(item.tone))
+                        .padding(.horizontal, DSSpacing.xs)
+                        .padding(.vertical, DSSpacing.xxs)
+                        .background(Capsule().fill(toneColor(item.tone).opacity(0.12)))
                     }
-                    .foregroundStyle(toneColor(item.tone))
-                    .padding(.horizontal, DSSpacing.xs)
-                    .padding(.vertical, DSSpacing.xxs)
-                    .background(Capsule().fill(toneColor(item.tone).opacity(0.12)))
+                    Spacer(minLength: 0)
                 }
-                Spacer(minLength: 0)
+
+                Divider().overlay(Color.surfaceBorder)
+
+                toneLedgerStrip
             }
-
-            // The chips count this session; the repetition ratchet counts the
-            // career. "2 DIPLOMATIC" can be the fourth diplomatic answer the room
-            // has heard, which is the point where the engine starts taking the
-            // payoff away — so the window it actually scores is printed beside
-            // them. Only when there is a history: on a first presser the line
-            // would just re-count the chips above it.
-            if !context.recentTones.isEmpty {
-                Text("The room remembers your last \(PressConferenceEngine.toneRepetitionWindow) answers: \(toneLedgerLine).")
-                    .font(DSType.text(DSType.Size.footnote, .regular, prose: true))
-                    .foregroundStyle(Color.textTertiaryReadable)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            .padding(DSSpacing.sm)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .cardBackground()
         }
-    }
-
-    /// The tones inside the ratchet's own window, counted the way the ratchet
-    /// counts them — this session's picks included, since `liveContext` has
-    /// already folded them in.
-    private var toneLedgerLine: String {
-        var table: [ResponseTone: Int] = [:]
-        for tone in liveContext.recentTones.prefix(PressConferenceEngine.toneRepetitionWindow) {
-            table[tone, default: 0] += 1
-        }
-        return table
-            .sorted { $0.value > $1.value }
-            .map { "\($0.key.label.lowercased()) \($0.value)" }
-            .joined(separator: ", ")
-    }
-
-    private func summaryQuotes(result: PressConferenceResult) -> some View {
-        VStack(alignment: .leading, spacing: DSSpacing.sm) {
-            Text("YOUR KEY QUOTES")
-                .font(DSType.display(DSType.Size.caption, .heavy))
-                .tracking(0.7)
-                .foregroundStyle(Color.textSecondary)
-
-            ForEach(result.selectedResponses) { response in
-                VStack(alignment: .leading, spacing: DSSpacing.xxs) {
-                    Text("\u{201C}\(response.responseText)\u{201D}")
-                        .font(DSType.text(DSType.Size.body, .regular, prose: true))
-                        .italic()
-                        .foregroundStyle(Color.textPrimary)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    Text(response.mediaReaction)
-                        .font(DSType.text(DSType.Size.footnote, .regular, prose: true))
-                        .foregroundStyle(Color.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(DSSpacing.sm)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: DSCornerRadius.inline)
-                        .fill(Color.backgroundTertiary.opacity(0.5))
-                )
-            }
-        }
-        .padding(DSSpacing.md)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .cardBackground()
     }
 
     /// #161 D: the bar, in the coach's own words, next to the line that set it.
@@ -1836,6 +2391,18 @@ struct PressConferenceView: View {
         case .friendly: return Color.success
         case .neutral:  return Color.textSecondary
         case .hostile:  return Color.dangerText
+        }
+    }
+
+    /// The locker-room band on the baseline tile. Buoyant/steady/fragile is a
+    /// mood, not a rating ladder, so this is three categorical hues and not
+    /// `Color.forRating` — but `warning` is the honest colour for fragile: it is
+    /// the band where an aggressive answer costs the most.
+    private func lockerRoomColor(_ band: PressConferenceEngine.LockerRoomBand) -> Color {
+        switch band {
+        case .buoyant: return Color.success
+        case .steady:  return Color.textSecondary
+        case .fragile: return Color.warning
         }
     }
 

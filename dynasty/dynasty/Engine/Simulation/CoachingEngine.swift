@@ -1804,6 +1804,12 @@ enum CoachingEngine {
 
     /// Calculate layered coaching bonus from HC → AHC → Coordinator → Position Coach
     ///
+    /// - Parameter player: read for `position.side` only, which selects WHICH
+    ///   system the coordinator layer holds him responsible for knowing (see
+    ///   "Layer 3b" below). Until that layer existed this parameter was accepted
+    ///   and never read — Swift does not warn on an unused function parameter,
+    ///   so it sat in the signature of the single hottest function in the
+    ///   development stack looking load-bearing.
     /// - Parameter coordinatorContinuity: the unit's coordinator has been in the
     ///   building `coordinatorContinuitySeasons`+ years AND has not changed the
     ///   scheme. Computed by the caller, which is the layer that knows the
@@ -1841,6 +1847,70 @@ enum CoachingEngine {
             // promoted this offseason cannot also have three seasons in the
             // same seat with an unchanged scheme.
             if coordinatorContinuity { multiplier += coordinatorContinuityBonus }
+
+            // Layer 3b: scheme mastery — the coordinator's own command of the
+            // system his unit actually installs. Penalty-only, and it is the
+            // MISSING HALF of a mechanic that already exists.
+            //
+            // `CoachingModifiers` Mech 6 reads exactly this number —
+            // `oc.expertise(for: oc.offensiveScheme)` — and pays a
+            // POSITIVE-ONLY game-day bonus above `CoachingModifiers.schemeCenter`
+            // (70). Below that centre it charges nothing, and until now nothing
+            // else in the engine read the number at all, so a coordinator asked
+            // to run a system he has never coached was FREE.
+            //
+            // That is reachable, not hypothetical. `initializeSchemeExpertise`
+            // seeds 75-95 in a coach's OWN scheme, 40-65 across his family and
+            // 15-40 everywhere else, and `SchemeSelectionView.commitPending`
+            // rewrites `coordinator.offensiveScheme` WITHOUT touching
+            // `schemeExpertise` — the one and only way in the game for the two
+            // to diverge, and it is the headline decision of the Coaching
+            // Changes phase. The ROSTER already paid for that install through
+            // `activeSchemeFamiliarity`; the man who chose it paid nothing.
+            //
+            // Where the two numbers come from, neither of them rounded for
+            // looking reasonable:
+            //  * Par is 70 because that is `CoachingModifiers.schemeCenter` —
+            //    the same quantity off the same coach, so the pair is now
+            //    two-sided instead of half-open: above par the sim pays him,
+            //    below par the development stack charges him.
+            //  * Saturation is 20 because that is what `Coach.expertise(for:)`
+            //    returns for a scheme it holds no record of, i.e. the model's
+            //    own statement of "knows nothing about this system", and it
+            //    sits at the bottom of the 15-40 unknown-scheme band above.
+            //  * The full-ignorance charge is `coordinatorContinuityBonus`
+            //    negated. Three seasons running one system is worth +0.05 on
+            //    this multiplier; installing one he has never run is worth
+            //    −0.05. The swing between those poles is 0.10, which is exactly
+            //    this layer's own authority over 50 attribute points — so
+            //    "does not know the playbook" can cost at most what "is a poor
+            //    developer" costs, and no more.
+            //
+            // A coordinator carrying no system on this player's side is charged
+            // nothing, for the reason `activeSchemeFamiliarity` already gives:
+            // a vacancy is not evidence that the room forgot football. The same
+            // holds for an empty `schemeExpertise` table (legacy rows written
+            // before the field existed) — no record is not a record of zero.
+            //
+            // Declared as locals rather than file-scope `static let`s on
+            // purpose: `tools/balance-harness/sync_sources.sh` slices this
+            // function out whole but copies only a NAMED LIST of top-level
+            // constants, so a new one at file scope would not reach the rig and
+            // the harness would stop compiling.
+            let schemeMasteryPar = 70.0
+            let schemeMasteryFloor = 20.0
+            let installedScheme: String?
+            switch player.position.side {
+            case .offense:      installedScheme = coord.offensiveScheme?.rawValue
+            case .defense:      installedScheme = coord.defensiveScheme?.rawValue
+            case .specialTeams: installedScheme = nil
+            }
+            if let installedScheme, !coord.schemeExpertise.isEmpty {
+                let mastery = Double(coord.expertise(for: installedScheme))
+                let shortfall = (schemeMasteryPar - mastery) / (schemeMasteryPar - schemeMasteryFloor)
+                let ignorance = min(1.0, max(0.0, shortfall))
+                multiplier -= coordinatorContinuityBonus * ignorance
+            }
         }
 
         // Layer 4: Position coach direct bonus

@@ -5,13 +5,13 @@
 # Populates build/src/ with the CANONICAL engine sources needed to compile the
 # balance harness against the SHIPPED simulation math:
 #
-#   • 30 files copied VERBATIM from the repo (byte-identical; sha-verified).
+#   • 36 files copied VERBATIM from the repo (byte-identical; sha-verified).
 #     11 play-by-play sources + 6 full-game sources (GameSimulator / DriveSimulator /
 #     CoachingModifiers / BoxScore / PlayerGameStats / DriveResult) for the round-5
-#     full-game campaign, 7 draft-class generator sources for `draftclass`, and 6
+#     full-game campaign, 7 draft-class generator sources for `draftclass`, 6
 #     development sources (PlayerDevelopmentEngine / PlayerRetirementEngine /
-#     MotivationState / InjuryRecord / InjuryType / CampEnums) for `career` — all
-#     pure engine, no hand-typed constants.
+#     MotivationState / InjuryRecord / InjuryType / CampEnums) for `career`, and
+#     SeasonPhase for `lockerroom` — all pure engine, no hand-typed constants.
 #   • AdaptiveOpponentAIExtract.swift REGENERATED mechanically from the shipped
 #     Engine/Match/AdaptiveOpponentAI.swift by awk-stripping only the 4
 #     persona-hint functions (which need DCPersona/OCPersona and carry ZERO
@@ -52,8 +52,9 @@ cleanup() { rm -f "$SLICE" "$STORAGE" "$COMPUTED" "$SCOUTSLICE" "$ANCHORS" "$PRO
 trap cleanup EXIT
 
 # --- Canonical repo sources (relative to $ENGINE) --------------------------
-# 32 files copied verbatim: 12 play-by-play + 6 full-game + 7 draft-class +
-# 7 development.
+# 36 files copied verbatim: 13 play-by-play + 6 full-game + 7 draft-class +
+# 8 development (incl. SeasonPhase, the camp calendar the `lockerroom` scenario
+# drives the shipped camp scheduler with) + 2 draft-fog.
 VERBATIM_SOURCES=(
   "Domain/Enums/PlayCall.swift"
   # Playbook catalog: the per-scheme install / signature / call-order tables the
@@ -96,6 +97,11 @@ VERBATIM_SOURCES=(
   # retirement probability. NOTHING in the career scenario re-implements any of it.
   "Domain/Enums/InjuryType.swift"
   "Domain/Enums/CampEnums.swift"
+  # The camp calendar's phase names. Pure Foundation, zero dependencies, and the
+  # ONE argument `WeekAdvancer.campIntensity(for:)` takes — the `lockerroom`
+  # scenario has to ask the shipped scheduler for the OTAs / camp / preseason
+  # intensities rather than re-type 0.45 / 0.85 / 0.55.
+  "Domain/Enums/SeasonPhase.swift"
   "Domain/Enums/MotivationState.swift"
   "Domain/Models/Player/InjuryRecord.swift"
   "Engine/PlayerDevelopment/PlayerDevelopmentEngine.swift"
@@ -155,6 +161,18 @@ LEAGUEGENSCENARIO_TEMPLATE="$HARNESS_DIR/driver/LeagueGenScenario.harness.swift"
 SEEDRNG_SOURCE="$ENGINE/Domain/Models/Player/TemplateAttributeSolver.swift"
 TRADEVALUE_SOURCE="$ENGINE/Engine/Contract/TradeValueEngine.swift"
 PERCEPTIONSCENARIO_TEMPLATE="$HARNESS_DIR/driver/PerceptionScenario.harness.swift"
+# --- locker room + camp workload staging (scenario `lockerroom`) --------------
+# The two engines the balance wave MOVED and that nothing here measured. Both
+# were verified only against a hand-written Python mirror of the engine — the
+# exact stale-shim failure mode the top-of-file note is about — so they are
+# staged the same way everything else is: sliced from the repo, guarded twice.
+LOCKERROOM_SOURCE="$ENGINE/Engine/Simulation/LockerRoomEngine.swift"
+WORKLOAD_SOURCE="$ENGINE/Engine/Camp/WorkloadEngine.swift"
+# The camp SCHEDULER's two inputs (per-phase intensity + the strength-coach
+# recovery mapping) live in WeekAdvancer. The workload band table can only be
+# read against the loads the scheduler can actually emit, so re-typing 0.45 /
+# 0.85 / 0.55 here would measure a camp the app does not run.
+WEEKADVANCER_SOURCE="$ENGINE/Engine/Simulation/WeekAdvancer.swift"
 
 # --- Preflight: refuse to build if any source is missing -------------------
 missing=0
@@ -172,7 +190,8 @@ done
 for f in "$PLAYER_SOURCE" "$COACHING_SOURCE" "$VERSATILITY_SOURCE" "$CONTRACT_SOURCE" \
          "$FOCUS_SOURCE" "$DRAFTENGINE_SOURCE" "$CAREERSCENARIO_TEMPLATE" \
          "$PRACTICESQUAD_SOURCE" "$CAMPROSTER_SOURCE" \
-         "$SEEDRNG_SOURCE" "$TRADEVALUE_SOURCE" "$PERCEPTIONSCENARIO_TEMPLATE"; do
+         "$SEEDRNG_SOURCE" "$TRADEVALUE_SOURCE" "$PERCEPTIONSCENARIO_TEMPLATE" \
+         "$LOCKERROOM_SOURCE" "$WORKLOAD_SOURCE" "$WEEKADVANCER_SOURCE"; do
   [ -f "$f" ] || { echo "  MISSING: $f" >&2; missing=1; }
 done
 [ "$missing" -eq 0 ] || die "one or more canonical sources are missing — refusing to build."
@@ -959,6 +978,234 @@ printf 'EXTRACT    %s  build/src/MedicalEngineExtract.swift  <=  %s  dynasty/dyn
   "$(sha "$MEDICAL_OUT")" "$(sha "$MEDICAL_SOURCE")" >> "$MANIFEST"
 echo "    MedicalEngineExtract.swift"
 
+# --- 8l) LockerRoomExtract.swift ---------------------------------------------
+# The CHEMISTRY block of LockerRoomEngine, plus the weekly morale pass that
+# consumes it.
+#
+# WHY THIS FILE EXISTS: the balance wave changed `calculateChemistry` from a raw
+# roster SUM to a per-capita RATING (the sum saturated the 0-100 dial: every club
+# in the league read a pinned 100, so no signing, cut or morale swing could move
+# the bar). That change moves simulated outcomes — `applyMoraleEffects` and
+# `weeklyMoraleUpdate` both branch on the number — and it was verified ONLY
+# against a hand-written Python mirror of the engine. That is the stale-shim
+# failure mode this whole script exists to prevent, so the chemistry maths now
+# arrives here as repo bytes and the `lockerroom` scenario reports its
+# distribution against published bands.
+#
+# What is left behind: `applyMoraleEffects` (needs the full ContractEngine
+# pricing path), the position-group / mentorship / conflict extension (needs
+# `Position` room tables and `Team`), and the weekly EVENT roller (needs
+# `InboxEngine` + SwiftData). None of them carries the chemistry formula.
+echo "==> regenerating LockerRoomExtract.swift from repo (awk keep-list slice)"
+LOCKERROOM_OUT="$SRC_OUT/LockerRoomExtract.swift"
+LRSTATE="$(mktemp)"
+cat > "$DEVANCHORS" <<'EOF'
+struct LockerRoomState: Codable \{
+EOF
+keeplist_slice "$LOCKERROOM_SOURCE" "$DEVANCHORS" "$LRSTATE"
+verbatim_guard "$LOCKERROOM_SOURCE" "$LRSTATE"
+cat > "$DEVANCHORS" <<'EOF'
+static func calculateChemistry\(
+static func chemistryScore\(
+static func chemistryRating\(
+static func chemistryLabel\(
+private static func reversionStep\(
+static func weeklyMoraleUpdate\(
+EOF
+keeplist_slice "$LOCKERROOM_SOURCE" "$DEVANCHORS" "$DEVSLICE"
+verbatim_guard "$LOCKERROOM_SOURCE" "$DEVSLICE"
+LOCKERROOM_CONSTS="$(grep -E '^[[:space:]]*static let (chemistryPointsPerNetHead|moraleBaseline|weeklyMoraleSwingCap|seasonMoraleSwingCap) =' "$LOCKERROOM_SOURCE")"
+for k in chemistryPointsPerNetHead moraleBaseline weeklyMoraleSwingCap seasonMoraleSwingCap; do
+  printf '%s\n' "$LOCKERROOM_CONSTS" | grep -qE "static let $k =" \
+    || die "LockerRoomEngine constant $k not found in the repo file."
+done
+# The per-capita normalisation itself. If either of these two lines ever goes
+# missing the harness would be reporting a chemistry number the app does not
+# compute — which is exactly the regression this scenario is here to catch.
+grep -q 'net: leadershipScore - toxicityScore' "$DEVSLICE" \
+  || die "LockerRoom slice lost the net-leadership call into chemistryRating."
+grep -q 'Double(net) / Double(headcount)' "$DEVSLICE" \
+  || die "LockerRoom slice lost the PER-CAPITA normalisation (the railed-at-100 defect)."
+grep -q 'return max(0, min(100, Int(raw.rounded())))' "$DEVSLICE" \
+  || die "LockerRoom slice lost the 0-100 chemistry clamp (the scenario reports the pinned share)."
+# The published ladder the bands below are worded against, and the two branches
+# that consume the rating. Both were dead code while chemistry was pinned at 100.
+for lbl in Elite Strong Average Shaky Toxic; do
+  grep -q "return \"$lbl\"" "$DEVSLICE" \
+    || die "LockerRoom slice lost the \"$lbl\" rung of the chemistryLabel ladder."
+done
+grep -qE 'if chemistry >= [0-9]+ \{' "$DEVSLICE" \
+  || die "LockerRoom slice lost the weekly chemistry branch."
+{
+  echo "// GENERATED by sync_sources.sh — DO NOT EDIT."
+  echo "// Source: dynasty/dynasty/Engine/Simulation/LockerRoomEngine.swift (sha $(sha "$LOCKERROOM_SOURCE"))"
+  echo "// Transform: awk KEEP-LIST slice of the CHEMISTRY block (calculateChemistry /"
+  echo "//            chemistryScore / chemistryRating / chemistryLabel) plus the weekly"
+  echo "//            morale pass that branches on it, re-wrapped in enum LockerRoomEngine."
+  echo "//            applyMoraleEffects, the position-room extension and the event roller"
+  echo "//            are deliberately left behind. Every line below is a repo byte."
+  echo ""
+  echo "import Foundation"
+  echo ""
+  cat "$LRSTATE"
+  echo "enum LockerRoomEngine {"
+  echo "$LOCKERROOM_CONSTS"
+  echo ""
+  cat "$DEVSLICE"
+  echo "}"
+} > "$LOCKERROOM_OUT"
+rm -f "$LRSTATE"
+printf 'EXTRACT    %s  build/src/LockerRoomExtract.swift  <=  %s  dynasty/dynasty/Engine/Simulation/LockerRoomEngine.swift  (keep-list slice: chemistry block + weekly morale)\n' \
+  "$(sha "$LOCKERROOM_OUT")" "$(sha "$LOCKERROOM_SOURCE")" >> "$MANIFEST"
+echo "    LockerRoomExtract.swift"
+
+# --- 8m) WorkloadEngineExtract.swift -----------------------------------------
+# The camp workload accumulator and its BAND TABLE.
+#
+# WHY THIS FILE EXISTS: the same wave re-anchored `.overloaded` 80 -> 56 and
+# `.burnedOut` 130 -> 63 because the camp scheduler could never emit a load
+# above ~70, which made four consumers dead code (the 1.6 / 2.5 injury rungs,
+# the burnout training tax, and two UI warnings) and left
+# `MedicalEngine.workloadRiskMultiplier` returning exactly 1.0 for every player
+# in the league. That re-anchoring was, again, verified only against a
+# hand-written mirror. The `lockerroom` scenario now runs the SHIPPED 21-day
+# camp cycle over shipped-generated bodies and reports the band split it lands
+# in, so neither the old defect (nothing reachable above `.healthy`) nor its
+# mirror image (a league of burnouts) can return unnoticed.
+#
+# Left behind: `tickDay` (needs `WorkloadEvent` + `ModelContext`). The band
+# table and the per-day arithmetic — the only things that decide the split —
+# come across whole.
+echo "==> regenerating WorkloadEngineExtract.swift from repo (awk keep-list slice)"
+WORKLOAD_OUT="$SRC_OUT/WorkloadEngineExtract.swift"
+cat > "$DEVANCHORS" <<'EOF'
+@discardableResult
+static func classify\(
+static func injuryRiskPct\(
+static func resetCampLoad\(
+static func tickWeek\(
+EOF
+keeplist_slice "$WORKLOAD_SOURCE" "$DEVANCHORS" "$DEVSLICE"
+verbatim_guard "$WORKLOAD_SOURCE" "$DEVSLICE"
+WORKLOAD_CONSTS="$(grep -E '^[[:space:]]*(private )?static let (underloadedMax|healthyMax|overloadedMax|burnoutFloor|absoluteCap) =' "$WORKLOAD_SOURCE")"
+for k in underloadedMax healthyMax overloadedMax burnoutFloor absoluteCap; do
+  printf '%s\n' "$WORKLOAD_CONSTS" | grep -qE "static let $k =" \
+    || die "WorkloadEngine constant $k not found in the repo file."
+done
+# The per-day arithmetic, whole. Each of these three lines decides which side of
+# a band edge a player lands on, so a slice that lost one would report a camp the
+# app does not run.
+grep -qE 'let staminaFactor = .*player\.physical\.stamina' "$DEVSLICE" \
+  || die "Workload slice lost the stamina absorber."
+grep -qE 'let loadDelta = Int\(\(clampedIntensity \* .*staminaFactor\)\.rounded\(\)\)' "$DEVSLICE" \
+  || die "Workload slice lost the daily load scale."
+grep -qE 'let recoveryDelta = Int\(\(clampedRecovery \* .*\)\.rounded\(\)\)' "$DEVSLICE" \
+  || die "Workload slice lost the daily recovery scale."
+grep -q 'let newLoad = max(0, min(absoluteCap, player.cumulativeLoad + net))' "$DEVSLICE" \
+  || die "Workload slice lost the per-day floor/cap (the 0-floor is why a light camp reads 0, not negative)."
+grep -qE 'case healthyMax\.\.<overloadedMax:[[:space:]]+return \.overloaded' "$DEVSLICE" \
+  || die "Workload slice lost the .overloaded band."
+grep -qE 'case underloadedMax\.\.<healthyMax:[[:space:]]+return \.healthy' "$DEVSLICE" \
+  || die "Workload slice lost the .healthy band."
+grep -q 'baseRisk \* status.injuryMultiplier \* durabilityFactor' "$DEVSLICE" \
+  || die "Workload slice lost the injury-multiplier stack."
+# Sole mechanical transform, applied AFTER verbatim_guard has proved every line
+# is a repo byte: drop `private` so the scenario can read the band edges and
+# report a distribution against the SAME numbers `classify` switches on
+# (re-typing 30 / 56 / 63 into the scenario is the drift this script prevents).
+# `@MainActor` is dropped with the enum wrapper for the same reason `tickDay` is
+# left behind — nothing sliced here touches SwiftData or shared state.
+WORKLOAD_CONSTS="$(printf '%s\n' "$WORKLOAD_CONSTS" | sed 's/^\([[:space:]]*\)private static /\1static /')"
+sed -i '' 's/^\([[:space:]]*\)private static /\1static /' "$DEVSLICE"
+grep -q 'private static' "$DEVSLICE" && die "Workload slice still carries a private member."
+printf '%s\n' "$WORKLOAD_CONSTS" | grep -q 'private static' && die "Workload constants still carry a private member."
+{
+  echo "// GENERATED by sync_sources.sh — DO NOT EDIT."
+  echo "// Source: dynasty/dynasty/Engine/Camp/WorkloadEngine.swift (sha $(sha "$WORKLOAD_SOURCE"))"
+  echo "// Transform: awk KEEP-LIST slice of the band table + the per-day load/recovery"
+  echo "//            arithmetic + classify / tickWeek / resetCampLoad / injuryRiskPct."
+  echo "//            tickDay (WorkloadEvent + ModelContext) is left behind, @MainActor"
+  echo '//            is dropped with the wrapper, and `private` is stripped so the'
+  echo "//            scenario reports against the engine's own band edges."
+  echo ""
+  echo "import Foundation"
+  echo ""
+  echo "enum WorkloadEngine {"
+  echo "$WORKLOAD_CONSTS"
+  echo ""
+  cat "$DEVSLICE"
+  echo "}"
+} > "$WORKLOAD_OUT"
+printf 'EXTRACT    %s  build/src/WorkloadEngineExtract.swift  <=  %s  dynasty/dynasty/Engine/Camp/WorkloadEngine.swift  (keep-list slice: band table + daily load)\n' \
+  "$(sha "$WORKLOAD_OUT")" "$(sha "$WORKLOAD_SOURCE")" >> "$MANIFEST"
+echo "    WorkloadEngineExtract.swift"
+
+# --- 8n) CampScheduleExtract.swift -------------------------------------------
+# The camp SCHEDULER's two inputs, out of WeekAdvancer: the per-phase training
+# intensity and the strength-coach recovery mapping.
+#
+# A workload band table can only be judged against the loads the scheduler can
+# actually emit — that is the whole argument the re-anchored 56 / 63 rests on —
+# so the harness has to ask the shipped scheduler what a camp week looks like
+# rather than re-type 0.45 / 0.85 / 0.55 and 0.40..0.75 into the scenario.
+echo "==> regenerating CampScheduleExtract.swift from repo (awk keep-list slice)"
+CAMPSCHED_OUT="$SRC_OUT/CampScheduleExtract.swift"
+cat > "$DEVANCHORS" <<'EOF'
+private static func campIntensity\(
+private static func computeRecoveryRate\(
+EOF
+keeplist_slice "$WEEKADVANCER_SOURCE" "$DEVANCHORS" "$DEVSLICE"
+verbatim_guard "$WEEKADVANCER_SOURCE" "$DEVSLICE"
+for ph in otas trainingCamp preseason; do
+  grep -qE "case \.$ph:[[:space:]]+return [0-9.]+" "$DEVSLICE" \
+    || die "CampSchedule slice lost the .$ph camp intensity."
+done
+grep -qE 'return [0-9.]+ \+ \(Double\(rating - 1\) / [0-9.]+\) \* [0-9.]+' "$DEVSLICE" \
+  || die "CampSchedule slice lost the coach -> recovery-rate mapping."
+# The 31 AI clubs do NOT go through `computeRecoveryRate`: `applyAICampWorkload`
+# hard-codes the same number the no-coach fallback returns. The scenario calls
+# `computeRecoveryRate(coaches: [])` for those clubs rather than typing 0.55, so
+# the equivalence the app's own comment asserts is checked here instead of
+# assumed.
+AI_CAMP_RATE="$(grep -oE 'WorkloadEngine\.tickWeek\(player: player, intensity: intensity, recoveryRate: [0-9.]+\)' "$WEEKADVANCER_SOURCE" | grep -oE '[0-9]+\.[0-9]+' | head -1)"
+NOCOACH_RATE="$(grep -oE 'guard let primary = strength \?\? physio else \{ return [0-9.]+ \}' "$DEVSLICE" | grep -oE '[0-9]+\.[0-9]+' | head -1)"
+[ -n "$AI_CAMP_RATE" ] \
+  || die "applyAICampWorkload no longer ticks AI clubs through WorkloadEngine.tickWeek at a literal rate."
+[ -n "$NOCOACH_RATE" ] \
+  || die "CampSchedule slice lost the no-coach recovery fallback."
+[ "$AI_CAMP_RATE" = "$NOCOACH_RATE" ] \
+  || die "applyAICampWorkload ticks AI clubs at $AI_CAMP_RATE but computeRecoveryRate's no-coach fallback is $NOCOACH_RATE — the lockerroom scenario reads the AI-club rate as computeRecoveryRate(coaches: []) and would now be measuring the wrong camp."
+# Same mechanical `private`-strip as the LeagueGenerator slice, applied after the
+# verbatim guard: both functions are file-private in an 8 900-line @MainActor
+# type the harness does not compile, and the extract lands in its own file.
+sed -i '' 's/^\([[:space:]]*\)private static /\1static /' "$DEVSLICE"
+grep -q 'private static' "$DEVSLICE" && die "CampSchedule slice still carries a private member."
+{
+  echo "// GENERATED by sync_sources.sh — DO NOT EDIT."
+  echo "// Source: dynasty/dynasty/Engine/Simulation/WeekAdvancer.swift (sha $(sha "$WEEKADVANCER_SOURCE"))"
+  echo "// Transform: awk KEEP-LIST slice of campIntensity(for:) + computeRecoveryRate(coaches:),"
+  echo "//            the two inputs the camp workload tick is driven by. \`private\` stripped;"
+  echo "//            every other token is a repo byte."
+  echo ""
+  echo "import Foundation"
+  echo ""
+  echo "// HARNESS SCAFFOLDING (carries no math): the stub CoachRole in GameModels.swift"
+  echo "// models the roles the sim and the development stack read, and \`.physio\` is not"
+  echo "// one of them. computeRecoveryRate names it only as the FALLBACK lookup behind"
+  echo "// \`.strengthCoach\`; the lockerroom scenario builds strength coaches or an empty"
+  echo "// staff, so this alias exists to let the repo bytes compile and is never the"
+  echo "// branch taken. Declared here, next to its only caller, rather than in the"
+  echo "// shared stub file."
+  echo "extension CoachRole { static var physio: CoachRole { .other } }"
+  echo ""
+  echo "enum WeekAdvancer {"
+  cat "$DEVSLICE"
+  echo "}"
+} > "$CAMPSCHED_OUT"
+printf 'EXTRACT    %s  build/src/CampScheduleExtract.swift  <=  %s  dynasty/dynasty/Engine/Simulation/WeekAdvancer.swift  (keep-list slice: campIntensity + computeRecoveryRate)\n' \
+  "$(sha "$CAMPSCHED_OUT")" "$(sha "$WEEKADVANCER_SOURCE")" >> "$MANIFEST"
+echo "    CampScheduleExtract.swift"
+
 # --- 8f) LeagueGeneratorExtract.swift ----------------------------------------
 # The RANDOM league's rating math — the intake level and shape that the P1
 # quality-pyramid wave calibrated. Only the pure level/range functions come
@@ -989,6 +1236,8 @@ static func veteranPotential\(
 static func tierEarnedUpside\(
 static func activeSchemeSeed<G: RandomNumberGenerator>\(
 static func realisticSalary<G: RandomNumberGenerator>\(
+static func realisticContractYears<G: RandomNumberGenerator>\(
+static func initialMorale<G: RandomNumberGenerator>\(
 static func overallDrift\(
 EOF
 keeplist_slice "$LEAGUEGEN_SOURCE" "$DEVANCHORS" "$DEVSLICE"
@@ -1015,6 +1264,18 @@ grep -q 'rosterBlueprint' "$DEVSLICE" || die "LeagueGenerator slice lost the 53-
 # in the repo measured it — `career` gates the DEVELOPMENT equilibrium the curve
 # was fitted to, not the curve. `leaguegen` gates the curve.
 grep -q '78.0 - 34.0 \* pow(0.78' "$DEVSLICE" || die "LeagueGenerator slice lost the activeSchemeSeed tenure curve."
+# The generated player's MORALE, and the contract runway that half of it keys
+# off. `LockerRoomEngine.calculateChemistry` reads morale at six thresholds
+# (75 / 70 / 60 / 50 / 45 / 40), so the `lockerroom` scenario is measuring the
+# chemistry of a fiction unless the morale it feeds in is the shipped draw.
+grep -qE 'var morale = Int\.random\(in: [0-9]+\.\.\.[0-9]+, using: &rng\)' "$DEVSLICE" \
+  || die "LeagueGenerator slice lost the initialMorale base draw."
+grep -q 'let peakStart = position.peakAgeRange.lowerBound' "$DEVSLICE" \
+  || die "LeagueGenerator slice lost the initialMorale age-vs-depth term."
+grep -qE 'return min\([0-9]+, max\([0-9]+, morale\)\)' "$DEVSLICE" \
+  || die "LeagueGenerator slice lost the initialMorale clamp."
+grep -q 'static func realisticContractYears<G: RandomNumberGenerator>' "$DEVSLICE" \
+  || die "LeagueGenerator slice lost realisticContractYears (the expiring-deal morale term reads it)."
 # Sole mechanical transform, applied AFTER verbatim_guard has proved every line is
 # a repo byte: drop `private` so the scenario in the neighbouring file can call
 # these. `private` in Swift is declaration-scoped, and the extract lands in its own

@@ -907,17 +907,12 @@ struct ProDayTourView: View {
         for info in recommended {
             guard slotsLeft > 0 else { break }
             guard !reservedColleges.contains(info.college) else { continue }
-            let pool = prospectsByCollege[info.college] ?? []
-            let topPosition = Dictionary(grouping: pool) { $0.position }
-                .max { $0.value.count < $1.value.count }?.key
-            // Same pick the reserve sheet's tip makes, for the same reason: the
-            // best specialist, then the best scout left.
-            let specialists = topPosition.map { position in
-                scoutsWithSlots.filter { $0.positionSpecialization == position }
-            } ?? []
-            let scout = specialists.max { $0.accuracy < $1.accuracy }
-                ?? scoutsWithSlots.max { $0.accuracy < $1.accuracy }
-            guard let scout else { break }
+            // Literally the pick the reserve sheet's tip makes — the same
+            // function, not a second copy of the rule. The copy that used to
+            // live here carried the dominated-specialist bug on its own, so the
+            // bulk button and the sheet could recommend different men at the
+            // same school.
+            guard let scout = bestScoutFor(college: info.college)?.scout else { continue }
             reserveFocus(scout: scout, college: info.college)
         }
     }
@@ -1105,27 +1100,74 @@ struct ProDayTourView: View {
 
     // MARK: - Helpers
 
+    /// The man whose report on this school will actually be the sharpest.
+    ///
+    /// **This used to be "the best specialist, else the most accurate man", and
+    /// that rule recommended dominated picks.** It preferred a specialist at any
+    /// accuracy, and the specialisation bonus is worth +3 ERROR points while
+    /// accuracy buys error points at 15 per 100 — so a 59-accuracy specialist
+    /// and a 79-accuracy generalist file the same ±3 read, and every specialist
+    /// further below that line filed a WORSE one than the colleague the screen
+    /// passed over. There was no fall-through at all: the specialist won by
+    /// existing.
+    ///
+    /// The rank is now the band `ScoutingEngine.reportPrecision` will actually
+    /// roll, which is the engine's own exchange rate rather than one invented
+    /// here, and which folds specialisation, focus position, tenure and the
+    /// scout's own region into one number.
+    ///
+    /// On a tie — and 59-vs-79 IS an exact tie — the higher raw accuracy takes
+    /// it, because the band is only equal on ONE position. A pro day is ten or
+    /// so declared men across half the depth chart, and the specialist's +3
+    /// touches exactly the ones who play his position; the more accurate man
+    /// reads everybody else better, and (`generatePositionStrengths`) surfaces a
+    /// wider set of notes on all of them.
     private func bestScoutFor(college: String) -> (scout: Scout, reason: String)? {
         let pool = prospectsByCollege[college] ?? []
         guard !pool.isEmpty else { return nil }
         let topPosition = Dictionary(grouping: pool) { $0.position }
             .max { $0.value.count < $1.value.count }?.key
 
-        // The BEST specialist, not the first one the array happens to hold. Two
-        // men can carry the same specialisation, and picking by array order
-        // recommended the less accurate of them over his own colleague.
-        if let position = topPosition,
-           let specialist = scoutsWithSlots
-               .filter({ $0.positionSpecialization == position })
-               .max(by: { $0.accuracy < $1.accuracy }) {
-            let best = pool.filter { $0.position == position }
-                .max { ($0.scoutedOverall ?? 0) < ($1.scoutedOverall ?? 0) }
-            return (specialist, "\(specialist.fullName) (\(position.rawValue) specialist) for \(best?.fullName ?? "the group")")
+        guard let best = scoutsWithSlots.min(by: { lhs, rhs in
+            let lhsBand = projectedBand(lhs, college: college, position: topPosition)
+            let rhsBand = projectedBand(rhs, college: college, position: topPosition)
+            if lhsBand != rhsBand { return lhsBand < rhsBand }
+            // Same band on this school's dominant position: the higher raw
+            // accuracy is the better man on every OTHER read the trip files —
+            // the letter grades, the strength and weakness notes, and the men at
+            // the school who play something else.
+            if lhs.accuracy != rhs.accuracy { return lhs.accuracy > rhs.accuracy }
+            return lhs.fullName < rhs.fullName
+        }) else { return nil }
+
+        var credentials: [String] = []
+        if let topPosition, best.positionSpecialization == topPosition {
+            credentials.append("\(topPosition.rawValue) specialist")
         }
-        if let best = scoutsWithSlots.max(by: { $0.accuracy < $1.accuracy }) {
-            return (best, "\(best.fullName) (highest accuracy: \(best.accuracy))")
+        if let beat = homeBeat(for: best, college: college) {
+            credentials.append("works the \(beat) beat")
         }
-        return nil
+        credentials.append("\u{00B1}\(projectedBand(best, college: college, position: topPosition)) read")
+        return (best, "\(best.fullName) \u{2014} \(credentials.joined(separator: ", "))")
+    }
+
+    /// The ± band this scout's pro-day report on this school's dominant position
+    /// would carry. One call into the engine, so the screen and the roll cannot
+    /// disagree about what a specialisation or a home beat is worth.
+    private func projectedBand(_ scout: Scout, college: String, position: Position?) -> Int {
+        ScoutingEngine.reportPrecision(
+            scout: scout,
+            position: position,
+            onHomeBeat: ScoutingEngine.isHomeRegion(scout: scout, college: college)
+        ).overallError
+    }
+
+    /// The beat name when this school is the scout's own ground, else `nil`.
+    private func homeBeat(for scout: Scout, college: String) -> String? {
+        guard ScoutingEngine.isHomeRegion(scout: scout, college: college),
+              let role = ScoutingEngine.homeRegion(for: college)
+        else { return nil }
+        return ScoutingEngine.regionName(role)
     }
 
     private func specialtyIcon(for scout: Scout) -> String {
@@ -1240,22 +1282,45 @@ private struct ProDayFocusScoutSheet: View {
     /// with three rows the user cannot use between them, and left one of them
     /// under the pinned button bar.
     private var sortedScouts: [Scout] {
-        scouts.sorted { lhs, rhs in
+        let top = topPosition
+        return scouts.sorted { lhs, rhs in
             let lhsFull = lhs.proDayColleges.count >= lhs.maxProDays
             let rhsFull = rhs.proDayColleges.count >= rhs.maxProDays
             if lhsFull != rhsFull { return rhsFull }
-            let lhsRecommended = isRecommended(lhs)
-            let rhsRecommended = isRecommended(rhs)
+            let lhsRecommended = isRecommended(lhs, position: top)
+            let rhsRecommended = isRecommended(rhs, position: top)
             if lhsRecommended != rhsRecommended { return lhsRecommended }
             if lhs.accuracy != rhs.accuracy { return lhs.accuracy > rhs.accuracy }
             return lhs.fullName < rhs.fullName
         }
     }
 
-    private func isRecommended(_ scout: Scout) -> Bool {
+    /// The position this school actually sends to the league — what the tip and
+    /// every band on the sheet are about.
+    private var topPosition: Position? {
+        Dictionary(grouping: prospects) { $0.position }
+            .max { $0.value.count < $1.value.count }?.key
+    }
+
+    /// The ± band this scout's report would carry, from the engine's own model.
+    private func band(_ scout: Scout, position: Position?) -> Int {
+        ScoutingEngine.reportPrecision(
+            scout: scout,
+            position: position,
+            onHomeBeat: ScoutingEngine.isHomeRegion(scout: scout, college: college)
+        ).overallError
+    }
+
+    /// **Carrying the school's position is not a recommendation.** The green
+    /// chip used to appear on any scout whose specialisation matched anybody at
+    /// the school, at any accuracy — so a 45-accuracy specialist wore it beside
+    /// the 80-accuracy man who would file the sharper report, which is the same
+    /// dominated pick `bestScoutFor` was making. A scout is recommended when he
+    /// matches the best achievable band, and for no other reason.
+    private func isRecommended(_ scout: Scout, position: Position?) -> Bool {
         if bestMatch?.scout.id == scout.id { return true }
-        guard let spec = scout.positionSpecialization else { return false }
-        return prospects.contains { $0.position == spec }
+        guard let best = bestMatch?.scout else { return false }
+        return band(scout, position: position) <= band(best, position: position)
     }
 
     var body: some View {
@@ -1329,6 +1394,13 @@ private struct ProDayFocusScoutSheet: View {
 
     private func scoutRow(_ scout: Scout) -> some View {
         let isFull = scout.proDayColleges.count >= scout.maxProDays
+        let position = topPosition
+        let readBand = band(scout, position: position)
+        let bandLabel = position.map { "\u{00B1}\(readBand) on \($0.rawValue)" }
+            ?? "\u{00B1}\(readBand) OVR"
+        let beat: String? = ScoutingEngine.isHomeRegion(scout: scout, college: college)
+            ? ScoutingEngine.homeRegion(for: college).flatMap(ScoutingEngine.regionName)
+            : nil
         return Button {
             if !isFull { selectedScoutID = scout.id }
         } label: {
@@ -1347,7 +1419,7 @@ private struct ProDayFocusScoutSheet: View {
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(Color.accentBlue.opacity(isFull ? 0.05 : 0.12), in: Capsule())
-                        if isRecommended(scout) && !isFull {
+                        if isRecommended(scout, position: position) && !isFull {
                             Text("Recommended")
                                 .font(.system(size: DSType.Size.caption, weight: .bold))
                                 .foregroundStyle(Color.success)
@@ -1360,6 +1432,28 @@ private struct ProDayFocusScoutSheet: View {
                         Text("Accuracy \(scout.accuracy)")
                             .font(.caption2.weight(.bold).monospacedDigit())
                             .foregroundStyle(Color.forRating(scout.accuracy))
+                        // The whole comparison in one number. Accuracy alone
+                        // cannot be compared across a specialist and a
+                        // generalist — the +3 the specialist gets is in error
+                        // points, not accuracy points — so the sheet prints the
+                        // band the report will actually roll.
+                        Text(bandLabel)
+                            .font(.caption2.weight(.bold).monospacedDigit())
+                            .foregroundStyle(isFull ? Color.textTertiary : Color.textSecondary)
+                        // The region the department has modelled since the first
+                        // build and shown on no screen that spends it: five
+                        // regional roles carrying five different college lists,
+                        // indistinguishable everywhere the user picks between
+                        // them. It sits beside the band because it is one of the
+                        // reasons the band is what it is.
+                        if let beat {
+                            Text("\(beat) beat")
+                                .font(.system(size: DSType.Size.caption, weight: .bold))
+                                .foregroundStyle(Color.accentGold)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(Color.accentGold.opacity(isFull ? 0.05 : 0.12), in: Capsule())
+                        }
                         Text("\(scout.proDayColleges.count)/\(scout.maxProDays) slots")
                             .font(.caption2.weight(.semibold).monospacedDigit())
                             .foregroundStyle(isFull ? Color.danger : Color.textSecondary)
@@ -1380,7 +1474,7 @@ private struct ProDayFocusScoutSheet: View {
         .disabled(isFull)
         .opacity(isFull ? 0.5 : 1.0)
         .listRowBackground(Color.backgroundSecondary)
-        .accessibilityLabel("\(scout.fullName)\(selectedScoutID == scout.id ? ", selected" : "")\(isFull ? ", no slots left" : "")")
+        .accessibilityLabel("\(scout.fullName), \(bandLabel)\(beat.map { ", \($0) beat" } ?? "")\(selectedScoutID == scout.id ? ", selected" : "")\(isFull ? ", no slots left" : "")")
     }
 
     private func prospectRow(_ prospect: CollegeProspect) -> some View {

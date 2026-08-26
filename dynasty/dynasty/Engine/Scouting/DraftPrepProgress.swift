@@ -43,6 +43,39 @@ struct DraftPrepProgress {
     // `private let maxInterviews = 60`.
 
     /// Interview slots per draft cycle (`career.interviewsUsed`).
+    ///
+    /// **60 is the league's combine allowance, and it binds.** Q-M129 read this
+    /// as a ration that is not a constraint ("60 slots, 60 prospects"), and the
+    /// pool it quoted is wrong by a factor of five: the interviews tab lists
+    /// `combineInvite && !interviewCompleted`, and `ScoutingEngine
+    /// .generateCombineResults` invites `min(330, prospects.count)` of a class
+    /// that every live caller builds at `DraftClassBuilder.build(count: 350)`.
+    /// So the club meets **60 of ~330** — 18 % coverage, the hardest cap in the
+    /// pre-draft process. Its two neighbours are the league's other named
+    /// allowances at the same scale (`workoutSlots` 30, `top30Slots` 30, i.e.
+    /// ~9 % each); moving this one alone would leave the trio's one arbitrary
+    /// number sitting between two real ones.
+    ///
+    /// Two further reasons the number is not the lever:
+    ///
+    /// * **The dominant strategy is the shortcut, not the ration.**
+    ///   `InterviewSelectionView`'s "Select All Recommended" fills
+    ///   `recommendedProspects.prefix(remainingSlots - selected)`, so it
+    ///   pre-solves "who" at ANY cap — cut this to 20 and the one tap still
+    ///   chooses for the user, he just learns less. The trade-off has to be
+    ///   created where the shortcut is, not here.
+    /// * **This constant is not the only writer of the cap.**
+    ///   `ProspectDetailView` still carries a hardcoded `maxInterviews = 60`
+    ///   gating its per-prospect Conduct button (the sibling `maxWorkouts` was
+    ///   pointed at `workoutSlots` in review F19c; this one was missed). Lower
+    ///   the shared constant without that copy and the detail card hands out
+    ///   interviews past the tab's own ration — the scarcity would be
+    ///   bypassable one man at a time. Any future cut has to move both.
+    ///
+    /// The "League teams typically interview 15-20 prospects" copy the finding
+    /// measured this against is already gone — deleted deliberately, because a
+    /// slot is the ONLY cost and `WeekAdvancer.startNewSeason` zeroes
+    /// `interviewsUsed` with the class, so restraint buys nothing.
     static let interviewSlots = 60
     /// Private workout slots per cycle (`career.workoutsUsed`).
     static let workoutSlots = 30

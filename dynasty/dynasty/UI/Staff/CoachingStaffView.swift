@@ -2821,11 +2821,623 @@ struct CoachingStaffView: View {
         return "Poor"
     }
 
+    // MARK: - Staff verdict (Q-M89)
+    //
+    // The Review tab used to open on three stat badges, a budget table and a
+    // sixteen-name rating list, and the one question it exists to answer — "is
+    // this staff ready to leave Coaching Changes" — was five unlabelled tick
+    // rows at the very foot of the scroll, below the fold on a portrait iPad.
+    // Names first, verdict never. (The dashboard's advance-gate sheet has the
+    // same shape over the same staff; it is not this file's to fix.)
+    //
+    // So the tab leads with the verdict, and two rules are what make it worth
+    // leading with:
+    //
+    //  1. **The blocking half is not re-derived.** ``StaffLedger``'s
+    //     `advanceBlocker(phase:)` is the ONE predicate the calendar sidebar,
+    //     the dashboard's advance button and `CareerShellView`'s shell advance
+    //     all refuse on (#158). This card reads that value instead of testing
+    //     seats and pots itself, so it cannot warn about a hole the gate
+    //     ignores — which is the exact class of defect #133 and #158 existed to
+    //     close. It is asked for `.coachingChanges` explicitly rather than for
+    //     the live phase: "are my required seats filled" is the same question in
+    //     Week 9, and the answer is only a GATE in February.
+    //  2. **The scheme figures are the Schemes tab's figures.** Same
+    //     `CoachingEngine.schemeFit` call over the same side of the roster and
+    //     the same plain mean, so "OFFENSE FIT 64%" here and "Average Fit 64%"
+    //     one tab over are one calculation rather than two that can drift.
+    //
+    // Everything under the figures is a CHECK: what it is, the reading behind
+    // it, and the tab that fixes it — so a check with a destination IS the
+    // button. This absorbs the old READINESS CHECK card from the foot of the
+    // tab; all five of its booleans are checks here, each now carrying the
+    // number it was hiding and the remedy it never named.
+
+    /// The Review tab's answer, built in one pass.
+    ///
+    /// A value type rather than eight computed properties because two of the
+    /// readings walk a whole side of the roster through `CoachingEngine
+    /// .schemeFit`, and eight independent properties would walk it eight times
+    /// on every redraw of a tab that already draws sixteen rating rows.
+    private struct StaffVerdict {
+
+        /// How the club stands. Worst first.
+        enum Standing {
+            /// Something on the list refuses the advance.
+            case blocked
+            /// Nothing refuses it; something is still worth fixing.
+            case gaps
+            /// Nothing to fix.
+            case ready
+
+            var icon: String {
+                switch self {
+                case .blocked: return "xmark.octagon.fill"
+                case .gaps:    return "exclamationmark.circle.fill"
+                case .ready:   return "checkmark.seal.fill"
+                }
+            }
+
+            /// Orange, never gold, for the middle band — §P7's hue separation:
+            /// `warning` and `accentGold` collapse into one another at 11 pt on
+            /// a dark card, and gold on this screen already means "act here".
+            var tint: Color {
+                switch self {
+                case .blocked: return .danger
+                case .gaps:    return .alertOrange
+                case .ready:   return .success
+                }
+            }
+
+            var pillLabel: String {
+                switch self {
+                case .blocked: return "Blocked"
+                case .gaps:    return "Gaps"
+                case .ready:   return "Ready"
+                }
+            }
+
+            var pillTone: DSStatusPill.Tone {
+                switch self {
+                case .blocked: return .bad
+                case .gaps:    return .warn
+                case .ready:   return .ok
+                }
+            }
+        }
+
+        /// One line of the readiness list.
+        struct Check: Identifiable {
+            /// What the row costs the club. `blocking` is reserved for the two
+            /// conditions `StaffLedger.advanceBlocker` actually refuses on —
+            /// nothing else in this file may claim to hold the calendar.
+            enum Weight {
+                case blocking, gap, done
+
+                var icon: String {
+                    switch self {
+                    case .blocking: return "exclamationmark.triangle.fill"
+                    case .gap:      return "exclamationmark.circle.fill"
+                    case .done:     return "checkmark.circle.fill"
+                    }
+                }
+
+                var tint: Color {
+                    switch self {
+                    case .blocking: return .danger
+                    case .gap:      return .alertOrange
+                    case .done:     return .success
+                    }
+                }
+            }
+
+            let id: String
+            let weight: Weight
+            /// What the check is, in two or three words.
+            let label: String
+            /// The reading behind it, or the remedy.
+            let detail: String
+            /// The tab that fixes it. `nil` for a check already passed.
+            let tab: StaffTab?
+        }
+
+        let standing: Standing
+        let headline: String
+        let detail: String
+        /// Reused rather than re-modelled: `DSResultSheet.Chip` is already the
+        /// app's label / value / context figure, and the batch-hire result
+        /// sheet prints the clash count with these exact fields.
+        let figures: [DSResultSheet.Chip]
+        let checks: [Check]
+    }
+
+    /// Average installed-scheme fit across one side of the ball, as a percent,
+    /// or `nil` when that side has no system installed.
+    ///
+    /// Deliberately `CoachingEngine.schemeFit` and a plain mean — the exact call
+    /// and the exact reduction `schemeRosterFitSection` makes for its "Average
+    /// Fit" line — so the verdict cannot print 64 % over a roster-fit section
+    /// that says 58 %.
+    private func averageSchemeFit(
+        players: [Player],
+        offensiveScheme: OffensiveScheme?,
+        defensiveScheme: DefensiveScheme?
+    ) -> Int? {
+        guard offensiveScheme != nil || defensiveScheme != nil, !players.isEmpty else { return nil }
+        let total = players.reduce(0.0) { sum, player in
+            sum + CoachingEngine.schemeFit(
+                player: player,
+                offensiveScheme: offensiveScheme,
+                defensiveScheme: defensiveScheme
+            )
+        }
+        return Int((total / Double(players.count)) * 100)
+    }
+
+    private var staffVerdict: StaffVerdict {
+        let book = ledger
+        // Asked for the phase the gate belongs to, not for the live one — see
+        // the section note. Outside February this is still the honest reading of
+        // the staff; it is simply not stopping anything today.
+        let blocker = book.advanceBlocker(phase: .coachingChanges)
+
+        // Seat occupants, ONE row per seat, read through the ledger's own seat
+        // list. `coaches` can still carry a duplicate row for a chair or the
+        // stray head-coach row a GM+HC save inherits, and neither is a rating
+        // this club owns — the same reason `StaffLedger` counts seats and not
+        // rows (#133).
+        let seated = book.coachRoles.compactMap { role in coaches.first { $0.role == role } }
+        let staffOverall: Int? = seated.isEmpty
+            ? nil
+            : seated.reduce(0) { $0 + coachOverall($1) } / seated.count
+
+        let oc = coaches.first { $0.role == .offensiveCoordinator }
+        let dc = coaches.first { $0.role == .defensiveCoordinator }
+        let offenseFit = averageSchemeFit(
+            players: offensivePlayers,
+            offensiveScheme: oc?.offensiveScheme,
+            defensiveScheme: nil
+        )
+        let defenseFit = averageSchemeFit(
+            players: defensivePlayers,
+            offensiveScheme: nil,
+            defensiveScheme: dc?.defensiveScheme
+        )
+
+        // The room, in the SAME bands every staff row badges — so a number
+        // printed here can always be found as a badge on the Staff tab. The head
+        // coach is skipped because he IS the reference: `coachChemistry` scores
+        // him against himself as a perfect fit, which is not a reading.
+        var conflicts = 0
+        var tensions = 0
+        for coach in seated where coach.role != .headCoach {
+            guard let score = chemistryWithHC(coach: coach) else { continue }
+            switch CoachingEngine.chemistryBand(score: score) {
+            case .conflict: conflicts += 1
+            case .tension:  tensions += 1
+            case .good:     break
+            }
+        }
+        let hasFitReference = autoHireReferencePersonality != nil
+
+        var checks: [StaffVerdict.Check] = []
+
+        // The head-coach chair leads, whoever is sitting in it. For a GM+HC
+        // career it is not one of the ledger's seats at all — he is in it — so
+        // it would otherwise never appear on a list whose whole job is to say
+        // the chair is covered.
+        if career.role == .gmAndHeadCoach {
+            checks.append(.init(
+                id: "chair-hc",
+                weight: .done,
+                label: "Head Coach",
+                detail: "You hold the chair \u{2014} \(career.coachingStyle.displayName). "
+                    + coordinatorComplementNote(for: career.coachingStyle) + ".",
+                tab: nil
+            ))
+        }
+
+        for role in book.requiredCoachRoles {
+            if let coach = coaches.first(where: { $0.role == role }) {
+                checks.append(.init(
+                    id: "req-\(role.rawValue)",
+                    weight: .done,
+                    label: role.displayName,
+                    detail: "\(coach.fullName) \u{00B7} OVR \(coachOverall(coach)) "
+                        + "\u{00B7} \(coachSalaryText(coach.salary))",
+                    tab: nil
+                ))
+            } else {
+                checks.append(.init(
+                    id: "req-\(role.rawValue)",
+                    weight: .blocking,
+                    label: role.displayName,
+                    detail: "Vacant. This seat is what the advance is held on. "
+                        + "The market asks \(estimatedSalaryRange(for: role)).",
+                    tab: .staff
+                ))
+            }
+        }
+
+        // The third coordinator is NOT required — `StaffLedger.requiredCoachRoles`
+        // says so and the gate honours it — so he is a gap, never a block. The
+        // old readiness card listed him beside the two that do block, in the
+        // same grey tick, which read as a fourth thing holding the calendar.
+        if !book.filledCoachRoles.contains(.specialTeamsCoordinator) {
+            checks.append(.init(
+                id: "stc",
+                weight: .gap,
+                label: "Special Teams Coordinator",
+                detail: "Vacant. Not required to advance, but nobody is running the third phase. "
+                    + "The market asks \(estimatedSalaryRange(for: .specialTeamsCoordinator)).",
+                tab: .staff
+            ))
+        }
+
+        // Schemes are only reported once the coordinator exists. With the chair
+        // empty the required-seat row above already says it, and two rows for
+        // one hole is how the old sheet got to sixteen lines of nothing.
+        if let oc {
+            if let scheme = oc.offensiveScheme {
+                checks.append(.init(
+                    id: "scheme-offense",
+                    weight: .done,
+                    label: "Offensive system",
+                    detail: "\(scheme.displayName), installed by \(oc.fullName)"
+                        + (offenseFit.map { " \u{00B7} roster fit \($0)% (\(schemeFitLabel($0)))" } ?? "") + ".",
+                    tab: nil
+                ))
+            } else {
+                checks.append(.init(
+                    id: "scheme-offense",
+                    weight: .gap,
+                    label: "Offensive system",
+                    detail: "\(oc.fullName) has not picked one. Roster fit and in-game play calling are both "
+                        + "measured against the installed system.",
+                    tab: .schemes
+                ))
+            }
+        }
+
+        if let dc {
+            if let scheme = dc.defensiveScheme {
+                checks.append(.init(
+                    id: "scheme-defense",
+                    weight: .done,
+                    label: "Defensive system",
+                    detail: "\(scheme.displayName), installed by \(dc.fullName)"
+                        + (defenseFit.map { " \u{00B7} roster fit \($0)% (\(schemeFitLabel($0)))" } ?? "") + ".",
+                    tab: nil
+                ))
+            } else {
+                checks.append(.init(
+                    id: "scheme-defense",
+                    weight: .gap,
+                    label: "Defensive system",
+                    detail: "\(dc.fullName) has not picked one. Roster fit and in-game play calling are both "
+                        + "measured against the installed system.",
+                    tab: .schemes
+                ))
+            }
+        }
+
+        // Money. `isResolved` false means no owner row could be reached, and an
+        // unknown envelope is not an overspend — the ledger is explicit that
+        // nobody prints a fabricated budget, so the check is withheld entirely.
+        if book.isOverspent {
+            checks.append(.init(
+                id: "budget",
+                weight: .blocking,
+                label: "Staff budget",
+                detail: overBudgetMessage,
+                tab: .staff
+            ))
+        } else if book.isResolved {
+            checks.append(.init(
+                id: "budget",
+                weight: .done,
+                label: "Staff budget",
+                detail: "Inside every envelope \u{2014} $\(formatBudget(book.remainingCoaching))M coaching, "
+                    + "$\(formatBudget(book.remainingMedical))M medical and "
+                    + "$\(formatBudget(book.remainingScouting))M scouting still unspent.",
+                tab: nil
+            ))
+        }
+
+        // Money the club is about to walk away from. `WeekAdvancer.startNewSeason`
+        // recomputes all three pots from `BudgetEngine` every year rather than
+        // carrying the remainder, so an unspent pot over an open chair is a
+        // seat the club could simply have had — and no surface on this screen
+        // put those two facts next to each other.
+        let openJobs = orderedVacancies
+        let unspent = max(0, book.remainingCoaching)
+            + max(0, book.remainingMedical)
+            + max(0, book.remainingScouting)
+        if book.isResolved, !openJobs.isEmpty, unspent > 0 {
+            checks.append(.init(
+                id: "unspent",
+                weight: .gap,
+                label: "Unspent budget",
+                detail: "\(openJobs.count) seat\(openJobs.count == 1 ? "" : "s") still open with "
+                    + "$\(formatBudget(unspent))M left in the pots. Unspent budget does not carry "
+                    + "into next season.",
+                tab: .staff
+            ))
+        }
+
+        // Chemistry. A CONFLICT is a gap; a TENSION is not. The batch pass
+        // refuses a conflicting hire while any workable candidate is affordable
+        // but takes a tension pick deliberately, as a trade-off paid for talent
+        // (Task #135) — so flagging tension amber here would paint most clubs
+        // with a fault the screen's own hiring policy chose on purpose. It is
+        // still counted, and still said out loud, in both branches.
+        if hasFitReference, !seated.isEmpty {
+            if conflicts > 0 {
+                checks.append(.init(
+                    id: "room",
+                    weight: .gap,
+                    label: "Room chemistry",
+                    detail: "\(conflicts) hire\(conflicts == 1 ? "" : "s") clash with your head coach"
+                        + (tensions > 0 ? ", and \(tensions) more sit in tension" : "")
+                        + ". Replacing one man clears his badge.",
+                    tab: .staff
+                ))
+            } else {
+                checks.append(.init(
+                    id: "room",
+                    weight: .done,
+                    label: "Room chemistry",
+                    detail: tensions > 0
+                        ? "Nobody clashes with your head coach. \(tensions) "
+                            + "hire\(tensions == 1 ? "" : "s") sit in tension \u{2014} a trade-off, not a fault."
+                        : "Nobody on the staff clashes with your head coach.",
+                    tab: nil
+                ))
+            }
+        }
+
+        let standing: StaffVerdict.Standing = {
+            if checks.contains(where: { $0.weight == .blocking }) { return .blocked }
+            if checks.contains(where: { $0.weight == .gap }) { return .gaps }
+            return .ready
+        }()
+        let gapCount = checks.filter { $0.weight == .gap }.count
+
+        let headline: String
+        let detail: String
+        switch standing {
+        case .blocked:
+            // The gate's own words. Re-writing them here is how the sidebar and
+            // the screen came to describe one refusal two ways (#158).
+            headline = blocker?.title ?? "Your staff is not ready"
+            detail = blocker?.detail ?? "Fill the seats marked below before the calendar will move."
+        case .gaps:
+            headline = "Ready \u{2014} \(gapCount) thing\(gapCount == 1 ? "" : "s") worth fixing"
+            detail = "Nothing below refuses the advance. The amber rows are the ones still worth your attention."
+        case .ready:
+            headline = "Ready \u{2014} nothing to fix"
+            detail = "Required seats filled, both systems installed and every pot inside its envelope."
+        }
+
+        let figures: [DSResultSheet.Chip] = [
+            .init(
+                id: "staff",
+                label: "Staff",
+                value: staffOverall.map { "\($0)" } ?? "\u{2014}",
+                context: "\(book.filledCoachSlots)/\(book.totalCoachSlots) seats",
+                // Ladder colour is for ratings and percentages of a whole (P7),
+                // which is exactly what these first three are.
+                valueColor: staffOverall.map { Color.forRating($0) } ?? .textTertiaryReadable
+            ),
+            .init(
+                id: "offense",
+                label: "Offense fit",
+                value: offenseFit.map { "\($0)%" } ?? "\u{2014}",
+                context: oc?.offensiveScheme?.displayName ?? "no system",
+                valueColor: offenseFit.map { Color.forRating($0, scale: .percent) } ?? .textTertiaryReadable
+            ),
+            .init(
+                id: "defense",
+                label: "Defense fit",
+                value: defenseFit.map { "\($0)%" } ?? "\u{2014}",
+                context: dc?.defensiveScheme?.displayName ?? "no system",
+                valueColor: defenseFit.map { Color.forRating($0, scale: .percent) } ?? .textTertiaryReadable
+            ),
+            .init(
+                id: "clashes",
+                label: "Clashes",
+                // Same word and same shape as the batch-hire result sheet's
+                // fourth chip, which counts the ✗ band alone and gives the ⚠
+                // band its own words rather than folding it into a number that
+                // never included it.
+                value: hasFitReference ? "\(conflicts)" : "\u{2014}",
+                context: hasFitReference
+                    ? (tensions > 0 ? "\(tensions) tension" : "none")
+                    : "no head coach yet",
+                valueColor: conflicts > 0 ? .dangerText : .textPrimary
+            )
+        ]
+
+        return StaffVerdict(
+            standing: standing,
+            headline: headline,
+            detail: detail,
+            figures: figures,
+            checks: checks
+        )
+    }
+
+    private var staffVerdictCard: some View {
+        // Built once and read throughout the body below. Reaching for the
+        // computed property at each use site would re-walk both sides of the
+        // roster through `CoachingEngine.schemeFit` every time.
+        let verdict = staffVerdict
+        return VStack(alignment: .leading, spacing: DSSpacing.sm) {
+            HStack(spacing: DSSpacing.xs) {
+                Image(systemName: verdict.standing.icon)
+                    .font(.system(size: DSType.Size.body, weight: .semibold))
+                    .foregroundStyle(verdict.standing.tint)
+                Text("STAFF VERDICT")
+                    .font(DSType.display(11, .heavy))
+                    .tracking(0.7)
+                    .foregroundStyle(verdict.standing.tint)
+                Spacer(minLength: 0)
+                DSStatusPill(label: verdict.standing.pillLabel, tone: verdict.standing.pillTone)
+            }
+
+            // §2.10: the most important line on the card is the verdict, so it
+            // takes the display voice at the second tier. Text voice caps at 18
+            // and this is a headline, not prose.
+            Text(verdict.headline)
+                .font(DSType.display(DSType.Size.title2, .heavy))
+                .foregroundStyle(Color.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text(verdict.detail)
+                .font(DSType.text(14, .regular, prose: true))
+                .foregroundStyle(Color.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            verdictFigureStrip(verdict.figures)
+
+            // Said only while the gate is actually up. The readings above are
+            // honest year-round; the word "gated" is only true in February.
+            if reviewTasksAreLive {
+                Text("These are the checks the Coaching Changes advance is gated on.")
+                    .font(.system(size: DSType.Size.caption, weight: .semibold))
+                    .foregroundStyle(Color.textTertiaryReadable)
+            }
+
+            Divider().overlay(Color.surfaceBorder)
+
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(verdict.checks.enumerated()), id: \.element.id) { index, check in
+                    if index > 0 {
+                        Divider().overlay(Color.surfaceBorder.opacity(0.4))
+                    }
+                    verdictCheckRow(check)
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardBackground()
+    }
+
+    /// The three-band figure grid — label row, value row, context row, one
+    /// baseline each — in the geometry `DSResultSheet`'s "what changed" block
+    /// established, which is the whole reason it is a `Grid` and not a row of
+    /// `VStack`s.
+    ///
+    /// One deviation from that block, and it is a width deviation only: every
+    /// cell is `maxWidth: .infinity`, so the four columns divide the strip
+    /// evenly. The result sheet is capped at `DSLayout.contentMeasure` and can
+    /// afford to left-pack its chips; this strip runs the full width of a
+    /// portrait iPad card, where left-packed figures leave half the band empty
+    /// and the fourth reading drifts away from the label above it.
+    private func verdictFigureStrip(_ chips: [DSResultSheet.Chip]) -> some View {
+        Grid(alignment: .leading, horizontalSpacing: DSSpacing.lg, verticalSpacing: DSSpacing.xxs) {
+            GridRow {
+                ForEach(chips) { chip in
+                    Text(chip.label.uppercased())
+                        .font(DSType.display(11, .heavy))
+                        .tracking(0.6)
+                        .foregroundStyle(Color.textTertiaryReadable)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            GridRow {
+                ForEach(chips) { chip in
+                    Text(chip.value)
+                        .font(DSType.display(DSType.Size.title2, .heavy))
+                        .foregroundStyle(chip.valueColor)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            GridRow {
+                ForEach(chips) { chip in
+                    // The strip always reserves its context line, so a figure
+                    // with a caption and one without do not sit at two
+                    // different heights (§2.2's slot rule).
+                    Text(chip.context ?? " ")
+                        .font(DSType.display(11, .semibold))
+                        .foregroundStyle(chip.contextColor)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+        .padding(DSSpacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: DSCornerRadius.inline))
+        .accessibilityElement(children: .combine)
+    }
+
+    /// A check that names a hole and cannot be acted on is the defect this card
+    /// exists to close, so a check with a destination IS the button. It stays a
+    /// tab switch rather than a push: the fix for every one of these is on this
+    /// screen, and a `navigationDestination` here would take the user out of the
+    /// review he is halfway through.
+    @ViewBuilder
+    private func verdictCheckRow(_ check: StaffVerdict.Check) -> some View {
+        if let tab = check.tab {
+            Button {
+                selectedTab = tab
+            } label: {
+                verdictCheckBody(check, showsChevron: true)
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Opens the \(tab.rawValue) tab")
+        } else {
+            verdictCheckBody(check, showsChevron: false)
+        }
+    }
+
+    private func verdictCheckBody(_ check: StaffVerdict.Check, showsChevron: Bool) -> some View {
+        HStack(alignment: .top, spacing: DSSpacing.xs) {
+            Image(systemName: check.weight.icon)
+                .font(.system(size: DSType.Size.body))
+                .foregroundStyle(check.weight.tint)
+                .frame(width: 18)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(check.label)
+                    .font(.system(size: DSType.Size.body, weight: .semibold))
+                    .foregroundStyle(check.weight == .done ? Color.textPrimary : check.weight.tint)
+                Text(check.detail)
+                    .font(.system(size: DSType.Size.footnote))
+                    .foregroundStyle(Color.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+
+            if showsChevron {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: DSType.Size.caption, weight: .bold))
+                    .foregroundStyle(Color.textTertiary)
+                    .padding(.top, 2)
+            }
+        }
+        // 10 + 10 around a two-line stack clears the 44 pt touch floor (§2.12)
+        // without a hardcoded height that a three-line detail would then break.
+        .padding(.vertical, 10)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+    }
+
     // MARK: - Review Tab Content (#107)
 
     private var reviewTabContent: some View {
         ScrollView {
             VStack(spacing: 16) {
+                // Q-M89: the answer first. Everything below it is the evidence.
+                staffVerdictCard
+
                 // Staff Overview
                 VStack(alignment: .leading, spacing: 12) {
                     Text("STAFF OVERVIEW")
@@ -2964,23 +3576,6 @@ struct CoachingStaffView: View {
                 .padding(16)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .cardBackground()
-
-                // Readiness Check
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("READINESS CHECK")
-                        .font(.system(size: DSType.Size.caption, weight: .black))
-                        .tracking(1.5)
-                        .foregroundStyle(Color.accentGold)
-
-                    readinessRow(label: "Head Coach", filled: career.role == .gmAndHeadCoach || headCoach != nil)
-                    readinessRow(label: "Offensive Coordinator", filled: coaches.contains(where: { $0.role == .offensiveCoordinator }))
-                    readinessRow(label: "Defensive Coordinator", filled: coaches.contains(where: { $0.role == .defensiveCoordinator }))
-                    readinessRow(label: "Special Teams Coordinator", filled: coaches.contains(where: { $0.role == .specialTeamsCoordinator }))
-                    readinessRow(label: "Budget Within Limits", filled: !isBudgetOverspent)
-                }
-                .padding(16)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .cardBackground()
             }
             .padding(16)
         }
@@ -3001,18 +3596,6 @@ struct CoachingStaffView: View {
         }
         .frame(width: 72, height: 56)
         .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 8))
-    }
-
-    private func readinessRow(label: String, filled: Bool) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: filled ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: DSType.Size.body))
-                .foregroundStyle(filled ? Color.success : Color.textTertiary)
-            Text(label)
-                .font(.subheadline)
-                .foregroundStyle(filled ? Color.textPrimary : Color.textTertiary)
-            Spacer()
-        }
     }
 
     private func coachOverall(_ coach: Coach) -> Int {

@@ -424,15 +424,21 @@ struct TrainingPlanView: View {
         }
     }
 
+    /// The bar fills at the load that makes a man Burnt, not at a round 100.
+    /// The engine's whole reachable range is 0…70 (see the band derivation on
+    /// `WorkloadEngine`), so dividing by 100 meant the bar could never pass
+    /// two-thirds and a "Burnt" pill sat next to a meter that looked like it
+    /// still had a third of the week left in it.
     private func workloadMeter(load: Int, status: WorkloadStatus) -> some View {
-        let clamped = max(0, min(100, load))
+        let fullScale = max(1, WorkloadEngine.burnoutFloor)
+        let clamped = max(0, min(fullScale, load))
         return GeometryReader { geo in
             ZStack(alignment: .leading) {
                 Capsule()
                     .fill(Color.backgroundTertiary)
                 Capsule()
                     .fill(loadTint(for: status))
-                    .frame(width: geo.size.width * CGFloat(clamped) / 100.0)
+                    .frame(width: geo.size.width * CGFloat(clamped) / CGFloat(fullScale))
             }
         }
         .frame(height: 6)

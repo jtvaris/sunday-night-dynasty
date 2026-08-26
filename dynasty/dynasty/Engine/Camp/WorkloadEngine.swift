@@ -11,12 +11,72 @@ enum WorkloadEngine {
 
     // MARK: - Constants
 
-    /// Cumulative-load thresholds (matched to design heuristic).
+    /// Cumulative-load bands, MEASURED against what the camp scheduler can
+    /// actually emit rather than against the 0…200 the cap implies.
+    ///
+    /// The camp cycle is exactly 21 days. `WeekAdvancer.advanceOffseasonPhase`
+    /// runs `applyCampWeeklyTick` once per camp phase and then advances the
+    /// phase unconditionally, so OTAs / trainingCamp / preseason are one 7-day
+    /// tick each, opening from the zero `resetCampLoad` writes at OTAs.
+    ///
+    /// A day's net is `round(intensity · 18 · staminaFactor) − round(recoveryRate · 10)`
+    /// — two independently rounded integers — so reachable loads form a lattice
+    /// of step 7 and the recovery term collapses to whole points.
+    /// `computeRecoveryRate` documents a 0.40…0.75 band, but `playerDevelopment`
+    /// is one of `CoachRole.focusAttributes` for both `.strengthCoach` and
+    /// `.physio`, so `CoachingEngine` always draws it from the GOOD range
+    /// (60…88 across budget/standard/premium clubs). That leaves exactly two
+    /// recovery deltas in the shipped game — 6 (every AI club's hard-coded
+    /// 0.55, the no-coach fallback, and a 60–70 coach) and 7 (a 71–88 coach) —
+    /// and therefore two end-of-cycle lattices:
+    ///
+    ///     recovery delta 6 → {21, 28, 35, 42, 49, 56, 63, 70}  median 42, p90 56
+    ///     recovery delta 7 → { 7, 14, 21, 28, 35, 42, 49}      median 28
+    ///
+    /// The shipped table put `.overloaded` at 80 and `.burnedOut` at 130 — 10
+    /// and 60 points ABOVE the global ceiling of 70. Both states had
+    /// probability zero for all 32 clubs, which made four consumers dead code:
+    /// `WorkloadStatus.injuryMultiplier`'s 1.6 and 2.5 rungs,
+    /// `TrainingPlanEngine.burnedOutGainFactor`, `CareerDashboardView`'s
+    /// `.overloaded || .burnedOut` camp warning, and `TrainingPlanView`'s own
+    /// "a player who reads Burnt takes only half of the week's gains".
+    /// `MedicalEngine.workloadRiskMultiplier` returned exactly 1.0 for every
+    /// player in the league, always — i.e. plan §2.9.6's "workload is cosmetic"
+    /// defect was still cosmetic after the fix that was meant to end it.
+    ///
+    /// The two upper bands are therefore anchored to the lattice they have to
+    /// live on:
+    ///
+    ///  * **56** is the measured p90 of a default-intensity club's end-of-cycle
+    ///    load, so `.overloaded` is the top decile of a normally-run camp while
+    ///    the median man (42) stays `.healthy` — which is exactly what
+    ///    `MedicalEngine.workloadRiskMultiplier`'s comment says the league-wide
+    ///    tick has to leave a default-intensity roster in.
+    ///  * **63** is the second-highest rung of that same lattice, so
+    ///    `.burnedOut` means a man carrying one of the two heaviest camps the
+    ///    scheduler can deliver: ~0.4 % of a roster, roughly one player every
+    ///    other club per camp.
+    ///
+    /// `underloadedMax` is deliberately unchanged: it is the one threshold that
+    /// already sat inside the reachable range (it separates 21 and 28 from the
+    /// rest of the camp week).
     private static let underloadedMax = 30
-    private static let healthyMax = 80
-    private static let overloadedMax = 130
+    private static let healthyMax = 56
+    private static let overloadedMax = 63
 
-    /// Loose cap so cumulativeLoad cannot grow unbounded across many weeks.
+    /// The load at which a player reads `.burnedOut`, i.e. the top of the
+    /// meaningful range. Exposed because the camp UI's load meter uses it as
+    /// its full scale — a full bar and a "Burnt" pill have to be the same
+    /// event, and a bar that divides by a number the engine cannot emit reads
+    /// as headroom the player does not have.
+    static let burnoutFloor = overloadedMax
+
+    /// Runaway guard only. Since plan §2.9.6 added `resetCampLoad` at OTAs the
+    /// counter cannot ratchet across seasons, and the 21-day cycle tops out at
+    /// 70 (88 if the user stacks every voluntary off-day practice, which adds
+    /// `injuryRiskBoost * 2` per attendee), so this never engages. Left at 200
+    /// because `VoluntaryWorkoutEngine` clamps to the same literal; the two
+    /// have to move together, and neither is reachable.
     private static let absoluteCap = 200
 
     // MARK: - Public API

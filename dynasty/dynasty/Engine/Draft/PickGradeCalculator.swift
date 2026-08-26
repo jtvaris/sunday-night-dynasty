@@ -5,6 +5,36 @@ import Foundation
 enum PickGradeCalculator {
 
     /// Inputs visible to fans/media at the moment a pick is made.
+    ///
+    /// ## The user's own board is NOT one of them, and must not become one
+    ///
+    /// An audit filed this as a defect — a reveal card reading `A+` in one
+    /// corner and `MY #101 · -50 REACH` in the other — and proposed feeding
+    /// `DraftDayCoordinator.userBoardRanks` in here. That is the wrong half of
+    /// the card to change, for three reasons that are checkable in this tree:
+    ///
+    ///   * **This grade is not blind to the user's scouting already.**
+    ///     `publicOVR` is `DraftIntel.publicOVREstimate`, which returns
+    ///     `scoutedOverall` when his building has filed on the man and the
+    ///     media band only when nobody has. What it does not read is
+    ///     `UserDraftBoard` — the drag-ordered list — which is a *preference*,
+    ///     not information the media could have.
+    ///   * **It grades all 32 clubs' cards.** `computePickGrade` runs on every
+    ///     pick in the room, so a user-board term would make Cleveland's grade
+    ///     for Cleveland's pick move when the user re-orders his own board.
+    ///   * **It would rebuild the systematic REACH that task #155 tore out.**
+    ///     `UserDraftBoard.order(among:)` appends every man the board has never
+    ///     seen *behind* the stored order, so on a night where the user has
+    ///     scouted sixty prospects everybody else starts at slot 61+. Grading
+    ///     against that stamps REACH on most of the class for no reason but
+    ///     unfinished scouting — the same shape of fault as the old
+    ///     `needScore <= 0.3` row documented under ``letterGrade(from:)``,
+    ///     arriving through a different door.
+    ///
+    /// The two numbers on that card are two frames, not one broken one. The
+    /// repair is the key: `DraftTickerPanel.PickRevealCard.gradeChip` prints
+    /// `MEDIA A+ STEAL` and `boardRow` prints `MY #101 · -50 REACH`, so the
+    /// card names whose opinion each is.
     struct Inputs {
         /// BB rank − pick number. Positive = picked later than expected (steal).
         let valueDelta: Int

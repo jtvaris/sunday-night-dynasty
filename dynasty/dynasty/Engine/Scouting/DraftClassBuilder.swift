@@ -149,11 +149,17 @@ enum DraftClassBuilder {
             }
         }
 
-        // One class draws 350 names from a 55 × 55 product, so independent draws
-        // put roughly twenty pairs of identically-named men on the same board.
         // The draft feed abbreviates to "N. Abernathy" and the board shows only
-        // the full name, so a duplicate inside one class is unresolvable by any
-        // screen that displays it — the draw has to be rejection-sampled.
+        // the full name, so a duplicate is unresolvable by any screen that
+        // displays it — the draw has to be rejection-sampled.
+        //
+        // This set carries the COHORT half of that: it is what holds the
+        // surname and given-name quotas ("no more than two Abernathys on one
+        // board"), and it is deliberately empty at the top of every class
+        // because a quota counts what is on THIS list. The league half — the
+        // rookie who arrives already sharing a name with a man on his own
+        // roster — is `RandomNameGenerator`'s own ledger, which spans classes
+        // and needs nothing from here.
         var usedNames: Set<String> = []
 
         for (index, token) in tokens.enumerated() {

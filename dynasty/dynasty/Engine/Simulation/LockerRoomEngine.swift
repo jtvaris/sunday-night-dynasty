@@ -3,11 +3,15 @@ import Foundation
 // MARK: - Locker Room State
 
 struct LockerRoomState: Codable {
-    /// Overall team chemistry rating from 0 to 100.
+    /// Overall team chemistry rating from 0 to 100. Derived from
+    /// `leadershipScore - toxicityScore` **per player** — see
+    /// `LockerRoomEngine.chemistryRating(net:headcount:)`.
     var teamChemistry: Int
-    /// Sum of positive leader contributions to chemistry.
+    /// Raw SUM of positive leader contributions across the roster. Scales with
+    /// headcount, so read it per player (or via `teamChemistry`), never raw.
     var leadershipScore: Int
-    /// Sum of negative toxic contributions dragging chemistry down.
+    /// Raw SUM of negative toxic contributions across the roster. Same caveat
+    /// as `leadershipScore`: it is a sum, not a rating.
     var toxicityScore: Int
     /// Human-readable log of recent events that affected chemistry.
     var recentEvents: [String]
@@ -108,9 +112,18 @@ enum LockerRoomEngine {
             }
         }
 
-        // Raw chemistry: base 50, add leadership, subtract toxicity
-        let rawChemistry = 50 + leadershipScore - toxicityScore
-        let teamChemistry = max(0, min(100, rawChemistry))
+        // Chemistry: base 50, moved by the roster's net leadership PER PLAYER.
+        //
+        // This used to be `50 + leadershipScore - toxicityScore` on the raw
+        // sums, which made chemistry scale with headcount instead of with the
+        // room: a full 53-man roster of the nine equally likely archetypes nets
+        // roughly +130, so every club in the league pinned at "Elite 100/100"
+        // and no signing, cut or morale swing could move the bar. Normalising
+        // per capita is what turns it back into a rating.
+        let teamChemistry = chemistryRating(
+            net: leadershipScore - toxicityScore,
+            headcount: players.count
+        )
 
         return LockerRoomState(
             teamChemistry: teamChemistry,
@@ -124,6 +137,37 @@ enum LockerRoomEngine {
     /// league-wide weekly morale pass only needs this.
     static func chemistryScore(players: [Player]) -> Int {
         calculateChemistry(players: players, collectEvents: false).teamChemistry
+    }
+
+    // MARK: - Chemistry Scale
+
+    /// Chemistry points per point of NET (leadership − toxicity) contribution
+    /// **per player**.
+    ///
+    /// Anchored on the per-player table in `calculateChemistry`, which tops out
+    /// at ±8 a head: the best single presence a room can have is a happy Team
+    /// Leader at +8, the worst an unhappy Drama Queen at −8, so net-per-head
+    /// lives in [−8, +8]. 50 / 8 lays exactly that reachable range across the
+    /// 0-100 dial either side of the base 50 — which is why this is 6.25 and
+    /// not a round number. The clamp then belongs to a roster that is
+    /// *entirely* leaders or *entirely* malcontents, not to every roster in
+    /// the league.
+    ///
+    /// Sanity check against the ladder in `chemistryLabel`: the nine archetypes
+    /// are drawn uniformly (`LeagueGenerator`) at a generated morale of 65-75,
+    /// which averages ≈ +1.9 leadership and ≈ −0.7 toxicity a head. That lands
+    /// a mixed room near 58 — inside the "Average" 50..<65 band, which is what
+    /// an average locker room should read.
+    static let chemistryPointsPerNetHead = 50.0 / 8.0
+
+    /// Turns a raw leadership−toxicity sum into the 0-100 chemistry rating for
+    /// a roster of `headcount` players. Single home for the formula so callers
+    /// that hold the raw sums (the Locker Room "Net" column) can word them with
+    /// the same maths the engine used.
+    static func chemistryRating(net: Int, headcount: Int) -> Int {
+        guard headcount > 0 else { return 50 }
+        let raw = 50.0 + (Double(net) / Double(headcount)) * chemistryPointsPerNetHead
+        return max(0, min(100, Int(raw.rounded())))
     }
 
     // MARK: - Morale Damping (plan §2.9.1)
@@ -191,7 +235,24 @@ enum LockerRoomEngine {
             }
 
             // --- Chemistry impact ---
-            if chemistry >= 75 {
+            //
+            // Every boundary here is a `chemistryLabel` boundary, deliberately.
+            // These numbers were written against a chemistry value that was
+            // always 100 — the un-normalised roster sum saturated the ceiling on
+            // any full roster — so the top branch fired for every club in the
+            // league and the rest were unreachable. Normalising per capita put
+            // an ordinary room at ~58, which made 75 mean "nobody", and a
+            // threshold nobody meets is the same dead branch in the other
+            // direction.
+            //
+            // Anchoring to the published ladder (Elite 80+, Strong 65+, Average
+            // 50+, Shaky 35+, Toxic below) makes each branch mean the word the
+            // rest of the app already shows the user for that number: a Strong
+            // room is worth the big bonus, an Average one a nudge, a Toxic one
+            // the full penalty. It also keeps the branch reachable in both
+            // directions — measured travel is ~49 (drama-heavy) to ~89
+            // (leader-stacked), so both ends are things a GM can build toward.
+            if chemistry >= 65 {
                 delta += 3
             } else if chemistry >= 50 {
                 delta += 1
@@ -261,9 +322,17 @@ enum LockerRoomEngine {
     /// Damping (plan §2.9.1) makes this safe to run every week for all 32
     /// rosters: the raw archetype swing is clamped to ±`weeklyMoraleSwingCap`
     /// and then one point of reversion toward `moraleBaseline` is applied. A
-    /// .500 team therefore converges on ~70, a 4-13 team bleeds roughly
-    /// (13·-2 + 4·+4) = -10 over a season instead of spiralling, and no roster
-    /// can pin itself at either end of the scale.
+    /// .500 team therefore converges on ~70, a 4-13 team takes (4·+3 + 13·−3)
+    /// = −27 from results and claws back +1 a week from reversion once it is
+    /// under the baseline, so it settles around −10 on the season instead of
+    /// spiralling, and no roster can pin itself at either end of the scale.
+    ///
+    /// NOTE on the `chemistry` term below: it is now genuinely conditional.
+    /// While `calculateChemistry` summed raw scores every roster arrived here
+    /// at a railed 100 and the `>= 70` branch fired for all 32 clubs every
+    /// week; per capita a uniformly-mixed room sits near 58, so the term is 0
+    /// unless the GM has actually built a leader-heavy (≥ 70) or malcontent-
+    /// heavy (< 40) locker room.
     ///
     /// Callers pass only rosters that actually PLAYED this week (a bye week is
     /// not a loss) and skip holdouts, whose morale `HoldoutEngine` owns.
@@ -282,10 +351,16 @@ enum LockerRoomEngine {
                 delta -= 3
             }
 
-            // Chemistry still has a mild weekly influence
-            if chemistry >= 70 {
+            // Chemistry still has a mild weekly influence, on the same
+            // `chemistryLabel` boundaries the season-end pass uses: a Strong
+            // room (65+) is worth a point a week, a room below Average (<50)
+            // costs one, and the ordinary Average club in between gets neither.
+            // Symmetric around the band where most clubs actually sit, which
+            // the old 70/40 pair was not once chemistry stopped being pinned
+            // at 100.
+            if chemistry >= 65 {
                 delta += 1
-            } else if chemistry < 40 {
+            } else if chemistry < 50 {
                 delta -= 1
             }
 

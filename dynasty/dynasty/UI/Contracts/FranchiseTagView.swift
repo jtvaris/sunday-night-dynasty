@@ -19,6 +19,32 @@ struct FranchiseTagView: View {
     /// thread is open.
     @State private var negotiationPlayer: Player?
 
+    /// Which tag's arithmetic is open, if any.
+    ///
+    /// One piece of state at BODY level driving one `.sheet(item:)`, and
+    /// deliberately not a `.popover(isPresented:)` hung off each row: eight rows
+    /// in a `ForEach` sharing a single `@State` anchor the popover to whichever
+    /// row SwiftUI laid out last, not to the one that was tapped. The request
+    /// carries the whole quote (see `TagBreakdownRequest`), so the presented
+    /// sheet has no nil case to render.
+    @State private var tagBreakdown: TagBreakdownRequest?
+
+    /// Every position this screen has to price, quoted once per load — see
+    /// `buildTagQuotes`.
+    @State private var tagQuotes: [Position: TagQuote] = [:]
+
+    /// `Team.id` -> abbreviation, so the breakdown can say who the five men on
+    /// it play for. Fetched with the rest of the screen's data, once.
+    @State private var teamAbbreviations: [UUID: String] = [:]
+
+    /// What each position's tag cost the LAST time this screen was opened —
+    /// read from `CareerScopedDefaults` at the top of the first load and then
+    /// left alone for the rest of the visit. See `captureTagPriceBaseline`.
+    @State private var previousQuotes: [Position: TagPriceMemory.Quote] = [:]
+
+    /// One baseline per visit, not one per `loadData`.
+    @State private var baselineCaptured = false
+
     var body: some View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
@@ -60,6 +86,9 @@ struct FranchiseTagView: View {
             }
         } message: {
             Text("Are you sure? You won't be able to franchise tag any player this offseason.")
+        }
+        .sheet(item: $tagBreakdown) { request in
+            TagBreakdownSheet(request: request, tagSeasonLabel: seasonLabel(nextSeason))
         }
         .fullScreenCover(item: $negotiationPlayer) { player in
             // ContractNegotiationView supplies its own "Close" toolbar item, so
@@ -316,7 +345,13 @@ struct FranchiseTagView: View {
     }
 
     private func taggedPlayerRow(_ player: Player) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        // Read once for the row. `tagCommitment` decodes the forward ledger out
+        // of `UserDefaults`, and the row now shows the number, speaks it and
+        // hands it to the sheet — three reads of a JSON table on a screen that
+        // redraws on a timer, where one will do.
+        let booked = tagCommitment(for: player)
+
+        return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 12) {
                 positionBadge(player.position)
 
@@ -343,19 +378,38 @@ struct FranchiseTagView: View {
 
                 Spacer()
 
-                VStack(alignment: .trailing, spacing: 2) {
-                    // #127: `annualSalary` is still the EXPIRING deal — the tag has
-                    // not been paid yet and does not overwrite it until the rollover
-                    // — so the number quoted here comes off the forward commitment
-                    // the tag actually booked. Showing `annualSalary` would now
-                    // print the old contract under the words "Tag Value".
-                    Text(formatMillions(tagCommitment(for: player)))
-                        .font(.subheadline.weight(.semibold).monospacedDigit())
-                        .foregroundStyle(Color.accentGold)
-                    Text("\(seasonLabel(nextSeason)) Tag")
-                        .font(.system(size: DSType.Size.caption).weight(.medium))
+                // The booked tag opens the same breakdown the expiring rows do,
+                // carrying its booked number with it. It is the one figure on
+                // the screen that does NOT move with the market — the club
+                // agreed a price and owns it — and the sheet is the only place
+                // that can say so next to the five salaries that have moved
+                // since.
+                Button {
+                    tagBreakdown = tagBreakdownRequest(for: player, booked: booked)
+                } label: {
+                    VStack(alignment: .trailing, spacing: 2) {
+                        // #127: `annualSalary` is still the EXPIRING deal — the tag has
+                        // not been paid yet and does not overwrite it until the rollover
+                        // — so the number quoted here comes off the forward commitment
+                        // the tag actually booked. Showing `annualSalary` would now
+                        // print the old contract under the words "Tag Value".
+                        Text(formatMillions(booked))
+                            .font(.subheadline.weight(.semibold).monospacedDigit())
+                            .foregroundStyle(Color.accentGold)
+                        HStack(spacing: 3) {
+                            Text("\(seasonLabel(nextSeason)) Tag")
+                                .font(.system(size: DSType.Size.caption).weight(.medium))
+                            Image(systemName: "info.circle")
+                                .font(.system(size: DSType.Size.micro, weight: .semibold))
+                        }
                         .foregroundStyle(Color.textTertiary)
+                    }
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(seasonLabel(nextSeason)) tag \(formatMillions(booked)) for \(player.fullName)")
+                .accessibilityHint("Shows the five salaries the \(player.position.rawValue) tag averages")
 
                 Button {
                     removeTag(from: player)
@@ -426,6 +480,8 @@ struct FranchiseTagView: View {
         // against the banner.
         let capAfterTag = roundedToDisplay(projectedNextYearSpace) - roundedToDisplay(tagCost)
         let recommendation = smartRecommendation(for: player)
+        // Read once for the row: the chip renders it and the button speaks it.
+        let priceChange = tagPriceChange(for: player.position)
 
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 12) {
@@ -451,21 +507,43 @@ struct FranchiseTagView: View {
 
                 Spacer()
 
-                VStack(alignment: .trailing, spacing: 2) {
-                    // Not gold. Eight rows priced in the screen's emphasis
-                    // colour made twenty gold elements out of a screen with one
-                    // decision on it, and a price the club pays at most once is
-                    // not a call to action — the headline number and the
-                    // endorsed row's pill are. Once the tag is spent this figure
-                    // is the price of a move the row can no longer make, so it
-                    // drops again to tertiary.
-                    Text(formatMillions(tagCost))
-                        .font(.subheadline.weight(.semibold).monospacedDigit())
-                        .foregroundStyle(hasUsedTag ? Color.textTertiary : Color.textPrimary)
-                    Text("Tag Cost")
-                        .font(.system(size: DSType.Size.caption).weight(.medium))
+                // **The derived number now says where it derives from.** The
+                // rules banner states the rule ("the average of the top 5
+                // salaries at his position"); it cannot state the five
+                // salaries, and until this sheet existed nothing on the screen
+                // could — which is also why the price moving between two visits
+                // read as the app changing its mind.
+                Button {
+                    tagBreakdown = tagBreakdownRequest(for: player, booked: nil)
+                } label: {
+                    VStack(alignment: .trailing, spacing: 2) {
+                        // Not gold. Eight rows priced in the screen's emphasis
+                        // colour made twenty gold elements out of a screen with one
+                        // decision on it, and a price the club pays at most once is
+                        // not a call to action — the headline number and the
+                        // endorsed row's pill are. Once the tag is spent this figure
+                        // is the price of a move the row can no longer make, so it
+                        // drops again to tertiary.
+                        Text(formatMillions(tagCost))
+                            .font(.subheadline.weight(.semibold).monospacedDigit())
+                            .foregroundStyle(hasUsedTag ? Color.textTertiary : Color.textPrimary)
+                        HStack(spacing: 3) {
+                            Text("Tag Cost")
+                                .font(.system(size: DSType.Size.caption).weight(.medium))
+                            Image(systemName: "info.circle")
+                                .font(.system(size: DSType.Size.micro, weight: .semibold))
+                        }
                         .foregroundStyle(Color.textTertiary)
+                        if let priceChange {
+                            tagChangeChip(priceChange)
+                        }
+                    }
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel(spokenTagCost(tagCost, for: player, change: priceChange))
+                .accessibilityHint("Shows the five salaries the \(player.position.rawValue) tag averages")
 
                 if hasUsedTag {
                     // Already used the tag — show disabled state
@@ -762,7 +840,17 @@ struct FranchiseTagView: View {
             ?? tagValue(for: player.position)
     }
 
+    /// The quoted tag for a position, off the per-load table.
+    ///
+    /// The fallback is the same live calculation this function used to BE, kept
+    /// for the position the table does not carry. Nothing on the screen asks for
+    /// one — `buildTagQuotes` prices exactly the positions the rows are drawn
+    /// from — but a miss returning a silent $0 would be a price, and a wrong one.
     private func tagValue(for position: Position) -> Int {
+        tagQuotes[position]?.price ?? liveTagValue(for: position)
+    }
+
+    private func liveTagValue(for position: Position) -> Int {
         let positionSalaries = allPlayers
             .filter { $0.position == position && $0.annualSalary > 0 }
             .map { $0.annualSalary }
@@ -774,6 +862,208 @@ struct FranchiseTagView: View {
             capMode: career.capMode,
             salaryCap: team?.salaryCap ?? ContractEngine.openingSalaryCap
         )
+    }
+
+    /// Prices every position this screen has to quote, **once per load**.
+    ///
+    /// `liveTagValue` walks all ~1 700 league players, and it is asked for a
+    /// price by every expiring row, by every tagged row, and by `tagFavourite`
+    /// — which prices the whole expiring list to find one man — on every
+    /// redraw. The set of positions is small (the club's expiring men plus
+    /// whoever is tagged), the answer only changes when `allPlayers` does, and
+    /// `allPlayers` only changes in `loadData`. So it is one pass, there.
+    ///
+    /// The quote carries the five men behind the number as well as the number,
+    /// because that is what the breakdown sheet exists to show and re-deriving
+    /// it when the sheet opens would be a second, separate walk of the league.
+    private func buildTagQuotes() -> [Position: TagQuote] {
+        let priced = Set(
+            teamPlayers
+                .filter { $0.contractYearsRemaining <= 1 || $0.isFranchiseTagged }
+                .map(\.position)
+        )
+        guard !priced.isEmpty else { return [:] }
+
+        let salaryCap = team?.salaryCap ?? ContractEngine.openingSalaryCap
+        let ownTeamID = team?.id
+
+        // The same population `liveTagValue` filters, grouped in one pass
+        // instead of re-filtered per position. A man with no club and a salary
+        // still on him is in it, exactly as he is in the engine's list — the
+        // screen must not print a five-man average the engine did not take.
+        var byPosition: [Position: [Player]] = [:]
+        for player in allPlayers where player.annualSalary > 0 && priced.contains(player.position) {
+            byPosition[player.position, default: []].append(player)
+        }
+
+        var quotes: [Position: TagQuote] = [:]
+        for position in priced {
+            let candidates = byPosition[position] ?? []
+            let salaries = candidates.map(\.annualSalary)
+
+            // The engine sorts the bare numbers; this sorts the MEN carrying
+            // them, so the sheet can name them. The id tiebreak only decides
+            // which of two men on an identical salary is printed — the five
+            // salaries, and therefore the average, are the engine's either way.
+            let topFive = candidates
+                .dsSorted(false, by: { $0.annualSalary }, id: { $0.id.uuidString })
+                .prefix(5)
+                .map { player in
+                    TagTopSalary(
+                        id: player.id,
+                        name: player.fullName,
+                        teamAbbreviation: player.teamID.flatMap { teamAbbreviations[$0] },
+                        age: player.age,
+                        overall: player.overall,
+                        salary: player.annualSalary,
+                        isOwnPlayer: player.teamID != nil && player.teamID == ownTeamID
+                    )
+                }
+
+            // Both engine overloads, deliberately: the floored/sandbox price is
+            // what the club is charged, the raw average is what the rules banner
+            // describes, and the sheet has to be able to say when the two are
+            // not the same number.
+            let average = ContractEngine.franchiseTagValue(position: position, topSalaries: salaries)
+            let price = ContractEngine.franchiseTagValue(
+                position: position,
+                topSalaries: salaries,
+                capMode: career.capMode,
+                salaryCap: salaryCap
+            )
+
+            quotes[position] = TagQuote(
+                position: position,
+                topFive: topFive,
+                average: average,
+                price: price,
+                floor: Int(ContractEngine.franchiseTagFloorShare * Double(salaryCap)),
+                isFloored: career.capMode != .sandbox && price > average,
+                isSandbox: career.capMode == .sandbox
+            )
+        }
+        return quotes
+    }
+
+    /// The breakdown request for one man's row, or nil for a position the load
+    /// did not price (which is no row on this screen — see `buildTagQuotes`).
+    private func tagBreakdownRequest(for player: Player, booked: Int?) -> TagBreakdownRequest? {
+        guard let quote = tagQuotes[player.position] else { return nil }
+        return TagBreakdownRequest(
+            quote: quote,
+            previous: previousQuotes[player.position],
+            bookedCommitment: booked,
+            playerName: player.fullName
+        )
+    }
+
+    // MARK: - Tag Price Memory (#127 follow-up: "it moved, with no note")
+
+    /// The scoped key the previous visit's quotes live under.
+    ///
+    /// **Not yet listed in `CareerScopedDefaults.keys`** — that file is another
+    /// lane's this wave. The value is career-scoped regardless (`set` suffixes
+    /// it with the open save's uuid, so no career can read another's) and it is
+    /// season-stamped, so the only cost of the omission is that a deleted save
+    /// leaves one small string behind. It belongs on the purge list.
+    private static let tagPriceMemoryKey = "franchiseTagPriceMemory"
+
+    /// Reads the previous visit's quotes, then records this one.
+    ///
+    /// **Once per appearance, not once per `loadData`.** Applying a tag, or
+    /// signing a man through Contact Agent, reloads the screen; re-basing there
+    /// would quietly zero the very delta the user came back to see. Measuring
+    /// from the moment the screen opened also means a re-sign agreed HERE shows
+    /// up against his own position's tag — which is exactly what it does to it,
+    /// since a new top-five salary is a new top-five salary whoever wrote it.
+    ///
+    /// The clearing rule is the season stamp: a memory from an earlier league
+    /// year is discarded rather than shown. At the rollover the cap grows and
+    /// every contract in the league re-prices, so a cross-year delta measures
+    /// inflation rather than the market — and the tag it would be compared
+    /// against is a different league year's tag anyway.
+    private func captureTagPriceBaseline() {
+        guard !baselineCaptured, !tagQuotes.isEmpty else { return }
+        baselineCaptured = true
+
+        let stored = storedTagPriceMemory()
+        let current: TagPriceMemory? = stored?.season == career.currentSeason ? stored : nil
+
+        var previous: [Position: TagPriceMemory.Quote] = [:]
+        for (raw, quote) in current?.quotes ?? [:] {
+            guard let position = Position(rawValue: raw) else { continue }
+            previous[position] = quote
+        }
+        previousQuotes = previous
+
+        // This visit's quotes are merged over the season's existing ones rather
+        // than replacing them: which positions the screen prices depends on who
+        // is expiring TODAY, and a man re-signed this visit takes his position
+        // off the list. Dropping it would silently restart that position's
+        // baseline the next time somebody at it hits his last year.
+        var quotes = current?.quotes ?? [:]
+        for (position, quote) in tagQuotes {
+            quotes[position.rawValue] = TagPriceMemory.Quote(
+                price: quote.price,
+                topFive: quote.topFiveSalaries
+            )
+        }
+        writeTagPriceMemory(TagPriceMemory(season: career.currentSeason, quotes: quotes))
+    }
+
+    private func storedTagPriceMemory() -> TagPriceMemory? {
+        guard let raw = CareerScopedDefaults.string(Self.tagPriceMemoryKey),
+              let memory = try? JSONDecoder().decode(TagPriceMemory.self, from: Data(raw.utf8))
+        else { return nil }
+        return memory
+    }
+
+    private func writeTagPriceMemory(_ memory: TagPriceMemory) {
+        guard let data = try? JSONEncoder().encode(memory) else { return }
+        CareerScopedDefaults.set(String(decoding: data, as: UTF8.self), Self.tagPriceMemoryKey)
+    }
+
+    /// What this position's tag has done since the screen was last opened, in
+    /// thousands — nil when there is nothing to report.
+    ///
+    /// Both ends are snapped to the tenth of a million the screen prints, for
+    /// the same reason `capAfterTag` is: a move the reader cannot reproduce
+    /// from the two figures he was shown is worse than no move at all. It is
+    /// also what stops a $40K drift being announced as a change.
+    private func tagPriceChange(for position: Position) -> Int? {
+        guard let quote = tagQuotes[position],
+              let previous = previousQuotes[position]
+        else { return nil }
+        let change = roundedToDisplay(quote.price) - roundedToDisplay(previous.price)
+        return change == 0 ? nil : change
+    }
+
+    /// The move, as the smallest thing that can carry it.
+    ///
+    /// Warning and success, never gold: a tag that got dearer is a cost and one
+    /// that got cheaper is a saving, and neither is the screen asking for a
+    /// decision. The chip only appears on a row whose price actually moved, so
+    /// on an ordinary revisit the column looks exactly as it did.
+    private func tagChangeChip(_ change: Int) -> some View {
+        HStack(spacing: 2) {
+            Image(systemName: change > 0 ? "arrow.up.right" : "arrow.down.right")
+            Text(formatMillions(abs(change)))
+        }
+        .font(.system(size: DSType.Size.micro, weight: .semibold).monospacedDigit())
+        .foregroundStyle(change > 0 ? Color.warning : Color.success)
+    }
+
+    /// The row's price, spoken.
+    ///
+    /// The chip carries no label of its own: it lives inside a button that
+    /// declares one, and VoiceOver reads the button rather than its children —
+    /// so news left on the chip would be news nobody hears.
+    private func spokenTagCost(_ tagCost: Int, for player: Player, change: Int?) -> String {
+        var spoken = "Tag cost \(formatMillions(tagCost)) for \(player.fullName)"
+        if let change {
+            spoken += ", \(change > 0 ? "up" : "down") \(formatMillions(abs(change))) since your last visit"
+        }
+        return spoken
     }
 
     // MARK: - Actions
@@ -834,14 +1124,7 @@ struct FranchiseTagView: View {
         }
     }
 
-    private func formatMillions(_ thousands: Int) -> String {
-        let millions = Double(thousands) / 1000.0
-        if millions >= 1.0 {
-            return String(format: "$%.1fM", millions)
-        } else {
-            return "$\(thousands)K"
-        }
-    }
+    private func formatMillions(_ thousands: Int) -> String { tagMillions(thousands) }
 
     /// Money as this screen actually prints it: thousands snapped to the tenth
     /// of a million `formatMillions` rounds to. Arithmetic a reader can check
@@ -869,6 +1152,437 @@ struct FranchiseTagView: View {
         let cid = career.id
         let allDesc = FetchDescriptor<Player>(predicate: #Predicate { $0.careerID == cid })
         allPlayers = (try? modelContext.fetch(allDesc)) ?? []
+
+        // The 32 clubs, for the breakdown's five rows. One fetch per load, not
+        // one per row: the sheet names the man's employer and `Player` carries
+        // only his `teamID`.
+        let teamsDesc = FetchDescriptor<Team>(predicate: #Predicate { $0.careerID == cid })
+        teamAbbreviations = ((try? modelContext.fetch(teamsDesc)) ?? [])
+            .reduce(into: [UUID: String]()) { $0[$1.id] = $1.abbreviation }
+
+        tagQuotes = buildTagQuotes()
+        captureTagPriceBaseline()
+    }
+}
+
+// MARK: - Tag Cost Breakdown Model
+//
+// #127 left the tag price stated but not shown: the rules banner says it is the
+// average of the top 5 salaries at the position, and nothing on the screen
+// could name those five. A price that is derived, unexplained and free to move
+// between two visits reads as the app changing its mind — which is precisely
+// what the screenshot audit recorded ("moved $3.3M between visits with no
+// note"). These four types are the answer: the quote, the men behind it, the
+// request that opens it, and the memory that makes "since your last visit" a
+// real measurement rather than a claim.
+//
+// File-scope `private` rather than nested in the view, because the sheet is its
+// own `View` and a type nested `private` inside `FranchiseTagView` is not
+// visible to it.
+
+/// One position's tag price, and everything needed to explain it.
+private struct TagQuote {
+    let position: Position
+    /// The five salaries the engine averages, highest first. Fewer than five
+    /// when the league has fewer salaried men at the position — the engine
+    /// divides by what it has, and so does the sheet.
+    let topFive: [TagTopSalary]
+    /// The straight average of `topFive`: the number the rules banner
+    /// describes, before the floor.
+    let average: Int
+    /// What the club is actually charged — the average, the floor, or $0 in
+    /// sandbox.
+    let price: Int
+    /// The cap-relative floor as it stands for this club, this year.
+    let floor: Int
+    /// The floor is doing the work: `price` is not the average.
+    let isFloored: Bool
+    let isSandbox: Bool
+
+    /// The salaries as the memory stores them.
+    var topFiveSalaries: [Int] { topFive.map(\.salary) }
+}
+
+/// One man in a position's top five.
+private struct TagTopSalary: Identifiable {
+    let id: UUID
+    let name: String
+    /// `nil` for a man with no club. A free agent still carrying a salary is in
+    /// the engine's own list, so he is in this one.
+    let teamAbbreviation: String?
+    let age: Int
+    let overall: Int
+    let salary: Int
+    /// Your own player. Worth marking: a club's own big contract raises the tag
+    /// it would have to pay to keep the next man at that position.
+    let isOwnPlayer: Bool
+
+    var subtitle: String {
+        "\(teamAbbreviation ?? "FA") \u{00B7} Age \(age) \u{00B7} \(overall) OVR"
+    }
+}
+
+/// One request to open the breakdown.
+///
+/// It carries the quote rather than a key into the view's table, so the
+/// presented sheet cannot have a nil case to render — the alternative is a
+/// `.sheet` whose content is an `if let` with an empty else, i.e. a modal that
+/// can come up blank.
+private struct TagBreakdownRequest: Identifiable {
+    let id = UUID()
+    let quote: TagQuote
+    let previous: TagPriceMemory.Quote?
+    /// The tagged man's BOOKED price, when the sheet was opened from his row.
+    /// Non-nil is what tells the sheet to explain that his number is fixed and
+    /// the market's is not.
+    let bookedCommitment: Int?
+    let playerName: String
+}
+
+/// What the screen quoted on its last visit, per position.
+///
+/// Persisted through `CareerScopedDefaults` because the whole complaint it
+/// answers is about what happened BETWEEN two visits — in-memory state cannot
+/// see across the gap.
+private struct TagPriceMemory: Codable {
+    /// The league year the quotes were taken in. See
+    /// `FranchiseTagView.captureTagPriceBaseline` for why a stamp from an
+    /// earlier season is discarded rather than shown.
+    var season: Int
+    /// `Position.rawValue` -> the quote.
+    var quotes: [String: Quote]
+
+    struct Quote: Codable {
+        /// What the screen printed as Tag Cost.
+        var price: Int
+        /// The five salaries behind it, so the breakdown can show WHICH rank
+        /// moved rather than only that the average did.
+        var topFive: [Int]
+    }
+}
+
+/// Money as this screen prints it, in one place: the view formats a dozen
+/// figures with it and the breakdown sheet another dozen, and two copies of a
+/// rounding rule is how a screen ends up disagreeing with its own sheet.
+private func tagMillions(_ thousands: Int) -> String {
+    let millions = Double(thousands) / 1000.0
+    if millions >= 1.0 {
+        return String(format: "$%.1fM", millions)
+    } else {
+        return "$\(thousands)K"
+    }
+}
+
+// MARK: - Tag Cost Breakdown Sheet
+
+/// Where a derived number shows its work.
+///
+/// Three questions, in the order a GM asks them: **what is this number** (the
+/// headline and the arithmetic that produced it), **what has it done since I
+/// last looked** (the change card, and the LAST VISIT column that says which
+/// rank moved), and **whose salaries are these** (the five rows). The notes at
+/// the foot cover the cases where the headline is not simply the average — the
+/// floor, sandbox, a thin position, and a tag already booked.
+///
+/// It reads nothing. Every figure arrives on the `TagBreakdownRequest`, priced
+/// in the one pass `buildTagQuotes` already makes, so opening the sheet does
+/// not walk the league a second time.
+private struct TagBreakdownSheet: View {
+
+    let request: TagBreakdownRequest
+    /// The league year the tag charges, already labelled by the parent — one
+    /// screen, one answer to "which season is this".
+    let tagSeasonLabel: String
+
+    @Environment(\.dismiss) private var dismiss
+
+    private var quote: TagQuote { request.quote }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: DSSpacing.md) {
+                    headline
+                    if let change { changeCard(change) }
+                    salaryTable
+                    notes
+                }
+                .padding(DSSpacing.lg)
+                .frame(maxWidth: DSLayout.contentMeasure)
+                .frame(maxWidth: .infinity)
+            }
+            .background(Color.backgroundPrimary.ignoresSafeArea())
+            .navigationTitle("\(quote.position.rawValue) Tag Cost")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.large])
+    }
+
+    // MARK: - Headline
+
+    private var headline: some View {
+        VStack(alignment: .leading, spacing: DSSpacing.xs) {
+            Text(tagMillions(quote.price))
+                .font(.system(size: DSType.Size.title1, weight: .bold).monospacedDigit())
+                .foregroundStyle(Color.accentGold)
+
+            Text(quote.isSandbox
+                 ? "Sandbox cap mode: a tag is booked at $0. The salaries below are what it would cost in a capped save."
+                 : "The average of the top 5 \(quote.position.rawValue) salaries in the league — charged against your \(tagSeasonLabel) cap, not this year's.")
+                .font(.subheadline)
+                .foregroundStyle(Color.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if !quote.topFive.isEmpty {
+                // The sum on one line. It is the shortest possible proof that
+                // the five rows underneath are the whole of the number above
+                // them, and it is the line a reader checks when he does not
+                // believe the price.
+                Text(arithmetic)
+                    .font(.system(size: DSType.Size.footnote).monospacedDigit())
+                    .foregroundStyle(Color.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(DSSpacing.md)
+        .background(Color.backgroundSecondary)
+        .clipShape(RoundedRectangle(cornerRadius: DSCornerRadius.card))
+        .overlay(
+            RoundedRectangle(cornerRadius: DSCornerRadius.card)
+                .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+        )
+    }
+
+    private var arithmetic: String {
+        let terms = quote.topFive.map { tagMillions($0.salary) }.joined(separator: " + ")
+        return "(\(terms)) \u{00F7} \(quote.topFive.count) = \(tagMillions(quote.average))"
+    }
+
+    // MARK: - Since Last Visit
+
+    /// The move, on the price the screen actually printed. Nil when there is no
+    /// baseline (a first visit this league year) or nothing moved.
+    private var change: Int? {
+        guard let previous = request.previous else { return nil }
+        let delta = displayRounded(quote.price) - displayRounded(previous.price)
+        return delta == 0 ? nil : delta
+    }
+
+    private func changeCard(_ change: Int) -> some View {
+        HStack(alignment: .top, spacing: DSSpacing.sm) {
+            Image(systemName: change > 0 ? "arrow.up.right" : "arrow.down.right")
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(change > 0 ? Color.warning : Color.success)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(change > 0 ? "Up" : "Down") \(tagMillions(abs(change))) since your last visit")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.textPrimary)
+                Text("It was \(tagMillions(request.previous?.price ?? 0)) when you last opened this screen. The tag follows the league's top five at the position, so any signing anywhere in the league can move it — including one you made yourself.")
+                    .font(.caption)
+                    .foregroundStyle(Color.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(DSSpacing.sm)
+        .background(
+            (change > 0 ? Color.warning : Color.success).opacity(0.08),
+            in: RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                .strokeBorder((change > 0 ? Color.warning : Color.success).opacity(0.3), lineWidth: 1)
+        )
+    }
+
+    // MARK: - The Five Salaries
+
+    private var salaryTable: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: "list.number")
+                    .foregroundStyle(Color.accentGold)
+                    .font(.system(size: DSType.Size.callout))
+                Text(tableTitle)
+                    .font(.headline)
+                    .foregroundStyle(Color.accentGold)
+                Spacer()
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
+            .background(Color.accentGold.opacity(0.08))
+
+            Divider().overlay(Color.surfaceBorder)
+
+            if quote.topFive.isEmpty {
+                CompactEmptyStateView(
+                    icon: "tray",
+                    message: "No salaried \(quote.position.rawValue) in the league — the tag falls back to its floor."
+                )
+                .padding(.horizontal, 8)
+                .padding(.vertical, 12)
+            } else {
+                VStack(spacing: 0) {
+                    DSListHeaderRow(
+                        density: .scan,
+                        reservesRank: true,
+                        portraitWidth: 0,
+                        identityLabel: "PLAYER"
+                    ) {
+                        DSColumnHeader("SALARY", width: DSListColumn.money, alignment: .trailing)
+                        if request.previous != nil {
+                            DSColumnHeader("LAST VISIT", width: DSListColumn.money, alignment: .trailing)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+
+                    Divider().overlay(Color.surfaceBorder.opacity(0.5))
+
+                    ForEach(Array(quote.topFive.enumerated()), id: \.element.id) { index, entry in
+                        salaryRow(entry, rank: index + 1, previous: previousSalary(at: index))
+                            .padding(.horizontal, 12)
+                        if index < quote.topFive.count - 1 {
+                            Divider()
+                                .overlay(Color.surfaceBorder.opacity(0.5))
+                                .padding(.horizontal, 8)
+                        }
+                    }
+                }
+                .padding(.vertical, 8)
+            }
+        }
+        .cardBackground()
+    }
+
+    /// "Top 5" is the rule; the count is what the league could actually supply.
+    /// The empty case still says 5, because there is nothing to have taken 0 of.
+    private var tableTitle: String {
+        let count = quote.topFive.isEmpty ? 5 : quote.topFive.count
+        return "Top \(count) \(quote.position.rawValue) Salaries"
+    }
+
+    private func salaryRow(_ entry: TagTopSalary, rank: Int, previous: Int?) -> some View {
+        DSListRow(
+            density: .scan,
+            rank: DSRank(value: rank),
+            portraitWidth: 0,
+            portrait: { EmptyView() },
+            identity: {
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 6) {
+                        Text(entry.name)
+                            .font(DSType.text(DSListDensity.scan.nameSize, .semibold, prose: true))
+                            .foregroundStyle(Color.textPrimary)
+                            .lineLimit(1)
+                        if entry.isOwnPlayer {
+                            // Your own contract is in your own tag. It is the
+                            // one thing on this list the GM can do something
+                            // about, so it is the one thing marked.
+                            Text("YOUR CLUB")
+                                .font(DSType.display(11, .heavy))
+                                .foregroundStyle(Color.accentGold)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(Color.accentGold.opacity(0.15), in: Capsule())
+                        }
+                    }
+                    Text(entry.subtitle)
+                        .font(DSType.display(11, .medium))
+                        .foregroundStyle(Color.textTertiary)
+                        .lineLimit(1)
+                }
+            },
+            columns: {
+                Text(tagMillions(entry.salary))
+                    .font(DSType.display(13, .bold))
+                    .foregroundStyle(Color.textPrimary)
+                    .dsColumn(DSListColumn.money, alignment: .trailing)
+                if request.previous != nil {
+                    Text(previous.map(tagMillions) ?? "\u{2014}")
+                        .font(DSType.display(11, .semibold))
+                        .foregroundStyle(previousTint(current: entry.salary, previous: previous))
+                        .dsColumn(DSListColumn.money, alignment: .trailing)
+                }
+            }
+        )
+    }
+
+    /// What sat at this rank last visit. Nil when the position had fewer men at
+    /// a salary then than it does now — an em dash rather than a zero, because
+    /// "there was nobody here" is not "he earned nothing".
+    private func previousSalary(at index: Int) -> Int? {
+        guard let previous = request.previous, index < previous.topFive.count else { return nil }
+        return previous.topFive[index]
+    }
+
+    /// Tertiary while the rank is unchanged, tinted when it moved: the column is
+    /// there to be scanned for the line that is not grey.
+    private func previousTint(current: Int, previous: Int?) -> Color {
+        guard let previous, displayRounded(previous) != displayRounded(current) else {
+            return Color.textTertiary
+        }
+        return current > previous ? Color.warning : Color.success
+    }
+
+    // MARK: - Notes
+
+    @ViewBuilder
+    private var notes: some View {
+        VStack(alignment: .leading, spacing: DSSpacing.xs) {
+            if let booked = request.bookedCommitment {
+                note(
+                    "lock.fill",
+                    "\(request.playerName)'s tag is booked at \(tagMillions(booked)) and does not move with the market. The price above is what tagging a \(quote.position.rawValue) would cost today."
+                )
+            }
+            if quote.isFloored {
+                note(
+                    "arrow.up.to.line",
+                    "The average is under the league's minimum tag (\(tagMillions(quote.floor))), so the tag is charged at that floor instead."
+                )
+            }
+            // No sandbox note: the headline already says the tag is $0 there,
+            // and saying it twice on one sheet is the app arguing with itself.
+            if !quote.topFive.isEmpty && quote.topFive.count < 5 {
+                note(
+                    "exclamationmark.triangle.fill",
+                    "Only \(quote.topFive.count) salaried \(quote.position.rawValue) in the league, so the average is taken over \(quote.topFive.count) rather than 5."
+                )
+            }
+            note(
+                "arrow.triangle.2.circlepath",
+                "This price is re-read every time the screen opens. Re-signings, free-agent deals and trades anywhere in the league move the top five, and the tag with it."
+            )
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(DSSpacing.sm)
+        .background(Color.backgroundSecondary.opacity(0.6), in: RoundedRectangle(cornerRadius: DSCornerRadius.inline))
+    }
+
+    private func note(_ icon: String, _ text: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: icon)
+                .font(.caption)
+                .foregroundStyle(Color.textTertiary)
+                .frame(width: 16)
+            Text(text)
+                .font(.caption)
+                .foregroundStyle(Color.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// The same snap-to-the-printed-figure rule the parent screen uses, so a
+    /// delta on the row and a delta in this sheet cannot disagree.
+    private func displayRounded(_ thousands: Int) -> Int {
+        Int((Double(thousands) / 100.0).rounded()) * 100
     }
 }
 

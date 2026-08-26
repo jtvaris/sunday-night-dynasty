@@ -35,7 +35,9 @@ import Foundation
 /// Goddard. Growing the pools is the only lever that reaches the callers which
 /// draw a bare `randomName()` (`LeagueGenerator`, `CoachingEngine`,
 /// `ScoutingEngine`); `uniqueName` below handles the cohorts that thread a
-/// `used` set. Every addition went through gate E before it landed here.
+/// `used` set, and the league ledger beside it handles the *other* axis — the
+/// name that is unique inside its own class and already belongs to a man three
+/// lockers down. Every addition went through gate E before it landed here.
 enum RandomNameGenerator {
 
     // MARK: - First Names
@@ -207,6 +209,76 @@ enum RandomNameGenerator {
     /// exists to avoid. Three never reaches that walk.
     private static let givenNameQuota = 3
 
+    // MARK: - The league ledger
+
+    /// How many recently issued full names the generator refuses to issue a
+    /// second time, across cohorts.
+    ///
+    /// `used` is a COHORT set: `DraftClassBuilder` hands in an empty one per
+    /// class and throws it away when the class is built, so the only thing
+    /// standing between a rookie and the veteran already on his roster was the
+    /// 195 × 349 = 68 055-pair product. A league carries 32 × 53 men and takes
+    /// a 350-man board every spring, so the expected number of prospects who
+    /// arrive already named after somebody in the league is
+    /// 1 696 × 350 / 68 055 ≈ 8.7 per class — which is how two different Kaleo
+    /// Hinsdales ended up on Houston.
+    ///
+    /// **2 625 = 7.5 × the 350-man class `DraftClassBuilder.build` defaults
+    /// to**, i.e. the mean first-round career the balance harness asserts
+    /// (`career` 6.6b, "R1 mean career >= 7.5 seasons"): a name stays taken for
+    /// at least as long as the man who took it is expected to still be playing
+    /// under it. It also clears the 2 558 people who can be nameable at one
+    /// time — 32 × (53 active + 16 practice squad) + one 350-man board — so the
+    /// whole live population is covered even in the week a fresh class lands.
+    ///
+    /// Measured over 40 consecutive classes, rookies arriving with a name a man
+    /// still in the league already carries, per class:
+    ///
+    /// | career length | before | after |
+    /// |---|---|---|
+    /// | 5 seasons (`career` 6.6a band 4.5–6.0) | 5.50 | **0.00** |
+    /// | 8 seasons (just past 6.6b's R1 mean) | 6.85 | **0.06** |
+    /// | 12 seasons | 12.18 | 1.38 |
+    /// | 15 seasons | 13.65 | 3.85 |
+    ///
+    /// The far tail is deliberately not free. A 15-year veteran outlives the
+    /// horizon, and buying his last years costs a ledger big enough to start
+    /// crowding the product — the trade the bound below exists to make.
+    ///
+    /// Bounded on purpose, not for memory. An unbounded ledger *saturates*:
+    /// `tools/balance-harness`'s `career` scenario builds 600 classes in one
+    /// process (20 leagues × 30 seasons) and `draftclass` builds 200, which is
+    /// 210 000 names against a 68 055-pair product. Every draw would fall
+    /// through to the cross-product walk below and then hand back duplicates
+    /// anyway — a slower generator producing the exact defect this fixes.
+    private static let leagueNameHorizon = 2_625
+
+    /// Full names issued since the last sweep, and the sweep before it.
+    ///
+    /// Two generational buckets rather than one FIFO queue: ageing a name out
+    /// is then a pointer swap instead of a `removeFirst` per issued name, and
+    /// the ledger provably remembers between `leagueNameHorizon` and twice that
+    /// many names at every point in the cycle. Eviction can never resurrect a
+    /// duplicate *inside* a class, because intra-class uniqueness is the
+    /// cohort `used` set's job and it is never swept.
+    private static var issuedNames: Set<String> = []
+    private static var priorIssuedNames: Set<String> = []
+
+    /// Whether this full name is still spoken for league-wide.
+    private static func isIssued(_ fullName: String) -> Bool {
+        issuedNames.contains(fullName) || priorIssuedNames.contains(fullName)
+    }
+
+    /// Records a full name league-wide, ageing the older bucket out once the
+    /// newer one has filled the horizon.
+    private static func recordIssued(_ fullName: String) {
+        issuedNames.insert(fullName)
+        if issuedNames.count >= leagueNameHorizon {
+            priorIssuedNames = issuedNames
+            issuedNames = []
+        }
+    }
+
     /// Draws a full name no caller has taken yet, recording it in `used`.
     ///
     /// The two halves are drawn independently, so a cohort the size of a draft
@@ -215,6 +287,15 @@ enum RandomNameGenerator {
     /// rookie classes that came out with three Tanguays in them. Uniqueness on
     /// the full name alone did not fix that; `surnameQuota` and `givenNameQuota`
     /// are the parts that do.
+    ///
+    /// The two guarantees are deliberately scoped differently. The QUOTAS are
+    /// cohort-scoped — "at most two Abernathys on this board" is a statement
+    /// about the list a user is reading, and league-wide it is arithmetically
+    /// impossible anyway (349 surnames × 2 = 698 men against a 1 696-man
+    /// league). FULL-NAME uniqueness is league-scoped, through
+    /// `leagueNameHorizon` above: two Kaleo Hinsdales are unresolvable on any
+    /// screen that shows either of them, and they reached the same roster
+    /// precisely because the cohort set died with the class that made it.
     ///
     /// Rejection sampling is the fast path. When it stops paying — a crowded
     /// pool rather than bad luck — the cross product is walked from a random
@@ -255,18 +336,25 @@ enum RandomNameGenerator {
     /// every caller — they hand in an empty one and never read it back — and a
     /// marker can never be mistaken for a full name because it is joined by "@"
     /// or "#" rather than a space, so the quotas need no second parameter.
+    ///
+    /// The league ledger is tested here, beside the cohort set, for the same
+    /// reason both slots are located before either is written: a name rejected
+    /// league-wide must not have already burned a given-name or surname slot on
+    /// a man who was never issued, and those leaks accumulate over a class.
     private static func claim(
         first: String,
         last: String,
         in used: inout Set<String>
     ) -> Bool {
-        guard !used.contains("\(first) \(last)"),
+        let fullName = "\(first) \(last)"
+        guard !used.contains(fullName), !isIssued(fullName),
               let givenSlot = freeSlot(for: "\(first)@", upTo: givenNameQuota, in: used),
               let surnameSlot = freeSlot(for: "\(last)#", upTo: surnameQuota, in: used)
         else { return false }
         used.insert(givenSlot)
         used.insert(surnameSlot)
-        used.insert("\(first) \(last)")
+        used.insert(fullName)
+        recordIssued(fullName)
         return true
     }
 

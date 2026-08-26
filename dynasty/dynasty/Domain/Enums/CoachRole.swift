@@ -22,6 +22,35 @@ enum CoachRole: String, Codable, CaseIterable, Identifiable {
     /// reduce setbacks, and lower re-injury risk after early returns.
     case headTrainer             = "HeadTrainer"
 
+    // MARK: - Which side of the ball the role installs
+
+    /// `true` when the role calls offensive plays.
+    ///
+    /// Kept on the enum rather than in a view, because the same split is asked
+    /// for in four places (`CoachingEngine.offensiveRole`, which is private to
+    /// that file, `SchemeSelectionView.staffCoachFit`,
+    /// `CareerDashboardView.calculateCoachFit`, and the hire card's scheme
+    /// list). New readers should use this; the existing three carry their own
+    /// copies and must agree with it.
+    ///
+    /// A head coach is on NEITHER side by role — he is generated with one
+    /// named scheme or both, so his sides come from the schemes he actually
+    /// holds, not from the chair he sits in.
+    var installsOffence: Bool {
+        switch self {
+        case .offensiveCoordinator, .qbCoach, .rbCoach, .wrCoach, .olCoach: return true
+        default: return false
+        }
+    }
+
+    /// `true` when the role calls defensive plays. See ``installsOffence``.
+    var installsDefence: Bool {
+        switch self {
+        case .defensiveCoordinator, .dlCoach, .lbCoach, .dbCoach: return true
+        default: return false
+        }
+    }
+
     // MARK: - Staff Families (task #96)
 
     /// The corner of a staff a role belongs to. Used by the hiring market to

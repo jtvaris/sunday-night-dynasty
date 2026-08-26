@@ -198,29 +198,83 @@ enum ScoutingEngine {
         return true
     }
 
-    // MARK: - Phase-Based Scout Report Generation
+    // MARK: - Report Precision (the one exchange rate)
 
-    /// Generate a scouting report for a prospect based on scout's abilities and the scouting phase.
-    static func generateScoutReport(
+    /// The two numbers `generateScoutReport` derives from a scout BEFORE it
+    /// rolls anything: the ± band it puts on the prospect's overall, and the
+    /// accuracy every letter grade and prose note is cut with.
+    struct ReportPrecision {
+        /// Half-width of the uniform noise on `scoutedOverall`, in OVR points.
+        let overallError: Int
+        /// The accuracy fed to the grade/note generators.
+        let gradingAccuracy: Int
+    }
+
+    /// Prices a scout on one position, in the report's own units.
+    ///
+    /// Split out of `generateScoutReport` because the pro-day screen has to
+    /// CHOOSE between two scouts, and the rule it chose with ("the specialist,
+    /// else the most accurate man") recommended dominated picks. The
+    /// specialisation bonus is +3 ERROR points and accuracy buys error points at
+    /// 15 per 100, so a 59-accuracy specialist and a 79-accuracy generalist file
+    /// the same ±3 read — and every specialist further below that line was a
+    /// strictly worse report the screen recommended anyway. There is exactly one
+    /// defensible exchange rate between accuracy points and the +3, and it is
+    /// the one the report itself uses; this makes that rate callable rather than
+    /// re-derivable, so the screen and the roll can never disagree.
+    ///
+    /// - Parameters:
+    ///   - position: the position being evaluated, or `nil` to price the scout
+    ///     with no specialisation or focus edge in play.
+    ///   - onHomeBeat: whether the evaluation happens inside the scout's own
+    ///     region — see `isHomeRegion(scout:college:)`.
+    static func reportPrecision(
         scout: Scout,
-        prospect: CollegeProspect,
-        phase: ScoutingPhase
-    ) -> ScoutingReport {
+        position: Position?,
+        onHomeBeat: Bool = false
+    ) -> ReportPrecision {
         // 1. Noise range based on scout accuracy (with familiarity bonus)
-        let familiarityBonus = scout.seasonsInRole >= 2 ? 5 : 0
+        let familiarityBonus = (scout.seasonsInRole >= 2 ? 5 : 0)
+            + (onHomeBeat ? homeBeatAccuracyBonus : 0)
         let effectiveBaseAccuracy = min(99, scout.accuracy + familiarityBonus)
         let errorRange = max(2, Int(15.0 * (1.0 - Double(effectiveBaseAccuracy) / 100.0)))
 
         // Position specialization bonus
         var accuracyBonus = 0
-        if let spec = scout.positionSpecialization, spec == prospect.position {
+        if let position, let spec = scout.positionSpecialization, spec == position {
             accuracyBonus += 3
         }
         // Focus position bonus: +15% accuracy when scout focuses on the prospect's position
-        if let focusPos = scout.focusPosition, focusPos == prospect.position {
+        if let position, let focusPos = scout.focusPosition, focusPos == position {
             accuracyBonus += 15
         }
-        let adjustedError = max(1, errorRange - accuracyBonus)
+        return ReportPrecision(
+            overallError: max(1, errorRange - accuracyBonus),
+            gradingAccuracy: min(99, scout.accuracy + accuracyBonus)
+        )
+    }
+
+    // MARK: - Phase-Based Scout Report Generation
+
+    /// Generate a scouting report for a prospect based on scout's abilities and the scouting phase.
+    ///
+    /// - Parameter onHomeBeat: `true` when the scout is working inside his own
+    ///   region. Only `attendProDay` passes it — the combine is in Indianapolis
+    ///   and belongs to nobody's beat, and film study happens at the facility.
+    static func generateScoutReport(
+        scout: Scout,
+        prospect: CollegeProspect,
+        phase: ScoutingPhase,
+        onHomeBeat: Bool = false
+    ) -> ScoutingReport {
+        // 1. Noise range and grading accuracy — one source of truth, shared with
+        //    the pro-day screen's scout picker.
+        let precision = reportPrecision(
+            scout: scout,
+            position: prospect.position,
+            onHomeBeat: onHomeBeat
+        )
+        let adjustedError = precision.overallError
 
         // 2. Scouted overall with noise
         let overallNoise = Int.random(in: -adjustedError...adjustedError)
@@ -248,7 +302,7 @@ enum ScoutingEngine {
         }
 
         // 5. Strength and weakness notes (position-appropriate, 2-3 each)
-        let effectiveAccuracy = min(99, scout.accuracy + accuracyBonus)
+        let effectiveAccuracy = precision.gradingAccuracy
         let strengthNotes = generatePositionStrengths(for: prospect, accuracy: effectiveAccuracy)
         let weaknessNotes = generatePositionWeaknesses(for: prospect, accuracy: effectiveAccuracy)
 
@@ -1543,6 +1597,18 @@ enum ScoutingEngine {
         let collegeIndices = prospects.indices.filter { prospects[$0].college == college }
         guard !collegeIndices.isEmpty else { return }
 
+        // Is this the scout's own beat? The regional map existed and nothing
+        // outside the weekly-report loop read it, so the five regional roles
+        // were five identical scouts wearing different labels the moment the
+        // season ended. A pro day is the one trip where the answer should show:
+        // the man who has been in that building all autumn reads the workout
+        // sharper than a colleague seeing the place for the first time.
+        //
+        // A property of (scout, school), so it is answered once rather than per
+        // prospect. False for the chief and the extras by construction — see
+        // `regionByCollege`.
+        let onHomeBeat = isHomeRegion(scout: scout, college: college)
+
         for i in collegeIndices {
             let phys = prospects[i].truePhysical
             let position = prospects[i].position
@@ -1551,7 +1617,8 @@ enum ScoutingEngine {
             if position == .K || position == .P {
                 prospects[i].proDayCompleted = true
                 // Still generate a scout report
-                let report = generateScoutReport(scout: scout, prospect: prospects[i], phase: .proDay)
+                let report = generateScoutReport(
+                    scout: scout, prospect: prospects[i], phase: .proDay, onHomeBeat: onHomeBeat)
                 applyReport(report: report, to: prospects[i], scout: scout)
                 continue
             }
@@ -1574,7 +1641,8 @@ enum ScoutingEngine {
             prospects[i].proDayCompleted = true
 
             // Generate scout report at Pro Day phase
-            let report = generateScoutReport(scout: scout, prospect: prospects[i], phase: .proDay)
+            let report = generateScoutReport(
+                scout: scout, prospect: prospects[i], phase: .proDay, onHomeBeat: onHomeBeat)
             applyReport(report: report, to: prospects[i], scout: scout)
         }
 
@@ -2608,6 +2676,78 @@ enum ScoutingEngine {
             return colleges // Chief Scout and extra scouts can evaluate any prospect
         }
     }
+
+    /// The beat name the pro-day screen prints — "East", "South".
+    ///
+    /// Lives next to the table above so the label and the school list cannot
+    /// drift apart. `ScoutRole.displayName` spells the same thing "Regional
+    /// Scout (East)", which is a job title, not a place.
+    static func regionName(_ role: ScoutRole) -> String? {
+        switch role {
+        case .regionalScout1: return "East"
+        case .regionalScout2: return "West"
+        case .regionalScout3: return "South"
+        case .regionalScout4: return "North"
+        case .regionalScout5: return "Central"
+        case .chiefScout, .extraScout1, .extraScout2: return nil
+        }
+    }
+
+    /// School → the regional scout whose beat it is on.
+    ///
+    /// Derived from `colleges(forRegion:)`, so there is one region table in the
+    /// app and this is a view of it, not a second copy.
+    ///
+    /// **The chief and the two extra scouts are deliberately absent.** Their
+    /// entry in that table is the whole college list, which is a REACH rule
+    /// ("may evaluate any prospect"), not a familiarity one. Reading it as
+    /// familiarity would make the chief a local at all 40 schools — he would
+    /// collect the bonus below everywhere while the five men who actually work a
+    /// beat could never out-read him on their own ground, which is the opposite
+    /// of what a beat is for.
+    private static let regionByCollege: [String: ScoutRole] = {
+        let beats: [ScoutRole] = [
+            .regionalScout1, .regionalScout2, .regionalScout3,
+            .regionalScout4, .regionalScout5,
+        ]
+        var map: [String: ScoutRole] = [:]
+        for role in beats {
+            for college in colleges(forRegion: role) where map[college] == nil {
+                map[college] = role
+            }
+        }
+        return map
+    }()
+
+    /// Whose beat a school sits on, or `nil` when no region owns it.
+    static func homeRegion(for college: String) -> ScoutRole? {
+        regionByCollege[college]
+    }
+
+    /// Whether this scout is on his own ground at this school.
+    static func isHomeRegion(scout: Scout, college: String) -> Bool {
+        guard let owner = regionByCollege[college] else { return false }
+        return scout.scoutRole == owner
+    }
+
+    /// What working his own beat is worth to a scout, in accuracy points.
+    ///
+    /// Deliberately the SAME +5, through the same channel, as the tenure
+    /// familiarity bonus `reportPrecision` already applies for
+    /// `seasonsInRole >= 2`: both say "he knows this ground", so pricing them
+    /// differently would need a reason neither the design nor the code has. It
+    /// is also exactly half the +10 `generateWeeklyReports` pays the chief for
+    /// running the department, which is the right ordering — knowing the campus
+    /// is worth less than being the best evaluator in the building.
+    ///
+    /// In error terms +5 accuracy is at most ONE point off the ± band, and over
+    /// the accuracy draw `CoachingEngine.generateScoutCandidates` actually
+    /// produces for a regional scout (experience 1–15 → 25…85) it averages
+    /// 0.73 of a point against a mean band of 6.9 — a 10.7 % narrowing, and
+    /// nothing at all above accuracy 87 where `max(2, …)` has already floored.
+    /// A nudge, matching the pro day's standing as the CHEAP half of the
+    /// circuit (`runLeagueProDays`).
+    static let homeBeatAccuracyBonus = 5
 
     // MARK: - Weekly Scout Reports (In-Season)
 

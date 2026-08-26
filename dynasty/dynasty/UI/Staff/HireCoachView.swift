@@ -58,6 +58,38 @@ struct HireCoachView: View {
     /// the bench, and the badge must not vanish from the row the user just used.
     @State private var marketCandidateIDs: Set<UUID> = []
 
+    // MARK: - Shortlist (side-by-side compare)
+    //
+    // The board poses a genuine trade-off — the man with the higher OVR is
+    // rarely the man with the better value, the better scheme fit and the
+    // shorter queue of rival clubs — and the screen could only ever show ONE
+    // candidate at a time: the profile is a full-screen cover, so holding two
+    // of them in mind meant closing one, scrolling back to the row, opening the
+    // other, and remembering twelve attributes in between.
+
+    /// The pinned candidates, in the order the user picked them.
+    ///
+    /// An ORDERED array rather than a `Set`: the compare table lays its columns
+    /// out in pick order, and a `Set` would let the two men swap sides between
+    /// openings for no reason the user can see.
+    ///
+    /// A pin deliberately survives the filters. Narrowing to "Affordable" after
+    /// pinning an expensive man is exactly how the trade-off gets examined, so
+    /// the pin store is keyed off `candidates`, not off the filtered list.
+    @State private var compareIDs: [UUID] = []
+    /// The rows the compare table is showing, frozen when it opened.
+    ///
+    /// Built at the tap rather than inside the sheet's content closure because
+    /// `Coach.potentialLabel(seasonsOnTeam:)` rolls fresh noise on EVERY call —
+    /// derived per render, a candidate's ceiling would flicker between "High"
+    /// and "Elite" while the user was reading the column.
+    @State private var compareEntries: [CoachCompareEntry] = []
+    @State private var showCompareSheet: Bool = false
+    /// The candidate whose profile the compare table asked for, waiting for the
+    /// table to finish dismissing — the same hand-off `pendingHire` uses, for
+    /// the same reason: one presentation at a time.
+    @State private var pendingProfileID: UUID?
+
     // MARK: - Performance caches
     // Recomputed via refreshCaches() on dependency changes — avoids per-render O(n log n) sorts in body.
     @State private var cachedSortedCandidates: [Coach] = []
@@ -285,6 +317,68 @@ struct HireCoachView: View {
         cachedCurrentCoachOVR = currentCoach.map { coachOverall($0) }
     }
 
+    // MARK: - Shortlist
+
+    /// The pinned candidates, in pick order.
+    ///
+    /// Resolved against `candidates` (≈20-30 rows) rather than kept as a second
+    /// store of `Coach` objects, so a pin can never outlive the pool it came
+    /// from — and a man who is no longer on the board simply drops out.
+    private var comparePinned: [Coach] {
+        compareIDs.compactMap { id in candidates.first { $0.id == id } }
+    }
+
+    /// Pins or unpins a candidate. At the cap the OLDEST pin drops out rather
+    /// than the tap doing nothing — `BigBoardView`'s prospect tray settled this
+    /// question already, and a box that looks live and ignores you is how the
+    /// same feature reads as broken.
+    private func toggleCompare(_ candidate: Coach) {
+        if let index = compareIDs.firstIndex(of: candidate.id) {
+            compareIDs.remove(at: index)
+        } else {
+            if compareIDs.count >= CandidateCompareSheet.maxCandidates {
+                compareIDs.removeFirst()
+            }
+            compareIDs.append(candidate.id)
+        }
+    }
+
+    /// Freezes the pinned men into table rows, then opens the table.
+    private func openCompare() {
+        compareEntries = comparePinned.map(makeCompareEntry)
+        showCompareSheet = true
+    }
+
+    /// One column's worth of derived data, computed once per opening.
+    ///
+    /// Everything here already exists on this screen — the row prints most of
+    /// it — but the row recomputes it per render. The table asks the same
+    /// questions of three men at once and would otherwise re-run
+    /// `CoachCarouselEngine.demand` on every scroll frame.
+    private func makeCompareEntry(_ coach: Coach) -> CoachCompareEntry {
+        let ovr = coachOverall(coach)
+        let potential = coach.potentialLabel(seasonsOnTeam: 0)
+        let value = valueScore(coach)
+        let fit = schemeFit(for: coach)
+        return CoachCompareEntry(
+            id: coach.id,
+            coach: coach,
+            ovr: ovr,
+            ovrDelta: cachedCurrentCoachOVR.map { ovr - $0 },
+            valueLabel: value.label,
+            valueColor: value.color,
+            valueRatio: valueRatio(coach),
+            schemeName: schemeLabel(coach),
+            fitLabel: fit?.label,
+            fitColor: fit?.color,
+            potentialLabel: potential,
+            potentialColor: potentialBadgeColor(potential),
+            rivalTeams: CoachCarouselEngine.demand(for: coach).rivalTeams,
+            isMarketCandidate: marketCandidateIDs.contains(coach.id),
+            isAffordable: coach.salary <= remainingBudget
+        )
+    }
+
     var body: some View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
@@ -316,10 +410,11 @@ struct HireCoachView: View {
                 Divider().overlay(Color.surfaceBorder)
 
                 // #149: Horizontally scrollable table for cramped columns.
-                // Indicator shown: the row lays out at 780 pt, so in anything
+                // Indicator shown: the row lays out at 820 pt, so in anything
                 // narrower Salary and Val are off the right edge and a hidden
                 // indicator left the gold role-dot of a clipped header as the
-                // only hint that more columns existed.
+                // only hint that more columns existed. (780 before the compare
+                // column joined the row.)
                 ScrollView(.horizontal, showsIndicators: true) {
                     VStack(spacing: 0) {
                         // Sticky column headers
@@ -347,10 +442,14 @@ struct HireCoachView: View {
                             }
                         }
                     }
-                    .frame(minWidth: 780, maxWidth: .infinity)
+                    .frame(minWidth: 820, maxWidth: .infinity)
                 }
                 .frame(maxWidth: .infinity)
             }
+            // The shortlist tray (§2.5's commit surface). It exists only while
+            // something is pinned, so the board keeps its full height until the
+            // user actually asks for a comparison.
+            .safeAreaInset(edge: .bottom) { compareTray }
         }
         .navigationTitle("Hire \(role.displayName)")
         .navigationBarTitleDisplayMode(.large)
@@ -413,8 +512,39 @@ struct HireCoachView: View {
                 userCoachingStyle: career.coachingStyle,
                 marketRivals: CoachCarouselEngine.demand(for: candidate).rivalTeams,
                 onHire: { hire(candidate) },
-                onRejected: { rejectedCandidates.insert(candidate.id) }
+                onRejected: {
+                    rejectedCandidates.insert(candidate.id)
+                    // A man who has signed elsewhere is out of the decision, so
+                    // he leaves the shortlist too — otherwise the tray keeps
+                    // quoting his salary and the table keeps a dead column.
+                    compareIDs.removeAll { $0 == candidate.id }
+                }
             )
+        }
+        // The compare table is a `.sheet`, not a second `.fullScreenCover`: two
+        // covers on one view fight over the same presentation slot, and the
+        // negotiation cover above must win it. `onDismiss` hands the profile
+        // request over once the table is genuinely gone — the same ordering
+        // `pendingHire` relies on.
+        .sheet(isPresented: $showCompareSheet, onDismiss: {
+            if let id = pendingProfileID {
+                pendingProfileID = nil
+                selectedCandidate = candidates.first { $0.id == id }
+            }
+        }) {
+            // Two columns is the floor: a "comparison" of one man is the
+            // profile he already has.
+            if compareEntries.count >= 2 {
+                CandidateCompareSheet(
+                    entries: compareEntries,
+                    role: role,
+                    currentCoachName: currentCoach?.fullName,
+                    onOpenProfile: { id in
+                        pendingProfileID = id
+                        showCompareSheet = false
+                    }
+                )
+            }
         }
     }
 
@@ -608,7 +738,7 @@ struct HireCoachView: View {
                     // anywhere — the flame's meaning reached VoiceOver and nobody
                     // else. This is the only legend on the screen, so it explains
                     // the badges too, not just the colours.
-                    Text("TOP 3 = best OVR on the board \u{00B7} FREE AGENT = real out-of-work coach \u{00B7} flame = rival teams bidding \u{00B7} Ceiling badge = potential, Elite down to Low")
+                    Text("TOP 3 = best OVR on the board \u{00B7} FREE AGENT = real out-of-work coach \u{00B7} flame = rival teams bidding \u{00B7} Ceiling badge = potential, Elite down to Low \u{00B7} VS box = pin up to \(CandidateCompareSheet.maxCandidates) and hold them side by side")
                         .font(.system(size: DSType.Size.micro, weight: .medium))
                         .foregroundStyle(Color.textSecondary)
                 }
@@ -695,6 +825,11 @@ struct HireCoachView: View {
             // Status column
             Text("")
                 .frame(width: 64)
+            // Shortlist column. A word rather than an icon: every other cell in
+            // this strip is a word, and "VS" is the question the box answers.
+            Text("VS")
+                .frame(width: 40)
+                .accessibilityLabel("Compare column")
         }
         .font(.system(size: DSType.Size.micro, weight: .semibold))
         .foregroundStyle(Color.textTertiary)
@@ -773,196 +908,207 @@ struct HireCoachView: View {
         // Fix #63: OVR delta vs current coach (cached current OVR — avoids per-row recompute)
         let ovrDelta: Int? = cachedCurrentCoachOVR.map { ovr - $0 }
 
-        return Button {
-            if !isRejected { selectedCandidate = candidate }
-        } label: {
-            HStack(spacing: 0) {
-                // Fix #55: Larger name area with personality + top-3 badge
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 4) {
-                        Text(candidate.fullName)
-                            .font(.system(size: DSType.Size.body, weight: .bold))
-                            .foregroundStyle(isOverBudget ? Color.textTertiary : Color.textPrimary)
-                            .lineLimit(1)
-                        // Potential label badge
-                        let potLabel = candidate.potentialLabel(seasonsOnTeam: 0)
-                        Text(potLabel)
-                            .font(.system(size: DSType.Size.micro, weight: .bold))
-                            .foregroundStyle(potentialBadgeColor(potLabel))
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 1)
-                            .background(potentialBadgeColor(potLabel).opacity(0.15), in: RoundedRectangle(cornerRadius: 3))
-                        // Fix #56 + #16: Self-explanatory "TOP 3" badge for top-3 candidates.
-                        if isTop3 {
-                            Text("TOP 3")
-                                .font(.system(size: DSType.Size.micro, weight: .black))
-                                .foregroundStyle(Color.backgroundPrimary)
+        return HStack(spacing: 0) {
+            Button {
+                if !isRejected { selectedCandidate = candidate }
+            } label: {
+                HStack(spacing: 0) {
+                    // Fix #55: Larger name area with personality + top-3 badge
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 4) {
+                            Text(candidate.fullName)
+                                .font(.system(size: DSType.Size.body, weight: .bold))
+                                .foregroundStyle(isOverBudget ? Color.textTertiary : Color.textPrimary)
+                                .lineLimit(1)
+                            // Potential label badge
+                            let potLabel = candidate.potentialLabel(seasonsOnTeam: 0)
+                            Text(potLabel)
+                                .font(.system(size: DSType.Size.micro, weight: .bold))
+                                .foregroundStyle(potentialBadgeColor(potLabel))
                                 .padding(.horizontal, 4)
                                 .padding(.vertical, 1)
-                                .background(Color.accentGold, in: RoundedRectangle(cornerRadius: 3))
-                        }
-                        // Task #96: a real out-of-work coach from the league's
-                        // market — somebody the news has already talked about,
-                        // possibly a man this club lost — as opposed to an
-                        // invented candidate. Worth calling out: he has a real
-                        // record, and every AI club is bidding for him too.
-                        if marketCandidateIDs.contains(candidate.id) {
-                            Text("FREE AGENT")
-                                .font(.system(size: DSType.Size.micro, weight: .black))
-                                .foregroundStyle(Color.accentBlue)
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 1)
-                                .background(Color.accentBlue.opacity(0.15), in: RoundedRectangle(cornerRadius: 3))
-                                .accessibilityLabel("Free agent coach, currently out of work")
-                        }
-                        // R30 Market 2.0: rival-demand badge — flame + how many
-                        // other teams are pursuing this candidate.
-                        let demand = CoachCarouselEngine.demand(for: candidate)
-                        if demand.rivalTeams > 0 {
-                            let demandColor: Color = demand.level == .high ? .danger : .warning
-                            HStack(spacing: 2) {
-                                Image(systemName: "flame.fill")
-                                    .font(.system(size: DSType.Size.micro))
-                                Text("\(demand.rivalTeams)")
-                                    .font(.system(size: DSType.Size.micro, weight: .black).monospacedDigit())
+                                .background(potentialBadgeColor(potLabel).opacity(0.15), in: RoundedRectangle(cornerRadius: 3))
+                            // Fix #56 + #16: Self-explanatory "TOP 3" badge for top-3 candidates.
+                            if isTop3 {
+                                Text("TOP 3")
+                                    .font(.system(size: DSType.Size.micro, weight: .black))
+                                    .foregroundStyle(Color.backgroundPrimary)
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 1)
+                                    .background(Color.accentGold, in: RoundedRectangle(cornerRadius: 3))
                             }
-                            .foregroundStyle(demandColor)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 1)
-                            .background(demandColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 3))
-                            .accessibilityLabel("\(demand.rivalTeams) rival teams pursuing")
-                        }
-                    }
-                    HStack(spacing: 4) {
-                        // Fix #59 + #148: Coaching personality — shorter labels to avoid truncation.
-                        // #19: Tappable personality reveals an effects menu.
-                        Menu {
-                            Text(candidate.personality.displayName)
-                            ForEach(personalityEffectsForRow(candidate), id: \.self) { line in
-                                Text(line)
-                            }
-                        } label: {
-                            HStack(spacing: 2) {
-                                Text(candidate.personality.shortLabel)
-                                    .font(.system(size: DSType.Size.caption, weight: .medium))
+                            // Task #96: a real out-of-work coach from the league's
+                            // market — somebody the news has already talked about,
+                            // possibly a man this club lost — as opposed to an
+                            // invented candidate. Worth calling out: he has a real
+                            // record, and every AI club is bidding for him too.
+                            if marketCandidateIDs.contains(candidate.id) {
+                                Text("FREE AGENT")
+                                    .font(.system(size: DSType.Size.micro, weight: .black))
                                     .foregroundStyle(Color.accentBlue)
-                                    .lineLimit(1)
-                                Image(systemName: "info.circle")
-                                    .font(.system(size: DSType.Size.micro))
-                                    .foregroundStyle(Color.accentBlue.opacity(0.85))
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 1)
+                                    .background(Color.accentBlue.opacity(0.15), in: RoundedRectangle(cornerRadius: 3))
+                                    .accessibilityLabel("Free agent coach, currently out of work")
+                            }
+                            // R30 Market 2.0: rival-demand badge — flame + how many
+                            // other teams are pursuing this candidate.
+                            let demand = CoachCarouselEngine.demand(for: candidate)
+                            if demand.rivalTeams > 0 {
+                                let demandColor: Color = demand.level == .high ? .danger : .warning
+                                HStack(spacing: 2) {
+                                    Image(systemName: "flame.fill")
+                                        .font(.system(size: DSType.Size.micro))
+                                    Text("\(demand.rivalTeams)")
+                                        .font(.system(size: DSType.Size.micro, weight: .black).monospacedDigit())
+                                }
+                                .foregroundStyle(demandColor)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(demandColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 3))
+                                .accessibilityLabel("\(demand.rivalTeams) rival teams pursuing")
                             }
                         }
-                        .buttonStyle(.plain)
-                        // Fix #63: OVR delta vs current
-                        if let delta = ovrDelta {
-                            Text(delta >= 0 ? "+\(delta)" : "\(delta)")
-                                .font(.system(size: DSType.Size.caption, weight: .bold).monospacedDigit())
-                                .foregroundStyle(delta > 0 ? Color.success : delta < 0 ? Color.dangerText : Color.textTertiary)
+                        HStack(spacing: 4) {
+                            // Fix #59 + #148: Coaching personality — shorter labels to avoid truncation.
+                            // #19: Tappable personality reveals an effects menu.
+                            Menu {
+                                Text(candidate.personality.displayName)
+                                ForEach(personalityEffectsForRow(candidate), id: \.self) { line in
+                                    Text(line)
+                                }
+                            } label: {
+                                HStack(spacing: 2) {
+                                    Text(candidate.personality.shortLabel)
+                                        .font(.system(size: DSType.Size.caption, weight: .medium))
+                                        .foregroundStyle(Color.accentBlue)
+                                        .lineLimit(1)
+                                    Image(systemName: "info.circle")
+                                        .font(.system(size: DSType.Size.micro))
+                                        .foregroundStyle(Color.accentBlue.opacity(0.85))
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            // Fix #63: OVR delta vs current
+                            if let delta = ovrDelta {
+                                Text(delta >= 0 ? "+\(delta)" : "\(delta)")
+                                    .font(.system(size: DSType.Size.caption, weight: .bold).monospacedDigit())
+                                    .foregroundStyle(delta > 0 ? Color.success : delta < 0 ? Color.dangerText : Color.textTertiary)
+                            }
                         }
                     }
-                }
-                .frame(minWidth: 160, maxWidth: .infinity, alignment: .leading)
+                    .frame(minWidth: 160, maxWidth: .infinity, alignment: .leading)
 
-                // Age
-                Text("\(candidate.age)")
-                    .font(.system(size: DSType.Size.caption).monospacedDigit())
-                    .foregroundStyle(Color.textSecondary)
-                    .frame(width: 34)
+                    // Age
+                    Text("\(candidate.age)")
+                        .font(.system(size: DSType.Size.caption).monospacedDigit())
+                        .foregroundStyle(Color.textSecondary)
+                        .frame(width: 34)
 
-                // Scheme
-                Text(schemeLabel(candidate))
-                    .font(.system(size: DSType.Size.caption, weight: .medium))
-                    .foregroundStyle(Color.accentBlue)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.91)  // floor the shrink at 10pt (11 * 0.91)
-                    .frame(width: 70)
+                    // Scheme
+                    Text(schemeLabel(candidate))
+                        .font(.system(size: DSType.Size.caption, weight: .medium))
+                        .foregroundStyle(Color.accentBlue)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.91)  // floor the shrink at 10pt (11 * 0.91)
+                        .frame(width: 70)
 
-                // Fix #38: Scheme/roster fit indicator — only when team has comparable scheme.
-                if hasInferableTeamScheme {
+                    // Fix #38: Scheme/roster fit indicator — only when team has comparable scheme.
+                    if hasInferableTeamScheme {
+                        Group {
+                            if let fit = schemeFit(for: candidate) {
+                                Circle()
+                                    .fill(fit.color)
+                                    .frame(width: 8, height: 8)
+                                    .overlay(
+                                        Circle()
+                                            .strokeBorder(fit.color.opacity(0.5), lineWidth: 1)
+                                    )
+                                    .accessibilityLabel("Scheme fit: \(fit.label)")
+                            } else {
+                                Text("--")
+                                    .font(.system(size: DSType.Size.micro))
+                                    .foregroundStyle(Color.textTertiary)
+                            }
+                        }
+                        .frame(width: 32)
+                    }
+
+                    // OVR numeric
+                    Text("\(ovr)")
+                        .font(.system(size: DSType.Size.caption, weight: .bold, design: .monospaced))
+                        .foregroundStyle(Color.forRating(ovr))
+                        .frame(width: 36)
+
+                    // Key skill numerics
+                    Text("\(candidate.playCalling)")
+                        .font(.system(size: DSType.Size.caption, design: .monospaced))
+                        .foregroundStyle(Color.forRating(candidate.playCalling))
+                        .frame(width: 36)
+
+                    Text("\(candidate.playerDevelopment)")
+                        .font(.system(size: DSType.Size.caption, design: .monospaced))
+                        .foregroundStyle(Color.forRating(candidate.playerDevelopment))
+                        .frame(width: 36)
+
+                    Text("\(candidate.gamePlanning)")
+                        .font(.system(size: DSType.Size.caption, design: .monospaced))
+                        .foregroundStyle(Color.forRating(candidate.gamePlanning))
+                        .frame(width: 36)
+
+                    // Salary
+                    Text(salaryFormatted(candidate.salary))
+                        .font(.system(size: DSType.Size.caption, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(isOverBudget ? Color.dangerText : Color.textSecondary)
+                        .frame(width: 56)
+
+                    // Fix #60: Value badge
+                    Text(val.label)
+                        .font(.system(size: DSType.Size.micro, weight: .bold))
+                        .foregroundStyle(val.color)
+                        .frame(width: 40)
+
+                    // Status indicator
                     Group {
-                        if let fit = schemeFit(for: candidate) {
-                            Circle()
-                                .fill(fit.color)
-                                .frame(width: 8, height: 8)
-                                .overlay(
-                                    Circle()
-                                        .strokeBorder(fit.color.opacity(0.5), lineWidth: 1)
-                                )
-                                .accessibilityLabel("Scheme fit: \(fit.label)")
+                        if isHired {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: DSType.Size.body))
+                                .foregroundStyle(Color.success)
+                        } else if isRejected {
+                            // #271: Rejected candidate badge
+                            Text("Signed elsewhere")
+                                .font(.system(size: DSType.Size.micro, weight: .bold))
+                                .foregroundStyle(Color.textTertiary)
+                                .lineLimit(1)
+                        } else if isOverBudget {
+                            Image(systemName: "xmark.circle")
+                                .font(.system(size: DSType.Size.body))
+                                .foregroundStyle(Color.dangerText.opacity(0.85))
                         } else {
-                            Text("--")
-                                .font(.system(size: DSType.Size.micro))
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: DSType.Size.caption, weight: .semibold))
                                 .foregroundStyle(Color.textTertiary)
                         }
                     }
-                    .frame(width: 32)
+                    .frame(width: 64)
                 }
-
-                // OVR numeric
-                Text("\(ovr)")
-                    .font(.system(size: DSType.Size.caption, weight: .bold, design: .monospaced))
-                    .foregroundStyle(Color.forRating(ovr))
-                    .frame(width: 36)
-
-                // Key skill numerics
-                Text("\(candidate.playCalling)")
-                    .font(.system(size: DSType.Size.caption, design: .monospaced))
-                    .foregroundStyle(Color.forRating(candidate.playCalling))
-                    .frame(width: 36)
-
-                Text("\(candidate.playerDevelopment)")
-                    .font(.system(size: DSType.Size.caption, design: .monospaced))
-                    .foregroundStyle(Color.forRating(candidate.playerDevelopment))
-                    .frame(width: 36)
-
-                Text("\(candidate.gamePlanning)")
-                    .font(.system(size: DSType.Size.caption, design: .monospaced))
-                    .foregroundStyle(Color.forRating(candidate.gamePlanning))
-                    .frame(width: 36)
-
-                // Salary
-                Text(salaryFormatted(candidate.salary))
-                    .font(.system(size: DSType.Size.caption, weight: .semibold).monospacedDigit())
-                    .foregroundStyle(isOverBudget ? Color.dangerText : Color.textSecondary)
-                    .frame(width: 56)
-
-                // Fix #60: Value badge
-                Text(val.label)
-                    .font(.system(size: DSType.Size.micro, weight: .bold))
-                    .foregroundStyle(val.color)
-                    .frame(width: 40)
-
-                // Status indicator
-                Group {
-                    if isHired {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: DSType.Size.body))
-                            .foregroundStyle(Color.success)
-                    } else if isRejected {
-                        // #271: Rejected candidate badge
-                        Text("Signed elsewhere")
-                            .font(.system(size: DSType.Size.micro, weight: .bold))
-                            .foregroundStyle(Color.textTertiary)
-                            .lineLimit(1)
-                    } else if isOverBudget {
-                        Image(systemName: "xmark.circle")
-                            .font(.system(size: DSType.Size.body))
-                            .foregroundStyle(Color.dangerText.opacity(0.85))
-                    } else {
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: DSType.Size.caption, weight: .semibold))
-                            .foregroundStyle(Color.textTertiary)
-                    }
-                }
-                .frame(width: 64)
+                .padding(.vertical, 8)
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .disabled(isRejected)
+            .opacity(isRejected ? 0.45 : isOverBudget ? 0.6 : 1.0)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(candidate.fullName), \(candidate.personality.displayName), age \(candidate.age), overall \(ovr), salary \(candidate.salary) thousand, value \(val.label)")
+            .accessibilityHint(isRejected ? "Already rejected" : "Tap to view candidate details")
+
+            // The pin sits OUTSIDE the row button rather than inside its
+            // label: a control nested in a Button's label does not reliably
+            // get the tap, and the row's tap is the way into the negotiation
+            // — the one thing on this board that must never misfire.
+            compareToggle(for: candidate, isRejected: isRejected)
         }
-        .buttonStyle(.plain)
-        .disabled(isRejected)
-        .opacity(isRejected ? 0.45 : isOverBudget ? 0.6 : 1.0)
+        .padding(.horizontal, 12)
         .background(
             Group {
                 if isHired {
@@ -985,9 +1131,100 @@ struct HireCoachView: View {
                     .frame(width: 3)
             }
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(candidate.fullName), \(candidate.personality.displayName), age \(candidate.age), overall \(ovr), salary \(candidate.salary) thousand, value \(val.label)")
-        .accessibilityHint(isRejected ? "Already rejected" : "Tap to view candidate details")
+    }
+
+    // MARK: - Shortlist Controls
+
+    /// The per-row pin. The same checkbox vocabulary team selection's compare
+    /// mode uses, so "empty square = not picked, blue tick = picked" means one
+    /// thing across the app.
+    ///
+    /// Always on the row rather than behind a compare MODE: this board's tap is
+    /// the way into the negotiation, and a mode that repurposes it would put a
+    /// second meaning on the most important gesture on the screen.
+    private func compareToggle(for candidate: Coach, isRejected: Bool) -> some View {
+        let isPinned = compareIDs.contains(candidate.id)
+        return Button {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                toggleCompare(candidate)
+            }
+        } label: {
+            Image(systemName: isPinned ? "checkmark.square.fill" : "square")
+                .font(.system(size: DSType.Size.callout, weight: .semibold))
+                .foregroundStyle(isPinned ? Color.accentBlue : Color.textTertiary)
+                .frame(width: 40, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isRejected)
+        .accessibilityLabel(isPinned
+                            ? "Remove \(candidate.fullName) from the comparison"
+                            : "Add \(candidate.fullName) to the comparison")
+        .accessibilityHint(!isPinned && compareIDs.count >= CandidateCompareSheet.maxCandidates
+                           ? "Replaces the first pinned candidate"
+                           : "")
+    }
+
+    /// The tray that appears with the first pin.
+    @ViewBuilder
+    private var compareTray: some View {
+        if !compareIDs.isEmpty {
+            DSActionBar(
+                explainer: .init(
+                    title: "Shortlist",
+                    message: compareTrayMessage
+                ),
+                ghost: .init(
+                    title: "Clear",
+                    caption: "unpins all",
+                    handler: {
+                        withAnimation(.easeInOut(duration: 0.18)) { compareIDs.removeAll() }
+                    }
+                ),
+                primary: .init(
+                    title: "Compare (\(compareIDs.count))",
+                    caption: compareIDs.count < 2 ? "pin one more" : "side by side",
+                    isEnabled: compareIDs.count >= 2,
+                    accessibilityLabel: "Compare \(compareIDs.count) pinned candidates",
+                    handler: { openCompare() }
+                )
+            )
+            .transition(.move(edge: .bottom))
+        }
+    }
+
+    /// States the trade-off in the bar itself.
+    ///
+    /// With exactly two men pinned the interesting fact is not that they are
+    /// pinned — it is which of them is better and what the better one costs
+    /// extra, which is the whole question the table then answers in detail. The
+    /// third case (better AND cheaper) is worth its own sentence: that is not a
+    /// trade-off at all, and the user should be told so rather than left to
+    /// discover it in a table.
+    private var compareTrayMessage: String {
+        let pinned = comparePinned
+        guard let first = pinned.first else { return "" }
+        if pinned.count == 1 {
+            return "**\(first.fullName)** pinned \u{2014} pin one more to hold them side by side."
+        }
+        guard pinned.count == 2 else {
+            return pinned.map(\.lastName).joined(separator: " \u{00B7} ") + " \u{2014} three men, one table."
+        }
+        let second = pinned[1]
+        let gap = coachOverall(first) - coachOverall(second)
+        if gap == 0 {
+            return "**\(first.lastName)** and **\(second.lastName)** rate level at **\(coachOverall(first)) OVR** \u{2014} money and fit decide it."
+        }
+        let better = gap > 0 ? first : second
+        let other = gap > 0 ? second : first
+        let payGap = better.salary - other.salary
+        if payGap > 0 {
+            return "**\(better.lastName)** is **+\(abs(gap)) OVR** on \(other.lastName), at **\(salaryFormatted(payGap))/yr** more."
+        }
+        if payGap == 0 {
+            return "**\(better.lastName)** is **+\(abs(gap)) OVR** on \(other.lastName) for the same money."
+        }
+        return "**\(better.lastName)** is **+\(abs(gap)) OVR** on \(other.lastName) and **\(salaryFormatted(-payGap))/yr** cheaper \u{2014} no trade-off here."
     }
 
     // MARK: - Helpers
@@ -1192,6 +1429,11 @@ struct HireCoachView: View {
         // genuinely gone. No `dismiss()` either — the result sheet owns the
         // ending now, and closing this view would have pulled the surface out
         // from under it (P5's one-dismissal corollary).
+        // The seat is filled, so the shortlist weighing candidates for it has
+        // nothing left to weigh — and the tray must not still be offering a
+        // comparison over the result sheet.
+        compareIDs.removeAll()
+
         pendingHire = (name: candidate.fullName, role: role.displayName, salary: candidate.salary)
         selectedCandidate = nil
     }
@@ -2156,6 +2398,59 @@ private struct CandidateDetailSheet: View {
         return rawValue
     }
 
+    /// The schemes this candidate's job actually installs — the only ones worth
+    /// grading him on.
+    ///
+    /// Both seeding paths (`CoachingEngine.initializeSchemeExpertise` and the
+    /// byte-identical one in `LeagueGenerator`) write EVERY scheme in the game
+    /// onto EVERY coach: the primary at 75–95, its family at 40–65, and all the
+    /// rest at `15 + adaptability/99*15 + 0...10`, which can never exceed 40.
+    /// So the raw map graded an offensive coordinator on seven defensive
+    /// systems and filled his card with a dozen F rows for work nobody will
+    /// ever ask him to do. The map itself is deliberately left whole underneath
+    /// — scheme fit reads it in full through `Coach.expertise(for:)`, and
+    /// trimming it would move simulated outcomes. This is a display filter and
+    /// nothing else.
+    ///
+    /// The side comes from the ROLE, using the same split every other
+    /// scheme-fit surface in the app already uses
+    /// (`CoachRole.installsOffence` / `.installsDefence`, which
+    /// `CoachingEngine`'s own file-private pair mirrors, as do
+    /// `SchemeSelectionView.staffCoachFit` and
+    /// `CareerDashboardView.calculateCoachFit`), UNION any side on which the
+    /// man holds an actual named scheme. That union is load-bearing, not
+    /// decoration: `role` is rewritten on promotion and by the AI staff refill
+    /// (`CoachCarouselEngine`, `WeekAdvancer`) while `offensiveScheme` /
+    /// `defensiveScheme` are never rewritten after construction — so an
+    /// ex-head-coach working as a DC really does carry a 75–95 offensive
+    /// scheme that his role alone would hide. It is also how a head coach —
+    /// whose role sits on neither side, and who is generated with one side or
+    /// both — gets exactly the sides he has.
+    ///
+    /// That cross-side case is why there is no separate "off-side expertise"
+    /// line: the genuine article is already in this list at its real number,
+    /// and a dedicated line for everyone else could only ever print an F,
+    /// because no writer in the codebase ever lifts an off-side value above
+    /// the 40 baseline ceiling.
+    ///
+    /// Roles that install neither side and carry no scheme (special teams,
+    /// strength, medical) yield an empty list, and the block hides.
+    private var relevantSchemeExpertise: [(key: String, value: Int)] {
+        var keys: Set<String> = []
+        if candidate.role.installsOffence || candidate.offensiveScheme != nil {
+            keys.formUnion(OffensiveScheme.allCases.map(\.rawValue))
+        }
+        if candidate.role.installsDefence || candidate.defensiveScheme != nil {
+            keys.formUnion(DefensiveScheme.allCases.map(\.rawValue))
+        }
+        // Name breaks value ties: `sorted` is not stable and these rows are
+        // `ForEach` identities, so equal expertise used to be free to re-order
+        // itself between redraws.
+        return candidate.schemeExpertise
+            .filter { keys.contains($0.key) }
+            .sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }
+    }
+
     private var schemeFitCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("SCHEME FIT")
@@ -2238,8 +2533,10 @@ private struct CandidateDetailSheet: View {
                     .foregroundStyle(Color.textTertiary)
             }
 
-            // #88: Scheme expertise levels
-            if !candidate.schemeExpertise.isEmpty {
+            // #88: Scheme expertise levels — narrowed to the schemes this
+            // candidate's role installs; see `relevantSchemeExpertise`.
+            let schemeRows = relevantSchemeExpertise
+            if !schemeRows.isEmpty {
                 Divider().overlay(Color.surfaceBorder)
 
                 Text("SCHEME EXPERTISE")
@@ -2247,7 +2544,7 @@ private struct CandidateDetailSheet: View {
                     .tracking(1)
                     .foregroundStyle(Color.textTertiary)
 
-                ForEach(candidate.schemeExpertise.sorted(by: { $0.value > $1.value }), id: \.key) { scheme, value in
+                ForEach(schemeRows, id: \.key) { scheme, value in
                     HStack(spacing: 8) {
                         Text(schemeDisplayName(scheme))
                             .font(.system(size: DSType.Size.caption, weight: .medium))
@@ -2712,6 +3009,490 @@ private struct NegotiationResult {
     /// #92: Counter-offer amount (in thousands) if the coach didn't walk away.
     let counterOffer: Int?
     let message: String
+}
+
+// MARK: - Candidate Compare Table
+
+/// One pinned candidate, frozen at the moment the table opened.
+///
+/// A snapshot rather than a live read of the `Coach`: the ceiling label rolls
+/// fresh noise on every call and the rival count runs a hash per lookup, and a
+/// comparison whose numbers move while you read it is worse than none.
+private struct CoachCompareEntry: Identifiable {
+    let id: UUID
+    let coach: Coach
+    let ovr: Int
+    /// Against the incumbent in this role; nil when the seat is empty.
+    let ovrDelta: Int?
+    let valueLabel: String
+    let valueColor: Color
+    /// The raw OVR-per-million behind `valueLabel` — the label buckets four
+    /// ways, so two men can both read "Good" and still not be equal.
+    let valueRatio: Double
+    let schemeName: String
+    let fitLabel: String?
+    let fitColor: Color?
+    let potentialLabel: String
+    let potentialColor: Color
+    let rivalTeams: Int
+    let isMarketCandidate: Bool
+    let isAffordable: Bool
+}
+
+/// Two or three candidates held side by side: one measure per row, the leader
+/// on each row marked in gold.
+///
+/// The board can rank by any single column, which is precisely what it cannot
+/// answer — the man with the best OVR is rarely the man with the best value,
+/// the better scheme fit and the shorter queue of rival clubs, and the profile
+/// is a full-screen cover, so weighing two of them meant closing one and
+/// remembering twelve attributes.
+private struct CandidateCompareSheet: View {
+    let entries: [CoachCompareEntry]
+    let role: CoachRole
+    /// The incumbent's name, so the overall row can say what the delta is
+    /// measured against instead of printing a bare signed number.
+    let currentCoachName: String?
+    let onOpenProfile: (UUID) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    /// Three is the cap. A fourth column does not fit a 1032 pt portrait iPad
+    /// once the faces and the "Open profile" buttons are in, and a four-way
+    /// coaching decision is not one anybody makes. (`BigBoardView` caps its
+    /// prospect tray the same way, at four narrower columns.)
+    static let maxCandidates = 3
+
+    /// The measure column. Sized for "Contract Negotiation" at the caption step.
+    private let labelWidth: CGFloat = 150
+
+    // MARK: Attribute rows
+
+    private struct AttributeRow: Identifiable {
+        /// The `Coach` property name — the same key `CoachRole.focusAttributes`
+        /// is written in, which is what makes the gold focus dot free.
+        let id: String
+        let label: String
+        let path: KeyPath<Coach, Int>
+    }
+
+    private var attributeRows: [AttributeRow] {
+        let all: [AttributeRow] = [
+            .init(id: "playCalling",        label: "Play Calling",        path: \.playCalling),
+            .init(id: "playerDevelopment",  label: "Player Development",  path: \.playerDevelopment),
+            .init(id: "gamePlanning",       label: "Game Planning",       path: \.gamePlanning),
+            .init(id: "scoutingAbility",    label: "Scouting Ability",    path: \.scoutingAbility),
+            .init(id: "recruiting",         label: "Recruiting",          path: \.recruiting),
+            .init(id: "motivation",         label: "Motivation",          path: \.motivation),
+            .init(id: "discipline",         label: "Discipline",          path: \.discipline),
+            .init(id: "adaptability",       label: "Adaptability",        path: \.adaptability),
+            .init(id: "mediaHandling",      label: "Media Handling",      path: \.mediaHandling),
+            .init(id: "contractNegotiation", label: "Contract Negotiation", path: \.contractNegotiation),
+            .init(id: "moraleInfluence",    label: "Morale Influence",    path: \.moraleInfluence),
+            .init(id: "reputation",         label: "Reputation",          path: \.reputation)
+        ]
+        // The attributes this job leans on come first — the same set the board's
+        // header marks with a gold dot. A stable partition, so the rest keep the
+        // order the profile lists them in.
+        let focus = role.focusAttributes
+        return all.filter { focus.contains($0.id) } + all.filter { !focus.contains($0.id) }
+    }
+
+    // MARK: Leaders
+
+    /// The single leader on a measure, or nil when two men tie on it.
+    ///
+    /// A tie is left unmarked rather than broken by array order: the whole point
+    /// of the table is that it does not invent a winner the numbers do not name.
+    private func leaderID(by score: (CoachCompareEntry) -> Double) -> UUID? {
+        guard let best = entries.map(score).max() else { return nil }
+        let winners = entries.filter { score($0) == best }
+        return winners.count == 1 ? winners.first?.id : nil
+    }
+
+    private func fitRank(_ entry: CoachCompareEntry) -> Double {
+        switch entry.fitLabel {
+        case "Great": return 3
+        case "OK":    return 2
+        case "Poor":  return 1
+        default:      return 0
+        }
+    }
+
+    private var anyFitRated: Bool { entries.contains { $0.fitLabel != nil } }
+
+    /// The leader's surname for the summary band, or "Level" for a tie.
+    private func leaderName(by score: (CoachCompareEntry) -> Double) -> String {
+        guard let id = leaderID(by: score),
+              let entry = entries.first(where: { $0.id == id }) else { return "Level" }
+        return entry.coach.lastName
+    }
+
+    // MARK: Body
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color.backgroundPrimary.ignoresSafeArea()
+
+                VStack(spacing: 0) {
+                    // Identity is pinned above the scroll: the one thing a
+                    // comparison table can never afford is a column of numbers
+                    // whose owner has scrolled off the top.
+                    columnHeader
+
+                    Divider().overlay(Color.surfaceBorder)
+
+                    ScrollView {
+                        VStack(spacing: 0) {
+                            leaderBand
+                            measureSection
+                            attributeSection
+                            footnote
+                        }
+                        .frame(maxWidth: DSLayout.wideMeasure)
+                        .frame(maxWidth: .infinity)
+                        .padding(.bottom, DSSpacing.lg)
+                    }
+                }
+            }
+            .navigationTitle("Compare Candidates")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                        .foregroundStyle(Color.textPrimary)
+                }
+            }
+        }
+    }
+
+    // MARK: Column header
+
+    private var columnHeader: some View {
+        HStack(alignment: .top, spacing: 0) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("HEAD TO HEAD")
+                    .font(.system(size: DSType.Size.caption, weight: .black))
+                    .tracking(1.5)
+                    .foregroundStyle(Color.accentGold)
+                Text("for the \(role.displayName) job")
+                    .font(.system(size: DSType.Size.micro, weight: .medium))
+                    .foregroundStyle(Color.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(width: labelWidth, alignment: .leading)
+            .padding(.top, 8)
+
+            ForEach(entries) { entry in
+                VStack(spacing: 6) {
+                    PersonFaceView(coach: entry.coach, size: .medium, ringColor: .accentGold)
+
+                    Text(entry.coach.fullName)
+                        .font(.system(size: DSType.Size.body, weight: .bold))
+                        .foregroundStyle(Color.textPrimary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+
+                    HStack(spacing: 4) {
+                        Text(entry.coach.personality.shortLabel)
+                            .font(.system(size: DSType.Size.micro, weight: .semibold))
+                            .foregroundStyle(Color.accentBlue)
+                        if entry.isMarketCandidate {
+                            Text("FREE AGENT")
+                                .font(.system(size: DSType.Size.micro, weight: .black))
+                                .foregroundStyle(Color.accentBlue)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(Color.accentBlue.opacity(0.15), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
+                        }
+                    }
+                    .lineLimit(1)
+
+                    // The way out of the table and into the negotiation. It sits
+                    // in the header, not at the foot of the columns, because the
+                    // twelve attribute rows below it would put a footer button
+                    // under a scroll on a portrait iPad.
+                    Button("Open profile") { onOpenProfile(entry.id) }
+                        .buttonStyle(.dsSecondary)
+                        .accessibilityLabel("Open \(entry.coach.fullName)'s profile")
+                }
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .frame(maxWidth: DSLayout.wideMeasure)
+        .frame(maxWidth: .infinity)
+        .background(Color.backgroundSecondary)
+    }
+
+    // MARK: Who wins what
+
+    /// The verdict, before the detail. Four chips is the whole trade-off: the
+    /// best coach, the best price, the best return on the money, and the best
+    /// fit — and it is the rare candidate who takes all four.
+    private var leaderBand: some View {
+        var chips: [(label: String, winner: String)] = [
+            ("Best overall", leaderName { Double($0.ovr) }),
+            ("Best value", leaderName { $0.valueRatio }),
+            ("Cheapest", leaderName { -Double($0.coach.salary) })
+        ]
+        if anyFitRated {
+            chips.append(("Best scheme fit", leaderName(by: fitRank)))
+        }
+
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("WHO WINS WHAT")
+                .font(.system(size: DSType.Size.caption, weight: .black))
+                .tracking(1.5)
+                .foregroundStyle(Color.accentGold)
+
+            HStack(spacing: 8) {
+                ForEach(chips, id: \.label) { chip in
+                    VStack(spacing: 2) {
+                        Text(chip.label.uppercased())
+                            .font(.system(size: DSType.Size.micro, weight: .semibold))
+                            .tracking(0.6)
+                            .foregroundStyle(Color.textTertiary)
+                            .lineLimit(1)
+                        Text(chip.winner)
+                            .font(.system(size: DSType.Size.callout, weight: .black))
+                            .foregroundStyle(chip.winner == "Level" ? Color.textSecondary : Color.textPrimary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: DSCornerRadius.inline))
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("\(chip.label): \(chip.winner)")
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: Measures
+
+    private var measureSection: some View {
+        VStack(spacing: 0) {
+            compareRow(
+                "Overall",
+                leaderID: leaderID { Double($0.ovr) },
+                spoken: { entry in
+                    guard let delta = entry.ovrDelta else { return "\(entry.ovr)" }
+                    return "\(entry.ovr), \(delta >= 0 ? "plus" : "minus") \(abs(delta)) on the incumbent"
+                }
+            ) { entry in
+                VStack(spacing: 2) {
+                    Text("\(entry.ovr)")
+                        .font(.system(size: DSType.Size.title3, weight: .black).monospacedDigit())
+                        .foregroundStyle(Color.forRating(entry.ovr))
+                    if let delta = entry.ovrDelta, let incumbent = currentCoachName {
+                        Text("\(delta >= 0 ? "+" : "")\(delta) vs \(incumbent)")
+                            .font(.system(size: DSType.Size.micro, weight: .semibold))
+                            .foregroundStyle(delta > 0 ? Color.success : delta < 0 ? Color.dangerText : Color.textTertiary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                    }
+                }
+            }
+
+            compareRow(
+                "Asking salary",
+                leaderID: leaderID { -Double($0.coach.salary) },
+                spoken: { entry in salaryFormatted(entry.coach.salary) + (entry.isAffordable ? "" : ", over budget") }
+            ) { entry in
+                VStack(spacing: 2) {
+                    Text(salaryFormatted(entry.coach.salary))
+                        .font(.system(size: DSType.Size.callout, weight: .bold).monospacedDigit())
+                        .foregroundStyle(entry.isAffordable ? Color.textPrimary : Color.dangerText)
+                    if !entry.isAffordable {
+                        Text("over budget")
+                            .font(.system(size: DSType.Size.micro, weight: .bold))
+                            .foregroundStyle(Color.dangerText)
+                    }
+                }
+            }
+
+            compareRow(
+                "Value",
+                leaderID: leaderID { $0.valueRatio },
+                spoken: { $0.valueLabel }
+            ) { entry in
+                Text(entry.valueLabel)
+                    .font(.system(size: DSType.Size.callout, weight: .bold))
+                    .foregroundStyle(entry.valueColor)
+            }
+
+            compareRow(
+                "Scheme",
+                leaderID: anyFitRated ? leaderID(by: fitRank) : nil,
+                spoken: { entry in "\(entry.schemeName), fit \(entry.fitLabel ?? "not rated")" }
+            ) { entry in
+                VStack(spacing: 2) {
+                    Text(entry.schemeName)
+                        .font(.system(size: DSType.Size.footnote, weight: .semibold))
+                        .foregroundStyle(Color.accentBlue)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                    if let fitLabel = entry.fitLabel, let fitColor = entry.fitColor {
+                        HStack(spacing: 4) {
+                            Circle().fill(fitColor).frame(width: 6, height: 6)
+                            Text(fitLabel)
+                                .font(.system(size: DSType.Size.micro, weight: .bold))
+                                .foregroundStyle(fitColor)
+                        }
+                    }
+                }
+            }
+
+            // No leader on the ceiling: `potentialLabel` is a scouting estimate
+            // carrying deliberate noise, so a gold cell here would be marking a
+            // dice roll as a fact.
+            compareRow("Ceiling", spoken: { $0.potentialLabel }) { entry in
+                Text(entry.potentialLabel)
+                    .font(.system(size: DSType.Size.footnote, weight: .bold))
+                    .foregroundStyle(entry.potentialColor)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+            }
+
+            // Nor on age: young is upside on a coach and old is a proven record,
+            // and the sim does not rate one above the other.
+            compareRow(
+                "Age \u{00B7} experience",
+                spoken: { entry in "age \(entry.coach.age), \(entry.coach.yearsExperience) years" }
+            ) { entry in
+                Text("\(entry.coach.age) \u{00B7} \(entry.coach.yearsExperience) yrs")
+                    .font(.system(size: DSType.Size.footnote, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(Color.textSecondary)
+            }
+
+            // Fewer rivals is easier to sign, not a better coach — coloured for
+            // risk, deliberately not crowned.
+            compareRow(
+                "Rival interest",
+                spoken: { entry in entry.rivalTeams == 0 ? "no rivals" : "\(entry.rivalTeams) rival teams" }
+            ) { entry in
+                HStack(spacing: 4) {
+                    if entry.rivalTeams > 0 {
+                        Image(systemName: "flame.fill")
+                            .font(.system(size: DSType.Size.micro))
+                    }
+                    Text(entry.rivalTeams == 0 ? "Clear run" : "\(entry.rivalTeams) team\(entry.rivalTeams == 1 ? "" : "s")")
+                        .font(.system(size: DSType.Size.footnote, weight: .semibold))
+                }
+                .foregroundStyle(entry.rivalTeams >= 2 ? Color.dangerText : entry.rivalTeams == 1 ? Color.warning : Color.success)
+            }
+
+            compareRow("Personality", spoken: { $0.coach.personality.displayName }) { entry in
+                Text(entry.coach.personality.displayName)
+                    .font(.system(size: DSType.Size.footnote, weight: .semibold))
+                    .foregroundStyle(Color.accentBlue)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+        }
+    }
+
+    // MARK: Attributes
+
+    private var attributeSection: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Text("ATTRIBUTES")
+                    .font(.system(size: DSType.Size.caption, weight: .black))
+                    .tracking(1.5)
+                    .foregroundStyle(Color.accentGold)
+                Spacer()
+                Circle()
+                    .fill(Color.accentGold)
+                    .frame(width: 4, height: 4)
+                Text("what this job leans on")
+                    .font(.system(size: DSType.Size.micro, weight: .medium))
+                    .foregroundStyle(Color.textTertiary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+            .padding(.bottom, 8)
+
+            ForEach(attributeRows) { row in
+                compareRow(
+                    row.label,
+                    focus: role.focusAttributes.contains(row.id),
+                    leaderID: leaderID { Double($0.coach[keyPath: row.path]) },
+                    spoken: { entry in "\(entry.coach[keyPath: row.path])" }
+                ) { entry in
+                    Text("\(entry.coach[keyPath: row.path])")
+                        .font(.system(size: DSType.Size.callout, weight: .bold, design: .monospaced))
+                        .foregroundStyle(Color.forRating(entry.coach[keyPath: row.path]))
+                }
+            }
+        }
+    }
+
+    private var footnote: some View {
+        Text("A gold cell leads that line. Ceiling, age and rival interest are not crowned \u{2014} the first is an estimate and the other two are trade-offs, not scores.")
+            .font(.system(size: DSType.Size.micro, weight: .medium))
+            .foregroundStyle(Color.textTertiary)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: Row builder
+
+    private func compareRow<Cell: View>(
+        _ label: String,
+        focus: Bool = false,
+        leaderID: UUID? = nil,
+        spoken: @escaping (CoachCompareEntry) -> String,
+        @ViewBuilder cell: @escaping (CoachCompareEntry) -> Cell
+    ) -> some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .center, spacing: 0) {
+                HStack(spacing: 4) {
+                    // #18's gold dot, reused: the same mark means the same thing
+                    // on the board's header and in this table.
+                    if focus {
+                        Circle()
+                            .fill(Color.accentGold)
+                            .frame(width: 4, height: 4)
+                    }
+                    Text(label)
+                        .font(.system(size: DSType.Size.caption, weight: focus ? .black : .semibold))
+                        .foregroundStyle(focus ? Color.accentGold : Color.textTertiary)
+                    Spacer(minLength: 0)
+                }
+                .frame(width: labelWidth, alignment: .leading)
+
+                ForEach(entries) { entry in
+                    cell(entry)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: DSCornerRadius.tight)
+                                .fill(entry.id == leaderID ? Color.accentGold.opacity(0.12) : Color.clear)
+                        )
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("\(entry.coach.lastName), \(label): \(spoken(entry))\(entry.id == leaderID ? ", leads this line" : "")")
+                }
+            }
+            .padding(.horizontal, 16)
+
+            Divider().overlay(Color.surfaceBorder.opacity(0.4))
+        }
+    }
+
+    private func salaryFormatted(_ thousands: Int) -> String {
+        let millions = Double(thousands) / 1_000.0
+        return String(format: "$%.1fM", millions)
+    }
 }
 
 // MARK: - Preview

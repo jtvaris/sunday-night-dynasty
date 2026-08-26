@@ -1460,8 +1460,12 @@ private struct PickRevealCard: View {
 
     private var accessibilitySummary: String {
         var parts = [
+            // "media grade", not "grade" — the spoken card carries the same
+            // two frames the printed one does, and the board slot appended
+            // below is the OTHER one. See ``gradeChip``.
             "Pick \(result.pickNumber), \(result.teamAbbrev) selects \(result.playerName), "
-            + "\(result.position.rawValue), grade \(result.grade.rawValue)"
+            + "\(result.position.rawValue), "
+            + "\(Self.gradeFrameLabel.lowercased()) grade \(result.grade.rawValue)"
         ]
         if result.isAutoPick {
             parts.append("Auto-pick, the clock expired and your room filed from your own board")
@@ -2548,6 +2552,15 @@ private struct PickRevealCard: View {
     /// Signed the way a room says it: a man taken *later* than his slot is value
     /// for the club that got him. Inside four picks either way the board and the
     /// podium simply agree, and printing `+2 VALUE` there would be numerology.
+    ///
+    /// **It is allowed to disagree with ``gradeChip``, and that is not a bug to
+    /// reconcile.** When ``boardSlot`` is quoting `MY #101` this reads the
+    /// user's own dragged order (`UserDraftBoard.slotMap`) while the letter in
+    /// the corner reads the media's, so `MEDIA A+ STEAL` beside `-50 REACH` is
+    /// the card saying the room and the user disagree about a man — which is
+    /// the whole point of keeping a board. Both chips name their frame now; the
+    /// fix for a card that looks self-contradictory was the missing key, never
+    /// making one number chase the other.
     private var boardDelta: (text: String, tint: Color)? {
         guard let slot = boardSlot else { return nil }
         let delta = result.pickNumber - slot.rank
@@ -2961,9 +2974,54 @@ private struct PickRevealCard: View {
     /// `showsQualifier` is the ladder ``callLine`` climbs down when the row is
     /// too narrow for the whole verdict: the letter is the fact, the qualifier
     /// is the gloss, and a `D` alone is still unambiguous next to `A`.
+    ///
+    /// ## THE CARD PRINTS TWO VERDICTS AND ONLY ONE OF THEM WAS NAMED
+    ///
+    /// The audited screenshot read `A+` in this corner, `MY #101` in the
+    /// dossier sixty points below it, and `-50 REACH` immediately beside that.
+    /// Three true statements and no way to tell they are answers to different
+    /// questions, so the card looks like it is contradicting itself.
+    ///
+    /// They are two different frames:
+    ///
+    ///   * **this chip is the MEDIA's verdict.** Every input
+    ///     `DraftDayCoordinator.computePickGrade` hands `PickGradeCalculator`
+    ///     is public: `DraftIntel.pickValueDelta` against `publicBoardRanks`,
+    ///     `publicOVREstimate`, the drafting club's needs, its coordinators'
+    ///     schemes. It is computed identically for all 32 clubs' cards, which
+    ///     is precisely why the user's own board has no standing in it.
+    ///   * **``boardRow`` is the user's frame** — `UserDraftBoard.slotMap`,
+    ///     the order he dragged — and it already names itself (`MY` / `YOUR
+    ///     BOARD`, and `MEDIA` when he never ranked the man). Its `+n VALUE` /
+    ///     `-n REACH` is measured against whichever board it is quoting.
+    ///
+    /// So the repair is one word on the unlabelled half. `MEDIA` is not a new
+    /// vocabulary: it is the compact label ``boardChip`` already prints for
+    /// this same frame, so the two chips on one card now agree on what to call
+    /// the media, and `MEDIA A+ STEAL` beside `MY #101 · -50 REACH` reads as
+    /// two opinions rather than as one broken one.
+    ///
+    /// **The tag has no rung below it.** ``callLine``'s ladder spends the
+    /// connectives, then the qualifier; the frame is the member it may never
+    /// spend, because a bare `A+` is the defect. It costs ~36 pt, and the
+    /// narrowest rung (`#51`, club chip, `YOURS`, letter) leaves ~98 pt of a
+    /// 312 pt card interior — the tag fits inside the slack the ladder already
+    /// had, and the second rung absorbs it by dropping `PICK … SELECTS`.
+    ///
+    /// It prints in the grade's own ink rather than a dimmed one on purpose:
+    /// this chip is a `tint`-on-`tint.opacity(0.30)` wash, which is the one
+    /// treatment ``metaBadge``'s note measured at **2.81 : 1** over the war
+    /// room, and knocking a second opacity into it is how a label becomes a
+    /// smudge. Size and tracking do the subordinating instead, exactly as the
+    /// qualifier's do.
     private func gradeChip(showsQualifier: Bool) -> some View {
         let color = Color.forGrade(result.grade.rawValue)
         return HStack(spacing: 4) {
+            Text(Self.gradeFrameLabel)
+                .font(DSType.display(DSType.Size.caption, .heavy))
+                // 0.8, the tracking `boardChip` gives the same frame word.
+                .tracking(0.8)
+                .lineLimit(1)
             Text(result.grade.rawValue)
                 .font(DSType.display(DSType.Size.footnote, .heavy))
                 .lineLimit(1)
@@ -2985,8 +3043,16 @@ private struct PickRevealCard: View {
                 .strokeBorder(color.opacity(0.6), lineWidth: 1)
         )
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Grade \(result.grade.rawValue), \(result.grade.qualifier)")
+        .accessibilityLabel(
+            "\(Self.gradeFrameLabel.capitalized) grade \(result.grade.rawValue), "
+            + result.grade.qualifier
+        )
     }
+
+    /// Whose verdict the letter is. One constant so the chip, its spoken label
+    /// and the card summary cannot come to name the frame three ways — the
+    /// failure this key exists to close, in miniature.
+    private static let gradeFrameLabel = "MEDIA"
 }
 
 // MARK: - PodiumStage — the minutes before the first card (#194-v2)

@@ -1091,6 +1091,60 @@ enum InterviewPriority {
     case must, should, optional
 }
 
+// MARK: - Interview Risk Tier
+
+/// What the MEETING made of a man — off-field flags, temperament, football IQ.
+///
+/// Deliberately NOT the board's `ProspectRiskLevel` (Safe / Ceiling /
+/// Boom-Bust), which every result card still prints in its BOARD RISK row: that
+/// one reads the spread of his grade, this one reads the room. Two questions,
+/// two answers, and the card shows both.
+///
+/// It is a type rather than the free string `InterviewResult` used to hand
+/// back, because the summary pills are FILTERS now and a filter that matches on
+/// `riskLabel == "Medium"` is one spelling away from selecting nobody at all.
+/// The thresholds are untouched — only the vocabulary is typed.
+private enum InterviewRiskTier: Hashable {
+    case low, medium, high
+
+    var label: String {
+        switch self {
+        case .low:    return "Low"
+        case .medium: return "Medium"
+        case .high:   return "High"
+        }
+    }
+
+    /// The ident a table cell has room for — `DSStatusPill`'s vocabulary rule:
+    /// one short word, because a label that overruns paints over its neighbour.
+    var shortLabel: String {
+        switch self {
+        case .low:    return "Low"
+        case .medium: return "Med"
+        case .high:   return "High"
+        }
+    }
+
+    var tone: DSStatusPill.Tone {
+        switch self {
+        case .low:    return .ok
+        case .medium: return .warn
+        case .high:   return .bad
+        }
+    }
+
+    /// Sort key. Ascending is safest-first, so a fresh (descending) tap on the
+    /// RISK column opens on the men who worry you — which is the question
+    /// somebody taps a risk column to ask.
+    var severity: Int {
+        switch self {
+        case .low:    return 0
+        case .medium: return 1
+        case .high:   return 2
+        }
+    }
+}
+
 // MARK: - Interview Result Model
 
 struct InterviewResult: Identifiable {
@@ -1142,12 +1196,164 @@ struct InterviewResult: Identifiable {
         notes.contains(where: { $0.contains("\u{2705}") })
     }
 
-    /// Risk level label for summary.
-    var riskLabel: String {
-        if hasOffFieldConcerns || personality.tier == .risky { return "High" }
-        if personality.tier == .neutral || footballIQ < 65 { return "Medium" }
-        return "Low"
+    /// The meeting's own risk read — see ``InterviewRiskTier``.
+    ///
+    /// Was `riskLabel: String`, returning "Low" / "Medium" / "High" for the
+    /// summary line to count by string comparison. Same three words and the
+    /// same thresholds; the tier is where they are decided now, because the
+    /// summary counts became FILTERS and a filter keyed off a spelling is a
+    /// filter that can silently match nobody.
+    fileprivate var riskTier: InterviewRiskTier {
+        if hasOffFieldConcerns || personality.tier == .risky { return .high }
+        if personality.tier == .neutral || footballIQ < 65 { return .medium }
+        return .low
     }
+}
+
+// MARK: - Report Facets — the summary pills, made operable
+
+/// One question the summary row asks of the batch, and the scope it puts the
+/// list into when you tap it.
+///
+/// The pills were four read-only sentences printed over a page of up to sixty
+/// cards: the report could tell you "6 off-field concerns" and then gave you no
+/// way to SEE the six men except by scrolling every card hunting for a red
+/// border. Each pill is now the question and the answer both.
+///
+/// `all` is a member rather than an optional wrapper so the row speaks one
+/// vocabulary, and every facet is drawn at every count — "0 off-field concerns"
+/// is the answer to the question the user came here with, and hiding the pill
+/// makes the good news invisible. A facet nobody matches is drawn dim and
+/// refuses the tap, so a chip can never lead to a blank page.
+private enum InterviewReportFacet: String, CaseIterable, Identifiable {
+    case all
+    case low, medium, high
+    case concerns
+    case marked
+
+    var id: String { rawValue }
+
+    var icon: String {
+        switch self {
+        case .all:      return "person.3.fill"
+        case .low:      return "checkmark.shield.fill"
+        case .medium:   return "shield.fill"
+        case .high:     return "exclamationmark.shield.fill"
+        case .concerns: return "exclamationmark.triangle.fill"
+        case .marked:   return "star.fill"
+        }
+    }
+
+    /// P5 allows one gold per screen and the report already spends it on the
+    /// header ident, so "everybody" — the scope the screen opens in — is the
+    /// quiet neutral and the gold goes to the user's OWN verdict.
+    var tint: Color {
+        switch self {
+        case .all:      return .textSecondary
+        case .low:      return .success
+        case .medium:   return .alertOrange
+        case .high:     return .danger
+        case .concerns: return .dangerText
+        case .marked:   return .accentGold
+        }
+    }
+
+    func pillText(count: Int) -> String {
+        switch self {
+        case .all:      return "\(count) interviewed"
+        case .low:      return "\(count) low risk"
+        case .medium:   return "\(count) medium risk"
+        case .high:     return "\(count) high risk"
+        case .concerns: return "\(count) off-field"
+        case .marked:   return "\(count) marked"
+        }
+    }
+
+    func spokenLabel(count: Int) -> String {
+        switch self {
+        case .all:      return "All \(count) interviews"
+        case .low:      return "\(count) at low interview risk"
+        case .medium:   return "\(count) at medium interview risk"
+        case .high:     return "\(count) at high interview risk"
+        case .concerns: return "\(count) with off-field concerns"
+        case .marked:   return "\(count) marked Elite or Target"
+        }
+    }
+
+    func matches(_ result: InterviewResult) -> Bool {
+        switch self {
+        case .all:      return true
+        case .low:      return result.riskTier == .low
+        case .medium:   return result.riskTier == .medium
+        case .high:     return result.riskTier == .high
+        case .concerns: return result.hasOffFieldConcerns
+        // ONE mark system, same bar the rest of the draft flow reads: Elite and
+        // Target are "men I want".
+        case .marked:   return result.prospect.userMark.isBoardPositive
+        }
+    }
+
+    var emptyTitle: String {
+        switch self {
+        case .marked: return "Nothing marked yet"
+        default:      return "Nobody reads that way"
+        }
+    }
+
+    /// Beat three of `DSEmptyState`: the CONDITION that is missing, not "no
+    /// data".
+    var emptyMessage: String {
+        switch self {
+        case .marked:
+            return "Elite and Target are the two marks that mean \u{201C}I want this man\u{201D}. Give one to a prospect from his card and he appears here."
+        case .concerns:
+            return "Nobody in this batch came back with an off-field flag."
+        default:
+            return "No man in this batch reads that way after his meeting."
+        }
+    }
+}
+
+// MARK: - Report Layout
+
+/// How the report draws its men.
+///
+/// The cards are right for the batch you just ran — they are the moment the
+/// meetings pay off. They are wrong for the hundredth visit to a spent cycle,
+/// where the same sixty cards are ~10,000 pt of scrolling to answer "which of
+/// these did I flag". The table is the same report at row height.
+private enum InterviewReportLayout: String, CaseIterable, Identifiable {
+    case cards, table
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .cards: return "Cards"
+        case .table: return "Table"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .cards: return "rectangle.grid.1x2"
+        case .table: return "tablecells"
+        }
+    }
+
+    var spokenLabel: String {
+        switch self {
+        case .cards: return "Show full cards"
+        case .table: return "Show compact table"
+        }
+    }
+}
+
+/// The table's sortable columns. GRD is not among them on purpose: the letter
+/// is `interviewScore` banded, so sorting by it would be the SCORE column under
+/// a second name.
+private enum InterviewReportSort: Hashable {
+    case score, iq, risk
 }
 
 // MARK: - Interview Report View
@@ -1165,16 +1371,87 @@ struct InterviewReportView: View {
 
     @Environment(\.modelContext) private var modelContext
 
+    /// Which slice of the batch the list is showing. See
+    /// ``InterviewReportFacet``.
+    @State private var activeFacet: InterviewReportFacet = .all
+    /// Which column the TABLE is ordered by. Opens on the score, descending —
+    /// byte-identical to the card order, so switching renderer re-orders
+    /// nothing under the user's finger.
+    @State private var tableSort = DSSortState<InterviewReportSort>(key: .score)
+    /// The one man whose full card is open under his table row. One at a time:
+    /// the table exists to be scanned, and a page of expanded rows is the card
+    /// list again with a header on it.
+    @State private var expandedResultID: UUID?
+    /// Cards or table, remembered across visits.
+    ///
+    /// `@AppStorage` rather than `@CareerScopedStorage`: this is a preference
+    /// about how a screen draws, not a fact about a save, and a GM who reads in
+    /// tables reads in tables in his second franchise too.
+    @AppStorage("interviewReportLayout") private var layoutRaw: String =
+        InterviewReportLayout.cards.rawValue
+
+    private var layout: InterviewReportLayout {
+        InterviewReportLayout(rawValue: layoutRaw) ?? .cards
+    }
+
     // Task 4: Results ranked by interview score (best first)
     private var rankedResults: [InterviewResult] {
         results.sorted { $0.interviewScore > $1.interviewScore }
     }
 
+    /// Every pill's number, counted in ONE pass over the batch.
+    ///
+    /// Six pills each running their own `filter` would be six passes per body
+    /// pass, on a report that can hold sixty men and redraws every time a mark
+    /// changes on any of them.
+    private var facetCounts: [InterviewReportFacet: Int] {
+        var counts: [InterviewReportFacet: Int] = [.all: results.count]
+        for result in results {
+            switch result.riskTier {
+            case .low:    counts[.low, default: 0] += 1
+            case .medium: counts[.medium, default: 0] += 1
+            case .high:   counts[.high, default: 0] += 1
+            }
+            if result.hasOffFieldConcerns { counts[.concerns, default: 0] += 1 }
+            if result.prospect.userMark.isBoardPositive { counts[.marked, default: 0] += 1 }
+        }
+        return counts
+    }
+
+    /// The rows the list draws: ranked by interview score, scoped by the live
+    /// facet, and — in table mode only — re-ordered by the column the user
+    /// tapped. The cards keep the ranking they are numbered by.
+    private var visibleRows: [InterviewResult] {
+        let scoped = activeFacet == .all
+            ? rankedResults
+            : rankedResults.filter { activeFacet.matches($0) }
+        guard layout == .table else { return scoped }
+        let asc = tableSort.ascending
+        // #134a's rule: every list sort ends in an id tiebreak, or two men on
+        // the same score swap places on a redraw with nothing having changed.
+        switch tableSort.key {
+        case .score: return scoped.dsSorted(asc, by: { $0.interviewScore }, id: { $0.id })
+        case .iq:    return scoped.dsSorted(asc, by: { $0.footballIQ }, id: { $0.id })
+        case .risk:  return scoped.dsSorted(asc, by: { $0.riskTier.severity }, id: { $0.id })
+        }
+    }
+
+    /// #N for every man in the batch, frozen on the interview-score order.
+    ///
+    /// The ordinal is his place in the BATCH, not his place in whatever column
+    /// the table is sorted by — so a table sorted by IQ still prints the numbers
+    /// the cards print, and the header's "ranked by interview score" line stays
+    /// true of both renderers.
+    private var scoreRankByID: [UUID: Int] {
+        var map: [UUID: Int] = [:]
+        map.reserveCapacity(results.count)
+        for (index, result) in rankedResults.enumerated() {
+            map[result.id] = index + 1
+        }
+        return map
+    }
+
     // Task 6: Summary calculations
-    private var lowRiskCount: Int { results.filter { $0.riskLabel == "Low" }.count }
-    private var mediumRiskCount: Int { results.filter { $0.riskLabel == "Medium" }.count }
-    private var highRiskCount: Int { results.filter { $0.riskLabel == "High" }.count }
-    private var offFieldConcernCount: Int { results.filter { $0.hasOffFieldConcerns }.count }
     private var bestResult: InterviewResult? { rankedResults.first }
 
     // Task 14: Top 3 recommendations
@@ -1183,22 +1460,40 @@ struct InterviewReportView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        // Filtered, ranked and (in table mode) sorted ONCE per body pass, with
+        // the batch ranking resolved alongside. Both were read inside the
+        // `ForEach` before there was anything to filter; a sort per row on a
+        // sixty-man report is the difference between a linear pass and a
+        // quadratic one every time a mark is set.
+        let rows = visibleRows
+        let rankByID = scoreRankByID
+
+        return VStack(spacing: 0) {
             reportHeader
             Divider().overlay(Color.surfaceBorder.opacity(0.6))
 
             ScrollView {
                 LazyVStack(spacing: 12) {
-                    // Task 6: Interview summary
+                    // Task 6: Interview summary — and, since this wave, the
+                    // control that scopes everything under it.
                     summarySection
 
-                    // Task 4: Ranked result cards
-                    ForEach(Array(rankedResults.enumerated()), id: \.element.id) { index, result in
-                        resultCard(result, rank: index + 1)
+                    if rows.isEmpty {
+                        noMatchState
+                    } else if layout == .table {
+                        tableSection(rows: rows, rankByID: rankByID)
+                    } else {
+                        // Task 4: Ranked result cards
+                        ForEach(rows) { result in
+                            resultCard(result, rank: rankByID[result.id] ?? 0)
+                        }
                     }
 
-                    // Task 14: Scout's recommendation
-                    if rankedResults.count >= 2 {
+                    // Task 14: Scout's recommendation. It is the report's
+                    // conclusion about the WHOLE batch, so it is printed only
+                    // when the whole batch is what is showing — under a filtered
+                    // page it named three men the list was hiding.
+                    if activeFacet == .all && rankedResults.count >= 2 {
                         recommendationSection
                     }
                 }
@@ -1260,6 +1555,12 @@ struct InterviewReportView: View {
                 Text("\(results.count) interview\(results.count == 1 ? "" : "s") completed")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Color.textSecondary)
+
+                // One man is not a list, and a renderer switch over a single
+                // card is a control that does nothing worth doing.
+                if results.count > 1 {
+                    layoutToggle
+                }
             }
 
             // The cards are stamped #1…#53 with no stated basis, so a projected
@@ -1279,31 +1580,55 @@ struct InterviewReportView: View {
     // MARK: - Task 6: Summary Section
 
     private var summarySection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("SUMMARY")
-                .font(.system(size: 10, weight: .heavy))
-                .foregroundStyle(Color.accentGold)
-                .tracking(0.5)
+        let counts = facetCounts
+        let shown = counts[activeFacet] ?? 0
+        return VStack(alignment: .leading, spacing: DSSpacing.xs) {
+            HStack(spacing: DSSpacing.xs) {
+                Text("SUMMARY")
+                    .font(.system(size: 10, weight: .heavy))
+                    .foregroundStyle(Color.accentGold)
+                    .tracking(0.5)
 
-            HStack(spacing: 12) {
-                summaryPill(icon: "person.3.fill", text: "\(results.count) interviewed", color: .accentGold)
-                summaryPill(icon: "shield.checkered", text: "\(lowRiskCount) low, \(mediumRiskCount) med, \(highRiskCount) high risk", color: .textSecondary)
+                Spacer(minLength: DSSpacing.xxs)
+
+                // What the scope is doing, in one line, so a page that is
+                // suddenly eight cards long says why.
+                if activeFacet != .all {
+                    Text("Showing \(shown) of \(results.count)")
+                        .font(.system(size: DSType.Size.footnote, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(Color.textTertiary)
+                }
             }
 
-            HStack(spacing: 12) {
-                if offFieldConcernCount > 0 {
-                    summaryPill(
-                        icon: "exclamationmark.triangle.fill",
-                        text: "\(offFieldConcernCount) off-field concern\(offFieldConcernCount == 1 ? "" : "s")",
-                        color: .danger
-                    )
+            // The pills. Horizontally scrolled rather than wrapped: six of them
+            // set at ~700 pt on the iPad's portrait column but the report is
+            // also rendered in a split view, and a chip row that wraps to three
+            // lines pushes the first card off the screen.
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: DSSpacing.xs) {
+                    ForEach(InterviewReportFacet.allCases) { facet in
+                        facetPill(facet, count: counts[facet] ?? 0)
+                    }
                 }
-                if let best = bestResult {
-                    summaryPill(
-                        icon: "star.fill",
-                        text: "Best: \(best.prospect.firstName) \(best.prospect.lastName) \u{2014} Grade \(best.interviewGrade)",
-                        color: .accentGold
-                    )
+                .padding(.horizontal, 1)
+                .padding(.vertical, 2)
+            }
+
+            // The best man is a STATEMENT, not a scope — there is no "list of
+            // the best man" to filter to — so he is deliberately NOT drawn as
+            // one of the capsules above him. A row where some chips act and
+            // others only inform is the defect §2.12 records against the first
+            // iteration of the status pill.
+            if let best = bestResult {
+                HStack(spacing: DSSpacing.xxs) {
+                    Image(systemName: "star.fill")
+                        .font(.system(size: DSType.Size.caption))
+                        .foregroundStyle(Color.accentGold)
+                    Text("Best: \(best.prospect.fullName) \u{2014} Grade \(best.interviewGrade) \u{00B7} score \(best.interviewScore)")
+                        .font(.system(size: DSType.Size.caption, weight: .medium))
+                        .foregroundStyle(Color.accentGold)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                 }
             }
         }
@@ -1322,15 +1647,318 @@ struct InterviewReportView: View {
         )
     }
 
-    private func summaryPill(icon: String, text: String, color: Color) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: icon)
-                .font(.system(size: DSType.Size.caption))
-                .foregroundStyle(color)
-            Text(text)
-                .font(.system(size: DSType.Size.caption, weight: .medium))
-                .foregroundStyle(color)
+    /// One summary pill.
+    ///
+    /// A pill here is a CONTROL, which is exactly why it is not `DSStatusPill`:
+    /// that component is documented as never being a button, so that a row of
+    /// facts and a row of controls can never look alike. These carry a selected
+    /// fill and the 44 pt target a control owes the user.
+    private func facetPill(_ facet: InterviewReportFacet, count: Int) -> some View {
+        let isSelected = activeFacet == facet
+        // A facet nobody matches is a stated fact ("0 off-field"), not a route
+        // to a blank page. The live facet stays tappable at zero, because that
+        // tap is the way back out of it.
+        let isDead = count == 0 && !isSelected
+        return Button {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                // A second tap on the live facet is the way back to the whole
+                // batch — the same gesture the board's own chips answer to.
+                activeFacet = isSelected ? .all : facet
+                // A scope change re-lays the list under the open card; leaving
+                // it open would scroll a man the filter may have just removed.
+                expandedResultID = nil
+            }
+        } label: {
+            HStack(spacing: DSSpacing.xxs) {
+                Image(systemName: facet.icon)
+                    .font(.system(size: DSType.Size.caption))
+                Text(facet.pillText(count: count))
+                    .font(.system(size: DSType.Size.caption,
+                                  weight: isSelected ? .heavy : .semibold).monospacedDigit())
+            }
+            .lineLimit(1)
+            .foregroundStyle(isSelected ? Color.backgroundPlate : facet.tint)
+            .padding(.horizontal, DSSpacing.sm)
+            .frame(minHeight: 44)
+            .background(Capsule().fill(isSelected ? facet.tint : facet.tint.opacity(0.12)))
+            .overlay(
+                Capsule().strokeBorder(
+                    facet.tint.opacity(isSelected ? 1 : 0.35),
+                    lineWidth: isSelected ? 1.5 : 1
+                )
+            )
+            .opacity(isDead ? 0.45 : 1)
+            .contentShape(Capsule())
         }
+        .buttonStyle(.plain)
+        .disabled(isDead)
+        .accessibilityLabel(facet.spokenLabel(count: count))
+        .accessibilityHint(isSelected
+                           ? "Shows the whole batch again"
+                           : "Filters the report to these men")
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+    }
+
+    // MARK: - Layout toggle
+
+    /// Cards or table.
+    ///
+    /// Deliberately NOT `DSLensTabs`: that control is documented as swapping a
+    /// list's trailing COLUMNS and nothing else, and this swaps the renderer
+    /// under them. It wears the same capsule spec — blue selected fill, 44 pt,
+    /// hairline when unselected — so the two read as one family anyway.
+    private var layoutToggle: some View {
+        HStack(spacing: 2) {
+            ForEach(InterviewReportLayout.allCases) { option in
+                let isSelected = layout == option
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        layoutRaw = option.rawValue
+                        expandedResultID = nil
+                    }
+                } label: {
+                    HStack(spacing: DSSpacing.xxs) {
+                        Image(systemName: option.icon)
+                            .font(.system(size: 11, weight: .bold))
+                        Text(option.label)
+                            .font(DSType.text(13, isSelected ? .bold : .medium))
+                    }
+                    .lineLimit(1)
+                    .padding(.horizontal, DSSpacing.sm)
+                    .frame(minHeight: 44)
+                    .foregroundStyle(isSelected ? Color.backgroundPlate : Color.textSecondary)
+                    .background(isSelected ? Color.accentBlue : Color.backgroundTertiary, in: Capsule())
+                    .overlay(
+                        Capsule().strokeBorder(
+                            isSelected ? Color.accentBlue : Color.surfaceBorder,
+                            lineWidth: isSelected ? 1.5 : 1
+                        )
+                    )
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(option.spokenLabel)
+                .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+            }
+        }
+    }
+
+    // MARK: - Empty state
+
+    /// What the list says when the live facet holds nobody.
+    ///
+    /// Only `marked` can actually land here — every other pill is dimmed at
+    /// zero — and it gets there the honest way: filter to your marked men, then
+    /// take the last mark off one from his card. The state names that condition
+    /// rather than saying "no results".
+    private var noMatchState: some View {
+        // A batch with nothing in it at all is a different sentence from a
+        // scope that caught nobody, and only the second one has a way out.
+        let isEmptyBatch = results.isEmpty
+        let actions: [DSEmptyState.Action] = isEmptyBatch ? [] : [
+            DSEmptyState.Action(
+                title: "Show all \(results.count)",
+                systemImage: "person.3.fill",
+                isPrimary: true
+            ) {
+                withAnimation(.easeInOut(duration: 0.2)) { activeFacet = .all }
+            }
+        ]
+        return DSEmptyState(
+            density: .scan,
+            icon: isEmptyBatch ? "person.crop.circle.badge.questionmark" : activeFacet.icon,
+            title: isEmptyBatch ? "No interviews on file" : activeFacet.emptyTitle,
+            message: isEmptyBatch
+                ? "Nothing was recorded from this batch."
+                : activeFacet.emptyMessage,
+            actions: actions
+        )
+    }
+
+    // MARK: - Compact Table
+
+    /// The report at row height — the list standard (`UI_REDESIGN_VISION` §2.2)
+    /// rather than a second hand-rolled table, so the header and the cells read
+    /// their widths from the same `DSListColumn` constants and cannot drift.
+    ///
+    /// The header sits INSIDE the scroll, directly over the rows it labels,
+    /// which is what the selection list one screen back does with its own
+    /// column labels. Pinning it outside would put a row of column idents above
+    /// the summary card, labelling a card.
+    @ViewBuilder
+    private func tableSection(rows: [InterviewResult], rankByID: [UUID: Int]) -> some View {
+        VStack(spacing: 0) {
+            tableHeaderRow
+            Divider().overlay(Color.surfaceBorder.opacity(0.5))
+            ForEach(rows) { result in
+                tableEntry(result, rank: rankByID[result.id] ?? 0)
+            }
+        }
+    }
+
+    private var tableHeaderRow: some View {
+        DSListHeaderRow(
+            density: .scan,
+            // The mark button lives outside the row's anatomy, exactly as it
+            // does on the Big Board.
+            leadingGutter: DSListColumn.leadingAction,
+            reservesRank: true,
+            rankLabel: "#",
+            reservesBadge: true,
+            badgeLabel: "POS",
+            // `ProspectRowIdentity` carries its own portrait, so the row has no
+            // separate portrait slot to reserve here.
+            portraitWidth: 0,
+            identityLabel: "PROSPECT",
+            affordance: .disclosure
+        ) {
+            Spacer(minLength: DSSpacing.xxs)
+            DSColumnHeader("GRD", width: DSListColumn.tight)
+            DSSortableColumnHeader("SCORE", key: .score, sort: $tableSort, width: DSListColumn.value)
+            DSSortableColumnHeader("IQ", key: .iq, sort: $tableSort, width: DSListColumn.meet)
+            DSColumnHeader("PERSONALITY", width: DSListColumn.state)
+            DSSortableColumnHeader("RISK", key: .risk, sort: $tableSort, width: DSListColumn.label)
+            DSColumnHeader("FLAG", width: DSListColumn.glyph)
+        }
+        .padding(.vertical, DSSpacing.xxs)
+    }
+
+    /// One table line: the row, the card it opens, and the rule under both.
+    @ViewBuilder
+    private func tableEntry(_ result: InterviewResult, rank: Int) -> some View {
+        tableRow(result, rank: rank)
+        if expandedResultID == result.id {
+            // The SAME card the cards mode draws. A compact mode that had to
+            // re-state personality, flags, combine numbers and the notes in a
+            // second layout would be two renderers of one report, and they would
+            // disagree within a wave.
+            resultCard(result, rank: rank)
+                .padding(.bottom, DSSpacing.xs)
+        }
+        Divider().overlay(Color.surfaceBorder.opacity(0.3))
+    }
+
+    private func tableRow(_ result: InterviewResult, rank: Int) -> some View {
+        let prospect = result.prospect
+        let isExpanded = expandedResultID == result.id
+        return HStack(spacing: 0) {
+            // The one verdict this screen writes, on the row rather than behind
+            // the disclosure: the point of the table is a pass down sixty men
+            // stamping Elite / Target / Depth without opening anything.
+            ProspectMarkButton(
+                prospect: prospect,
+                onChange: { try? modelContext.save() }
+            )
+
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    expandedResultID = isExpanded ? nil : result.id
+                }
+            } label: {
+                DSListRow(
+                    density: .scan,
+                    rank: DSRank(value: rank),
+                    badge: DSRowBadge(
+                        text: prospect.position.rawValue,
+                        tint: ProspectSelectionPositionBadge.tint(prospect.position),
+                        accessibilityLabel: "\(prospect.position.rawValue), \(prospect.position.side.rawValue)"
+                    ),
+                    portraitWidth: 0,
+                    affordance: .icon(isExpanded ? "chevron.up" : "chevron.down")
+                ) {
+                    EmptyView()
+                } identity: {
+                    // The board's identity block, shared — portrait, name, the
+                    // ONE mark, my grade, college and projected round. A fourth
+                    // hand-rolled name column is how the two selection lists
+                    // ended up poorer than the board in the first place.
+                    ProspectRowIdentity(prospect: prospect)
+                } columns: {
+                    Spacer(minLength: DSSpacing.xxs)
+
+                    // The card's top-right letter, in a column.
+                    Text(result.interviewGrade)
+                        .font(DSType.display(14, .heavy))
+                        .foregroundStyle(Color.forGrade(result.interviewGrade))
+                        .dsColumn(DSListColumn.tight)
+
+                    // What the ranking is actually ON — printed because the
+                    // letter bands three men into one grade and the order
+                    // between them is otherwise unreadable.
+                    Text("\(result.interviewScore)")
+                        .font(DSType.display(11, .semibold))
+                        .foregroundStyle(Color.textSecondary)
+                        .dsColumn(DSListColumn.value)
+
+                    // Football IQ — the exact number the meeting bought,
+                    // tinted by its own letter on the one grade ladder.
+                    Text("\(result.footballIQ)")
+                        .font(DSType.display(12, .bold))
+                        .foregroundStyle(Color.forGrade(result.footballIQGrade))
+                        .dsColumn(DSListColumn.meet)
+
+                    Text(result.personality.shortLabel)
+                        .font(DSType.display(11, .semibold))
+                        .foregroundStyle(personalityTextColor(result.personality))
+                        .dsColumn(DSListColumn.state)
+
+                    DSStatusPill(
+                        label: result.riskTier.shortLabel,
+                        tone: result.riskTier.tone,
+                        showsDot: false,
+                        spokenLabel: "\(result.riskTier.label) interview risk"
+                    )
+                    .dsColumn(DSListColumn.label)
+
+                    tableFlagCell(result)
+                        .dsColumn(DSListColumn.glyph)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            // One sentence per row rather than eleven cells read out in column
+            // order — the row IS one fact about one man.
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(tableRowSpoken(result, rank: rank))
+            .accessibilityHint(isExpanded ? "Closes his full card" : "Opens his full card")
+        }
+    }
+
+    /// The character flag, in a slot that is reserved on every line.
+    ///
+    /// §2.2's fixed-slot rule: what the user scans a sixty-row table for is the
+    /// column of gaps, so an unflagged man draws a dash rather than nothing.
+    @ViewBuilder
+    private func tableFlagCell(_ result: InterviewResult) -> some View {
+        if result.hasOffFieldConcerns {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 12))
+                .foregroundStyle(Color.danger)
+        } else if result.hasExemplaryCharacter {
+            Image(systemName: "checkmark.seal.fill")
+                .font(.system(size: 12))
+                .foregroundStyle(Color.success)
+        } else {
+            Image(systemName: "minus")
+                .font(.system(size: 12))
+                .foregroundStyle(Color.textTertiary)
+        }
+    }
+
+    private func tableRowSpoken(_ result: InterviewResult, rank: Int) -> String {
+        var parts = [
+            "Rank \(rank)",
+            result.prospect.fullName,
+            result.prospect.position.rawValue,
+            "grade \(result.interviewGrade)",
+            "score \(result.interviewScore)",
+            "football IQ \(result.footballIQ)",
+            result.personality.displayName,
+            "\(result.riskTier.label) interview risk"
+        ]
+        if result.hasOffFieldConcerns { parts.append("off-field concerns") }
+        if result.hasExemplaryCharacter { parts.append("exemplary character") }
+        return parts.joined(separator: ", ")
     }
 
     // MARK: - Result Card (Tasks 1-4, 7-9, 12-13)
@@ -1746,6 +2374,20 @@ struct InterviewReportView: View {
         case .positive: return Color.success
         case .risky:    return Color.danger
         case .neutral:  return Color.warning.opacity(0.8)
+        }
+    }
+
+    /// The same three tiers as INK rather than as a fill behind white text.
+    ///
+    /// The badge colours cannot be reused for the table cell: `danger` reads
+    /// ~3.4:1 as words on a card (which is why `dangerText` exists) and
+    /// `warning` at 80 % is dimmer still. A capsule fill is held to the 3:1
+    /// component threshold; a word in a column is held to 4.5.
+    private func personalityTextColor(_ p: PersonalityArchetype) -> Color {
+        switch p.tier {
+        case .positive: return Color.success
+        case .risky:    return Color.dangerText
+        case .neutral:  return Color.textSecondary
         }
     }
 

@@ -74,7 +74,7 @@ README live in git.
 
 `sync_sources.sh` produces `build/src/` in three ways:
 
-### 1. Verbatim copies (30 files, SHA-verified)
+### 1. Verbatim copies (36 files, SHA-verified)
 
 **Play-by-play (11):** `PlayCall.swift`, `PlayType.swift`, `Position.swift`,
 `Scheme.swift`, `GameWeather.swift`, `PersonalityArchetype.swift`,
@@ -92,11 +92,16 @@ reimplemented game loop, momentum, clock, heat feed, or box score).
 `MentalAttributeModel.swift`, `RandomNameGenerator.swift`,
 `DraftClassBuilder.swift`.
 
-**Development stack (6, stage 5):** `InjuryType.swift`, `CampEnums.swift`,
+**Development stack (7, stage 5):** `InjuryType.swift`, `CampEnums.swift`,
 `MotivationState.swift`, `InjuryRecord.swift`, `PlayerDevelopmentEngine.swift`,
-`PlayerRetirementEngine.swift`.
+`PlayerRetirementEngine.swift`, `SeasonPhase.swift` — the last one is the camp
+calendar the `lockerroom` scenario drives the shipped camp scheduler with
+(`WeekAdvancer.campIntensity(for:)` takes a `SeasonPhase` and nothing else).
 
-All 30 are copied byte-for-byte. The script asserts `sha(copy) == sha(repo)` for
+Plus `Playbook.swift`, `HCPersona.swift`, `RosterValue.swift`,
+`AIDraftPerception.swift` and `GMTaste.swift` alongside their own scenarios.
+
+All 36 are copied byte-for-byte. The script asserts `sha(copy) == sha(repo)` for
 each and records both in `MANIFEST.txt`; a mismatch aborts the build.
 
 ### 2. `AdaptiveOpponentAIExtract.swift` — mechanically sliced from the repo
@@ -201,6 +206,14 @@ grepped straight out of the repo rather than transcribed:
 | `DraftEngineExtract.swift` | `rookieScaleFactors` + `scaleAttribute`/`scalePhysical`/`scaleMental`/`scalePositionAttributes` + `initializeRookieFamiliarity` + `roundForPick` + `topTeamNeeds` | `enum DraftEngine` |
 | `PracticeSquadExtract.swift` | `isSquadEligible` + `needsVeteranSlot` + `squadSigningScore` + `FillSummary` (the engine's own diagnostic line), plus the ten squad constants by grep | `enum PracticeSquadEngine` |
 | `CampRosterConstantsExtract.swift` | `campRosterTarget` / `campContractYears` by grep, plus `TradeValueEngine.offseasonRosterCeiling` — the ladder the camp diagnostic measures against | `enum CampRosterEngine` + `extension TradeValueEngine` |
+| `LockerRoomExtract.swift` | `LockerRoomState` + `calculateChemistry` / `chemistryScore` / `chemistryRating` / `chemistryLabel` + `weeklyMoraleUpdate` + the four morale-damping constants by grep | `struct` at file scope + `enum LockerRoomEngine` |
+| `WorkloadEngineExtract.swift` | the band table (`underloadedMax` / `healthyMax` / `overloadedMax` / `burnoutFloor` / `absoluteCap`) by grep + `applyDailyLoad` / `classify` / `tickWeek` / `resetCampLoad` / `injuryRiskPct` | `enum WorkloadEngine` |
+| `CampScheduleExtract.swift` | `campIntensity(for:)` + `computeRecoveryRate(coaches:)` — the camp scheduler's two inputs, out of the 8 900-line `WeekAdvancer` | `enum WeekAdvancer` |
+
+The last three rows belong to the `lockerroom` scenario rather than to `career`;
+they are listed here because they are staged by the same keep-list machinery.
+See "Locker room + camp workload" below for why those two engines had to stop
+being measured by a hand-written mirror.
 
 `GameModels.swift` also gains one repo splice: the stub `Player` needs the
 SHIPPED `Player.overall` blend, because the career scenario develops attributes
@@ -245,6 +258,9 @@ BH_N=60000 ./run.sh regression         # override per-cell sample size
 # Round-5 parameterized scenarios (flag args passed straight through):
 ./run.sh fullgame --home-tier elite --away-tier weak --n 200 --seedable
 ./run.sh positionsweep --group CB --n 100
+
+# Locker room + camp workload (defaults shown):
+./run.sh lockerroom --clubs 400 --travel-clubs 40
 ```
 
 `run.sh` re-syncs (unless `--no-sync`), rebuilds only when a source is newer
@@ -274,9 +290,10 @@ with margin for that.
 | `draftclass` | **draft-class overhaul** — N classes through the shipped `DraftClassBuilder` + combine; full distribution report + the 31 plan-§7 invariants as hard asserts | every §7.1–§7.10 invariant; **exits 1** on any violation |
 | `career` | **development overhaul** — 20 independent 32-team leagues run end-to-end through the shipped development stack; hit rates by round, elite shares, trajectory mix, aging curves, R and motivation distributions, career lengths, **and the §8 league quality pyramid** | every `PLAYER_DEVELOPMENT_OVERHAUL_PLAN.md` §6 item + `DEVELOPMENT_NFL_REFERENCE.md` §8 (6.9a-g); **exits 1** on any violation |
 | `leaguegen` | **P1 quality-pyramid wave** — the RANDOM league's t=0 intake: 400 × 53-man rosters straight out of `LeagueGenerator`'s rating path, reported as the §8 quality pyramid, plus a **pin against the Python mirror** in `tools/league-data/make_templates.py` | §8 bands on the intake distribution, depth-tier ordering, the rating floor, `veteranPotential` headroom ≤ 4, and Swift-vs-mirror agreement; **exits 1** on any violation |
+| `lockerroom` | **the two engines this harness did not cover** — locker-room chemistry across generated clubs (mean/sd, clamp shares, travel by archetype mix) and the shipped 21-day camp cycle's workload band split at preseason exit, with the strength-coach axis | chemistry mean **52–64**, sd **1.5–6.0**, pinned-at-100 **0–2 %**, travel **≥ 35**; camp `.overloaded`+`.burnedOut` **2–40 %**, mean injury multiplier **1.02–1.35**; 5 hard gates, **exits 1** on any violation |
 | `perception` | **AI draft fog (Track C)** — 32 personas draft N boards twice off the same rosters, once through `AIDraftPerception` and once on the true board (`--perceptionEnabled false`), through the shipped `DraftEngine.aiMakePick` | DIAGNOSTIC ONLY, always exits 0: R1 reaches / steals / true-BPA slide and mean \|perceived − true\| by GM persona |
 
-The last six are **parameterized** — they take `--flag value` args instead of a
+The last seven are **parameterized** — they take `--flag value` args instead of a
 scenario-name list (see "Round-5 full-game campaign" and "Draft-class validation"
 below), so they are invoked on their own, not via `all`.
 
@@ -521,6 +538,171 @@ model), so that width is calibrated here — which makes assert 6.1 a check that
 the DEVELOPMENT system can reproduce the reference curve at all, not an
 independent test of the draft. Asserts 6.2-6.8 and the league quality pyramid
 printed at the end are independent of it.
+
+
+---
+
+## Locker room + camp workload (`lockerroom`)
+
+### Why this scenario exists
+
+Two engines that **move simulated outcomes** were changed by a balance wave and
+neither was covered here. Both were verified only against a hand-written Python
+mirror of the engine — which is precisely the failure mode described at the top
+of this file, one step removed: not a stale constant this time, but a stale
+*model* of the engine that looks authoritative and can silently drift from it.
+
+| engine | what changed | what it moves |
+|---|---|---|
+| `LockerRoomEngine.calculateChemistry` | summed leadership/toxicity across the roster (a value that scaled with HEADCOUNT), now normalised **per capita** via `chemistryRating(net:headcount:)` | `applyMoraleEffects` and `weeklyMoraleUpdate` both branch on the number; morale feeds the motivation state machine, holdouts and the whole development loop |
+| `WorkloadEngine`'s band table | `.overloaded` 80 → **56**, `.burnedOut` 130 → **63** | `WorkloadStatus.injuryMultiplier` (×1.6 / ×2.5), `TrainingPlanEngine.burnedOutGainFactor`, and two camp UI warnings |
+
+`sync_sources.sh` now stages both files the way it stages everything else — awk
+keep-list slice, `verbatim_guard` (every non-blank line must be a repo byte), and
+named grep guards on the lines that carry the fix. It also stages
+`WeekAdvancer.campIntensity(for:)` and `computeRecoveryRate(coaches:)`, because a
+workload band table can only be judged against the loads the **camp scheduler**
+can actually emit — re-typing 0.45 / 0.85 / 0.55 into the scenario would have
+measured a camp the app does not run.
+
+Rosters come out of `LeagueGeneratorExtract`: bodies, ages, salaries, contract
+runway, and (new in this wave's staging) `initialMorale` and
+`realisticContractYears`. `calculateChemistry` reads morale at six thresholds
+(75 / 70 / 60 / 50 / 45 / 40), so a hand-drawn morale would have made the whole
+chemistry number a fiction.
+
+### What it runs
+
+- **A.** `--clubs` (default 400) × 53-man rosters built by the shipped generator
+  with the shipped uniform archetype draw → `LockerRoomEngine.chemistryScore`.
+  Reports mean, sd, the percentile spread, the share pinned at each clamp, and
+  the mix over the engine's own `chemistryLabel` ladder.
+- **A2.** the same roster build with all 53 men forced to ONE archetype, nine
+  rows — the widest a GM could build in each direction. Plus the analytic clamp
+  points, computed by `chemistryRating` itself.
+- **B.** the shipped 21-day camp cycle (`resetCampLoad` at OTAs, then one
+  `tickWeek` per phase at `campIntensity(for:)`) over the same rosters at the
+  league-default recovery rate, reported as the band split at preseason exit
+  plus the mean injury multiplier.
+- **B2.** the same camp swept across the user club's strength coach through
+  `computeRecoveryRate`.
+
+The AI-club recovery rate is read as `computeRecoveryRate(coaches: [])` rather
+than typed: `applyAICampWorkload` hard-codes the same number the no-coach
+fallback returns, and `sync_sources.sh` fails the build if that stops being
+true.
+
+### Published bands
+
+Chemistry, 400 clubs:
+
+| quantity | band | measured | PRE-CHANGE |
+|---|---|---|---|
+| league mean chemistry | **52–64** | 57.6 | **98.0** |
+| sd across clubs | **1.5–6.0** | 2.7 | ~0 (the meter could not move) |
+| share pinned at 100 | **0–2 %** | 0.0 % | **83 %** |
+| share pinned at 0 | **0–2 %** | 0.0 % | 0 % |
+| travel, best archetype mix − worst | **≥ 35** | 62.8 | 0 (every mix read 100) |
+
+Camp workload at preseason exit, league-default recovery (0.550 — 31 of 32
+clubs):
+
+| quantity | band | measured | PRE-CHANGE |
+|---|---|---|---|
+| `.overloaded` + `.burnedOut` share | **2–40 %** | 14.5 % | **0.005 %** (see below) |
+| `.burnedOut` share | **0–15 %** | 1.6 % | **0.000 %** |
+| mean injury multiplier | **1.02–1.35** | 1.101 | **1.000, for every player in the league** |
+| p90 exit load | inside `[underloadedMax, overloadedMax]` | 56 | — |
+| max exit load | `< absoluteCap` | 84 | — |
+
+Five **hard gates** (the scenario exits 1): chemistry pinned-at-100 < 50 %,
+league mean chemistry < 90, travel ≥ 20, `.overloaded`+`.burnedOut` > 0, mean
+injury multiplier > 1.000. They are deliberately looser than the bands above —
+they are regression guards on two defects that were *measured*, not a
+restatement of the distribution. The bands carry the tight expectation and do
+not gate, because this scenario's job is to report what the engine does, not to
+hold it still.
+
+### What the measurement says about the change
+
+**Chemistry.** The per-capita rating puts an ordinary club at **57.6**, inside
+the engine's own "Average" 50..<65 label band, with 98 % of clubs reading
+*Average* and 2 % *Strong*. Every consumer branch is now reachable in both
+directions and none of them is free: the `>= 65` arm needs a genuinely
+leader-heavy room and the `< 50` arm a genuinely toxic one. The travel table
+shows where those rooms come from — a 53-man room of Team Leaders reads 87.5
+(*Elite*), of Mentors 87.3, of Drama Queens 24.6 (*Toxic*), of Fiery Competitors
+38.8 (*Shaky*) — and it shows the clamps are **not** reachable by archetype
+alone: `chemistryRating` rails at ±8.0 net per head, which is a roster of
+*entirely happy* Team Leaders or *entirely unhappy* Drama Queens, and generated
+morale never delivers all 53. That is the correct shape for a 0-100 dial: the
+ends exist, and they cost something.
+
+**Workload.** The re-anchored table lands the league at
+11.6 / 73.9 / 13.1 / 1.6 % across `.underloaded` / `.healthy` / `.overloaded` /
+`.burnedOut`. The engine's own justification for `healthyMax = 56` — "the
+measured p90 of a default-intensity club's end-of-cycle load" — **reproduces
+exactly**: measured p90 is 56, run after run. The median man finishes at 42 and
+reads `.healthy`, which is what `MedicalEngine.workloadRiskMultiplier`'s comment
+says the league-wide tick has to leave a default-intensity roster in.
+
+### Deviation notes — three places the engine's own comments are optimistic
+
+Recorded, not fixed. A harness measures the engine; it does not edit it.
+
+1. **`WorkloadEngine`'s comment says the 21-day cycle "tops out at 70".** It does
+   not. Measured over 42 400 players, **0.77 %** finish above 70 and the maximum
+   observed exit load is **84**. The lattice in that comment assumes the OTAs
+   week contributes nothing, which holds for the median body but not for a
+   low-stamina one: `round(0.45 · 18 · staminaFactor)` reaches 7 against a
+   recovery of 6 once `staminaFactor ≥ 0.803`, i.e. stamina ≤ 48.
+2. **The conclusion the re-anchoring rests on survives anyway, with a thinner
+   margin than claimed.** The pre-change `.overloaded` edge of 80 was reachable
+   by **~0.005 %** of the league (measured 0.000 %–0.009 % over three 42 400-player
+   runs — of order one player per league per several seasons), not the flat
+   zero the comment asserts; the pre-change `.burnedOut` edge of 130 was reachable
+   by **exactly 0 %**. So both upper bands were dead in practice and the ×1.6 /
+   ×2.5 rungs really were unreachable — but the true ceiling is 84, not 70, and
+   the old 80 sat 4 points *below* it rather than 10 above.
+3. **`.burnedOut` is ~4× more common than the comment estimates.** The engine
+   comment puts a 63-load camp at "~0.4 % of a roster, roughly one player every
+   other club per camp". Measured at the league-default recovery it is **1.6 %**
+   — about **0.8 players per club per camp**, i.e. roughly one man per club, not
+   one per two clubs. Still rare enough that the ×2.5 rung is an event rather
+   than a tax.
+
+### The strength coach is a 5-rung step, not a curve
+
+`computeRecoveryRate` maps a coach's `playerDevelopment` 1..99 onto 0.40..0.75
+linearly — but `applyDailyLoad` consumes it as `Int((rate · 10).rounded())`, so
+the whole 1-99 axis collapses to **five** distinct camps. Measured band split at
+preseason exit:
+
+| coach rating | recovery | daily recovery | under | healthy | over | burnt | mean load |
+|---|---|---|---|---|---|---|---|
+| 1 | 0.400 | 4 | 0.0 % | 0.0 % | 2.6 % | **97.4 %** | 81.5 |
+| 25 | 0.486 | 5 | 0.0 % | 24.8 % | 6.7 % | 68.5 % | 60.5 |
+| 50 / 60 / 70 | 0.575–0.646 | 6 | 10.8 % | 74.5 % | 13.1 % | 1.6 % | 41.2 |
+| 80 / 88 | 0.682–0.711 | 7 | 83.3 % | 16.7 % | 0.0 % | 0.0 % | 27.1 |
+| 99 | 0.750 | 8 | 99.2 % | 0.8 % | 0.0 % | 0.0 % | 13.3 |
+
+Diagnostic, deliberately ungated. It is reported because it is the kind of thing
+a hand mirror of the engine would never have surfaced: hiring a strength coach
+is worth nothing at all across three of the four rating bands the game can hand
+you (a 50 and a 70 run an identical camp), and everything at the two boundaries.
+Whether that is a defect is a design question, not a harness one.
+
+### Known gap
+
+`CareerScenario.harness.swift` still substitutes a hand-rolled morale drift with
+**no chemistry term at all** (`driver/CareerScenario.harness.swift`, the
+"Locker-room mood" block). With `LockerRoomExtract` staged, replacing it is now a
+call-site change only — `LockerRoomEngine.chemistryScore(players:)` once per club
+per season, then `weeklyMoraleUpdate(players:wonLastGame:chemistry:)` in place of
+the hand-rolled win/role/reversion arithmetic. It was not done in this wave
+because that file was owned by another agent at the time; it must be done with
+the `career` bands re-read afterwards, and if they shift, the shift is the
+result — the engine does not move to keep them.
 
 ---
 

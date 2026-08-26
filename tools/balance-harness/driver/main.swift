@@ -1847,10 +1847,378 @@ func scenarioBlowoutProbe(_ f: [String: String]) {
     }
 }
 
+// ============================================================================
+// lockerroom scenario — locker-room chemistry + camp workload
+// ============================================================================
+//
+// WHY THIS SCENARIO EXISTS
+//
+// The balance wave changed two engines that move simulated outcomes, and this
+// harness measured NEITHER of them:
+//
+//  1. `LockerRoomEngine.calculateChemistry` summed leadership/toxicity across the
+//     whole roster, so the 0-100 rating scaled with HEADCOUNT and saturated:
+//     measured mean 98.0 with 83 % of clubs pinned at exactly 100. Every
+//     consumer branch (`applyMoraleEffects`, `weeklyMoraleUpdate`) therefore took
+//     the same arm for all 32 clubs every week. The fix normalises per capita.
+//  2. `WorkloadEngine`'s band table put `.overloaded` at 80 and `.burnedOut` at
+//     130, both ABOVE anything the camp scheduler can emit, so every player in
+//     the league finished camp inside the light bands, `injuryMultiplier` was
+//     1.0 for everybody, and four consumers were dead code. The fix re-anchors
+//     the two edges onto the loads the scheduler actually reaches.
+//
+// Both were verified only against a hand-written Python mirror of the engine —
+// the stale-shim failure mode `sync_sources.sh` exists to prevent. This scenario
+// replaces that mirror with the shipped bytes: `LockerRoomExtract.swift`,
+// `WorkloadEngineExtract.swift` and `CampScheduleExtract.swift` are keep-list
+// slices of the three repo files, and the rosters they run on come out of
+// `LeagueGeneratorExtract` (bodies, ages, salaries, contract runway and the
+// morale draw chemistry reads at six thresholds).
+//
+// It measures the engine. It never edits it: every number printed below is
+// computed by repo bytes, and the bands are set against the engine's own
+// published `chemistryLabel` ladder and band edges.
+
+/// Assertion collector — same shape as the `career` scenario's `CRAsserts`.
+final class LRAsserts {
+    private(set) var lines: [(ok: Bool, id: String, text: String)] = []
+    func check(_ id: String, _ ok: Bool, _ text: String) { lines.append((ok, id, text)) }
+    var failures: Int { lines.filter { !$0.ok }.count }
+    func report() {
+        print("")
+        print("===== HARD GATES =====")
+        for l in lines { print("  [\(l.ok ? "PASS" : "FAIL")] \(l.id.padding(toLength: 6, withPad: " ", startingAt: 0)) \(l.text)") }
+        print("")
+        print(failures == 0
+              ? "  ALL \(lines.count) GATES PASSED"
+              : "  \(failures) of \(lines.count) GATES FAILED")
+    }
+}
+
+func lrPct(_ xs: [Double], _ p: Double) -> Double {
+    guard !xs.isEmpty else { return 0 }
+    let s = xs.sorted()
+    let i = Swift.max(0, Swift.min(s.count - 1, Int((p / 100.0 * Double(s.count - 1)).rounded())))
+    return s[i]
+}
+func lrShare(_ hit: Int, _ total: Int) -> Double { total > 0 ? Double(hit) / Double(total) * 100 : 0 }
+/// `%-N@` does not pad on Darwin's `%@`, so column labels are padded here.
+func lrPad(_ s: String, _ n: Int) -> String {
+    s.count >= n ? s : s + String(repeating: " ", count: n - s.count)
+}
+
+/// Builds ONE 53-man roster the way `LeagueGenerator.generateRoster` builds one.
+///
+/// Scaffolding here is only the loop and the depth chart (both mirrored from the
+/// `leaguegen` scenario, which pins them against the Python mirror); every value
+/// that a number depends on — age, body, position skills, salary, contract
+/// runway and MORALE — is drawn by the staged shipped functions. `forced` pins
+/// every man to one archetype so the travel table can walk the extremes; `nil`
+/// reproduces the shipped uniform `PersonalityArchetype.allCases.randomElement()`.
+func lrBuildRoster(forced: PersonalityArchetype?, rng: inout SystemRandomNumberGenerator) -> [Player] {
+    let cap = ContractEngine.openingSalaryCap
+    var depthChart: [Position: Int] = [:]
+    var roster: [Player] = []
+    roster.reserveCapacity(53)
+    for (position, count) in LeagueGenerator.rosterBlueprint {
+        for _ in 0..<count {
+            let rank = depthChart[position, default: 0]
+            depthChart[position] = rank + 1
+            let depthIndex = Swift.min(rank, 2)
+            let age = LeagueGenerator.randomAge(for: position)
+            let levelShift = LeagueGenerator.ageLevelShift(age: age, position: position)
+                + LeagueGenerator.talentLevelShift(depthIndex: depthIndex, using: &rng)
+            let ageShift = Int(levelShift.rounded())
+            let posAttrs = LeagueGenerator.randomPositionAttributes(
+                for: position, depthIndex: depthIndex, ageShift: ageShift
+            )
+            let physical = PositionPhysicalProfile.sample(
+                for: position,
+                levelShift: LeagueGenerator.veteranLevelShift(depthIndex: depthIndex) + levelShift
+            )
+            let mental = PositionPhysicalProfile.sampleMental(
+                for: position,
+                targetAverage: PositionPhysicalProfile.baseLevel
+                    + LeagueGenerator.veteranLevelShift(depthIndex: depthIndex) + levelShift
+            )
+            let archetype = forced ?? PersonalityArchetype.allCases.randomElement(using: &rng)!
+            let motivation = Motivation.allCases.randomElement(using: &rng)!
+            // `generatePlayer`'s own tenure assembly (a 21-23 debut year), the
+            // same three lines the `leaguegen` scenario mirrors.
+            let yearsPro = Swift.max(0, age - Int.random(in: 21...23, using: &rng))
+            let contractYears = LeagueGenerator.realisticContractYears(
+                yearsPro: yearsPro, age: age, using: &rng
+            )
+            let p = Player(
+                fullName: "lr-\(position.rawValue)",
+                position: position,
+                physical: physical,
+                mental: mental,
+                positionAttributes: posAttrs,
+                personalityArchetype: archetype
+            )
+            // The man is built BEFORE he is priced, exactly as `generatePlayer`
+            // does it: the salary seeder and the market ask both read `overall`.
+            let salary = LeagueGenerator.realisticSalary(
+                for: position, overall: p.overall, age: age,
+                yearsPro: yearsPro, depthIndex: depthIndex, salaryCap: cap, using: &rng
+            )
+            p.age = age
+            p.yearsPro = yearsPro
+            p.annualSalary = salary
+            p.contractYearsRemaining = contractYears
+            p.personality = PlayerPersonality(archetype: archetype, motivation: motivation)
+            p.morale = LeagueGenerator.initialMorale(
+                personality: archetype,
+                age: age,
+                depthIndex: depthIndex,
+                contractYears: contractYears,
+                salary: salary,
+                marketValue: ContractEngine.estimateMarketValue(
+                    overall: p.overall, position: position, age: age, salaryCap: cap
+                ),
+                position: position,
+                using: &rng
+            )
+            roster.append(p)
+        }
+    }
+    return roster
+}
+
+/// Runs the SHIPPED 21-day camp cycle over a roster and leaves every man holding
+/// his preseason-exit load and status.
+///
+/// `WeekAdvancer.advanceOffseasonPhase` calls `applyCampWeeklyTick` once per camp
+/// phase and then advances the phase unconditionally, so OTAs / trainingCamp /
+/// preseason are one 7-day tick each, opening from the zero `resetCampLoad`
+/// writes at OTAs. Intensity comes from the scheduler's own
+/// `campIntensity(for:)`; nothing here types 0.45 / 0.85 / 0.55.
+let lrCampPhases: [SeasonPhase] = [.otas, .trainingCamp, .preseason]
+@discardableResult
+func lrRunCamp(_ roster: [Player], recovery: Double) -> [Int] {
+    var sumByPhase: [Int] = []
+    for p in roster { WorkloadEngine.resetCampLoad(player: p) }
+    for phase in lrCampPhases {
+        let intensity = WeekAdvancer.campIntensity(for: phase)
+        for p in roster {
+            WorkloadEngine.tickWeek(player: p, intensity: intensity, recoveryRate: recovery)
+        }
+        sumByPhase.append(roster.reduce(0) { $0 + $1.cumulativeLoad })
+    }
+    return sumByPhase
+}
+
+func lrBandSplit(_ players: [Player]) -> [WorkloadStatus: Int] {
+    var out: [WorkloadStatus: Int] = [:]
+    for p in players { out[p.workloadStatus, default: 0] += 1 }
+    return out
+}
+
+func scenarioLockerRoom(_ f: [String: String]) {
+    let clubCount = Int(f["clubs"] ?? "") ?? 400
+    let travelClubs = Int(f["travel-clubs"] ?? "") ?? 40
+    let A = LRAsserts()
+    var rng = SystemRandomNumberGenerator()
+
+    print("===== SCENARIO lockerroom: chemistry + camp workload over \(clubCount) x 53-man rosters =====")
+    print("  chemistry: LockerRoomEngine (awk slice) · workload: WorkloadEngine (awk slice)")
+    print("  camp inputs: WeekAdvancer.campIntensity / computeRecoveryRate (awk slice)")
+    print("  rosters:   LeagueGenerator + PositionPhysicalProfile + ContractEngine (staged)")
+    print(String(format: "  engine constants read (never re-typed): chemistryPointsPerNetHead=%.4f  bands <%d / <%d / <%d / burnoutFloor=%d",
+        LockerRoomEngine.chemistryPointsPerNetHead,
+        WorkloadEngine.underloadedMax, WorkloadEngine.healthyMax,
+        WorkloadEngine.overloadedMax, WorkloadEngine.burnoutFloor))
+
+    // ------------------------------------------------------------------------
+    // A. Chemistry distribution across generated clubs
+    // ------------------------------------------------------------------------
+    let t0 = Date()
+    var league: [[Player]] = []
+    league.reserveCapacity(clubCount)
+    var chem: [Double] = []
+    for _ in 0..<clubCount {
+        let roster = lrBuildRoster(forced: nil, rng: &rng)
+        chem.append(Double(LockerRoomEngine.chemistryScore(players: roster)))
+        league.append(roster)
+    }
+    let chemMean = meanD(chem)
+    let chemSD = sdD(chem)
+    let pinned100 = lrShare(chem.filter { $0 >= 100 }.count, chem.count)
+    let pinned0 = lrShare(chem.filter { $0 <= 0 }.count, chem.count)
+
+    print("")
+    print("  --- A. chemistry across \(clubCount) uniformly-mixed clubs (the shipped archetype draw) ---")
+    print(String(format: "    mean            %6.2f     band 52-64   [%@]   (PRE-CHANGE: 98.0)",
+        chemMean, band(chemMean, 52, 64)))
+    print(String(format: "    sd              %6.2f     band 1.5-6.0 [%@]   (PRE-CHANGE: ~0, the meter could not move)",
+        chemSD, band(chemSD, 1.5, 6.0)))
+    print(String(format: "    min / p05 / p50 / p95 / max   %.0f / %.0f / %.0f / %.0f / %.0f",
+        chem.min() ?? 0, lrPct(chem, 5), lrPct(chem, 50), lrPct(chem, 95), chem.max() ?? 0))
+    print(String(format: "    pinned at 100   %5.1f %%    band 0-2 %%   [%@]   (PRE-CHANGE: 83 %%)",
+        pinned100, band(pinned100, 0, 2)))
+    print(String(format: "    pinned at 0     %5.1f %%    band 0-2 %%   [%@]   (PRE-CHANGE: 0 %%)",
+        pinned0, band(pinned0, 0, 2)))
+    // Label mix, on the engine's OWN ladder — the words the app shows the user.
+    var labelMix: [String: Int] = [:]
+    for c in chem { labelMix[LockerRoomEngine.chemistryLabel(Int(c)), default: 0] += 1 }
+    let labelOrder = ["Elite", "Strong", "Average", "Shaky", "Toxic"]
+    print("    chemistryLabel mix: " + labelOrder.map {
+        String(format: "%@ %.1f%%", $0, lrShare(labelMix[$0] ?? 0, chem.count))
+    }.joined(separator: "  "))
+
+    // ------------------------------------------------------------------------
+    // A2. Travel across roster archetype mixes
+    // ------------------------------------------------------------------------
+    // Each row is a roster of 53 men who are ALL one archetype — the widest a
+    // GM could ever build in that direction — with everything else (age, body,
+    // pay, contract runway, morale) still drawn by the shipped generator. The
+    // spread between the top and bottom row is how much room the meter has.
+    print("")
+    print("  --- A2. chemistry travel by roster archetype mix (\(travelClubs) clubs each, 53/53 forced) ---")
+    print("    archetype            mean     sd    min   max   label")
+    var travelRows: [(String, Double)] = []
+    for archetype in PersonalityArchetype.allCases {
+        var xs: [Double] = []
+        for _ in 0..<travelClubs {
+            let r = lrBuildRoster(forced: archetype, rng: &rng)
+            xs.append(Double(LockerRoomEngine.chemistryScore(players: r)))
+        }
+        let m = meanD(xs)
+        travelRows.append((archetype.rawValue, m))
+        print(String(format: "    %@ %6.1f  %5.2f  %5.0f %5.0f   %@",
+            lrPad(archetype.rawValue, 18), m, sdD(xs), xs.min() ?? 0, xs.max() ?? 0,
+            LockerRoomEngine.chemistryLabel(Int(m))))
+    }
+    let travelHi = travelRows.map(\.1).max() ?? 0
+    let travelLo = travelRows.map(\.1).min() ?? 0
+    let travelSpan = travelHi - travelLo
+    print(String(format: "    TRAVEL  %.1f (%@ %.1f  ->  %@ %.1f)   band >= 35 [%@]",
+        travelSpan,
+        travelRows.min(by: { $0.1 < $1.1 })?.0 ?? "?", travelLo,
+        travelRows.max(by: { $0.1 < $1.1 })?.0 ?? "?", travelHi,
+        travelSpan >= 35 ? "OK " : "OUT"))
+
+    // Where the clamps actually live, computed by the engine's own rating
+    // function rather than asserted: `chemistryRating` is linear in net-per-head
+    // with slope `chemistryPointsPerNetHead`, so the dial rails at exactly
+    // ±(50 / slope) per head. The per-player table tops out at ±8 a head (a happy
+    // Team Leader / an unhappy Drama Queen), so the clamp is a roster that is
+    // ENTIRELY one of those — which is why no row above reaches it.
+    let netPerHeadToClamp = 50.0 / LockerRoomEngine.chemistryPointsPerNetHead
+    let head = 53
+    print(String(format: "    clamp reachability: net/head +%.1f -> %d, net/head -%.1f -> %d  (a 53-man room of ONLY happy leaders / unhappy drama queens)",
+        netPerHeadToClamp,
+        LockerRoomEngine.chemistryRating(net: Int(netPerHeadToClamp) * head, headcount: head),
+        netPerHeadToClamp,
+        LockerRoomEngine.chemistryRating(net: -Int(netPerHeadToClamp) * head, headcount: head)))
+
+    // ------------------------------------------------------------------------
+    // B. Camp workload at preseason exit
+    // ------------------------------------------------------------------------
+    // 31 of 32 clubs never touch `computeRecoveryRate`: `applyAICampWorkload`
+    // ticks them at the same number the no-coach fallback returns, which is why
+    // the league-default row asks the engine for `computeRecoveryRate(coaches: [])`
+    // instead of typing 0.55. `sync_sources.sh` fails the build if that
+    // equivalence ever stops holding.
+    let leagueRecovery = WeekAdvancer.computeRecoveryRate(coaches: [])
+    print("")
+    print(String(format: "  --- B. camp workload at PRESEASON EXIT — league default (recovery %.3f, the AI-club rate) ---", leagueRecovery))
+    var phaseTotals = [0, 0, 0]
+    var allPlayers: [Player] = []
+    for roster in league {
+        let totals = lrRunCamp(roster, recovery: leagueRecovery)
+        for i in 0..<3 { phaseTotals[i] += totals[i] }
+        allPlayers.append(contentsOf: roster)
+    }
+    let headcount = allPlayers.count
+    let loads = allPlayers.map { Double($0.cumulativeLoad) }
+    let split = lrBandSplit(allPlayers)
+    let bandOrder: [WorkloadStatus] = [.underloaded, .healthy, .overloaded, .burnedOut]
+    print(String(format: "    load after OTAs / camp / preseason (mean)   %5.1f  %5.1f  %5.1f",
+        Double(phaseTotals[0]) / Double(headcount),
+        Double(phaseTotals[1]) / Double(headcount),
+        Double(phaseTotals[2]) / Double(headcount)))
+    print(String(format: "    exit load  mean %5.1f  sd %4.1f  min %.0f  p50 %.0f  p90 %.0f  max %.0f",
+        meanD(loads), sdD(loads), loads.min() ?? 0, lrPct(loads, 50), lrPct(loads, 90), loads.max() ?? 0))
+    // The re-anchoring's own argument, checked instead of asserted. `healthyMax`
+    // was set to "the measured p90 of a default-intensity club's end-of-cycle
+    // load", and `absoluteCap` is documented as a runaway guard the 21-day cycle
+    // cannot reach. Both are printed against the engine's own constants, so a
+    // camp scheduler change that invalidates either shows up here.
+    let p90 = lrPct(loads, 90)
+    print(String(format: "    p90 exit load %3.0f  vs healthyMax %d (the .overloaded edge is anchored ON this p90)  [%@]",
+        p90, WorkloadEngine.healthyMax, band(p90, Double(WorkloadEngine.underloadedMax), Double(WorkloadEngine.overloadedMax))))
+    print(String(format: "    max exit load %3.0f  vs absoluteCap %d (documented as unreachable — the runaway guard)  [%@]",
+        loads.max() ?? 0, WorkloadEngine.absoluteCap,
+        (loads.max() ?? 0) < Double(WorkloadEngine.absoluteCap) ? "OK " : "OUT"))
+    print("    band            share    injuryMultiplier")
+    for b in bandOrder {
+        print(String(format: "    %@ %5.1f %%   x%.1f",
+            lrPad(b.rawValue, 14), lrShare(split[b] ?? 0, headcount), b.injuryMultiplier))
+    }
+    let heavyShare = lrShare((split[.overloaded] ?? 0) + (split[.burnedOut] ?? 0), headcount)
+    let burntShare = lrShare(split[.burnedOut] ?? 0, headcount)
+    let meanMult = allPlayers.reduce(0.0) { $0 + $1.workloadStatus.injuryMultiplier } / Double(headcount)
+    print(String(format: "    overloaded+burnedOut   %5.1f %%   band 2-40 %%  [%@]   (PRE-CHANGE: 0.0 %% — both bands sat above the reachable ceiling)",
+        heavyShare, band(heavyShare, 2, 40)))
+    print(String(format: "    burnedOut only         %5.1f %%   band 0-15 %%  [%@]   (the x2.5 rung: one of the two heaviest camps the scheduler can deliver)",
+        burntShare, band(burntShare, 0, 15)))
+    print(String(format: "    mean injury multiplier %6.3f   band 1.02-1.35 [%@]   (PRE-CHANGE: 1.000 for every player in the league)",
+        meanMult, band(meanMult, 1.02, 1.35)))
+
+    // B2. The coach axis. Only the USER's club goes through `computeRecoveryRate`;
+    // this is what a strength coach is worth in band terms.
+    print("")
+    print("  --- B2. workload band split vs the user club's strength coach (computeRecoveryRate) ---")
+    print("    coach playerDevelopment   recovery   under   healthy   over    burnt   meanLoad")
+    let sweepLeague = Array(league.prefix(Swift.max(1, Swift.min(league.count, travelClubs))))
+    for rating in [1, 25, 50, 60, 70, 80, 88, 99] {
+        let staff = [Coach(role: .strengthCoach, playerDevelopment: rating)]
+        let rec = WeekAdvancer.computeRecoveryRate(coaches: staff)
+        var men: [Player] = []
+        for roster in sweepLeague {
+            lrRunCamp(roster, recovery: rec)
+            men.append(contentsOf: roster)
+        }
+        let s = lrBandSplit(men)
+        print(String(format: "    %-24d  %.3f     %5.1f%%  %5.1f%%   %5.1f%%  %5.1f%%   %5.1f",
+            rating, rec,
+            lrShare(s[.underloaded] ?? 0, men.count), lrShare(s[.healthy] ?? 0, men.count),
+            lrShare(s[.overloaded] ?? 0, men.count), lrShare(s[.burnedOut] ?? 0, men.count),
+            meanD(men.map { Double($0.cumulativeLoad) })))
+    }
+    // Restore the league-default state so anything read after this point is the
+    // shipped AI-club camp, not the last sweep row.
+    for roster in sweepLeague { lrRunCamp(roster, recovery: leagueRecovery) }
+
+    // ------------------------------------------------------------------------
+    // Hard gates — the four things that CANNOT be true again
+    // ------------------------------------------------------------------------
+    // Deliberately loose. These are regression guards on defects that were
+    // measured (chemistry railed at its ceiling; nothing above `.healthy`
+    // reachable), not a re-statement of the distribution above. The printed
+    // bands carry the tighter expectations and do not gate, because this
+    // scenario's job is to REPORT what the engine does, not to hold it still.
+    A.check("LR-1", pinned100 < 50,
+        String(format: "chemistry pinned at 100 for %.1f %% of clubs (< 50 %%; the defect measured 83 %%)", pinned100))
+    A.check("LR-2", chemMean < 90,
+        String(format: "league mean chemistry %.1f (< 90; the defect measured 98.0)", chemMean))
+    A.check("LR-3", travelSpan >= 20,
+        String(format: "chemistry travel across archetype mixes %.1f points (>= 20; a railed meter has none)", travelSpan))
+    A.check("LR-4", heavyShare > 0,
+        String(format: "%.2f %% of the league finishes camp above .healthy (> 0; the defect made both upper bands unreachable)", heavyShare))
+    A.check("LR-5", meanMult > 1.0,
+        String(format: "mean camp injury multiplier %.3f (> 1.000; MedicalEngine.workloadRiskMultiplier returned exactly 1.0 for everybody)", meanMult))
+    A.report()
+    print(String(format: "\n  elapsed %.1fs", Date().timeIntervalSince(t0)))
+    if A.failures > 0 { exit(1) }
+}
+
 // Parameterized round-5 scenarios consume `--flag value` args instead of a
 // scenario-name list. They dispatch BEFORE the name-list path so every existing
 // scenario keeps working exactly as before.
-if let first = args.first, first == "fullgame" || first == "positionsweep" || first == "blowoutprobe" || first == "draftclass" || first == "career" || first == "leaguegen" || first == "perception" {
+if let first = args.first, first == "fullgame" || first == "positionsweep" || first == "blowoutprobe" || first == "draftclass" || first == "career" || first == "leaguegen" || first == "perception" || first == "lockerroom" {
     let flags = parseFlags(Array(args.dropFirst()))
     printHeader()
     print("")
@@ -1860,6 +2228,7 @@ if let first = args.first, first == "fullgame" || first == "positionsweep" || fi
     else if first == "career" { scenarioCareer(flags) }
     else if first == "leaguegen" { scenarioLeagueGen(flags) }
     else if first == "perception" { scenarioPerception(flags) }
+    else if first == "lockerroom" { scenarioLockerRoom(flags) }
     else { scenarioPositionSweep(flags) }
     print("\nDONE.")
     exit(0)

@@ -467,6 +467,25 @@ struct CareerDashboardView: View {
         }
     }
 
+    /// Which hiring destination fills a given coaching chair.
+    ///
+    /// All four of these resolve to `ShellDestination.coachingStaff` today —
+    /// `CareerShellView.handleTaskNavigation` maps them onto the same screen,
+    /// whose default tab is the Staff tab, i.e. the hiring surface. They are
+    /// still named per seat rather than collapsed to `.coachingStaff` because
+    /// the destination is the only thing the shell is handed, and the day the
+    /// three gate seats get their own pre-filtered market (the `.hireHC` /
+    /// `.hireOC` / `.hireDC` cases exist for exactly that) this call site
+    /// already asks for it.
+    private func hireDestination(for role: CoachRole) -> TaskDestination {
+        switch role {
+        case .headCoach:            return .hireHC
+        case .offensiveCoordinator: return .hireOC
+        case .defensiveCoordinator: return .hireDC
+        default:                    return .hireCoach
+        }
+    }
+
     private func loadCoaches() {
         guard let teamID = career.teamID else { return }
         // Scoped to the open save as well as the club: `teamID` alone matches
@@ -590,7 +609,22 @@ struct CareerDashboardView: View {
                     },
                     onCancel: {
                         activeSheet = nil
-                    }
+                    },
+                    // A vacant seat is the one line the review cannot fix in
+                    // place — hiring lives on the Staff screen. Rather than
+                    // print "VACANT" and stop there, the row closes the sheet
+                    // and asks the shell for the list that fills that chair.
+                    onHireSeat: { role in
+                        activeSheet = nil
+                        onTaskSelected(hireDestination(for: role))
+                    },
+                    // The sheet can now push `CoachDetailView`, which fires,
+                    // extends, promotes and demotes. #133's rule is that this
+                    // screen keeps ONE staff reading: a mutation behind the
+                    // modal re-derives the ledger here and hands a fresh one
+                    // down, so the review can never argue with the advance gate
+                    // it is the front end of.
+                    onStaffChanged: { refreshStaffTile() }
                 )
                 .presentationDetents([.large])
                 // On a regular-width iPad a sheet presents as a fixed-size form
@@ -5263,6 +5297,28 @@ private struct CoachingStaffReviewSheet: View {
     let ledger: StaffLedger
     let onConfirm: () -> Void
     let onCancel: () -> Void
+    /// Leave the review and open the hiring list for a named chair. The sheet
+    /// cannot hire — that flow is a modal of its own on the Staff screen, and a
+    /// second modal on this presentation is the silent-dismiss bug this file
+    /// keeps a one-sheet enum to avoid.
+    let onHireSeat: (CoachRole) -> Void
+    /// Raised once the pushed coach card has been and gone, because that card
+    /// fires, extends, promotes and demotes. Everything on this sheet reads the
+    /// ONE `StaffLedger` handed down (#133), so the owner of that reading is
+    /// asked to take it again rather than the sheet patching its own copy.
+    let onStaffChanged: () -> Void
+
+    @Environment(\.modelContext) private var modelContext
+
+    /// The coach the user tapped, pushed onto this sheet's own stack — the same
+    /// `navigationDestination(item:)` idiom `CoachingStaffView` uses for the
+    /// identical push, rather than a second sheet over the first.
+    @State private var detailCoachID: UUID?
+
+    /// The league read behind every benchmark marker on the list. Nil until the
+    /// single fetch in `loadLeagueBenchmark()` lands, and the rows simply omit
+    /// their markers while it is — an absent comparison beats a zero one.
+    @State private var benchmark: LeagueBenchmark?
 
     // MARK: - Derived
 
@@ -5277,6 +5333,23 @@ private struct CoachingStaffReviewSheet: View {
     private var missingRequiredRoles: [CoachRole] { ledger.missingRequiredRoles }
 
     private var vacantRoles: [CoachRole] { ledger.vacantCoachRoles }
+
+    /// One occupant per seat, resolved the SAME way ``StaffLedger`` resolves it:
+    /// where a save carries duplicate rows for one chair, the dearer man wins.
+    ///
+    /// `coaches.first(where:)` was good enough while the row printed a rating
+    /// and the ledger printed the money separately. It is not good enough now
+    /// that the row carries the salary charged to the pot in the card below —
+    /// picking a different duplicate here would put two payrolls on one sheet,
+    /// which is the #133 defect this whole ledger exists to have ended.
+    private var coachBySeat: [CoachRole: Coach] {
+        var seated: [CoachRole: Coach] = [:]
+        for coach in coaches where ledger.coachRoles.contains(coach.role) {
+            if let sitting = seated[coach.role], sitting.salary >= coach.salary { continue }
+            seated[coach.role] = coach
+        }
+        return seated
+    }
 
     private var oc: Coach? {
         coaches.first { $0.role == .offensiveCoordinator }
@@ -5308,6 +5381,13 @@ private struct CoachingStaffReviewSheet: View {
                     // Staff listing
                     staffSection
 
+                    // What the owner actually gave this club for its staff, and
+                    // what is still sitting in the account. The review used to
+                    // end the money conversation at a salary-free list: sixteen
+                    // ratings and no idea whether the club was skint or sitting
+                    // on an unspent coordinator.
+                    budgetSection
+
                     // Schemes
                     schemesSection
 
@@ -5325,6 +5405,33 @@ private struct CoachingStaffReviewSheet: View {
             .navigationTitle("Coaching Staff Review")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarColorScheme(.dark, for: .navigationBar)
+            // One fetch per presentation, never per row — see
+            // `loadLeagueBenchmark()`.
+            .task { loadLeagueBenchmark() }
+            // The coach card, pushed on this sheet's stack. `CoachingStaffView`
+            // pushes the identical destination from the identical binding; the
+            // review was the only staff surface where a man's name was not a
+            // link to him.
+            .navigationDestination(item: $detailCoachID) { coachID in
+                if let coach = coaches.first(where: { $0.id == coachID }) {
+                    CoachDetailView(coach: coach)
+                }
+            }
+            .onChange(of: detailCoachID) { _, pushed in
+                // Popped back. That card can fire, extend, promote and demote,
+                // so the seat list, the three pots and the advance gate are all
+                // re-read from the owner of the reading instead of being
+                // trusted from before the push.
+                guard pushed == nil else { return }
+                onStaffChanged()
+                // The club's own mean and its table position both move when a
+                // man is fired or promoted, so the league read is dropped and
+                // taken again rather than left describing a staff that no
+                // longer exists. Only on the way back from a coach card —
+                // never on the ordinary appear, where `.task` has it already.
+                benchmark = nil
+                loadLeagueBenchmark()
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { onCancel() }
@@ -5372,52 +5479,33 @@ private struct CoachingStaffReviewSheet: View {
                     .font(.system(size: DSType.Size.caption, weight: .semibold).monospacedDigit())
                     .foregroundStyle(Color.textSecondary)
             }
-            .padding(.bottom, 8)
+            .padding(.bottom, DSSpacing.xs)
+
+            // Where this staff places in the league, before a single row is
+            // read. Sixteen numbers with no denominator was the whole of the
+            // complaint: a 58 painted red is only a verdict if you already know
+            // what the club across the road pays for the same chair.
+            staffQualityStrip
+
+            benchmarkLegend
 
             // Player as HC (if GM+HC role) — ruled off from the counted seats
             // below it, because it is not one of them.
             if isGMAndHC {
-                staffRow(
-                    role: .headCoach,
-                    name: "You (The Tactician)",
-                    overall: nil,
-                    schemeName: nil,
-                    isFilled: true,
-                    isRequired: true
-                )
+                playerHeadCoachRow
                 Divider()
                     .overlay(Color.surfaceBorder.opacity(0.6))
                     .padding(.vertical, 4)
             }
 
-            // All roles in sort order
+            // All roles in sort order. Resolved once, outside the loop, and
+            // resolved the way the LEDGER resolves it — see `coachBySeat`.
+            let seated = coachBySeat
             ForEach(allRoles.sorted(by: { $0.sortOrder < $1.sortOrder }), id: \.self) { role in
-                if let coach = coaches.first(where: { $0.role == role }) {
-                    let schemeName: String? = {
-                        if role == .offensiveCoordinator {
-                            return coach.offensiveScheme?.displayName
-                        } else if role == .defensiveCoordinator {
-                            return coach.defensiveScheme?.displayName
-                        }
-                        return nil
-                    }()
-                    staffRow(
-                        role: role,
-                        name: coach.fullName,
-                        overall: coachOverall(coach),
-                        schemeName: schemeName,
-                        isFilled: true,
-                        isRequired: ledger.requiredCoachRoles.contains(role)
-                    )
+                if let coach = seated[role] {
+                    hiredStaffRow(role: role, coach: coach)
                 } else {
-                    staffRow(
-                        role: role,
-                        name: "VACANT",
-                        overall: nil,
-                        schemeName: nil,
-                        isFilled: false,
-                        isRequired: ledger.requiredCoachRoles.contains(role)
-                    )
+                    vacantStaffRow(role: role)
                 }
             }
         }
@@ -5430,62 +5518,633 @@ private struct CoachingStaffReviewSheet: View {
         )
     }
 
-    private func staffRow(
-        role: CoachRole,
-        name: String,
-        overall: Int?,
-        schemeName: String?,
-        isFilled: Bool,
-        isRequired: Bool
+    /// The shared chrome of a staff line — status glyph, seat code, portrait,
+    /// two-line identity block — with the trailing edge left to the caller.
+    ///
+    /// One shell rather than one row per state, because the three states differ
+    /// only in what hangs off the right-hand side and what a tap does. The
+    /// 44 pt floor lives here for the same reason: every one of these lines is
+    /// now a touch target, and §2.12 has no exceptions for rows.
+    private func staffRowShell<Portrait: View, Trailing: View>(
+        statusIcon: String,
+        statusColor: Color,
+        seat: String,
+        title: String,
+        titleColor: Color,
+        subtitle: String,
+        highlighted: Bool,
+        @ViewBuilder portrait: () -> Portrait,
+        @ViewBuilder trailing: () -> Trailing
     ) -> some View {
-        HStack(spacing: 8) {
-            // Status icon
-            Image(systemName: isFilled ? "checkmark.circle.fill" : (isRequired ? "exclamationmark.triangle.fill" : "circle"))
+        HStack(spacing: DSSpacing.xs) {
+            Image(systemName: statusIcon)
                 .font(.system(size: DSType.Size.body))
-                .foregroundStyle(isFilled ? Color.success : (isRequired ? Color.warning : Color.textTertiary))
+                .foregroundStyle(statusColor)
                 .frame(width: 18)
 
-            // Role abbreviation
-            Text(role.abbreviation)
+            Text(seat)
                 .font(.system(size: DSType.Size.micro, weight: .heavy))
                 .foregroundStyle(Color.accentGold)
                 .frame(width: 30, alignment: .leading)
 
-            // Name
-            Text(name)
-                .font(.system(size: DSType.Size.body, weight: isFilled ? .medium : .bold))
-                .foregroundStyle(isFilled ? Color.textPrimary : Color.warning)
-                .lineLimit(1)
+            portrait()
 
-            Spacer()
-
-            // Scheme badge (for coordinators)
-            if let scheme = schemeName {
-                Text(scheme)
-                    .font(.system(size: DSType.Size.caption, weight: .semibold))
-                    .foregroundStyle(Color.accentGold)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(
-                        Capsule()
-                            .fill(Color.accentGold.opacity(0.12))
-                    )
+            VStack(alignment: .leading, spacing: 0) {
+                Text(title)
+                    .font(.system(size: DSType.Size.body, weight: .semibold))
+                    .foregroundStyle(titleColor)
+                    .lineLimit(1)
+                Text(subtitle)
+                    .font(.system(size: DSType.Size.micro))
+                    .foregroundStyle(Color.textTertiary)
+                    .lineLimit(1)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            // The flexible column is the one that has to give way, or a long
+            // coach name pushes the benchmark marker off the trailing edge.
+            .clipped()
 
-            // OVR
-            if let ovr = overall {
-                Text("\(ovr)")
-                    .font(.system(size: DSType.Size.body, weight: .bold).monospacedDigit())
-                    .foregroundStyle(coachRatingColor(ovr))
-                    .frame(width: 30, alignment: .trailing)
-            }
+            trailing()
         }
-        .padding(.vertical, 5)
-        .padding(.horizontal, 4)
+        .frame(minHeight: 44)
+        .padding(.horizontal, DSSpacing.xxs)
         .background(
             RoundedRectangle(cornerRadius: DSCornerRadius.tight)
-                .fill(!isFilled && isRequired ? Color.warning.opacity(0.06) : Color.clear)
+                .fill(highlighted ? Color.warning.opacity(0.06) : Color.clear)
         )
+        .contentShape(Rectangle())
+    }
+
+    /// One hired coach. The whole line is the link to his card.
+    private func hiredStaffRow(role: CoachRole, coach: Coach) -> some View {
+        let overall = coachOverall(coach)
+        let seatMean = benchmark?.meanBySeat[role]
+        let schemeName: String? = {
+            if role == .offensiveCoordinator {
+                return coach.offensiveScheme?.displayName
+            } else if role == .defensiveCoordinator {
+                return coach.defensiveScheme?.displayName
+            }
+            return nil
+        }()
+
+        return Button {
+            detailCoachID = coach.id
+        } label: {
+            staffRowShell(
+                statusIcon: "checkmark.circle.fill",
+                statusColor: Color.success,
+                seat: role.abbreviation,
+                title: coach.fullName,
+                titleColor: Color.textPrimary,
+                subtitle: contractLine(for: coach),
+                highlighted: false,
+                portrait: { PersonFaceView(coach: coach, size: .small) },
+                trailing: {
+                    HStack(spacing: DSSpacing.xs) {
+                        if let schemeName {
+                            schemeChip(schemeName)
+                        }
+                        if let seatMean {
+                            benchmarkBar(overall: overall, seatMean: seatMean)
+                            deltaLabel(overall - seatMean)
+                        }
+                        Text("\(overall)")
+                            .font(.system(size: DSType.Size.callout, weight: .bold).monospacedDigit())
+                            .foregroundStyle(coachRatingColor(overall))
+                            .frame(width: 28, alignment: .trailing)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: DSType.Size.micro, weight: .semibold))
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                }
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// An open seat. Tapping it leaves the review and opens the hiring list for
+    /// that chair — the review is where the hole is named, so it is the right
+    /// place to be handed the shovel.
+    private func vacantStaffRow(role: CoachRole) -> some View {
+        let isRequired = ledger.requiredCoachRoles.contains(role)
+        // The going rate is `CoachRole.salaryRange.avg` — the same engine figure
+        // the hiring market prices candidates against. Read, never rewritten:
+        // it is what makes "$18.2M unspent" mean something on a line that says
+        // the chair is empty.
+        let goingRate = role.salaryRange.avg
+
+        return Button {
+            onHireSeat(role)
+        } label: {
+            staffRowShell(
+                statusIcon: isRequired ? "exclamationmark.triangle.fill" : "circle",
+                statusColor: isRequired ? Color.warning : Color.textTertiary,
+                seat: role.abbreviation,
+                title: "Vacant — \(role.displayName)",
+                titleColor: isRequired ? Color.warning : Color.textSecondary,
+                subtitle: "League pays about \(StaffLedger.money(goingRate)) for this chair",
+                highlighted: isRequired,
+                portrait: {
+                    Circle()
+                        .strokeBorder(
+                            Color.surfaceBorder,
+                            style: StrokeStyle(lineWidth: 1, dash: [3, 3])
+                        )
+                        .frame(width: 30, height: 30)
+                        .overlay(
+                            Image(systemName: "plus")
+                                .font(.system(size: DSType.Size.caption, weight: .bold))
+                                .foregroundStyle(isRequired ? Color.warning : Color.textTertiary)
+                        )
+                },
+                trailing: {
+                    HStack(spacing: DSSpacing.xs) {
+                        Text("HIRE")
+                            .font(.system(size: DSType.Size.micro, weight: .heavy))
+                            .foregroundStyle(Color.accentGold)
+                            .tracking(0.4)
+                            .padding(.horizontal, DSSpacing.xs)
+                            .padding(.vertical, DSSpacing.xxs)
+                            .background(Capsule().fill(Color.accentGold.opacity(0.14)))
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: DSType.Size.micro, weight: .semibold))
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                }
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// The GM+HC's own chair. Not a hire, not a seat in any denominator, and
+    /// deliberately not a link — there is no coach row in the store for the man
+    /// holding the iPad.
+    private var playerHeadCoachRow: some View {
+        staffRowShell(
+            statusIcon: "checkmark.circle.fill",
+            statusColor: Color.success,
+            seat: CoachRole.headCoach.abbreviation,
+            title: "You (The Tactician)",
+            titleColor: Color.textPrimary,
+            subtitle: "Your own chair — off the budget and out of the count",
+            highlighted: false,
+            portrait: { UserPortraitView(career: career, size: .small) },
+            trailing: { EmptyView() }
+        )
+    }
+
+    /// The money line under a hired coach's name — the answer to the question
+    /// the rating beside it provokes. It is the same salary `StaffLedger`
+    /// charges to the pot in the card below, so the list and the budget cannot
+    /// describe two different payrolls.
+    private func contractLine(for coach: Coach) -> String {
+        let years = coach.contractYearsRemaining
+        let term = years <= 0 ? "expiring" : "\(years) yr\(years == 1 ? "" : "s") left"
+        return "\(StaffLedger.money(coach.salary)) · \(term) · age \(coach.age)"
+    }
+
+    private func schemeChip(_ name: String) -> some View {
+        Text(name)
+            .font(.system(size: DSType.Size.micro, weight: .semibold))
+            .foregroundStyle(Color.accentGold)
+            .lineLimit(1)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(Color.accentGold.opacity(0.12)))
+    }
+
+    // MARK: - League Benchmark
+
+    /// What the rest of the league gets out of the same sixteen chairs.
+    ///
+    /// Built ONCE per presentation, from one `Coach` fetch. The sheet lists
+    /// sixteen seats and "the average OC" is a whole-league question, so a
+    /// per-row derivation would be sixteen passes over ~500 rows on a modal
+    /// that opens over an already-loading dashboard.
+    private struct LeagueBenchmark {
+        /// Mean coach overall at each seat, over every employed coach alive in
+        /// the league.
+        let meanBySeat: [CoachRole: Int]
+        /// Mean coach overall across this club's own staff.
+        let clubMean: Int
+        /// Mean coach overall across every employed coach in the league — the
+        /// number `clubMean` is worth reading against.
+        let leagueMean: Int
+        /// Where `clubMean` places among the league's clubs. 1 is best; 0 means
+        /// this club could not be ranked (see the minimum-staff rule below).
+        let clubRank: Int
+        /// How many clubs were ranked.
+        let clubCount: Int
+    }
+
+    /// One fetch, one pass, on appear.
+    ///
+    /// Scoped to the open save by `careerID` alone — deliberately NOT by
+    /// `teamID`, because the benchmark wants every club's staff and not just
+    /// this one's. Retired men and the out-of-work bench are excluded: an
+    /// unemployed 44-year-old is nobody's defensive coordinator, and
+    /// `CoachMarketEngine` leaves enough of them on the books to drag every
+    /// seat mean down.
+    ///
+    /// The overall it averages is this sheet's own nine-attribute
+    /// `coachOverall`, on both sides of the comparison. `CoachDetailView`
+    /// prints a twelve-attribute mean for the same man; that is a different
+    /// reading of him and mixing the two would produce a delta that is really
+    /// just the two formulas disagreeing.
+    private func loadLeagueBenchmark() {
+        guard benchmark == nil else { return }
+
+        let cid = career.id
+        let descriptor = FetchDescriptor<Coach>(
+            predicate: #Predicate<Coach> { $0.careerID == cid }
+        )
+        let league = ((try? modelContext.fetch(descriptor)) ?? [])
+            .filter { $0.teamID != nil && !$0.isRetired }
+        guard !league.isEmpty else { return }
+
+        var sumBySeat: [CoachRole: Int] = [:]
+        var countBySeat: [CoachRole: Int] = [:]
+        var sumByClub: [UUID: Int] = [:]
+        var countByClub: [UUID: Int] = [:]
+        var leagueSum = 0
+
+        for coach in league {
+            let overall = coachOverall(coach)
+            leagueSum += overall
+            sumBySeat[coach.role, default: 0] += overall
+            countBySeat[coach.role, default: 0] += 1
+            guard let clubID = coach.teamID else { continue }
+            sumByClub[clubID, default: 0] += overall
+            countByClub[clubID, default: 0] += 1
+        }
+
+        var meanBySeat: [CoachRole: Int] = [:]
+        for (role, count) in countBySeat where count > 0 {
+            meanBySeat[role] = (sumBySeat[role] ?? 0) / count
+        }
+
+        // A club is ranked only once it has a staff worth averaging. THIS phase
+        // is exactly when that matters: the carousel has just emptied chairs
+        // all over the league, and a club with three men on the books would
+        // otherwise post the mean of its three best and finish above a fully
+        // staffed rival. Half a staff is the floor.
+        let minimumStaffToRank = 8
+        let clubMeans: [(id: UUID, mean: Int)] = countByClub
+            .filter { $0.value >= minimumStaffToRank }
+            .map { (id: $0.key, mean: (sumByClub[$0.key] ?? 0) / $0.value) }
+            .sorted { $0.mean > $1.mean }
+
+        var clubMean = 0
+        var clubRank = 0
+        if let clubID = career.teamID {
+            let count = countByClub[clubID] ?? 0
+            if count > 0 { clubMean = (sumByClub[clubID] ?? 0) / count }
+            if let index = clubMeans.firstIndex(where: { $0.id == clubID }) {
+                clubRank = index + 1
+            }
+        }
+
+        benchmark = LeagueBenchmark(
+            meanBySeat: meanBySeat,
+            clubMean: clubMean,
+            leagueMean: leagueSum / league.count,
+            clubRank: clubRank,
+            clubCount: clubMeans.count
+        )
+    }
+
+    /// The club's league position for staff quality, in one line above the list.
+    @ViewBuilder
+    private var staffQualityStrip: some View {
+        if let benchmark, benchmark.clubRank > 0, benchmark.clubCount > 1 {
+            let tint = rankColor(rank: benchmark.clubRank, of: benchmark.clubCount)
+            HStack(spacing: DSSpacing.xxs) {
+                Image(systemName: "chart.bar.xaxis")
+                    .font(.system(size: DSType.Size.micro, weight: .semibold))
+                    .foregroundStyle(tint)
+                Text("#\(benchmark.clubRank)")
+                    .font(.system(size: DSType.Size.callout, weight: .heavy).monospacedDigit())
+                    .foregroundStyle(tint)
+                // "staffed clubs", not "clubs": the carousel empties chairs all
+                // over the league on the way INTO this phase and the AI refill
+                // does not run until the way out, so a plain "of 32" would be a
+                // denominator that does not exist yet. The rank is taken over
+                // the clubs that currently have a staff worth averaging.
+                Text("of \(benchmark.clubCount) staffed clubs for coaching quality")
+                    .font(.system(size: DSType.Size.caption, weight: .semibold))
+                    .foregroundStyle(Color.textSecondary)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                Text("avg \(benchmark.clubMean) · league \(benchmark.leagueMean)")
+                    .font(.system(size: DSType.Size.caption).monospacedDigit())
+                    .foregroundStyle(Color.textTertiary)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, DSSpacing.xs)
+            .padding(.vertical, DSSpacing.xxs)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.backgroundTertiary.opacity(0.5))
+            .clipShape(RoundedRectangle(cornerRadius: DSCornerRadius.inline))
+            .padding(.bottom, DSSpacing.xs)
+        }
+    }
+
+    /// What the tick on every row means, said once instead of sixteen times.
+    @ViewBuilder
+    private var benchmarkLegend: some View {
+        if benchmark != nil {
+            HStack(spacing: DSSpacing.xxs) {
+                Rectangle()
+                    .fill(Color.textSecondary)
+                    .frame(width: 1.5, height: 9)
+                Text("marks the league average for that seat. Tap a line to open the coach — or the hiring list.")
+                    .font(.system(size: DSType.Size.micro))
+                    .foregroundStyle(Color.textTertiary)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, DSSpacing.xxs)
+            .padding(.bottom, DSSpacing.xs)
+        }
+    }
+
+    /// How far from the seat's league average a rating is allowed to read
+    /// before the marker pins, and how wide the marker is.
+    ///
+    /// ±15 rather than a 0–100 rail, and the choice is forced by the data.
+    /// `coachOverall` is the mean of nine attributes and `LeagueGenerator`
+    /// gives a position coach one to five of them in the 70–85 band with the
+    /// rest at 40–60, so virtually every coach in the league lands between 45
+    /// and 68. Sixteen full-scale rails would have filled to within a finger's
+    /// width of one another and hidden the only question the column is asked:
+    /// is this man better or worse than the one the club across the road has in
+    /// the same chair.
+    private static let benchmarkSpan = 15
+    private static let benchmarkWidth: CGFloat = 58
+
+    /// A centre tick at the seat's league average, and a bar off it in the
+    /// direction this man differs.
+    private func benchmarkBar(overall: Int, seatMean: Int) -> some View {
+        let delta = overall - seatMean
+        let clamped = max(-Self.benchmarkSpan, min(Self.benchmarkSpan, delta))
+        let half = Self.benchmarkWidth / 2
+        let length = half * CGFloat(abs(clamped)) / CGFloat(Self.benchmarkSpan)
+        // A man exactly on the average gets no bar at all — the tick alone is
+        // the honest picture, and a 2 pt stub either side would have read as a
+        // direction he does not have.
+        let drawn = delta == 0 ? 0 : max(length, 2)
+
+        return ZStack {
+            Capsule()
+                .fill(Color.surfaceBorder.opacity(0.35))
+                .frame(width: Self.benchmarkWidth, height: 4)
+            Capsule()
+                .fill(delta >= 0 ? Color.success : Color.danger)
+                .frame(width: drawn, height: 4)
+                .offset(x: delta >= 0 ? drawn / 2 : -drawn / 2)
+            Rectangle()
+                .fill(Color.textSecondary)
+                .frame(width: 1.5, height: 9)
+        }
+        .frame(width: Self.benchmarkWidth, height: 10)
+    }
+
+    private func deltaLabel(_ delta: Int) -> some View {
+        Text(delta == 0 ? "±0" : (delta > 0 ? "+\(delta)" : "\(delta)"))
+            .font(.system(size: DSType.Size.caption, weight: .bold).monospacedDigit())
+            .foregroundStyle(delta > 0 ? Color.success : (delta < 0 ? Color.danger : Color.textTertiary))
+            .frame(width: 26, alignment: .trailing)
+    }
+
+    /// A table position is not a rating, so it deliberately does NOT take
+    /// `Color.forRating`: that ladder puts everything under 60 in red, which
+    /// would paint a mid-table club — the literal league average — as a
+    /// failure. Quarters of the table instead, for the same reason
+    /// `coachRatingColor` below reads its bands off the real distribution.
+    private func rankColor(rank: Int, of count: Int) -> Color {
+        guard count > 0 else { return .textSecondary }
+        if rank <= max(1, count / 4) { return .eliteGreen }
+        if rank <= count / 2 { return .success }
+        if rank <= (count * 3) / 4 { return .accentGold }
+        return .warning
+    }
+
+    // MARK: - Budget Section
+
+    /// The owner's three envelopes, what is committed against each, and the
+    /// sentence that says what the surplus is actually for.
+    ///
+    /// All THREE pots, even though the list above is coaching seats only,
+    /// because this sheet owns the Advance button and
+    /// `StaffLedger.advanceBlocker` refuses that advance on the sum of all
+    /// three. A review that showed two pots and then declined to advance over
+    /// the third would be #158 wearing a new hat.
+    ///
+    /// Hidden outright — never faked — when no owner has resolved: `StaffLedger`
+    /// returns zeros in that state, and a per-screen invented envelope is the
+    /// exact defect that type was written to end.
+    @ViewBuilder
+    private var budgetSection: some View {
+        if ledger.isResolved {
+            VStack(alignment: .leading, spacing: DSSpacing.sm) {
+                // 6 pt, not `DSSpacing.xxs`, because the two section headers
+                // this card sits between are 6 pt: a card head that breathes
+                // differently from its neighbours reads as a different KIND of
+                // card.
+                HStack(spacing: 6) {  // ds-lint:allow(spacing) matches the sheet's other section heads
+                    Image(systemName: "dollarsign.square.fill")
+                        .font(.system(size: DSType.Size.footnote, weight: .semibold))
+                        .foregroundStyle(Color.accentGold)
+                    Text("STAFF BUDGET")
+                        .font(.system(size: DSType.Size.caption, weight: .bold))
+                        .foregroundStyle(Color.accentGold)
+                        .tracking(0.5)
+                    Spacer()
+                    if ledger.isOverspent {
+                        Text("\(StaffLedger.money(ledger.overage)) over")
+                            .font(.system(size: DSType.Size.callout, weight: .bold).monospacedDigit())
+                            .foregroundStyle(Color.danger)
+                    } else {
+                        Text("\(StaffLedger.money(unspentTotal)) unspent")
+                            .font(.system(size: DSType.Size.callout, weight: .bold).monospacedDigit())
+                            .foregroundStyle(unspentColor)
+                    }
+                }
+
+                // Icon and tint per pot are lifted from `OwnerBudgetView`, where
+                // the same three envelopes are set. Two screens describing one
+                // allocation should not need the labels read to be matched up.
+                budgetPotRow(
+                    title: "Coaching",
+                    icon: "person.3.fill",
+                    tint: Color.accentGold,
+                    committed: ledger.committedCoaching,
+                    envelope: ledger.coachingBudget
+                )
+                budgetPotRow(
+                    title: "Medical",
+                    icon: "cross.case.fill",
+                    tint: Color.success,
+                    committed: ledger.committedMedical,
+                    envelope: ledger.medicalBudget
+                )
+                budgetPotRow(
+                    title: "Scouting",
+                    icon: "binoculars.fill",
+                    tint: Color.accentBlue,
+                    committed: ledger.committedScouting,
+                    envelope: ledger.scoutingBudget
+                )
+
+                if let sentence = budgetSentence {
+                    Divider().overlay(Color.surfaceBorder.opacity(0.5))
+                    HStack(alignment: .top, spacing: DSSpacing.xxs) {
+                        Image(systemName: ledger.isOverspent ? "exclamationmark.octagon.fill" : "lightbulb.fill")
+                            .font(.system(size: DSType.Size.footnote))
+                            .foregroundStyle(ledger.isOverspent ? Color.danger : Color.accentGold)
+                        Text(sentence)
+                            .font(.system(size: DSType.Size.footnote, weight: .medium))
+                            .foregroundStyle(ledger.isOverspent ? Color.dangerText : Color.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            .padding(DSSpacing.sm)
+            .background(Color.backgroundSecondary)
+            // 10, off the DSCornerRadius ladder, because the staff, schemes and
+            // warnings cards stacked with it are all 10 and one card with a
+            // 12 pt corner in a column of 10s is a visible defect, not a fix.
+            .clipShape(RoundedRectangle(cornerRadius: 10))  // ds-lint:allow(radius) matches its sibling cards
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)  // ds-lint:allow(radius) matches its sibling cards
+                    .strokeBorder(
+                        ledger.isOverspent ? Color.danger.opacity(0.4) : Color.surfaceBorder,
+                        lineWidth: 1
+                    )
+            )
+        }
+    }
+
+    private func budgetPotRow(
+        title: String,
+        icon: String,
+        tint: Color,
+        committed: Int,
+        envelope: Int
+    ) -> some View {
+        let remaining = envelope - committed
+        let isOver = remaining < 0
+        let fraction = envelope > 0 ? min(1.0, Double(committed) / Double(envelope)) : 0
+
+        return VStack(alignment: .leading, spacing: DSSpacing.xxs) {
+            HStack(spacing: DSSpacing.xxs) {
+                Image(systemName: icon)
+                    .font(.system(size: DSType.Size.micro))
+                    .foregroundStyle(tint)
+                    .frame(width: 14)
+                Text(title)
+                    .font(.system(size: DSType.Size.caption, weight: .semibold))
+                    .foregroundStyle(Color.textSecondary)
+                    .frame(width: 62, alignment: .leading)
+                Text("\(StaffLedger.money(committed)) of \(StaffLedger.money(envelope))")
+                    .font(.system(size: DSType.Size.caption).monospacedDigit())
+                    .foregroundStyle(Color.textTertiary)
+                Spacer(minLength: 4)
+                // "left" / "over", never a bare figure: the tile beside this one
+                // shipped "$26.5M / $47.0M" and it read as money SPENT when it
+                // was money REMAINING. Say which way the number points.
+                Text(isOver
+                     ? "\(StaffLedger.money(-remaining)) over"
+                     : "\(StaffLedger.money(remaining)) left")
+                    .font(.system(size: DSType.Size.caption, weight: .bold).monospacedDigit())
+                    .foregroundStyle(isOver ? Color.danger : tint)
+            }
+
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.surfaceBorder.opacity(0.35))
+                    Capsule()
+                        .fill(isOver ? Color.danger : tint)
+                        .frame(width: geo.size.width * fraction)
+                }
+            }
+            .frame(height: 5)
+        }
+    }
+
+    /// Money still sitting in the three envelopes.
+    ///
+    /// Negative pots are floored at zero rather than netted off: an overspent
+    /// medical pot is not spending power for the coaching one, and subtracting
+    /// it would print a comfortable surplus for a club whose advance the gate
+    /// is about to refuse.
+    private var unspentTotal: Int {
+        max(0, ledger.remainingCoaching)
+            + max(0, ledger.remainingMedical)
+            + max(0, ledger.remainingScouting)
+    }
+
+    /// Green means "you can still spend this". The moment every chair is
+    /// filled it buys nothing, and a green figure over a fully-hired staff read
+    /// the club's biggest unmade upgrade as an unambiguous win — the same
+    /// finding the dashboard staff tile records against its own budget line.
+    private var unspentColor: Color {
+        guard !ledger.vacantCoachRoles.isEmpty else { return .textTertiary }
+        if unspentTotal > 10_000 { return .success }
+        if unspentTotal > 5_000 { return .accentGold }
+        return .warning
+    }
+
+    /// The one line that turns a surplus into a decision.
+    ///
+    /// Ordered by what the Advance button will actually do: an overspend is
+    /// what the gate refuses on, so it is said first and nothing else is said
+    /// at all. The coaching pot is quoted rather than `unspentTotal` once a
+    /// chair is named, because a coaching chair is charged to the coaching pot
+    /// (`StaffLedger.medicalRoles` decides which side a title falls on) and
+    /// offering the scouting surplus for it would be a lie.
+    private var budgetSentence: String? {
+        if ledger.isOverspent {
+            return "You are \(StaffLedger.money(ledger.overage)) over the staff budget. "
+                + "The advance will not run until staff are released or replaced with cheaper men."
+        }
+
+        let openCoachingSeats = ledger.vacantCoachRoles
+            .filter { !StaffLedger.medicalRoles.contains($0) }
+
+        guard !openCoachingSeats.isEmpty else {
+            guard unspentTotal > 0 else { return nil }
+            return "\(StaffLedger.money(unspentTotal)) is unspent with every chair filled — "
+                + "the only thing left to buy is a better man in one of them."
+        }
+
+        let purse = max(0, ledger.remainingCoaching)
+        let seatWord = openCoachingSeats.count == 1 ? "chair" : "chairs"
+        guard purse > 0 else {
+            return "\(openCoachingSeats.count) coaching \(seatWord) open and nothing left in the coaching pot. "
+                + "The owner's budget screen is where it gets re-cut."
+        }
+
+        // Cheapest first, so "enough for N of them" is the largest honest N.
+        var spent = 0
+        var covered = 0
+        for role in openCoachingSeats.sorted(by: { $0.salaryRange.avg < $1.salaryRange.avg })
+        where spent + role.salaryRange.avg <= purse {
+            spent += role.salaryRange.avg
+            covered += 1
+        }
+
+        if covered == 0 {
+            return "\(StaffLedger.money(purse)) left in the coaching pot — under the going rate for any of "
+                + "the \(openCoachingSeats.count) open \(seatWord)."
+        }
+        if covered >= openCoachingSeats.count {
+            return "\(StaffLedger.money(purse)) left in the coaching pot — enough to fill all "
+                + "\(openCoachingSeats.count) open \(seatWord) at the league's going rate."
+        }
+        return "\(StaffLedger.money(purse)) left in the coaching pot — enough for \(covered) of the "
+            + "\(openCoachingSeats.count) open \(seatWord) at the league's going rate."
     }
 
     // MARK: - Schemes Section
