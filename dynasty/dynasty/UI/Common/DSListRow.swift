@@ -172,6 +172,9 @@ enum DSListColumn {
     static let affordance: CGFloat = 22
     /// The identity block's floor. It is the one flexible column.
     static let identityMin: CGFloat = 80
+    /// The identity block's ceiling on a table that has already spent its width
+    /// on columns. See `DSListRow.identityWidth` for when to reach for it.
+    static let identityWide: CGFloat = 220
     /// Gap between the portrait slot and the identity block.
     static let identityGap: CGFloat = 6
 }
@@ -587,6 +590,20 @@ struct DSListRow<Portrait: View, Identity: View, Columns: View>: View {
     /// Overrides `density.portraitColumn` for a slot that carries more than a
     /// face.
     var portraitWidth: CGFloat? = nil
+    /// Caps the identity slot instead of letting it take every point of slack.
+    ///
+    /// `nil` — the default, and right for almost every list — leaves the slot
+    /// flexible, which is what keeps the first column at one x down the page.
+    /// Set it on a WIDE table whose columns already fill the row: there the
+    /// slack is not a name that might be long, it is a void, and on the cut
+    /// sheet it measured 256–278 pt — a quarter of the row, repeated 53 times,
+    /// while the money cells to its right were packed at 30 pt each.
+    ///
+    /// Capping alone only moves the hole to the trailing edge, so a screen that
+    /// sets this must also cap its own stack (`DSLayout.wideMeasure`) and place
+    /// the `Spacer(minLength:)`s that turn the remainder into inter-group
+    /// gutters — the flattened `columns` block takes them inline.
+    var identityWidth: CGFloat? = nil
     var affordance: DSRowAffordance = .none
 
     @ViewBuilder var portrait: () -> Portrait
@@ -598,6 +615,7 @@ struct DSListRow<Portrait: View, Identity: View, Columns: View>: View {
         rank: DSRank? = nil,
         badge: DSRowBadge? = nil,
         portraitWidth: CGFloat? = nil,
+        identityWidth: CGFloat? = nil,
         affordance: DSRowAffordance = .none,
         @ViewBuilder portrait: @escaping () -> Portrait,
         @ViewBuilder identity: @escaping () -> Identity,
@@ -607,6 +625,7 @@ struct DSListRow<Portrait: View, Identity: View, Columns: View>: View {
         self.rank = rank
         self.badge = badge
         self.portraitWidth = portraitWidth
+        self.identityWidth = identityWidth
         self.affordance = affordance
         self.portrait = portrait
         self.identity = identity
@@ -633,7 +652,11 @@ struct DSListRow<Portrait: View, Identity: View, Columns: View>: View {
                 // length of the starter comparison under the name and ran from
                 // 558 to 685 down one screen, which is a column that cannot be
                 // scanned. Claiming the slack fixes the offset for the list.
-                .frame(minWidth: DSListColumn.identityMin, maxWidth: .infinity, alignment: .leading)
+                .frame(
+                    minWidth: DSListColumn.identityMin,
+                    maxWidth: identityWidth ?? .infinity,
+                    alignment: .leading
+                )
                 .padding(.leading, DSListColumn.identityGap)
                 // The identity block is the flexible column, so it is also the
                 // one that has to give way — without this it pushes the fixed
@@ -675,6 +698,9 @@ struct DSListHeaderRow<Identity: View, Columns: View>: View {
     var reservesBadge: Bool = false
     var badgeLabel: String = "POS"
     var portraitWidth: CGFloat? = nil
+    /// Mirrors `DSListRow.identityWidth`. A header that keeps the slack its rows
+    /// have given up is the drift this type exists to prevent.
+    var identityWidth: CGFloat? = nil
     var affordance: DSRowAffordance = .none
 
     /// The identity column's own label. A plain `DSColumnHeader` in the ordinary
@@ -691,6 +717,7 @@ struct DSListHeaderRow<Identity: View, Columns: View>: View {
         reservesBadge: Bool = false,
         badgeLabel: String = "POS",
         portraitWidth: CGFloat? = nil,
+        identityWidth: CGFloat? = nil,
         affordance: DSRowAffordance = .none,
         @ViewBuilder identity: @escaping () -> Identity,
         @ViewBuilder columns: @escaping () -> Columns
@@ -702,6 +729,7 @@ struct DSListHeaderRow<Identity: View, Columns: View>: View {
         self.reservesBadge = reservesBadge
         self.badgeLabel = badgeLabel
         self.portraitWidth = portraitWidth
+        self.identityWidth = identityWidth
         self.affordance = affordance
         self.identity = identity
         self.columns = columns
@@ -725,7 +753,11 @@ struct DSListHeaderRow<Identity: View, Columns: View>: View {
                 // The same slack the row's identity slot takes, or the header
                 // resolves to the width of the word "NAME" and every label
                 // lands well left of the column it names.
-                .frame(minWidth: DSListColumn.identityMin, maxWidth: .infinity, alignment: .leading)
+                .frame(
+                    minWidth: DSListColumn.identityMin,
+                    maxWidth: identityWidth ?? .infinity,
+                    alignment: .leading
+                )
                 .padding(.leading, DSListColumn.identityGap)
 
             columns()
@@ -751,6 +783,7 @@ extension DSListHeaderRow where Identity == DSColumnHeader {
         badgeLabel: String = "POS",
         portraitWidth: CGFloat? = nil,
         identityLabel: String = "NAME",
+        identityWidth: CGFloat? = nil,
         affordance: DSRowAffordance = .none,
         @ViewBuilder columns: @escaping () -> Columns
     ) {
@@ -762,6 +795,7 @@ extension DSListHeaderRow where Identity == DSColumnHeader {
             reservesBadge: reservesBadge,
             badgeLabel: badgeLabel,
             portraitWidth: portraitWidth,
+            identityWidth: identityWidth,
             affordance: affordance,
             identity: { DSColumnHeader(identityLabel, alignment: .leading) },
             columns: columns

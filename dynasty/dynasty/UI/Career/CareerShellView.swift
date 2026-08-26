@@ -2240,7 +2240,7 @@ struct CareerShellView: View {
                     refreshTaskCompletionStatus()
                 }
         case .workloadDashboard:
-            WorkloadDashboard(roster: teamRoster)
+            WorkloadDashboard(roster: workloadRankedRoster)
         case .rosterCuts:
             RosterCutView(career: career, roster: teamRoster)
         case .preseason:
@@ -2461,6 +2461,24 @@ struct CareerShellView: View {
         guard let teamID = career.teamID else { return [] }
         let descriptor = FetchDescriptor<Player>(predicate: #Predicate<Player> { $0.teamID == teamID })
         return (try? modelContext.fetch(descriptor)) ?? []
+    }
+
+    /// `teamRoster` ordered the way the heat-map is read: heaviest load first,
+    /// then the thinner durability margin.
+    ///
+    /// The fetch has no `sortBy`, so the grid drew 53 tiles in store order and
+    /// the flagged men landed wherever the store happened to put them — nobody
+    /// scans an unordered grid hunting for a red cell. `TrainingPlanView` learned
+    /// this on the same roster and its `displayRoster` uses this exact
+    /// comparator; sorting at the call site rather than in `teamRoster` keeps the
+    /// cut sheet and the preseason slate on the order they each already impose.
+    private var workloadRankedRoster: [Player] {
+        teamRoster.sorted { lhs, rhs in
+            if lhs.cumulativeLoad != rhs.cumulativeLoad {
+                return lhs.cumulativeLoad > rhs.cumulativeLoad
+            }
+            return lhs.physical.durability < rhs.physical.durability
+        }
     }
 
     /// The preseason slate, SEEDED — `nil` outside `.preseason` (#205b).

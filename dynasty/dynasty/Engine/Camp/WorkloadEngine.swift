@@ -19,50 +19,49 @@ enum WorkloadEngine {
     /// phase unconditionally, so OTAs / trainingCamp / preseason are one 7-day
     /// tick each, opening from the zero `resetCampLoad` writes at OTAs.
     ///
-    /// A day's net is `round(intensity · 18 · staminaFactor) − round(recoveryRate · 10)`
-    /// — two independently rounded integers — so reachable loads form a lattice
-    /// of step 7 and the recovery term collapses to whole points.
-    /// `computeRecoveryRate` documents a 0.40…0.75 band, but `playerDevelopment`
-    /// is one of `CoachRole.focusAttributes` for both `.strengthCoach` and
-    /// `.physio`, so `CoachingEngine` always draws it from the GOOD range
-    /// (60…88 across budget/standard/premium clubs). That leaves exactly two
-    /// recovery deltas in the shipped game — 6 (every AI club's hard-coded
-    /// 0.55, the no-coach fallback, and a 60–70 coach) and 7 (a 71–88 coach) —
-    /// and therefore two end-of-cycle lattices:
+    /// **Two defects were fixed here, in that order, and the second forced the
+    /// numbers below to be re-measured.**
     ///
-    ///     recovery delta 6 → {21, 28, 35, 42, 49, 56, 63, 70}  median 42, p90 56
-    ///     recovery delta 7 → { 7, 14, 21, 28, 35, 42, 49}      median 28
+    /// 1. The shipped table put `.overloaded` at 80 and `.burnedOut` at 130 —
+    ///    above the global ceiling the scheduler could reach at all. Both
+    ///    states had probability zero for all 32 clubs, which made four
+    ///    consumers dead code: `WorkloadStatus.injuryMultiplier`'s 1.6 and 2.5
+    ///    rungs, `TrainingPlanEngine.burnedOutGainFactor`,
+    ///    `CareerDashboardView`'s camp warning, and `TrainingPlanView`'s
+    ///    "a player who reads Burnt takes only half of the week's gains".
+    ///    `MedicalEngine.workloadRiskMultiplier` returned exactly 1.0 for every
+    ///    player in the league, always — plan §2.9.6's "workload is cosmetic"
+    ///    defect surviving the fix that was meant to end it.
+    /// 2. `tickWeek` rounded both halves of every day to an integer before
+    ///    subtracting them, so recovery (`rate · 10`) collapsed to whole points
+    ///    and the strength coach's 1–99 rating had five reachable values.
+    ///    Coaches twenty points apart ran an identical camp. Netting the week
+    ///    once (see `tickWeek`) removed that lattice — and with it the anchors
+    ///    the first fix had used, because the per-day rounding had been
+    ///    rounding recovery UP (0.55 → 6) and therefore under-reporting load.
     ///
-    /// The shipped table put `.overloaded` at 80 and `.burnedOut` at 130 — 10
-    /// and 60 points ABOVE the global ceiling of 70. Both states had
-    /// probability zero for all 32 clubs, which made four consumers dead code:
-    /// `WorkloadStatus.injuryMultiplier`'s 1.6 and 2.5 rungs,
-    /// `TrainingPlanEngine.burnedOutGainFactor`, `CareerDashboardView`'s
-    /// `.overloaded || .burnedOut` camp warning, and `TrainingPlanView`'s own
-    /// "a player who reads Burnt takes only half of the week's gains".
-    /// `MedicalEngine.workloadRiskMultiplier` returned exactly 1.0 for every
-    /// player in the league, always — i.e. plan §2.9.6's "workload is cosmetic"
-    /// defect was still cosmetic after the fix that was meant to end it.
+    /// The three thresholds are now anchored to the measured end-of-cycle
+    /// distribution at the league-default recovery (`./run.sh lockerroom`,
+    /// section B: mean 50.0, sd 9.8, p10 ≈ 37, p50 50, p90 64):
     ///
-    /// The two upper bands are therefore anchored to the lattice they have to
-    /// live on:
+    ///  * **37** is that distribution's bottom decile, so `.underloaded` means
+    ///    a man the camp genuinely under-worked rather than an artefact of
+    ///    where the old lattice happened to put its rungs.
+    ///  * **64** is its top decile, so `.overloaded` is the top tenth of a
+    ///    normally-run camp while the median man stays `.healthy` — which is
+    ///    what `MedicalEngine.workloadRiskMultiplier`'s comment says the
+    ///    league-wide tick has to leave a default-intensity roster in.
+    ///  * **73** is ≈ p99, so `.burnedOut` is genuinely rare at a default camp
+    ///    (measured 1.2 %, about one man every other club) and is something the
+    ///    user reaches by choosing to work his roster harder or by employing a
+    ///    poor strength coach, not something the schedule hands him.
     ///
-    ///  * **56** is the measured p90 of a default-intensity club's end-of-cycle
-    ///    load, so `.overloaded` is the top decile of a normally-run camp while
-    ///    the median man (42) stays `.healthy` — which is exactly what
-    ///    `MedicalEngine.workloadRiskMultiplier`'s comment says the league-wide
-    ///    tick has to leave a default-intensity roster in.
-    ///  * **63** is the second-highest rung of that same lattice, so
-    ///    `.burnedOut` means a man carrying one of the two heaviest camps the
-    ///    scheduler can deliver: ~0.4 % of a roster, roughly one player every
-    ///    other club per camp.
-    ///
-    /// `underloadedMax` is deliberately unchanged: it is the one threshold that
-    /// already sat inside the reachable range (it separates 21 and 28 from the
-    /// rest of the camp week).
-    private static let underloadedMax = 30
-    private static let healthyMax = 56
-    private static let overloadedMax = 63
+    /// The bands are a decile rule, not three tuned numbers: if the camp
+    /// scheduler or `computeRecoveryRate` moves, re-run the scenario and
+    /// re-read p10 / p90 / p99 off section B rather than nudging these.
+    private static let underloadedMax = 37
+    private static let healthyMax = 64
+    private static let overloadedMax = 73
 
     /// The load at which a player reads `.burnedOut`, i.e. the top of the
     /// meaningful range. Exposed because the camp UI's load meter uses it as
@@ -78,6 +77,11 @@ enum WorkloadEngine {
     /// because `VoluntaryWorkoutEngine` clamps to the same literal; the two
     /// have to move together, and neither is reachable.
     private static let absoluteCap = 200
+
+    /// The two per-day scales, named so `tickWeek` (which nets a whole week in
+    /// one go) and `tickDay` (which files a row a day) cannot drift apart.
+    static let dailyLoadAtFullIntensity = 18.0
+    static let dailyRecoveryAtFullRate = 10.0
 
     // MARK: - Public API
 
@@ -95,6 +99,23 @@ enum WorkloadEngine {
     ///   - dayOfWeek: 0-6 within the camp week, from the caller's day loop
     ///     (the wall-clock weekday it replaced had no relationship to the camp
     ///     day being simulated).
+    /// One camp day for the USER's club, with its `WorkloadEvent` row.
+    ///
+    /// The seven days of a week must add up to exactly what `tickWeek` would
+    /// have produced, because the two paths tick the same league: the user's
+    /// own roster comes through here (`WeekAdvancer.applyCampWeeklyTick`) while
+    /// the other 31 clubs go through `tickWeek`. When this rounded each day's
+    /// load and recovery separately it produced a different — and coarser —
+    /// distribution than the netted path, so the user's roster ran the camp the
+    /// engine's own band table was NOT calibrated on. A player and an AI club
+    /// with identical staff finished camp in different states.
+    ///
+    /// The day's delta is therefore taken as a difference of running totals:
+    /// `round(weekNet · (d+1)/7) − round(weekNet · d/7)`. Each row stays a whole
+    /// number, the seven telescope to exactly `round(weekNet)`, and that is the
+    /// same integer `tickWeek` writes. `loadDelta` / `recoveryDelta` on the row
+    /// keep their own honest per-day rounding — they are an audit trail, not
+    /// the accumulator.
     static func tickDay(
         player: Player,
         intensity: Double,
@@ -104,12 +125,29 @@ enum WorkloadEngine {
         dayOfWeek: Int,
         modelContext: ModelContext
     ) {
-        let delta = applyDailyLoad(player: player, intensity: intensity, recoveryRate: recoveryRate)
+        let day = max(0, min(6, dayOfWeek))
+        let clampedIntensity = max(0.0, min(1.0, intensity))
+        let clampedRecovery = max(0.0, min(1.0, recoveryRate))
+        let staminaFactor = 1.0 - (Double(player.physical.stamina) / 99.0) * 0.4
+        let dayLoad = clampedIntensity * dailyLoadAtFullIntensity * staminaFactor
+        let dayRecovery = clampedRecovery * dailyRecoveryAtFullRate
+        let weekNet = (dayLoad - dayRecovery) * 7.0
+
+        // The telescoping difference — this day's share of the week's exact net.
+        let upToToday = Int((weekNet * Double(day + 1) / 7.0).rounded())
+        let upToYesterday = Int((weekNet * Double(day) / 7.0).rounded())
+        let net = upToToday - upToYesterday
+
+        let newLoad = max(0, min(absoluteCap, player.cumulativeLoad + net))
+        player.cumulativeLoad = newLoad
+        player.workloadStatus = classify(load: newLoad)
+
+        let delta = (load: Int(dayLoad.rounded()), recovery: Int(dayRecovery.rounded()))
 
         let event = WorkloadEvent(
             playerID: player.id,
             seasonYear: seasonYear,
-            dayOfWeek: max(0, min(6, dayOfWeek)),
+            dayOfWeek: day,
             loadDelta: delta.load,
             recoveryDelta: delta.recovery
         )
@@ -144,14 +182,41 @@ enum WorkloadEngine {
     /// `MedicalEngine` injury multiplier and the `TrainingPlanEngine` burnout
     /// tax both read `workloadStatus`), the user's team additionally keeps the
     /// per-day trail.
+    /// A week of camp, netted ONCE.
+    ///
+    /// This used to call `applyDailyLoad` seven times, which rounded BOTH halves
+    /// of each day to an integer before subtracting them. Recovery is
+    /// `recoveryRate · 10`, so the strength coach's whole 1–99 rating collapsed
+    /// into five reachable values (4, 5, 6, 7, 8 points a day) and coaches
+    /// twenty points apart ran an identical camp: the harness's `lockerroom` B2
+    /// sweep measured `playerDevelopment` 50, 60 and 70 all producing
+    /// 12.7 / 74.3 / 11.4 / 1.6 across the bands with a mean exit load of 40.7,
+    /// to the decimal. A rating that cannot change an outcome is not a rating.
+    ///
+    /// Netting the week in `Double` and rounding once keeps the same expected
+    /// load — no per-day constant moved — and restores the resolution the coach
+    /// rating was always supposed to buy. It also removes the step-7 lattice the
+    /// band table was anchored to, which is why the thresholds were re-measured
+    /// in the same pass.
+    ///
+    /// Deliberately the WEEK and not the day: a week is the unit the camp
+    /// scheduler advances in (one `tickWeek` per phase), while `tickDay` keeps
+    /// its per-day rounding because it files a `WorkloadEvent` row per day and
+    /// those rows have to be whole numbers.
     static func tickWeek(
         player: Player,
         intensity: Double,
         recoveryRate: Double
     ) {
-        for _ in 0..<7 {
-            _ = applyDailyLoad(player: player, intensity: intensity, recoveryRate: recoveryRate)
-        }
+        let clampedIntensity = max(0.0, min(1.0, intensity))
+        let clampedRecovery = max(0.0, min(1.0, recoveryRate))
+        let staminaFactor = 1.0 - (Double(player.physical.stamina) / 99.0) * 0.4
+        let weekLoad = clampedIntensity * dailyLoadAtFullIntensity * staminaFactor * 7.0
+        let weekRecovery = clampedRecovery * dailyRecoveryAtFullRate * 7.0
+        let net = Int((weekLoad - weekRecovery).rounded())
+        let newLoad = max(0, min(absoluteCap, player.cumulativeLoad + net))
+        player.cumulativeLoad = newLoad
+        player.workloadStatus = classify(load: newLoad)
     }
 
     /// Clears a player's accumulated camp load. Called when a new camp cycle
@@ -177,10 +242,10 @@ enum WorkloadEngine {
 
         // Load delta scales 0..18 per day at full intensity. Stamina partly absorbs load.
         let staminaFactor = 1.0 - (Double(player.physical.stamina) / 99.0) * 0.4
-        let loadDelta = Int((clampedIntensity * 18.0 * staminaFactor).rounded())
+        let loadDelta = Int((clampedIntensity * dailyLoadAtFullIntensity * staminaFactor).rounded())
 
         // Recovery delta scales 0..10 per day. Trainer skill amplifies recovery.
-        let recoveryDelta = Int((clampedRecovery * 10.0).rounded())
+        let recoveryDelta = Int((clampedRecovery * dailyRecoveryAtFullRate).rounded())
 
         let net = loadDelta - recoveryDelta
         let newLoad = max(0, min(absoluteCap, player.cumulativeLoad + net))

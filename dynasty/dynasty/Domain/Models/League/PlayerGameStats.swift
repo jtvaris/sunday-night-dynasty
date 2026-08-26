@@ -65,6 +65,37 @@ nonisolated struct PlayerGameStats: Codable, Identifiable {
         return Double(receivingYards) / Double(receptions)
     }
 
+    // MARK: - Coverage
+
+    /// Whether an all-zero line at this position means "did nothing" or "was
+    /// never counted".
+    ///
+    /// Every column above is a ball-touch, a defensive event or a field goal.
+    /// There is nothing here an offensive lineman or a punter can register — no
+    /// snaps, no blocks, no pressures allowed, no punts, no gross average — so
+    /// those men come back empty from a game they played every down of.
+    ///
+    /// That is a fact about THIS type, which is why it is stated here instead of
+    /// being re-derived by each reader. `PreseasonEngine.CampCase.read` counts
+    /// opportunities off these same columns and returns `.quiet` at zero, and a
+    /// screen that prints that verdict without asking here ends up saying "did
+    /// not factor" about a left tackle who started three exhibitions — five of
+    /// the sixteen rows visible on the cut sheet, seventeen of the 53-man
+    /// roster. Ask before turning an empty line into a judgement.
+    ///
+    /// Exhaustive rather than a `default` on purpose: a new position has to be
+    /// classified by whoever adds it. The durable fix is a column rather than a
+    /// list — one measurable event per blind position — at which point entries
+    /// move to the `true` side as they are covered.
+    static func measures(_ position: Position) -> Bool {
+        switch position {
+        case .LT, .LG, .C, .RG, .RT, .P:
+            return false
+        case .QB, .RB, .FB, .WR, .TE, .DE, .DT, .OLB, .MLB, .CB, .FS, .SS, .K:
+            return true
+        }
+    }
+
     // MARK: - Init
 
     init(

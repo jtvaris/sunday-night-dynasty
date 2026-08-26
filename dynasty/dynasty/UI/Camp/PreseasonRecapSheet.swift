@@ -86,12 +86,26 @@ enum PreseasonCampCase {
             }
         }
 
+        /// `quiet` is `neutral`, not `empty`.
+        ///
+        /// `DSStatusPill.Tone.empty` has one meaning app-wide — "the slot exists
+        /// and nothing has filled it", drawn dashed and spoken as "not done".
+        /// QUIET is the opposite of a hole: the tape was watched and the verdict
+        /// is that the man did not factor. Wearing the empty style made it read
+        /// as a missing reading, and on the cut sheet it was also the COMMONEST
+        /// cell in the CASE column while the DEPTH column one slot to its right
+        /// used the same dashes for OFF, where the absence is real. One dashed
+        /// treatment, two meanings, adjacent.
+        ///
+        /// It shares `neutral` with `held` on purpose: tone carries the
+        /// direction of the verdict, and neither of these moved anything. The
+        /// pill word is what separates "did his job" from "was not seen".
         var tone: DSStatusPill.Tone {
             switch self {
             case .helped: return .ok
             case .held:   return .neutral
             case .hurt:   return .bad
-            case .quiet:  return .empty
+            case .quiet:  return .neutral
             }
         }
 
@@ -105,6 +119,47 @@ enum PreseasonCampCase {
         }
 
         var moved: Bool { self == .helped || self == .hurt }
+    }
+
+    // MARK: The reading
+    //
+    // A verdict is only worth printing where the tape could see the man.
+
+    /// What a CASE cell says: the engine's verdict, resolved against what the
+    /// box score is capable of recording at this position.
+    struct Reading {
+        let label: String
+        let spoken: String
+        let tone: DSStatusPill.Tone
+    }
+
+    /// `quiet` at a position `PlayerGameStats` has no column for is not a
+    /// verdict — it is an unread slot, and it is drawn as one.
+    ///
+    /// `PreseasonEngine.CampCase.read` counts opportunities off ball-touches,
+    /// defensive events and field-goal attempts. An offensive lineman or a
+    /// punter has none of those by construction, so he returns `quiet` from
+    /// every exhibition he ever plays and the column then spoke the sentence
+    /// "did not factor" over a left tackle who started all three. That was five
+    /// of the sixteen rows on the cut sheet, seventeen of the 53.
+    ///
+    /// `empty` is exactly right for it — "the slot exists and nothing has filled
+    /// it" — and the tone is free to carry that meaning here now that
+    /// ``Verdict/tone`` has handed it back.
+    ///
+    /// This stays a display decision rather than a fifth `Verdict` case: the
+    /// engine's four verdicts mirror `PreseasonEngine.CampCase.Verdict` one for
+    /// one, and the day a punter has a punt column the engine will start
+    /// answering for him without this file changing at all.
+    static func reading(_ verdict: Verdict, position: Position) -> Reading {
+        guard verdict == .quiet, !PlayerGameStats.measures(position) else {
+            return Reading(label: verdict.pillLabel, spoken: verdict.spoken, tone: verdict.tone)
+        }
+        return Reading(
+            label: "Unseen",
+            spoken: "was not measured \u{2014} the box score has no column for this position",
+            tone: .empty
+        )
     }
 
     // MARK: Standout ranking
@@ -786,14 +841,21 @@ struct PreseasonBubbleTable: View {
             DSStatusPill(label: line.tier.pillLabel, tone: line.tier.tone, showsDot: false)
                 .dsColumn(DSListColumn.label)
 
-            DSStatusPill(
-                label: line.verdict.pillLabel,
-                tone: line.verdict.tone,
-                showsDot: false,
-                spokenLabel: line.verdict.spoken
-            )
-            .dsColumn(DSListColumn.label)
+            caseCell(line)
         }
+    }
+
+    /// The CASE pill, asked for through ``PreseasonCampCase/reading(_:position:)``
+    /// so a man the box score cannot see reads UNSEEN rather than a verdict.
+    private func caseCell(_ line: PreseasonRecap.Line) -> some View {
+        let reading = PreseasonCampCase.reading(line.verdict, position: line.position)
+        return DSStatusPill(
+            label: reading.label,
+            tone: reading.tone,
+            showsDot: false,
+            spokenLabel: reading.spoken
+        )
+        .dsColumn(DSListColumn.label)
     }
 
     private func positionTint(_ position: Position) -> Color {

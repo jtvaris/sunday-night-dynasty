@@ -4081,7 +4081,45 @@ oman mitatun aaltonsa balanssirigiä vasten; jokainen on kirjattu syineen.
       `6.9g` 33+ ikäosuus (repossa merkitty "retirement-calibration follow-up") ja `6.9b`
       80+ osuus, joka istuu kattonsa päällä siemenestä riippuen (baseline 18.90 %, mitattu
       hajonta 18.36–19.31, katto 19.0). Kumpikaan ei liikkunut tästä aallosta.
-- [ ] **UUSI LÖYDÖS rigiltä — vahvuusvalmentajan arvo on suurelta osin plasebo.**
+- [x] **KVANTISOINTI KORJATTU JA MITATTU (kts. alempi löydös — se on nyt suljettu).**
+      `tickWeek` netottaa viikon kerran `Double`ina, päiväkohtainen matematiikka ennallaan.
+      Mitattu `lockerroom` B2:lla: valmentaja 50/60/70 tuotti ENNEN identtisen campin
+      (meanLoad 40.7 desimaalilleen), JÄLKEEN 45.1 / 39.4 / 34.3 — monotoninen käyrä.
+      Sivutuote: vanha päiväpyöristys pyöristi palautumista YLÖSPÄIN (0.55 → 6), eli antoi
+      enemmän palautumista kuin kerroin lupaa; vinouman poisto nosti jakauman 41.2 → 50.0.
+      Bandit ankkuroitu uudelleen **desiilisääntönä** eikä kolmena viritettynä lukuna:
+      37 = p10, 64 = p90, 73 ≈ p99 → 7.2 / 82.4 / 9.2 / 1.2 %, kaikki neljä tilaa asuttuja.
+      Vakioiden dokumentaatio kirjoitettu kokonaan uusiksi (vanha perusteli arvot hilalla
+      jota ei enää ole). Harness kaatoi buildin koska slice ei tuntenut uusia vakioita —
+      tarkoitettu käytös, lisätty keep-listaan. 94 assertiota, kaikki baselinen tilassa.
+- [x] **AUDITTI LÖYSI VIAN TÄSTÄ KORJAUKSESTA — ja se on korjattu.**
+      Käyttäjän oma joukkue tikittää `tickDay`llä 7× (`WeekAdvancer:8603`), AI-seurat
+      `tickWeek`illä. Korjasin siis vain AI-polun ja ankkuroin bandit sen jakaumaan, kun
+      pelaajan oma rosteri jäi vialliselle hilalle — bandit oli kalibroitu populaatiolle
+      joka ei niitä lue, ja pelaaja + AI-seura identtisellä valmennuksella päättivät campin
+      eri tilaan. `tickDay` ottaa nyt päivän deltan juoksevien summien erotuksena:
+      `round(viikkoNetto·(d+1)/7) − round(viikkoNetto·d/7)`. Rivit pysyvät kokonaislukuina,
+      seitsemän teleskooppaa täsmälleen `round(viikkoNetto)`iin. Mitattu 49.9 vs 50.0.
+- [x] **`/analyze-app` AJETTU: Training Camp + Roster Cuts, neljä linssiä.**
+      Kloonatulla simulaattorilla (`review-sim`, poistettu ajon jälkeen) koska cut-ruudulla on
+      peruuttamattomia toimintoja — käyttäjän tallennusta ei koskettu. Debug-buildi varmistettu
+      konsolin `PERF|`-riveistä. **68 löydöstä, 6 kumottu vastaväittäjällä, 62 jäi**
+      (5 blocking, 10 high, 36 medium, 11 low) — `docs/QA_CAMP_CUTS_AUDIT_2026-08-26.md`.
+      **48 korjausta, 16 skipattua.** Kolme blockeria kiinni:
+      - **"Save plan" tallensi suunnitelman avaimeen jota mikään moottoripolku ei lue**, ja
+        toimintopalkki lupasi "Banks 34/33/33 for the Roster Cuts development pass".
+        KOLME neljästä persoonasta löysi tämän itsenäisesti. Ruutu lukee nyt
+        "CAMP TRAINING CLOSED … it is here to read, not to change" ja kertoo että seuraava
+        suunnitelma avautuu OTAissa; kuollut kultanappi poistettu.
+      - **Technical-kaista saattoi VÄHENTÄÄ position skilliä** — clamppasi attribuutin alas
+        kehityskattoon.
+      - **FREES/DEAD hinnoiteltiin sopimuspituudella jota peli ei koskaan etene** — rivi oli
+        ristiriidassa oman YRS-sarakkeensa kanssa.
+      Workload-lämpökartta rakennettu uusiksi: kuormaluku sankarina, raskain ensin, tila
+      sanana + SF Symbol (emoji 🔥/💀 poistettu — VoiceOver luki solun "fire"), selite elävänä
+      laskurina, ja suora vastaus yläreunassa ("Nobody is carrying added injury risk this week").
+      Verifioitu v2-kuvakaappauksilla.
+- [ ] ~~UUSI LÖYDÖS rigiltä — vahvuusvalmentajan arvo on suurelta osin plasebo.~~ **SULJETTU, kts. yllä.**
       `applyDailyLoad` pyöristää päivän molemmat puoliskot erikseen kokonaisluvuiksi, ja
       palautuminen on `recoveryRate * 10`, joten valmentajan koko 1–99 asteikko litistyy
       viideksi tavoitettavaksi arvoksi (4/5/6/7/8 pistettä päivässä). Mitattu `lockerroom`

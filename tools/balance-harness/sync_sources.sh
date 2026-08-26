@@ -1087,8 +1087,13 @@ static func tickWeek\(
 EOF
 keeplist_slice "$WORKLOAD_SOURCE" "$DEVANCHORS" "$DEVSLICE"
 verbatim_guard "$WORKLOAD_SOURCE" "$DEVSLICE"
-WORKLOAD_CONSTS="$(grep -E '^[[:space:]]*(private )?static let (underloadedMax|healthyMax|overloadedMax|burnoutFloor|absoluteCap) =' "$WORKLOAD_SOURCE")"
-for k in underloadedMax healthyMax overloadedMax burnoutFloor absoluteCap; do
+# `dailyLoadAtFullIntensity` / `dailyRecoveryAtFullRate` are the two per-day
+# scales `tickWeek` and `applyDailyLoad` share. They were literals (18.0 / 10.0)
+# until the week was netted in one go; naming them is what stops the weekly and
+# daily paths drifting, so the extract has to carry them or the slice will not
+# compile.
+WORKLOAD_CONSTS="$(grep -E '^[[:space:]]*(private )?static let (underloadedMax|healthyMax|overloadedMax|burnoutFloor|absoluteCap|dailyLoadAtFullIntensity|dailyRecoveryAtFullRate) =' "$WORKLOAD_SOURCE")"
+for k in underloadedMax healthyMax overloadedMax burnoutFloor absoluteCap dailyLoadAtFullIntensity dailyRecoveryAtFullRate; do
   printf '%s\n' "$WORKLOAD_CONSTS" | grep -qE "static let $k =" \
     || die "WorkloadEngine constant $k not found in the repo file."
 done

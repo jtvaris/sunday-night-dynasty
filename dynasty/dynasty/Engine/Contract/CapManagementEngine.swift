@@ -149,6 +149,13 @@ enum CapManagementEngine {
 
     /// Dead cap = remaining prorated signing bonus + any guaranteed base salaries.
     ///
+    /// **Not the release authority.** It reads `Contract.deadCap`, i.e. the charge
+    /// at `contract.currentYear`, and that column never advances — so it answers
+    /// for the deal's first year no matter how much of the deal has been played.
+    /// ``tradeCapSplit`` and ``releaseCapSplit`` ask `deadCapIfCut(atYear:)` for
+    /// the year the player row is actually in; anything that prices a real
+    /// transaction must go through them.
+    ///
     /// - Parameters:
     ///   - contract: The player's detailed contract.
     ///   - team: The team cutting the player.
@@ -310,12 +317,33 @@ enum CapManagementEngine {
         }
 
         // Remaining years drive the acceleration, same as a mid-contract cut.
+        //
+        // **Both halves come off the player row, even when a `Contract` exists.**
+        // `Contract.currentYear` is written as 0 and never advanced anywhere in
+        // the game — `ContractEngine.restructureQuote` and the restructure ledger
+        // on `Player` both reached this conclusion before this call did. So
+        // `contract.deadCap`, which is `deadCapIfCut(atYear: currentYear)`, priced
+        // every release as though the entire original deal were still ahead of the
+        // club: a man in the last year of a five-year deal was charged five years
+        // of bonus acceleration plus every guarantee he had already been paid, and
+        // the divisor said five years too.
+        //
+        // That is how the cut sheet printed a NEGATIVE saving beside "YRS 1".
+        // `capSavings = salaryRelieved + proratedPerYear − deadCap`, and with one
+        // year genuinely left `proratedPerYear == deadCap`, so the saving collapses
+        // to `salaryRelieved` and cannot go below zero. A negative one was proof
+        // the money had been priced over a longer deal than the column beside it.
+        //
+        // `deadCapIfCut(atYear:)` exists precisely so a caller can name the year;
+        // naming the one `Player.contractYearsRemaining` implies puts the charge
+        // and the divisor back on a single clock. Clamped to the schedule because
+        // an extension can bump the player row while the `Contract` row it was
+        // written against still holds the old length.
         let years: Int
         let rawDead: Int
         if let contract, contract.totalYears > 0 {
-            years = max(1, contract.totalYears - contract.currentYear)
-            // Exactly what `calculateDeadCap(for:team:)` returns for a release.
-            rawDead = contract.deadCap
+            years = min(max(1, player.contractYearsRemaining), contract.totalYears)
+            rawDead = contract.deadCapIfCut(atYear: contract.totalYears - years)
         } else {
             years = max(1, player.contractYearsRemaining)
             rawDead = RosterCutEvaluator.deadCap(player: player)

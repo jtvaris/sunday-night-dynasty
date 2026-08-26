@@ -103,7 +103,7 @@ extension View {
 //   80–89 Good     green         → success
 //   70–79 Solid    blue          → accentBlue
 //   60–69 Average  yellow        → warning
-//   <60   Poor     red           → danger
+//   <60   Poor     red           → dangerText
 
 extension Color {
     /// Brighter, more saturated green reserved for the elite (90+) tier.
@@ -120,13 +120,22 @@ extension Color {
 
     /// Five-tier color for a position-group / roster-evaluation tier.
     /// Aligned with the OVR scale so chips and badges share semantics.
+    ///
+    /// The poor tier is `dangerText`, not `danger`. Every one of this function's
+    /// 180-odd call sites paints a NUMERAL or a short word, and `DSTokens` is
+    /// explicit that `#EF4444` "is too dim to read as words on the dark
+    /// surfaces… keep `danger` for fills, bars, and icon glyphs". The cut sheet
+    /// caught it: a 56 OVR measured 4.44:1 — under the AA floor — beside a money
+    /// column already using `dangerText` at 6.03:1, two reds on one row, 36 %
+    /// apart. The handful of sites that put this colour behind something do it
+    /// at 0.06–0.12 opacity under text of the same hue, so they follow it.
     static func forRatingTier(_ tier: RatingTier) -> Color {
         switch tier {
         case .elite:   return .eliteGreen
         case .good:    return .success
         case .solid:   return .accentBlue
         case .average: return .warning
-        case .poor:    return .danger
+        case .poor:    return .dangerText
         }
     }
 }
