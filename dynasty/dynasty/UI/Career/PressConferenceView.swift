@@ -177,6 +177,9 @@ struct PressConferenceView: View {
     @State private var currentQuestionIndex = 0
     @State private var selectedIndices: [Int] = []
     @State private var didPrepare = false
+    /// The coach handed the rest of the room to his media team. Weekly presser
+    /// only — see `canDelegate`.
+    @State private var didDelegate = false
 
     // Reveal choreography
     @State private var showPodium = false
@@ -332,6 +335,50 @@ struct PressConferenceView: View {
 
     private var currentQuestion: PressQuestion? {
         currentQuestionIndex < questions.count ? questions[currentQuestionIndex] : nil
+    }
+
+    // MARK: - Derived (delegation)
+
+    /// Whether the podium can be handed to the media team right now.
+    ///
+    /// **Weekly pressers only, never the introductory one.** The hiring presser
+    /// is the single place a session's `dominantTone` is not just a headline:
+    /// `IntroSequenceView` feeds it to `FranchiseIdentityDeclaration.amend`, so
+    /// the league's read of this front office is settled there — and a session
+    /// nobody spoke at has no dominant tone to settle it with. It is also the
+    /// only presser whose questions are the identity questions. Restricting the
+    /// hand-off to the weekly room sidesteps all of that rather than inventing
+    /// an answer for it.
+    ///
+    /// Offered while the live question is still unanswered, which is both
+    /// shapes of the hand-off in one control: tapped before the first answer it
+    /// gives away the whole session, tapped later it gives away the rest.
+    private var canDelegate: Bool {
+        session == .postGame
+            && selectedResponseIndex == nil
+            && currentQuestionIndex < questions.count
+    }
+
+    /// How many questions the media team ended up fielding. Zero unless the
+    /// coach actually walked away.
+    private var delegatedQuestionCount: Int {
+        didDelegate ? max(0, questions.count - selectedIndices.count) : 0
+    }
+
+    /// The result this session will write — the same fold in both cases, with a
+    /// delegated tail on top when the coach handed the room over.
+    private var sessionResult: PressConferenceResult {
+        didDelegate
+            ? PressConferenceEngine.buildDelegatedResult(
+                questions: questions,
+                selectedIndices: selectedIndices,
+                context: context
+            )
+            : PressConferenceEngine.buildResult(
+                questions: questions,
+                selectedIndices: selectedIndices,
+                context: context
+            )
     }
 
     // MARK: - Body
@@ -1944,8 +1991,21 @@ struct PressConferenceView: View {
         let isCommitted = selectedResponseIndex != nil
         let isLast = currentQuestionIndex + 1 >= questions.count
 
+        // The way out of the mini-game, for a coach who does not want to work
+        // the room this week. Ghost, not secondary: it is the quiet option
+        // beside "Say it", never the one the bar recommends.
+        let remaining = max(0, questions.count - selectedIndices.count)
+        let delegate: DSActionBar.Action? = canDelegate
+            ? DSActionBar.Action(
+                title: "Let the media team handle it",
+                caption: "\(remaining) question\(remaining == 1 ? "" : "s") \u{00B7} average outcomes",
+                handler: delegateRemainder
+            )
+            : nil
+
         return DSActionBar(
             explainer: commitExplainer(question: question, isCommitted: isCommitted),
+            ghost: delegate,
             primary: .init(
                 title: isCommitted ? (isLast ? "Wrap it up" : "Next question") : "Say it",
                 isEnabled: isCommitted || pendingResponseIndex != nil,
@@ -1988,11 +2048,7 @@ struct PressConferenceView: View {
     // the sheet and they are the reason a press summary exists.
 
     private var summaryContent: some View {
-        let result = PressConferenceEngine.buildResult(
-            questions: questions,
-            selectedIndices: selectedIndices,
-            context: context
-        )
+        let result = sessionResult
 
         // The same ledger the questioning phase keeps its receipt from. The
         // transcript at the end of the session and the receipt under the answer
@@ -2004,11 +2060,19 @@ struct PressConferenceView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: DSSpacing.md) {
                     summaryHeadline(result: result)
+                    if delegatedQuestionCount > 0 {
+                        summaryDelegation
+                    }
                     summaryChanged(result: result)
                     if session == .introductory {
                         summaryFrontOffice(result: result)
                     }
-                    summaryApproach(result: result)
+                    // "Your approach" is the tone distribution of what the coach
+                    // said. On a session he never spoke at there is nothing to
+                    // distribute, and the card would head an empty chip row.
+                    if !result.selectedResponses.isEmpty {
+                        summaryApproach(result: result)
+                    }
                     if !ledger.isEmpty {
                         transcriptCard(entries: ledger, detail: .record)
                     }
@@ -2064,7 +2128,12 @@ struct PressConferenceView: View {
                     .lineLimit(1)
             }
 
-            Text(mediaOutcomeHeadline(tone: result.dominantTone, media: media))
+            // A session the coach never spoke at has no note for the room to
+            // have heard, so the tone half of the headline is dropped rather
+            // than filled with `buildResult`'s no-answers fallback.
+            Text(result.selectedResponses.isEmpty
+                 ? delegatedOutcomeHeadline(media: media)
+                 : mediaOutcomeHeadline(tone: result.dominantTone, media: media))
                 .font(DSType.display(DSType.Size.title2, .heavy))
                 .foregroundStyle(Color.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -2082,6 +2151,44 @@ struct PressConferenceView: View {
                 )
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    /// What the media team actually did, and what it did NOT do.
+    ///
+    /// The two omissions are the point. A delegated question lands on the mean
+    /// of the cards that were on the table, so it cannot be the best answer in
+    /// the room — and because nobody at the podium picked a note, no tone joins
+    /// the career ledger the repetition ratchet reads and no promise is booked
+    /// against the season.
+    private var summaryDelegation: some View {
+        let count = delegatedQuestionCount
+        return VStack(alignment: .leading, spacing: DSSpacing.xs) {
+            Text("HANDLED BY YOUR MEDIA TEAM")
+                .font(DSType.display(DSType.Size.caption, .heavy))
+                .tracking(0.7)
+                .foregroundStyle(Color.textSecondary)
+
+            VStack(alignment: .leading, spacing: DSSpacing.xs) {
+                HStack(alignment: .top, spacing: DSSpacing.xs) {
+                    Image(systemName: "person.2.wave.2.fill")
+                        .font(.system(size: DSType.Size.footnote, weight: .semibold))
+                        .foregroundStyle(Color.accentGold)
+                    Text("They fielded \(count) question\(count == 1 ? "" : "s") for you. Each one lands on the average of the answers that were on the table \u{2014} never the best one in the room.")
+                        .font(DSType.text(DSType.Size.footnote, .regular, prose: true))
+                        .foregroundStyle(Color.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                DSDetailNote(
+                    text: "Nothing they said counts as your word: no tone goes on your record, and no promise is tracked against the season.",
+                    icon: "checkmark.shield"
+                )
+            }
+            .padding(DSSpacing.sm)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .cardBackground()
+        }
+        .accessibilityElement(children: .combine)
     }
 
     /// F-56 — the other read the room takes away, and the only one the TRADE
@@ -2318,7 +2425,11 @@ struct PressConferenceView: View {
         // ARE named. WHAT CHANGED shows all five meters, so a bar that lists
         // three of them can head "what it cost" over a session whose only cost
         // was the fans, and the two summaries on one screen then disagree.
-        var parts = ["\(result.selectedResponses.count) answers", ownerPart, mediaPart]
+        var parts = ["\(result.selectedResponses.count) answers"]
+        if delegatedQuestionCount > 0 {
+            parts.append("**\(delegatedQuestionCount)** taken by your media team")
+        }
+        parts.append(contentsOf: [ownerPart, mediaPart])
         if effects.playerMorale != 0 {
             parts.append("**\(effects.playerMorale > 0 ? "+" : "")\(effects.playerMorale)** locker room")
         }
@@ -2454,13 +2565,19 @@ struct PressConferenceView: View {
         }
     }
 
+    /// Hand the rest of the room to the media team and go straight to the
+    /// summary. Nothing else is torn down: `selectedIndices` still holds every
+    /// answer the coach gave himself, and those keep their real cost.
+    private func delegateRemainder() {
+        guard canDelegate else { return }
+        didDelegate = true
+        withAnimation(.easeInOut(duration: 0.4)) {
+            phase = .summary
+        }
+    }
+
     private func finishConference() {
-        let result = PressConferenceEngine.buildResult(
-            questions: questions,
-            selectedIndices: selectedIndices,
-            context: context
-        )
-        onComplete(result)
+        onComplete(sessionResult)
     }
 
     /// #166: one request funnel. The nonce is why the same anchor can be asked
@@ -2539,15 +2656,23 @@ struct PressConferenceView: View {
     }
 
     private func mediaOutcomeHeadline(tone: ResponseTone, media: Int) -> String {
-        let verdict: String
+        "\(toneReadLabel(for: tone)) \u{2014} \(roomVerdict(media: media))."
+    }
+
+    /// The same verdict, with nothing in front of it: the coach did not speak,
+    /// so there is no read of *him* to head the summary with.
+    private func delegatedOutcomeHeadline(media: Int) -> String {
+        "Your media team took the room \u{2014} \(roomVerdict(media: media))."
+    }
+
+    private func roomVerdict(media: Int) -> String {
         switch media {
-        case 12...:      verdict = "and the room loved it"
-        case 4..<12:     verdict = "and the room came away sold"
-        case -3..<4:     verdict = "and the room found nothing to write"
-        case -12 ..< -3: verdict = "and the room is not buying it"
-        default:         verdict = "and the room has turned on you"
+        case 12...:      return "and the room loved it"
+        case 4..<12:     return "and the room came away sold"
+        case -3..<4:     return "and the room found nothing to write"
+        case -12 ..< -3: return "and the room is not buying it"
+        default:         return "and the room has turned on you"
         }
-        return "\(toneReadLabel(for: tone)) \u{2014} \(verdict)."
     }
 }
 
