@@ -427,7 +427,10 @@ struct RosterView: View {
                     // The roster ceiling is phase-dependent (90 in the offseason,
                     // 53 once the season starts), so the bar needs the calendar
                     // to label the count honestly.
-                    phase: career?.currentPhase
+                    phase: career?.currentPhase,
+                    // …and the save itself, so the cap cell can push the
+                    // breakdown that attributes its dead money.
+                    career: career
                 )
 
                 controlStrip

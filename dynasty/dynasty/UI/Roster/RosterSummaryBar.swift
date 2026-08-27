@@ -21,6 +21,19 @@ struct RosterSummaryBar: View {
     /// actually applies right now. `nil` (previews, call sites with no career)
     /// prints the bare count exactly as before.
     var phase: SeasonPhase? = nil
+    /// The save this bar belongs to, so the cap cell can be a **control**.
+    ///
+    /// The strip printed "$230.0M / $265.0M · Salary Cap" and stopped there: it
+    /// was the only number on the screen a user could not ask a question about,
+    /// and the question he actually asks is "does that include dead money?".
+    /// It does — `capUsed` is `Team.currentCapUsage`, documented above as the
+    /// ledger that CARRIES dead money — and the breakdown that attributes it
+    /// already exists on `CapOverviewView` (its `deadMoneyCard` names every
+    /// recorded release and labels the remainder honestly). There was no route
+    /// to it from here, so the cell now says what is inside the figure and
+    /// pushes the screen that itemises it. `nil` (previews, call sites with no
+    /// career) keeps the cell as the plain read-out it was.
+    var career: Career? = nil
 
     private var totalCount: Int { players.count }
     private var healthyCount: Int { players.filter { !$0.isInjured }.count }
@@ -306,45 +319,20 @@ struct RosterSummaryBar: View {
 
             divider
 
-            // Salary cap with progress bar
-            VStack(spacing: 3) {
-                HStack(spacing: 0) {
-                    Text(formattedCapUsed)
-                        .font(.subheadline)
-                        .fontWeight(.bold)
-                        .monospacedDigit()
-                        .foregroundStyle(capColor)
-                    Text(" / ")
-                        .font(.caption)
-                        .foregroundStyle(Color.textTertiary)
-                    Text(formattedCapTotal)
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .monospacedDigit()
-                        .foregroundStyle(Color.textSecondary)
+            // Salary cap with progress bar. A control when there is a save to
+            // open the breakdown for — see `career`.
+            if let career {
+                NavigationLink {
+                    CapOverviewView(career: career)
+                } label: {
+                    capCell
                 }
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-
-                // Progress bar
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        Capsule()
-                            .fill(Color.backgroundTertiary)
-                            .frame(height: 5)
-                        Capsule()
-                            .fill(capColor)
-                            .frame(width: geo.size.width * capUsageRatio, height: 5)
-                    }
-                }
-                .frame(height: 5)
-                .padding(.horizontal, 6)
-
-                Text("Salary Cap")
-                    .font(.system(size: DSType.Size.caption))
-                    .foregroundStyle(Color.textTertiary)
+                .buttonStyle(.plain)
+                .accessibilityLabel("Salary cap \(formattedCapUsed) of \(formattedCapTotal), dead money included")
+                .accessibilityHint("Opens the cap breakdown, which attributes the dead money")
+            } else {
+                capCell
             }
-            .frame(maxWidth: .infinity)
 
             divider
 
@@ -375,6 +363,74 @@ struct RosterSummaryBar: View {
         )
     }
 
+    /// The cap read-out itself, drawn identically whether or not it is wrapped
+    /// in the `NavigationLink` above — so the bar looks the same in a preview
+    /// and on the roster screen, and only the affordance differs.
+    private var capCell: some View {
+        VStack(spacing: 3) {
+            HStack(spacing: 0) {
+                Text(formattedCapUsed)
+                    .font(.subheadline)
+                    .fontWeight(.bold)
+                    .monospacedDigit()
+                    .foregroundStyle(capColor)
+                Text(" / ")
+                    .font(.caption)
+                    .foregroundStyle(Color.textTertiary)
+                Text(formattedCapTotal)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .monospacedDigit()
+                    .foregroundStyle(Color.textSecondary)
+            }
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+
+            // Progress bar
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.backgroundTertiary)
+                        .frame(height: 5)
+                    Capsule()
+                        .fill(capColor)
+                        .frame(width: geo.size.width * capUsageRatio, height: 5)
+                }
+            }
+            .frame(height: 5)
+            .padding(.horizontal, 6)
+
+            HStack(spacing: 2) {
+                // The caption ANSWERS the question rather than repeating the
+                // column heading: "Salary Cap" left the user to guess whether
+                // the $35M of room he could see was already net of the dead
+                // money, and it is.
+                Text(career == nil ? "Salary Cap" : "Cap \u{00B7} incl. dead money")
+                    .font(.system(size: DSType.Size.caption))
+                    .foregroundStyle(Color.textTertiary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(Self.legibilityScaleFloor)
+                if career != nil {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: DSType.Size.micro, weight: .semibold))
+                        .foregroundStyle(Color.textTertiary)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+    }
+
+    /// The smallest a `DSType.Size.caption` label may be scaled to before it
+    /// drops under `DSType.Size.micro`, the app's own 10 pt legibility floor
+    /// (`DSTokens.swift` §Size: "Nothing informational should go below it").
+    ///
+    /// The cell labels shipped at `.minimumScaleFactor(0.65)`, which bottoms out
+    /// at ~7 pt — a smudge rather than a word, and the exact defect
+    /// `TeamSelectionView`'s column header was already fixed for. Same remedy as
+    /// there: scale down to the floor and truncate past it, never below it.
+    private static let legibilityScaleFloor = Double(DSType.Size.micro / DSType.Size.caption)
+
     private func summaryItem(label: String, value: String, color: Color) -> some View {
         VStack(spacing: 2) {
             Text(value)
@@ -388,7 +444,7 @@ struct RosterSummaryBar: View {
                 .font(.system(size: DSType.Size.caption))
                 .foregroundStyle(Color.textTertiary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.65)
+                .minimumScaleFactor(Self.legibilityScaleFloor)
         }
         .frame(maxWidth: .infinity)
     }
