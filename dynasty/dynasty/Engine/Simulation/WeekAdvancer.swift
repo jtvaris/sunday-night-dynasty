@@ -1352,6 +1352,7 @@ enum WeekAdvancer {
         let teamsByID = fetchTeamsByID(modelContext: modelContext)
         let allPlayers = fetchAllPlayers(modelContext: modelContext)
         let allCoaches = fetchAllCoaches(modelContext: modelContext)
+        let clubChiefScout = chiefScout(career: career, modelContext: modelContext)
 
         // R39 perf: the fatigue/injury/XP passes below used to re-scan
         // `allCoaches`/`allPlayers` once per player (O(players × coaches) —
@@ -1807,7 +1808,8 @@ enum WeekAdvancer {
                 career: career,
                 team: playerTeam,
                 coaches: teamCoaches,
-                owner: playerTeam.owner
+                owner: playerTeam.owner,
+                chiefScout: clubChiefScout
             )
 
             // The owner's note about his own rating (staged at 3b), posted now
@@ -2393,7 +2395,8 @@ enum WeekAdvancer {
                 ) {
                     lastInboxMessages.append(InboxEngine.weeklyScoutingDigestMessage(
                         digest: digest,
-                        season: season
+                        season: season,
+                        chiefScout: clubChiefScout
                     ))
                 }
             }
@@ -2478,7 +2481,8 @@ enum WeekAdvancer {
                     career: career,
                     team: playerTeam,
                     coaches: allCoaches.filter { $0.teamID == playerTeamID },
-                    owner: playerTeam.owner
+                    owner: playerTeam.owner,
+                    chiefScout: clubChiefScout
                 ))
             }
         }
@@ -3211,6 +3215,7 @@ enum WeekAdvancer {
         let teams = fetchAllTeams(modelContext: modelContext)
         let allPlayers = fetchAllPlayers(modelContext: modelContext)
         let allCoaches = fetchAllCoaches(modelContext: modelContext)
+        let clubChiefScout = chiefScout(career: career, modelContext: modelContext)
         let teamsByID = Dictionary(uniqueKeysWithValues: teams.map { ($0.id, $0) })
 
         // Plan §5 in-flight save migration. Runs BEFORE the phase switch so the
@@ -3740,7 +3745,9 @@ enum WeekAdvancer {
             }
 
             // Finding S9 — the department checks in at every phase boundary.
-            sendDraftCycleHeartbeat(career: career, phase: .coachingChanges)
+            sendDraftCycleHeartbeat(
+                career: career, phase: .coachingChanges, chiefScout: clubChiefScout
+            )
 
             lastInboxMessages.append(contentsOf: newMessages)
 
@@ -3792,7 +3799,8 @@ enum WeekAdvancer {
                     mentions: combineMentions,
                     dateString: InboxEngine.dateLabel(
                         week: 0, season: career.currentSeason, phase: .combine
-                    )
+                    ),
+                    chiefScout: clubChiefScout
                 ) {
                     lastInboxMessages.append(digest)
                 }
@@ -3851,6 +3859,7 @@ enum WeekAdvancer {
                 pool: ScoutingEngine.combineCharacterFindings,
                 salt: ScoutingEngine.CycleSalt.combineCharacter,
                 phase: .combine,
+                chiefScout: clubChiefScout,
                 modelContext: modelContext
             )
 
@@ -3901,7 +3910,9 @@ enum WeekAdvancer {
                 teams: teams
             ))
 
-            sendDraftCycleHeartbeat(career: career, phase: .combine)
+            sendDraftCycleHeartbeat(
+                career: career, phase: .combine, chiefScout: clubChiefScout
+            )
 
         case .freeAgency:
             // FA engine logic (contract decrements, AI signings, cap growth)
@@ -4018,7 +4029,9 @@ enum WeekAdvancer {
             // fifth mock — and the entry hook is a whole phase away from
             // MOMENT 4, which is the point.
 
-            sendDraftCycleHeartbeat(career: career, phase: .freeAgency)
+            sendDraftCycleHeartbeat(
+                career: career, phase: .freeAgency, chiefScout: clubChiefScout
+            )
 
         case .proDays:
             // #103 §5.7 FIXUP — this case is deliberately empty.
@@ -4090,7 +4103,9 @@ enum WeekAdvancer {
                 )
             }
 
-            sendDraftCycleHeartbeat(career: career, phase: .draft)
+            sendDraftCycleHeartbeat(
+                career: career, phase: .draft, chiefScout: clubChiefScout
+            )
 
         case .otas:
             // Camp Phase 1 hook-up: apply training plan + workload tick + battles
@@ -4611,7 +4626,8 @@ enum WeekAdvancer {
                     moves: moves,
                     dateString: InboxEngine.dateLabel(
                         week: 0, season: career.currentSeason, phase: .proDays
-                    )
+                    ),
+                    chiefScout: clubChiefScout
                 ) {
                     lastInboxMessages.append(message)
                 }
@@ -4625,6 +4641,7 @@ enum WeekAdvancer {
                 pool: ScoutingEngine.proDayCharacterFindings,
                 salt: ScoutingEngine.CycleSalt.proDayCharacter,
                 phase: .proDays,
+                chiefScout: clubChiefScout,
                 modelContext: modelContext
             )
 
@@ -4653,7 +4670,8 @@ enum WeekAdvancer {
                         setbacks: setbacks,
                         dateString: InboxEngine.dateLabel(
                             week: 0, season: career.currentSeason, phase: .proDays
-                        )
+                        ),
+                        chiefScout: clubChiefScout
                     ) {
                         lastInboxMessages.append(message)
                     }
@@ -4725,7 +4743,9 @@ enum WeekAdvancer {
                 applyMockDrift(career: career, moment: 3, modelContext: modelContext)
             }
 
-            sendDraftCycleHeartbeat(career: career, phase: .proDays)
+            sendDraftCycleHeartbeat(
+                career: career, phase: .proDays, chiefScout: clubChiefScout
+            )
         }
 
         // R32: the draft order must exist BEFORE the draft phase begins —
@@ -4820,7 +4840,8 @@ enum WeekAdvancer {
                     verdict: summary.verdict,
                     bestPickLine: summary.bestPickLine,
                     biggestReachLine: summary.biggestReachLine,
-                    season: draftYear
+                    season: draftYear,
+                    chiefScout: clubChiefScout
                 ))
             }
         }
@@ -4834,7 +4855,8 @@ enum WeekAdvancer {
                 career: career,
                 team: playerTeam,
                 coaches: teamCoaches,
-                owner: playerTeam.owner
+                owner: playerTeam.owner,
+                chiefScout: clubChiefScout
             ))
         }
     }
@@ -5277,6 +5299,7 @@ enum WeekAdvancer {
         pool: [String],
         salt: UInt64,
         phase: SeasonPhase,
+        chiefScout: Scout?,
         modelContext: ModelContext
     ) {
         guard !currentDraftClass.isEmpty else { return }
@@ -5299,7 +5322,8 @@ enum WeekAdvancer {
             findings: findings,
             dateString: InboxEngine.dateLabel(
                 week: 0, season: career.currentSeason, phase: phase
-            )
+            ),
+            chiefScout: chiefScout
         ) {
             lastInboxMessages.append(message)
         }
@@ -5311,7 +5335,9 @@ enum WeekAdvancer {
     /// The offseason used to go quiet between the loud events; this is the
     /// scouting department checking in with real counts off the live class at
     /// every phase boundary, so the four months read as a season of work.
-    private static func sendDraftCycleHeartbeat(career: Career, phase: SeasonPhase) {
+    private static func sendDraftCycleHeartbeat(
+        career: Career, phase: SeasonPhase, chiefScout: Scout?
+    ) {
         guard !currentDraftClass.isEmpty else { return }
         let key = "\(career.currentSeason)-\(phase.rawValue)"
         // The de-duplication has to survive a relaunch, because the thing it is
@@ -5326,7 +5352,8 @@ enum WeekAdvancer {
             prospects: currentDraftClass,
             dateString: InboxEngine.dateLabel(
                 week: 0, season: career.currentSeason, phase: phase
-            )
+            ),
+            chiefScout: chiefScout
         ) else { return }
         draftCycleHeartbeatsSent.insert(key)
         persistHeartbeatKeys(sent.union([key]))
@@ -5379,7 +5406,10 @@ enum WeekAdvancer {
             result: result,
             dateString: InboxEngine.dateLabel(
                 week: 0, season: career.currentSeason, phase: .coachingChanges
-            )
+            ),
+            // The club's department is already in hand above — no second fetch
+            // just to read the signature off it (#3553).
+            chiefScout: scouts.first { $0.scoutRole == .chiefScout }
         ) {
             lastInboxMessages.append(message)
         }
@@ -5934,6 +5964,17 @@ enum WeekAdvancer {
         let cid = activeCareerID
         let descriptor = FetchDescriptor<Scout>(predicate: #Predicate { $0.careerID == cid })
         return (try? modelContext.fetch(descriptor)) ?? []
+    }
+
+    /// The club's hired Chief Scout, or `nil` while the chair is vacant.
+    ///
+    /// #3553: a scouting letter is signed by the man who actually holds the
+    /// job, not by the office. `InboxEngine` falls back to "Director of
+    /// Scouting" on `nil`, so an unfilled chair still files its reports.
+    private static func chiefScout(career: Career, modelContext: ModelContext) -> Scout? {
+        guard let teamID = career.teamID else { return nil }
+        return fetchAllScouts(modelContext: modelContext)
+            .first { $0.teamID == teamID && $0.scoutRole == .chiefScout }
     }
 
     /// Draft picks that haven't been used yet — the tradable pick pool (R21).

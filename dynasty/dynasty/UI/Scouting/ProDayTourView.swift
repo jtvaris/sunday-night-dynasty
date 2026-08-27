@@ -174,6 +174,12 @@ struct ProDayTourView: View {
         scouts.filter { $0.proDayColleges.count < $0.maxProDays }
     }
 
+    /// Who signs the tour digest: the hired Chief Scout, or `nil` while the
+    /// chair is vacant (#3553).
+    private var chiefScout: Scout? {
+        scouts.first { $0.scoutRole == .chiefScout }
+    }
+
     /// The department in the order the decision uses: who can still be spent,
     /// best first. Insertion order answered a question nobody on this screen is
     /// asking — finding the men with a slot left meant reading all eight
@@ -1027,7 +1033,8 @@ struct ProDayTourView: View {
                 week: career.currentWeek,
                 season: receipt.season,
                 phase: career.currentPhase
-            )
+            ),
+            chiefScout: chiefScout
         ) else { return }
 
         // The process-global staging channel every out-of-shell producer posts

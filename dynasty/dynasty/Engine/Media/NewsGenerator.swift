@@ -923,7 +923,8 @@ enum NewsGenerator {
         verdict: String,
         bestPickLine: String?,
         biggestReachLine: String?,
-        season: Int
+        season: Int,
+        chiefScout: Scout? = nil
     ) -> InboxMessage {
         var lines: [String] = [
             "Coach,",
@@ -943,7 +944,7 @@ enum NewsGenerator {
         lines.append("Scouting Department")
 
         return InboxMessage(
-            sender: .scout(name: "Director of Scouting"),
+            sender: .scout(name: chiefScout?.fullName ?? "Director of Scouting"),
             subject: "Rookie Class Report — \(teamName)",
             body: lines.joined(separator: "\n"),
             date: "Offseason - Training Camp, Season \(String(season))",
