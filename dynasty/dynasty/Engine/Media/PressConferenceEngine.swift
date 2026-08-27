@@ -290,7 +290,7 @@ enum PressConferenceEngine {
 
     // MARK: - Intro Press Conference
 
-    /// Generate 4-5 questions for the introductory press conference.
+    /// Generate 5-6 questions for the introductory press conference.
     static func generateIntroConference(team: Team, owner: Owner, career: Career) -> [PressQuestion] {
         var questions: [PressQuestion] = []
 
@@ -306,7 +306,18 @@ enum PressConferenceEngine {
         // Q4: Upcoming draft
         questions.append(generateDraftQuestion(team: team))
 
-        // Q5: Media pressure (large market only)
+        // The team-state wildcard, dealt into a rotating middle slot: the four
+        // topics above are authored in a fixed order, so without this the very
+        // first thing every career hears is the same four questions in the same
+        // sequence. Never index 0 — the vision question is the opener by
+        // design, and the room is asked what he is here to do before anything
+        // else.
+        questions.insert(
+            generateInheritedRosterQuestion(team: team, owner: owner),
+            at: Int.random(in: 1...questions.count)
+        )
+
+        // Media pressure (large market only) — still the closer.
         if team.mediaMarket == .large {
             questions.append(generateMediaPressureQuestion(team: team))
         }
@@ -489,6 +500,155 @@ enum PressConferenceEngine {
     }
 
     // MARK: - Private Question Generators
+
+    /// The introductory presser's team-state wildcard.
+    ///
+    /// The other four intro topics — vision, cap, fans, draft — are the same
+    /// four sentences whatever club the coach walked into. This one is seeded
+    /// on the roster he actually inherited, and deliberately through
+    /// `standing(forTeam:roster:)`, the SAME band `introContext` reads: the
+    /// question the room asks, the fogged hints on the cards and the resolved
+    /// effects then all agree about what kind of team this is, instead of the
+    /// wildcard carrying a private opinion of its own.
+    ///
+    /// Effects follow the shape the four authored siblings already use — the
+    /// confident card buys fans and legacy at the owner's expense, humble buys
+    /// the owner and the room and bores the fans, aggressive buys the back page
+    /// and costs everything else, diplomatic is small and positive everywhere —
+    /// and the one state-dependent cell is the owner's: promising a fast turn
+    /// on a rebuilding roster is a bill a patient owner never agreed to, which
+    /// is the same rule `generateVisionQuestion` applies to a title claim.
+    private static func generateInheritedRosterQuestion(team: Team, owner: Owner) -> PressQuestion {
+        let r = randomReporter()
+        let band = standing(forTeam: team, roster: team.players)
+        let ownerWinNow = owner.prefersWinNow
+
+        let question: String
+        // (answer, the headline that answer produces), per tone.
+        let confident: (String, String)
+        let humble: (String, String)
+        let aggressive: (String, String)
+        let diplomatic: (String, String)
+
+        switch band {
+        case .rebuilding:
+            question = "Nobody outside this building rates this roster. How long before the \(team.name) matter again?"
+            confident = (
+                "I don't do three-year rebuilds. We'll be in the hunt next season.",
+                "\(r.outlet): \u{201C}No rebuild in \(team.city) \u{2014} new GM sets the clock at one year.\u{201D}"
+            )
+            humble = (
+                "It starts with the men already in this building. I'm not writing anybody off in week one.",
+                "\(r.outlet): \u{201C}New \(team.city) boss backs the players he inherited.\u{201D}"
+            )
+            aggressive = (
+                "There is a lot less here than people keep telling me there is.",
+                "\(r.outlet): \u{201C}Brutal first verdict on the \(team.name) roster from its own GM.\u{201D}"
+            )
+            diplomatic = (
+                "We're further away than this city deserves and closer than the outside thinks. Both are true.",
+                "\(r.outlet): \u{201C}\(team.city) sells a rebuild without using the word.\u{201D}"
+            )
+        case .middling:
+            question = "This roster has been stuck in the middle for years. How do you get it out?"
+            confident = (
+                "Mediocrity is a choice, and we're done making it.",
+                "\(r.outlet): \u{201C}\u{2018}Mediocrity is a choice\u{2019} \u{2014} new \(team.city) GM declares it over.\u{201D}"
+            )
+            humble = (
+                "You leave the middle by being better at the boring parts than anyone else. That's the whole job.",
+                "\(r.outlet): \u{201C}New GM preaches the unglamorous route out of the middle.\u{201D}"
+            )
+            aggressive = (
+                "Stuck in the middle is a personnel problem. I intend to change the personnel.",
+                "\(r.outlet): \u{201C}Roster purge hinted at as \(team.city) GM blames personnel.\u{201D}"
+            )
+            diplomatic = (
+                "Good teams get out of the middle a piece at a time. We'll add the right ones.",
+                "\(r.outlet): \u{201C}\(team.name) promise incremental climb out of the pack.\u{201D}"
+            )
+        case .contender:
+            question = "You're inheriting a team that can win right now. Does that make the job harder?"
+            confident = (
+                "It makes it simpler. This team is ready, and my job is not to get in its way.",
+                "\(r.outlet): \u{201C}New \(team.city) GM says the window is open and he won't touch it.\u{201D}"
+            )
+            humble = (
+                "A roster this good got here without me. I intend to learn it before I change any of it.",
+                "\(r.outlet): \u{201C}Hands-off start promised for a ready-made \(team.name) roster.\u{201D}"
+            )
+            aggressive = (
+                "Ready to win now? Then somebody should explain to me why it hasn't happened yet.",
+                "\(r.outlet): \u{201C}Shots at the old regime as new GM questions \(team.city)'s near misses.\u{201D}"
+            )
+            diplomatic = (
+                "A good roster is a starting point, not a finish line. We'll keep adding.",
+                "\(r.outlet): \u{201C}\(team.name) leadership preaches continuity with upgrades.\u{201D}"
+            )
+        }
+
+        return PressQuestion(
+            reporterName: r.name,
+            outlet: r.outlet,
+            question: question,
+            responses: [
+                // Confident: best Fans, strong Legacy. Cost: the owner, unless
+                // he wanted it now anyway.
+                PressResponse(
+                    text: confident.0,
+                    tone: .confident,
+                    mediaReaction: confident.1,
+                    effects: PressEffects(
+                        ownerSatisfaction: band == .rebuilding && !ownerWinNow ? -6 : 3,
+                        playerMorale: 3,
+                        mediaPerception: 5,
+                        legacyPoints: 8,
+                        fanExcitement: 12
+                    )
+                ),
+                // Humble: best Owner trust, best Morale. Cost: fans bored.
+                PressResponse(
+                    text: humble.0,
+                    tone: .humble,
+                    mediaReaction: humble.1,
+                    effects: PressEffects(
+                        ownerSatisfaction: 9,
+                        playerMorale: 6,
+                        mediaPerception: 3,
+                        legacyPoints: 2,
+                        fanExcitement: -5
+                    )
+                ),
+                // Aggressive: best Media buzz, hurts everything else — and it
+                // is the roster he is about to coach that he just criticised.
+                PressResponse(
+                    text: aggressive.0,
+                    tone: .aggressive,
+                    mediaReaction: aggressive.1,
+                    effects: PressEffects(
+                        ownerSatisfaction: -7,
+                        playerMorale: -11,
+                        mediaPerception: 18,
+                        legacyPoints: 5,
+                        fanExcitement: 2
+                    )
+                ),
+                // Diplomatic: balanced positives, no negatives — the safe choice.
+                PressResponse(
+                    text: diplomatic.0,
+                    tone: .diplomatic,
+                    mediaReaction: diplomatic.1,
+                    effects: PressEffects(
+                        ownerSatisfaction: 4,
+                        playerMorale: 4,
+                        mediaPerception: 3,
+                        legacyPoints: 3,
+                        fanExcitement: 4
+                    )
+                ),
+            ]
+        )
+    }
 
     private static func generateVisionQuestion(team: Team, owner: Owner) -> PressQuestion {
         let r = randomReporter()
@@ -736,7 +896,11 @@ enum PressConferenceEngine {
                 PressResponse(
                     text: "The draft is how you build dynasties. We're going to nail this.",
                     tone: .diplomatic,
-                    mediaReaction: "\(r.outlet): \u{201C}\(team.name) putting emphasis on the draft.\u{201D}",
+                    // Its three siblings above quote the ANSWER back ("BPA
+                    // philosophy", "wants to see film", "trade-back strategy");
+                    // this one used to restate the QUESTION's topic, so the one
+                    // safe card was also the only card the room heard nothing in.
+                    mediaReaction: "\(r.outlet): \u{201C}Dynasty talk \u{2014} new \(team.city) GM stakes his tenure on nailing the draft.\u{201D}",
                     effects: PressEffects(
                         ownerSatisfaction: 4,
                         playerMorale: 4,
