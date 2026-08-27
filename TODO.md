@@ -1,5 +1,25 @@
 # Dynasty - TODO
 
+> **Triage 2026-08-27.** Every open `- [ ]` in this file (596 of them, outside the
+> `Rajaukset` / `Left out` note sections) was checked against the current source by twelve
+> agents. **269 were already implemented and 104 had gone stale — 62 % of the queue was not
+> open.** The results are split out and each carries the evidence that proves it:
+>
+> * **`docs/BACKLOG_LIVE_2026-08-27.md`** — the 181 that are genuinely open, grouped by topic
+>   and typed, plus 22 that need a device or a human eye and 20 that turned out to be decisions.
+> * **`docs/BACKLOG_ARCHIVE_2026-08-27.md`** — the 269 done and 104 stale, with the file, symbol
+>   or call path each verdict was read from.
+>
+> Browsable version: https://claude.ai/code/artifact/54b37a94-0c67-4aae-bcfe-b23d9e51f7d5
+>
+> **Nothing has been deleted from this file yet** — the reorganisation is agreed to happen
+> together, topic by topic. The root cause is worth stating before it recurs: this file uses one
+> notation for three things. A line reading "reason texts are English only (intentional)" is a
+> DECISION, and `- [ ]` makes it indistinguishable from unfinished work. The 201 lines under
+> `Rajaukset` and `Left out` are of that kind and were deliberately left out of the triage —
+> they are limitations with reasons, not a queue.
+
+
 ## 🗺️ JATKOKEHITYSROADMAP — kirjattu 2026-07-30 (uuden session aloituspiste)
 
 Tila: vaiheet 1–4 valmiit ja kaikki portit vihreinä (draft class · kehitys-realisaatiomalli · fi-poisto · kiinteä 2026-liiga · 2 560 kasvon kirjasto bundlessa). KAIKKI COMMITTAAMATTA branchilla feat/skeletal-mocap-players. Yksityiskohdat: BACKLOG.md 2026-07-28…30 -osiot, docs/RELEASE_CHECKLIST.md, muisti session-state-2026-07-29.
