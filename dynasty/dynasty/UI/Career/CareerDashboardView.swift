@@ -2969,8 +2969,8 @@ struct CareerDashboardView: View {
 
     private var positionStrengthsTile: some View {
         // NOTE: Outer NavigationLink intentionally removed — per-grade letters are now
-        // tap targets that open an explainer popover. A "View" link is still available
-        // in the header.
+        // tap targets that open an explainer popover. The route out of the tile is the
+        // link at the FOOT of it, not the header chevron.
         DashboardTile(icon: "chart.bar.fill", title: "Position Grades") {
             VStack(alignment: .leading, spacing: 4) {
                 if positionGroupGrades.isEmpty {
@@ -2987,20 +2987,35 @@ struct CareerDashboardView: View {
                     // "No need on this roster" is a real and useful answer.
                     let weakest = positionGroupGrades.min(by: { $0.starterOVR < $1.starterOVR })
                     let weakestGroup: String? = (weakest?.starterOVR ?? 100) < 70 ? weakest?.group : nil
-                    // Show in two columns
-                    let halfCount = (positionGroupGrades.count + 1) / 2
-                    let leftCol = Array(positionGroupGrades.prefix(halfCount))
-                    let rightCol = Array(positionGroupGrades.dropFirst(halfCount))
-                    HStack(alignment: .top, spacing: 8) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            ForEach(leftCol, id: \.group) { item in
-                                positionGradeRow(item, isWeakest: item.group == weakestGroup)
-                            }
-                        }
-                        VStack(alignment: .leading, spacing: 4) {
-                            ForEach(rightCol, id: \.group) { item in
-                                positionGradeRow(item, isWeakest: item.group == weakestGroup)
-                            }
+                    // The ENDS of the table, not the whole of it. All eleven
+                    // groups used to print here in two columns — the same
+                    // letters `RosterEvaluationView` draws off the same
+                    // `PositionGradeCalculator`, one push away — so the hub
+                    // was carrying a duplicate of a full screen. It keeps the
+                    // two ends (the only part a glance can act on) and the
+                    // grade explainer, which lives on no other surface.
+                    //
+                    // Ranked with the group code as a tie-break: two groups on
+                    // the same starter rating must not swap places between
+                    // renders, and `sorted` gives no stability guarantee.
+                    let ranked = positionGroupGrades.sorted {
+                        $0.starterOVR == $1.starterOVR
+                            ? $0.group < $1.group
+                            : $0.starterOVR > $1.starterOVR
+                    }
+                    let strongest = Array(ranked.prefix(2))
+                    // Dropped past `strongest` first, so a club with three or
+                    // four graded groups cannot print the same group in both
+                    // bands.
+                    let thinnest = Array(ranked.dropFirst(strongest.count).suffix(2))
+                    positionGradeBandLabel("STRONGEST", tint: Color.success)
+                    ForEach(strongest, id: \.group) { item in
+                        positionGradeRow(item, isWeakest: item.group == weakestGroup)
+                    }
+                    if !thinnest.isEmpty {
+                        positionGradeBandLabel("WEAKEST", tint: Color.warning)
+                        ForEach(thinnest, id: \.group) { item in
+                            positionGradeRow(item, isWeakest: item.group == weakestGroup)
                         }
                     }
                     // Key first: "S: A / D: B-" was unreadable without it. NEED
@@ -3013,9 +3028,39 @@ struct CareerDashboardView: View {
                         .foregroundStyle(Color.textTertiary)
                         .lineLimit(2)
                         .padding(.top, 2)
+                    // The middle of the table has moved, not gone, so the tile
+                    // says where to. The header chevron cannot carry this —
+                    // the tile has no outer link by design, because the grade
+                    // letters inside it are tap targets of their own.
+                    if positionGroupGrades.count > strongest.count + thinnest.count {
+                        Button {
+                            onTaskSelected(.rosterEvaluation)
+                        } label: {
+                            HStack(spacing: DSSpacing.xxs) {
+                                Text("All \(positionGroupGrades.count) groups")
+                                    .font(.system(size: DSType.Size.caption, weight: .semibold))
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: DSType.Size.micro, weight: .semibold))
+                            }
+                            .foregroundStyle(Color.accentGold)
+                            // §2.12: this is a touch target, not a caption.
+                            .frame(minHeight: 44, alignment: .leading)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
             }
         }
+    }
+
+    /// The two-word rule between the tile's ends. Without it the condensed
+    /// tile is four unlabelled rows and reads as an arbitrary four groups.
+    private func positionGradeBandLabel(_ label: String, tint: Color) -> some View {
+        Text(label)
+            .font(.system(size: DSType.Size.micro, weight: .heavy))
+            .foregroundStyle(tint)
+            .tracking(0.5)
     }
 
     private func positionGradeRow(_ item: (group: String, starterGrade: String, depthGrade: String, starterOVR: Int, depthOVR: Int), isWeakest: Bool = false) -> some View {
@@ -5708,6 +5753,13 @@ private struct CoachingStaffReviewSheet: View {
                     // rows are read.
                     readinessVerdict
 
+                    // The same staff read FORWARD, in one more sentence. The
+                    // review was a present-tense snapshot and nothing else:
+                    // sixteen ratings as they stand this morning, with no way
+                    // to tell the 34-year-old the club is still growing from
+                    // the 61-year-old it is about to lose.
+                    developmentOutlook
+
                     // Staff listing
                     staffSection
 
@@ -5873,6 +5925,199 @@ private struct CoachingStaffReviewSheet: View {
             return nil
         }
         return (role: worst.key, coach: worst.value, delta: nil)
+    }
+
+    // MARK: - Development Outlook
+
+    /// The forward-looking half of the review, in one sentence: who on this
+    /// staff still has growing to do under this head coach, and who the engine
+    /// has already started taking apart.
+    ///
+    /// Everything in it is a number the simulation measurably applies. Two
+    /// things it deliberately does NOT do:
+    ///
+    /// - It never reads `Coach.potentialLabel(seasonsOnTeam:)`. That rolls a
+    ///   fresh `Int.random` on EVERY call, so a sentence built on it would
+    ///   reword itself between two renders of the same sheet —
+    ///   `HireCoachView` had to freeze it at sheet-open to get a stable
+    ///   compare table. Everything here is a pure function of stored fields.
+    /// - It projects no rating three seasons out. There is no growth curve in
+    ///   the engine to project along: `CoachDevelopmentEngine` is per-season
+    ///   XP against a per-man ceiling, not a trajectory, and inventing the
+    ///   missing coefficient to put a 2029 staff average on screen would be a
+    ///   balance statement dressed up as a label.
+    ///
+    /// What the engine WILL answer is exactly the two halves of the sentence:
+    /// how fast this staff banks XP under this head coach
+    /// (`applyWeeklyXP`'s mentoring multiplier) and who has room left under
+    /// his own ceiling to spend it on (`convertXPToGrowth`), against who is
+    /// already inside `applyAgingDecline`'s bands.
+    @ViewBuilder
+    private var developmentOutlook: some View {
+        if !coachBySeat.isEmpty {
+            HStack(alignment: .top, spacing: DSSpacing.xs) {
+                Image(systemName: "chart.line.uptrend.xyaxis")
+                    .font(.system(size: DSType.Size.footnote, weight: .semibold))
+                    .foregroundStyle(Color.accentBlue)
+                Text(developmentSentence)
+                    .font(.system(size: DSType.Size.footnote, weight: .medium))
+                    .foregroundStyle(Color.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            .padding(DSSpacing.sm)
+            .background(Color.backgroundSecondary)
+            .clipShape(RoundedRectangle(cornerRadius: 10))  // ds-lint:allow(radius) matches its sibling cards
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)  // ds-lint:allow(radius) matches its sibling cards
+                    .strokeBorder(Color.accentBlue.opacity(0.35), lineWidth: 1)
+            )
+        }
+    }
+
+    private var developmentSentence: String {
+        let seated = coachBySeat
+        let rate = String(format: "%.2f", staffXPMultiplier)
+
+        // Whose staff this is, in the engine's terms. `WeekAdvancer` looks up
+        // the mentor as the `.headCoach` row on the player's club, so a GM+HC
+        // career — where that chair is the user's and has no coach row —
+        // genuinely mentors nobody and lands on the bare 1.0 baseline.
+        let lead: String
+        if let hc = seated[.headCoach] {
+            lead = "Under \(hc.fullName) this staff banks XP at \u{00D7}\(rate) a week"
+        } else if isGMAndHC {
+            lead = "Your own chair mentors nobody in the engine, so this staff banks XP "
+                + "at \u{00D7}\(rate) a week"
+        } else {
+            lead = "With no head coach to mentor them this staff banks XP at \u{00D7}\(rate) a week"
+        }
+
+        let growers = developingCoaches
+        let growClause: String
+        switch growers.count {
+        case 0:
+            growClause = "no man on it has room left under his own ceiling to spend it on"
+        case 1:
+            growClause = "\(nameList(growers)) has the most room left under his ceiling"
+        default:
+            growClause = "\(nameList(growers)) have the most room left under their ceilings"
+        }
+
+        let agers = decliningCoaches
+        let ageClause: String
+        if agers.isEmpty {
+            ageClause = "and nobody is old enough yet for the engine's ageing decline"
+        } else {
+            // `shouldRetire` only fires from 65, so that is the age at which
+            // "declining" becomes "may not be here next year".
+            let retirementRisk = agers.contains { $0.age >= 65 }
+            let agerNames: [String] = agers.map { coach in
+                let name: String = coach.fullName
+                return "\(name) (\(coach.age))"
+            }
+            ageClause = "while \(nameList(agerNames)) "
+                + (agers.count == 1 ? "is" : "are") + " into the ageing-decline bands"
+                + (retirementRisk ? " and can retire on you this offseason" : "")
+        }
+
+        return "\(lead): \(growClause), \(ageClause)."
+    }
+
+    /// The XP multiplier `CoachDevelopmentEngine.applyWeeklyXP` actually
+    /// applies to this club every week, recomputed here from the same two
+    /// inputs: the head coach's mentoring (`motivation` + `playerDevelopment`)
+    /// and the assistant head coach's development bonus.
+    ///
+    /// This is the figure for the men who are NEITHER of those two — the
+    /// engine skips its own mentor (`hc.id != coach.id`), so the head coach
+    /// and the AHC each run slightly off this rate. It is quoted as the
+    /// staff's rate because fourteen of the sixteen chairs are on it.
+    private var staffXPMultiplier: Double {
+        let seated = coachBySeat
+        let hcMultiplier: Double
+        if let hc = seated[.headCoach] {
+            let leadership = Double(hc.motivation + hc.playerDevelopment) / 2.0
+            hcMultiplier = 0.6 + (leadership - 30.0) / 60.0 * 0.9
+        } else {
+            hcMultiplier = 1.0
+        }
+        var ahcBonus = 0.0
+        if let ahc = seated[.assistantHeadCoach] {
+            ahcBonus = Double(ahc.playerDevelopment - 50) / 50.0 * 0.20
+        }
+        return max(0.3, hcMultiplier + ahcBonus)
+    }
+
+    /// The twelve attributes `convertXPToGrowth` is allowed to spend XP on —
+    /// the same list, in the same order, because a man's room to grow is
+    /// defined by exactly the set of dials the engine can turn.
+    private static let growableAttributes = [
+        "playCalling", "playerDevelopment", "reputation", "adaptability",
+        "gamePlanning", "scoutingAbility", "recruiting", "motivation",
+        "discipline", "mediaHandling", "contractNegotiation", "moraleInfluence"
+    ]
+
+    /// At most three names, most room first: the men with the most attribute
+    /// points still available below `Coach.attributeCeiling`.
+    ///
+    /// Room, not potential. XP arrives identically for every man on the club —
+    /// `applyWeeklyXP` gives the whole staff the same base, the same win bonus
+    /// and the same multiplier — so the ONLY thing that separates two of these
+    /// coaches is whether `convertXPToGrowth` has anywhere left to put it. A
+    /// man already at his ceiling converts nothing, however good his mentor.
+    ///
+    /// Ties break on name so the sentence cannot reorder itself between two
+    /// renders of the same staff.
+    /// Spelled out rather than chained: the fluent
+    /// `map`/`filter`/`sorted`/`prefix`/`map` version of this over a labelled
+    /// tuple defeated the type-checker outright ("unable to type-check this
+    /// expression in reasonable time").
+    private var developingCoaches: [String] {
+        var ranked: [(coach: Coach, room: Int)] = []
+        for coach in coachBySeat.values {
+            let room = growthRoom(coach)
+            if room > 0 {
+                ranked.append((coach: coach, room: room))
+            }
+        }
+        ranked.sort {
+            $0.room == $1.room ? $0.coach.fullName < $1.coach.fullName : $0.room > $1.room
+        }
+        return ranked.prefix(3).map { entry in
+            let seat: String = entry.coach.role.abbreviation
+            let name: String = entry.coach.fullName
+            return "\(name) (\(seat))"
+        }
+    }
+
+    /// At most two names, oldest first: the men `applyAgingDecline` has already
+    /// started rolling against. 50 is that function's own guard — under it the
+    /// engine returns before touching a single attribute.
+    private var decliningCoaches: [Coach] {
+        var aged: [Coach] = coachBySeat.values.filter { $0.age >= 50 }
+        aged.sort { $0.age == $1.age ? $0.fullName < $1.fullName : $0.age > $1.age }
+        return Array(aged.prefix(2))
+    }
+
+    /// Total attribute points still available to this man below his ceiling.
+    ///
+    /// `Coach.attributeCeiling` is `potential * 0.65 + 35` — a stored, stable
+    /// number, unlike the fuzzed `potentialLabel`. The sum is deliberately
+    /// unweighted: it is exactly how many points `convertXPToGrowth` will ever
+    /// be permitted to add to him, which is a fact rather than a forecast.
+    private func growthRoom(_ coach: Coach) -> Int {
+        let ceiling = coach.attributeCeiling
+        return Self.growableAttributes.reduce(0) { total, attribute in
+            total + max(0, ceiling - coach.attributeValue(named: attribute))
+        }
+    }
+
+    /// "A", "A and B", "A, B and C".
+    private func nameList(_ names: [String]) -> String {
+        guard let last = names.last else { return "" }
+        guard names.count > 1 else { return last }
+        return names.dropLast().joined(separator: ", ") + " and " + last
     }
 
     // MARK: - Staff Section
