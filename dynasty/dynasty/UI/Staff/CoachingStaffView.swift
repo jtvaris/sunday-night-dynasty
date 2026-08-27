@@ -339,6 +339,18 @@ struct CoachingStaffView: View {
             .sorted { $0.role.sortOrder < $1.role.sortOrder }
     }
 
+    /// The position room's own average rating, over the seats actually filled.
+    ///
+    /// The only staff roll-up in the app is the Review tab's "Staff" chip, and
+    /// that averages EVERY seat — head coach and coordinators included — so the
+    /// eight rooms that do the week-to-week teaching had no number of their own.
+    /// `nil` while the group is empty: a zero would read as a rating.
+    private var positionCoachesOverall: Int? {
+        let group = positionCoaches
+        guard !group.isEmpty else { return nil }
+        return group.reduce(0) { $0 + coachOverall($1) } / group.count
+    }
+
     // MARK: - Medical staff
 
     private var medicalStaff: [Coach] {
@@ -1434,8 +1446,19 @@ struct CoachingStaffView: View {
                         // "Close" is withdrawn for both.
                         if sheetOutcome == nil && !sheetType.bringsOwnChrome {
                             ToolbarItem(placement: .cancellationAction) {
-                                Button("Close") { activeHireSheet = nil }
-                                    .foregroundStyle(Color.accentGold)
+                                // The glyph, not the word. This is the dismissal
+                                // for a full-page hiring sheet, and the sheet's
+                                // own inline dismissals (the value legend, the
+                                // scheme tip, the rating legend) are all
+                                // `xmark.circle.fill` already — the one that
+                                // closed the whole surface was the odd 40 pt of
+                                // small gold text in the corner.
+                                Button { activeHireSheet = nil } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.system(size: DSType.Size.title3))
+                                        .foregroundStyle(Color.accentGold)
+                                }
+                                .accessibilityLabel("Close")
                             }
                         }
                     }
@@ -1991,9 +2014,14 @@ struct CoachingStaffView: View {
                                     .foregroundStyle(Color.textTertiary)
                             }
                             let filledCount = coaches.filter { [CoachRole.offensiveCoordinator, .defensiveCoordinator, .specialTeamsCoordinator].contains($0.role) }.count
-                            Text("\(filledCount)/3")
+                            // "filled", not a bare fraction. A gold "0/3" beside
+                            // a salary range read as a price, a rating or a rank
+                            // depending on who was looking; the word is what
+                            // makes it a count of chairs.
+                            Text("\(filledCount)/3 filled")
                                 .font(.caption.weight(.medium).monospacedDigit())
                                 .foregroundStyle(filledCount == 3 ? Color.success : Color.warning)
+                                .accessibilityLabel("\(filledCount) of 3 coordinator seats filled")
                         }
                     }
                     .tint(Color.accentGold)
@@ -2037,10 +2065,22 @@ struct CoachingStaffView: View {
                                     .font(.system(size: DSType.Size.caption, weight: .medium))
                                     .foregroundStyle(Color.textTertiary)
                             }
+                            // The room's own average, which no roll-up on this
+                            // screen was giving: the Review tab's "Staff" chip
+                            // means every seat including the head coach and the
+                            // three coordinators, so eight weak position rooms
+                            // under two strong coordinators read as a fine staff.
+                            if let groupAverage = positionCoachesOverall {
+                                Text("avg \(groupAverage)")
+                                    .font(.caption.weight(.bold).monospacedDigit())
+                                    .foregroundStyle(Color.forRating(groupAverage))
+                                    .accessibilityLabel("Position coach group average rating \(groupAverage)")
+                            }
                             let filledCount = positionCoaches.count
-                            Text("\(filledCount)/8")
+                            Text("\(filledCount)/8 filled")
                                 .font(.caption.weight(.medium).monospacedDigit())
                                 .foregroundStyle(filledCount == 8 ? Color.success : Color.textTertiary)
+                                .accessibilityLabel("\(filledCount) of 8 position coach seats filled")
                         }
                     }
                     .tint(Color.accentGold)
@@ -2089,9 +2129,10 @@ struct CoachingStaffView: View {
                                         }
                                         // #275: Filled/total count
                                         let filledCount = medicalStaff.count
-                                        Text("\(filledCount)/3")
+                                        Text("\(filledCount)/3 filled")
                                             .font(.caption.weight(.medium).monospacedDigit())
                                             .foregroundStyle(filledCount == 3 ? Color.success : Color.textTertiary)
+                                            .accessibilityLabel("\(filledCount) of 3 medical seats filled")
                                     }
                                 }
                                 .tint(Color.accentGold)
@@ -2135,9 +2176,10 @@ struct CoachingStaffView: View {
                                         }
                                         // #275: Filled/total count
                                         let filledCount = scouts.count
-                                        Text("\(filledCount)/6")
+                                        Text("\(filledCount)/6 filled")
                                             .font(.caption.weight(.medium).monospacedDigit())
                                             .foregroundStyle(filledCount == 6 ? Color.success : Color.textTertiary)
+                                            .accessibilityLabel("\(filledCount) of 6 scouting seats filled")
                                     }
                                 }
                                 .tint(Color.accentGold)
@@ -2185,9 +2227,10 @@ struct CoachingStaffView: View {
                                 }
                                 // #275: Filled/total count
                                 let filledCount = medicalStaff.count
-                                Text("\(filledCount)/3")
+                                Text("\(filledCount)/3 filled")
                                     .font(.caption.weight(.medium).monospacedDigit())
                                     .foregroundStyle(filledCount == 3 ? Color.success : Color.textTertiary)
+                                    .accessibilityLabel("\(filledCount) of 3 medical seats filled")
                             }
                         }
                         .tint(Color.accentGold)
@@ -2229,9 +2272,10 @@ struct CoachingStaffView: View {
                                 }
                                 // #275: Filled/total count
                                 let filledCount = scouts.count
-                                Text("\(filledCount)/6")
+                                Text("\(filledCount)/6 filled")
                                     .font(.caption.weight(.medium).monospacedDigit())
                                     .foregroundStyle(filledCount == 6 ? Color.success : Color.textTertiary)
+                                    .accessibilityLabel("\(filledCount) of 6 scouting seats filled")
                             }
                         }
                         .tint(Color.accentGold)
@@ -4639,6 +4683,16 @@ struct CoachingStaffView: View {
                     .padding(.vertical, 2)
                     .background(coach.role.badgeColor, in: RoundedRectangle(cornerRadius: 3))
 
+                // The job, spelled out. A filled card carried the three-letter
+                // code and a name, so the medical cards read "DOC / Ana Reyes"
+                // and nothing on them said doctor — while the VACANT card for
+                // the same seat, one tap earlier, printed "Team Doctor" in full.
+                Text(coach.role.displayName)
+                    .font(.system(size: DSType.Size.micro, weight: .medium))
+                    .foregroundStyle(Color.textTertiary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+
                 Spacer()
 
                 Text("\(keyAttr.value)")
@@ -4682,6 +4736,11 @@ struct CoachingStaffView: View {
                 }
             }
         }
+        // Pinned to the top of its grid cell. A card sizes to its own content
+        // and the grid row sizes to the tallest card in it, so a two-line card
+        // beside a three-line one floated in the middle of the row and its
+        // panel stopped short — sixteen boxes on eight different baselines.
+        .frame(maxHeight: .infinity, alignment: .top)
         .padding(8)
         .background(
             RoundedRectangle(cornerRadius: 8)
@@ -4733,6 +4792,9 @@ struct CoachingStaffView: View {
                     .font(.system(size: DSType.Size.caption))
                     .foregroundStyle(Color.textTertiary)
             }
+            // Top of the cell, for the same reason `compactCoachCard` is: the
+            // vacancies share the grid rows with the filled cards.
+            .frame(maxHeight: .infinity, alignment: .top)
             .padding(8)
             .background(
                 RoundedRectangle(cornerRadius: 8)
