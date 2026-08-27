@@ -70,6 +70,10 @@ struct ScoutNotesView: View {
     /// the persisted order — the Big Board, the Mock Draft, the war room and
     /// this screen all print the same "#1", rather than each inventing one.
     @State private var myTopProspect: CollegeProspect?
+    /// Whether the "why we differ" answer under the Your #1 vs Media #1 callout
+    /// is open. Local and unpersisted on purpose: it is a question the user
+    /// asks, not a preference he sets.
+    @State private var showBoardDisagreement = false
     @State private var isLoading = true
 
     // MARK: - Body
@@ -144,66 +148,116 @@ struct ScoutNotesView: View {
     private var recommendationsSection: some View {
         Section {
             if let need = reads.topNeed {
-                HStack(spacing: 10) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(Color.warning)
-                        .font(.caption)
+                recommendationRow(icon: "exclamationmark.triangle.fill", tint: .warning) {
                     Text("Your #1 need: **\(need.rawValue)** (weakest group)")
-                        .font(.subheadline)
-                        .foregroundStyle(Color.textPrimary)
                 }
-                .listRowBackground(Color.backgroundSecondary)
             }
 
             if let prospect = reads.bestAtTopNeed, let need = reads.topNeed {
-                HStack(spacing: 10) {
-                    Image(systemName: "target")
-                        .foregroundStyle(Color.success)
-                        .font(.caption)
-                    // The BAND, not the tier. These two lines pick their man by
-                    // the midpoint of the fogged read now, so printing
-                    // `scoutedTier` — a bucketing of the raw scouted integer —
-                    // put a second, tighter yardstick on the same line as the
-                    // first: the depth list three rows down already prints the
-                    // band, for the same prospect, off the same instrument.
+                // The BAND, not the tier. These two lines pick their man by
+                // the midpoint of the fogged read now, so printing
+                // `scoutedTier` — a bucketing of the raw scouted integer —
+                // put a second, tighter yardstick on the same line as the
+                // first: the depth list three rows down already prints the
+                // band, for the same prospect, off the same instrument.
+                recommendationRow(icon: "target", tint: .success) {
                     Text("Best available at \(need.rawValue): **\(prospect.fullName)** (\(reads.gradeText(prospect)))")
-                        .font(.subheadline)
-                        .foregroundStyle(Color.textPrimary)
-                    Spacer(minLength: 0)
+                } trailing: {
                     interviewButton(for: prospect)
                 }
-                .listRowBackground(Color.backgroundSecondary)
             }
 
             if let prospect = reads.bestAvailable {
-                HStack(spacing: 10) {
-                    Image(systemName: "star.fill")
-                        .foregroundStyle(Color.accentGold)
-                        .font(.caption)
+                recommendationRow(icon: "star.fill", tint: .accentGold) {
                     Text("Best player available: **\(prospect.fullName)** (\(reads.gradeText(prospect)))")
-                        .font(.subheadline)
-                        .foregroundStyle(Color.textPrimary)
-                    Spacer(minLength: 0)
+                } trailing: {
                     interviewButton(for: prospect)
                 }
-                .listRowBackground(Color.backgroundSecondary)
             }
 
             // #71: Show team's draft picks
-            HStack(spacing: 10) {
-                Image(systemName: "list.number")
-                    .foregroundStyle(Color.accentBlue)
-                    .font(.caption)
+            recommendationRow(icon: "list.number", tint: .accentBlue) {
                 Text("Your picks: \(reads.picksSummary)")
-                    .font(.subheadline)
-                    .foregroundStyle(Color.textPrimary)
             }
-            .listRowBackground(Color.backgroundSecondary)
+
+            // The user's OWN half of the need call, and the way to go and set
+            // it. This line used to sit in the depth section as grey text —
+            // "You: Set your priorities in Roster Evaluation" — an instruction
+            // with no control anywhere on the screen to follow it, on the one
+            // surface whose whole job is to tell you what the board adds up to.
+            if userPriorityPositions.isEmpty {
+                NavigationLink {
+                    RosterEvaluationView(career: career)
+                } label: {
+                    recommendationRowBody(icon: "slider.horizontal.3", tint: .accentBlue) {
+                        Text("Set your position priorities \u{2014} your scouts' need call has no counterpoint yet")
+                    }
+                }
+                .listRowBackground(Color.backgroundSecondary)
+            }
         } header: {
             Label("Recommendations", systemImage: "lightbulb.fill")
                 .font(.caption.weight(.bold))
                 .foregroundStyle(Color.textSecondary)
                 .textCase(nil)
+        }
+    }
+
+    // MARK: - One badge vocabulary
+    //
+    // The four lines above hand-rolled four different `HStack`s around four
+    // different glyph treatments — a bare warning triangle at `.caption`, a
+    // hairline `target`, a solid gold star, a numbered list icon — so a block
+    // whose entire purpose is "here are four reads, in priority order" read as
+    // four unrelated notifications. The badge below is the vocabulary: same
+    // 22 pt tile, same corner radius, same tint-at-15 % wash, same text style.
+    // Only the COLOUR carries meaning now, which is the one signal that should.
+
+    /// One recommendation, with an optional action on the man it names.
+    ///
+    /// The label is a `Text` built at the call site rather than a `String`
+    /// parameter on purpose: every one of these lines carries `**bold**` around
+    /// the name, and markdown only survives when the literal reaches
+    /// `Text(LocalizedStringKey)` — routing it through a runtime `String` would
+    /// have printed the asterisks and taken the lines out of string extraction
+    /// at the same time.
+    private func recommendationRow<Label: View, Trailing: View>(
+        icon: String,
+        tint: Color,
+        @ViewBuilder label: () -> Label,
+        @ViewBuilder trailing: () -> Trailing
+    ) -> some View {
+        HStack(spacing: 10) {
+            recommendationRowBody(icon: icon, tint: tint, label: label)
+            Spacer(minLength: 0)
+            trailing()
+        }
+        .listRowBackground(Color.backgroundSecondary)
+    }
+
+    private func recommendationRow<Label: View>(
+        icon: String,
+        tint: Color,
+        @ViewBuilder label: () -> Label
+    ) -> some View {
+        recommendationRow(icon: icon, tint: tint, label: label) { EmptyView() }
+    }
+
+    private func recommendationRowBody<Label: View>(
+        icon: String,
+        tint: Color,
+        @ViewBuilder label: () -> Label
+    ) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: DSType.Size.caption, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 22, height: 22)
+                .background(tint.opacity(0.15), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
+            label()
+                .font(.subheadline)
+                .foregroundStyle(Color.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -271,7 +325,12 @@ struct ScoutNotesView: View {
                         .font(.caption)
                         .foregroundStyle(Color.textPrimary)
                     if userPriorityPositions.isEmpty {
-                        Text("You: Set your priorities in Roster Evaluation")
+                        // The instruction that used to live here — "Set your
+                        // priorities in Roster Evaluation" — is a CTA in the
+                        // Recommendations block now, because an instruction
+                        // with no control to follow it is not a line, it is a
+                        // dead end. What stays is the honest state.
+                        Text("You: no priorities set")
                             .font(.caption)
                             .foregroundStyle(Color.textTertiary)
                     } else {
@@ -334,6 +393,34 @@ struct ScoutNotesView: View {
                                 .font(.caption)
                                 .foregroundStyle(Color.textPrimary)
                         }
+
+                        // THE TAP TARGET. The callout is the best line on this
+                        // screen and it was inert prose: it names a
+                        // disagreement between two boards and then offers no
+                        // way to ask what the disagreement IS. Everything the
+                        // answer needs is already loaded here — the user's own
+                        // board order, the media's published projection, and
+                        // the slot each board gives the OTHER board's man.
+                        if myTop.id != mediaTop.id {
+                            Spacer(minLength: 0)
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    showBoardDisagreement.toggle()
+                                }
+                            } label: {
+                                HStack(spacing: 2) {
+                                    Text("Why we differ")
+                                        .font(.caption2.weight(.bold))
+                                    Image(systemName: showBoardDisagreement ? "chevron.up" : "chevron.down")
+                                        .font(.system(size: DSType.Size.micro, weight: .bold))
+                                }
+                                .foregroundStyle(Color.accentGold)
+                                .frame(minHeight: 28)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Why your board and the media board disagree")
+                        }
                     }
                     // Media projection for #1 (#15)
                     if let proj = mediaTop.draftProjection {
@@ -342,21 +429,41 @@ struct ScoutNotesView: View {
                             .foregroundStyle(Color.textTertiary)
                             .padding(.leading, 26)
                     }
+
+                    if showBoardDisagreement, myTop.id != mediaTop.id {
+                        boardDisagreementExplainer(myTop: myTop, mediaTop: mediaTop)
+                            .padding(.leading, 26)
+                    }
                 }
                 .listRowBackground(Color.backgroundSecondary)
             }
 
             // Available at your pick probability (#18)
+            //
+            // The number NEVER said what it was a probability OF. "Gordon
+            // available at Rd 2 #63: 15%" reads equally well as "15 % chance he
+            // is gone", and a user who reads it the wrong way round trades up
+            // for nothing. The caption states the direction; the tooltip states
+            // where the odds come from and why they are sometimes flat.
             if let myTop = myTopProspect,
                let prob = reads.availableAtPickProbability(for: myTop),
                let firstPick = reads.firstPick {
-                HStack(spacing: 8) {
+                HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "percent")
                         .font(.caption)
                         .foregroundStyle(Color.accentBlue)
-                    Text("**\(myTop.lastName)** available at Rd \(firstPick.round) #\(firstPick.pickNumber): \(Int(prob * 100))%")
-                        .font(.caption)
-                        .foregroundStyle(Color.textPrimary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("**\(myTop.lastName)** available at Rd \(firstPick.round) #\(firstPick.pickNumber): \(Int(prob * 100))%")
+                            .font(.caption)
+                            .foregroundStyle(Color.textPrimary)
+                        Text("Chance he is STILL on the board when you pick \u{2014} not the chance he is gone.")
+                            .font(.caption2)
+                            .foregroundStyle(Color.textTertiaryReadable)
+                    }
+                    InfoTooltipButton(
+                        text: "The odds that \(myTop.fullName) is still unpicked when your first selection comes up at Rd \(firstPick.round) #\(firstPick.pickNumber). Read off the MEDIA's published window \u{2014} the latest mock's pick number and the projected round \u{2014} never off your own scouts' grade, so it says what the league is likely to do rather than what you make of him. A wide public window makes the curve flat: nobody knows, so nothing is safe and nothing is hopeless.",
+                        size: 11
+                    )
                 }
                 .listRowBackground(Color.backgroundSecondary)
             }
@@ -365,6 +472,77 @@ struct ScoutNotesView: View {
                 .font(.caption.weight(.bold))
                 .foregroundStyle(Color.accentBlue)
                 .textCase(nil)
+        }
+    }
+
+    // MARK: - Why the two boards disagree
+
+    /// The answer behind the "Why we differ" tap target.
+    ///
+    /// Two boards, two yardsticks, and the disagreement is the POINT of having
+    /// your own scouts — but the callout above stated it as a bare fact and
+    /// left the user to work out whether it meant he was right or wrong. Every
+    /// number here is already on this screen or one call away:
+    ///
+    /// * `UserDraftBoard.slotMap` is the same "MY #N" the Big Board, the Mock
+    ///   Draft and the war room print, so the slot quoted for the media's man
+    ///   is the slot the user will see on every other surface;
+    /// * `draftProjection` is the media's published round, the only public
+    ///   half of the comparison;
+    /// * `ScoutBoardReads.gradeText` is the fogged band — never
+    ///   `scoutedOverall` — so the grade beside a name here is the grade
+    ///   beside it everywhere else.
+    @ViewBuilder
+    private func boardDisagreementExplainer(
+        myTop: CollegeProspect,
+        mediaTop: CollegeProspect
+    ) -> some View {
+        let slots = UserDraftBoard.slotMap(among: prospects)
+        VStack(alignment: .leading, spacing: 3) {
+            Text("Your board is your own order \u{2014} your scouts' grades and the marks you have set. The media board is public projection only: last mock, projected round, nothing your building has filed.")
+                .font(.caption2)
+                .foregroundStyle(Color.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            disagreementLine(
+                name: myTop.fullName,
+                yourSlot: slots[myTop.id],
+                grade: reads.gradeText(myTop),
+                mediaRound: myTop.draftProjection
+            )
+            disagreementLine(
+                name: mediaTop.fullName,
+                yourSlot: slots[mediaTop.id],
+                grade: reads.gradeText(mediaTop),
+                mediaRound: mediaTop.draftProjection
+            )
+
+            Text("A gap in your favour is the value you are being paid for. A gap against you is a reach \u{2014} and a man your department has filed one report on is a gap you have not earned yet.")
+                .font(.caption2)
+                .foregroundStyle(Color.textTertiaryReadable)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.top, 2)
+    }
+
+    private func disagreementLine(
+        name: String,
+        yourSlot: Int?,
+        grade: String,
+        mediaRound: Int?
+    ) -> some View {
+        HStack(spacing: 6) {
+            Text(name)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(Color.textPrimary)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+            Text("you #\(yourSlot.map(String.init) ?? "\u{2014}") \u{00B7} \(grade)")
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(Color.accentBlue)
+            Text("media \(mediaRound.map { "Rd \($0)" } ?? "\u{2014}")")
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(Color.textTertiary)
         }
     }
 

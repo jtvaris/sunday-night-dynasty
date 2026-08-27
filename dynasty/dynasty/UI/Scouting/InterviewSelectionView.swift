@@ -1154,14 +1154,17 @@ struct InterviewResult: Identifiable {
     let footballIQ: Int
     let notes: [String]
 
-    // Task 7: Overall interview grade (A-F)
+    // Task 7: Overall interview grade.
+    //
+    // ONE LADDER. This was a private 85/75/65/55 four-cut into A/B/C/D/F while
+    // every other grade in the app — the board's GRD band, the roster's
+    // position grades, the depth chart — runs `PositionGradeCalculator
+    // .letterGrade`'s nine rungs with plus/minus. So the same man was a "B" in
+    // the interview room and a "B-" everywhere else, and the colour pass that
+    // unified `Color.forGrade` only made the disagreement harder to see: two
+    // identically tinted letters that were not the same claim.
     var interviewGrade: String {
-        let score = interviewScore
-        if score >= 85 { return "A" }
-        if score >= 75 { return "B" }
-        if score >= 65 { return "C" }
-        if score >= 55 { return "D" }
-        return "F"
+        PositionGradeCalculator.letterGrade(for: interviewScore)
     }
 
     /// Combined interview score used for ranking and grading.
@@ -1177,13 +1180,31 @@ struct InterviewResult: Identifiable {
         return max(0, min(99, score))
     }
 
-    /// Football IQ letter grade (Task 2).
+    /// Football IQ letter grade (Task 2). Same nine-rung ladder as
+    /// ``interviewGrade`` — see the note there.
     var footballIQGrade: String {
-        if footballIQ >= 85 { return "A" }
-        if footballIQ >= 75 { return "B" }
-        if footballIQ >= 65 { return "C" }
-        if footballIQ >= 55 { return "D" }
-        return "F"
+        PositionGradeCalculator.letterGrade(for: footballIQ)
+    }
+
+    /// What this football IQ implies for how fast he learns a playbook.
+    ///
+    /// "Affects scheme learning speed" was the whole hint, on a card that
+    /// prints an exact number one line above it. The real term is
+    /// `VersatilityDevelopmentEngine.learnScheme`'s
+    /// `learningRate *= player.learning / 65.0`, so 65 is the neutral point and
+    /// the percentage below is that multiplier stated as a delta.
+    ///
+    /// Hedged as an estimate on purpose, and this is the honest part: the
+    /// meeting does not measure `learning` on its own —
+    /// `ScoutingEngine.conductInterview` reveals
+    /// `0.5 * awareness + 0.5 * trueLearning` plus interviewer noise — so only
+    /// half of the number on the card is the install term. Printing a bare
+    /// "+31% scheme learning" off it would be a fabrication with a decimal
+    /// point on it.
+    static func installSpeedHint(iq: Int) -> String {
+        let pct = Int((((Double(iq) / 65.0) - 1.0) * 100).rounded())
+        if pct == 0 { return "Scheme install \u{2248} league average (estimate)" }
+        return "Scheme install \u{2248} \(pct > 0 ? "+" : "")\(pct)% vs league average (estimate)"
     }
 
     /// Whether this prospect has off-field concerns.
@@ -1980,15 +2001,20 @@ struct InterviewReportView: View {
                 // can hold the same letter grade — the summary's "Best: …" is
                 // undecidable from a page of A's — so the score that decided
                 // the order is printed where the order is.
+                // The rank is the card's ORDER, so it is drawn at rank weight
+                // rather than as a caption. It used to be 14 pt tertiary grey
+                // for every man but #1 — the same grey as the score underneath
+                // it, on a page of fifteen cards, which made the ordering the
+                // quietest thing on a screen whose entire job is to rank.
                 VStack(spacing: 1) {
                     Text("#\(rank)")
-                        .font(.system(size: 14, weight: .heavy).monospacedDigit())
-                        .foregroundStyle(isTopPick ? Color.accentGold : Color.textTertiary)
+                        .font(.system(size: DSType.Size.title3, weight: .heavy).monospacedDigit())
+                        .foregroundStyle(isTopPick ? Color.accentGold : Color.textSecondary)
                     Text("\(result.interviewScore)")
                         .font(.system(size: DSType.Size.micro, weight: .semibold).monospacedDigit())
                         .foregroundStyle(Color.textTertiary)
                 }
-                .frame(width: 28)
+                .frame(width: 32)
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel("Rank \(rank), interview score \(result.interviewScore)")
 
@@ -2062,8 +2088,9 @@ struct InterviewReportView: View {
                             .font(.system(size: DSType.Size.caption, weight: .medium).monospacedDigit())
                             .foregroundStyle(Color.textTertiary)
                     }
-                    // Task 11: Football IQ impact explanation
-                    Text("Affects scheme learning speed")
+                    // Task 11: Football IQ impact explanation, with the number
+                    // the mechanic actually runs on — see `installSpeedHint`.
+                    Text(InterviewResult.installSpeedHint(iq: result.footballIQ))
                         .font(.system(size: DSType.Size.footnote, weight: .medium))
                         .foregroundStyle(Color.textTertiary)
                 }

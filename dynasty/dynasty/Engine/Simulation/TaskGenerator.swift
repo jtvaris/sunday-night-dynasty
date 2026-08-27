@@ -829,6 +829,36 @@ enum TaskGenerator {
         )
     }
 
+    // MARK: - "Update Big Board" — the completion criterion it never had
+
+    /// Marks that count as having worked the board.
+    ///
+    /// Three, and the unit is the MARK rather than the star: the mark is the
+    /// one verdict every scouting surface keys off (`ProspectMarkTier`), the
+    /// war room sorts by it on draft night, and it is the single thing the Big
+    /// Board exists to let a user record. Ordering film or grading a man is
+    /// separately tracked by the film-study stage and the evaluation ledger, so
+    /// counting those here would tick this row for work the panel already
+    /// credits elsewhere.
+    ///
+    /// Deliberately small. The row is OPTIONAL — it gates nothing — so the
+    /// number's job is to mean "you have started using this screen as a board",
+    /// not to set a quota.
+    static let bigBoardMarkThreshold = 3
+
+    /// The key `CareerShellView.refreshTaskCompletionStatus` matches on. Named
+    /// here so the switch and the generator cannot drift apart the way an
+    /// exact-title match does the moment a counter is appended.
+    static let bigBoardTaskKey = "Update Big Board"
+
+    /// The row's title with its live counter, re-stamped on every refresh for
+    /// the same reason the draft-prep stages are: the list is only rebuilt on a
+    /// phase change, and the whole offseason holds the week still.
+    static func bigBoardTitle(marked: Int) -> String {
+        guard marked > 0 else { return bigBoardTaskKey }
+        return "\(bigBoardTaskKey) (\(min(marked, bigBoardMarkThreshold))/\(bigBoardMarkThreshold) marked)"
+    }
+
     private static func combineTasks(
         interviewsDone: Int = 0,
         interviewsMax: Int = DraftPrepProgress.interviewSlots,
@@ -868,11 +898,20 @@ enum TaskGenerator {
                 isRequired: true,
                 progress: prepProgress
             ),
-            // Optional: Update board between reviews
+            // Optional: Update board between reviews.
+            //
+            // It now has a completion criterion — see `bigBoardMarkThreshold`.
+            // It shipped without one: a plain `GameTask` with no `progress:`
+            // stage and `completesOnVisit` at its default `false`, so
+            // `CareerShellView.markTaskVisited` could only ever raise it to
+            // `.inProgress` and the refresh switch had no case for it at all.
+            // The row was therefore permanently amber, on the phase panel, for
+            // the whole of every combine — an instruction the game had no way
+            // of ever agreeing you had followed.
             GameTask(
                 phase: .combine,
-                title: "Update Big Board",
-                description: "Rank prospects based on Combine performance and scouting reports.",
+                title: bigBoardTitle(marked: 0),
+                description: "Rank prospects on combine performance and your scouts' reports. Mark \(bigBoardMarkThreshold) men \u{2014} elite, target, depth or avoid \u{2014} and the board is a board rather than a list.",
                 icon: "list.number",
                 destination: .bigBoard,
                 isRequired: false

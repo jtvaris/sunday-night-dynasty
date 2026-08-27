@@ -1873,6 +1873,11 @@ struct BigBoardView<Header: View>: View {
                             .font(.system(size: DSType.Size.caption, weight: .semibold))
                     }
                     .foregroundStyle(avgProb >= 0.6 ? Color.success : (avgProb >= 0.3 ? Color.accentBlue : Color.warning))
+                    // What the percentage is a probability OF. Same sentence
+                    // Scout Notes prints under its own copy of this number:
+                    // "still on the board", never "already gone".
+                    .help("How many men in this tier are better than even money to be STILL ON THE BOARD at your pick #\(pick.pickNumber), and the tier's mean chance of that. Read off the media's published window, not off your scouts' grade.")
+                    .accessibilityLabel("\(availCount) of \(count) likely still available at pick \(pick.pickNumber), \(Int(avgProb * 100)) percent average")
                 }
             }
             // Tier description (#8)

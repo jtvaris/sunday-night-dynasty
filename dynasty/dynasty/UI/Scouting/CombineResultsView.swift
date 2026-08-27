@@ -103,6 +103,20 @@ struct CombineResultsView<Header: View>: View {
     /// `false` when the scouting budget cannot cover `tripCost`.
     var canAffordTrip: Bool = true
 
+    /// How many scouts this club actually employs.
+    ///
+    /// The trip CTA gated on money alone, and the money was never the binding
+    /// constraint: `ScoutingEngine.applyCombineScouting` opens with
+    /// `guard !scouts.isEmpty ... else { return 0 }`, so a club with 0/8 seats
+    /// filled paid the $60K flight and had zero reports filed for it. The Scout
+    /// Team tab has always refused to draw its own copy of this button at zero;
+    /// this tab offered it live.
+    var scoutCount: Int = 0
+
+    /// Sends the user to the Scout Team tab. The CTA's blocked state names
+    /// hiring as the remedy, so it has to be able to hand him the door.
+    var onHireScouts: (() -> Void)? = nil
+
     /// Forward exit out of the pre-invite empty state (#128). The one thing a
     /// user standing here in January can actually read is what the declared
     /// class looks like, so the dead end gets a door instead of a full stop.
@@ -150,6 +164,9 @@ struct CombineResultsView<Header: View>: View {
     /// position filter because a filter that evaporates on a tab switch was a
     /// bug, but a column block is a reading of THIS table.
     @State private var viewMode: ProspectAttributeTab = .physical
+    /// Risers / fallers / held. Local like `viewMode` and for the same reason:
+    /// it is a reading of THIS table, not a filter the hub shares across tabs.
+    @State private var moverFilter: CombineMoverFilter = .all
     @State private var mediaPopoverProspectID: UUID?
     @State private var dnpPopoverProspectID: UUID?
     @State private var teamPlayers: [Player] = []
@@ -231,9 +248,19 @@ struct CombineResultsView<Header: View>: View {
     }
 
     private var filteredProspects: [CollegeProspect] {
-        let base = combineInvitees
-        if positionFilter == .all { return base }
-        return base.filter { positionFilter.matches($0.position) }
+        var base = combineInvitees
+        if positionFilter != .all {
+            base = base.filter { positionFilter.matches($0.position) }
+        }
+        // #9: the storyline filter. `CombineMovers.improvement` already
+        // classifies every invitee — it is what the RISERS / FALLERS rails and
+        // the hub's teaser count are built from — but nothing narrowed the
+        // TABLE by it, so "who did this week move" was answerable only from a
+        // five-card rail that shows the top five and folds away with Insights.
+        if moverFilter != .all {
+            base = base.filter { moverFilter.matches(CombineMovers.improvement(for: $0)) }
+        }
+        return base
     }
 
     private var sortedProspects: [CollegeProspect] {
@@ -409,10 +436,19 @@ struct CombineResultsView<Header: View>: View {
                                 combineRow(index: index + 1, prospect: prospect)
                             }
                             .listRowInsets(EdgeInsets(top: 5, leading: 8, bottom: 5, trailing: 8))
+                            // #10: the week's movers are TINTED, not merely
+                            // zebra-striped. The arrow in the GRD cell is 8 pt
+                            // and sits eight columns in; on a 330-row table
+                            // that is not a signal you can scan for. The tint
+                            // reads off `CombineMovers.improvement`, the same
+                            // measure the rails above the table are built from,
+                            // so a man tinted green here is a man on the RISERS
+                            // rail rather than a second opinion about him.
                             .listRowBackground(
-                                index % 2 == 0
-                                    ? Color.backgroundPrimary
-                                    : Color.backgroundSecondary.opacity(0.5)
+                                moverTint(for: prospect)
+                                    ?? (index % 2 == 0
+                                        ? Color.backgroundPrimary
+                                        : Color.backgroundSecondary.opacity(0.5))
                             )
                             .accessibilityElement(children: .combine)
                             .accessibilityHint("Tap to view prospect details")
@@ -450,6 +486,14 @@ struct CombineResultsView<Header: View>: View {
                                 background: Color.backgroundSecondary
                             )
 
+                            // Drawn only once the combine has actually moved
+                            // somebody. Before the event every man scores 0 on
+                            // the ladder, so the control would offer three
+                            // filters that all return the same empty table.
+                            if hasMovers {
+                                moverFilterChips
+                            }
+
                             Divider().overlay(Color.surfaceBorder)
 
                             columnHeaders
@@ -479,6 +523,7 @@ struct CombineResultsView<Header: View>: View {
             isLoading = false
         }
         .onChange(of: positionFilter) { _, _ in refreshCachedData() }
+        .onChange(of: moverFilter) { _, _ in refreshCachedData() }
         .onChange(of: sortColumn) { _, _ in refreshCachedData() }
         .onChange(of: sortAscending) { _, _ in refreshCachedData() }
         .onChange(of: viewMode) { _, newMode in
@@ -574,6 +619,27 @@ struct CombineResultsView<Header: View>: View {
         )
     }
 
+    /// Whether the trip can honestly be bought.
+    ///
+    /// TWO gates, and the second one is the one that was missing. Money is the
+    /// obvious constraint; STAFF is the binding one, because what the trip buys
+    /// is `applyCombineScouting`, and that function's first line refuses on an
+    /// empty scout list. A club with no scouts pressing this button spent the
+    /// flight and got nothing back — not a rounded number, not a partial report,
+    /// nothing — and the screen gave it no way to know that in advance.
+    private var canSendScouts: Bool { canAffordTrip && scoutCount > 0 }
+
+    /// Why the button is dead, or what it costs when it is not.
+    private var sendScoutsSubtitle: String {
+        if scoutCount == 0 {
+            return "You have no scouts on staff \u{2014} nobody would file a report, so the trip would buy nothing. Hire from Scout Team first."
+        }
+        if !canAffordTrip {
+            return "Not enough scouting budget ($\(tripCost)K needed) \u{2014} reallocate in Owner Relations"
+        }
+        return "Exact times and drill grades, plus fresh reports on your board \u{2014} $\(tripCost)K from the scouting budget"
+    }
+
     /// The optional purchase, drawn as an OUTLINE rather than a gold fill.
     ///
     /// It used to be a full-width gold slab in the middle of the table while the
@@ -582,44 +648,118 @@ struct CombineResultsView<Header: View>: View {
     /// prevent. The trip is a side purchase; the advance is the commit, and the
     /// commit keeps the fill.
     private func sendScoutsCTA(action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+        // With no scouts on staff the CTA becomes the door to the fix rather
+        // than a dead grey slab: the remedy named in the subtitle is one tap
+        // away instead of being an instruction the user has to go and find.
+        let blockedOnStaff = scoutCount == 0 && onHireScouts != nil
+        return Button {
+            if blockedOnStaff { onHireScouts?() } else { action() }
+        } label: {
             HStack(spacing: 12) {
-                Image(systemName: "binoculars.fill")
+                Image(systemName: scoutCount == 0 ? "person.badge.plus" : "binoculars.fill")
                     .font(.title3)
-                    .foregroundStyle(canAffordTrip ? Color.accentGold : Color.textTertiary)
+                    .foregroundStyle(canSendScouts ? Color.accentGold : Color.textTertiary)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Send Scouts to the Combine")
+                    Text(blockedOnStaff ? "Hire Scouts First" : "Send Scouts to the Combine")
                         .font(.subheadline.weight(.bold))
-                        .foregroundStyle(canAffordTrip ? Color.accentGold : Color.textSecondary)
-                    Text(canAffordTrip
-                         ? "Exact times and drill grades, plus fresh reports on your board \u{2014} $\(tripCost)K from the scouting budget"
-                         : "Not enough scouting budget ($\(tripCost)K needed) \u{2014} reallocate in Owner Relations")
+                        .foregroundStyle(canSendScouts ? Color.accentGold : Color.textSecondary)
+                    Text(sendScoutsSubtitle)
                         .font(.caption)
-                        .foregroundStyle(canAffordTrip ? Color.textSecondary : Color.textTertiary)
+                        .foregroundStyle(canSendScouts ? Color.textSecondary : Color.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
-                if canAffordTrip {
+                if canSendScouts {
                     Image(systemName: "arrow.right.circle.fill")
                         .font(.title3)
                         .foregroundStyle(Color.accentGold)
+                } else if blockedOnStaff {
+                    Image(systemName: "chevron.right")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.textSecondary)
                 }
             }
             .padding(12)
             .background(
                 RoundedRectangle(cornerRadius: DSCornerRadius.card)
-                    .fill(canAffordTrip ? Color.accentGold.opacity(0.10) : Color.backgroundTertiary)
+                    .fill(canSendScouts ? Color.accentGold.opacity(0.10) : Color.backgroundTertiary)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: DSCornerRadius.card)
                     .strokeBorder(
-                        canAffordTrip ? Color.accentGold.opacity(0.5) : Color.surfaceBorder,
+                        canSendScouts ? Color.accentGold.opacity(0.5) : Color.surfaceBorder,
                         lineWidth: 1
                     )
             )
         }
         .buttonStyle(.plain)
-        .disabled(!canAffordTrip)
+        .disabled(!canSendScouts && !blockedOnStaff)
+        .accessibilityHint(sendScoutsSubtitle)
+    }
+
+    // MARK: - Movers
+
+    /// True once the combine has moved at least one man on the grade ladder.
+    private var hasMovers: Bool {
+        combineInvitees.contains { CombineMovers.improvement(for: $0) != 0 }
+    }
+
+    /// The storyline filter, in the same chip vocabulary as
+    /// ``ProspectModeChips`` so the row above it and this one read as one
+    /// control strip rather than two.
+    private var moverFilterChips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(CombineMoverFilter.allCases) { filter in
+                    let isSelected = moverFilter == filter
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            moverFilter = filter
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: filter.icon)
+                                .font(.system(size: 10))
+                            Text(filter.label)
+                                .font(.caption)
+                                .fontWeight(.medium)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .foregroundStyle(isSelected ? Color.backgroundPrimary : filter.tint)
+                        .background(
+                            isSelected ? filter.tint : Color.backgroundTertiary,
+                            in: Capsule()
+                        )
+                        .overlay(
+                            Capsule().strokeBorder(
+                                isSelected ? filter.tint : Color.surfaceBorder,
+                                lineWidth: 1
+                            )
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Filter: \(filter.label)")
+                    .accessibilityAddTraits(isSelected ? .isSelected : [])
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 4)
+        }
+        .background(Color.backgroundSecondary)
+    }
+
+    /// The row wash for a man the combine moved, or `nil` for everyone else.
+    ///
+    /// Deliberately weak (10 %): it has to survive under the zebra striping and
+    /// under a row of coloured drill cells without turning the table into a
+    /// traffic light. Held men keep the stripe — "nothing happened" is the
+    /// default state and does not deserve a colour.
+    private func moverTint(for prospect: CollegeProspect) -> Color? {
+        let move = CombineMovers.improvement(for: prospect)
+        if move > 0 { return Color.success.opacity(0.10) }
+        if move < 0 { return Color.danger.opacity(0.10) }
+        return nil
     }
 
     // MARK: - Risers & Fallers
@@ -721,12 +861,36 @@ struct CombineResultsView<Header: View>: View {
             // The one elastic header. It carries the same floor as the row's
             // name cell and is followed by the same `Spacer`, so the fixed block
             // below lands on the same pixels in the header and in every row.
-            sortableHeader("Name", column: .name, minWidth: CombineW.nameMin, alignment: .leading)
+            //
+            // It also carries the KEY to the chips that ride beside a name.
+            // Three of them are coloured capsules the table never explained,
+            // and the red one is the one a reader most needs explained: NEED is
+            // a fact about the CLUB, not about the man wearing it.
+            sortableHeader(
+                "Name",
+                column: .name,
+                minWidth: CombineW.nameMin,
+                alignment: .leading,
+                // No markdown: `InfoTooltipButton` renders its `String` through
+                // `Text(_:)`'s verbatim overload, so asterisks would print.
+                info: "Chips beside a name: a red NEED capsule means YOUR ROSTER is short at his position \u{2014} a fact about your club, not a flag on the player. A megaphone is combine media coverage (gold good, red bad) \u{2014} tap it to read the line. An amber DNP or LIMITED capsule means he did not complete the workout \u{2014} tap it for the reason. Your own mark and your own grade sit in front of them."
+            )
 
             Spacer(minLength: CombineW.gap)
 
-            sortableHeader("Pos", column: .position, width: CombineW.pos)
-            sortableHeader("GRD", column: .grade, width: CombineW.grade)
+            sortableHeader(
+                "Pos",
+                column: .position,
+                width: CombineW.pos,
+                info: "The chip colour is the SIDE OF THE BALL, not a warning: blue offence, red defence, gold special teams. A red position chip says nothing about the player."
+            )
+            sortableHeader(
+                "GRD",
+                column: .grade,
+                width: CombineW.grade,
+                info: "Your department's grade band for this man \u{2014} two letters when the reports disagree, one when they do not. A = elite / first-round talent, B = quality starter, C = average, D = back-end roster, F = undraftable. A dash means nobody in your building has filed on him.",
+                showLetterGradeKey: true
+            )
             sortableHeader("PROD", column: .production, width: CombineW.prod)
             sortableHeader("Proj", column: .projection, width: CombineW.proj)
             sortableHeader("College", column: .college, width: CombineW.college, alignment: .leading)
@@ -815,15 +979,56 @@ struct CombineResultsView<Header: View>: View {
         .buttonStyle(.plain)
     }
 
-    /// The flexible variant: a floor rather than a width, for the name column.
-    private func sortableHeader(_ title: String, column: CombineColumn, minWidth: CGFloat, alignment: Alignment = .center) -> some View {
-        Button {
-            toggleSort(column)
-        } label: {
-            sortLabel(title, column: column)
-                .frame(minWidth: minWidth, alignment: alignment)
+    /// A sortable header that ALSO carries the shared explainer popover.
+    ///
+    /// Tapping a column header sorts — that is the only thing it has ever done —
+    /// so a header whose notation needs explaining had nowhere to put the
+    /// explanation. `InfoTooltipButton` is the component the Big Board and the
+    /// Mock Draft already use for exactly this, with `LetterGradeLegend` behind
+    /// its `showLetterGradeKey` flag; this table simply never wired it in. The
+    /// sort target shrinks to the label itself, which is the price of having a
+    /// second tappable thing inside one 56 pt column.
+    private func sortableHeader(
+        _ title: String,
+        column: CombineColumn,
+        width: CGFloat,
+        info: String,
+        showLetterGradeKey: Bool = false
+    ) -> some View {
+        HStack(spacing: 1) {
+            Button {
+                toggleSort(column)
+            } label: {
+                sortLabel(title, column: column)
+            }
+            .buttonStyle(.plain)
+
+            InfoTooltipButton(text: info, showLetterGradeKey: showLetterGradeKey, size: 9)
         }
-        .buttonStyle(.plain)
+        .frame(width: width, alignment: .center)
+    }
+
+    /// The elastic twin of the above: a floor rather than a width, for the name
+    /// column. It replaced the plain `minWidth:` overload, which had no callers
+    /// left once the name header took the chip key.
+    private func sortableHeader(
+        _ title: String,
+        column: CombineColumn,
+        minWidth: CGFloat,
+        alignment: Alignment,
+        info: String
+    ) -> some View {
+        HStack(spacing: 1) {
+            Button {
+                toggleSort(column)
+            } label: {
+                sortLabel(title, column: column)
+            }
+            .buttonStyle(.plain)
+
+            InfoTooltipButton(text: info, size: 9)
+        }
+        .frame(minWidth: minWidth, alignment: alignment)
     }
 
     private func toggleSort(_ column: CombineColumn) {
@@ -1012,6 +1217,10 @@ struct CombineResultsView<Header: View>: View {
                     .padding(.vertical, 1)
                     .background(Capsule().fill(Color.danger))
                     .fixedSize()
+                    // The key is on the Name column header; this is the same
+                    // sentence where a pointer or VoiceOver can reach it.
+                    .help("Your roster is short at \(prospect.position.rawValue). A fact about your club, not a flag on the player.")
+                    .accessibilityLabel("Roster need at \(prospect.position.rawValue)")
             }
 
             // Why this man's card is empty. Tappable rather than always-on
@@ -1530,6 +1739,53 @@ enum CombineMovers {
 }
 
 // MARK: - Supporting Types
+
+/// Risers / fallers / held, over `CombineMovers.improvement`.
+///
+/// The measure is the club's own grade ladder from before the combine to now,
+/// which is exactly what the RISERS and FALLERS rails at the top of this screen
+/// are built from — so a man the rail calls a riser is a man this filter keeps.
+private enum CombineMoverFilter: String, CaseIterable, Identifiable {
+    case all, risers, fallers, held
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .all:     return "All"
+        case .risers:  return "Risers"
+        case .fallers: return "Fallers"
+        case .held:    return "Held"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .all:     return "line.3.horizontal"
+        case .risers:  return "arrow.up.right"
+        case .fallers: return "arrow.down.right"
+        case .held:    return "equal"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .all:     return .accentBlue
+        case .risers:  return .success
+        case .fallers: return .danger
+        case .held:    return .textSecondary
+        }
+    }
+
+    func matches(_ improvement: Int) -> Bool {
+        switch self {
+        case .all:     return true
+        case .risers:  return improvement > 0
+        case .fallers: return improvement < 0
+        case .held:    return improvement == 0
+        }
+    }
+}
 
 private enum CombineColumn {
     case rank, name, position, college

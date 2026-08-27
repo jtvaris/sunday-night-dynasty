@@ -500,6 +500,13 @@ struct ScoutingHubView: View {
     private func sendScoutsToCombine() {
         guard career.currentPhase == .combine, !scoutsSentToCombine else { return }
         guard canAffordCombineTrip else { return }
+        // The trip's whole yield is `applyCombineScouting`, which opens with
+        // `guard !scouts.isEmpty ... else { return 0 }`. Spending the flight to
+        // buy zero reports is not a decision the user should be able to make by
+        // accident, and the CTA is now drawn blocked for the same reason —
+        // this guard is the belt to that braces, because the Scout Team tab
+        // hands the same closure down.
+        guard !scouts.isEmpty else { return }
 
         var draftClass = WeekAdvancer.currentDraftClass
 
@@ -1553,6 +1560,11 @@ struct ScoutingHubView: View {
                     ? { sendScoutsToCombine() }
                     : nil,
                 canAffordTrip: canAffordCombineTrip,
+                // The gate the CTA was missing: `applyCombineScouting` refuses
+                // on an empty scout list, so at 0/8 seats the trip charges the
+                // flight and files nothing.
+                scoutCount: scouts.count,
+                onHireScouts: { selectedTab = .scouts },
                 // #128 case D: before the league issues its invite list there is
                 // literally nothing on this tab, and the class-depth read is what
                 // a January user came for.
@@ -1757,8 +1769,17 @@ private struct CombineReportSheet: View {
     let career: Career
     let prospects: [CollegeProspect]
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
 
     private let categories = ["Standout", "Stock Riser", "Stock Faller", "Surprise"]
+
+    /// The user's own board slot per prospect, built ONCE for the sheet.
+    ///
+    /// `UserDraftBoard.slotMap` is the same "MY #N" the Big Board, the Mock
+    /// Draft and the war room print, so a name in this report carries the slot
+    /// the user will see when he goes and looks at it. Rebuilt per body pass it
+    /// would walk the whole class for each of ten rows.
+    private var boardSlots: [UUID: Int] { UserDraftBoard.slotMap(among: prospects) }
 
     private func mentionsFor(_ category: String) -> [ScoutingEngine.CombineMediaMention] {
         mentions.filter { $0.category == category }
@@ -1821,6 +1842,24 @@ private struct CombineReportSheet: View {
                                         NavigationLink(destination: ProspectDetailView(career: career, prospect: prospect)) {
                                             mentionRow(mention)
                                         }
+                                        // THE INLINE ACT. The report named ten
+                                        // men and the only thing a reader could
+                                        // do about any of them was push into a
+                                        // card and come back. The mark is the
+                                        // one control every other prospect
+                                        // surface puts on a row, and it is the
+                                        // thing this sheet is for: you read
+                                        // that he ran a 4.38, you put him on
+                                        // your board, you carry on reading.
+                                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                            markSwipeButton(for: prospect)
+                                        }
+                                        .contextMenu {
+                                            ProspectGradeContextMenu(
+                                                prospect: prospect,
+                                                onChange: { try? modelContext.save() }
+                                            )
+                                        }
                                     } else {
                                         mentionRow(mention)
                                     }
@@ -1834,10 +1873,43 @@ private struct CombineReportSheet: View {
                             .listRowBackground(Color.backgroundSecondary)
                         }
                     }
+
+                    // THE CLOSING LINE. The reports were filed and the board
+                    // was rewritten BEFORE this sheet was raised
+                    // (`applyCombineScouting` runs inside `sendScoutsToCombine`,
+                    // the sheet is set on the line after), and nothing said so —
+                    // so the one screen that proves the money bought something
+                    // ended on a headline and a Done button, and a reader could
+                    // reasonably close it believing he still had work to do.
+                    Section {
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: "checkmark.seal.fill")
+                                .font(.caption)
+                                .foregroundStyle(Color.success)
+                            // Precise about WHAT was written. `applyCombineScouting`
+                            // files a `.combine` report on every man the board
+                            // tracks, which narrows his band and moves his
+                            // grade; the media board's projected rounds are
+                            // moved later, by the drift pass at the end of the
+                            // phase. Claiming both here would be a promise the
+                            // next screen contradicts.
+                            Text("These results are already on your Big Board \u{2014} every man you track has a fresh report, a narrower grade band and an updated letter. Nothing here is waiting on you.")
+                                .font(.caption)
+                                .foregroundStyle(Color.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .listRowBackground(Color.backgroundSecondary)
                 }
                 .scrollContentBackground(.hidden)
                 .listStyle(.insetGrouped)
             }
+            // The consensus board is a per-session cache and the row below
+            // quotes the mock slot off it. Publishing it here means this sheet
+            // answers the same as the Big Board whether or not the user has
+            // opened that tab yet; the population is normalised inside, so
+            // republishing it cannot narrow anyone else's board.
+            .task { DraftIntel.refreshConsensusBoard(for: prospects) }
             .navigationTitle("Combine Report")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarColorScheme(.dark, for: .navigationBar)
@@ -1849,8 +1921,47 @@ private struct CombineReportSheet: View {
         }
     }
 
+    /// The one row action: put him on the board, or take him off it.
+    ///
+    /// A full mark menu does not fit a swipe, and `ProspectGradeContextMenu` is
+    /// already wired into the long-press for the men who want a tier. The swipe
+    /// is the fast path — the same `.target` mark the Big Board's star writes.
+    @ViewBuilder
+    private func markSwipeButton(for prospect: CollegeProspect) -> some View {
+        let isMarked = prospect.isMarked
+        Button {
+            // `setUserMark`, never a raw write to `userMarkTier`: it is what
+            // mirrors the verdict onto `prospectFlag` and the star store, so a
+            // mark made here is a mark the board and the war room can see.
+            prospect.setUserMark(isMarked ? .none : .target)
+            try? modelContext.save()
+        } label: {
+            Label(
+                isMarked ? "Unmark" : "Mark",
+                systemImage: isMarked ? "bookmark.slash.fill" : "bookmark.fill"
+            )
+        }
+        .tint(isMarked ? Color.textTertiary : Color.accentGold)
+    }
+
+    /// The row: who he is, what was said, and WHERE HE SITS.
+    ///
+    /// It printed a position chip, a name and a headline — "Andre Bryant posts
+    /// elite combine numbers across the board" — and nothing that answers the
+    /// only question a GM has while reading it: does this man matter at my
+    /// pick? Three facts close that, and all three are already loaded:
+    ///
+    /// * the club's own grade band, through the fog (`ScoutBoardReads
+    ///   .gradeText`), so it prints "—" for a man nobody in the building has
+    ///   filed on rather than inventing a letter for him;
+    /// * the media's projected round, the public half;
+    /// * the user's OWN board slot, off `UserDraftBoard.slotMap` — the same
+    ///   number every other surface prints for him.
     private func mentionRow(_ mention: ScoutingEngine.CombineMediaMention) -> some View {
-        HStack(spacing: 12) {
+        // Named `matched` rather than `prospect`: a local of that name would
+        // shadow the `prospect(for:)` lookup on the very line that calls it.
+        let matched = prospect(for: mention)
+        return HStack(spacing: 12) {
             Text(mention.position)
                 .font(.caption.weight(.bold))
                 .foregroundStyle(Color.textPrimary)
@@ -1858,15 +1969,74 @@ private struct CombineReportSheet: View {
                 .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(mention.prospectName)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Color.textPrimary)
+                HStack(spacing: 6) {
+                    Text(mention.prospectName)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.textPrimary)
+                        .lineLimit(1)
+                    if let matched, matched.isMarked {
+                        Image(systemName: "bookmark.fill")
+                            .font(.system(size: DSType.Size.micro))
+                            .foregroundStyle(Color.accentGold)
+                    }
+                }
                 Text(mention.headline)
                     .font(.caption)
                     .foregroundStyle(Color.textSecondary)
                     .lineLimit(2)
+                if let matched {
+                    contextLine(for: matched)
+                }
             }
         }
+    }
+
+    /// Grade · projected round · your board slot · latest mock, in one line.
+    ///
+    /// The last two are what tie a headline to a DECISION. A riser is only news
+    /// if he is a man you had at #7 and the mock now has going at #12; the
+    /// report used to name him and leave the reader to go and look both numbers
+    /// up on two other screens. `UserDraftBoard.slotMap` is the same "MY #N"
+    /// every other surface prints, and `DraftIntel.consensusRank` is the market
+    /// slot the board's VAL chip and the availability curve already read — so
+    /// nothing here is a fifth opinion about the same man.
+    private func contextLine(for prospect: CollegeProspect) -> some View {
+        // Text off `ScoutBoardReads.gradeText` — the shared reader, so a man
+        // nobody has filed on prints "—" here exactly as he does on Scout Notes
+        // — and the TINT off the band's midpoint rather than off the string. A
+        // band renders as "B-/A-", and colouring a string by its first letter
+        // would tint that whole read by its worst end.
+        let read = ProspectFog.read(prospect)
+        let grade = ScoutBoardReads.gradeText(prospect)
+        let gradeTint = read.band.map { Color.forGrade($0) } ?? Color.textTertiary
+        let round = prospect.draftProjection.map { "Rd \($0)" } ?? "\u{2014}"
+        let slot = boardSlots[prospect.id].map { "your #\($0)" } ?? "not on your board"
+        let mock = DraftIntel.consensusRank(for: prospect.id).map { "mock #\($0)" }
+        return HStack(spacing: 5) {
+            Text(grade)
+                .font(.system(size: DSType.Size.caption, weight: .heavy))
+                .foregroundStyle(grade == "\u{2014}" ? Color.textTertiary : gradeTint)
+            contextDivider
+            Text(round)
+                .font(.system(size: DSType.Size.caption, weight: .medium).monospacedDigit())
+                .foregroundStyle(Color.textSecondary)
+            contextDivider
+            Text(slot)
+                .font(.system(size: DSType.Size.caption, weight: .medium).monospacedDigit())
+                .foregroundStyle(Color.accentBlue)
+            if let mock {
+                contextDivider
+                Text(mock)
+                    .font(.system(size: DSType.Size.caption, weight: .medium).monospacedDigit())
+                    .foregroundStyle(Color.textTertiary)
+            }
+        }
+    }
+
+    private var contextDivider: some View {
+        Text(verbatim: "\u{00B7}")
+            .font(.system(size: DSType.Size.caption))
+            .foregroundStyle(Color.textTertiary)
     }
 }
 
