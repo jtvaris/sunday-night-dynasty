@@ -158,6 +158,8 @@ struct HireCoachView: View {
         case name    = "Name"
         case age     = "Age"
         case scheme  = "Scheme"
+        /// "Best available for THIS staff" — see ``teamFitScore(_:)``.
+        case teamFit = "For Us"
         case ovr     = "OVR"
         case play    = "Play"
         case dev     = "Dev"
@@ -199,6 +201,57 @@ struct HireCoachView: View {
     private var roleReferenceRatio: Double {
         let avgSalaryM = max(Double(role.salaryRange.avg) / 1000.0, 0.1)
         return 65.0 / avgSalaryM
+    }
+
+    // MARK: - "For Us" composite
+
+    /// Best available **for this staff**, 0-100.
+    ///
+    /// Every other ranking on this board is an absolute reading of a man: OVR
+    /// is the mean of twelve attributes, Val is his price, Fit is one word, and
+    /// the TOP 3 badge is OVR again. None of them answers the question a GM
+    /// actually has — who is the best man *for this chair, in this system,
+    /// under this head coach*. The three terms below are all already computed
+    /// per candidate elsewhere on the screen; this composes them.
+    ///
+    ///   * **focus × 5** — the mean of `CoachRole.focusAttributes`, i.e. what
+    ///     this particular chair is bought for (the same set the header row
+    ///     already marks with a gold dot). The heaviest term because it is the
+    ///     only one about the job itself.
+    ///   * **scheme fit × 3** — `schemeFit(for:)`'s Great / OK / Poor against
+    ///     the system the club installs. Neutral when the club has installed
+    ///     nothing to be rated against, so an unstaffed club is not ranked on a
+    ///     comparison that does not exist yet.
+    ///   * **chemistry × 2** — `CoachingEngine.coachChemistry` against the head
+    ///     coach, the same −1…1 reading the staff screen bands, mapped to
+    ///     0…100. Neutral when there is no head coach on the books.
+    ///
+    /// The weights are the retunable part of this and they are one line each.
+    private func teamFitScore(_ coach: Coach) -> Int {
+        let focus = role.focusAttributes
+        let focusScore = focus.isEmpty
+            ? coachOverall(coach)
+            : focus.reduce(0) { $0 + coach.attributeValue(named: $1) } / focus.count
+
+        let fitScore: Int = {
+            guard let fit = schemeFit(for: coach) else { return 60 }
+            switch fit.label {
+            case "Great": return 100
+            case "OK":    return 60
+            default:      return 25
+            }
+        }()
+
+        let chemistryScore: Int = {
+            guard let hc = teamHeadCoach else { return 50 }
+            let score = CoachingEngine.coachChemistry(
+                coachA: hc.personality,
+                coachB: coach.personality
+            )
+            return Int(((score + 1.0) / 2.0) * 100.0)
+        }()
+
+        return (focusScore * 5 + fitScore * 3 + chemistryScore * 2) / 10
     }
 
     /// Fix #56: Top-3 candidate indices in the current sorted list.
@@ -286,6 +339,7 @@ struct HireCoachView: View {
         case .name:    sorted = filtered.sorted { $0.lastName < $1.lastName }
         case .age:     sorted = filtered.sorted { $0.age < $1.age }
         case .scheme:  sorted = filtered.sorted { schemeLabel($0) < schemeLabel($1) }
+        case .teamFit: sorted = filtered.sorted { teamFitScore($0) > teamFitScore($1) }
         case .ovr:     sorted = filtered.sorted { coachOverall($0) > coachOverall($1) }
         case .play:    sorted = filtered.sorted { $0.playCalling > $1.playCalling }
         case .dev:     sorted = filtered.sorted { $0.playerDevelopment > $1.playerDevelopment }
@@ -410,11 +464,11 @@ struct HireCoachView: View {
                 Divider().overlay(Color.surfaceBorder)
 
                 // #149: Horizontally scrollable table for cramped columns.
-                // Indicator shown: the row lays out at 820 pt, so in anything
+                // Indicator shown: the row lays out at 864 pt, so in anything
                 // narrower Salary and Val are off the right edge and a hidden
                 // indicator left the gold role-dot of a clipped header as the
                 // only hint that more columns existed. (780 before the compare
-                // column joined the row.)
+                // column joined the row, 820 before "For Us".)
                 ScrollView(.horizontal, showsIndicators: true) {
                     VStack(spacing: 0) {
                         // Sticky column headers
@@ -442,7 +496,7 @@ struct HireCoachView: View {
                             }
                         }
                     }
-                    .frame(minWidth: 820, maxWidth: .infinity)
+                    .frame(minWidth: 864, maxWidth: .infinity)
                 }
                 .frame(maxWidth: .infinity)
             }
@@ -454,6 +508,20 @@ struct HireCoachView: View {
         .navigationTitle("Hire \(role.displayName)")
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
+        .toolbar {
+            // How big the market for this seat is, beside the seat's own name.
+            // It counts the FILTERED board, so flipping "Affordable" on is
+            // answered in the header rather than by scrolling the list.
+            ToolbarItem(placement: .topBarTrailing) {
+                Text("\(filteredCandidates.count) candidates")
+                    .font(.system(size: DSType.Size.caption, weight: .bold).monospacedDigit())
+                    .foregroundStyle(Color.accentGold)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.accentGold.opacity(0.14), in: Capsule())
+                    .accessibilityLabel("\(filteredCandidates.count) candidates on the board")
+            }
+        }
         .task {
             if candidates.isEmpty {
                 // Yield first so the navigation transition completes before we block on generation.
@@ -511,6 +579,7 @@ struct HireCoachView: View {
                 userIsHeadCoach: career.role == .gmAndHeadCoach,
                 userCoachingStyle: career.coachingStyle,
                 marketRivals: CoachCarouselEngine.demand(for: candidate).rivalTeams,
+                fallbackCandidate: fallbackCandidate(excluding: candidate),
                 onHire: { hire(candidate) },
                 onRejected: {
                     rejectedCandidates.insert(candidate.id)
@@ -662,11 +731,11 @@ struct HireCoachView: View {
                 .tint(Color.accentGold)
                 .fixedSize()
 
-                Spacer().frame(width: 16)
-
-                Text("\(filteredCandidates.count) candidates")
-                    .font(.caption)
-                    .foregroundStyle(Color.textSecondary)
+                // The pool size used to end this row as grey caption text —
+                // the last thing after three filter chips and a switch, in the
+                // one spot on the screen the eye reaches last. It is the size
+                // of the market and it belongs beside the title; it now lives
+                // in the navigation bar (see the toolbar on the body).
             }
 
             // #153: Value column legend
@@ -738,7 +807,7 @@ struct HireCoachView: View {
                     // anywhere — the flame's meaning reached VoiceOver and nobody
                     // else. This is the only legend on the screen, so it explains
                     // the badges too, not just the colours.
-                    Text("TOP 3 = best OVR on the board \u{00B7} FREE AGENT = real out-of-work coach \u{00B7} flame = rival teams bidding \u{00B7} Ceiling badge = potential, Elite down to Low \u{00B7} VS box = pin up to \(CandidateCompareSheet.maxCandidates) and hold them side by side")
+                    Text("TOP 3 OVR = best OVR on the board \u{00B7} For Us = fit with THIS club: what the seat is bought for, your installed scheme and chemistry with your head coach \u{00B7} FREE AGENT = real out-of-work coach \u{00B7} flame = rival teams bidding \u{00B7} Ceiling badge = potential, Elite down to Low \u{00B7} VS box = pin up to \(CandidateCompareSheet.maxCandidates) and hold them side by side")
                         .font(.system(size: DSType.Size.micro, weight: .medium))
                         .foregroundStyle(Color.textSecondary)
                 }
@@ -801,6 +870,9 @@ struct HireCoachView: View {
                 Text("Fit")
                     .frame(width: 32)
             }
+            // The one sortable column that is about THIS club rather than about
+            // the man in the abstract. See `teamFitScore`.
+            headerButton("For Us", column: .teamFit, width: 44)
             headerButton("OVR", column: .ovr, width: 36)
             // #18: Highlight role-relevant attribute headers with a gold dot.
             headerButton("Play", column: .play, width: 36, keyForRole: roleHighlights("playCalling"))
@@ -905,6 +977,7 @@ struct HireCoachView: View {
         let ovr = coachOverall(candidate)
         let isTop3 = top3IDs.contains(candidate.id)
         let val = valueScore(candidate)
+        let forUs = teamFitScore(candidate)
         // Fix #63: OVR delta vs current coach (cached current OVR — avoids per-row recompute)
         let ovrDelta: Int? = cachedCurrentCoachOVR.map { ovr - $0 }
 
@@ -929,13 +1002,20 @@ struct HireCoachView: View {
                                 .padding(.vertical, 1)
                                 .background(potentialBadgeColor(potLabel).opacity(0.15), in: RoundedRectangle(cornerRadius: 3))
                             // Fix #56 + #16: Self-explanatory "TOP 3" badge for top-3 candidates.
+                            // The badge now carries its own reason. It is
+                            // awarded on OVR and nothing else (`cachedTop3IDs`),
+                            // and that fact was written down once, inside a
+                            // legend the user has to open — so a gold badge on
+                            // a row could as easily have meant best value, best
+                            // fit or shortest queue of rivals.
                             if isTop3 {
-                                Text("TOP 3")
+                                Text("TOP 3 OVR")
                                     .font(.system(size: DSType.Size.micro, weight: .black))
                                     .foregroundStyle(Color.backgroundPrimary)
                                     .padding(.horizontal, 4)
                                     .padding(.vertical, 1)
                                     .background(Color.accentGold, in: RoundedRectangle(cornerRadius: 3))
+                                    .accessibilityLabel("Top 3 on this board by overall rating")
                             }
                             // Task #96: a real out-of-work coach from the league's
                             // market — somebody the news has already talked about,
@@ -1033,6 +1113,13 @@ struct HireCoachView: View {
                         }
                         .frame(width: 32)
                     }
+
+                    // "For Us" composite
+                    Text("\(forUs)")
+                        .font(.system(size: DSType.Size.caption, weight: .bold, design: .monospaced))
+                        .foregroundStyle(Color.forRating(forUs))
+                        .frame(width: 44)
+                        .accessibilityLabel("Fit with this staff \(forUs) of 100")
 
                     // OVR numeric
                     Text("\(ovr)")
@@ -1437,6 +1524,41 @@ struct HireCoachView: View {
         pendingHire = (name: candidate.fullName, role: role.displayName, salary: candidate.salary)
         selectedCandidate = nil
     }
+
+    // MARK: - Fallback candidate
+
+    /// The best man left on the board for this seat if the one being negotiated
+    /// with walks away.
+    ///
+    /// Read off `candidates` rather than `filteredCandidates`: the question is
+    /// who else could take the job, and a Scheme or Affordable filter set two
+    /// minutes ago is not an answer to it. Men who have already signed
+    /// elsewhere are out — `onRejected` retires them from the board for good.
+    private func fallbackCandidate(excluding candidate: Coach) -> FallbackCandidate? {
+        let field = candidates.filter {
+            $0.id != candidate.id
+                && $0.id != hiredCoachID
+                && !rejectedCandidates.contains($0.id)
+        }
+        guard let next = field.max(by: { coachOverall($0) < coachOverall($1) }) else { return nil }
+        return FallbackCandidate(
+            name: next.fullName,
+            ovr: coachOverall(next),
+            salary: next.salary,
+            isAffordable: next.salary <= remainingBudget
+        )
+    }
+}
+
+// MARK: - Fallback Candidate
+
+/// The next man at this seat, for the negotiation card's "if he walks" line.
+private struct FallbackCandidate {
+    let name: String
+    let ovr: Int
+    /// Asking salary, in thousands.
+    let salary: Int
+    let isAffordable: Bool
 }
 
 // MARK: - Candidate Detail / Negotiation Sheet
@@ -1462,6 +1584,9 @@ private struct CandidateDetailSheet: View {
     /// R30 Market 2.0: how many rival teams are pursuing this candidate.
     /// Competition raises rejection risk unless the user overbids.
     let marketRivals: Int
+    /// The next man on the board if this one says no. `nil` when he is the only
+    /// candidate left for the seat.
+    let fallbackCandidate: FallbackCandidate?
     let onHire: () -> Void
     /// #271: Callback when candidate rejects offer
     var onRejected: (() -> Void)?
@@ -1472,7 +1597,7 @@ private struct CandidateDetailSheet: View {
     @State private var proposedYears: Int = 3
     @State private var negotiationResult: NegotiationResult?
 
-    init(candidate: Coach, remainingBudget: Int, isHired: Bool, headCoach: Coach?, currentCoach: Coach?, candidateRank: Int, totalCandidates: Int, schemeFitResult: (color: Color, label: String)?, installedSchemeName: String? = nil, userIsHeadCoach: Bool = false, userCoachingStyle: CoachingStyle? = nil, marketRivals: Int = 0, onHire: @escaping () -> Void, onRejected: (() -> Void)? = nil) {
+    init(candidate: Coach, remainingBudget: Int, isHired: Bool, headCoach: Coach?, currentCoach: Coach?, candidateRank: Int, totalCandidates: Int, schemeFitResult: (color: Color, label: String)?, installedSchemeName: String? = nil, userIsHeadCoach: Bool = false, userCoachingStyle: CoachingStyle? = nil, marketRivals: Int = 0, fallbackCandidate: FallbackCandidate? = nil, onHire: @escaping () -> Void, onRejected: (() -> Void)? = nil) {
         self.candidate = candidate
         self.remainingBudget = remainingBudget
         self.isHired = isHired
@@ -1485,6 +1610,7 @@ private struct CandidateDetailSheet: View {
         self.userIsHeadCoach = userIsHeadCoach
         self.userCoachingStyle = userCoachingStyle
         self.marketRivals = marketRivals
+        self.fallbackCandidate = fallbackCandidate
         self.onHire = onHire
         self.onRejected = onRejected
         self._proposedSalary = State(initialValue: Double(candidate.salary))
@@ -1813,7 +1939,12 @@ private struct CandidateDetailSheet: View {
             Text(label)
                 .font(.system(size: DSType.Size.caption, weight: .semibold))
                 .foregroundStyle(color)
+                .lineLimit(1)
         }
+        // The longest chip in the header row, and the one that used to be
+        // squeezed into "High dem…" by the pills beside it. It states its full
+        // width and lets the row's `ViewThatFits` choose the arrangement.
+        .fixedSize(horizontal: true, vertical: false)
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(color.opacity(0.1), in: RoundedRectangle(cornerRadius: 5))
@@ -2040,13 +2171,16 @@ private struct CandidateDetailSheet: View {
                         .font(.title2.weight(.bold))
                         .foregroundStyle(Color.textPrimary)
 
+                    // Age and experience only. The personality used to end this
+                    // line too, and the Coaching Style card below prints the
+                    // same words as its first row — with the effect lines that
+                    // make them mean something. One statement of a man's
+                    // temperament per profile, and it is the one that explains
+                    // itself.
                     HStack(spacing: 8) {
                         Text("Age \(candidate.age)")
                         Text("\u{00B7}")
                         Text("\(candidate.yearsExperience) yrs experience")
-                        Text("\u{00B7}")
-                        Text(candidate.personality.displayName)
-                            .foregroundStyle(Color.accentBlue)
                     }
                     .font(.caption)
                     .foregroundStyle(Color.textSecondary)
@@ -2054,76 +2188,129 @@ private struct CandidateDetailSheet: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            // Overall rating + scheme + salary summary
-            HStack(spacing: 12) {
-                // #160: Overall badge with context label
-                let ovr = coachOverall(candidate)
-                VStack(spacing: 2) {
-                    Text("\(ovr)")
-                        .font(.system(size: DSType.Size.title2, weight: .black).monospacedDigit())
-                        .foregroundStyle(Color.forRating(ovr))
-                    Text("OVR")
-                        .font(.system(size: DSType.Size.caption, weight: .bold))
-                        .foregroundStyle(Color.textTertiary)
-                    Text(ovrContextLabel(ovr))
-                        .font(.system(size: DSType.Size.micro, weight: .semibold))
-                        .foregroundStyle(Color.forRating(ovr).opacity(0.8))
-                }
-                // 52 pt clipped the context label to "Above A…" / "Below A…",
-                // i.e. every candidate rated 50–79 lost the word that gives the
-                // number its meaning.
-                .frame(width: 68, height: 58)
-                .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 8))
-
-                // #89: Coach development potential
-                VStack(spacing: 2) {
-                    Text(candidatePotentialLabel)
-                        .font(.system(size: DSType.Size.caption, weight: .bold))
-                        .foregroundStyle(candidatePotentialColor)
-                    Text("Potential")
-                        .font(.system(size: DSType.Size.micro, weight: .medium))
-                        .foregroundStyle(Color.textTertiary)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
-                .background(candidatePotentialColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
-
-                if let off = candidate.offensiveScheme {
-                    schemeTag(off.displayName, color: .accentBlue)
-                }
-                if let def = candidate.defensiveScheme {
-                    schemeTag(def.displayName, color: .danger)
-                }
-
-                // Fix #66: Scheme fit badge in header
-                if let fit = schemeFitResult {
-                    HStack(spacing: 4) {
-                        Circle().fill(fit.color).frame(width: 8, height: 8)
-                        Text(fit.label)
-                            .font(.system(size: DSType.Size.micro, weight: .semibold))
-                            .foregroundStyle(fit.color)
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(fit.color.opacity(0.1), in: RoundedRectangle(cornerRadius: 5))
-                }
-
-                // #91: Other teams' interest badge
-                demandBadge
-
-                Spacer()
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text("Asking Salary")
-                        .font(.caption2)
-                        .foregroundStyle(Color.textTertiary)
-                    Text(salaryFormatted(candidate.salary))
-                        .font(.headline.weight(.bold).monospacedDigit())
-                        .foregroundStyle(Color.accentGold)
-                }
+            // Overall rating + scheme + salary summary.
+            //
+            // A `ViewThatFits` over a one-line and a two-line arrangement, with
+            // every chip in it `fixedSize`. This row carries an OVR box, a
+            // ceiling chip, up to two scheme pills, a fit badge and a demand
+            // badge that can read "High demand (3 rival teams)" — in a single
+            // HStack they compressed each other into ellipses instead of
+            // wrapping, so the busiest candidates lost exactly the words that
+            // make the badges worth printing. The rule for a row of fixed-size
+            // chips (see `DraftTickerPanel.callLine`) is that it must carry a
+            // smaller variant.
+            ViewThatFits(in: .horizontal) {
+                headerSummary(stacked: false)
+                headerSummary(stacked: true)
             }
         }
         .padding(16)
         .cardBackground()
+    }
+
+    /// One arrangement of the header's rating / chips / salary line.
+    /// `stacked` moves the chips onto a second line under the OVR box.
+    @ViewBuilder
+    private func headerSummary(stacked: Bool) -> some View {
+        HStack(alignment: stacked ? .top : .center, spacing: 12) {
+            headerOverallBox
+
+            if stacked {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        headerPotentialChip
+                        headerSchemeTags
+                    }
+                    HStack(spacing: 8) {
+                        headerFitBadge
+                        demandBadge
+                    }
+                }
+            } else {
+                headerPotentialChip
+                headerSchemeTags
+                headerFitBadge
+                demandBadge
+            }
+
+            Spacer(minLength: 8)
+
+            VStack(alignment: .trailing, spacing: 2) {
+                Text("Asking Salary")
+                    .font(.caption2)
+                    .foregroundStyle(Color.textTertiary)
+                Text(salaryFormatted(candidate.salary))
+                    .font(.headline.weight(.bold).monospacedDigit())
+                    .foregroundStyle(Color.accentGold)
+            }
+            .fixedSize(horizontal: true, vertical: false)
+        }
+    }
+
+    /// #160: Overall badge with context label.
+    private var headerOverallBox: some View {
+        let ovr = coachOverall(candidate)
+        return VStack(spacing: 2) {
+            Text("\(ovr)")
+                .font(.system(size: DSType.Size.title2, weight: .black).monospacedDigit())
+                .foregroundStyle(Color.forRating(ovr))
+            Text("OVR")
+                .font(.system(size: DSType.Size.caption, weight: .bold))
+                .foregroundStyle(Color.textTertiary)
+            Text(ovrContextLabel(ovr))
+                .font(.system(size: DSType.Size.micro, weight: .semibold))
+                .foregroundStyle(Color.forRating(ovr).opacity(0.8))
+        }
+        // 52 pt clipped the context label to "Above A…" / "Below A…",
+        // i.e. every candidate rated 50–79 lost the word that gives the
+        // number its meaning.
+        .frame(width: 68, height: 58)
+        .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    /// #89: Coach development potential.
+    private var headerPotentialChip: some View {
+        VStack(spacing: 2) {
+            Text(candidatePotentialLabel)
+                .font(.system(size: DSType.Size.caption, weight: .bold))
+                .foregroundStyle(candidatePotentialColor)
+            Text("Potential")
+                .font(.system(size: DSType.Size.micro, weight: .medium))
+                .foregroundStyle(Color.textTertiary)
+        }
+        .fixedSize(horizontal: true, vertical: false)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(candidatePotentialColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
+    }
+
+    @ViewBuilder
+    private var headerSchemeTags: some View {
+        if let off = candidate.offensiveScheme {
+            schemeTag(off.displayName, color: .accentBlue)
+                .fixedSize(horizontal: true, vertical: false)
+        }
+        if let def = candidate.defensiveScheme {
+            schemeTag(def.displayName, color: .danger)
+                .fixedSize(horizontal: true, vertical: false)
+        }
+    }
+
+    /// Fix #66: Scheme fit badge in header.
+    @ViewBuilder
+    private var headerFitBadge: some View {
+        if let fit = schemeFitResult {
+            HStack(spacing: 4) {
+                Circle().fill(fit.color).frame(width: 8, height: 8)
+                Text(fit.label)
+                    .font(.system(size: DSType.Size.micro, weight: .semibold))
+                    .foregroundStyle(fit.color)
+            }
+            .fixedSize(horizontal: true, vertical: false)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(fit.color.opacity(0.1), in: RoundedRectangle(cornerRadius: 5))
+        }
     }
 
     // MARK: - Quick Hire Button (Fix #43 + #65: budget impact)
@@ -2331,34 +2518,46 @@ private struct CandidateDetailSheet: View {
         .cardBackground()
     }
 
-    /// Fix #64 + #86: Color-coded attribute cells with tier label.
+    /// Fix #64 + #86: Colour-coded attribute cells.
+    ///
+    /// A bar, not a tier word beside a numeral. The pair said one thing twice
+    /// ("Great" and 78 are the same statement on the same ladder) and neither
+    /// half showed what twelve attributes in a column are actually read for —
+    /// how they stand against each other. The tier word is not lost: it is
+    /// spoken, in the cell's accessibility label, where it still adds something.
     private func attributeCell(name: String, value: Int) -> some View {
         let tier = attributeTier(value)
-        return HStack(spacing: 6) {
+        let color = Color.forRating(value)
+        return HStack(spacing: 8) {
             Text(name)
                 .font(.system(size: DSType.Size.micro, weight: .medium))
                 .foregroundStyle(Color.textSecondary)
-            Spacer()
-            Text(tier.label)
-                .font(.system(size: DSType.Size.caption, weight: .bold))
-                .foregroundStyle(tier.color)
-                .padding(.horizontal, 5)
-                .padding(.vertical, 2)
-                .background(
-                    RoundedRectangle(cornerRadius: DSCornerRadius.tight)
-                        .fill(tier.color.opacity(tier.isElite ? 0.18 : 0.10))
-                )
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.surfaceBorder.opacity(0.35))
+                    Capsule()
+                        .fill(color)
+                        .frame(width: geo.size.width * CGFloat(min(max(value, 0), 99)) / 99.0)
+                }
+            }
+            .frame(width: 56, height: 6)
             Text("\(value)")
                 .font(.system(size: DSType.Size.callout, weight: .bold).monospacedDigit())
-                .foregroundStyle(Color.forRating(value))
+                .foregroundStyle(color)
+                .frame(width: 24, alignment: .trailing)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .frame(maxWidth: .infinity)
         .background(
             RoundedRectangle(cornerRadius: 6)
-                .fill(Color.forRating(value).opacity(0.06))
+                .fill(color.opacity(0.06))
         )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(name) \(value), \(tier.label)")
     }
 
     /// #86: Attribute tier with color coding.
@@ -2781,6 +2980,33 @@ private struct CandidateDetailSheet: View {
                 .background(
                     RoundedRectangle(cornerRadius: 8)
                         .fill((rejectionChance > 0.5 ? Color.danger : Color.warning).opacity(0.1))
+                )
+            }
+
+            // What a rejection actually costs, in the one place the risk is
+            // being taken. A refusal is permanent — `onRejected` greys the man
+            // out and takes him off the shortlist — so the screen was asking
+            // for a lowball with no picture of the downside at all.
+            if rejectionChance > 0, let fallback = fallbackCandidate {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "arrow.uturn.forward.circle")
+                        .foregroundStyle(Color.textSecondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("If he walks: \(fallback.name) is next on the board")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.textSecondary)
+                        Text("OVR \(fallback.ovr) \u{00B7} asking \(salaryFormatted(fallback.salary))"
+                             + (fallback.isAffordable ? "" : " \u{00B7} over budget"))
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(fallback.isAffordable ? Color.textTertiary : Color.dangerText)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.backgroundTertiary.opacity(0.5))
                 )
             }
 

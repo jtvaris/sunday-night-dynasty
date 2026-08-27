@@ -5525,7 +5525,15 @@ private struct CoachingStaffReviewSheet: View {
     }
 
     private var hasValidationWarnings: Bool {
-        !missingRequiredRoles.isEmpty || !areSchemesSet
+        !missingRequiredRoles.isEmpty || !areSchemesSet || !schemeMismatchWarnings.isEmpty
+    }
+
+    /// Every coordinator who specialises in one system while the club installs
+    /// another, in the words `schemeMismatchWarning(for:)` already wrote. That
+    /// function had no call site, so a coordinator hired for a system nobody
+    /// runs was a reading this sheet computed and threw away.
+    private var schemeMismatchWarnings: [String] {
+        coaches.compactMap { schemeMismatchWarning(for: $0) }
     }
 
     // MARK: - Body
@@ -5539,6 +5547,10 @@ private struct CoachingStaffReviewSheet: View {
                     // with "COACHING STAFF" a third heading under it. The bar
                     // names the sheet; the space goes to the list.
                     //
+                    // The verdict, in one sentence, before any of the sixteen
+                    // rows are read.
+                    readinessVerdict
+
                     // Staff listing
                     staffSection
 
@@ -5612,6 +5624,98 @@ private struct CoachingStaffReviewSheet: View {
                 }
             }
         }
+    }
+
+    // MARK: - Readiness Verdict
+
+    /// The whole sheet in one sentence: what this staff is built to run, and
+    /// the chair most likely to cost the club.
+    ///
+    /// The review opened straight into sixteen rows. Everything needed to
+    /// answer "is this staff any good, and where is the hole" was on the sheet
+    /// — the seats, the two installed systems, the league benchmark — and the
+    /// user had to assemble it himself from a scrolling list.
+    private var readinessVerdict: some View {
+        let unready = !missingRequiredRoles.isEmpty
+        let tint: Color = unready ? .warning : .accentGold
+
+        return HStack(alignment: .top, spacing: DSSpacing.xs) {
+            Image(systemName: unready ? "exclamationmark.triangle.fill" : "checkmark.seal.fill")
+                .font(.system(size: DSType.Size.footnote, weight: .semibold))
+                .foregroundStyle(tint)
+            Text(verdictSentence)
+                .font(.system(size: DSType.Size.footnote, weight: .medium))
+                .foregroundStyle(Color.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(DSSpacing.sm)
+        .background(Color.backgroundSecondary)
+        .clipShape(RoundedRectangle(cornerRadius: 10))  // ds-lint:allow(radius) matches its sibling cards
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)  // ds-lint:allow(radius) matches its sibling cards
+                .strokeBorder(tint.opacity(0.35), lineWidth: 1)
+        )
+    }
+
+    /// The systems this staff installs, plus the weakest chair in it.
+    private var verdictSentence: String {
+        let off = oc?.offensiveScheme?.displayName
+        let def = dc?.defensiveScheme?.displayName
+        let systems: String
+        switch (off, def) {
+        case let (o?, d?):
+            systems = "This staff is built to run \(o) and \(d)."
+        case let (o?, nil):
+            systems = "This staff is built to run \(o); nothing is installed on defence yet."
+        case let (nil, d?):
+            systems = "This staff is built to run \(d); nothing is installed on offence yet."
+        default:
+            systems = "No system is installed on either side of the ball yet."
+        }
+
+        // A chair nobody is sitting in beats any rating for "weakest".
+        if let missing = missingRequiredRoles.sorted(by: { $0.sortOrder < $1.sortOrder }).first {
+            return systems + " Its weakest link is an empty chair: no \(missing.displayName)."
+        }
+        guard let weak = weakestSeat else { return systems }
+        let name = weak.coach.fullName
+        let overall = coachOverall(weak.coach)
+        if let delta = weak.delta, delta < 0 {
+            return systems + " Weakest chair: \(weak.role.displayName) — \(name), \(overall), "
+                + "\(-delta) under what the league gets out of that seat."
+        }
+        if weak.delta != nil {
+            return systems + " No chair is below the league average for its seat; "
+                + "the closest is \(weak.role.displayName), \(name) at \(overall)."
+        }
+        return systems + " Weakest chair: \(weak.role.displayName) — \(name), \(overall)."
+    }
+
+    /// The seat this staff is likeliest to lose games in.
+    ///
+    /// Measured against the seat's OWN league average wherever the benchmark
+    /// has landed, never against the raw minimum: `coachOverall` is the mean of
+    /// nine attributes and `LeagueGenerator` builds a position coach out of one
+    /// to five strong ones, so the lowest number on the sheet is a position
+    /// coach every single time — which is a fact about the generator, not a
+    /// verdict on this club.
+    private var weakestSeat: (role: CoachRole, coach: Coach, delta: Int?)? {
+        let seated = coachBySeat
+        guard !seated.isEmpty else { return nil }
+        if let benchmark {
+            let measured = seated.compactMap { entry -> (CoachRole, Coach, Int)? in
+                guard let mean = benchmark.meanBySeat[entry.key] else { return nil }
+                return (entry.key, entry.value, coachOverall(entry.value) - mean)
+            }
+            if let worst = measured.min(by: { $0.2 < $1.2 }) {
+                return (role: worst.0, coach: worst.1, delta: worst.2)
+            }
+        }
+        guard let worst = seated.min(by: { coachOverall($0.value) < coachOverall($1.value) }) else {
+            return nil
+        }
+        return (role: worst.key, coach: worst.value, delta: nil)
     }
 
     // MARK: - Staff Section
@@ -5763,8 +5867,18 @@ private struct CoachingStaffReviewSheet: View {
                 portrait: { PersonFaceView(coach: coach, size: .small) },
                 trailing: {
                     HStack(spacing: DSSpacing.xs) {
+                        // The same slot on every row. Only the two coordinators
+                        // own a scheme, so on the other fourteen lines the chip
+                        // was simply absent — and `schemeFitIndicator`, which
+                        // reads a man's expertise in the system his side of the
+                        // ball actually runs and covers all eleven offensive
+                        // and defensive seats, had no call site at all. The
+                        // coordinator's chip names the system; everybody else's
+                        // dot says how well he knows the one he has been handed.
                         if let schemeName {
                             schemeChip(schemeName)
+                        } else {
+                            schemeFitIndicator(for: coach)
                         }
                         if let seatMean {
                             benchmarkBar(overall: overall, seatMean: seatMean)
@@ -6450,6 +6564,8 @@ private struct CoachingStaffReviewSheet: View {
                     .font(.system(size: DSType.Size.caption, weight: .bold).monospacedDigit())
                     .foregroundStyle(color)
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Knows the installed scheme \(expertise) out of 100")
         }
     }
 
@@ -6513,6 +6629,17 @@ private struct CoachingStaffReviewSheet: View {
                 color: fitBarColor(rosterFit.percent)
             )
 
+            // What the tick on both bars means, said once per side of the ball.
+            HStack(spacing: DSSpacing.xxs) {
+                Rectangle()
+                    .fill(Color.textSecondary)
+                    .frame(width: 1.5, height: 8)
+                Text("marks \(Self.goodFitMark)% — a fit reads Good from there up.")
+                    .font(.system(size: DSType.Size.micro))
+                    .foregroundStyle(Color.textTertiary)
+            }
+            .padding(.leading, 66)  // ds-lint:allow(spacing) lines up with each bar's own detail line
+
             // Best Alternative
             if let alt = alternative {
                 let currentTotal = coachFit.total + rosterFit.percent
@@ -6569,6 +6696,15 @@ private struct CoachingStaffReviewSheet: View {
         }
     }
 
+    /// Where a fit stops being a worry and starts reading "Good".
+    ///
+    /// 60 is not a new number: it is the floor of
+    /// `CoachingStaffView.schemeFitLabel`'s **Good** band, the vocabulary the
+    /// Schemes tab already prints beside the identical percentage. The bar had
+    /// a track, a fill and a colour and no mark of any kind, so a mid-yellow
+    /// 54 % and a mid-yellow 66 % looked like the same reading.
+    private static let goodFitMark = 60
+
     private func schemeFitBar(label: String, percent: Int, detail: String, color: Color) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
@@ -6579,7 +6715,8 @@ private struct CoachingStaffReviewSheet: View {
                 Text("\(percent)%")
                     .font(.system(size: DSType.Size.caption, weight: .bold).monospacedDigit())
                     .foregroundStyle(color)
-                // Progress bar
+                // Progress bar, with the Good line marked on the track — the
+                // same device `benchmarkBar` uses on every staff row above.
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
                         RoundedRectangle(cornerRadius: 2)
@@ -6587,10 +6724,16 @@ private struct CoachingStaffReviewSheet: View {
                         RoundedRectangle(cornerRadius: 2)
                             .fill(color)
                             .frame(width: geo.size.width * CGFloat(min(percent, 100)) / 100.0)
+                        Rectangle()
+                            .fill(Color.textSecondary)
+                            .frame(width: 1.5, height: 10)
+                            .offset(x: geo.size.width * CGFloat(Self.goodFitMark) / 100.0 - 0.75)
                     }
                 }
                 .frame(height: 6)
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(label) \(percent) percent, \(Self.goodFitMark) percent is a good fit")
             Text(detail)
                 .font(.system(size: DSType.Size.caption))
                 .foregroundStyle(Color.textTertiary)
@@ -6680,57 +6823,127 @@ private struct CoachingStaffReviewSheet: View {
     }
 
     private var staffChemistryRow: some View {
-        let score = calculateStaffChemistry()
+        let chemistry = calculateStaffChemistry()
+        let score = chemistry.score
         let grade: String = score >= 75 ? "Great" : (score >= 50 ? "Good" : (score >= 25 ? "Fair" : "Poor"))
         let gradeColor: Color = score >= 75 ? .success : (score >= 50 ? .accentGold : (score >= 25 ? .warning : .danger))
 
-        return HStack(spacing: 6) {
-            Image(systemName: "person.2.wave.2.fill")
-                .font(.system(size: DSType.Size.micro))
-                .foregroundStyle(gradeColor)
-                .frame(width: 18)
-            Text("Staff chemistry: **\(grade)**")
-                .font(.system(size: DSType.Size.caption, weight: .medium))
-                .foregroundStyle(Color.textPrimary)
-            Spacer()
-            Text(grade)
-                .font(.system(size: DSType.Size.micro, weight: .bold))
-                .foregroundStyle(gradeColor)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(gradeColor.opacity(0.12), in: Capsule())
+        return VStack(alignment: .leading, spacing: DSSpacing.xxs) {
+            HStack(spacing: 6) {
+                Image(systemName: "person.2.wave.2.fill")
+                    .font(.system(size: DSType.Size.micro))
+                    .foregroundStyle(gradeColor)
+                    .frame(width: 18)
+                Text("Staff chemistry: **\(grade)**")
+                    .font(.system(size: DSType.Size.caption, weight: .medium))
+                    .foregroundStyle(Color.textPrimary)
+                Spacer()
+                Text(grade)
+                    .font(.system(size: DSType.Size.micro, weight: .bold))
+                    .foregroundStyle(gradeColor)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(gradeColor.opacity(0.12), in: Capsule())
+            }
+
+            // The grade was the whole row: a word, then the same word again in
+            // a capsule, over a score built pair by pair from men who are all
+            // named on the list above. The pairs that cost the points are the
+            // answer to "so what do I do about it", and they were computed and
+            // thrown away.
+            if let advice = chemistryAdvice(chemistry) {
+                Text(advice)
+                    .font(.system(size: DSType.Size.micro))
+                    .foregroundStyle(Color.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 24)  // hangs under the row's own label: 18 pt glyph + 6 pt gap
+            }
         }
     }
 
-    /// Simple personality-based chemistry score (0-100).
-    private func calculateStaffChemistry() -> Int {
-        guard coaches.count >= 2 else { return 50 }
+    /// A chemistry reading and the pairs that made it.
+    private struct StaffChemistryReading {
+        let score: Int
+        /// Every pair the table charges −10 for, in staff order.
+        let clashes: [(Coach, Coach)]
+    }
 
-        // Compatible personality pairs get bonus, clashing pairs get penalty
-        let compatiblePairs: Set<Set<PersonalityArchetype>> = [
-            [.teamLeader, .mentor],
-            [.teamLeader, .steadyPerformer],
-            [.mentor, .quietProfessional],
-            [.quietProfessional, .steadyPerformer],
-            [.fieryCompetitor, .teamLeader],
-        ]
-        let clashingPairs: Set<Set<PersonalityArchetype>> = [
-            [.fieryCompetitor, .dramaQueen],
-            [.loneWolf, .teamLeader],
-            [.dramaQueen, .quietProfessional],
-            [.classClown, .fieryCompetitor],
-        ]
+    /// Personality pairs that add to the room. Hoisted off
+    /// `calculateStaffChemistry` so the advice line can be scored on the SAME
+    /// table the grade is scored on — an advice line derived from a second,
+    /// hand-written table is how a screen ends up recommending a hire that
+    /// lowers the number it is printed under.
+    private static let compatiblePairs: Set<Set<PersonalityArchetype>> = [
+        [.teamLeader, .mentor],
+        [.teamLeader, .steadyPerformer],
+        [.mentor, .quietProfessional],
+        [.quietProfessional, .steadyPerformer],
+        [.fieryCompetitor, .teamLeader],
+    ]
+
+    /// Personality pairs that cost the room points.
+    private static let clashingPairs: Set<Set<PersonalityArchetype>> = [
+        [.fieryCompetitor, .dramaQueen],
+        [.loneWolf, .teamLeader],
+        [.dramaQueen, .quietProfessional],
+        [.classClown, .fieryCompetitor],
+    ]
+
+    /// Simple personality-based chemistry score (0-100), and the clashing pairs
+    /// that produced it. The arithmetic is unchanged — only the culprits, which
+    /// the loop already knew, now survive the return.
+    private func calculateStaffChemistry() -> StaffChemistryReading {
+        guard coaches.count >= 2 else { return StaffChemistryReading(score: 50, clashes: []) }
 
         var score = 50
+        var clashes: [(Coach, Coach)] = []
         for i in 0..<coaches.count {
             for j in (i + 1)..<coaches.count {
                 let pair: Set<PersonalityArchetype> = [coaches[i].personality, coaches[j].personality]
-                if compatiblePairs.contains(pair) { score += 8 }
-                if clashingPairs.contains(pair) { score -= 10 }
+                if Self.compatiblePairs.contains(pair) { score += 8 }
+                if Self.clashingPairs.contains(pair) {
+                    score -= 10
+                    clashes.append((coaches[i], coaches[j]))
+                }
                 if coaches[i].personality == coaches[j].personality { score += 3 }
             }
         }
-        return min(max(score, 0), 100)
+        return StaffChemistryReading(score: min(max(score, 0), 100), clashes: clashes)
+    }
+
+    /// What would move the grade, in one line: who is pulling against whom, or
+    /// — when nobody is — the personality that would add most in an open chair.
+    private func chemistryAdvice(_ chemistry: StaffChemistryReading) -> String? {
+        if let clash = chemistry.clashes.first {
+            let (first, second) = clash
+            let extra = chemistry.clashes.count - 1
+            let more = extra > 0 ? " (and \(extra) other pair\(extra == 1 ? "" : "s"))" : ""
+            return "\(first.role.abbreviation) \(first.lastName) (\(first.personality.displayName)) and "
+                + "\(second.role.abbreviation) \(second.lastName) (\(second.personality.displayName)) "
+                + "pull against each other\(more) — replacing either one lifts the room."
+        }
+        guard let addition = bestAdditionArchetype() else { return nil }
+        return "Nobody in the room clashes. A \(addition.displayName) in one of the open chairs "
+            + "is what lifts it further."
+    }
+
+    /// The personality that would add most to THIS room if the next hire had
+    /// it, scored on the same two tables the grade uses. Nil once every chair
+    /// is filled — there is nowhere left to put him.
+    private func bestAdditionArchetype() -> PersonalityArchetype? {
+        guard !coaches.isEmpty, !vacantRoles.isEmpty else { return nil }
+        var best: (archetype: PersonalityArchetype, gain: Int)?
+        for archetype in PersonalityArchetype.allCases {
+            var gain = 0
+            for coach in coaches {
+                let pair: Set<PersonalityArchetype> = [archetype, coach.personality]
+                if Self.compatiblePairs.contains(pair) { gain += 8 }
+                if Self.clashingPairs.contains(pair) { gain -= 10 }
+                if coach.personality == archetype { gain += 3 }
+            }
+            if gain > (best?.gain ?? 0) { best = (archetype, gain) }
+        }
+        return best?.archetype
     }
 
     // MARK: - Warnings Section
@@ -6774,6 +6987,18 @@ private struct CoachingStaffReviewSheet: View {
                         .foregroundStyle(Color.warning)
                 }
             }
+
+            ForEach(schemeMismatchWarnings, id: \.self) { warning in
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.triangle.branch")
+                        .font(.system(size: DSType.Size.footnote))
+                        .foregroundStyle(Color.warning)
+                    Text(warning)
+                        .font(.system(size: DSType.Size.footnote, weight: .medium))
+                        .foregroundStyle(Color.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
         }
         .padding(12)
         .background(Color.warning.opacity(0.06))
@@ -6810,6 +7035,19 @@ private struct CoachingStaffReviewSheet: View {
                 )
             }
             .buttonStyle(.plain)
+
+            // The padlock and "Lock in" say the market shuts behind you. It
+            // does not: hiring is not phase-gated anywhere — `CoachingStaffView`
+            // gates only its two review TASKS on `.coachingChanges`, and its own
+            // confirm copy already tells the user "You can still hire and
+            // replace anybody". This sheet was the one place that implied the
+            // opposite, over the button that carries the decision.
+            Text("This only advances the phase — you can still hire, replace and re-sign staff afterwards.")
+                .font(.system(size: DSType.Size.footnote))
+                .foregroundStyle(Color.textTertiary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity)
 
             Button {
                 onCancel()
