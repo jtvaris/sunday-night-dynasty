@@ -4224,6 +4224,12 @@ struct CoachedGameView: View {
             shown.timeRemaining = engine.timeRemaining
             shown.clock = engine.formattedClock
             shown.drivePlays = engine.currentDrivePlays
+            // The snap plate names the down that was SNAPPED, and the chip
+            // above moves to the new one right here — so the plate retires in
+            // the same beat. Its 1.8 s timer is only an upper bound: a play
+            // that resolves inside that window used to leave a stale down on
+            // the field beside the already-advanced chip.
+            snapPlate = nil
         }
         // QW-5c chip-leak gate: the situation chips are shown only when this
         // reveal actually surfaces the situation AND no kickoff is pending. The
@@ -4353,6 +4359,16 @@ struct CoachedGameView: View {
                 ? event.offRole.map { oBase + $0 }
                 : event.defRole.map { dBase + $0 }
             if let winnerNode { fieldScene.pulse(nodeIndex: winnerNode) }
+        }
+
+        // The capsules are gone in 3.4 s, so the marquee battle also goes into
+        // the broadcast ticker — the same feed-note mechanism as the audible /
+        // delay lines — and survives in the play feed history. Only the two
+        // headline kinds post (a star winning his battle, a blown assignment):
+        // routine trench and coverage wins would flood a three-line ticker and
+        // turn the play history into a matchup log.
+        if let headline = events.first(where: { $0.kind == .star || $0.kind == .bust }) {
+            engine.postFeedNote(headline.text)
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 3.4) {

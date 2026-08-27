@@ -1032,6 +1032,16 @@ struct PressConferenceView: View {
                 value: ownerPersonaLabel,
                 read: ownerRead
             )
+            // #2596: the four axes above read the room, the roster, the
+            // building and the owner — and said nothing about the man at the
+            // podium. He is asked to answer in character without being told
+            // what his character is.
+            roomReadRow(
+                icon: career.coachingStyle.icon,
+                axis: "You",
+                value: career.coachingStyle.displayName,
+                read: coachStyleRead
+            )
 
             Divider().overlay(Color.surfaceBorder)
 
@@ -1154,6 +1164,31 @@ struct PressConferenceView: View {
         return context.ownerPatience <= 3
             ? "He is backing the plan, but thin-skinned — a promise you have not earned stings him hardest."
             : "He is backing the plan. Humility buys credit with him; heat costs it."
+    }
+
+    /// #2596: the coach's own archetype, read back to him before he answers in
+    /// character — and, like every other line on this card, a restatement of a
+    /// rule that is actually running rather than flavour.
+    ///
+    /// The rule is `FranchiseIdentityDeclaration`: the coaching style declared
+    /// in the office SEEDS the identity the other 31 front offices price him
+    /// against, and the introductory presser's dominant tone can AMEND it. The
+    /// confirming tone is derived from `podiumRead` rather than retyped, so
+    /// this sentence cannot drift from the mapping it describes — and the
+    /// Disciplinarian genuinely has none, because no tone in the room reads as
+    /// old-school.
+    private var coachStyleRead: String {
+        let seed = FranchiseIdentityDeclaration.seed(for: career.coachingStyle)
+        let headline = FranchiseIdentityDeclaration.leagueReadHeadline(seed)
+        guard session == .introductory else {
+            return "\(headline) because of it. Nothing said in a weekly room moves that read — only the deals you actually make do."
+        }
+        guard let confirming = Self.toneOrder.first(where: {
+            FranchiseIdentityDeclaration.podiumRead(for: $0) == seed
+        }) else {
+            return "\(headline) because of it — and no tone in this room says the same thing, so any answer the league reads a market in moves you off it."
+        }
+        return "\(headline) because of it. Leaning \(confirming.label.lowercased()) today confirms that read; a tone the league reads differently overrules it."
     }
 
     // MARK: The tone ledger
@@ -1378,6 +1413,12 @@ struct PressConferenceView: View {
                     .padding(.vertical, DSSpacing.xxs)
                     .background(Capsule().fill(tint.opacity(0.15)))
 
+                    // #2620: what this tone would say about the man himself,
+                    // read against the style he declared in the office.
+                    if let read = identityRead(for: response.tone) {
+                        identityChip(read)
+                    }
+
                     if preview.isVanilla, let label = preview.vanillaLabel {
                         vanillaChip(label)
                     }
@@ -1448,7 +1489,11 @@ struct PressConferenceView: View {
         // No `.disabled` on the card: SwiftUI propagates it to every descendant
         // and a child cannot re-enable itself. `pickResponse` already refuses
         // once an answer is committed, so the guard is the lock.
-        .accessibilityLabel("\(response.tone.label) answer. \(response.text)")
+        .accessibilityLabel(
+            identityRead(for: response.tone).map {
+                "\(response.tone.label) answer, \($0.label.lowercased()). \(response.text)"
+            } ?? "\(response.tone.label) answer. \(response.text)"
+        )
         .accessibilityHint(hintSpeech(preview))
         .animation(.easeInOut(duration: 0.25), value: pendingResponseIndex)
         .animation(.easeInOut(duration: 0.25), value: selectedResponseIndex)
@@ -1517,6 +1562,52 @@ struct PressConferenceView: View {
         preview.hints
             .map { "\($0.audience.label): \($0.phrase)" }
             .joined(separator: ". ")
+    }
+
+    // MARK: - #2620: the identity read, per card
+
+    /// What this card's tone would tell the league about how the coach does
+    /// business, measured against the identity his coaching STYLE already
+    /// seeded. `nil` = no chip.
+    ///
+    /// Framed as the identity read and nothing else, because that is the only
+    /// archetype mechanic that exists: `PressConferenceEngine` applies no
+    /// coaching-style bonus or penalty to an answer, so a chip that implied a
+    /// cost would be inventing one. Three rules, all of them the engine's:
+    ///
+    /// * a tone `podiumRead` has no market read for (Confident, Funny) says
+    ///   nothing about how he does business, so it carries no chip;
+    /// * the read only amends the league's file at the INTRODUCTORY presser
+    ///   (`FranchiseIdentityDeclaration.amend`, called once from
+    ///   `IntroSequenceView`), so the post-game room gets no chip either;
+    /// * and it switches on the session's DOMINANT tone, not on one answer —
+    ///   so the chip says what this card sounds like, never what it settles.
+    private func identityRead(for tone: ResponseTone) -> (label: String, onCharacter: Bool)? {
+        guard session == .introductory,
+              let read = FranchiseIdentityDeclaration.podiumRead(for: tone) else { return nil }
+        let seed = FranchiseIdentityDeclaration.seed(for: career.coachingStyle)
+        return read == seed
+            ? ("In character", true)
+            : ("Against type", false)
+    }
+
+    private func identityChip(_ read: (label: String, onCharacter: Bool)) -> some View {
+        let tint = read.onCharacter ? Color.success : Color.accentBlue
+        return HStack(spacing: DSSpacing.xxs) {
+            Image(systemName: read.onCharacter ? "checkmark.seal.fill" : "arrow.triangle.branch")
+                .font(.system(size: DSType.Size.micro, weight: .bold))
+            Text(read.label.uppercased())
+                .font(DSType.display(DSType.Size.caption, .heavy))
+                .tracking(0.5)
+        }
+        .foregroundStyle(tint)
+        .padding(.horizontal, DSSpacing.xs)
+        .padding(.vertical, DSSpacing.xxs)
+        .background(
+            Capsule()
+                .fill(tint.opacity(0.12))
+                .overlay(Capsule().strokeBorder(tint.opacity(0.35), lineWidth: 1))
+        )
     }
 
     private func vanillaChip(_ label: String) -> some View {
