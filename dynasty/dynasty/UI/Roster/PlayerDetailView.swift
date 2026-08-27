@@ -468,6 +468,15 @@ struct PlayerDetailView: View {
     /// is the answer to a question the user has to ask.
     @State private var showsDramaTriggers = false
 
+    /// Which alternate-position rows have their "why he is eligible here" line
+    /// open. Same disclosure the drama chip above takes: the row is the fact,
+    /// the sentence is the answer to a question the user has to ask.
+    ///
+    /// A `Set` rather than a single `Position?` because the card exists to be
+    /// compared across — closing one row to open the next would make the two
+    /// explanations impossible to read side by side.
+    @State private var expandedVersatilityRows: Set<Position> = []
+
     /// **The one sheet slot on this screen** — an enum, not a `Bool`.
     ///
     /// Repeat bug class: several screens shipped two `.sheet(isPresented:)`
@@ -561,6 +570,10 @@ struct PlayerDetailView: View {
                 contractCard
                 overviewCard
                 if !isRookieFogged { tradeValueCard }
+                // Last in the column on purpose: it quotes the three cards
+                // above it, so it reads as the summing-up rather than as a
+                // fourth opinion offered before the evidence.
+                managerNotesCard
             } middle: {
                 // MIDDLE — what he has done and where he is going.
                 developmentCard
@@ -2055,6 +2068,202 @@ struct PlayerDetailView: View {
         return String(format: "Franchise Tagged \u{2014} %d at $%.1fM", row.seasonYear, millions)
     }
 
+    // MARK: - Manager Notes
+
+    /// **The four verdicts on this screen, read as one file.**
+    ///
+    /// Every line is *quoted*, never computed: the standing off `leagueRanking`
+    /// and `teamPositionRank`, the deal off the contract row and the
+    /// Bargain / Fair / Overpaid verdict beside it, the scheme pair off
+    /// `schemeMismatchInfo`, the bucket and the points off `TradeValueEngine`.
+    /// The card owns no model of its own, so it cannot disagree with the cards
+    /// it summarises — which is the only reason a fourth card restating three
+    /// others is worth its space.
+    ///
+    /// **It names a move and never prices one** (#127). "Recommended: open
+    /// extension talks" points at the button already on the action bar; what
+    /// the deal costs is still something the agent tells you in the
+    /// conversation, which is the whole reason the "~$32M/yr × 4yr" teaser was
+    /// deleted from this screen. Nothing here quotes a dollar figure.
+    ///
+    /// A rookie still in the fog gets no card at all: a synthesis of the exact
+    /// numbers the screen is deliberately withholding would be the leak. Nor
+    /// does a rival's player — every move it can name is a door only an
+    /// own-roster player has.
+    @ViewBuilder
+    private var managerNotesCard: some View {
+        if isUserRosterPlayer && !isRookieFogged {
+            DSDetailCard(
+                "Manager Notes",
+                icon: "text.badge.checkmark",
+                explainer: "The deal, the scheme and the trade chart read together — and the one move they point at."
+            ) {
+                let recommendation = managerMove
+                VStack(alignment: .leading, spacing: DSSpacing.xs) {
+                    ForEach(managerNoteLines) { line in
+                        HStack(alignment: .top, spacing: DSSpacing.xxs) {
+                            Image(systemName: line.icon)
+                                .font(.system(size: DSType.Size.caption, weight: .semibold))
+                                .foregroundStyle(Color.textTertiaryReadable)
+                                .frame(width: 16, alignment: .leading)
+                            Text(LocalizedStringKey(line.text))
+                                .font(.system(size: DSType.Size.footnote))
+                                .foregroundStyle(Color.textPrimary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 0)
+                        }
+                        .accessibilityElement(children: .combine)
+                    }
+
+                    Divider().overlay(Color.surfaceBorder)
+
+                    HStack(alignment: .firstTextBaseline, spacing: DSSpacing.xxs) {
+                        Image(systemName: recommendation.move.icon)
+                            .font(.system(size: DSType.Size.footnote, weight: .bold))
+                        Text("Recommended: \(recommendation.move.phrase)")
+                            .font(.system(size: DSType.Size.callout, weight: .bold))
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                    }
+                    .foregroundStyle(Color.accentGold)
+                    .accessibilityElement(children: .combine)
+
+                    // `DSDetailNote` renders its `String` verbatim, so the
+                    // reason carries no markdown — asterisks would print as
+                    // asterisks. The emphasis lives in the quoted lines above.
+                    DSDetailNote(text: recommendation.because, icon: "text.quote")
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    /// The synthesis half — one line per card it quotes, in the order those
+    /// cards appear above it on the page.
+    private var managerNoteLines: [ManagerNoteLine] {
+        var lines: [ManagerNoteLine] = []
+
+        // Standing: the same two ranks the hero badge and the room badge print.
+        var standing: [String] = []
+        if let rank = leagueRanking { standing.append("**\(rank)** in the league") }
+        if let room = teamPositionRank {
+            standing.append("**#\(room.rank) of \(room.total)** in your own \(player.position.rawValue) room")
+        }
+        standing.append("**\(developmentPhase.label)** on the age curve")
+        lines.append(ManagerNoteLine(
+            icon: "person.text.rectangle",
+            text: standing.joined(separator: ", ") + "."
+        ))
+
+        // The deal: years off the Years pill, verdict off the Value pill. No
+        // money — that is the agent's to name (#127).
+        if player.annualSalary > 0 {
+            lines.append(ManagerNoteLine(
+                icon: "doc.text",
+                text: "He has **\(contractYearsText)** left, and against what he is paid the market rates him **\(marketValueComparison.label)**."
+            ))
+        } else {
+            lines.append(ManagerNoteLine(
+                icon: "doc.text",
+                text: "He has **\(contractYearsText)** left and no salary on file, so there is nothing yet for the market to be measured against."
+            ))
+        }
+
+        // Scheme: the mismatch card's own sentence, or how far into the club's
+        // system he actually is.
+        if let info = schemeMismatchInfo {
+            lines.append(ManagerNoteLine(
+                icon: "square.grid.3x3",
+                text: "He knows **\(info.playerScheme)**; \(info.hcName) runs **\(info.teamScheme)**, so he installs it from scratch."
+            ))
+        } else if let team = teamSchemeForPlayer {
+            let installed = player.schemeFamiliarity[team.key] ?? 0
+            lines.append(ManagerNoteLine(
+                icon: "square.grid.3x3",
+                text: "He is **\(installed)%** into **\(team.displayName)**, the system this staff runs."
+            ))
+        } else if let best = bestSchemeFit {
+            lines.append(ManagerNoteLine(
+                icon: "square.grid.3x3",
+                text: "Best scheme on file is **\(best.scheme)** at **\(best.familiarity)%**. The club has no system logged for his side of the ball."
+            ))
+        }
+
+        // Trade value: the bucket AND the engine's points, both already on the
+        // Trade Value card directly above.
+        lines.append(ManagerNoteLine(
+            icon: "arrow.left.arrow.right",
+            text: "Trade chart: **\(tradeValueLabel)**, about **\(tradeValuePoints) pts** on the board the war rooms price packages in."
+        ))
+
+        return lines
+    }
+
+    /// "2 years" / "1 year" / "no years" — the figure the Contract card's Years
+    /// pill prints, in words.
+    private var contractYearsText: String {
+        let years = player.contractYearsRemaining
+        if years <= 0 { return "no years" }
+        return years == 1 ? "1 year" : "\(years) years"
+    }
+
+    /// **The one move the notes name, and why.**
+    ///
+    /// Strictly a re-reading of what is already on the screen: the phase off
+    /// the development card, the Bargain / Fair / Overpaid verdict off the
+    /// contract card, the scheme pair off the mismatch card, the bucket off the
+    /// trade card, and the two contract windows (`canExtend`, `canRenegotiate`)
+    /// the action bar is already gated on. It invents no coefficient of its own
+    /// and quotes no money.
+    ///
+    /// Every case resolves to a door this screen actually has — the two
+    /// contract conversations on the bar, the shopping poll in the Trade Value
+    /// card — so the note can never recommend something the user then cannot do
+    /// from here. When the verdicts do not agree, the honest answer is
+    /// `standPat`, not a manufactured one.
+    private var managerMove: (move: ManagerMove, because: String) {
+        let value = marketValueComparison
+        let phase = developmentPhase
+        let priced = player.annualSalary > 0
+
+        // 1. Both money verdicts pointing the same way: above the market AND
+        //    past the peak. Reprice while there is still a deal to reprice;
+        //    otherwise the chart is the only exit left.
+        if priced && value == .overpaid && phase == .declining {
+            if canRenegotiate {
+                return (.reopenDeal, "He is over the market at his current number and already past his peak, with \(contractYearsText) still to run — the deal only gets worse from here. What he would take instead is his agent's to say.")
+            }
+            return (.shop, "He is over the market at his current number and already past his peak, and the chart still has him at \(tradeValueLabel). That is close to the most the other 31 clubs will ever offer for him.")
+        }
+
+        // 2. Above the market but not yet falling off. Repricing is the lever
+        //    that keeps the player.
+        if priced && value == .overpaid && canRenegotiate {
+            return (.reopenDeal, "The market rates him Overpaid at his current number and he still has \(contractYearsText) to run. Repricing is the one lever here that does not cost you the player.")
+        }
+
+        // 3. A man learning a system he will be too old to use.
+        if let info = schemeMismatchInfo, phase == .declining {
+            return (.shop, "He knows \(info.playerScheme), not the \(info.teamScheme) this staff runs, and he is past his peak — the seasons it takes him to install it are the seasons he has left. The chart has him at \(tradeValueLabel).")
+        }
+
+        // 4. The extension window, with nothing arguing against it.
+        if canExtend && phase != .declining && value != .overpaid {
+            var reason = "He has \(contractYearsText) left, the market rates him \(value.label), and he is \(phase.label) on the age curve. The years after this deal are the ones worth buying — what they cost is the agent's to name."
+            if let info = schemeMismatchInfo {
+                reason += " He is still installing \(info.teamScheme) from scratch, so you are buying years the coordinator cannot fully use yet."
+            }
+            return (.extendTalks, reason)
+        }
+
+        // 5. Nothing on the file is asking for a decision. Say so rather than
+        //    manufacture one.
+        if player.contractYearsRemaining > Self.extensionWindowYears {
+            return (.standPat, "He has \(contractYearsText) left, which is too much deal to renew, and the market rates him \(value.label). Nothing on this file is asking for a decision this season.")
+        }
+        return (.standPat, "Nothing on this file pulls in one direction: the market rates him \(value.label), he is \(phase.label) on the age curve, and the chart has him at \(tradeValueLabel).")
+    }
+
     // MARK: - Action Buttons (#35)
 
     /// Whether the shown player is on the user's own roster. The league
@@ -2826,50 +3035,87 @@ struct PlayerDetailView: View {
                         let familiarity = player.familiarity(at: pos)
                         let ceiling = VersatilityDevelopmentEngine.versatilityCeiling(player: player, at: pos)
                         let statusLabel = familiarity > 0 ? "Developing" : "Can Learn"
+                        let isOpen = expandedVersatilityRows.contains(pos)
                         VStack(spacing: 4) {
-                            HStack(spacing: 8) {
-                                Text(pos.rawValue)
-                                    .font(.caption.weight(.bold))
-                                    .foregroundStyle(Color.textPrimary)
-                                    .frame(width: 30, alignment: .leading)
-
-                                Text(statusLabel)
-                                    .font(.system(size: DSType.Size.micro, weight: .medium))
-                                    .foregroundStyle(familiarity > 0 ? Color.accentGold : Color.accentBlue)
-
-                                Spacer()
-
-                                Text("\(familiarity)%")
-                                    .font(.caption2.weight(.bold).monospacedDigit())
-                                    .foregroundStyle(familiarity > 0 ? versatilityBarColor(familiarity) : Color.textTertiary)
-                            }
-
-                            // Familiarity bar with ceiling
-                            GeometryReader { geo in
-                                let barWidth = geo.size.width
-                                ZStack(alignment: .leading) {
-                                    RoundedRectangle(cornerRadius: DSCornerRadius.tight)
-                                        .fill(Color.backgroundTertiary)
-                                        .frame(height: 6)
-                                    if familiarity > 0 {
-                                        RoundedRectangle(cornerRadius: DSCornerRadius.tight)
-                                            .fill(versatilityBarColor(familiarity))
-                                            .frame(width: barWidth * CGFloat(familiarity) / 100.0, height: 6)
+                            // **The "why this spot" sentence is behind the row.**
+                            //
+                            // It used to be a permanent footnote under every
+                            // alternate position — up to five of them on a
+                            // safety, always on, in the quietest ink on the
+                            // card, each one restating a rule that does not
+                            // change from week to week. The row states the fact
+                            // it always stated; the tap answers "why is he even
+                            // eligible there", which is a question asked once.
+                            //
+                            // Same disclosure the "Can generate media drama"
+                            // chip takes in the personality card — one chevron,
+                            // one `DSDetailNote`, no new component.
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.15)) {
+                                    if isOpen {
+                                        expandedVersatilityRows.remove(pos)
+                                    } else {
+                                        expandedVersatilityRows.insert(pos)
                                     }
-                                    // Ceiling marker
-                                    Rectangle()
-                                        .fill(Color.textTertiary)
-                                        .frame(width: 1.5, height: 10)
-                                        .offset(x: barWidth * CGFloat(ceiling) / 100.0 - 0.75)
                                 }
-                            }
-                            .frame(height: 10)
+                            } label: {
+                                VStack(spacing: 4) {
+                                    HStack(spacing: 8) {
+                                        Text(pos.rawValue)
+                                            .font(.caption.weight(.bold))
+                                            .foregroundStyle(Color.textPrimary)
+                                            .frame(width: 30, alignment: .leading)
 
-                            // Explanation of why this alternate position exists (#32)
-                            Text(versatilityExplanation(from: player.position, to: pos, rating: rating))
-                                .font(.system(size: DSType.Size.footnote))
-                                .foregroundStyle(Color.textTertiary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                                        Text(statusLabel)
+                                            .font(.system(size: DSType.Size.micro, weight: .medium))
+                                            .foregroundStyle(familiarity > 0 ? Color.accentGold : Color.accentBlue)
+
+                                        Spacer()
+
+                                        Text("\(familiarity)%")
+                                            .font(.caption2.weight(.bold).monospacedDigit())
+                                            .foregroundStyle(familiarity > 0 ? versatilityBarColor(familiarity) : Color.textTertiary)
+
+                                        Image(systemName: isOpen ? "chevron.up" : "chevron.down")
+                                            .font(.system(size: DSType.Size.micro, weight: .bold))
+                                            .foregroundStyle(Color.textTertiary)
+                                    }
+
+                                    // Familiarity bar with ceiling
+                                    GeometryReader { geo in
+                                        let barWidth = geo.size.width
+                                        ZStack(alignment: .leading) {
+                                            RoundedRectangle(cornerRadius: DSCornerRadius.tight)
+                                                .fill(Color.backgroundTertiary)
+                                                .frame(height: 6)
+                                            if familiarity > 0 {
+                                                RoundedRectangle(cornerRadius: DSCornerRadius.tight)
+                                                    .fill(versatilityBarColor(familiarity))
+                                                    .frame(width: barWidth * CGFloat(familiarity) / 100.0, height: 6)
+                                            }
+                                            // Ceiling marker
+                                            Rectangle()
+                                                .fill(Color.textTertiary)
+                                                .frame(width: 1.5, height: 10)
+                                                .offset(x: barWidth * CGFloat(ceiling) / 100.0 - 0.75)
+                                        }
+                                    }
+                                    .frame(height: 10)
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("\(pos.rawValue), \(statusLabel), \(familiarity) percent familiar, ceiling \(ceiling) percent")
+                            .accessibilityHint(isOpen ? "Hides why he can play there" : "Shows why he can play there")
+
+                            // Explanation of why this alternate position exists
+                            // (#32) — on request now, not on permanent display.
+                            if isOpen {
+                                DSDetailNote(
+                                    text: versatilityExplanation(from: player.position, to: pos, rating: rating),
+                                    icon: "arrow.triangle.swap"
+                                )
+                            }
                         }
                     }
                 }
@@ -3825,6 +4071,50 @@ struct PlayerDetailView: View {
             return String(format: "$%.1fM", Double(thousands) / 1_000.0)
         }
         return "$\(thousands)K"
+    }
+}
+
+// MARK: - Manager Notes model
+
+/// One quoted line in the Manager Notes card: the card it came from (its icon)
+/// and what that card says. Identified by its own content — the set is built
+/// fresh each pass and every line is unique within it.
+private struct ManagerNoteLine: Identifiable {
+    let icon: String
+    let text: String
+    var id: String { icon + text }
+}
+
+/// The single move the Manager Notes card is allowed to name.
+///
+/// Each case is a door this screen already has: the two contract conversations
+/// on the action bar, the shopping poll in the Trade Value card, and `standPat`
+/// for the case where the verdicts do not agree. **No case carries a price** —
+/// the ask is what the agent tells you when you ring him (#127).
+private enum ManagerMove {
+    case extendTalks
+    case reopenDeal
+    case shop
+    case standPat
+
+    var phrase: String {
+        switch self {
+        case .extendTalks: return "open extension talks"
+        case .reopenDeal:  return "reopen his deal"
+        case .shop:        return "shop him"
+        case .standPat:    return "leave him where he is"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .extendTalks: return "signature"
+        case .reopenDeal:  return "arrow.uturn.backward"
+        // The same symbol the "Shop <name>" button in the Trade Value card
+        // uses, because it is the same door.
+        case .shop:        return "antenna.radiowaves.left.and.right"
+        case .standPat:    return "hand.raised"
+        }
     }
 }
 
