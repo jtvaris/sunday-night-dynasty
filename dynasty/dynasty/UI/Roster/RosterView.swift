@@ -135,7 +135,12 @@ struct RosterView: View {
             return ("Below average", .warning)
         }
 
-        if depthBad { return ("Depth thin", .accentGold) }
+        // Warn, not gold. P5 gives gold exactly three jobs — the primary
+        // commit, the current step on a band, the live/now marker — and a
+        // roster group's verdict is none of them. The roster has no commit at
+        // all, so the correct amount of gold on this screen is zero; before
+        // this pass a bad roster could print it in four places at once.
+        if depthBad { return ("Depth thin", .warning) }
 
         let n = PositionGradeCalculator.starterCount(for: group.positions)
         let sorted = players.sorted { $0.overall > $1.overall }
@@ -147,20 +152,28 @@ struct RosterView: View {
         }
 
         let hasExpiring = players.contains { $0.contractYearsRemaining <= 1 && $0.overall >= grades.starterOVR - 5 }
-        if hasExpiring { return ("Key FA pending", .accentGold) }
+        // Informational, and it sits beside "Aging" on the same ladder: neither
+        // is a fault, both are things to note about a group that is otherwise
+        // fine.
+        if hasExpiring { return ("Key FA pending", .accentBlue) }
 
         if starterGood && depthGood { return ("Strong", .success) }
         if starterGood { return ("Solid starters", .success) }
         return ("Adequate", .textSecondary)
     }
 
-    /// Returns a slightly brighter background for starters to visually distinguish them.
+    /// Starters sit on the **raised** surface, backups on the base card
+    /// surface. Two tokens, one step apart, saying the thing the roster is
+    /// grouped to say.
+    ///
+    /// It was a raw `Color(red: 0.10, green: 0.14, blue: 0.22)` — a hand-mixed
+    /// navy roughly between `backgroundSecondary` and `backgroundTertiary` that
+    /// belonged to no scale, so the one visual distinction the depth chart
+    /// makes was the only paint on the screen that could not be adjusted with
+    /// the theme.
     private func starterRowBackground(player: Player, groupPlayers: [Player], starterCount: Int) -> Color {
         let idx = depthIndex(for: player, in: groupPlayers)
-        if idx < starterCount {
-            return Color(red: 0.10, green: 0.14, blue: 0.22) // blue tint distinguishing starters from backups
-        }
-        return Color.backgroundSecondary
+        return idx < starterCount ? Color.backgroundTertiary : Color.backgroundSecondary
     }
 
     /// Maps assessment group IDs to the EvalPositionGroup-style IDs used by RosterEvaluationView.
@@ -191,12 +204,17 @@ struct RosterView: View {
         if let data = try? JSONEncoder().encode(notes) { rosterNotesJSON = String(data: data, encoding: .utf8) ?? "{}" }
     }
 
+    /// Your own verdict on a group, on the same five-step ladder the staff
+    /// read uses: danger (broken) / warning (caution) / accentBlue (noted) /
+    /// success (good) / textTertiary (unset). "Upgrade needed" was gold, which
+    /// is the screen's commit paint on a screen that never commits (P5); it is
+    /// a caution, and it now says so in the same colour "Depth needed" does.
     private func assessmentColor(_ assessment: String) -> Color {
         switch assessment {
         case "Solid":           return .success
         case "Starter needed":  return .danger
         case "Depth needed":    return .warning
-        case "Upgrade needed":  return .accentGold
+        case "Upgrade needed":  return .warning
         case "Aging":           return .accentBlue
         case "Priority":        return .danger
         default:                return .textTertiary
@@ -405,15 +423,9 @@ struct RosterView: View {
                     phase: career?.currentPhase
                 )
 
-                viewModePicker
-                    .padding(.horizontal)
-                    .padding(.vertical, 8)
+                controlStrip
 
                 if viewMode == .list {
-                    analysisModePicker
-                        .padding(.horizontal)
-                        .padding(.bottom, 6)
-
                     listContent
                 } else {
                     formationContent
@@ -525,6 +537,38 @@ struct RosterView: View {
         .accessibilityLabel("Injury report, \(injuryReportBadgeCount) item\(injuryReportBadgeCount == 1 ? "" : "s")")
     }
 
+    // MARK: - Control strip
+
+    /// The roster's one band of chrome: **what shape you are looking at**, and
+    /// **which columns are on**.
+    ///
+    /// It was two stacked bands, and between them they spent something like
+    /// 110 pt above the first player on a screen whose entire job is the
+    /// players. The first was a two-option segmented control handed the full
+    /// 1000 pt width of a portrait iPad — a binary switch drawn as a header
+    /// band. The second was a hand-rolled capsule strip under an
+    /// `ANALYSIS · OVERVIEW` ident that restated, in tracked caps, the one
+    /// capsule already filled blue four points beneath it.
+    ///
+    /// One line now. The shape switch takes the width a two-option control
+    /// actually needs and the lens strip takes the rest, which is also why the
+    /// strip passes no `title:` — `DSLensTabs` will happily draw the same
+    /// redundant ident, and the selected capsule *is* the title.
+    private var controlStrip: some View {
+        HStack(spacing: DSSpacing.md) {
+            viewModePicker
+                .frame(width: 280)
+
+            if viewMode == .list {
+                analysisLensTabs
+            } else {
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(.horizontal, DSSpacing.md)
+        .padding(.vertical, DSSpacing.xs)
+    }
+
     // MARK: - View Mode Picker
 
     private var viewModePicker: some View {
@@ -536,72 +580,28 @@ struct RosterView: View {
         .pickerStyle(.segmented)
     }
 
-    // MARK: - Analysis Mode Picker (#96, #98)
+    // MARK: - Analysis Lens (#96, #98)
 
-    private var analysisModePicker: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Image(systemName: "slider.horizontal.3")
-                    .font(.system(size: DSType.Size.caption, weight: .semibold))
-                    .foregroundStyle(Color.textTertiary)
-                Text("ANALYSIS")
-                    .font(.system(size: DSType.Size.caption, weight: .heavy))
-                    .foregroundStyle(Color.textTertiary)
-                    .tracking(0.5)
-                Text("·")
-                    .font(.system(size: DSType.Size.caption, weight: .heavy))
-                    .foregroundStyle(Color.textTertiary)
-                Text(analysisMode.label.uppercased())
-                    .font(.system(size: DSType.Size.caption, weight: .heavy))
-                    .foregroundStyle(Color.accentBlue)
-                    .tracking(0.5)
-                Spacer()
-            }
-            .padding(.horizontal, 4)
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(RosterAnalysisMode.allCases) { mode in
-                        Button {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                analysisMode = mode
-                            }
-                        } label: {
-                            HStack(spacing: 4) {
-                                Image(systemName: mode.icon)
-                                    .font(.system(size: DSType.Size.caption, weight: analysisMode == mode ? .bold : .regular))
-                                Text(mode.label)
-                                    .font(.caption)
-                                    .fontWeight(analysisMode == mode ? .bold : .medium)
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .foregroundStyle(analysisMode == mode ? Color.backgroundPrimary : Color.textSecondary)
-                            .background(
-                                analysisMode == mode ? Color.accentBlue : Color.backgroundTertiary,
-                                in: Capsule()
-                            )
-                            .overlay(
-                                Capsule()
-                                    .strokeBorder(
-                                        analysisMode == mode ? Color.accentBlue : Color.surfaceBorder,
-                                        lineWidth: analysisMode == mode ? 1.5 : 1
-                                    )
-                            )
-                            .shadow(
-                                color: analysisMode == mode ? Color.accentBlue.opacity(0.3) : .clear,
-                                radius: analysisMode == mode ? 4 : 0,
-                                y: analysisMode == mode ? 1 : 0
-                            )
-                        }
-                        .accessibilityLabel("Analysis mode: \(mode.label)\(analysisMode == mode ? ", selected" : "")")
-                        .accessibilityAddTraits(analysisMode == mode ? .isSelected : [])
-                    }
-                }
-                .padding(.horizontal, 1)
-                .padding(.vertical, 2)
-            }
-        }
+    /// The lens strip, on the shared control (`DSLensTabs`, `DSListRow.swift`).
+    ///
+    /// `DSLensTabs`' own documentation names this exact strip as one of the
+    /// three styles it exists to collapse — "the roster's analysis pills (with
+    /// a blue glow the board's do not have)" — and the glow was the tell: it
+    /// was the only capsule in the app carrying a coloured shadow, so the
+    /// roster's selected lens looked like a different kind of object from the
+    /// board's. The hand-rolled version also measured ~30 pt tall against
+    /// §2.12's 44 pt floor, which is the one number a lens strip cannot get
+    /// wrong: it is the control the user hits most often on this screen.
+    ///
+    /// Nothing about *what* the lenses do changes — same seven modes, same
+    /// `analysisMode` binding, same `analysisHeaderColumns` reading it.
+    private var analysisLensTabs: some View {
+        DSLensTabs(
+            selection: $analysisMode,
+            lenses: RosterAnalysisMode.allCases,
+            label: { $0.label },
+            icon: { $0.icon }
+        )
     }
 
     // MARK: - List Content
@@ -715,7 +715,7 @@ struct RosterView: View {
         .scrollContentBackground(.hidden)
         .listStyle(.insetGrouped)
         // insetGrouped's stock top inset and section gaps left a wide band of
-        // empty navy between the analysis pills and the first position group —
+        // empty navy between the control strip and the first position group —
         // roughly a third of a screen before any player was visible.
         .listSectionSpacing(12)
         .contentMargins(.top, 0, for: .scrollContent)
@@ -1726,161 +1726,161 @@ struct PositionGroupHeader: View {
         }
     }
 
+    /// **Title, facts, verdict** — in that order, at three different weights.
+    ///
+    /// The header used to be one `HStack` of ten children at one weight: the
+    /// group name, a "Biggest Need" capsule, the two graded readouts, two grey
+    /// rounded boxes (cap, starter ratio), a warn capsule (expiring), a bare
+    /// glyph-plus-number with no container at all (injuries), the staff verdict
+    /// and the review control. Six of those ten were *facts* dressed as chips,
+    /// which is why nothing on the line read as more important than anything
+    /// else — a chip is a container, and putting every fact in one says every
+    /// fact is a state.
+    ///
+    /// Three tiers now:
+    ///
+    ///   * **Title + facts** — `DSGroupRollup`, the shared group-header
+    ///     grammar (§2.2: "a position group on the roster and a tier on the
+    ///     board read as the same object at the same weight"). The cap and the
+    ///     starter ratio are prose in that line, because that is what they are.
+    ///   * **The verdict** — the starter and depth grades, still the largest
+    ///     type on the row. On a roster you return to a hundred times, the
+    ///     letter is the thing you scan for.
+    ///   * **The states** — capsules, one shape, only for things that are
+    ///     actually a state: biggest need, expiring, injured, the staff read,
+    ///     your own read.
     var body: some View {
         let g = grades
-        HStack(spacing: 8) {
-            // Group name
-            Text(group.name)
-                .font(.subheadline)
-                .fontWeight(.bold)
-                .foregroundStyle(Color.textPrimary)
+        HStack(spacing: DSSpacing.xs) {
+            // Title + the neutral facts. `DSGroupRollup` ends in its own
+            // `Spacer`, so everything after it is pushed to the trailing edge —
+            // which is the split this header wanted all along: who and what,
+            // left; how good and what is wrong, right.
+            DSGroupRollup(
+                title: group.name,
+                facts: rollupFacts,
+                tint: .textPrimary
+            )
 
-            if isWeakest {
-                Text("Biggest Need")
-                    .font(.system(size: DSType.Size.micro, weight: .bold))
-                    .foregroundStyle(Color.danger)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
-                    .background(Color.danger.opacity(0.15), in: Capsule())
-                    .overlay(Capsule().strokeBorder(Color.danger.opacity(0.4), lineWidth: 1))
-            }
+            gradeReadout(g)
 
-            Spacer()
-
-            // Starter grade / depth grade — prominent sizing.
-            //
-            // Spelled out, and with the average it was cut from beside it: "S:"
-            // and "D:" were the largest type on the row and the two labels on
-            // the screen that nothing expanded, and the letter alone could not
-            // be reconciled with the OVRs printed in the rows directly below.
-            HStack(spacing: 3) {
-                Text("Starters")
-                    .font(.system(size: DSType.Size.caption, weight: .semibold))
-                    .foregroundStyle(Color.textTertiary)
-                Text(g.starterGrade)
-                    .font(.system(size: DSType.Size.title3, weight: .black))
-                    .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(g.starterGrade))
-                Text("\(g.starterOVR) avg")
-                    .font(.system(size: DSType.Size.micro, weight: .semibold).monospacedDigit())
-                    .foregroundStyle(Color.textTertiary)
-                Text("·")
-                    .font(.system(size: DSType.Size.body))
-                    .foregroundStyle(Color.textTertiary)
-                Text("Depth")
-                    .font(.system(size: DSType.Size.caption, weight: .semibold))
-                    .foregroundStyle(Color.textTertiary)
-                Text(g.depthGrade)
-                    .font(.system(size: DSType.Size.title3, weight: .black))
-                    .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(g.depthGrade))
-                if g.depthGrade != PositionGradeCalculator.noDepthGrade {
-                    Text("\(g.depthOVR) avg")
-                        .font(.system(size: DSType.Size.micro, weight: .semibold).monospacedDigit())
-                        .foregroundStyle(Color.textTertiary)
-                }
-            }
-
-            // Development trend — drawn only once there is a real delta to draw.
-            // Styled as a data chip beside the live cap and expiring chips, the
+            // Development trend — drawn only once there is a real delta to
+            // draw. Styled as a state capsule like its neighbours, the
             // placeholder dash read as a measured "flat" verdict on every group
-            // in every season (see developmentTrend).
+            // in every season (see `developmentTrend`).
             let trend = developmentTrend
             if trend.delta != 0 {
-                Text(trend.label)
-                    .font(.system(size: DSType.Size.micro, weight: .bold).monospacedDigit())
-                    .foregroundStyle(trend.color)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
-                    .background(trend.color.opacity(0.12), in: Capsule())
-                    .overlay(Capsule().strokeBorder(trend.color.opacity(0.3), lineWidth: 0.5))
+                stateChip(trend.label, tint: trend.color)
                     .accessibilityLabel("Development trend \(trend.label)")
             }
 
-            // Cap allocation
-            Text(formattedCap)
-                .font(.caption2)
-                .fontWeight(.semibold)
-                .monospacedDigit()
-                .foregroundStyle(Color.textSecondary)
-                .padding(.horizontal, 5)
-                .padding(.vertical, 2)
-                .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
+            if isWeakest {
+                stateChip("Biggest Need", tint: .danger)
+            }
 
-            // Starter / total count. The bare ratio was the one chip here that
-            // named neither of its two numbers.
-            Text("\(starterCount) of \(players.count) starting")
-                .font(.system(size: DSType.Size.micro, weight: .semibold).monospacedDigit())
-                .foregroundStyle(Color.textTertiary)
-                .padding(.horizontal, 4)
-                .padding(.vertical, 2)
-                .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
-
-            // Expiring contracts
             if expiringCount > 0 {
-                Text("\(expiringCount) expiring")
-                    .font(.system(size: DSType.Size.micro, weight: .bold))
-                    .foregroundStyle(Color.warning)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 1)
-                    .background(Color.warning.opacity(0.15), in: Capsule())
+                stateChip("\(expiringCount) expiring", tint: .warning)
             }
 
-            // Injured count
             if injuredCount > 0 {
-                HStack(spacing: 2) {
-                    Image(systemName: "cross.circle.fill")
-                        .font(.caption2)
-                    Text("\(injuredCount)")
-                        .font(.caption2)
-                        .fontWeight(.medium)
-                }
-                .foregroundStyle(Color.danger)
+                stateChip("\(injuredCount) injured", glyph: "cross.circle.fill", tint: .danger)
             }
 
-            // Staff assessment badge
-            Text(staffLabel)
-                .font(.system(size: DSType.Size.micro, weight: .bold))
-                .foregroundStyle(staffColor)
-                .padding(.horizontal, 5)
-                .padding(.vertical, 2)
-                .background(staffColor.opacity(0.15), in: Capsule())
-                .overlay(Capsule().strokeBorder(staffColor.opacity(0.4), lineWidth: 1))
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
+            stateChip(staffLabel, tint: staffColor)
 
-            // Review button — shows own assessment or prompts review
+            // Review control — shows your own assessment, or invites one.
             if let own = ownAssessment, own != "none" {
-                Text(own)
-                    .font(.system(size: DSType.Size.micro, weight: .bold))
-                    .foregroundStyle(Self.ownAssessmentColor(own))
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
-                    .background(Self.ownAssessmentColor(own).opacity(0.15), in: Capsule())
-                    .overlay(Capsule().strokeBorder(Self.ownAssessmentColor(own).opacity(0.4), lineWidth: 1))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+                stateChip(own, tint: Self.ownAssessmentColor(own))
             } else {
-                HStack(spacing: 3) {
-                    Image(systemName: "square.and.pencil")
-                        .font(.system(size: DSType.Size.micro))
-                    Text("Review")
-                        .font(.system(size: DSType.Size.micro, weight: .semibold))
-                }
-                .foregroundStyle(Color.accentBlue)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3)
-                .background(Color.accentBlue.opacity(0.12), in: Capsule())
-                .overlay(Capsule().strokeBorder(Color.accentBlue.opacity(0.3), lineWidth: 1))
+                stateChip("Review", glyph: "square.and.pencil", tint: .accentBlue)
             }
         }
         .textCase(nil)
     }
 
+    /// The neutral facts, already formatted — `DSGroupRollup` does no
+    /// arithmetic. The starter ratio names both of its numbers because a bare
+    /// "3 / 7" was the one reading on this header that named neither.
+    private var rollupFacts: [String] {
+        [
+            "\(starterCount) of \(players.count) starting",
+            "\(formattedCap) cap"
+        ]
+    }
+
+    /// The group's two grades, spelled out and with the average each was cut
+    /// from beside it: `S:` and `D:` were the largest type on the row and the
+    /// two labels on the screen that nothing expanded, and the letter alone
+    /// could not be reconciled with the OVRs printed in the rows below it.
+    private func gradeReadout(
+        _ g: (starterGrade: String, depthGrade: String, starterOVR: Int, depthOVR: Int)
+    ) -> some View {
+        HStack(spacing: 3) {  // ds-lint:allow(spacing) label-to-value gaps inside one readout
+            Text("Starters")
+                .font(DSType.display(DSType.Size.caption, .semibold))
+                .foregroundStyle(Color.textTertiary)
+            Text(g.starterGrade)
+                .font(DSType.display(DSType.Size.title3, .black))
+                .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(g.starterGrade))
+            Text("\(g.starterOVR) avg")
+                .font(DSType.display(DSType.Size.caption, .semibold).monospacedDigit())
+                .foregroundStyle(Color.textTertiary)
+            Text("\u{00B7}")
+                .font(DSType.display(DSType.Size.caption, .semibold))
+                .foregroundStyle(Color.textTertiary)
+            Text("Depth")
+                .font(DSType.display(DSType.Size.caption, .semibold))
+                .foregroundStyle(Color.textTertiary)
+            Text(g.depthGrade)
+                .font(DSType.display(DSType.Size.title3, .black))
+                .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(g.depthGrade))
+            if g.depthGrade != PositionGradeCalculator.noDepthGrade {
+                Text("\(g.depthOVR) avg")
+                    .font(DSType.display(DSType.Size.caption, .semibold).monospacedDigit())
+                    .foregroundStyle(Color.textTertiary)
+            }
+        }
+        .lineLimit(1)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            "Starters grade \(g.starterGrade), \(g.starterOVR) average. "
+            + "Depth grade \(g.depthGrade)."
+        )
+    }
+
+    /// One state, one shape.
+    ///
+    /// Every tinted thing on this header goes through here, so "expiring",
+    /// "injured", the staff read and your own read cannot end up as four
+    /// different objects again. 11 pt display rather than the 10 pt text the
+    /// chips shipped at: 11 is the condensed voice's floor (P7's legibility
+    /// corollary) and these are the words that carry the row's verdict.
+    private func stateChip(_ text: String, glyph: String? = nil, tint: Color) -> some View {
+        HStack(spacing: 3) {  // ds-lint:allow(spacing) glyph-to-text gap inside one chip
+            if let glyph {
+                Image(systemName: glyph)
+                    .font(DSType.text(DSType.Size.caption, .semibold))
+            }
+            Text(text)
+                .font(DSType.display(DSType.Size.caption, .heavy))
+        }
+        .foregroundStyle(tint)
+        .lineLimit(1)
+        .minimumScaleFactor(0.7)
+        .padding(.horizontal, DSSpacing.xxs + 2)
+        .padding(.vertical, 2)
+        .background(tint.opacity(0.15), in: Capsule())
+        .overlay(Capsule().strokeBorder(tint.opacity(0.4), lineWidth: 1))
+    }
+
+    /// Mirrors `RosterView.assessmentColor` — same words, same ladder. Gold is
+    /// off this screen entirely (P5): the roster has no commit to spend it on.
     static func ownAssessmentColor(_ assessment: String) -> Color {
         switch assessment {
         case "Solid":           return .success
         case "Starter needed":  return .danger
         case "Depth needed":    return .warning
-        case "Upgrade needed":  return .accentGold
+        case "Upgrade needed":  return .warning
         case "Aging":           return .accentBlue
         case "Priority":        return .danger
         default:                return .textTertiary

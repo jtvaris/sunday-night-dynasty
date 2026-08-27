@@ -52,15 +52,17 @@ enum OwnerGoalsEngine {
 
     /// Generates 3–4 season goals tailored to the team's strength,
     /// the owner's personality, and the current career context.
+    ///
+    /// Which mandate the owner hands out comes from the club's RANK in the
+    /// league — see `rosterTier(team:career:)` for why the absolute OVR test
+    /// this used to run could never pick anything but the middle one.
     static func generateSeasonGoals(team: Team, owner: Owner, career: Career) -> [SeasonGoal] {
-        // S3 (TRADE_OVERHAUL_PLAN §4/§7.5): roster strength off the `teamID`
-        // query, one fetch per goal-generation pass (once a season / once per
-        // owner screen), never the stale `Team.players` relationship.
-        let avgOverall = averageOverall(roster: team.currentRoster())
+        let tier = rosterTier(team: team, career: career)
         var goals: [SeasonGoal] = []
 
-        if avgOverall > 75 {
-            // Good team — push for a championship
+        switch tier {
+        case .contender:
+            // Best rosters in the league — push for a championship
             goals.append(contenderPrimaryGoal(owner: owner))
             goals.append(
                 SeasonGoal(
@@ -80,7 +82,7 @@ enum OwnerGoalsEngine {
                 )
             )
 
-        } else if avgOverall >= 65 {
+        case .middle:
             // Middle-of-the-pack — playoffs are the realistic ceiling
             goals.append(
                 SeasonGoal(
@@ -108,8 +110,8 @@ enum OwnerGoalsEngine {
                 )
             )
 
-        } else {
-            // Rebuilding team — focus on development and stability
+        case .rebuilding:
+            // Bottom of the league — focus on development and stability
             if owner.prefersWinNow {
                 // Impatient owner still wants a win target
                 goals.append(
@@ -166,7 +168,7 @@ enum OwnerGoalsEngine {
         }
 
         // Win-now owners always want a stretch win-streak goal appended
-        if owner.prefersWinNow && avgOverall >= 65 {
+        if owner.prefersWinNow && tier != .rebuilding {
             goals.append(
                 SeasonGoal(
                     title: "Win 3 Straight",
@@ -202,6 +204,86 @@ enum OwnerGoalsEngine {
         return Array(goals.prefix(4))
     }
 
+    // MARK: - Roster Tier (TODO §5.6)
+
+    /// Which of the three mandates the owner hands out.
+    enum RosterTier {
+        /// Top fifth of the league — he wants a trophy.
+        case contender
+        /// The other twenty clubs — he wants January.
+        case middle
+        /// Bottom fifth — he wants the young men to play.
+        case rebuilding
+    }
+
+    /// The club's roster strength measured against the rest of the league.
+    ///
+    /// ## Why this is not an average-OVR threshold any more
+    ///
+    /// It used to be: `> 75` average OVR picked the contender mandate, `< 65`
+    /// picked the rebuild, and everything between got the playoff mandate.
+    /// Neither end was reachable. In the shipped 2026 league the best 53 men on
+    /// the best-stocked club average **74.3**, and the worst club's best 53
+    /// average **69.4** — so all 32 teams took the middle branch, every season,
+    /// for every owner. Four goal types (`superBowl`, `conference`,
+    /// `developRookies`, `reduceCapUsage`) were therefore generated for nobody,
+    /// which is also why the §5.6 real-standings work on `wonConference` /
+    /// `wonSuperBowl` had nothing to evaluate.
+    ///
+    /// A rank is the right measure anyway: an owner does not hold his roster up
+    /// against an absolute number, he holds it up against the clubs he has to
+    /// get past. It also survives a league whose OVR level drifts over twenty
+    /// seasons, which an absolute cut cannot.
+    ///
+    /// Costs ONE fetch of every rostered player in the save. Goal generation
+    /// runs once a season (`WeekAdvancer.startNewSeason`) and once per owner
+    /// screen that finds no persisted slate, so it is not on any per-frame or
+    /// per-player path — but do not call it from one.
+    static func rosterTier(team: Team, career: Career) -> RosterTier {
+        let strengths = leagueRosterStrength(team: team, career: career)
+
+        // No league to rank against — an in-memory league that was never
+        // inserted, or a save whose clubs have not been stocked yet. Fall back
+        // to the absolute read so the old behaviour still applies where the
+        // comparison genuinely cannot be made.
+        guard strengths.count >= 8, let own = strengths[team.id] else {
+            let average = averageOverall(roster: team.currentRoster())
+            if average > 75 { return .contender }
+            return average >= 65 ? .middle : .rebuilding
+        }
+
+        // 1-based rank, ties resolved in the club's favour.
+        let rank = strengths.values.filter { $0 > own }.count + 1
+        let band = max(1, strengths.count / 5)   // 6 of 32 at each end
+        if rank <= band { return .contender }
+        if rank > strengths.count - band { return .rebuilding }
+        return .middle
+    }
+
+    /// Average OVR of every club's rostered players, by team id.
+    ///
+    /// S3 (TRADE_OVERHAUL_PLAN §4/§7.5): read off the `teamID` query, never the
+    /// stale `Team.players` relationship — and as ONE league-wide fetch rather
+    /// than 32 calls to `Team.currentRoster()`. Practice-squad men carry
+    /// `teamID == nil` and so are correctly out of it; so are retirees, whose
+    /// `teamID` `PlayerRetirementEngine` clears.
+    private static func leagueRosterStrength(team: Team, career: Career) -> [UUID: Double] {
+        guard let context = team.modelContext else { return [:] }
+        let cid = career.id
+        let descriptor = FetchDescriptor<Player>(
+            predicate: #Predicate<Player> { $0.careerID == cid && $0.teamID != nil }
+        )
+        guard let players = try? context.fetch(descriptor) else { return [:] }
+
+        var totals: [UUID: (sum: Int, count: Int)] = [:]
+        for player in players {
+            guard let teamID = player.teamID else { continue }
+            let running = totals[teamID] ?? (sum: 0, count: 0)
+            totals[teamID] = (sum: running.sum + player.overall, count: running.count + 1)
+        }
+        return totals.compactMapValues { $0.count > 0 ? Double($0.sum) / Double($0.count) : nil }
+    }
+
     // MARK: - Progress Evaluation
 
     /// Re-evaluates each goal's progress against current team state and marks
@@ -226,6 +308,9 @@ enum OwnerGoalsEngine {
     /// - **Win streak** was `wins - losses`, which is not a streak at all: a
     ///   team alternating W/L all year reported a "3-game streak" at 10-7. Now
     ///   it is the longest actual run of consecutive wins in the game log.
+    /// - **Develop rookies** counted rookies at `overall >= 60` — a scouting
+    ///   grade, not the "meaningful snaps" the goal asks for, and true from the
+    ///   moment the draft ended. Now it is starts, off `gamesStartedThisSeason`.
     ///
     /// - Parameters:
     ///   - leagueTeams: All teams, when the caller already holds them. `nil`
@@ -294,7 +379,27 @@ enum OwnerGoalsEngine {
                 updated.isAchieved = won
 
             case .developRookies:
-                let rookieCount = roster.filter { $0.yearsPro <= 1 && $0.overall >= 60 }.count
+                // "Meaningful snaps", which is what the goal actually asks for.
+                // This used to be `overall >= 60`: a scouting verdict with no
+                // playing time in it at all, so a club could draft four 62-OVR
+                // rookies, bury every one of them on the bench, and be told in
+                // week 1 that it had developed three of them. #40's
+                // `gamesStartedThisSeason` is the real signal — credited
+                // league-wide from the lineup `WeekAdvancer` fields each week,
+                // and reset in `startNewSeason` alongside `Team.wins`, so both
+                // halves of the fraction below cover exactly this season.
+                let teamGames = team.wins + team.losses + team.ties
+                // A third of the club's games so far, minimum one. Deliberately
+                // NOT `DraftGradeEngine`'s 8-starts-a-season bar: that one asks
+                // whether a pick BECAME a starter over a career, and this goal
+                // asks whether the coach got him on the field this year — so a
+                // rookie handed the job in October has to count in the season he
+                // took it. The minimum is what stops the slate opening the
+                // season pre-achieved, when nobody has started anything yet.
+                let starterBar = max(1, teamGames / 3)
+                let rookieCount = roster.filter {
+                    $0.yearsPro <= 1 && $0.gamesStartedThisSeason >= starterBar
+                }.count
                 updated.progress = rookieCount
                 if let target = goal.target {
                     updated.isAchieved = rookieCount >= target

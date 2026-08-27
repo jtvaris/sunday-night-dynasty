@@ -144,4 +144,57 @@ final class Owner {
         self.gender = gender
         self.faceID = faceID
     }
+
+    // MARK: - Temperament reads
+
+    /// **How hard this owner leans on the cap when his club ranks its own
+    /// roster.** 1.0 is league-neutral; above it money weighs more, below it
+    /// less. Read by ``RosterCutEvaluator/keepScore(for:owner:)``.
+    ///
+    /// **Derived, never stored.** The four traits above are already the model
+    /// of the man — a `capWeighting` column would be a second opinion that
+    /// could drift from them and would need a migration to arrive. SwiftData
+    /// does not persist computed properties, so this is a read of the existing
+    /// row and every old save has it.
+    ///
+    /// **The wallet is the base and the archetype is the modifier**, which is
+    /// the shape `BudgetEngine.calculateCoachingBudget` already uses on these
+    /// same traits. The order matters here for a specific reason:
+    /// `OwnerArchetype.from` resolves `meddling` FIRST, so a tight-fisted
+    /// meddler reads as `.meddler` and his wallet vanishes from the badge
+    /// entirely. Deriving the lean from the badge alone would hand that owner a
+    /// league-average purse he demonstrably does not have; deriving it from
+    /// `spendingWillingness` and letting the badge modify keeps both readings.
+    ///
+    /// `prefersWinNow` is applied on its own rather than only through
+    /// `.winNowTycoon`, which fires only above spending 55. An owner who wants
+    /// the trophy this year and also counts his pennies still wants the trophy
+    /// this year, and releasing the best player in the building for cap room is
+    /// the opposite of that.
+    ///
+    /// `patience` and `meddling` are deliberately absent from the arithmetic.
+    /// Patience is about the COACH's seat — it is what
+    /// `OwnerPersonaEngine.jobSecurity` reads — and meddling is interference,
+    /// not thrift. Both already speak through the archetype, where they belong.
+    ///
+    /// Bounded to 0.25…1.75 so the extremes stay finite. Note that this bound
+    /// is not what keeps a star off the cut block: that is the ceiling on the
+    /// money TERM (`RosterCutEvaluator.moneyCeiling`), which binds no matter
+    /// how the multiplier lands.
+    var capReliefLean: Double {
+        // Spending 1 -> 1.70, 50 -> 1.00, 99 -> 0.30.
+        let wallet = 1.0 + (50.0 - Double(spendingWillingness)) / 70.0
+
+        let persona: Double = {
+            switch OwnerPersonaEngine.OwnerArchetype.from(self) {
+            case .pennyPincher:  return 1.15
+            case .winNowTycoon:  return 0.85
+            case .patientBuilder, .meddler: return 1.0
+            }
+        }()
+
+        let winNow = prefersWinNow ? 0.85 : 1.0
+
+        return min(1.75, max(0.25, wallet * persona * winNow))
+    }
 }

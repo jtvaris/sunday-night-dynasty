@@ -691,6 +691,17 @@ struct TradeView: View {
                 fairnessLabel(sending: youSend, receiving: youReceive)
             }
 
+            if let shelf = shelfLifeNote(offer) {
+                HStack(spacing: 6) {
+                    Image(systemName: "clock.fill")
+                        .font(.system(size: DSType.Size.micro))
+                    Text(shelf.text)
+                        .font(.system(size: DSType.Size.caption, weight: .semibold))
+                    Spacer()
+                }
+                .foregroundStyle(shelf.urgent ? Color.danger : Color.warning)
+            }
+
             HStack(alignment: .top, spacing: 16) {
                 offerAssetColumn(
                     title: "You Send",
@@ -758,6 +769,31 @@ struct TradeView: View {
             RoundedRectangle(cornerRadius: 12)
                 .fill(Color.backgroundTertiary)
         )
+    }
+
+    /// How long the club will hold this particular deal open.
+    ///
+    /// Wave 1.3: the Trade Center had exactly one deadline sentence and it lived
+    /// on the negotiation shelf (`TradeWindowRules.expiryNote`, which only knows
+    /// today's week), so five offers of five different ages all read the same
+    /// thing — and then the oldest of them was withdrawn with no warning at all.
+    /// The clock is per offer now, and `loadData` withdraws the offer on exactly
+    /// the number this line quotes.
+    ///
+    /// `nil` for an offer with no stamp (a save written before Wave 1.3), which
+    /// keeps its old no-clock behaviour rather than being labelled with a
+    /// deadline nothing enforces.
+    private func shelfLifeNote(_ offer: TradeProposal) -> (text: String, urgent: Bool)? {
+        guard offer.hasShelfLife else { return nil }
+        if let expiryWeek = TradeValueEngine.offerExpiryWeek(offer) {
+            switch expiryWeek - career.currentWeek {
+            case ..<1:  return ("Last week to act — they pull it when this week ends", true)
+            case 1:     return ("On the table through Week \(expiryWeek) — one week left", true)
+            default:    return ("On the table through Week \(expiryWeek)", false)
+            }
+        }
+        guard let phase = offer.offeredPhase else { return nil }
+        return ("On the table while the \(phase.displayName) window is open", false)
     }
 
     /// One side of an incoming offer. The layout moved to `TradeAssetViews` in
@@ -2085,6 +2121,37 @@ struct TradeView: View {
         try? modelContext.save()
     }
 
+    /// Receipt for offers that ran out their own shelf life while the user sat
+    /// on them (Wave 1.3). The deadline wipe already had one
+    /// (`InboxEngine.tradeOffersExpiredMessage`); this is the same courtesy for
+    /// the far commoner case of one club simply moving on.
+    private func withdrawnOffersMessage(_ offers: [TradeProposal]) -> InboxMessage {
+        let abbreviations = offers
+            .compactMap { offer in allTeams.first { $0.id == offer.offeringTeamID }?.abbreviation }
+            .sorted()
+        let who = abbreviations.isEmpty ? "The clubs involved" : abbreviations.joined(separator: ", ")
+        let one = offers.count == 1
+        let subject = one ? "A trade offer was withdrawn" : "\(offers.count) trade offers withdrawn"
+        return InboxMessage(
+            sender: .leagueOffice,
+            subject: subject,
+            body: """
+            We sat on \(one ? "a trade offer" : "\(offers.count) trade offers") long enough that \(who) \(one ? "has" : "have") taken \(one ? "it" : "them") back off the table.
+
+            Nothing stops us calling them ourselves. The package they were offering is gone, though — the next one gets priced fresh.
+
+            League Office
+            """,
+            date: InboxEngine.dateLabel(
+                week: career.currentWeek,
+                season: career.currentSeason,
+                phase: career.currentPhase
+            ),
+            category: .tradeOffer,
+            actionDestination: .trades
+        )
+    }
+
     /// Inbox notice for a completed trade (both user-initiated and accepted
     /// incoming offers).
     ///
@@ -2157,15 +2224,47 @@ struct TradeView: View {
         // R21: incoming offers are persisted on the career (generated weekly
         // by WeekAdvancer). Show only offers whose assets are still where the
         // offer assumes them to be, and prune the rest from storage.
+        //
+        // Wave 1.3 adds the second staleness rule. `isProposalStillValid` can
+        // only fire on a deal somebody else disturbed, so a package the user
+        // simply ignored used to be executable at its original price weeks
+        // later; `TradeValueEngine.offerHasLapsed` is the club taking it back.
+        // An offer the user is ALREADY talking about is exempt — an open thread
+        // is engagement, and it runs its own clock in
+        // `WeekAdvancer.advanceOpenTradeThreads`, so lapsing the card under a
+        // live conversation would withdraw a deal the GM is still negotiating.
+        let engagedOfferIDs = Set(
+            career.tradeThreads.filter { $0.status == .open }.compactMap(\.sourceOfferID)
+        )
         let stored = career.pendingTradeOffers
-        let valid = stored.filter {
-            TradeValueEngine.isProposalStillValid($0, allPlayers: allPlayers, allPicks: allPicks)
+        var lapsed: [TradeProposal] = []
+        let valid = stored.filter { offer in
+            guard TradeValueEngine.isProposalStillValid(
+                offer, allPlayers: allPlayers, allPicks: allPicks
+            ) else { return false }
+            guard !engagedOfferIDs.contains(offer.id) else { return true }
+            guard TradeValueEngine.offerHasLapsed(
+                offer,
+                season: career.currentSeason,
+                week: career.currentWeek,
+                phase: career.currentPhase
+            ) else { return true }
+            lapsed.append(offer)
+            return false
         }
         if valid.count != stored.count {
             career.pendingTradeOffers = valid
             try? modelContext.save()
         }
         incomingOffers = valid
+
+        // A receipt rather than a silent disappearance — the same courtesy
+        // `loadThreads` extends to an expired conversation. Safe to send from
+        // here: the lapsed rows were just pruned from storage, so the next
+        // `loadData` finds nothing to report.
+        if !lapsed.isEmpty {
+            deliver(withdrawnOffersMessage(lapsed))
+        }
 
         loadTradeHistory()
         loadThreads()

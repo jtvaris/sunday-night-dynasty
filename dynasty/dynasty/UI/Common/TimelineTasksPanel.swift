@@ -39,6 +39,44 @@ struct TimelineTasksPanel: View {
     /// How many upcoming phases (beyond current) to show fully expanded.
     private let upcomingPhaseCount = 3
 
+    // MARK: - The rail's measurements
+    //
+    // Three numbers, declared once, because every row in this panel is measured
+    // against them and they used to be typed in per row: the gutter shipped as
+    // 14 on the header, 14 on a phase row, 12 on the advance block and 6 on the
+    // wash behind the live phase, and the task list was indented by a flat 30 pt
+    // that matched none of them. The result was a column whose left edge moved
+    // four times between the top of the panel and the bottom of one phase.
+
+    /// The panel's width wherever it is mounted, and the width it lays itself
+    /// out for. Shared with the hub so the column and its contents cannot
+    /// disagree — at 280 the longest real task title ("Set game plan for your
+    /// opponent") wrapped, which made the list scan ragged.
+    static let railWidth: CGFloat = 300
+
+    /// The one horizontal gutter. Every row in the panel starts here.
+    private static let gutter: CGFloat = DSSpacing.sm
+
+    /// The timeline spine: the dot column's width plus the gap after it.
+    ///
+    /// Fixed rather than derived from each row's own glyph, because the glyphs
+    /// differ — an 18 pt live dot, a 16 pt future ring, a 14 pt check — and a
+    /// column sized by its content put three phase names on three different
+    /// left edges. Every dot column takes `dotColumn` and every block of text
+    /// under a phase is indented by the whole spine, so the task titles line up
+    /// under the phase title instead of landing 10 pt to the right of it.
+    private static let dotColumn: CGFloat = 18
+    private static let spine: CGFloat = dotColumn + DSSpacing.xs
+
+    /// Where any text nested under a phase header begins.
+    private static let nestedIndent: CGFloat = gutter + spine
+
+    /// A task row's leading status-mark column. Same reason as `dotColumn`: the
+    /// four marks are a 14 pt check, an 11 pt padlock and two 10 pt discs, so a
+    /// column sized by its content walked the task titles back and forth by 4 pt
+    /// from row to row down a list where every title starts with a verb.
+    private static let statusColumn: CGFloat = 14
+
     /// Completed phases are collapsed behind one disclosure row by default.
     /// Expanded, twelve struck-through rows ate most of the sidebar in Week 1
     /// and pushed the live phase (the only actionable part) below the fold.
@@ -78,13 +116,28 @@ struct TimelineTasksPanel: View {
 
     // MARK: - Body
 
+    /// **Three decks, and the middle one is the only one that scrolls.**
+    ///
+    /// The advance button used to sit inside the scroll, between the live phase
+    /// and the previews of the phases after it. A game week's list is six rows
+    /// deep and every unfinished row carries a four-line sentence under it, so
+    /// on a 1032 pt portrait iPad the season's primary progression control — and
+    /// the footnote that says advancing will sim the user's own game — were
+    /// below the fold on the screen the player spends the season in. The panel's
+    /// own header comment already called that button "the one unmissable thing"
+    /// in the column, and a QA pass twice recorded "the week will not advance"
+    /// against a control that was simply off screen.
+    ///
+    /// The list keeps everything it had, in the order it had it; only the button
+    /// left the scroll. The previews and the bracket sit under where it used to
+    /// be, which is where they were.
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Panel header
             panelHeader
-                .padding(.horizontal, 14)
-                .padding(.top, 12)
-                .padding(.bottom, 8)
+                .padding(.horizontal, Self.gutter)
+                .padding(.top, DSSpacing.sm)
+                .padding(.bottom, DSSpacing.xs)
 
             Divider().overlay(Color.surfaceBorder.opacity(0.6))
 
@@ -104,12 +157,6 @@ struct TimelineTasksPanel: View {
                     // Current phase (expanded with real tasks)
                     currentPhaseSection
 
-                    // Advance button (full width within panel)
-                    advanceSection
-                        .padding(.horizontal, 12)
-                        .padding(.top, 12)
-                        .padding(.bottom, 10)
-
                     // Upcoming phases (expanded with preview tasks)
                     ForEach(Array(upcomingPhaseTasks.enumerated()), id: \.element.phase) { index, entry in
                         upcomingPhaseSection(entry, isLast: index == upcomingPhaseTasks.count - 1)
@@ -127,10 +174,29 @@ struct TimelineTasksPanel: View {
                         postseasonSection(postseason)
                     }
                 }
-                .padding(.bottom, 16)
+                .padding(.top, DSSpacing.xs)
+                .padding(.bottom, DSSpacing.md)
             }
+
+            Divider().overlay(Color.surfaceBorder.opacity(0.6))
+
+            // The commit, pinned. Always the last thing down the column and
+            // always on screen, whatever the list above it is doing.
+            //
+            // Painted on the PAGE colour rather than the rail's card surface,
+            // which is what makes it a footer bar instead of a button floating
+            // at the bottom of a void. On a 1376 pt portrait iPad a short phase
+            // list leaves several hundred points between the last row and this
+            // deck; recessed and ruled off, that gap reads as "the list ended",
+            // which is what it is.
+            advanceSection
+                .padding(.horizontal, Self.gutter)
+                .padding(.top, DSSpacing.sm)
+                .padding(.bottom, DSSpacing.sm)
+                .frame(maxWidth: .infinity)
+                .background(Color.backgroundPrimary)
         }
-        .frame(minWidth: 300)
+        .frame(minWidth: Self.railWidth)
         .background(Color.backgroundSecondary)
         // Two doors into one loader: the first mount (and any change made while
         // the rail was off screen) and the change made while it is on it.
@@ -141,17 +207,17 @@ struct TimelineTasksPanel: View {
     // MARK: - Panel Header
 
     private var panelHeader: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: DSSpacing.xs) {
             // Grey, not gold. This is a standing label — it says the same word
             // all season — and it was the first of ten gold objects down a
             // column whose one unmissable thing is meant to be the advance
             // button. Gold is reserved for the live phase and the button.
             Image(systemName: "list.clipboard.fill")
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: DSType.Size.body, weight: .semibold))
                 .foregroundStyle(Color.textSecondary)
 
             Text("YOUR \(seasonLabel)")
-                .font(.system(size: 14, weight: .bold))
+                .font(.system(size: DSType.Size.body, weight: .bold))
                 .foregroundStyle(Color.textSecondary)
                 .textCase(.uppercase)
                 .tracking(0.5)
@@ -175,7 +241,7 @@ struct TimelineTasksPanel: View {
             let progress = Self.taskProgress(tasks)
             let anyRequired = Self.actionableTasks(tasks).contains { $0.isRequired }
             Text("\(progress.done)/\(progress.total) \(anyRequired ? "tasks" : "optional")")
-                .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                .font(.system(size: DSType.Size.caption, weight: .semibold).monospacedDigit())
                 .foregroundStyle(Color.textSecondary)
         }
     }
@@ -220,19 +286,20 @@ struct TimelineTasksPanel: View {
                 showCompletedPhases.toggle()
             }
         } label: {
-            HStack(spacing: 10) {
+            HStack(spacing: DSSpacing.xs) {
                 VStack(spacing: 0) {
                     Color.clear.frame(width: 2, height: 6)
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 14))
+                        .font(.system(size: DSType.Size.body))
                         .foregroundStyle(Color.success.opacity(0.7))
                     Rectangle()
                         .fill(Color.textTertiary.opacity(0.3))
                         .frame(width: 2, height: 6)
                 }
+                .frame(width: Self.dotColumn)
 
                 Text("\(completedPhasesLabel) (\(pastPhases.count))")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: DSType.Size.footnote, weight: .semibold))
                     .foregroundStyle(Color.textSecondary)
 
                 Spacer()
@@ -241,8 +308,8 @@ struct TimelineTasksPanel: View {
                     .font(.system(size: DSType.Size.caption, weight: .bold))
                     .foregroundStyle(Color.textTertiary)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 6)
+            .padding(.horizontal, Self.gutter)
+            .padding(.vertical, DSSpacing.xs)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -268,7 +335,7 @@ struct TimelineTasksPanel: View {
     }
 
     private func pastPhaseRow(_ entry: (phase: SeasonPhase, name: String)) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: DSSpacing.xs) {
             // Vertical timeline connector
             VStack(spacing: 0) {
                 Rectangle()
@@ -276,16 +343,17 @@ struct TimelineTasksPanel: View {
                     .frame(width: 2, height: 10)
 
                 Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 14))
+                    .font(.system(size: DSType.Size.body))
                     .foregroundStyle(Color.textTertiaryReadable)
 
                 Rectangle()
                     .fill(Color.textTertiary.opacity(0.3))
                     .frame(width: 2, height: 10)
             }
+            .frame(width: Self.dotColumn)
 
             Text(entry.name)
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: DSType.Size.footnote, weight: .medium))
                 .foregroundStyle(Color.textTertiary)
                 .strikethrough(true, color: Color.textTertiary.opacity(0.5))
 
@@ -295,8 +363,8 @@ struct TimelineTasksPanel: View {
                 .font(.system(size: DSType.Size.caption, weight: .semibold))
                 .foregroundStyle(Color.textTertiaryReadable)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 2)
+        .padding(.horizontal, Self.gutter)
+        .padding(.vertical, 2)  // ds-lint:allow(spacing) struck-through history: a collapsed list of twelve rows, not a list of steps
         .opacity(0.85)
     }
 
@@ -305,7 +373,7 @@ struct TimelineTasksPanel: View {
     private var currentPhaseSection: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Phase header row
-            HStack(spacing: 10) {
+            HStack(spacing: DSSpacing.xs) {
                 // Timeline dot
                 VStack(spacing: 0) {
                     if currentIndex > 0 {
@@ -318,7 +386,7 @@ struct TimelineTasksPanel: View {
 
                     Circle()
                         .fill(Color.accentGold)
-                        .frame(width: 18, height: 18)
+                        .frame(width: Self.dotColumn, height: Self.dotColumn)
                         .overlay(
                             Image(systemName: Self.phaseIcon(career.currentPhase))
                                 .font(.system(size: DSType.Size.micro, weight: .bold))
@@ -329,9 +397,10 @@ struct TimelineTasksPanel: View {
                         .fill(Color.accentGold.opacity(0.5))
                         .frame(width: 2, height: 8)
                 }
+                .frame(width: Self.dotColumn)
 
-                Text(Self.phaseName(career.currentPhase))
-                    .font(.system(size: 14, weight: .heavy))
+                Text(currentPhaseTitle)
+                    .font(.system(size: DSType.Size.body, weight: .heavy))
                     .foregroundStyle(Color.accentGold)
                     .textCase(.uppercase)
 
@@ -340,16 +409,16 @@ struct TimelineTasksPanel: View {
                 Text("NOW")
                     .font(.system(size: DSType.Size.caption, weight: .black))
                     .foregroundStyle(Color.backgroundPrimary)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
+                    .padding(.horizontal, DSSpacing.xxs)
+                    .padding(.vertical, 2)  // ds-lint:allow(spacing) the NOW pill must not grow the phase row
                     .background(Capsule().fill(Color.accentGold))
 
                 Text(Self.phaseDate(career.currentPhase))
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: DSType.Size.caption, weight: .medium))
                     .foregroundStyle(Color.textSecondary)
             }
-            .padding(.horizontal, 14)
-            .padding(.top, 8)
+            .padding(.horizontal, Self.gutter)
+            .padding(.top, DSSpacing.xs)
 
             // Group caption, replacing the "─ Regular Season ─" pseudo-task that
             // `TaskGenerator` pins to the top of every list. Rendered as a task
@@ -357,12 +426,12 @@ struct TimelineTasksPanel: View {
             // completed — and inside the TRADE DEADLINE / PLAYOFFS groups it
             // looked like a stray "Regular Season" item in the wrong phase.
             Text(groupCaption(for: career.currentPhase))
-                .font(.system(size: 10, weight: .semibold))
+                .font(.system(size: DSType.Size.micro, weight: .semibold))
                 .foregroundStyle(Color.textTertiary)
                 .textCase(.uppercase)
                 .tracking(0.4)
-                .padding(.leading, 30)
-                .padding(.top, 4)
+                .padding(.leading, Self.nestedIndent)
+                .padding(.top, DSSpacing.xxs)
 
             // Task rows for current phase
             VStack(spacing: 0) {
@@ -385,16 +454,46 @@ struct TimelineTasksPanel: View {
                     currentTaskRow(task, isRequired: task.isRequired, isNext: task.id == nextID)
                 }
             }
-            .padding(.leading, 30) // Align with text after timeline dot
-            .padding(.trailing, 10)
-            .padding(.top, 4)
-            .padding(.bottom, 4)
+            // The whole spine: the list hangs off the phase title's own left
+            // edge. The flat 30 it replaces sat 8 pt short of that and 9 pt wide
+            // of the connector line, so the block belonged to neither.
+            //
+            // It costs the titles 8 pt of measure and buys back 2 on the
+            // trailing side — a net 6 of ~212, at `lineLimit(3)`, where the
+            // overflow is a wrap and not a clip.
+            .padding(.leading, Self.nestedIndent)
+            .padding(.trailing, DSSpacing.xs)
+            .padding(.top, DSSpacing.xxs)
+            .padding(.bottom, DSSpacing.xxs)
         }
         .background(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: DSCornerRadius.inline)
                 .fill(Color.accentGold.opacity(0.04))
-                .padding(.horizontal, 6)
+                .padding(.horizontal, DSSpacing.xxs)
         )
+    }
+
+    /// **What the live row is called** — the WEEK during the season, the round
+    /// in the bracket, the phase everywhere else.
+    ///
+    /// `SeasonPhase.regularSeason` covers eighteen weeks and five months, so the
+    /// header over a list of week-scoped steps ("Set game plan for Seattle")
+    /// read "REGULAR SEASON · SEP–DEC" from kickoff to New Year — a label that
+    /// never moved above a list that changed every week. The unit the player
+    /// lives in is the week, which is the same ruling the season band is built
+    /// on, so the rail names it too.
+    ///
+    /// The round name is `SeasonWeekBand`'s, not a second opinion: the band's
+    /// postseason tail and this header would otherwise disagree about January,
+    /// one saying DIVISIONAL and the other PLAYOFFS. `.tradeDeadline` keeps its
+    /// own name — it is one week, and its name is the only thing that makes it
+    /// different from the week before it.
+    private var currentPhaseTitle: String {
+        switch career.currentPhase {
+        case .regularSeason: return "Week \(career.currentWeek)"
+        case .playoffs:      return SeasonWeekBand.playoffRoundName(week: career.currentWeek)
+        default:             return Self.phaseName(career.currentPhase)
+        }
     }
 
     /// One task row.
@@ -428,14 +527,14 @@ struct TimelineTasksPanel: View {
                     onTaskSelected(task.destination)
                 }
             } label: {
-                HStack(spacing: 8) {
+                HStack(spacing: DSSpacing.xs) {
                     // Status dot
                     taskStatusIcon(task, isRequired: isRequired, isLocked: locked)
 
                     // Task text. Baseline alignment keeps the status pill on the
                     // title's *first* line — centered, it floated mid-block on a
                     // title that wrapped, reading as if it belonged to neither line.
-                    HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    HStack(alignment: .firstTextBaseline, spacing: DSSpacing.xxs) {
                         Text(task.title)
                             .font(.system(size: DSType.Size.body, weight: done ? .regular : (locked ? .regular : .medium)))
                             .foregroundStyle(done ? Color.textTertiary : (locked ? Color.textTertiary : Color.textPrimary))
@@ -486,7 +585,12 @@ struct TimelineTasksPanel: View {
                             .foregroundStyle(Color.textTertiary)
                     }
                 }
-                .padding(.vertical, 5)
+                // 6 not 5: with the sentence underneath, the tappable band
+                // measures ~34 pt. §2.12's 44 pt row is still not met and cannot
+                // be met here without pushing two steps of a six-step week off
+                // the fold — reaching it needs the detail sentence to become a
+                // disclosure, which is a behaviour change, not a padding change.
+                .padding(.vertical, DSSpacing.xxs + 2)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -501,7 +605,7 @@ struct TimelineTasksPanel: View {
             // "…and here is the thing to read it against" beside the sentence
             // it belongs to.
             if !done {
-                HStack(alignment: .top, spacing: 6) {
+                HStack(alignment: .top, spacing: DSSpacing.xxs) {
                     // Four, not two. Several of these sentences END on the one
                     // clause that makes them actionable — "…then confirm the
                     // review on the Schemes tab" — and at two lines a 300 pt
@@ -510,28 +614,36 @@ struct TimelineTasksPanel: View {
                     // sentence is short still draws one line; only the long
                     // ones grow.
                     Text(detailLine(for: task, isRequired: isRequired, locked: locked))
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: DSType.Size.micro, weight: .medium))
                         .foregroundStyle(Color.textTertiaryReadable)
                         .lineLimit(4)
                         .fixedSize(horizontal: false, vertical: true)
 
                     Spacer(minLength: 2)
 
+                    // **Grey, not gold.** The chip is the row's SECONDARY move
+                    // by definition — the reference screen the decision is made
+                    // against, never the decision — and a six-step week drew six
+                    // of them in the same hue as the one control the column
+                    // exists to sell. Gold is left to three things down this
+                    // rail: where the club is standing, the NEXT step, and the
+                    // advance. The chip keeps its outline, which is what says it
+                    // is a control at all.
                     if let secondary {
                         Button {
                             onTaskSelected(secondary.destination)
                         } label: {
-                            HStack(spacing: 3) {
+                            HStack(spacing: 3) {  // ds-lint:allow(spacing) glyph-to-word inside a 20 pt chip
                                 Image(systemName: secondary.icon)
-                                    .font(.system(size: 10, weight: .semibold))
+                                    .font(.system(size: DSType.Size.micro, weight: .semibold))
                                 Text(secondary.label)
-                                    .font(.system(size: 10, weight: .semibold))
+                                    .font(.system(size: DSType.Size.micro, weight: .semibold))
                             }
-                            .foregroundStyle(Color.accentGold)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 3)
+                            .foregroundStyle(Color.textSecondary)
+                            .padding(.horizontal, DSSpacing.xs)
+                            .padding(.vertical, DSSpacing.xxs)
                             .background(
-                                Capsule().strokeBorder(Color.accentGold.opacity(0.35), lineWidth: 1)
+                                Capsule().strokeBorder(Color.surfaceBorder, lineWidth: 1)
                             )
                             .contentShape(Capsule())
                         }
@@ -540,9 +652,9 @@ struct TimelineTasksPanel: View {
                         .accessibilityLabel("\(secondary.label), reference for \(task.title)")
                     }
                 }
-                .padding(.leading, 18)
+                .padding(.leading, Self.statusColumn + DSSpacing.xs)
                 .padding(.trailing, 2)
-                .padding(.bottom, 4)
+                .padding(.bottom, DSSpacing.xxs)
             }
         }
         .opacity(done ? 0.55 : (locked ? 0.45 : 1.0))
@@ -646,36 +758,39 @@ struct TimelineTasksPanel: View {
 
     @ViewBuilder
     private func taskStatusIcon(_ task: GameTask, isRequired: Bool, isLocked: Bool = false) -> some View {
-        if task.status == .done {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 14))
-                .foregroundStyle(Color.success)
-        } else if isLocked {
-            Image(systemName: "lock.fill")
-                .font(.system(size: 11))
-                .foregroundStyle(Color.textTertiary)
-        } else if task.status == .inProgress {
-            Image(systemName: "circle.dotted")
-                .font(.system(size: 14))
-                .foregroundStyle(Color.accentGold)
-        } else if isRequired {
-            Circle()
-                .fill(Color.danger)
-                .frame(width: 10, height: 10)
-        } else {
-            Circle()
-                .strokeBorder(Color.textTertiary, lineWidth: 1.5)
-                .frame(width: 10, height: 10)
+        Group {
+            if task.status == .done {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: DSType.Size.body))
+                    .foregroundStyle(Color.success)
+            } else if isLocked {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: DSType.Size.caption))
+                    .foregroundStyle(Color.textTertiary)
+            } else if task.status == .inProgress {
+                Image(systemName: "circle.dotted")
+                    .font(.system(size: DSType.Size.body))
+                    .foregroundStyle(Color.accentGold)
+            } else if isRequired {
+                Circle()
+                    .fill(Color.danger)
+                    .frame(width: 10, height: 10)  // ds-lint:allow(spacing) status disc, sized against the 14 pt check beside it
+            } else {
+                Circle()
+                    .strokeBorder(Color.textTertiary, lineWidth: 1.5)
+                    .frame(width: 10, height: 10)  // ds-lint:allow(spacing) status disc, sized against the 14 pt check beside it
+            }
         }
+        .frame(width: Self.statusColumn)
     }
 
     // MARK: - Advance Section
 
     private var advanceSection: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: DSSpacing.xs) {
             if !canAdvance {
                 let count = TaskGenerator.incompleteRequiredCount(in: tasks)
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: DSSpacing.xxs) {
                     // Only claim the task list is the blocker when it actually
                     // is. A zero-count sentence over a disabled button is worse
                     // than silence — it sends the user hunting through a list
@@ -693,23 +808,23 @@ struct TimelineTasksPanel: View {
                             "Required: \(blocking.title)",
                             systemImage: "exclamationmark.triangle.fill"
                         )
-                        .font(.system(size: 12, weight: .heavy))
-                        .foregroundStyle(Color.danger)
+                        .font(.system(size: DSType.Size.footnote, weight: .heavy))
+                        .foregroundStyle(Color.dangerText)
                         .fixedSize(horizontal: false, vertical: true)
 
                         if count > 1 {
                             Text("\(count - 1) more required task\(count == 2 ? "" : "s") after it.")
-                                .font(.system(size: 11))
+                                .font(.system(size: DSType.Size.caption))
                                 .foregroundStyle(Color.textSecondary)
                         }
                     }
 
                     if let blocker = advanceBlocker {
                         Label(blocker.title, systemImage: "exclamationmark.octagon.fill")
-                            .font(.system(size: 12, weight: .heavy))
-                            .foregroundStyle(Color.danger)
+                            .font(.system(size: DSType.Size.footnote, weight: .heavy))
+                            .foregroundStyle(Color.dangerText)
                         Text(blocker.detail)
-                            .font(.system(size: 11))
+                            .font(.system(size: DSType.Size.caption))
                             .foregroundStyle(Color.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -727,20 +842,19 @@ struct TimelineTasksPanel: View {
                 guard canAdvance else { return }
                 onAdvance()
             } label: {
-                HStack(spacing: 8) {
+                HStack(spacing: DSSpacing.xs) {
                     Image(systemName: "chevron.right.2")
                         .font(.system(size: DSType.Size.body, weight: .bold))
                     Text(advanceButtonLabel)
-                        .font(.system(size: 14, weight: .bold))
+                        .font(.system(size: DSType.Size.body, weight: .bold))
                 }
                 .foregroundStyle(advanceForeground)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
+                .frame(maxWidth: .infinity, minHeight: 44)
                 .background(
-                    RoundedRectangle(cornerRadius: 10)
+                    RoundedRectangle(cornerRadius: DSCornerRadius.card)
                         .fill(advanceFill)
                         .overlay(
-                            RoundedRectangle(cornerRadius: 10)
+                            RoundedRectangle(cornerRadius: DSCornerRadius.card)
                                 .strokeBorder(
                                     isSecondaryAdvance ? Color.accentGold.opacity(0.55) : Color.clear,
                                     lineWidth: 1.5
@@ -768,12 +882,19 @@ struct TimelineTasksPanel: View {
 
             // Honest footnote for the secondary state: the user is one tap away
             // from having their own game played for them.
+            //
+            // `textSecondary` at the 11 pt caption step, not 10 pt tertiary. It
+            // is the whole answer to "what happens if I skip this", it sits
+            // directly under the control that does it, and it was drawn in the
+            // dimmest ink on the screen — quieter than the struck-through list
+            // of phases that finished months ago.
             if isSecondaryAdvance {
                 Label("Your game is still unplayed — advancing sims it.",
                       systemImage: "info.circle")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(Color.textTertiary)
+                    .font(.system(size: DSType.Size.caption, weight: .medium))
+                    .foregroundStyle(Color.textSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -782,8 +903,14 @@ struct TimelineTasksPanel: View {
     /// still on the board and "Coach the Game" owns the primary slot.
     private var isSecondaryAdvance: Bool { canAdvance && !advanceIsPrimary }
 
+    /// `controlDisabled`, not `backgroundTertiary`: §2.12 names one fill for a
+    /// genuinely disabled control and this is it. The difference is the whole
+    /// point of the token — `backgroundTertiary` is two steps up from the footer
+    /// deck it now sits on and reads as a live control at a glance, while
+    /// `controlDisabled` barely lifts off it. Pinned, this button is on screen
+    /// for the whole of a blocked phase, so looking disabled is most of its job.
     private var advanceFill: Color {
-        guard canAdvance else { return Color.backgroundTertiary }
+        guard canAdvance else { return Color.controlDisabled }
         return advanceIsPrimary ? Color.accentGold : Color.accentGold.opacity(0.10)
     }
 
@@ -897,7 +1024,7 @@ struct TimelineTasksPanel: View {
     private func upcomingPhaseSection(_ entry: (phase: SeasonPhase, name: String, date: String, tasks: [GameTask]), isLast: Bool) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             // Phase header
-            HStack(spacing: 10) {
+            HStack(spacing: DSSpacing.xs) {
                 // Timeline connector
                 VStack(spacing: 0) {
                     Rectangle()
@@ -906,7 +1033,7 @@ struct TimelineTasksPanel: View {
 
                     Circle()
                         .strokeBorder(Color.textTertiary.opacity(0.4), lineWidth: 1.5)
-                        .frame(width: 16, height: 16)
+                        .frame(width: 16, height: 16)  // ds-lint:allow(spacing) hollow future ring, one point inside the live dot
 
                     if !isLast || remainingFutureCount > 0 {
                         Rectangle()
@@ -916,6 +1043,7 @@ struct TimelineTasksPanel: View {
                         Color.clear.frame(width: 2, height: 8)
                     }
                 }
+                .frame(width: Self.dotColumn)
 
                 Text(entry.name)
                     .font(.system(size: DSType.Size.body, weight: .semibold))
@@ -925,53 +1053,77 @@ struct TimelineTasksPanel: View {
                 Spacer()
 
                 Text(entry.date)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: DSType.Size.caption, weight: .medium))
                     .foregroundStyle(Color.textTertiary)
             }
-            .padding(.horizontal, 14)
-            .padding(.top, 6)
+            .padding(.horizontal, Self.gutter)
+            .padding(.top, DSSpacing.xs)
 
             Text(groupCaption(for: entry.phase))
                 .font(.system(size: DSType.Size.caption, weight: .semibold))
                 .foregroundStyle(Color.textTertiary)
                 .textCase(.uppercase)
                 .tracking(0.4)
-                .padding(.leading, 30)
+                .padding(.leading, Self.nestedIndent)
                 .padding(.top, 2)
 
             // Preview task rows (dimmed) — banner row stripped, see
             // `actionableTasks`.
-            VStack(spacing: 0) {
-                ForEach(Self.actionableTasks(entry.tasks)) { task in
-                    previewTaskRow(task)
+            VStack(alignment: .leading, spacing: 0) {
+                let preview = Self.actionableTasks(entry.tasks)
+                if preview.isEmpty {
+                    // **Says why it is empty.** Inside the regular-season group
+                    // a preview is deliberately only what the phase ADDS to the
+                    // weekly list (see `upcomingPhaseTasks`), and a deadline week
+                    // that adds nothing left a header, a caption and then a gap —
+                    // which reads as a list that failed to load rather than as a
+                    // week that asks for the same seven things this one does.
+                    Text(emptyPreviewLine(for: entry.phase))
+                        .font(.system(size: DSType.Size.footnote))
+                        .foregroundStyle(Color.textTertiary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.vertical, DSSpacing.xxs)
+                } else {
+                    ForEach(preview) { task in
+                        previewTaskRow(task)
+                    }
                 }
             }
-            .padding(.leading, 30)
-            .padding(.trailing, 10)
+            .padding(.leading, Self.nestedIndent)
+            .padding(.trailing, DSSpacing.xs)
             .padding(.top, 2)
             .padding(.bottom, 2)
         }
         .opacity(0.55)
     }
 
+    /// Why an upcoming phase drew no preview rows.
+    private func emptyPreviewLine(for phase: SeasonPhase) -> String {
+        phase.group == .regularSeason
+            ? "Same weekly list \u{2014} nothing new to prepare"
+            : "No steps to preview yet"
+    }
+
     private func previewTaskRow(_ task: GameTask) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: DSSpacing.xs) {
             Circle()
                 .strokeBorder(Color.textTertiary.opacity(0.5), lineWidth: 1)
-                .frame(width: 9, height: 9)
+                .frame(width: 9, height: 9)  // ds-lint:allow(spacing) preview disc, one step under the live list's 10 pt
+                .frame(width: Self.statusColumn)
 
             // Two lines: at one, a 300 pt rail was clipping four characters off
             // "Read the Showcase & declaration report" — a preview row that
             // costs a second line only when the title actually needs one.
             Text(task.title)
-                .font(.system(size: 12, weight: .regular))
+                .font(.system(size: DSType.Size.footnote, weight: .regular))
                 .foregroundStyle(Color.textSecondary)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
 
             Spacer()
         }
-        .padding(.vertical, 3)
+        .padding(.vertical, 3)  // ds-lint:allow(spacing) dimmed preview: half the live row's rhythm, on purpose
     }
 
     // MARK: - Remaining Future Phases
@@ -983,24 +1135,25 @@ struct TimelineTasksPanel: View {
     }
 
     private var remainingPhasesIndicator: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: DSSpacing.xs) {
             VStack(spacing: 0) {
                 Rectangle()
                     .fill(Color.textTertiary.opacity(0.15))
                     .frame(width: 2, height: 12)
                 Circle()
                     .fill(Color.textTertiary.opacity(0.2))
-                    .frame(width: 6, height: 6)
+                    .frame(width: 6, height: 6)  // ds-lint:allow(spacing) the spine's terminal dot, smallest mark on the rail
             }
+            .frame(width: Self.dotColumn)
 
             Text("+ \(remainingFutureCount) more phase\(remainingFutureCount == 1 ? "" : "s")")
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: DSType.Size.caption, weight: .medium))
                 .foregroundStyle(Color.textTertiaryReadable)
 
             Spacer()
         }
-        .padding(.horizontal, 14)
-        .padding(.top, 8)
+        .padding(.horizontal, Self.gutter)
+        .padding(.top, DSSpacing.xs)
     }
 
     // MARK: - Postseason Bracket
@@ -1094,17 +1247,17 @@ struct TimelineTasksPanel: View {
         VStack(alignment: .leading, spacing: 0) {
             Divider()
                 .overlay(Color.surfaceBorder.opacity(0.6))
-                .padding(.top, 14)
+                .padding(.top, DSSpacing.md)
 
             // Deliberately the same object as `panelHeader`: two panels stacked
             // in one 300 pt rail only read as siblings if their headers do.
-            HStack(spacing: 8) {
+            HStack(spacing: DSSpacing.xs) {
                 Image(systemName: "trophy.fill")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: DSType.Size.body, weight: .semibold))
                     .foregroundStyle(Color.textSecondary)
 
                 Text("THE BRACKET")
-                    .font(.system(size: 14, weight: .bold))
+                    .font(.system(size: DSType.Size.body, weight: .bold))
                     .foregroundStyle(Color.textSecondary)
                     .textCase(.uppercase)
                     .tracking(0.5)
@@ -1115,20 +1268,20 @@ struct TimelineTasksPanel: View {
                 // (see `panelHeader`): a bare figure in a column that also
                 // prints seeds and scores is a number with no noun.
                 Text("\(bracket.clubsLeft) alive")
-                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                    .font(.system(size: DSType.Size.caption, weight: .semibold).monospacedDigit())
                     .foregroundStyle(Color.textSecondary)
             }
-            .padding(.horizontal, 14)
-            .padding(.top, 12)
+            .padding(.horizontal, Self.gutter)
+            .padding(.top, DSSpacing.sm)
 
             // Drawn only when the user is OUT — see `PostseasonBracket.userLine`.
             if let line = bracket.userLine {
                 Text(line)
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: DSType.Size.micro, weight: .semibold))
                     .foregroundStyle(Color.textTertiary)
                     .textCase(.uppercase)
                     .tracking(0.4)
-                    .padding(.horizontal, 14)
+                    .padding(.horizontal, Self.gutter)
                     .padding(.top, 3)
             }
 
@@ -1144,25 +1297,25 @@ struct TimelineTasksPanel: View {
                 Button {
                     onTaskSelected(.standings)
                 } label: {
-                    HStack(spacing: 3) {
+                    HStack(spacing: 3) {  // ds-lint:allow(spacing) glyph-to-word inside a 20 pt chip
                         Image(systemName: "list.bullet.rectangle")
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(.system(size: DSType.Size.micro, weight: .semibold))
                         Text("Full standings")
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(.system(size: DSType.Size.micro, weight: .semibold))
                     }
-                    .foregroundStyle(Color.accentGold)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
+                    .foregroundStyle(Color.textSecondary)
+                    .padding(.horizontal, DSSpacing.xs)
+                    .padding(.vertical, DSSpacing.xxs)
                     .background(
-                        Capsule().strokeBorder(Color.accentGold.opacity(0.35), lineWidth: 1)
+                        Capsule().strokeBorder(Color.surfaceBorder, lineWidth: 1)
                     )
                     .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Full standings, with conference seeding")
             }
-            .padding(.horizontal, 14)
-            .padding(.top, 10)
+            .padding(.horizontal, Self.gutter)
+            .padding(.top, DSSpacing.xs)
         }
     }
 
@@ -1222,7 +1375,7 @@ struct TimelineTasksPanel: View {
 
                     if let note = round.pendingNote {
                         Text(note)
-                            .font(.system(size: 10, weight: .medium))
+                            .font(.system(size: DSType.Size.micro, weight: .medium))
                             .foregroundStyle(Color.textTertiaryReadable)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -1230,7 +1383,7 @@ struct TimelineTasksPanel: View {
                 .padding(.top, 6)
             }
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, Self.gutter)
     }
 
     private func bracketMatchupCard(_ matchup: PostseasonBracket.Matchup) -> some View {

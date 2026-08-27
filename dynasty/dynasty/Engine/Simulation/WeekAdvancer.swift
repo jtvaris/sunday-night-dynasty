@@ -1460,7 +1460,15 @@ enum WeekAdvancer {
                     // Deterministic per-game weather — the live coached game
                     // derives the identical value from the same game id/week/
                     // home venue (dome home teams always play indoors/clear).
-                    weather: GameWeather.forGame(id: game.id, week: game.week, homeTeamAbbreviation: homeTeam.abbreviation)
+                    weather: GameWeather.forGame(id: game.id, week: game.week, homeTeamAbbreviation: homeTeam.abbreviation),
+                    // The crowd, on the same asymmetry as the game plan above:
+                    // `fanSupport` is a `Career` field, so it exists for the
+                    // user's club and nowhere else. `nil` means "this home team
+                    // is not the user's", and `GameSimulator` answers it with
+                    // the flat calibrated 0.1 — so every AI-vs-AI game and every
+                    // game the user plays on the ROAD stays byte-identical, and
+                    // so does every harness run.
+                    homeFanSupport: homeTeam.id == userTeamID ? career.fanSupport : nil
                 )
                 game.homeScore = result.homeScore
                 game.awayScore = result.awayScore

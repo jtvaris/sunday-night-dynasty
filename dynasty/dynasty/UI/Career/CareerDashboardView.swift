@@ -271,6 +271,23 @@ struct CareerDashboardView: View {
     /// Same fixture the hero card offers to coach (`currentWeekPlayerGame`).
     private var weeklyGameUnplayed: Bool { currentWeekPlayerGame != nil }
 
+    /// The club has no fixture at all this week: nothing on the board and
+    /// nothing played.
+    ///
+    /// Hoisted out of `regularSeasonHeroCard`, which computed it inline, because
+    /// the work band's head asks the same question one card higher up the
+    /// column. Two labels about one week deriving "is this a bye" separately is
+    /// the #154 shape, and it is cheaper to not have two than to keep them
+    /// agreeing.
+    private var isByeWeek: Bool {
+        currentWeekPlayerGame == nil && currentWeekPlayedGame == nil
+    }
+
+    /// The user's game for the current week **once it has been played**.
+    private var currentWeekPlayedGame: Game? {
+        lastGame.flatMap { $0.week == career.currentWeek ? $0 : nil }
+    }
+
     /// Opponent abbreviation of that unplayed game, for confirmation copy.
     private var unplayedGameOpponentAbbr: String? {
         guard let game = currentWeekPlayerGame, let teamID = career.teamID else { return nil }
@@ -725,30 +742,41 @@ struct CareerDashboardView: View {
     /// Deleted the dead branch rather than the live one: the brief named "the
     /// portrait branch" as the corpse, but the grep says otherwise, and the
     /// corpse is whichever one the user has never seen.
+    ///
+    /// ## The rail is no longer inside a scroll of the hub's own
+    ///
+    ///
+    /// `TimelineTasksPanel` carries its own `ScrollView`, and wrapping it in a
+    /// second one nested two vertical scrolls of the same axis: the outer one
+    /// proposes an unbounded height, so the inner scroll sized to its content
+    /// and never scrolled, the panel's header scrolled away with everything
+    /// else, and the panel could not pin anything. The column is given a bounded
+    /// height instead, which is what lets the panel keep its header at the top
+    /// and its advance button at the bottom with the phase list moving between
+    /// them.
+    ///
+    /// The 8 pt leading inset went with it. The panel declares `minWidth:
+    /// railWidth`, so inside a 300 pt column an 8 pt inset did not indent it —
+    /// it pushed 8 pt of the panel's right edge under the divider and let the
+    /// clip eat it.
     private var hubLayout: some View {
         HStack(alignment: .top, spacing: 0) {
             // Left column -- Tasks rail
-            ScrollView {
-                VStack(spacing: 0) {
-                    #if DEBUG
-                    debugSkipToFABanner
-                    #endif
-                    TimelineTasksPanel(
-                        career: career,
-                        tasks: $tasks,
-                        onTaskSelected: onTaskSelected,
-                        onAdvance: { performAdvance() },
-                        canAdvance: canAdvance,
-                        advanceIsPrimary: !weeklyGameUnplayed,
-                        advanceBlocker: advanceBlocker
-                    )
-                }
-                .padding(.leading, 8)
+            VStack(spacing: 0) {
+                #if DEBUG
+                debugSkipToFABanner
+                #endif
+                TimelineTasksPanel(
+                    career: career,
+                    tasks: $tasks,
+                    onTaskSelected: onTaskSelected,
+                    onAdvance: { performAdvance() },
+                    canAdvance: canAdvance,
+                    advanceIsPrimary: !weeklyGameUnplayed,
+                    advanceBlocker: advanceBlocker
+                )
             }
-            // 300 (matching the landscape rail) rather than 280: at 280 the
-            // longest real task titles — "Set game plan for your opponent" —
-            // wrapped to a second line, which made the list scan ragged.
-            .frame(width: 300)
+            .frame(width: TimelineTasksPanel.railWidth)
             // The panel paints its own background only as far as its content
             // reaches; on a short task list that left the bottom of the rail
             // showing the darker page color. Paint the whole column instead.
@@ -756,37 +784,29 @@ struct CareerDashboardView: View {
 
             Divider().overlay(Color.surfaceBorder)
 
-            // Right column -- Tiles + Messages + Division + Schedule
+            // Right column -- the week, then the club, then the league
             ScrollView {
-                LazyVStack(spacing: 12) {
+                LazyVStack(spacing: DSSpacing.sm) {
                     centerTilesGrid
                     // No minHeight: with a single message the 240pt floor left
                     // ~180pt of empty panel under it. The empty state carries
                     // its own height when there is genuinely nothing to show.
                     messagesPanel
-                        .background(Color.backgroundSecondary)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .strokeBorder(Color.surfaceBorder, lineWidth: 1)
-                        )
+                        .clipShape(RoundedRectangle(cornerRadius: DSCornerRadius.card))
+                        .cardBackground()
                     // Division + Upcoming combined to reduce gap (#143)
                     VStack(spacing: 0) {
                         divisionStandingsSection
-                            .padding(12)
+                            .padding(DSSpacing.sm)
                         Divider().overlay(Color.surfaceBorder.opacity(0.4))
                         scheduleSection
-                            .padding(12)
+                            .padding(DSSpacing.sm)
                     }
-                    .background(Color.backgroundSecondary)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .strokeBorder(Color.surfaceBorder, lineWidth: 1)
-                    )
-                    .padding(.bottom, 16)
+                    .clipShape(RoundedRectangle(cornerRadius: DSCornerRadius.card))
+                    .cardBackground()
+                    .padding(.bottom, DSSpacing.md)
                 }
-                .padding(12)
+                .padding(DSSpacing.sm)
             }
             .frame(maxWidth: .infinity)
         }
@@ -802,12 +822,16 @@ struct CareerDashboardView: View {
         VStack(alignment: .leading, spacing: 0) {
             // Header
             HStack {
+                // Grey, like every other panel head on this column and like the
+                // season band's above it. A section's NAME is not a decision;
+                // the unread badge beside it and the links after it are the two
+                // things here that ask for anything.
                 Image(systemName: "tray.full.fill")
                     .font(.system(size: DSType.Size.body, weight: .semibold))
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.textSecondary)
                 Text("Messages")
                     .font(.system(size: DSType.Size.body, weight: .bold))
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.textSecondary)
                     .textCase(.uppercase)
                     .tracking(0.5)
 
@@ -864,38 +888,43 @@ struct CareerDashboardView: View {
 
             Divider().overlay(Color.surfaceBorder.opacity(0.6))
 
-            // Message list
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    let filtered = filteredInboxMessages
-                    if filtered.isEmpty {
-                        // Shared empty-state component rather than a bare
-                        // icon + "No messages", and it now says what will
-                        // eventually land here.
-                        EmptyStateView(
-                            icon: "tray",
-                            title: "No messages",
-                            message: "Weekly recaps, owner notes and league news arrive here as the season plays out."
-                        )
-                    } else {
-                        let displayMessages = Array(filtered.reversed().prefix(5))
-                        ForEach(displayMessages) { message in
-                            messageRow(message)
-                            Divider().overlay(Color.surfaceBorder.opacity(0.3))
-                        }
+            // Message list.
+            //
+            // A plain stack, not a `ScrollView` over a `LazyVStack`. The panel
+            // has no height of its own and lives inside the work column's
+            // scroll, so the inner one was handed an unbounded proposal, sized
+            // to its content and never scrolled a pixel — and the list it held
+            // is capped at five rows plus a link, which is not a list that needs
+            // to scroll. Lazy is the same story: nothing off screen to defer.
+            VStack(spacing: 0) {
+                let filtered = filteredInboxMessages
+                if filtered.isEmpty {
+                    // Shared empty-state component rather than a bare
+                    // icon + "No messages", and it now says what will
+                    // eventually land here.
+                    EmptyStateView(
+                        icon: "tray",
+                        title: "No messages",
+                        message: "Weekly recaps, owner notes and league news arrive here as the season plays out."
+                    )
+                } else {
+                    let displayMessages = Array(filtered.reversed().prefix(5))
+                    ForEach(displayMessages) { message in
+                        messageRow(message)
+                        Divider().overlay(Color.surfaceBorder.opacity(0.3))
+                    }
 
-                        if filtered.count > 5 {
-                            Button {
-                                onTaskSelected(.inbox)
-                            } label: {
-                                Text("\(filtered.count - 5) more message\(filtered.count - 5 == 1 ? "" : "s")")
-                                    .font(.system(size: DSType.Size.caption, weight: .semibold))
-                                    .foregroundStyle(Color.accentGold)
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 10)
-                            }
-                            .buttonStyle(.plain)
+                    if filtered.count > 5 {
+                        Button {
+                            onTaskSelected(.inbox)
+                        } label: {
+                            Text("\(filtered.count - 5) more message\(filtered.count - 5 == 1 ? "" : "s")")
+                                .font(.system(size: DSType.Size.caption, weight: .semibold))
+                                .foregroundStyle(Color.accentGold)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, DSSpacing.xs)
                         }
+                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -971,31 +1000,105 @@ struct CareerDashboardView: View {
     // MARK: - 3. Center Tiles Grid
 
     private let tileColumns = [
-        GridItem(.flexible(), spacing: 12),
-        GridItem(.flexible(), spacing: 12)
+        GridItem(.flexible(), spacing: DSSpacing.sm),
+        GridItem(.flexible(), spacing: DSSpacing.sm)
     ]
 
+    /// **The week has a shape, and the column is now cut to it.**
+    ///
+    /// Everything below the hero used to be one flat run: a chip bar, then the
+    /// card, then four standing scores, then fourteen tiles in one grid with the
+    /// evergreen club tiles FIRST. On a game week that put Team, Roster, Staff,
+    /// Cap, Locker Room, Key Players, Position Strengths, Expiring Contracts and
+    /// Owner Expectations — none of which change between Tuesday and Sunday —
+    /// above Week Prep, Depth Chart, Injuries and Opponent Scout, which are the
+    /// four tiles the week is actually made of. The player's one question during
+    /// a game week is what to do before Sunday, and the answer was at grid
+    /// position eleven of fourteen.
+    ///
+    /// Two bands instead, each with a head that names it, in the order the week
+    /// is lived: **this week's work, then the club that does it.**
+    ///
+    /// Two grids rather than one is the cost. The single grid existed because
+    /// hard-coded `HStack` pairs left a hole when an optional tile was absent,
+    /// and each band is still a grid, so that still cannot happen INSIDE a band.
+    /// What can happen is a single empty cell at the END of the first band when
+    /// it holds an odd count — which is a band ending, not a hole in a run, and
+    /// it is what the head above it is there to say.
     private var centerTilesGrid: some View {
-        VStack(spacing: 12) {
-            // Quick Action Bar — 3 phase-specific shortcuts at the top.
-            quickActionBar
-
-            // Phase-aware Hero Card — the screen's ONE commit (P5). Adapts to
-            // the current SeasonPhase and carries the only gold fill here.
+        VStack(spacing: DSSpacing.sm) {
+            // Phase-aware Hero Card — the screen's ONE commit (P5), and now the
+            // first thing in the column. It answers "what happens this week";
+            // a row of shortcut chips does not, and used to sit above it.
             phaseHeroCard
 
-            // Satisfaction/Reputation scores row
-            satisfactionScoresRow
+            // The phase's shortcuts, under the commit they support.
+            quickActionBar
 
-            // Every tile — core *and* phase-adaptive — flows through one grid.
-            // Fixed HStack pairs used to hard-code which two tiles shared a row,
-            // so an absent optional tile (no previous season yet) left a dead
-            // hole in the right column. In a single grid the next tile closes
-            // the gap instead.
-            LazyVGrid(columns: tileColumns, spacing: 12) {
-                coreTiles
+            bandHead(workBandTitle)
+
+            LazyVGrid(columns: tileColumns, spacing: DSSpacing.sm) {
                 adaptiveTiles
             }
+
+            bandHead("Your club")
+
+            // The club's standing heads its own band: it is what the tiles under
+            // it are about, and it is not something the player does this week.
+            satisfactionScoresRow
+
+            LazyVGrid(columns: tileColumns, spacing: DSSpacing.sm) {
+                coreTiles
+            }
+        }
+    }
+
+    /// A band head: the label, then a rule to the edge of the column.
+    ///
+    /// Grey and condensed rather than the app's gold `SectionHeaderText`, and
+    /// deliberately the same object as `DSSlatBand`'s head — the season band is
+    /// pinned directly above this column, so its "2026 SEASON · WEEK 7 OF 18"
+    /// and these two heads are the screen's structural voice and now share one.
+    /// Gold on this screen is spent on the hero's commit and the rail's advance.
+    ///
+    /// The rule is what makes a two-word label fill a 700 pt column instead of
+    /// leaving 600 pt of nothing beside it.
+    private func bandHead(_ title: String) -> some View {
+        HStack(spacing: DSSpacing.xs) {
+            Text(title.uppercased())
+                .font(DSType.display(DSType.Size.caption, .heavy))
+                .tracking(0.7)
+                .foregroundStyle(Color.textSecondary)
+                .lineLimit(1)
+                .fixedSize()
+
+            Rectangle()
+                .fill(Color.surfaceBorder)
+                .frame(height: 1)  // ds-lint:allow(spacing) hairline rule, not a gap
+        }
+        // Two steps of vertical rhythm in the column, not one: `sm` between
+        // cards inside a band, `sm + sm` above a head — which is `DSSpacing.lg`,
+        // the "between major sections" step, arrived at through the stack's own
+        // spacing rather than by declaring a third number.
+        .padding(.top, DSSpacing.sm)
+        .accessibilityAddTraits(.isHeader)
+    }
+
+    /// What the first band is called — **the week's stage, not the phase's
+    /// name**, wherever the calendar is on a week.
+    ///
+    /// Prepare, play, read the result: during the season the head says which of
+    /// the three the club is standing in, off the same `weeklyGameUnplayed`
+    /// predicate that decides which control wears the gold, so the head and the
+    /// hero card cannot describe different Sundays. Outside the season a phase
+    /// is not a week and its own name is the honest label.
+    private var workBandTitle: String {
+        switch career.currentPhase {
+        case .regularSeason, .tradeDeadline, .playoffs:
+            if isByeWeek { return "Bye week" }
+            return weeklyGameUnplayed ? "Before Sunday" : "After the game"
+        default:
+            return career.currentPhase.displayName
         }
     }
 
@@ -1126,19 +1229,27 @@ struct CareerDashboardView: View {
         }
     }
 
+    /// The phase's three or four shortcuts, spread across the column.
+    ///
+    /// They used to sit above the hero card and hug the left edge behind a
+    /// `Spacer`, leaving ~330 pt of the measure empty beside them. Sharing the
+    /// width evenly spends that, and it puts the strip's right edge on the same
+    /// line as the hero card and the tile grid, which is what makes three blocks
+    /// of different content read as one column.
     @ViewBuilder
     private var quickActionBar: some View {
         let group = career.currentPhase.group
-        HStack(spacing: 8) {
+        HStack(spacing: DSSpacing.xs) {
             ForEach(quickActions(for: group), id: \.label) { action in
                 quickActionButton(action)
             }
-            Spacer()
         }
-        .padding(.horizontal, 4)
-        .padding(.vertical, 4)
     }
 
+    /// **Grey, not gold** (P5). Four chips carrying a gold glyph and a gold
+    /// border, in a strip that sits directly against a hero card whose one job
+    /// is the week's single gold commit: five gold objects for one decision and
+    /// four shortcuts. A chip is a door, and the outline is what says so.
     private func quickActionButton(_ action: QuickAction) -> some View {
         Button {
             if action.opensInjuryReport {
@@ -1147,24 +1258,33 @@ struct CareerDashboardView: View {
                 onTaskSelected(action.destination)
             }
         } label: {
-            HStack(spacing: 6) {
+            HStack(spacing: DSSpacing.xxs) {
                 Image(systemName: action.icon)
                     .font(.system(size: DSType.Size.footnote, weight: .semibold))
-                    .foregroundStyle(Color.draftStealGold)
+                    .foregroundStyle(Color.textSecondary)
                 Text(action.label)
                     .font(.system(size: DSType.Size.caption, weight: .semibold))
                     .foregroundStyle(Color.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
+            // Padding first, then the flex: the label keeps its inset from the
+            // capsule edge, and the frame is what shares the column out. The
+            // other order adds 16 pt to every chip's *share* and overflows.
+            //
+            // §2.12: 44 pt in both axes, measured. At 8 pt of vertical padding
+            // around an 11 pt label these chips measured 27.
+            .padding(.horizontal, DSSpacing.xs)
+            .frame(maxWidth: .infinity, minHeight: 44)
             .background(
                 RoundedRectangle(cornerRadius: DSCornerRadius.inline)
                     .fill(Color.backgroundSecondary)
                     .overlay(
                         RoundedRectangle(cornerRadius: DSCornerRadius.inline)
-                            .strokeBorder(Color.draftStealGold.opacity(0.3), lineWidth: 1)
+                            .strokeBorder(Color.surfaceBorder, lineWidth: 1)
                     )
             )
+            .contentShape(RoundedRectangle(cornerRadius: DSCornerRadius.inline))
         }
         .buttonStyle(.plain)
     }
@@ -1713,13 +1833,17 @@ struct CareerDashboardView: View {
             onTaskSelected(.depthChart)
         } label: {
             DashboardTile(icon: "list.number", title: "Depth Chart") {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("View")
-                        .font(.system(size: DSType.Size.caption, weight: .medium))
-                        .foregroundStyle(Color.accentGold)
+                VStack(alignment: .leading, spacing: DSSpacing.xxs) {
+                    // "View" was the first line and it was gold — the tile's
+                    // emphasis colour spent on the word every tappable tile
+                    // could have printed. What the tile is FOR goes first.
                     Text("Starters & backups")
+                        .font(.system(size: DSType.Size.footnote, weight: .bold))
+                        .foregroundStyle(Color.textPrimary)
+                    Text("Set who takes the snaps")
                         .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(Color.textSecondary)
+                        .lineLimit(1)
                 }
             }
         }
@@ -1733,9 +1857,9 @@ struct CareerDashboardView: View {
             activeSheet = .injuryReport
         } label: {
             DashboardTile(icon: "cross.case.fill", title: "Injuries") {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: DSSpacing.xxs) {
                     let injuredCount = players.filter { $0.injuryWeeksRemaining > 0 }.count
-                    Text("\(injuredCount) out")
+                    Text(injuredCount == 0 ? "Fully healthy" : "\(injuredCount) out")
                         .font(.system(size: DSType.Size.footnote, weight: .bold).monospacedDigit())
                         .foregroundStyle(injuredCount > 0 ? Color.dangerText : Color.success)
                     Text("Status updates weekly")
@@ -1752,7 +1876,7 @@ struct CareerDashboardView: View {
             onTaskSelected(.gameWeekPrep)
         } label: {
             DashboardTile(icon: "binoculars.fill", title: "Opponent Scout") {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: DSSpacing.xxs) {
                     // #154: `currentWeekFixture`, not `upcomingGames.first` —
                     // the tile used to name next week's opponent the moment this
                     // week's game was played, while the hero card above it still
@@ -1760,9 +1884,12 @@ struct CareerDashboardView: View {
                     let opponent = currentWeekFixture.flatMap { game in
                         allTeamsByID[game.homeTeamID == team?.id ? game.awayTeamID : game.homeTeamID]
                     }
+                    // The opponent's code is a FACT about the week, not a call
+                    // the user has to make, so it takes the ink a value takes
+                    // and not the screen's emphasis hue.
                     Text(opponent.map { "Vs \($0.abbreviation)" } ?? "Vs \u{2014}")
                         .font(.system(size: DSType.Size.footnote, weight: .bold))
-                        .foregroundStyle(Color.accentGold)
+                        .foregroundStyle(Color.textPrimary)
                     Text("Strengths & weaknesses")
                         .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(Color.textSecondary)
@@ -1904,13 +2031,20 @@ struct CareerDashboardView: View {
         let split = savedPrepSplit
         return NavigationLink(value: CareerShellView.ShellDestination.gameWeekPrep) {
             DashboardTile(icon: "scope", title: "Week Prep") {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Week \(career.currentWeek) prep")
-                        .font(.system(size: DSType.Size.caption, weight: .medium))
-                        .foregroundStyle(Color.accentGold)
+                VStack(alignment: .leading, spacing: DSSpacing.xxs) {
+                    // The SPLIT is the emphasis, not the caption naming the
+                    // week: the split is the decision this tile exists for, and
+                    // an unset one is the state the week is asking about. The
+                    // caption above it used to be the gold line and the split
+                    // the grey one, i.e. exactly backwards.
                     Text(split.map { "\($0.general) general / \($0.opponent) opponent" }
                          ?? "Not set \u{2014} 50 / 50")
-                        .font(.system(size: DSType.Size.footnote, weight: split == nil ? .regular : .bold).monospacedDigit())
+                        .font(.system(size: DSType.Size.footnote, weight: .bold).monospacedDigit())
+                        .foregroundStyle(split == nil ? Color.warning : Color.textPrimary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                    Text("Week \(career.currentWeek) practice focus")
+                        .font(.system(size: DSType.Size.footnote))
                         .foregroundStyle(Color.textSecondary)
                         .lineLimit(1)
                 }
@@ -1951,14 +2085,14 @@ struct CareerDashboardView: View {
     // MARK: - Schedule Section
 
     private var scheduleSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: DSSpacing.xs) {
+            HStack(spacing: DSSpacing.xxs) {
                 Image(systemName: "calendar")
                     .font(.system(size: DSType.Size.footnote, weight: .semibold))
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.textSecondary)
                 Text("UPCOMING")
                     .font(.system(size: DSType.Size.footnote, weight: .bold))
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.textSecondary)
                     .tracking(0.5)
                 Spacer()
                 // The Schedule bookmark came off the seven-slot strip; this is
@@ -1982,14 +2116,14 @@ struct CareerDashboardView: View {
     // MARK: - Division Standings Section
 
     private var divisionStandingsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: DSSpacing.xs) {
+            HStack(spacing: DSSpacing.xxs) {
                 Image(systemName: "list.number")
                     .font(.system(size: DSType.Size.footnote, weight: .semibold))
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.textSecondary)
                 Text("DIVISION")
                     .font(.system(size: DSType.Size.footnote, weight: .bold))
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.textSecondary)
                     .tracking(0.5)
                 Spacer()
                 // The Standings bookmark came off the seven-slot strip; this is
@@ -3461,7 +3595,7 @@ struct CareerDashboardView: View {
         let legacyPts = career.legacy.totalPoints
         let mediaRep = career.legacy.mediaReputation
 
-        return HStack(spacing: 10) {
+        return HStack(spacing: DSSpacing.xs) {
             satisfactionCard(
                 icon: "building.2.fill",
                 label: "Owner",
@@ -3495,7 +3629,7 @@ struct CareerDashboardView: View {
     }
 
     private func satisfactionCard(icon: String, label: String, value: String, color: Color) -> some View {
-        VStack(spacing: 4) {
+        VStack(spacing: DSSpacing.xxs) {
             Image(systemName: icon)
                 .font(.system(size: DSType.Size.body, weight: .semibold))
                 .foregroundStyle(color)
@@ -3511,12 +3645,12 @@ struct CareerDashboardView: View {
                 .tracking(0.3)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 8)
+        .padding(.vertical, DSSpacing.xs)
         .background(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: DSCornerRadius.inline)
                 .fill(Color.backgroundSecondary)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8)
+                    RoundedRectangle(cornerRadius: DSCornerRadius.inline)
                         .strokeBorder(Color.surfaceBorder, lineWidth: 1)
                 )
         )
@@ -4256,10 +4390,14 @@ struct CareerDashboardView: View {
         )
     }
 
+    /// The card's one headline, on the app's own ladder rather than on the
+    /// system's `.title2` role — `DSType.Size.title2` is the same 22 pt step,
+    /// and it is the step every other section title on the surface is measured
+    /// against.
     @ViewBuilder
     private func heroHeader(_ text: String) -> some View {
         Text(text)
-            .font(.title2.weight(.heavy))
+            .font(.system(size: DSType.Size.title2, weight: .heavy))
             .foregroundStyle(Color.textPrimary)
             .lineLimit(2)
             .minimumScaleFactor(0.85)
@@ -4276,12 +4414,13 @@ struct CareerDashboardView: View {
     private func heroStatRow(_ label: String, value: String, accent: Color = .accentGold) -> some View {
         HStack(spacing: DSSpacing.sm) {
             Text(label)
-                .font(.subheadline.weight(.medium))
+                .font(.system(size: DSType.Size.body, weight: .medium))
                 .foregroundStyle(Color.textSecondary)
             Spacer()
             Text(value)
-                .font(.subheadline.weight(.bold))
+                .font(.system(size: DSType.Size.body, weight: .bold).monospacedDigit())
                 .foregroundStyle(accent)
+                .multilineTextAlignment(.trailing)
         }
     }
 
@@ -4308,19 +4447,22 @@ struct CareerDashboardView: View {
         Button {
             onTaskSelected(destination)
         } label: {
-            HStack(spacing: 6) {
+            HStack(spacing: DSSpacing.xxs) {
                 Text(title)
-                    .font(.subheadline.weight(.bold))
+                    .font(.system(size: DSType.Size.body, weight: .bold))
                 Image(systemName: "arrow.right")
-                    .font(.subheadline.weight(.bold))
+                    .font(.system(size: DSType.Size.body, weight: .bold))
             }
             .foregroundStyle(isPrimary ? Color.backgroundPrimary : Color.accentGold)
             .padding(.horizontal, DSSpacing.md)
-            .padding(.vertical, 8)
+            // §2.12, measured: at 8 pt of padding around a 15 pt label the
+            // week's own call to action was a 33 pt target.
+            .frame(minHeight: 44)
             .background(
                 isPrimary ? Color.accentGold : Color.accentGold.opacity(0.14),
                 in: Capsule()
             )
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
     }
@@ -4461,7 +4603,7 @@ struct CareerDashboardView: View {
         // it's been played yet; falls back to the next scheduled game
         // (upcomingGames only holds unplayed ones, so it alone would skip
         // ahead to next week's opponent as soon as the game finishes).
-        let currentWeekPlayed = lastGame.flatMap { $0.week == career.currentWeek ? $0 : nil }
+        let currentWeekPlayed = currentWeekPlayedGame
         let heroGame = currentWeekFixture
         let week = heroGame?.week ?? career.currentWeek
         let nextOpponent = heroGame.flatMap { game -> (abbr: String, isHome: Bool)? in
@@ -4475,8 +4617,6 @@ struct CareerDashboardView: View {
             }
             return "vs TBD"
         }()
-        // No game scheduled this week and none played this week = bye.
-        let isByeWeek = currentWeekPlayerGame == nil && currentWeekPlayed == nil
         let playerTeam = career.teamID.flatMap { allTeamsByID[$0] }
         let injuredCount = players.filter(\.isInjured).count
         return phaseCardBase(icon: "calendar.badge.clock", accent: .accentGold) {
@@ -4485,17 +4625,20 @@ struct CareerDashboardView: View {
                        : "Week \(week) · \(oppText)")
             // R19: late-season stakes — only rendered when provably true.
             if let stakes = seasonStakes {
-                HStack(spacing: 6) {
+                HStack(spacing: DSSpacing.xxs) {
                     Image(systemName: stakes.urgent ? "exclamationmark.triangle.fill" : "flame.fill")
-                        .font(.caption.weight(.bold))
+                        .font(.system(size: DSType.Size.caption, weight: .bold))
                     Text(stakes.text)
-                        .font(.footnote.weight(.heavy))
+                        .font(.system(size: DSType.Size.footnote, weight: .heavy))
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
                 }
-                .foregroundStyle(stakes.urgent ? Color.danger : Color.accentGold)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
+                // `dangerText`, not `danger`: this badge is words on a card, and
+                // DSTokens is explicit that #EF4444 is ~3.4:1 there — keep the
+                // fill red for fills and bars.
+                .foregroundStyle(stakes.urgent ? Color.dangerText : Color.accentGold)
+                .padding(.horizontal, DSSpacing.xs)
+                .padding(.vertical, DSSpacing.xxs)
                 .background(
                     (stakes.urgent ? Color.danger : Color.accentGold).opacity(0.14),
                     in: Capsule()
@@ -4504,20 +4647,24 @@ struct CareerDashboardView: View {
             heroStatRow("Record", value: playerTeam?.record ?? "—")
             heroStatRow("Injuries", value: injuredCount == 0 ? "Fully healthy" : "\(injuredCount) OUT")
             if currentWeekPlayerGame != nil {
+                // The week's two moves, and the only pair of buttons on the
+                // screen: the gold one plays Sunday, the ghost one prepares for
+                // it. Both cleared to the 44 pt floor — they were 33.
                 HStack(spacing: DSSpacing.sm) {
                     Button {
                         startCoachedGame()
                     } label: {
-                        HStack(spacing: 6) {
+                        HStack(spacing: DSSpacing.xxs) {
                             Image(systemName: "headset")
-                                .font(.subheadline.weight(.bold))
+                                .font(.system(size: DSType.Size.body, weight: .bold))
                             Text("Coach the Game")
-                                .font(.subheadline.weight(.bold))
+                                .font(.system(size: DSType.Size.body, weight: .bold))
                         }
                         .foregroundStyle(Color.backgroundPrimary)
                         .padding(.horizontal, DSSpacing.md)
-                        .padding(.vertical, 8)
+                        .frame(minHeight: 44)
                         .background(Color.accentGold, in: Capsule())
+                        .contentShape(Capsule())
                     }
                     .buttonStyle(.plain)
 
@@ -4525,11 +4672,12 @@ struct CareerDashboardView: View {
                         onTaskSelected(.gamePlan)
                     } label: {
                         Text("Game Plan")
-                            .font(.subheadline.weight(.bold))
+                            .font(.system(size: DSType.Size.body, weight: .bold))
                             .foregroundStyle(Color.accentGold)
                             .padding(.horizontal, DSSpacing.md)
-                            .padding(.vertical, 8)
+                            .frame(minHeight: 44)
                             .background(Color.accentGold.opacity(0.14), in: Capsule())
+                            .contentShape(Capsule())
                     }
                     .buttonStyle(.plain)
                 }
@@ -5221,6 +5369,17 @@ private enum DashboardInboxFilter: String, CaseIterable {
 // MARK: - Dashboard Tile
 
 /// Reusable tile component for the FM26-inspired grid layout.
+///
+/// **The header is grey; only a highlighted tile's is gold.**
+///
+/// Every tile's icon and title used to be `accentGold`, which on a game week
+/// meant twenty-eight gold objects in the grid alone — under a hero card and
+/// beside a rail whose gold is supposed to mean "this is the decision". A tile's
+/// name is not a decision; it is a label, and the grid is a wall of them. Gold
+/// is left here to `highlighted`, which is the one tile the phase says is live
+/// (the trade deadline in its week, the draft in its room), and to whatever
+/// VALUE a tile chooses to emphasise inside its own body — a number that changes
+/// is worth a colour in a way a fixed caption never is.
 private struct DashboardTile<Content: View>: View {
 
     let icon: String
@@ -5228,24 +5387,26 @@ private struct DashboardTile<Content: View>: View {
     var highlighted: Bool = false
     @ViewBuilder let content: () -> Content
 
+    private var headerInk: Color { highlighted ? .accentGold : .textSecondary }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: DSSpacing.xs) {
             // Header
-            HStack(spacing: 6) {
+            HStack(spacing: DSSpacing.xxs) {
                 Image(systemName: icon)
                     .font(.system(size: DSType.Size.footnote, weight: .semibold))
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(headerInk)
                 Text(title)
                     .font(.system(size: DSType.Size.caption, weight: .bold))
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(headerInk)
                     .textCase(.uppercase)
                     .tracking(0.5)
                 Spacer()
                 if highlighted {
                     Text("ACTIVE")
                         .font(.system(size: DSType.Size.micro, weight: .heavy))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 5)
+                        .foregroundStyle(Color.backgroundPrimary)
+                        .padding(.horizontal, 5)  // ds-lint:allow(spacing) the ACTIVE pill must not grow the tile header
                         .padding(.vertical, 2)
                         .background(Capsule().fill(Color.accentGold))
                 }
@@ -5259,23 +5420,23 @@ private struct DashboardTile<Content: View>: View {
             // Content
             content()
         }
-        .padding(12)
+        .padding(DSSpacing.sm)
         // maxHeight stretches every tile to its grid row's height, so a short
         // tile (Roster) no longer floats vertically centered beside a tall one
         // (Team) — paired cards share a top edge *and* a bottom edge.
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: DSCornerRadius.card)
                 .fill(Color.backgroundSecondary)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 10)
+                    RoundedRectangle(cornerRadius: DSCornerRadius.card)
                         .strokeBorder(
                             highlighted ? Color.accentGold.opacity(0.6) : Color.surfaceBorder,
                             lineWidth: highlighted ? 1.5 : 1
                         )
                 )
         )
-        .contentShape(RoundedRectangle(cornerRadius: 10))
+        .contentShape(RoundedRectangle(cornerRadius: DSCornerRadius.card))
     }
 
 }

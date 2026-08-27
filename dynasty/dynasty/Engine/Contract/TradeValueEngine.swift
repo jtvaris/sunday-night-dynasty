@@ -3046,6 +3046,96 @@ enum TradeValueEngine {
         return !(proposal.sendingPlayers.isEmpty && proposal.sendingPicks.isEmpty)
     }
 
+    // MARK: - Offer Shelf Life (Wave 1.3 remainder)
+
+    /// How many weeks a club leaves an unanswered offer on the user's desk.
+    ///
+    /// The number is the offering GM's own patience (`GMPersona.maxRounds`,
+    /// 2 … 4) read as WEEKS rather than rounds — deliberately the same clock
+    /// `WeekAdvancer.advanceOpenTradeThreads` already runs an open conversation
+    /// on (`week - lastActivityWeek > identity.patience`). "How long will this
+    /// man wait on us" is then one number in this codebase and not two: an
+    /// old-school GM hangs up after two weeks of silence whether the silence is
+    /// in a transcript or on a package he phoned in cold.
+    ///
+    /// The persona is drawn exactly the way `gmIdentity` draws it, declared
+    /// franchise identity included: the negotiation header prints that persona's
+    /// patience as "rounds left", so a clock built from a different archetype
+    /// would contradict a number the user can already see on screen.
+    static func offerLifespanWeeks(offeringTeamID: UUID) -> Int {
+        GMPersona.forTeam(
+            id: offeringTeamID,
+            declaredIdentity: FranchiseIdentityRegistry.identity(for: offeringTeamID)
+        ).maxRounds
+    }
+
+    /// Last regular-season week an in-season offer is still live, or `nil` when
+    /// it has no in-season clock (an offseason offer, a package the user built,
+    /// or a row stored before offers were stamped).
+    ///
+    /// Capped at ``deadlineWeek`` because the deadline outranks any GM's
+    /// patience: a week-8 offer from a balanced GM would otherwise advertise
+    /// week 12, which is not a week anything can be traded in.
+    static func offerExpiryWeek(_ proposal: TradeProposal) -> Int? {
+        guard let offeredWeek = proposal.offeredWeek,
+              let phase = proposal.offeredPhase,
+              phase == .regularSeason || phase == .tradeDeadline
+        else { return nil }
+        return min(
+            offeredWeek + offerLifespanWeeks(offeringTeamID: proposal.offeringTeamID),
+            deadlineWeek
+        )
+    }
+
+    /// Whether a stored offer has gone stale on the CALENDAR.
+    ///
+    /// The companion to ``isProposalStillValid``, which only asks whether the
+    /// assets are still where the offer assumes them to be. That test can never
+    /// fire on a deal nobody has touched, so a package the user simply ignored
+    /// used to sit on his desk — fully executable, at its original price —
+    /// until the deadline wiped it. This is the second staleness rule the plan
+    /// asked for, and it is the reason the fields exist on `TradeProposal`.
+    ///
+    /// An unstamped proposal has no clock and never lapses: the user's own
+    /// builder package and any offer written by a save older than the stamp.
+    static func offerHasLapsed(
+        _ proposal: TradeProposal,
+        season: Int,
+        week: Int,
+        phase: SeasonPhase
+    ) -> Bool {
+        guard let offeredSeason = proposal.offeredSeason else { return false }
+        // A new league year is a different roster, a different cap sheet and a
+        // reset `TradeTalkRegistry`. `WeekAdvancer.startNewSeason` already wipes
+        // the desk at kickoff; this is the belt to that pair of braces.
+        guard offeredSeason == season else { return true }
+        guard let offeredPhase = proposal.offeredPhase else { return false }
+
+        let wasInSeason = offeredPhase == .regularSeason || offeredPhase == .tradeDeadline
+        let isInSeason  = phase == .regularSeason || phase == .tradeDeadline
+        // The calendar turned under it — an in-season offer read in the
+        // offseason, or the reverse. Neither side's clock means anything to the
+        // other, so the offer goes.
+        guard wasInSeason == isInSeason else { return true }
+
+        if isInSeason {
+            guard let expiry = offerExpiryWeek(proposal) else { return false }
+            return week > expiry
+        }
+
+        // Offseason: the phase IS the clock, and what ends it is the next
+        // WINDOW, not merely the next phase. `MarketWindow.isMarketWindow` names
+        // the five offseason stages the league actually does business in; the
+        // quiet ones between them (the combine, the draft itself, camp) are not
+        // a club changing its mind, so an offer made at `.reviewRoster` survives
+        // the combine and is withdrawn when free agency opens and the phone
+        // starts ringing again. That is the sentence the offer letter has always
+        // ended on — "it stays on the table until the market moves on" — finally
+        // backed by something.
+        guard MarketWindow.offseason(phase).isMarketWindow else { return false }
+        return offeredPhase != phase
+    }
+
     // MARK: - Market Windows (Wave 2 — plan §6 Wave 2.1, decision §7.2)
 
     /// When the market is active, and which ledger bucket its deals land in.
@@ -3117,7 +3207,10 @@ enum TradeValueEngine {
 
     /// A generated AI offer plus the explanation shown to the user.
     struct AIOffer {
-        let proposal: TradeProposal
+        /// `var` so `generateAIOffer` can stamp the shelf life on the way out —
+        /// one place, after every builder, rather than a line each builder could
+        /// forget.
+        var proposal: TradeProposal
         let offeringTeamAbbr: String
         let subject: String
         let rationale: String
@@ -3288,9 +3381,16 @@ enum TradeValueEngine {
                    { buildBuyOffer(buyer: aiView, seller: userView, allPlayers: allPlayers, allPicks: allPicks, allTeams: allTeams, capMode: capMode, contracts: contracts, window: window) }]
 
             for builder in builders {
-                if let offer = builder() {
+                if var offer = builder() {
                     funnel.offerBuilt += 1
                     if !window.isInSeason { funnel.offerBuiltOff += 1 }
+                    // Wave 1.3: the offer leaves here with a clock on it. This
+                    // is the ONE birthplace of an AI-initiated offer, so
+                    // stamping at the exit means nothing can reach
+                    // `career.pendingTradeOffers` and sit there forever.
+                    offer.proposal.stampOffered(
+                        season: currentSeason, week: week, phase: window.ledgerPhase
+                    )
                     return offer
                 }
             }
@@ -3991,9 +4091,22 @@ enum TradeValueEngine {
 
     /// Inbox message for a freshly generated AI offer.
     static func offerInboxMessage(offer: AIOffer, week: Int, season: Int) -> InboxMessage {
-        let expiry = offer.window.isInSeason
-            ? "It expires at the Week \(deadlineWeek) trade deadline."
-            : "It stays on the table until the market moves on."
+        // Wave 1.3: the letter quotes the offer's OWN shelf life, not the
+        // league's. Both of these sentences used to be promises the code did not
+        // keep — every in-season offer claimed the deadline whatever week it
+        // came in, and "until the market moves on" described a withdrawal that
+        // never happened. `offerHasLapsed` is what withdraws it now, and it
+        // reads the same stamp this line does.
+        let expiry: String
+        if let expiryWeek = offerExpiryWeek(offer.proposal) {
+            expiry = expiryWeek >= deadlineWeek
+                ? "It stands until the Week \(deadlineWeek) deadline."
+                : "It stands through Week \(expiryWeek) — after that they move on."
+        } else if offer.window.isInSeason {
+            expiry = "It expires at the Week \(deadlineWeek) trade deadline."
+        } else {
+            expiry = "It stands while the \(offer.window.label) window is open — once the league moves on to the next stage of the offseason, so do they."
+        }
         let dateLine = offer.window.isInSeason
             ? "Week \(week), Season \(season)"
             : "\(offer.window.label), Season \(season)"

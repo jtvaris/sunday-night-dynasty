@@ -9,6 +9,11 @@ import Foundation
 /// the coaching staff runs a known scheme, and a hosted facility visit.
 /// The weights shift with the player's motivation so the meter explains the
 /// eventual decision instead of contradicting it.
+///
+/// One last, smaller term reads the city rather than the roster: how the user's
+/// own fan base currently feels about his front office. See
+/// ``fanSupportBonus(_:)`` for its size and for why it is the only term in here
+/// that can apply to exactly one of the league's 32 clubs.
 enum SigningInterestEngine {
 
     // MARK: - Tiers
@@ -53,6 +58,10 @@ enum SigningInterestEngine {
         let schemeFit: Double?
         /// Flat bonus applied when the player was hosted on a visit.
         let visitBonus: Double
+        /// Signed nudge from the city's read on the user's front office,
+        /// -0.05...+0.05. Exactly 0 for all 31 other clubs — see
+        /// ``SigningInterestEngine/fanSupportBonus(_:)``.
+        let fanSupportBonus: Double
         /// Weighted total, clamped 0...1.
         let total: Double
 
@@ -106,6 +115,9 @@ enum SigningInterestEngine {
     ///   - offer: The user's current offer; `nil` shows the pre-offer baseline.
     ///   - askingPrice: The agent's asking price (thousands/yr).
     ///   - hostedVisit: Whether the team hosted the player on a facility visit.
+    ///   - fanSupport: The user's `Career.fanSupport` when `team` IS the user's
+    ///     club; `nil` — the default, and the truth for the other 31 — leaves the
+    ///     reading exactly where it was. See ``fanSupportBonus(_:)``.
     static func interest(
         player: Player,
         askingPrice: Int,
@@ -114,7 +126,8 @@ enum SigningInterestEngine {
         allPlayers: [Player],
         offensiveScheme: OffensiveScheme? = nil,
         defensiveScheme: DefensiveScheme? = nil,
-        hostedVisit: Bool = false
+        hostedVisit: Bool = false,
+        fanSupport: Int? = nil
     ) -> Breakdown {
         // Scheme fit when the staff runs a known scheme. Computed here, at the
         // one entry point that has a `Player` to hand it to `CoachingEngine`.
@@ -136,7 +149,8 @@ enum SigningInterestEngine {
             team: team,
             allPlayers: allPlayers,
             schemeFit: scheme,
-            hostedVisit: hostedVisit
+            hostedVisit: hostedVisit,
+            fanSupport: fanSupport
         )
     }
 
@@ -155,7 +169,8 @@ enum SigningInterestEngine {
         team: Team,
         allPlayers: [Player],
         schemeFit: Double? = nil,
-        hostedVisit: Bool = false
+        hostedVisit: Bool = false,
+        fanSupport: Int? = nil
     ) -> Breakdown {
         // Money: offer vs. asking. 0.6x -> 0.0, 1.0x -> ~0.67, 1.2x+ -> 1.0.
         let money: Double
@@ -190,7 +205,14 @@ enum SigningInterestEngine {
             + (schemeFit ?? 0.5) * weights.scheme
 
         let visitBonus = hostedVisit ? 0.12 : 0.0
-        total = clamp01(total + visitBonus)
+        // Added BESIDE `visitBonus` rather than folded in as a fifth weight, and
+        // that is a decision, not laziness: a fifth weight means renormalizing
+        // the four above, which would move every existing reading even for a club
+        // sitting at the neutral 50, and there is no fan number for the other 31
+        // clubs to renormalize against. As a signed term through the same clamp,
+        // a neutral (or absent) city is arithmetically identical to no term.
+        let fanBonus = fanSupportBonus(fanSupport)
+        total = clamp01(total + visitBonus + fanBonus)
 
         return Breakdown(
             money: money,
@@ -198,8 +220,46 @@ enum SigningInterestEngine {
             role: role,
             schemeFit: schemeFit,
             visitBonus: visitBonus,
+            fanSupportBonus: fanBonus,
             total: total
         )
+    }
+
+    // MARK: - Fan support
+
+    /// Largest nudge the fan-support term can apply, at 0 or 100.
+    ///
+    /// Calibrated against the terms already inside `interest`, not picked for
+    /// feel: it is under half the hosted-visit bonus (0.12), a twelfth of a
+    /// money-motivated man's money weight (0.60), and a third of the narrowest
+    /// tier band (~0.15). So a sold-out city can carry a man up a tier
+    /// only when he was already sitting on that tier's edge, and can never
+    /// out-argue the cheque, the depth chart or the scheme. Tilting a close call
+    /// is the whole brief.
+    private static let fanSupportSwing = 0.05
+
+    /// What the city's read on the front office is worth, as a signed nudge on
+    /// the 0...1 interest scale. Linear through the neutral 50.
+    ///
+    /// **Asymmetric on purpose.** `fanSupport` is a field on `Career` — the
+    /// USER's save, moved by his own press conferences. No AI club has one. So
+    /// `nil` here does not mean "unknown", it means "this is not the user's
+    /// building", and it returns exactly 0: all 31 other clubs price a free agent
+    /// precisely as they did before this term existed. Inventing a league-wide
+    /// fan model to make the term symmetric is a far larger design decision than
+    /// giving the podium's FANS number something to do, and is deliberately not
+    /// smuggled in here.
+    ///
+    /// Deliberately NOT motivation-shifted, unlike the weights in `interest`: no
+    /// motivation in the model is "plays in front of a full house". The nearest,
+    /// `.fame`, is already served by `MediaMarket.freeAgentAttraction` over in
+    /// `FreeAgencyEngine`, and this must not quietly double it — that term is
+    /// about WHERE a club plays and never changes, this one is about how the city
+    /// feels about it this month.
+    static func fanSupportBonus(_ fanSupport: Int?) -> Double {
+        guard let fanSupport else { return 0 }
+        let tilt = (Double(min(max(fanSupport, 0), 100)) - 50.0) / 50.0 // -1...+1
+        return tilt * fanSupportSwing
     }
 
     // MARK: - Role

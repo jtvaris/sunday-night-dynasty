@@ -16,7 +16,9 @@ enum RosterCutEvaluator {
     /// - Parameters:
     ///   - roster: Full team roster (90 / 75 / 65 player array).
     ///   - targetCount: Roster size to trim down to (75 / 65 / 53).
-    ///   - modelContext: SwiftData context (used for contract lookups when present).
+    ///   - modelContext: SwiftData context. Used to resolve the club's `Owner`,
+    ///     whose temperament weights the money half of ``keepScore(for:owner:)``
+    ///     (N-03). The parameter had no reader at all before that.
     /// - Returns: Array of `Player` objects in order of cut priority.
     static func recommendCuts(
         roster: [Player],
@@ -26,10 +28,11 @@ enum RosterCutEvaluator {
         guard roster.count > targetCount else { return [] }
 
         let cutCount = roster.count - targetCount
+        let owner = clubOwner(of: roster, modelContext: modelContext)
 
         // Score each player on a "keep" axis. Lower score → higher cut priority.
         let scored: [(player: Player, keepScore: Double)] = roster.map { p in
-            (player: p, keepScore: keepScore(for: p))
+            (player: p, keepScore: keepScore(for: p, owner: owner))
         }
 
         // Sort ascending by keepScore (worst first).
@@ -87,6 +90,28 @@ enum RosterCutEvaluator {
     /// Practice-squad eligible? (rookie or <2 accrued seasons.)
     static func isPracticeSquadEligible(player: Player) -> Bool {
         return player.yearsPro <= 2
+    }
+
+    /// **The owner whose money is in the ranking.**
+    ///
+    /// Resolved here rather than asked for, so the cut sheet's "Suggest 12"
+    /// button is owner-weighted the day this ships instead of waiting on a
+    /// caller to start passing something. This is also the first reader
+    /// `modelContext` has ever had in this function.
+    ///
+    /// The hop goes team → owner and not the other way: `Team.owner` is the
+    /// stored relationship and therefore the authority, while `Owner.teamID` is
+    /// a convenience `FacilityEngine.linkOwners` stamps from the team side and
+    /// can still be nil on a save that predates it.
+    ///
+    /// `nil` — a roster of free agents, or a league with no owner rows — reads
+    /// league-neutral in ``keepScore(for:owner:)``.
+    private static func clubOwner(of roster: [Player], modelContext: ModelContext) -> Owner? {
+        guard let teamID = roster.compactMap(\.teamID).first else { return nil }
+        let team = try? modelContext.fetch(
+            FetchDescriptor<Team>(predicate: #Predicate<Team> { $0.id == teamID })
+        ).first
+        return team?.owner
     }
 
     // MARK: - Positional integrity (#208a)
@@ -253,13 +278,34 @@ enum RosterCutEvaluator {
 
     // MARK: - Cut priority
 
+    /// **The most the money terms may ever move a player's ``keepScore``**, in
+    /// either direction.
+    ///
+    /// The unit that matters is not dollars, it is OVR. `keepScore` prices one
+    /// OVR at 0.55 points, so ±4.00 is ±7.3 OVR of travel, and the full swing
+    /// from the most-shielded contract to the most expensive one is 8.00 points
+    /// — while a gap of 15 OVR is 8.25. **So no contract, under any owner, can
+    /// invert a 15-OVR gap.** Money settles the call between comparable
+    /// footballers, which is exactly what a cap-conscious owner is entitled to,
+    /// and never the call between a starter and a camp body.
+    ///
+    /// The ceiling is meant to BIND on the outlier rather than sit unused: the
+    /// club MVP that prompted N-03 clips to it under a stingy owner AND a
+    /// neutral one. Those two owners agreeing about him is the guarantee
+    /// working, not a distinction lost.
+    static let moneyCeiling: Double = 4.0
+
     /// Composite "keep this player" score. Higher = safer; lower = closer to cut block.
     ///
     /// Published rather than private because the cut sheet orders its rows by
     /// it. A screen that asks the user to find the twelve worst men in 87
     /// unordered rows is asking him to hold the roster in his head while the
     /// answer sits one function away.
-    static func keepScore(for player: Player) -> Double {
+    ///
+    /// **`owner` is the club's**, and weights the money half only — see the
+    /// money block below. `nil` reads league-neutral (lean 1.0); it is not
+    /// "money off", because ``moneyCeiling`` binds either way.
+    static func keepScore(for player: Player, owner: Owner? = nil) -> Double {
         // OVR contribution (0..50)
         let ovrScore = Double(player.overall) * 0.55
 
@@ -286,18 +332,104 @@ enum RosterCutEvaluator {
             }
         }()
 
-        // Contract pressure: large salary / high dead-cap → harder to cut.
-        // We INVERT this — high salary REDUCES keepScore so big-money under-performers float to the top.
-        // BUT a large dead-cap penalty pulls them back as "expensive to release".
-        let salaryPenalty = -Double(player.annualSalary) / 5000.0   // -1 per $5M
-        let deadCapShield = Double(deadCap(player: player)) / 4000.0 // +1 per $4M dead
-
         // Injury status drags keep score (you don't keep an injured #80 over a healthy #78).
         let injuryPenalty: Double = player.isInjured ? -6.0 : 0.0
 
         // Hold-out drama drag — defaults to 0; UI can lift this via personality archetype.
         let dramaPenalty: Double = player.personality.archetype == .dramaQueen ? -3.0 : 0.0
 
-        return ovrScore + gradeScore + agePenalty + salaryPenalty + deadCapShield + injuryPenalty + dramaPenalty
+        // MARK: The money, weighted by the owner and bounded by football value (N-03)
+        //
+        // Contract pressure: large salary → easier to cut, large dead-cap bill →
+        // harder ("expensive to release"). Both terms keep the shape and the
+        // rates they always had. What changed is that they used to be the LAST
+        // WORD: at -1 point per $5M with no ceiling, a $54M deal cost 10.80
+        // points, which on a 0.55-per-OVR scale is 19.6 OVR of football. That is
+        // how the club's 93 OVR MVP came to sit fifth on a list headed "worst
+        // first · your staff's cut order" — the screen was not reporting a
+        // judgement, it was reporting a salary, and calling it the staff's.
+        //
+        // Money SHOULD weigh. Two separate things decide how much, and they are
+        // answering two different questions:
+        //
+        // 1. WHO CARES, and how much — `Owner.capReliefLean` (0.25…1.75), read
+        //    off the temperament the owner already has rather than a new dial.
+        //    A penny pincher weighs the cap seven times as heavily as a tycoon
+        //    spending to win now. This is the feature: the cap number stops
+        //    being a constant nobody in the fiction chose.
+        //
+        // 2. HOW FAR IT CAN EVER GO — `moneyCeiling`, which is not the owner's
+        //    to move. A preference the user can push to an absurd answer is not
+        //    a preference, it is a bug with a personality, so the clamp sits
+        //    OUTSIDE the multiplier and binds for every owner alike.
+        let salaryPenalty = -Double(player.annualSalary) / 5000.0   // -1 per $5M
+        let deadCapShield = Double(deadCap(player: player)) / 4000.0 // +1 per $4M dead
+        let lean = owner?.capReliefLean ?? 1.0
+        let moneyScore = min(moneyCeiling, max(-moneyCeiling, (salaryPenalty + deadCapShield) * lean))
+
+        return ovrScore + gradeScore + agePenalty + moneyScore + injuryPenalty + dramaPenalty
+    }
+
+    // MARK: - What the header is allowed to claim (N-03)
+    //
+    // The strip has always read "WORST FIRST · YOUR STAFF'S CUT ORDER". That
+    // was a true sentence while the order was the staff's alone. It is not a
+    // true sentence about a list the owner's wallet has tilted, and a header
+    // that names the wrong author is worse than one that says nothing, because
+    // the user acts on the ranking and attributes the result to his coaches.
+    //
+    // The copy lives in this file rather than in the view because which
+    // sentence is true depends on which way the lean fell, and the lean is this
+    // file's arithmetic. `releaseBlockReason` above sets the same precedent:
+    // the rule and the sentence the rule owes the reader ship together.
+
+    /// Which way the owner has tilted the order — the three sentences the
+    /// header has to choose between.
+    enum OrderTilt {
+        case capRelief
+        case footballValue
+        case even
+    }
+
+    /// The lean is continuous; the sentence cannot be. The dead band is wide
+    /// enough that a mid-range owner reads as "even" rather than claiming a
+    /// tilt the user could not possibly see in the rows.
+    static func tilt(of owner: Owner?) -> OrderTilt {
+        let lean = owner?.capReliefLean ?? 1.0
+        if lean > 1.15 { return .capRelief }
+        if lean < 0.85 { return .footballValue }
+        return .even
+    }
+
+    /// **The cut sheet's order caption**, now that the owner is in the ranking.
+    ///
+    /// Sentence case, as the strip uppercases what it is handed.
+    static func orderCaption(owner: Owner?) -> String {
+        switch tilt(of: owner) {
+        case .capRelief:
+            return "Worst first \u{00B7} your staff, tilted to cap relief"
+        case .footballValue:
+            return "Worst first \u{00B7} your staff, tilted to football value"
+        case .even:
+            return "Worst first \u{00B7} your staff's cut order"
+        }
+    }
+
+    /// The CUT column's glossary line — the long form of ``orderCaption(owner:)``.
+    ///
+    /// It has to end where the old one ended: the men the roster rules pin to
+    /// the bottom are the reader's first question about any worst-first list
+    /// that is not in OVR order, and that sentence was already earning its keep.
+    static func orderMeaning(owner: Owner?) -> String {
+        let clause: String
+        switch tilt(of: owner) {
+        case .capRelief:
+            clause = "Your owner watches the cap, so an expensive man is pulled up the list \u{2014} never past football value, which decides any gap of about 15 OVR or more."
+        case .footballValue:
+            clause = "Your owner spends freely, so salary barely moves the order: this is close to a pure football ranking."
+        case .even:
+            clause = "Salary weighs a little, in your owner's direction, but football value decides any gap of about 15 OVR or more."
+        }
+        return "Where your staff ranks him, worst first. \(clause) Men the league's roster rules will not let you release are ranked last."
     }
 }

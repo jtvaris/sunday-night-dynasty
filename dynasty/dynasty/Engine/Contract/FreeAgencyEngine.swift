@@ -3541,7 +3541,15 @@ enum FreeAgencyEngine {
         allTeams: [Team]? = nil,
         allPlayers: [Player]? = nil,
         userTeamID: UUID? = nil,
-        hostedVisit: Bool = false
+        hostedVisit: Bool = false,
+        /// The user club's `Career.fanSupport` (0…100, neutral 50), or `nil`
+        /// when the user's club is not among the bidders.
+        ///
+        /// Asymmetric on purpose and for a structural reason, not a shortcut:
+        /// `fanSupport` is a field on `Career`, i.e. the user's save. The other
+        /// 31 clubs have no such number, so there is nothing to compare against
+        /// and `nil` prices a bid exactly as it was priced before.
+        fanSupport: Int? = nil
     ) -> PlayerDecision {
         // Combine player offer with AI bids
         struct Bid {
@@ -3722,6 +3730,17 @@ enum FreeAgencyEngine {
             if bid.isPlayer {
                 score *= 1.02
                 if hostedVisit { score *= 1.04 }
+                // The city, on the same scarce-lever footing as the visit above.
+                // ±5 % at the extremes of `fanSupport`, which sits deliberately
+                // between the 2 % "we actually courted him" pitch and the
+                // `loserTax`, and far under `legacyVeteranPreference`'s ±25 %:
+                // a full house tilts a close call and never outbids money.
+                // `SigningInterestEngine.fanSupportBonus` is the same rule in
+                // the meter the user reads, so the number he is shown and the
+                // decision the engine makes cannot disagree.
+                if let fanSupport {
+                    score *= 1.0 + SigningInterestEngine.fanSupportBonus(fanSupport)
+                }
             }
 
             // R23: role factor — players favor rosters where they'd start.

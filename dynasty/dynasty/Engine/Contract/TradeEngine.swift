@@ -19,6 +19,58 @@ struct TradeProposal: Identifiable, Codable {
     /// The team on the receiving end of this proposal.
     var receivingTeamID: UUID
 
+    // MARK: Shelf life
+    //
+    // Wave 1.3's open remainder (`docs/TRADE_OVERHAUL_PLAN.md` §6: "offers get
+    // `weekOffered` + expiry"). A package an AI club put on the user's desk
+    // carried no clock at all: `career.pendingTradeOffers` was pruned only when
+    // one of its assets moved, when another club from the same team overwrote
+    // it, or when the deadline wiped the whole desk. So a call that came in
+    // during week 1 was still sitting there, at week-1 prices, in week 8, and an
+    // offseason offer generated in `.reviewRoster` survived free agency, the
+    // draft and cutdown day. The letter that shipped with it promised "it stays
+    // on the table until the market moves on" and nothing in the code ever made
+    // the market move on.
+    //
+    // Three fields rather than one because the offseason has no usable week
+    // number — `runOffseasonTradeMarket` is handed a FROZEN `career.currentWeek`
+    // (`WeekAdvancer.advanceOpenTradeThreads` says so itself), so week
+    // arithmetic can only order the regular season. The PHASE orders the
+    // offseason, stored raw for the migration reason `TradeRecord.phaseRaw` is.
+    //
+    // All three are optional and default to nil, which reads as "no clock": a
+    // package the user is building in the Trade Center has no shelf life, and an
+    // offer persisted by a save written before these fields existed decodes to
+    // nil (synthesised `Codable` uses `decodeIfPresent` for optionals) and keeps
+    // its previous behaviour exactly.
+
+    /// League year the offer was put on the table.
+    var offeredSeason: Int?
+    /// Week within that league year. Only meaningful on an in-season stamp.
+    var offeredWeek: Int?
+    /// `SeasonPhase.rawValue` of the window the offer was made in.
+    var offeredPhaseRaw: String?
+
+    /// The stamped window, or `nil` when this package carries no clock.
+    var offeredPhase: SeasonPhase? {
+        offeredPhaseRaw.flatMap(SeasonPhase.init(rawValue:))
+    }
+
+    /// True once a club has put this package on the user's desk — i.e. it is
+    /// somebody's standing offer rather than a package being built right now.
+    var hasShelfLife: Bool { offeredSeason != nil }
+
+    /// Records when and where the offer was made.
+    ///
+    /// Called from `TradeValueEngine.generateAIOffer`, which is the one place an
+    /// AI-initiated offer is born, so no offer can reach
+    /// `career.pendingTradeOffers` without a clock on it.
+    mutating func stampOffered(season: Int, week: Int, phase: SeasonPhase) {
+        offeredSeason = season
+        offeredWeek = week
+        offeredPhaseRaw = phase.rawValue
+    }
+
     init(
         id: UUID = UUID(),
         offeringTeamID: UUID,
@@ -26,7 +78,10 @@ struct TradeProposal: Identifiable, Codable {
         sendingPlayers: [UUID] = [],
         receivingPlayers: [UUID] = [],
         sendingPicks: [UUID] = [],
-        receivingPicks: [UUID] = []
+        receivingPicks: [UUID] = [],
+        offeredSeason: Int? = nil,
+        offeredWeek: Int? = nil,
+        offeredPhaseRaw: String? = nil
     ) {
         self.id = id
         self.offeringTeamID = offeringTeamID
@@ -35,6 +90,9 @@ struct TradeProposal: Identifiable, Codable {
         self.receivingPlayers = receivingPlayers
         self.sendingPicks = sendingPicks
         self.receivingPicks = receivingPicks
+        self.offeredSeason = offeredSeason
+        self.offeredWeek = offeredWeek
+        self.offeredPhaseRaw = offeredPhaseRaw
     }
 }
 

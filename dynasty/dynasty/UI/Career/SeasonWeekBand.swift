@@ -95,6 +95,25 @@ enum SeasonWeekBand {
         return nil
     }
 
+    /// The mark a played week wears where an unplayed one wears its number.
+    ///
+    /// `DSSlat.doneGlyph` was added for this band and no caller ever passed it,
+    /// so every finished week — the twelve-point defeat included — drew the
+    /// default checkmark, recoloured red. That property's own doc names the
+    /// problem: "a tick recoloured red still says done well". A defeat is not a
+    /// completed step, and colour alone cannot carry the difference for a
+    /// colour-blind reader anyway, which is the whole reason the band insists on
+    /// three channels per state.
+    ///
+    /// A bye and a week the calendar walked past unplayed both take `minus`:
+    /// they are behind the club without having produced a result.
+    static func doneGlyph(_ fixture: Fixture?) -> String {
+        guard let fixture, let ours = fixture.ourScore, let theirs = fixture.theirScore else { return "minus" }
+        if ours > theirs { return "checkmark" }
+        if theirs > ours { return "xmark" }
+        return "minus"
+    }
+
     /// Playoff round names by absolute week. Weeks 19–22 are the bracket
     /// (`WeekAdvancer`: wild card 19 → divisional 20 → conference 21 → Super
     /// Bowl 22).
@@ -160,13 +179,17 @@ enum SeasonWeekBand {
                 outcome: state == .done ? (result ?? (fixture?.isBye ?? true ? "Bye" : nil)) : nil,
                 tint: state == .done ? resultTint(fixture) : nil,
                 isLive: state == .current,
+                // The spoken sentence carries the same second line the slat
+                // prints, so "Week 7, this week, at PHI" no longer stops one
+                // word short of the thing that line exists to say.
                 accessibilityText: weekAccessibilityText(
                     week: week,
                     state: state,
                     tag: tag,
-                    result: result,
+                    detail: state == .current ? subcaption : result,
                     isBye: fixture?.isBye ?? true
-                )
+                ),
+                doneGlyph: doneGlyph(fixture)
             )
         }
 
@@ -213,7 +236,7 @@ enum SeasonWeekBand {
         week: Int,
         state: DSSlat.State,
         tag: String,
-        result: String?,
+        detail: String?,
         isBye: Bool
     ) -> String {
         let stateWord: String
@@ -224,7 +247,7 @@ enum SeasonWeekBand {
         case .locked:  stateWord = "locked"
         }
         let opponent = isBye ? "bye week" : tag
-        return ["Week \(week)", stateWord, opponent, result]
+        return ["Week \(week)", stateWord, opponent, detail]
             .compactMap { $0 }
             .joined(separator: ", ")
     }
@@ -263,8 +286,13 @@ struct SeasonWeekBandView: View {
         // built. Re-keying on the week is what makes the ladder follow the
         // calendar instead of staying where Week 1 left it.
         .id(currentWeek)
+        // The band shares the work column's 12 pt gutter, so the ribbon's left
+        // edge and the hub's first card sit on one line down the screen. The
+        // top inset is what stops the plate from butting straight onto the
+        // persistent top bar and reading as one continuous slab of chrome.
         .padding(.horizontal, DSSpacing.sm)
-        .padding(.bottom, DSSpacing.xxs)
+        .padding(.top, DSSpacing.xxs)
+        .padding(.bottom, DSSpacing.xs)
         .background(Color.backgroundPrimary)
     }
 }

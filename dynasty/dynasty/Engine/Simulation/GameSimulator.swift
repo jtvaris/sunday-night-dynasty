@@ -58,7 +58,24 @@ enum GameSimulator {
     static let onsideKickFailStartYardLine = 55
 
     // Momentum constants
+    /// Neutral home-field momentum: what every club starts a game with, and the
+    /// exact figure the full-game bands (points a side, the win split) were
+    /// measured against. ``homeFieldMomentum(fanSupport:)`` tilts AROUND this
+    /// value, so this is the tilt's zero and must not move.
     static let homeFieldMomentum: Double = 0.1
+    /// Most that fan support can add to or take off that seed, at 100 and at 0.
+    ///
+    /// Half the constant, so the range is 0.05…0.15: a home field is never worth
+    /// nothing, because an emptying stadium is a quieter one, not a road game.
+    ///
+    /// Small on purpose, and the smallness is measurable. Momentum here is a
+    /// SEED, not a standing bonus — `updateMomentum` decays it 10 % per drive
+    /// toward zero while drive events move it ±0.05…±0.20, so the opening value
+    /// is spent within the first few possessions. And it reaches a play as
+    /// `momentum * 0.05` on completion chance, which makes the whole end-to-end
+    /// swing worth about half a percentage point of completion on the opening
+    /// drive. That is a thumb on the scale, which is what a crowd is.
+    private static let homeFieldFanSwing: Double = 0.05
     private static let momentumDecayRate: Double = 0.10
     private static let momentumTD: Double = 0.15
     private static let momentumTurnover: Double = 0.20
@@ -130,6 +147,11 @@ enum GameSimulator {
     ///     The holdout filter below still applies on top of an override, so no
     ///     caller can accidentally dress a man who is refusing to report.
     ///   - awayRosterOverride: Same, for the AWAY team.
+    ///   - homeFanSupport: The HOME club's `Career.fanSupport` (0…100) when that
+    ///     club is the USER's. `nil` — every AI-vs-AI game, every game the user
+    ///     plays on the ROAD, and every balance-harness run — is today's exact
+    ///     behavior. See ``homeFieldMomentum(fanSupport:)`` for why only one club
+    ///     in the league can pass a number here.
     static func simulate(
         homeTeam: Team,
         awayTeam: Team,
@@ -141,7 +163,8 @@ enum GameSimulator {
         awayGamePlan: GamePlan? = nil,
         weather: GameWeather? = nil,
         homeRosterOverride: [Player]? = nil,
-        awayRosterOverride: [Player]? = nil
+        awayRosterOverride: [Player]? = nil,
+        homeFanSupport: Int? = nil
     ) -> GameResult {
         // -----------------------------------------------------------------
         // 1. Setup
@@ -240,7 +263,10 @@ enum GameSimulator {
         applyCoachMoraleBump(players: &homePlayers, bump: CoachingModifiers.moraleBump(homeRatings))
         applyCoachMoraleBump(players: &awayPlayers, bump: CoachingModifiers.moraleBump(awayRatings))
 
-        var momentum: Double = homeFieldMomentum // slight home advantage
+        // Slight home advantage, tilted by the crowd the home club actually
+        // draws. `nil` for the other 31 clubs and for the harness, which is the
+        // flat constant — see the helper.
+        var momentum: Double = homeFieldMomentum(fanSupport: homeFanSupport)
         var quarter = 1
         var timeRemaining = quarterDuration
 
@@ -1642,6 +1668,29 @@ enum GameSimulator {
     }
 
     // MARK: - Momentum
+
+    /// The home club's OPENING momentum, tilted by how its city currently feels
+    /// about the front office. 50 (a career's neutral value) is the flat
+    /// ``homeFieldMomentum``; 0 gives 0.05 and 100 gives 0.15.
+    ///
+    /// **Asymmetric, and it has to be.** `fanSupport` is a field on `Career` —
+    /// the USER's save. No AI club has one, and inventing a league-wide fan model
+    /// so that all 32 could be tilted is a far larger design decision than giving
+    /// the press conference's FANS number something to do. So `nil` does not mean
+    /// "unknown", it means "this home team is not the user's club", and it
+    /// returns the constant untouched: every AI-vs-AI game, every game the user
+    /// plays on the road, and every harness run produce exactly the number they
+    /// produced before this existed.
+    ///
+    /// Internal (not private) on purpose: `LiveGameEngine` still seeds the
+    /// coached game from the flat ``homeFieldMomentum`` property, and the day it
+    /// has a career to hand over it must come HERE rather than grow a second
+    /// opinion about what a home crowd is worth.
+    static func homeFieldMomentum(fanSupport: Int?) -> Double {
+        guard let fanSupport else { return homeFieldMomentum }
+        let tilt = (Double(min(max(fanSupport, 0), 100)) - 50.0) / 50.0 // -1…+1
+        return homeFieldMomentum + tilt * homeFieldFanSwing
+    }
 
     /// Applies momentum decay and shifts based on the outcome of the completed drive.
     /// Positive momentum favors the home team; negative favors the away team.

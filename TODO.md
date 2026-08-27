@@ -4142,6 +4142,61 @@ oman mitatun aaltonsa balanssirigiä vasten; jokainen on kirjattu syineen.
       "STARTER" leikkautui muotoon "START…" kun fontti kasvatettiin 58 pt sarakkeeseen, ja
       monipaikkakapseli "ALSO WR1·PR" leikkautui muotoon "ALSO…" kaksipalstaisessa ruudukossa —
       eli menetti ainoan asian jonka se kertoo. Molemmat verifioitu v3-kuvakaappauksilla.
+- [x] **ROADMAP-AALLOT 1 JA 2 AJETTU (6 agenttia, 2026-08-27). 26 tehtyä, 39 avointa/handoffia.**
+      **Harness: 94 assertiota identtisessä tilassa baselinen kanssa, lockerroom 5/5 porttia.**
+      Ainoa FAIL on ennestään tunnettu `6.9g` (`6.9b` läpäisi tällä siemenellä — se on se
+      kolikonheitto).
+      **Iso tulos: suunnitelma oli vanhentunut, ja välitin sen eteenpäin briiffeissä.**
+      Kolme neljästä "auki olevasta" trade-kohdasta oli jo tehty: `Team.players`-vanhentuminen
+      (`Team.currentRoster()` on `FetchDescriptor` `teamID`llä; `Team.players` on dokumentoitu
+      sanoin "NOT a source of truth, and never maintained"), cap-totuus kaikilta neljältä
+      osalta, ja W1.3:n handoffit (`deadlineWeek` lukee 9, ja riippuvuus menee päinvastoin kuin
+      briiffasin: `WeekAdvancer.tradeDeadlineWeek = TradeValueEngine.deadlineWeek`). Sama
+      pelillisessä: fasiliteetti → kehitys on kytketty ja mitattu (`WeekAdvancer:4211`), ja
+      vammapuoli myös (`MedicalEngine` lukee kaikkia neljää vipua). Agentti korjasi myös
+      virheeni: `PlayerDevelopmentEngine` ON harness-peilattu (`sync_sources.sh:107`).
+      Ohje "tarkista premissi lähteestä" esti kolmea agenttia rakentamasta olemassa olevaa.
+      **Syntyi oikeasti:** tarjouksille elinikä + Trade Centerin vanhenemiskuitti ja per-tarjous
+      -kello; omistajan tavoitteet oikeasta sarjasijoituksesta (ennen: absoluuttiset OVR-rajat
+      joiden MOLEMMAT päät olivat saavuttamattomia → kaikki 32 seuraa saivat ikuisesti saman
+      keskimmäisen listan ja neljä `GoalType`a generoitiin kenellekään); "develop rookies" lukee
+      aloituskertoja eikä scouting-arvosanaa; viikkonäkymän kaari (hero → "Before Sunday" →
+      "Your club"), advance-nappi kiinnitetty, sisäkkäiset ScrollView't pois; FA-markkinan ja
+      rosterin visuaalinen passi.
+      **Fanituki kytketty loppuun orkestroijan toimesta** — agentit lisäsivät parametrit
+      oletuksella `nil` eikä yksikään kutsuja välittänyt arvoa, eli mekanismi ilman kytkentää.
+      Nyt `WeekAdvancer` syöttää `homeFanSupport`in kotipeleissä ja `FAWeeklyView` syöttää
+      `fanSupport`in molempiin `resolvePlayerDecision`-kutsuihin. Epäsymmetria on tarkoituksella:
+      `nil` = "ei pelaajan seura" → tasan entinen hinnoittelu, joten AI-vs-AI-pelit, pelaajan
+      vieraspelit ja kaikki harness-ajot ovat tavu tavulta ennallaan.
+- [ ] **SEURATTAVA — "Develop 3 Rookies" -tavoitteen saavutettavuutta ei ole mitattu.**
+      Agentti merkitsi tämän itse epävarmaksi ja on oikeassa: tavoite on nyt ensimmäistä kertaa
+      elävä PRIMAARITAVOITE (pohjaviidennes + kärsivällinen omistaja), ja luku 3 on peräisin
+      ajalta jolloin sitä ei voinut mitenkään saavuttaa. Mittari on nyt kolmasosa seuran
+      otteluista aloitettuna, ja `startingLineupIDs` valitsee tiukasti parhaan OVR:n mukaan
+      samalla kun rookiet tulevat sisään 60–90 %:lla todellisista attribuuteistaan.
+      Vaikutusalue on YKSI seura: `generateSeasonGoals(team: userTeam, …)` kirjoittaa
+      `career.ownerSeasonGoals`iin, joten AI-seuroilla ei ole omistajatavoitteita lainkaan —
+      agentin "31 seuran budjetit siirtyvät" -varoitus on siis liian iso. Katsotaan seuraavassa
+      kauden ajossa montako rookieta oikeasti yltää rajaan.
+- [ ] **#97 / F-71 JONOSSA — realisaation ylitoimitus. Käyttäjä hyväksyi 2026-08-27.**
+      Sama vika kuin `6.9b` (80+ osuus) JA `6.9g` (33+ ikäosuus): rigin oma jaettu-juuri
+      -testi antaa `P(33+ | 80+) / P(33+ | all) = 3.01x`, eli vanhat pelaajat ovat vanhoja
+      koska he ovat hyviä (`qualityHazardScale` tekee sen tahallaan), ei koska eläkeputki
+      olisi väärin. Kaksi asserttia, yksi korjaus, ja korjaus on realisaatiossa:
+      `offseasonDevelop` tuottaa **+2.2 OVR/pelaaja/kausi** kun kaikki muut passit yhteensä
+      antavat +0.05.
+      **AJOJÄRJESTYS ON OSA TEHTÄVÄÄ, ei muotoseikka.** TODO:n oma merkintä kieltää
+      pinoamisen kolmesta syystä ja ne pitävät yhä: (1) edellinen yritys
+      (`runwayCentre` 0.55→0.40) rikkoi NELJÄ §6-asserttia, koska §6:n hit/elite-käyrät ovat
+      väite headroomista; (2) tämä pitää mitata sekä rigiä ETTÄ appin smokea vasten, koska
+      #97:n jäännös on nimenomaan näiden kahden ero; (3) toinen balanssimuutos samassa
+      mittauksessa tekee regression kohdistamisen mahdottomaksi.
+      Siksi #97 ajetaan **yksin ja viimeisenä**, sen jälkeen kun kaikki muut aallot ovat
+      maalissa ja puu on committoitu — muuten sen baseline sisältää fasiliteettikertoimen,
+      kotiedun ja leikkausjärjestyksen muutokset eikä kukaan voi sanoa mikä liikutti mitä.
+      Vipu on `WeekAdvancer.processOffseason`in SYÖTTEET (opportunity / coaching / scheme
+      fit), **ei** generaattorivakio. `6.9g` mitataan uudelleen vasta tämän jälkeen.
 - [ ] **PÄÄTÖS TARVITAAN — syvyyskaavio ei vaikuta mihinkään.** Tarkistettu itse:
       `grep` koko `Engine/`-puusta hakusanoilla `depthChartData`/`DepthChart` palauttaa
       **yhden osuman, ja se on kommentti**. `WeekAdvancer.startingLineupIDs(available:)`

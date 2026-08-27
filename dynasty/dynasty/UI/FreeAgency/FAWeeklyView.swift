@@ -264,7 +264,6 @@ struct FAWeeklyView: View {
                         outcomes: flowOutcomes,
                         meter: marketDayMeter
                     )
-                    roundHeader
                     liveTicker
                     biddingUpdatesBar
                     pendingOffersBar
@@ -274,8 +273,11 @@ struct FAWeeklyView: View {
                     actionBar
                 }
             } else {
+                // Blue: a spinner is informational, and P5's gold is spoken for
+                // twice over on this screen (the band's current slat, the
+                // commit) before the market has even loaded.
                 ProgressView()
-                    .tint(Color.accentGold)
+                    .tint(Color.accentBlue)
             }
 
             // Outbid alert banner overlay
@@ -564,7 +566,7 @@ struct FAWeeklyView: View {
         }
     }
 
-    // MARK: - Round Header
+    // MARK: - Market day metadata
 
     /// Phase metadata for the progression indicator.
     private struct PhaseInfo {
@@ -621,14 +623,24 @@ struct FAWeeklyView: View {
         career.capMode == .sandbox ? [:] : [.capReview: "Under the cap"]
     }
 
-    /// The market's meta line: the visit budget and the board size.
+    /// The market's meta reading: the visit budget and the board size.
     ///
-    /// The day, the phase description and the six-step rail have all moved into
-    /// the band above it, and the cap ledger has moved down onto the board
-    /// itself (#187c) — this bar now carries only the things neither has a slot
-    /// for.
-    private var roundHeader: some View {
-        HStack(alignment: .center, spacing: DSSpacing.md) {
+    /// **It used to be a bar of its own.** The day, the phase description and
+    /// the six-step rail moved into the band (§2.1) and the cap ledger moved
+    /// down onto the board (#187c), which left a full-width bar with a
+    /// background, a hairline and 16 pt of padding carrying two 11 pt readings
+    /// and a `Spacer` — about 31 pt of permanent chrome for one line of text,
+    /// on the screen in the game with the most rows and the least room for
+    /// them. It is now one end of the board's own head line, opposite
+    /// `slotLegend`, which follows the same argument #187c made about the
+    /// money: a reading belongs next to the thing it is a reading OF, not four
+    /// bars above it.
+    ///
+    /// The visit budget is the one that has to be near the board. `Host Visit`
+    /// stops being drawn once the allowance is spent (see `visitControl`), so
+    /// this is where the user finds out why.
+    private var boardMeta: some View {
+        HStack(spacing: DSSpacing.sm) {
             // R23: facility visit budget for this FA period.
             HStack(spacing: DSSpacing.xxs) {
                 Image(systemName: "building.2")
@@ -641,23 +653,9 @@ struct FAWeeklyView: View {
             Text("\(freeAgents.count) on the board")
                 .font(DSType.display(11, .semibold))
                 .foregroundStyle(Color.textTertiaryReadable)
-
-            Spacer(minLength: DSSpacing.xs)
-
-            // #187c: the cap ledger used to sit here. It now pins to the top of
-            // the board itself (`capRoomStrip`), because between this bar and
-            // the first row there are four more bars — ticker, bidding updates,
-            // pending offers, position filter — and any of them can be tall
-            // enough to push the money off-screen at the exact moment the user
-            // is choosing a row to press.
         }
-        .padding(.horizontal, DSSpacing.md)
-        .padding(.vertical, DSSpacing.xs)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.backgroundSecondary)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(Color.surfaceBorder).frame(height: 1)
-        }
+        .lineLimit(1)
+        .fixedSize(horizontal: true, vertical: false)
     }
 
     // MARK: - Bidding Updates Bar
@@ -1253,9 +1251,20 @@ struct FAWeeklyView: View {
             // scroll away from the rows they govern.
             VStack(spacing: DSSpacing.xxs) {
                 capRoomStrip
+                // The legend and the market's meta reading share one line: the
+                // legend is short, `lineLimit(1)` prose and the meta is two
+                // fixed readings, so between them they filled a line that each
+                // of them was previously given on its own (the meta had a whole
+                // bar — see `boardMeta`).
+                HStack(spacing: DSSpacing.sm) {
+                    if !agents.isEmpty {
+                        slotLegend
+                    }
+                    Spacer(minLength: DSSpacing.xs)
+                    boardMeta
+                }
                 if !agents.isEmpty {
                     marketHeader
-                    slotLegend
                 }
             }
             .padding(.horizontal, DSSpacing.md)
@@ -1419,6 +1428,12 @@ struct FAWeeklyView: View {
     /// one big list in the game whose columns were labels only, so "who is the
     /// cheapest 80-plus body left" was a question the board could not answer
     /// without the user reading all of it.
+    ///
+    /// `UPGRADE` and `ROOM` are not sortable and are deliberately not sortable:
+    /// both are derived (the delta from `incumbentByPosition`, the percentage
+    /// from `askingPrice / room`), and a sort on either is a sort on a column
+    /// the header already offers. They are here to be **read down**, which is
+    /// the whole reason they stopped being sentences.
     private var marketHeader: some View {
         DSListHeaderRow(
             density: .scan,
@@ -1428,10 +1443,12 @@ struct FAWeeklyView: View {
             affordance: .disclosure
         ) {
             Spacer(minLength: DSSpacing.xxs)
+            DSColumnHeader("Upgrade", width: Self.upgradeColumn)
             DSSortableColumnHeader("OVR",  key: .ovr,   sort: $marketSort, width: DSListColumn.ovr)
             DSSortableColumnHeader("Age",  key: .age,   sort: $marketSort, width: DSListColumn.age)
             DSSortableColumnHeader("Asks", key: .asks,  sort: $marketSort, width: DSListColumn.money)
             DSSortableColumnHeader("Yrs",  key: .years, sort: $marketSort, width: DSListColumn.tight)
+            DSColumnHeader("Room", width: DSListColumn.attribute)
         }
     }
 
@@ -1449,16 +1466,31 @@ struct FAWeeklyView: View {
             .foregroundStyle(Color.textTertiaryReadable)
             .lineLimit(1)
             .minimumScaleFactor(0.75)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            // No `maxWidth: .infinity`: the line it shares with `boardMeta` has
+            // a `Spacer` doing that job, and two greedy children would split
+            // the slack down the middle instead of packing the legend left.
     }
 
     /// One free agent.
     ///
     /// The tap target is still the whole row and it still opens the offer dial;
     /// what changed is that the top line is now `DSListRow` — one anatomy, one
-    /// badge shape, one set of column widths — and the two supporting lines sit
-    /// under it, indented to the row's own identity gutter rather than to a
-    /// hand-typed `40`.
+    /// badge shape, one set of column widths — and the single supporting line
+    /// sits under it, indented to the row's own identity gutter rather than to
+    /// a hand-typed `40`.
+    ///
+    /// **Why one supporting line and not two.** The market is the screen with
+    /// the most rows in the game (a day-one board is 90+ names) and the least
+    /// room to show them: a slat band, a ticker, two conditional bars, a filter
+    /// strip, a three-line pinned board head and a commit bar all sit above and
+    /// below the list. At three lines the row measured ~133 pt, which is
+    /// seven names to a 1032 pt iPad — a market you page through rather than
+    /// scan. Promoting the two always-present readings to columns (`UPGRADE`,
+    /// `ROOM`) removed a line without removing a fact, and spent slack the
+    /// identity slot was hoarding: at this width the flexible name column had
+    /// several hundred points of void between the state pills and the OVR cell
+    /// while the two most decision-relevant numbers on the row were crammed
+    /// into an 11 pt sentence underneath it.
     ///
     /// The row reserves **four state slots** (§2.2), chosen once for the whole
     /// list and drawn on every line whether or not the fact behind them exists.
@@ -1506,6 +1538,8 @@ struct FAWeeklyView: View {
                 } columns: {
                     Spacer(minLength: DSSpacing.xxs)
 
+                    upgradeCell(fa: fa)
+
                     Text("\(fa.player.overall)")
                         .font(DSType.display(DSType.Size.body, .heavy))
                         .foregroundStyle(Color.forRating(fa.player.overall))
@@ -1525,15 +1559,26 @@ struct FAWeeklyView: View {
                         .font(DSType.display(DSType.Size.body, .semibold))
                         .foregroundStyle(Color.textTertiaryReadable)
                         .dsColumn(DSListColumn.tight)
+
+                    roomCell(asking: fa.askingPrice, room: room)
                 }
 
-                // What signing him would do to the books, and what the room is
-                // saying about him.
-                HStack(spacing: DSSpacing.xxs + 2) {
-                    capImpactBadge(asking: fa.askingPrice, room: room)
-                    depthLabel(fa: fa)
+                // What the rest of the league is saying about him, and the one
+                // scoped control the row carries.
+                //
+                // This was TWO stacked lines. The four things on them were not
+                // four of a kind: two were readings every row prints (what he
+                // costs out of the room, who he would displace) and two are
+                // occasional (a rumour, a rival count). The two that are always
+                // there are columns now — see `upgradeCell` / `roomCell` — and
+                // what is left fits on one line beside the control.
+                //
+                // `minHeight` keeps the line reserved on a row that happens to
+                // have no rumour and no rivals, so the board's rhythm does not
+                // depend on which facts exist.
+                HStack(spacing: DSSpacing.xs) {
                     if let rumor = rumorText(for: fa) {
-                        HStack(spacing: 3) {
+                        HStack(spacing: 3) {  // ds-lint:allow(spacing) icon-to-text gap
                             Image(systemName: rumor.icon)
                                 .font(DSType.text(DSType.Size.caption))
                             Text(rumor.text)
@@ -1543,16 +1588,11 @@ struct FAWeeklyView: View {
                         .foregroundStyle(rumor.color)
                     }
                     aiInterestLabel(fa: fa)
-                    Spacer(minLength: 0)
-                }
-                .padding(.leading, Self.supportingInset)
-
-                // The row's one scoped control, plus the reading it unlocks.
-                HStack(spacing: DSSpacing.xs) {
-                    visitControl(fa: fa)
+                    Spacer(minLength: DSSpacing.xs)
                     interestChip(fa: fa)
-                    Spacer(minLength: 0)
+                    visitControl(fa: fa)
                 }
+                .frame(minHeight: 22, alignment: .leading)
                 .padding(.leading, Self.supportingInset)
             }
             .padding(.horizontal, DSSpacing.md)
@@ -1564,11 +1604,16 @@ struct FAWeeklyView: View {
         .accessibilityHint(hasOffer ? "Tap to update your offer" : "Tap to make an offer")
     }
 
-    /// Where the supporting lines start: the badge column plus the portrait
+    /// Where the supporting line starts: the badge column plus the portrait
     /// slot plus the identity gap, i.e. exactly under the player's name. It was
     /// a literal `40` that matched neither the old chip nor the new badge.
     private static let supportingInset: CGFloat =
         DSListColumn.position + DSListColumn.scanPortrait + DSListColumn.identityGap
+
+    /// The `UPGRADE` cell. `DSListColumn.state` (76) is the app's widest cell
+    /// constant — sized for "Discouraged" — and "Beckham 88" is the same shape
+    /// of label, so the market borrows it rather than inventing a ninth width.
+    private static let upgradeColumn: CGFloat = DSListColumn.state
 
     /// Name line, then the three reserved slots (§2.2).
     private func freeAgentIdentity(fa: FreeAgencyEngine.FreeAgent, hasOffer: Bool) -> some View {
@@ -1660,9 +1705,20 @@ struct FAWeeklyView: View {
     /// cannot tell which half of the row he may press. The state moved to the
     /// row's `VST` slot; what is left here is the button, and nothing when
     /// there is nothing left to press.
+    ///
+    /// **"Nothing left to press" now includes a spent budget.** The visit
+    /// allowance is three for the whole free-agency period and it is stored on
+    /// the career (`career.faVisitsUsed`), so once it is gone it does not come
+    /// back until next offseason — a disabled "Host Visit" on all ninety
+    /// remaining rows is 44 pt of dead control per row that can never become
+    /// live again. The budget itself is still stated, once, where a budget
+    /// belongs: `boardMeta`'s "Visits left 0/3", which now sits on the board's
+    /// own head line rather than four bars up. Gating on the shared counter
+    /// rather than on anything per-row means every row changes together, so the
+    /// board's rhythm never breaks mid-list.
     @ViewBuilder
     private func visitControl(fa: FreeAgencyEngine.FreeAgent) -> some View {
-        if !visitedPlayerIDs.contains(fa.player.id) {
+        if visitsRemaining > 0 && !visitedPlayerIDs.contains(fa.player.id) {
             Button {
                 hostVisit(fa: fa)
             } label: {
@@ -1672,20 +1728,16 @@ struct FAWeeklyView: View {
                     Text("Host Visit")
                         .font(DSType.text(11, .semibold))
                 }
-                .foregroundStyle(visitsRemaining > 0 ? Color.accentBlue : Color.textTertiary)
+                .foregroundStyle(Color.accentBlue)
                 .padding(.horizontal, DSSpacing.xs)
                 // 44, not 32: this button sits INSIDE a row that is itself a
                 // button to the offer sheet, so every pixel it is short of the
                 // rule opens the wrong surface instead of missing.
                 .frame(minHeight: 44)
-                .background(
-                    (visitsRemaining > 0 ? Color.accentBlue : Color.textTertiary).opacity(0.12),
-                    in: Capsule()
-                )
+                .background(Color.accentBlue.opacity(0.12), in: Capsule())
                 .contentShape(Capsule())
             }
             .buttonStyle(.borderless)
-            .disabled(visitsRemaining <= 0)
             .accessibilityLabel("Host \(fa.player.fullName) on a facility visit")
         }
     }
@@ -1722,53 +1774,84 @@ struct FAWeeklyView: View {
         }
     }
 
+    /// The interest tier, on the **status ladder** — bad at the bottom, good at
+    /// the top.
+    ///
+    /// It used to run cold → blue, warm → amber, hot → red, scorching → gold,
+    /// which put two opposite readings in the same paint on the same row: the
+    /// `HEAT` slot two lines above is RIVAL heat, where red means "the league is
+    /// all over him" (bad for us), and this chip is HIS heat for US, where the
+    /// old red meant "he is nearly ours" (good for us). One row, one red, two
+    /// meanings — and the top of the ladder wearing the screen's commit gold
+    /// (P5 gives gold exactly three jobs, and "a hot lead" is none of them).
+    ///
+    /// The two top tiers share green deliberately. A five-hue ramp on an 11 pt
+    /// chip is a palette, not a ladder; `Hot` and `Scorching` are told apart by
+    /// the word the chip already prints.
     private func interestTierColor(_ tier: SigningInterestEngine.InterestTier) -> Color {
         switch tier {
-        case .cold:      return .accentBlue
-        case .lukewarm:  return .textSecondary
+        case .cold:      return .dangerText
+        case .lukewarm:  return .alertOrange
         case .warm:      return .warning
-        case .hot:       return .danger
-        case .scorching: return .draftStealGold
+        case .hot:       return .success
+        case .scorching: return .success
         }
     }
 
-    // MARK: - Cap Impact Badge (preview)
+    // MARK: - `ROOM` column
 
     /// What the ask costs out of **the room the club still has** — the same
     /// number the strip at the top of the board labels `AVAILABLE`, handed in
-    /// so the badge does not re-read the ledger once per row.
+    /// so the cell does not re-read the ledger once per row.
     ///
     /// It used to divide by `salaryCap`, so an $18.1M ask on a club with $64.8M
     /// of room read "Will use 6 % of cap": true of a ~$264M total that appears
     /// nowhere on this screen, and a quarter of the answer to the only question
     /// the row is ever asked — can I afford him out of what is left.
-    private func capImpactBadge(asking: Int, room: Int) -> some View {
+    ///
+    /// **It also used to be a sentence.** "Will use 34 % of your room" is a fine
+    /// thing to read once and a terrible thing to read ninety times: the badge
+    /// before it was a different width on every line, so the percentages never
+    /// landed on a common x and could not be compared by eye. As a column the
+    /// board answers "who is cheap out of what I have left" by scanning, which
+    /// is what a market is for. The sentence survives as the spoken label.
+    ///
+    /// `OVER` rather than a true percentage above 100: the exact multiple of a
+    /// room you do not have is not a reading anyone acts on, and "2400 %" in a
+    /// 34 pt cell is a clip.
+    private func roomCell(asking: Int, room: Int) -> some View {
         let pctRounded = room > 0 ? Int((Double(asking) / Double(room) * 100).rounded()) : 0
-        let unaffordable = asking > room
+        let unaffordable = room <= 0 || asking > room
         let color: Color = {
-            if unaffordable { return .danger }
+            if unaffordable { return .dangerText }
             if pctRounded >= 50 { return .warning }
             return .textSecondary
         }()
-        let labelText: String = {
-            if room <= 0 { return "No room left" }
-            if unaffordable { return "More than your room" }
-            return pctRounded <= 0 ? "<1% of your room" : "Will use \(pctRounded)% of your room"
+        let value: String = {
+            if room <= 0 { return "\u{2014}" }
+            if asking > room { return "OVER" }
+            return pctRounded <= 0 ? "<1%" : "\(pctRounded)%"
         }()
-        return Text(labelText)
-            .font(DSType.display(11, .semibold))
+        let spoken: String = {
+            if room <= 0 { return "No cap room left" }
+            if asking > room { return "More than your remaining room" }
+            return pctRounded <= 0
+                ? "Under one per cent of your room"
+                : "Would use \(pctRounded) per cent of your room"
+        }()
+        return Text(value)
+            .font(DSType.display(DSType.Size.body, .heavy))
             .foregroundStyle(color)
-            .padding(.horizontal, DSSpacing.xxs + 2)
-            .padding(.vertical, 2)
-            .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
+            .dsColumn(DSListColumn.attribute)
+            .accessibilityLabel(spoken)
     }
 
-    // MARK: - Depth Reading
+    // MARK: - `UPGRADE` column
 
     /// **What signing him would actually change.**
     ///
-    /// The board's columns are POS / OVR / AGE / ASKS / YRS, so the highest
-    /// rating left is always the apparent right answer: two strong safeties at
+    /// The board's columns were POS / OVR / AGE / ASKS / YRS, so the highest
+    /// rating left was always the apparent right answer: two strong safeties at
     /// the top of the list read as the two best buys on the screen whether the
     /// club already starts an 88 there or has nobody at all. Nothing else on
     /// this screen names the man he would be replacing — the position filter
@@ -1776,35 +1859,48 @@ struct FAWeeklyView: View {
     /// market exists to pose was fake, and "sort by OVR, buy the top name you
     /// can afford" was the whole game.
     ///
+    /// It is a **column** and not the sentence it used to be for the same
+    /// reason `roomCell` is: need is the second axis of every buy on this
+    /// board, and a second axis has to be readable down the page. `+9` over
+    /// `Weeks 74` and `−4` under `Weeks 74` are two glances in a column and two
+    /// readings of a paragraph anywhere else.
+    ///
     /// Cheap by construction: `incumbentByPosition` is one dictionary lookup,
     /// built once per load rather than by scanning the roster per row.
-    @ViewBuilder
-    private func depthLabel(fa: FreeAgencyEngine.FreeAgent) -> some View {
-        let (icon, text, color) = { () -> (String, String, Color) in
+    private func upgradeCell(fa: FreeAgencyEngine.FreeAgent) -> some View {
+        let (value, caption, color, spoken) = { () -> (String, String, Color, String) in
             guard let held = incumbentByPosition[fa.player.position] else {
                 // Nobody at the spot is the strongest reason on the board to
                 // sign a man, and it is the one case the OVR column cannot say.
-                return ("person.badge.plus", "No \(fa.player.position.rawValue) on your roster", .success)
+                return ("OPEN", "unfilled", .success,
+                        "No \(fa.player.position.rawValue) on your roster")
             }
+            let under = "\(held.lastName) \(held.overall)"
             let delta = fa.player.overall - held.overall
             if delta > 0 {
-                return ("arrow.up.right", "+\(delta) over \(held.lastName) (\(held.overall))", .success)
+                return ("+\(delta)", under, .success,
+                        "\(delta) better than \(held.lastName), \(held.overall) overall")
             }
             if delta == 0 {
-                return ("equal", "Same as \(held.lastName) (\(held.overall))", .textTertiaryReadable)
+                return ("=", under, .textTertiaryReadable,
+                        "Level with \(held.lastName), \(held.overall) overall")
             }
-            // `abs`, not the raw delta: "-3 behind" is a double negative.
-            return ("arrow.down.right", "\(abs(delta)) behind \(held.lastName) (\(held.overall))", .textTertiaryReadable)
+            // A true minus sign, and `abs` — "-3 behind" was a double negative.
+            return ("\u{2212}\(abs(delta))", under, .textTertiaryReadable,
+                    "\(abs(delta)) worse than \(held.lastName), \(held.overall) overall")
         }()
 
-        HStack(spacing: 3) {  // ds-lint:allow(spacing) icon-to-text gap, same as the rumour beside it
-            Image(systemName: icon)
-                .font(DSType.text(DSType.Size.caption))
-            Text(text)
+        return VStack(spacing: 0) {
+            Text(value)
+                .font(DSType.display(DSType.Size.body, .heavy))
+                .foregroundStyle(color)
+            Text(caption)
                 .font(DSType.display(11, .semibold))
-                .lineLimit(1)
+                .foregroundStyle(Color.textTertiaryReadable)
         }
-        .foregroundStyle(color)
+        .dsColumn(Self.upgradeColumn)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(spoken)
     }
 
     // MARK: - Rumor System
@@ -1987,7 +2083,8 @@ struct FAWeeklyView: View {
                 allTeams: allTeams,
                 allPlayers: allPlayers,
                 userTeamID: career.teamID,
-                hostedVisit: visitedPlayerIDs.contains(player.id)
+                hostedVisit: visitedPlayerIDs.contains(player.id),
+                fanSupport: career.fanSupport
             )
 
             if decision.shoppingAround {
@@ -2157,7 +2254,8 @@ struct FAWeeklyView: View {
                 aiBids: bids,
                 round: currentRound,
                 allTeams: allTeams,
-                allPlayers: allPlayers
+                allPlayers: allPlayers,
+                fanSupport: career.fanSupport
             )
 
             // Task #93 F8: "wants to explore all options before committing" was
@@ -2404,12 +2502,16 @@ struct FAWeeklyView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: DSSpacing.md) {
                     ForEach(recentEvents) { item in
-                        HStack(spacing: 6) {
+                        // The two voices, not a third: `.caption2` / `.caption`
+                        // resolve to whatever the system decides, which is how a
+                        // strip pinned directly above an 11 pt tracked column
+                        // header ended up a size and a face away from it.
+                        HStack(spacing: 6) {  // ds-lint:allow(spacing) icon-to-text gap
                             Image(systemName: item.icon)
-                                .font(.caption2)
+                                .font(DSType.text(DSType.Size.caption))
                                 .foregroundStyle(item.tint)
                             Text(item.text)
-                                .font(.caption)
+                                .font(DSType.text(DSType.Size.footnote, .medium, prose: true))
                                 .foregroundStyle(Color.textSecondary)
                                 .lineLimit(1)
                         }
@@ -2461,7 +2563,9 @@ struct FAWeeklyView: View {
             let aav = bid.baseSalary + (bid.years > 0 ? bid.signingBonus / max(bid.years, 1) : bid.signingBonus)
             let aavM = max(aav / 1000, 1)
             let icon = bid.status == .outbid ? "arrow.up.circle.fill" : "arrow.up.right"
-            let tint: Color = bid.status == .outbid ? .draftReachRed : .warning
+            // `danger`, not the draft's `draftReachRed`: this is a free-agency
+            // surface and the app has a semantic red for "this went against us".
+            let tint: Color = bid.status == .outbid ? .danger : .warning
             items.append(TickerItem(
                 icon: icon,
                 tint: tint,
@@ -2501,10 +2605,18 @@ struct FAWeeklyView: View {
             }
         }
         for (fa, tier) in heatPairs {
-            let tint: Color = tier == .burning ? .draftStealGold : .danger
+            // No `tier.emoji`: the chip has an SF Symbol flame on its leading
+            // edge already, and §2.12 bans dingbats outright — this is the same
+            // emoji-plus-word lockup #177 took off the row, left behind in the
+            // ticker. And no `draftStealGold`: the burning tier is the top of a
+            // heat ladder, not the screen's commit (P5).
+            let tint: Color = tier == .burning ? .danger : .alertOrange
             let label: String = tier == .burning ? "FIRE" : "HOT"
-            let text = "\(fa.player.fullName) \(tier.emoji) \(label)"
-            items.append(TickerItem(icon: "flame.fill", tint: tint, text: text))
+            items.append(TickerItem(
+                icon: "flame.fill",
+                tint: tint,
+                text: "\(fa.player.fullName) \(label)"
+            ))
         }
 
         // 4. Day 1 has no bids, no visits and no heat, so items 1-3 are empty on
@@ -2514,9 +2626,11 @@ struct FAWeeklyView: View {
         // top names are safeties. These read the board instead, which exists
         // before a single bid is cast.
         if items.isEmpty {
+            // Neutral, not gold. A board count is a fact, and P5 spends this
+            // screen's gold on the band's current slat and the commit.
             items.append(TickerItem(
                 icon: "newspaper",
-                tint: .accentGold,
+                tint: .textSecondary,
                 text: "\(freeAgents.count) free agent\(freeAgents.count == 1 ? "" : "s") on the wire"
             ))
 
@@ -2536,7 +2650,7 @@ struct FAWeeklyView: View {
                !named.contains(priciest.player.id) {
                 items.append(TickerItem(
                     icon: "dollarsign.circle.fill",
-                    tint: .accentGold,
+                    tint: .accentBlue,
                     text: "Biggest ask on the board: \(priciest.player.fullName) at "
                         + "\(formatMillions(priciest.askingPrice))/yr over \(priciest.desiredYears) yrs"
                 ))
@@ -2577,34 +2691,52 @@ struct FAWeeklyView: View {
 
     // MARK: - FA Drama Phase 2 — Outbid Alert Banner
 
+    /// The one thing on this screen that interrupts: a rival has taken a man
+    /// the club has money on, and there is a clock on the answer.
+    ///
+    /// It shipped in a **third** voice — `.caption` / `.subheadline`, i.e.
+    /// whatever the system resolves — wearing the DRAFT's palette
+    /// (`draftReachRed`, `draftClockUrgent`) on a free-agency surface. Both are
+    /// now the app's: the two DSType voices, and `danger` for the alarm with
+    /// `alertOrange` for the countdown, which is the same warn hue the rest of
+    /// this screen uses. Nothing about the banner's urgency depended on
+    /// borrowing another screen's colours.
+    ///
+    /// The dismiss target is 44 pt, measured — it was a bare 17 pt glyph on the
+    /// one control that makes an interrupting banner go away.
     @ViewBuilder
     private var outbidBanner: some View {
         if let evt = visibleOutbidEvent {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
+            VStack(alignment: .leading, spacing: DSSpacing.xxs) {
+                HStack(spacing: DSSpacing.xxs) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(Color.draftReachRed)
+                        .font(DSType.text(DSType.Size.caption, .semibold))
+                        .foregroundStyle(Color.danger)
                     Text("OUTBID")
-                        .font(.caption.weight(.heavy))
+                        .font(DSType.display(DSType.Size.caption, .heavy))
                         .tracking(1)
-                        .foregroundStyle(Color.draftReachRed)
-                    Spacer()
+                        .foregroundStyle(Color.dangerText)
+                    Spacer(minLength: DSSpacing.xs)
                     Text(timeRemaining(until: evt.respondByDeadline))
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(Color.draftClockUrgent)
+                        .font(DSType.display(DSType.Size.footnote, .bold).monospacedDigit())
+                        .foregroundStyle(Color.alertOrange)
                     Button {
                         visibleOutbidEvent = nil
                     } label: {
                         Image(systemName: "xmark.circle.fill")
+                            .font(DSType.text(DSType.Size.callout))
                             .foregroundStyle(Color.textTertiary)
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Dismiss the outbid alert")
                 }
                 Text("\(evt.outbidByTeamAbbrev) bumped \(evt.playerName) to $\(evt.competingOfferAnnualValue / 1000)M/yr")
-                    .font(.subheadline.weight(.semibold))
+                    .font(DSType.text(DSType.Size.callout, .semibold, prose: true))
                     .foregroundStyle(Color.textPrimary)
                 Text("Match by deadline or lose the player.")
-                    .font(.caption)
+                    .font(DSType.text(DSType.Size.footnote, .regular, prose: true))
                     .foregroundStyle(Color.textSecondary)
             }
             .padding(DSSpacing.sm)
@@ -2614,7 +2746,7 @@ struct FAWeeklyView: View {
                     .fill(Color.backgroundSecondary)
                     .overlay(
                         RoundedRectangle(cornerRadius: DSCornerRadius.card)
-                            .strokeBorder(Color.draftReachRed, lineWidth: 2)
+                            .strokeBorder(Color.danger, lineWidth: 2)
                     )
             )
             .padding(.horizontal, DSSpacing.md)
