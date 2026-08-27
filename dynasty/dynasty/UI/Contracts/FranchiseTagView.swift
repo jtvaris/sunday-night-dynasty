@@ -45,6 +45,23 @@ struct FranchiseTagView: View {
     /// One baseline per visit, not one per `loadData`.
     @State private var baselineCaptured = false
 
+    /// The tag the user has asked for and not yet agreed to.
+    ///
+    /// A franchise tag is the least reversible thing on this screen — one per
+    /// offseason, and it books next season's cap the moment it lands — and it
+    /// used to commit on the first tap of a gold pill that sat on every row.
+    /// `UI_REDESIGN_VISION.md` §"Irreversibility always confirms" names this
+    /// screen by example.
+    @State private var pendingTag: PendingTag?
+    @State private var showTagConfirmation = false
+
+    /// The terms of the tag being confirmed, captured at the tap so the sheet
+    /// cannot quote a price that has since been recomputed.
+    private struct PendingTag {
+        let player: Player
+        let tagCost: Int
+    }
+
     var body: some View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
@@ -86,6 +103,15 @@ struct FranchiseTagView: View {
             }
         } message: {
             Text("Are you sure? You won't be able to franchise tag any player this offseason.")
+        }
+        .alert("Franchise tag \(pendingTag?.player.fullName ?? "this player")?", isPresented: $showTagConfirmation, presenting: pendingTag) { pending in
+            Button("Cancel", role: .cancel) { pendingTag = nil }
+            Button("Apply Tag") {
+                applyTag(to: pending.player, tagCost: pending.tagCost)
+                pendingTag = nil
+            }
+        } message: { pending in
+            Text(tagConfirmationTerms(for: pending))
         }
         .sheet(item: $tagBreakdown) { request in
             TagBreakdownSheet(request: request, tagSeasonLabel: seasonLabel(nextSeason))
@@ -517,6 +543,19 @@ struct FranchiseTagView: View {
                     tagBreakdown = tagBreakdownRequest(for: player, booked: nil)
                 } label: {
                     VStack(alignment: .trailing, spacing: 2) {
+                        // Caption first, figure under it. A column whose small
+                        // grey word sat BELOW its number read as a caption for
+                        // whatever came next; above it, it is a heading for the
+                        // dollars it introduces, which is the order the eye
+                        // wants and the order every other labelled figure on
+                        // this screen already uses.
+                        HStack(spacing: 3) {
+                            Text("Tag Cost")
+                                .font(.system(size: DSType.Size.caption).weight(.medium))
+                            Image(systemName: "info.circle")
+                                .font(.system(size: DSType.Size.micro, weight: .semibold))
+                        }
+                        .foregroundStyle(Color.textTertiary)
                         // Not gold. Eight rows priced in the screen's emphasis
                         // colour made twenty gold elements out of a screen with one
                         // decision on it, and a price the club pays at most once is
@@ -527,13 +566,6 @@ struct FranchiseTagView: View {
                         Text(formatMillions(tagCost))
                             .font(.subheadline.weight(.semibold).monospacedDigit())
                             .foregroundStyle(hasUsedTag ? Color.textTertiary : Color.textPrimary)
-                        HStack(spacing: 3) {
-                            Text("Tag Cost")
-                                .font(.system(size: DSType.Size.caption).weight(.medium))
-                            Image(systemName: "info.circle")
-                                .font(.system(size: DSType.Size.micro, weight: .semibold))
-                        }
-                        .foregroundStyle(Color.textTertiary)
                         if let priceChange {
                             tagChangeChip(priceChange)
                         }
@@ -555,7 +587,8 @@ struct FranchiseTagView: View {
                         .background(Color.backgroundTertiary, in: Capsule())
                 } else {
                     Button {
-                        applyTag(to: player, tagCost: tagCost)
+                        pendingTag = PendingTag(player: player, tagCost: tagCost)
+                        showTagConfirmation = true
                     } label: {
                         // One tag, eight rows: a filled gold pill on every one
                         // of them reads as eight primary actions for a resource
@@ -672,23 +705,86 @@ struct FranchiseTagView: View {
         let endorsesTag: Bool
     }
 
+    /// Where a man stands against the far edge of his position's peak window.
+    ///
+    /// The screen used to know two states, `age > upperBound` and everything
+    /// else, and that single hard gate is wrong at both ends. A 30-year-old CB
+    /// sits exactly ON the bound (25...30) and was told nothing, though the tag
+    /// buys his 31st season; and the gate was read only after the elite branch
+    /// had already returned, so a 33-year-old at 87 OVR was urged to tag with no
+    /// mention of his age at all. Three states, checked for everyone.
+    private enum AgeStanding {
+        /// Comfortably inside the peak window.
+        case inPrime
+        /// The last year of it — the tag buys the first season after the peak.
+        case atTheEdge
+        /// Beyond it.
+        case pastPeak
+    }
+
+    private func ageStanding(for player: Player) -> AgeStanding {
+        let upperBound = player.position.peakAgeRange.upperBound
+        if player.age > upperBound { return .pastPeak }
+        if player.age == upperBound { return .atTheEdge }
+        return .inPrime
+    }
+
     /// The judgement of the man never changes; the decision it is advice ABOUT
     /// does. Once the tag is spent, "strongly consider tagging" recommends a
     /// move this row has already disabled, so each tier states the choice that
     /// is still open — re-sign him through his agent, or let him walk.
     private func smartRecommendation(for player: Player) -> Recommendation {
-        let isPastPeak = player.age > player.position.peakAgeRange.upperBound
+        let standing = ageStanding(for: player)
 
         if player.overall >= 85 {
+            switch standing {
+            case .pastPeak:
+                // The discontinuity this fixes: at 84 OVR and 33 he was an
+                // "aging veteran, tag cost may not be worth it"; one rating
+                // point higher he was "strongly consider tagging" with no age
+                // mentioned. A tag is top-five money at his position for one
+                // season, and a man past his window is the wrong place to spend
+                // it — so the elite tier stops endorsing it too.
+                return Recommendation(
+                    text: hasUsedTag
+                        ? "Elite on tape but past peak at \(player.age) — re-sign him short, or let him go."
+                        : "Elite on tape, but past peak at \(player.age) — a tag pays top-5 money for a declining year.",
+                    icon: "exclamationmark.triangle.fill",
+                    color: .warning,
+                    endorsesTag: false
+                )
+            case .atTheEdge:
+                return Recommendation(
+                    text: hasUsedTag
+                        ? "Elite player — re-sign him or lose him for nothing. At \(player.age) this is his last peak year."
+                        : "Elite player — strongly consider tagging. At \(player.age) this is his last peak year for a \(player.position.rawValue).",
+                    icon: "star.fill",
+                    color: .accentGold,
+                    endorsesTag: true
+                )
+            case .inPrime:
+                return Recommendation(
+                    text: hasUsedTag
+                        ? "Elite player — re-sign him or lose him for nothing."
+                        : "Elite player — strongly consider tagging.",
+                    icon: "star.fill",
+                    color: .accentGold,
+                    endorsesTag: true
+                )
+            }
+        } else if standing == .atTheEdge {
+            // The band that did not exist. The tag buys the season AFTER the
+            // one being played, so a man in the last year of his window is
+            // being paid for his first year outside it.
             return Recommendation(
                 text: hasUsedTag
-                    ? "Elite player — re-sign him or lose him for nothing."
-                    : "Elite player — strongly consider tagging.",
-                icon: "star.fill",
-                color: .accentGold,
-                endorsesTag: true
+                    ? "At \(player.age) he is in his last peak year — re-sign him short or let him walk."
+                    : "At \(player.age) he is in his last peak year for a \(player.position.rawValue) — the tag would buy his first year past it.",
+                icon: "hourglass",
+                color: .warning,
+                endorsesTag: false
             )
-        } else if isPastPeak {
+        } else if standing == .pastPeak {
             return Recommendation(
                 text: hasUsedTag
                     ? "Aging veteran at \(player.age) — let him walk unless he re-signs cheap."
@@ -1067,6 +1163,23 @@ struct FranchiseTagView: View {
     }
 
     // MARK: - Actions
+
+    /// The deal, spelled out before it is signed.
+    ///
+    /// Everything in it is a term the user is agreeing to and could not read off
+    /// the row: that it is ONE season and which one, what it costs, that it
+    /// spends the club's only tag, and what is left of next spring afterwards.
+    private func tagConfirmationTerms(for pending: PendingTag) -> String {
+        let player = pending.player
+        let remaining = roundedToDisplay(projectedNextYearSpace) - roundedToDisplay(pending.tagCost)
+        return """
+        \(player.position.rawValue) \(player.fullName), \(player.overall) OVR, age \(player.age).
+
+        One season in \(seasonLabel(nextSeason)) at \(formatMillions(pending.tagCost)) — the average of the top 5 salaries at his position. It charges the \(seasonLabel(nextSeason)) cap, leaving \(formatMillions(remaining)) projected.
+
+        This is your only franchise tag this offseason. You can remove it from this screen afterwards.
+        """
+    }
 
     private func applyTag(to player: Player, tagCost: Int) {
         guard let team, !hasUsedTag else { return }

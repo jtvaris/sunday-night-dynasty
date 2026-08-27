@@ -70,6 +70,12 @@ struct RosterEvaluationView: View {
     private var salaryCap: Int { team?.salaryCap ?? ContractEngine.openingSalaryCap }
 
     @State private var players: [Player] = []
+    /// The club's detailed contract rows, keyed by player, for the restructure
+    /// scenario. `ContractEngine.restructureQuote` reads the row's own base
+    /// salary where one exists and falls back to `annualSalary` where it does
+    /// not, so quoting without them would price simple-mode arithmetic on a
+    /// detailed-mode save.
+    @State private var contractsByPlayer: [UUID: Contract] = [:]
     @State private var allPlayers: [Player] = []
     @State private var allTeams: [Team] = []
     @State private var defensiveScheme: DefensiveScheme = .base43
@@ -120,6 +126,13 @@ struct RosterEvaluationView: View {
     // companion `capScenarioConfirmation` receipt is gone — it claimed moves
     // were queued when nothing was.
     @CareerScopedStorage("rosterCapScenario") private var selectedCapScenario: String = ""
+
+    /// Where a typical club sits on its cap, as a fraction — the reference tick
+    /// on the Cap Usage bar. A reading, not a rule: nothing in the engine
+    /// enforces it, and it exists only so the user's own percentage has
+    /// something to be high or low against.
+    private static let leagueAverageCapUsage: Double = 0.78
+    private static let leagueAverageCapUsageLabel = "78%"
 
     // Own assessment options (#266)
     // "Strength" = team strength (bright green) marker the coach can flag.
@@ -1671,15 +1684,20 @@ struct RosterEvaluationView: View {
             // showed the user two different futures.
             let projectedNextCap = Int(Double(team.salaryCap) * (1.0 + ContractEngine.capGrowthPerSeason))
             let projectedSpaceAfterReplacements = projectedNextCap - projectedWithReplacements
+            // …and the row that prints the projection now READS the same
+            // constant. It was hand-labelled "~5% increase" against arithmetic
+            // that had already moved to the engine's 6.5 % midpoint, so the
+            // caption and the figure beside it described different futures.
+            let capGrowthLabel = String(format: "%.1f%%", ContractEngine.capGrowthPerSeason * 100)
 
             return AnyView(
                 VStack(spacing: 16) {
                     // Current season summary
                     HStack(spacing: 0) {
-                        capStatColumn(label: "Total Cap",    value: formatMillions(team.salaryCap),      color: .accentGold)
-                        capStatColumn(label: "Used",         value: formatMillions(team.currentCapUsage), color: capUsageColor(team))
-                        capStatColumn(label: "Available",    value: formatMillions(team.availableCap),    color: team.availableCap >= 0 ? .success : .danger)
-                        capStatColumn(label: "Dead Cap Est.", value: formatMillions(estimatedDeadCap),    color: estimatedDeadCap > 5_000 ? .danger : .textSecondary)
+                        capStatColumn(label: "Total Cap",    icon: "dollarsign.circle.fill", value: formatMillions(team.salaryCap),      color: .accentGold)
+                        capStatColumn(label: "Used",         icon: "chart.pie.fill",         value: formatMillions(team.currentCapUsage), color: capUsageColor(team))
+                        capStatColumn(label: "Available",    icon: "checkmark.circle.fill",  value: formatMillions(team.availableCap),    color: team.availableCap >= 0 ? .success : .danger)
+                        capStatColumn(label: "Dead Cap Est.", icon: "xmark.circle.fill",     value: formatMillions(estimatedDeadCap),    color: estimatedDeadCap > 5_000 ? .danger : .textSecondary)
                     }
 
                     Divider().overlay(Color.surfaceBorder)
@@ -1702,7 +1720,7 @@ struct RosterEvaluationView: View {
                         color: .textSecondary
                     )
                     projectedCapRow(
-                        label: "Projected Cap (\(String(nextSeason)), ~5% increase)",
+                        label: "Projected Cap (\(String(nextSeason)), ~\(capGrowthLabel) increase)",
                         value: formatMillions(projectedNextCap),
                         color: .accentGold
                     )
@@ -1738,6 +1756,16 @@ struct RosterEvaluationView: View {
                         color: .textPrimary
                     )
 
+                    // The same sentence `CapOverviewView` prints under the same
+                    // figure. Without it "+ Est. Replacement Cost" is a number
+                    // with no stated basis, and the obvious guess — a veteran
+                    // minimum per empty slot — is off by an order of magnitude.
+                    Text("Replacement is each expiring player's own market value at this cap — not a veteran minimum.")
+                        .font(.caption2)
+                        .foregroundStyle(Color.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
                     Divider().overlay(Color.surfaceBorder.opacity(0.4))
 
                     // Final available cap
@@ -1768,27 +1796,43 @@ struct RosterEvaluationView: View {
                         Button {
                             showCapDetailPopover = true
                         } label: {
+                            // The league average is a tick ON the bar now, not a
+                            // grey line under it. "League avg: ~78%" printed in
+                            // caption2/tertiary was the only reference point the
+                            // user had for whether his own 87 % was normal, and
+                            // it was the least legible text in the card — the
+                            // one comparison worth making, made invisible.
                             GeometryReader { geo in
-                                ZStack(alignment: .leading) {
+                                let width = geo.size.width
+                                let tickX = width * Self.leagueAverageCapUsage
+                                ZStack(alignment: .topLeading) {
                                     RoundedRectangle(cornerRadius: 5)
                                         .fill(Color.backgroundTertiary)
-                                        .frame(height: 10)
+                                        .frame(width: width, height: 10)
                                     RoundedRectangle(cornerRadius: 5)
                                         .fill(capBarGradientThreshold(team))
-                                        .frame(width: geo.size.width * min(capPct(team), 1.0), height: 10)
+                                        .frame(width: width * min(capPct(team), 1.0), height: 10)
+                                    Rectangle()
+                                        .fill(Color.textPrimary.opacity(0.75))
+                                        .frame(width: 2, height: 16)
+                                        .offset(x: max(tickX - 1, 0), y: -3)
+                                    Text("League avg \(Self.leagueAverageCapUsageLabel)")
+                                        .font(.system(size: DSType.Size.micro, weight: .semibold))
+                                        .foregroundStyle(Color.textSecondary)
+                                        .fixedSize()
+                                        // Centred on the tick, then held inside
+                                        // the bar's own width so it cannot run
+                                        // off either edge on a narrow layout.
+                                        .offset(x: min(max(tickX - 38, 0), max(width - 76, 0)), y: 17)
                                 }
                             }
-                            .frame(height: 10)
+                            .frame(height: 32)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("Cap usage \(String(format: "%.1f percent", capPct(team) * 100)), league average \(Self.leagueAverageCapUsageLabel)")
                         .popover(isPresented: $showCapDetailPopover) {
                             capDetailPopover(team: team)
                         }
-
-                        // League average context line
-                        Text("League avg: ~78%")
-                            .font(.caption2)
-                            .foregroundStyle(Color.textTertiary)
                     }
 
                     // #253: Cap warning cards
@@ -1815,19 +1859,33 @@ struct RosterEvaluationView: View {
         }
     }
 
-    private func capStatColumn(label: String, value: String, color: Color) -> some View {
+    /// One of the four Cap Outlook tiles.
+    ///
+    /// The label carries a glyph and a bold weight because it used to be 11 pt
+    /// tertiary-weight prose under a large coloured figure: four numbers the eye
+    /// could read from across the room, over four captions it could not, so the
+    /// strip said "$265M / $230.5M / $34.5M / $1.1M" and left the user to guess
+    /// which was which.
+    private func capStatColumn(label: String, icon: String, value: String, color: Color) -> some View {
         VStack(spacing: 5) {
             Text(value)
                 .font(.system(size: DSType.Size.title3, weight: .bold).monospacedDigit())
                 .foregroundStyle(color)
                 .minimumScaleFactor(0.6)
                 .lineLimit(1)
-            Text(label)
-                .font(.caption2)
-                .foregroundStyle(Color.textSecondary)
-                .multilineTextAlignment(.center)
+            HStack(spacing: 3) {
+                Image(systemName: icon)
+                    .font(.system(size: DSType.Size.micro, weight: .semibold))
+                Text(label)
+                    .font(.system(size: DSType.Size.caption, weight: .bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            .foregroundStyle(Color.textSecondary)
         }
         .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(label), \(value)")
     }
 
     private func projectedCapRow(label: String, value: String, color: Color) -> some View {
@@ -2454,12 +2512,25 @@ struct RosterEvaluationView: View {
     }
 
     /// #253: Color thresholds: <80% green, 80-90% yellow, 90-95% orange, >95% red
+    ///
+    /// The ladder itself lives in ``capBandColor(_:)`` so the cap-scenario cards
+    /// can paint the same percentage the same colour as the bar above them.
     private func capThresholdColor(_ team: Team) -> Color {
-        let pct = capPct(team)
+        capBandColor(capPct(team))
+    }
+
+    /// The four cap-usage bands, as a colour. The one authority for this screen
+    /// — the Cap Usage bar, its legend popover and every scenario card read it.
+    private func capBandColor(_ pct: Double) -> Color {
         if pct > 0.95 { return .danger }
         if pct > 0.90 { return .orange }
         if pct > 0.80 { return .warning }
         return .success
+    }
+
+    /// A cap percentage as the screen writes it everywhere: no decimal places.
+    private static func pctText(_ pct: Double) -> String {
+        String(format: "%.0f%%", pct * 100)
     }
 
     private func capBarGradient(_ team: Team) -> LinearGradient {
@@ -2578,8 +2649,90 @@ struct RosterEvaluationView: View {
         let scenCSpace = cap - scenCUsage
         let scenCPct = cap > 0 ? Double(scenCUsage) / Double(cap) : 0
 
+        // Scenario D: restructure the biggest contracts that CAN be restructured.
+        //
+        // The other three are roster moves; this one is a money move, and it is
+        // the one an NFL club reaches for first. It sits on the same baseline as
+        // A/B/C — this league year's cap, with the move applied — because a
+        // restructure frees money in the CURRENT year only. What it costs is a
+        // charge in every later year and dead money if the man is then cut, so
+        // both are stated on the card rather than left to be discovered.
+        //
+        // The quote comes straight from the engine, so a club in Sandbox mode
+        // or one whose top deals are all in their final year (nothing to
+        // prorate over) simply gets no card — an empty scenario is more honest
+        // than a card offering $0 of relief.
+        let restructureCandidates = players
+            .compactMap { player -> (player: Player, quote: ContractEngine.RestructureQuote)? in
+                guard let quote = CapManagementEngine.restructureQuote(
+                    player: player,
+                    contract: contractsByPlayer[player.id],
+                    capMode: career.capMode,
+                    salaryCap: cap
+                ) else { return nil }
+                return (player, quote)
+            }
+            .sorted { $0.quote.immediateRelief > $1.quote.immediateRelief }
+            .prefix(3)
+        let restructureRelief = restructureCandidates.reduce(0) { $0 + $1.quote.immediateRelief }
+        let restructureFutureCharge = restructureCandidates.reduce(0) { $0 + $1.quote.proratedPerYear }
+        let restructureDeadMoney = restructureCandidates.reduce(0) { $0 + $1.quote.deadMoneyAdded }
+        let restructureNames = restructureCandidates.map { $0.player.lastName }.joined(separator: ", ")
+        let scenDUsage = currentUsage - restructureRelief
+        let scenDSpace = cap - scenDUsage
+        let scenDPct = cap > 0 ? Double(scenDUsage) / Double(cap) : 0
+        let hasRestructureScenario = restructureRelief > 0
+
         let topThreeNames = top3Expiring.map(\.lastName).joined(separator: ", ")
         let releaseRest = max(expiringCount - 3, 0)
+
+        // **The default the screen never had.** A first-time GM was shown three
+        // projections and no opinion about which one his club can afford, so the
+        // strip taught nothing. The rule is stated on screen next to the badge,
+        // and it is deliberately the cheapest defensible one: keep as much of
+        // the roster as the cap can carry without going tight (over 90 % is the
+        // band this screen already calls "restructures may be needed").
+        //
+        // Restructuring is not a candidate — it keeps nobody and signs nobody,
+        // it only moves this year's money into later years, so recommending it
+        // as an offseason plan would be recommending a debt.
+        let recommendedScenario: String? = {
+            guard expiringCount > 0 else { return nil }
+            if scenCSpace >= 0 && scenCPct <= 0.90 { return "C" }
+            if scenBSpace >= 0 && scenBPct <= 0.90 { return "B" }
+            return "A"
+        }()
+
+        let recommendationReason: String? = {
+            switch recommendedScenario {
+            case "C":
+                return "Recommended: C. Re-signing all \(expiringCount) still leaves the club at \(Self.pctText(scenCPct)) of the cap — you can keep the group together without going tight."
+            case "B":
+                return "Recommended: B. Re-signing everyone would take the club to \(Self.pctText(scenCPct)) of the cap; holding the top 3 keeps it at \(Self.pctText(scenBPct)) with \(formatMillions(scenBSpace)) to spend."
+            case "A":
+                return "Recommended: A. Even re-signing only the top 3 reaches \(Self.pctText(scenBPct)) of the cap, so letting the group walk is the only version of next spring with real room in it."
+            default:
+                return nil
+            }
+        }()
+
+        // Factual, not advisory: which projection leaves the most room. Always
+        // A among the roster moves — releasing men can only free cap — so it
+        // earns its place only once the restructure card is in the comparison,
+        // where it can and does change hands.
+        let roomiestScenario: String = {
+            var best = ("A", scenASpace)
+            if scenBSpace > best.1 { best = ("B", scenBSpace) }
+            if scenCSpace > best.1 { best = ("C", scenCSpace) }
+            if hasRestructureScenario && scenDSpace > best.1 { best = ("D", scenDSpace) }
+            return best.0
+        }()
+
+        func badge(for label: String) -> ScenarioBadge? {
+            if label == recommendedScenario { return .recommended }
+            if label == roomiestScenario { return .mostRoom }
+            return nil
+        }
 
         // #173: these three cards are a projection, not a transaction. The old
         // tap handler stamped a green "Scenario A queued: … Confirm in Free
@@ -2595,6 +2748,8 @@ struct RosterEvaluationView: View {
                 return "Re-signing the top 3\(topThreeNames.isEmpty ? "" : " (\(topThreeNames))") at market value and letting \(releaseRest) walk would leave \(formatMillions(scenBSpace)) of room."
             case "C":
                 return "Re-signing all \(expiringCount) expiring player\(expiringCount == 1 ? "" : "s") at market value would leave \(formatMillions(scenCSpace)) of room."
+            case "D" where hasRestructureScenario:
+                return "Restructuring \(restructureNames) converts base salary into signing bonus: \(formatMillions(restructureRelief)) of room this year, \(formatMillions(restructureFutureCharge)) added to every remaining year of those deals, and \(formatMillions(restructureDeadMoney)) of dead money if any of them is released before the proration runs out."
             default:
                 return nil
             }
@@ -2628,6 +2783,19 @@ struct RosterEvaluationView: View {
                 .foregroundStyle(Color.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
 
+            if let recommendationReason {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "sparkles")
+                        .font(.caption)
+                        .foregroundStyle(Color.accentGold)
+                    Text(recommendationReason)
+                        .font(.caption)
+                        .foregroundStyle(Color.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             Button {
                 selectedCapScenario = "A"
             } label: {
@@ -2637,7 +2805,8 @@ struct RosterEvaluationView: View {
                     capPct: scenAPct,
                     available: scenASpace,
                     tradeoff: "Max flexibility, lose \(expiringCount) player\(expiringCount == 1 ? "" : "s")",
-                    isSelected: selectedCapScenario == "A"
+                    isSelected: selectedCapScenario == "A",
+                    badge: badge(for: "A")
                 )
             }
             .buttonStyle(.plain)
@@ -2651,7 +2820,8 @@ struct RosterEvaluationView: View {
                     capPct: scenBPct,
                     available: scenBSpace,
                     tradeoff: "Keep core\(top3Expiring.isEmpty ? "" : " (\(topThreeNames))"), release \(releaseRest)",
-                    isSelected: selectedCapScenario == "B"
+                    isSelected: selectedCapScenario == "B",
+                    badge: badge(for: "B")
                 )
             }
             .buttonStyle(.plain)
@@ -2665,10 +2835,28 @@ struct RosterEvaluationView: View {
                     capPct: scenCPct,
                     available: scenCSpace,
                     tradeoff: scenCSpace < 5_000 ? "Retain all, very tight cap" : "Retain all, moderate flexibility",
-                    isSelected: selectedCapScenario == "C"
+                    isSelected: selectedCapScenario == "C",
+                    badge: badge(for: "C")
                 )
             }
             .buttonStyle(.plain)
+
+            if hasRestructureScenario {
+                Button {
+                    selectedCapScenario = "D"
+                } label: {
+                    capScenarioCard(
+                        label: "D",
+                        title: "Restructure Top \(restructureCandidates.count)",
+                        capPct: scenDPct,
+                        available: scenDSpace,
+                        tradeoff: "Keep everyone, +\(formatMillions(restructureFutureCharge))/yr later",
+                        isSelected: selectedCapScenario == "D",
+                        badge: badge(for: "D")
+                    )
+                }
+                .buttonStyle(.plain)
+            }
 
             if let scenarioNote {
                 HStack(alignment: .top, spacing: 8) {
@@ -2693,16 +2881,52 @@ struct RosterEvaluationView: View {
         .animation(.easeInOut(duration: 0.2), value: selectedCapScenario)
     }
 
+    /// What a scenario card says about itself.
+    ///
+    /// `recommended` is an opinion and wins the slot; `mostRoom` is arithmetic.
+    /// A card never shows both, because the recommendation already implies the
+    /// screen has looked at the room.
+    private enum ScenarioBadge {
+        case recommended
+        case mostRoom
+
+        var text: String {
+            switch self {
+            case .recommended: return "Recommended"
+            case .mostRoom:    return "Most room"
+            }
+        }
+
+        var icon: String {
+            switch self {
+            case .recommended: return "sparkles"
+            case .mostRoom:    return "arrow.up.right"
+            }
+        }
+
+        var color: Color {
+            switch self {
+            case .recommended: return .accentGold
+            case .mostRoom:    return .success
+            }
+        }
+    }
+
     private func capScenarioCard(
         label: String,
         title: String,
         capPct: Double,
         available: Int,
         tradeoff: String,
-        isSelected: Bool = false
+        isSelected: Bool = false,
+        badge: ScenarioBadge? = nil
     ) -> some View {
         let pctClamped = min(max(capPct, 0), 1.5)
-        let pctColor: Color = pctClamped > 1.0 ? .danger : (pctClamped > 0.9 ? .warning : .success)
+        // The screen's own four-band ladder, not a private three-band one. The
+        // card used to paint everything under 90 % the same green, so 74 %,
+        // 79 % and 89 % were three identical fills and the only thing separating
+        // them was a bar length the eye had to measure.
+        let pctColor = capBandColor(pctClamped)
 
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
@@ -2715,6 +2939,8 @@ struct RosterEvaluationView: View {
                 Text(title)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Color.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
 
                 if isSelected {
                     // #173: a radio dot, not a checkmark — this scenario is the
@@ -2725,11 +2951,34 @@ struct RosterEvaluationView: View {
                         .accessibilityLabel("Selected")
                 }
 
-                Spacer()
+                if let badge {
+                    HStack(spacing: 3) {
+                        Image(systemName: badge.icon)
+                        Text(badge.text)
+                    }
+                    .font(.system(size: DSType.Size.micro, weight: .bold))
+                    .foregroundStyle(badge.color)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(badge.color.opacity(0.14), in: Capsule())
+                    .fixedSize()
+                }
 
-                Text(String(format: "%.0f%%", pctClamped * 100))
-                    .font(.subheadline.weight(.bold).monospacedDigit())
-                    .foregroundStyle(pctColor)
+                Spacer(minLength: 6)
+
+                // **The money is the headline.** A GM plans against dollars, not
+                // against a ratio, and "Available: $70.1M" was caption text on
+                // the bottom row while the percentage carried the emphasis.
+                VStack(alignment: .trailing, spacing: 0) {
+                    Text(formatMillions(available))
+                        .font(.system(size: DSType.Size.callout, weight: .bold).monospacedDigit())
+                        .foregroundStyle(available >= 0 ? Color.success : Color.danger)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                    Text("available")
+                        .font(.system(size: DSType.Size.micro))
+                        .foregroundStyle(Color.textTertiary)
+                }
             }
 
             // Mini cap bar
@@ -2746,9 +2995,9 @@ struct RosterEvaluationView: View {
             .frame(height: 6)
 
             HStack {
-                Text("Available: \(formatMillions(available))")
+                Text("\(Self.pctText(pctClamped)) of cap used")
                     .font(.caption.monospacedDigit())
-                    .foregroundStyle(available >= 0 ? Color.success : Color.danger)
+                    .foregroundStyle(pctColor)
 
                 Spacer()
 
@@ -2814,6 +3063,12 @@ struct RosterEvaluationView: View {
         )
         playerDesc.sortBy = [SortDescriptor(\.annualSalary, order: .reverse)]
         players = (try? modelContext.fetch(playerDesc)) ?? []
+
+        let contractDesc = FetchDescriptor<Contract>(
+            predicate: #Predicate<Contract> { $0.teamID == fetchedTeamID }
+        )
+        let contracts = (try? modelContext.fetch(contractDesc)) ?? []
+        contractsByPlayer = Dictionary(contracts.map { ($0.playerID, $0) }, uniquingKeysWith: { first, _ in first })
 
         // Fetch all players and teams for FA preview
         let cid = career.id
