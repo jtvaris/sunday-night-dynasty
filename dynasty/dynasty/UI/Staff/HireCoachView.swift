@@ -43,7 +43,19 @@ struct HireCoachView: View {
     @State private var sortColumn: SortColumn = .ovr
     @State private var sortAscending: Bool = false
     @State private var selectedCandidate: Coach?
-    @State private var showAffordableOnly: Bool = false
+    /// #3067: the salary ceiling the board is filtered against, in thousands.
+    ///
+    /// Replaces a plain `showAffordableOnly` switch. That switch was binary and
+    /// measured against the WHOLE remaining pot, so its only question was "can
+    /// this club afford him at all" — and with three coordinator seats sharing
+    /// one pot, the question a GM actually has is "what am I willing to spend on
+    /// THIS one". Only a ceiling he sets himself can answer that.
+    ///
+    /// `nil` means "untouched", which reads as the top of the slider's range —
+    /// the whole remaining budget, i.e. exactly what the old switch meant when
+    /// it was ON. Kept optional rather than seeded in `.task` so the board never
+    /// renders a frame filtered against a not-yet-initialised zero.
+    @State private var maxSalary: Double?
     @State private var schemeFilter: String = "All"
     @State private var showValueLegend: Bool = false
     @State private var showSchemeTip: Bool = false
@@ -73,9 +85,10 @@ struct HireCoachView: View {
     /// out in pick order, and a `Set` would let the two men swap sides between
     /// openings for no reason the user can see.
     ///
-    /// A pin deliberately survives the filters. Narrowing to "Affordable" after
-    /// pinning an expensive man is exactly how the trade-off gets examined, so
-    /// the pin store is keyed off `candidates`, not off the filtered list.
+    /// A pin deliberately survives the filters. Pulling the max-salary ceiling
+    /// down after pinning an expensive man is exactly how the trade-off gets
+    /// examined, so the pin store is keyed off `candidates`, not off the
+    /// filtered list.
     @State private var compareIDs: [UUID] = []
     /// The rows the compare table is showing, frozen when it opened.
     ///
@@ -262,10 +275,39 @@ struct HireCoachView: View {
 
     // MARK: - Filtered & Sorted Candidates
 
+    /// The band the max-salary slider runs over: the role's own going-rate floor
+    /// (`CoachRole.salaryRange.min`, the band the candidate generator draws
+    /// from) up to whatever is left in the pot.
+    ///
+    /// `nil` when the pot cannot even cover the floor. There is no ceiling left
+    /// to choose then, so the control is not offered and the board is not
+    /// filtered — every row shows, over budget and greyed, which is the honest
+    /// picture of a club that cannot afford this seat.
+    private var salarySliderRange: ClosedRange<Double>? {
+        let floor = Double(role.salaryRange.min)
+        let ceiling = Double(remainingBudget)
+        guard ceiling > floor else { return nil }
+        return floor...ceiling
+    }
+
+    /// The ceiling actually applied to the board, in thousands.
+    private var salaryCap: Int? {
+        guard let range = salarySliderRange else { return nil }
+        let chosen = maxSalary ?? range.upperBound
+        return Int(min(range.upperBound, max(range.lowerBound, chosen)))
+    }
+
+    /// True only while the slider is excluding somebody — i.e. it has been
+    /// pulled below the full remaining budget.
+    private var isSalaryCapNarrowed: Bool {
+        guard let range = salarySliderRange, let cap = salaryCap else { return false }
+        return Double(cap) < range.upperBound
+    }
+
     private var filteredCandidates: [Coach] {
         var list = candidates
-        if showAffordableOnly {
-            list = list.filter { $0.salary <= remainingBudget }
+        if let cap = salaryCap {
+            list = list.filter { $0.salary <= cap }
         }
         // Fix #58: Scheme filter
         if schemeFilter != "All" {
@@ -288,7 +330,7 @@ struct HireCoachView: View {
     /// (or, while the pool is still being built, "one moment").
     @ViewBuilder
     private var candidateEmptyState: some View {
-        let filtersActive = showAffordableOnly || schemeFilter != "All" || personalityFilter != "All"
+        let filtersActive = isSalaryCapNarrowed || schemeFilter != "All" || personalityFilter != "All"
         VStack(spacing: 12) {
             if candidates.isEmpty {
                 ProgressView()
@@ -316,7 +358,7 @@ struct HireCoachView: View {
                     .multilineTextAlignment(.center)
                 if filtersActive {
                     Button("Clear filters") {
-                        showAffordableOnly = false
+                        maxSalary = salarySliderRange?.upperBound
                         schemeFilter = "All"
                         personalityFilter = "All"
                     }
@@ -510,8 +552,8 @@ struct HireCoachView: View {
         .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbar {
             // How big the market for this seat is, beside the seat's own name.
-            // It counts the FILTERED board, so flipping "Affordable" on is
-            // answered in the header rather than by scrolling the list.
+            // It counts the FILTERED board, so pulling the max-salary slider
+            // down is answered in the header rather than by scrolling the list.
             ToolbarItem(placement: .topBarTrailing) {
                 Text("\(filteredCandidates.count) candidates")
                     .font(.system(size: DSType.Size.caption, weight: .bold).monospacedDigit())
@@ -550,7 +592,7 @@ struct HireCoachView: View {
         .onChange(of: candidates.count) { _, _ in refreshCaches() }
         .onChange(of: sortColumn) { _, _ in refreshCaches() }
         .onChange(of: sortAscending) { _, _ in refreshCaches() }
-        .onChange(of: showAffordableOnly) { _, _ in refreshCaches() }
+        .onChange(of: maxSalary) { _, _ in refreshCaches() }
         .onChange(of: schemeFilter) { _, _ in refreshCaches() }
         .onChange(of: personalityFilter) { _, _ in refreshCaches() }
         .onChange(of: allCoaches.count) { _, _ in refreshCaches() }
@@ -719,23 +761,44 @@ struct HireCoachView: View {
                     .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 6))
                 }
 
-                Spacer().frame(width: 8)
-
-                // Fix #39: Affordable-only toggle
-                Toggle(isOn: $showAffordableOnly) {
-                    Text("Affordable")
-                        .font(.caption2)
-                        .foregroundStyle(Color.textSecondary)
-                }
-                .toggleStyle(.switch)
-                .tint(Color.accentGold)
-                .fixedSize()
-
                 // The pool size used to end this row as grey caption text —
                 // the last thing after three filter chips and a switch, in the
                 // one spot on the screen the eye reaches last. It is the size
                 // of the market and it belongs beside the title; it now lives
                 // in the navigation bar (see the toolbar on the body).
+            }
+
+            // #3067: the max-salary ceiling, replacing Fix #39's binary
+            // "Affordable" switch. It gets its own row rather than a fourth
+            // seat in the chip strip above, which already carries two menus and
+            // a legend button and had no width left for a control that needs a
+            // track to drag along.
+            if let range = salarySliderRange, let cap = salaryCap {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Max salary")
+                            .font(.caption)
+                            .foregroundStyle(Color.textTertiary)
+                        Spacer()
+                        Text("$\(formatBudget(cap))M")
+                            .font(.system(size: DSType.Size.footnote, weight: .bold).monospacedDigit())
+                            .foregroundStyle(isSalaryCapNarrowed ? Color.accentGold : Color.textSecondary)
+                    }
+                    Slider(
+                        value: Binding(
+                            get: { Double(cap) },
+                            set: { maxSalary = $0 }
+                        ),
+                        in: range,
+                        // $50k. Fine enough that a drag moves the one-decimal
+                        // figure above smoothly, coarse enough that the head
+                        // coach's $3M-$32M band is not 29,000 stops.
+                        step: 50
+                    )
+                    .tint(Color.accentGold)
+                    .accessibilityLabel("Maximum salary")
+                    .accessibilityValue("$\(formatBudget(cap)) million")
+                }
             }
 
             // #153: Value column legend
@@ -1531,8 +1594,8 @@ struct HireCoachView: View {
     /// with walks away.
     ///
     /// Read off `candidates` rather than `filteredCandidates`: the question is
-    /// who else could take the job, and a Scheme or Affordable filter set two
-    /// minutes ago is not an answer to it. Men who have already signed
+    /// who else could take the job, and a Scheme filter or a salary ceiling set
+    /// two minutes ago is not an answer to it. Men who have already signed
     /// elsewhere are out — `onRejected` retires them from the board for good.
     private func fallbackCandidate(excluding candidate: Coach) -> FallbackCandidate? {
         let field = candidates.filter {
@@ -1844,17 +1907,66 @@ private struct CandidateDetailSheet: View {
                 color: devPct >= 0 ? .success : .danger
             ))
         } else if topRoles.contains(candidate.role) {
-            // Projected wins: blend overall + motivation + discipline.
-            let ovr = Double(coachOverall(candidate))
-            let mot = Double(candidate.motivation)
-            let disc = Double(candidate.discipline)
-            let blend = (ovr * 0.5 + mot * 0.25 + disc * 0.25 - leagueAvg)
-            let wins = max(-2.0, min(2.0, blend * 0.04))
+            // #3087: what the sim ACTUALLY applies for this seat, read straight
+            // off `CoachingModifiers`, in place of the "Projected wins" figure
+            // that used to sit here.
+            //
+            // That figure was `clamp((ovr·0.5 + mot·0.25 + disc·0.25 - 65) ·
+            // 0.04, -2, 2)` — a display heuristic with no path into the engine.
+            // The engine's coaching terms are all PER-PLAY (completion
+            // probability, yards per carry, penalty frequency, pre-game morale),
+            // and turning any of them into wins needs a plays-per-season and a
+            // points-to-wins conversion this game does not have. Rather than
+            // invent one, the card quotes the levers themselves.
+            if candidate.role == .headCoach {
+                // Mech 4 — the head coach sets the discipline that scales this
+                // club's own penalty AND fumble frequencies. Mirrors
+                // `CoachingModifiers.disciplineScale`, which is private.
+                let scale = min(CoachingModifiers.disciplineScaleMax,
+                                max(CoachingModifiers.disciplineScaleMin,
+                                    1.0 - (Double(candidate.discipline) - CoachingModifiers.disciplineCenter)
+                                        * CoachingModifiers.disciplineSlope))
+                let penaltyPct = (scale - 1.0) * 100.0
+                items.append((
+                    label: "Penalties & fumbles",
+                    value: "\(penaltyPct >= 0 ? "+" : "")\(String(format: "%.0f", penaltyPct))%",
+                    icon: "flag.fill",
+                    color: penaltyPct <= 0 ? .success : .danger
+                ))
+            } else {
+                // Mech 2 — the assistant's game planning is a completion edge,
+                // but only while he is the sharpest planner on the staff:
+                // `CoachingModifiers.ratings` takes the max over HC/AHC/OC/DC.
+                let edge = min(CoachingModifiers.planCompletionCap,
+                               max(-CoachingModifiers.planCompletionCap,
+                                   (Double(candidate.gamePlanning) - CoachingModifiers.planCenter)
+                                       * CoachingModifiers.planCompletionSlope))
+                let pts = edge * 100.0
+                items.append((
+                    label: "Game-plan edge",
+                    value: "\(pts >= 0 ? "+" : "")\(String(format: "%.1f", pts)) pts completion",
+                    icon: "doc.text.fill",
+                    color: pts >= 0 ? .success : .danger
+                ))
+            }
+
+            // Mech 3/5 — the pre-game morale bump, in points of morale.
+            // Morale influence is taken from the best man on the staff and
+            // motivation is the head coach's lever alone, so this is what the
+            // candidate contributes when he is that man.
+            var bump = (Double(candidate.moraleInfluence) - CoachingModifiers.moraleCenter)
+                * CoachingModifiers.moraleInfluenceSlope
+            if candidate.role == .headCoach {
+                bump += (Double(candidate.motivation) - CoachingModifiers.moraleCenter)
+                    * CoachingModifiers.motivationSlope
+            }
+            let morale = Int(min(CoachingModifiers.moraleBumpCap,
+                                 max(-CoachingModifiers.moraleBumpCap, bump)).rounded())
             items.append((
-                label: "Projected wins",
-                value: "\(wins >= 0 ? "+" : "")\(String(format: "%.1f", wins)) / season",
-                icon: "trophy.fill",
-                color: wins >= 0 ? .success : .danger
+                label: "Pre-game morale",
+                value: "\(morale >= 0 ? "+" : "")\(morale) pts",
+                icon: "heart.fill",
+                color: morale >= 0 ? .success : .danger
             ))
 
             let dev = Double(candidate.playerDevelopment)

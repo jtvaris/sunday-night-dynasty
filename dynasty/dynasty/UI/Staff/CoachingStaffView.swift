@@ -486,6 +486,82 @@ struct CoachingStaffView: View {
         }
     }
 
+    // MARK: - Why a vacancy is urgent (#3045)
+
+    /// One side of the ball's grade, and where that grade sits in the league.
+    private struct UnitStanding {
+        let grade: Int
+        /// 1 = the best unit in the league.
+        let rank: Int
+        let teams: Int
+
+        /// "bottom quarter of the league", "top quarter of the league", …
+        var standingLabel: String {
+            guard teams >= 4 else { return "\(rank) of \(teams) in the league" }
+            switch Double(rank) / Double(teams) {
+            case ..<0.25: return "top quarter of the league"
+            case ..<0.50: return "upper half of the league"
+            case ..<0.75: return "lower half of the league"
+            default:      return "bottom quarter of the league"
+            }
+        }
+    }
+
+    /// Every side of the ball's grade and league standing, in ONE pass over the
+    /// league's players.
+    ///
+    /// All three coordinator seats carry the same "High Priority" badge, and
+    /// that is staying: `hiringPriority(for:)` is a static role table because
+    /// the sim charges the SAME for either coordinator missing — the sheet's own
+    /// warnings say so — and demoting one to "Recommended" would be the UI
+    /// deciding something `CoachingModifiers` does not. What the badge was
+    /// missing is not a ranking, it is a reason. This is the reason: the unit
+    /// the seat is responsible for, graded, and placed against the other clubs.
+    ///
+    /// Read ONCE per render and handed down, for exactly the reason
+    /// `autoHireAllocations` is — it walks every player in the league.
+    private var unitStandings: [PositionSide: UnitStanding] {
+        guard let teamID = career.teamID else { return [:] }
+        var bySide: [PositionSide: [UUID: [Player]]] = [:]
+        for player in allPlayers {
+            guard let club = player.teamID else { continue }
+            bySide[player.position.side, default: [:]][club, default: []].append(player)
+        }
+        var result: [PositionSide: UnitStanding] = [:]
+        for (side, byClub) in bySide {
+            let grades = byClub.compactMapValues { RosterStrength.unitAverage($0) }
+            guard let mine = grades[teamID] else { continue }
+            let better = grades.values.filter { $0 > mine }.count
+            result[side] = UnitStanding(grade: mine, rank: better + 1, teams: grades.count)
+        }
+        return result
+    }
+
+    /// Empty unless a coordinator seat is actually open — the league-wide walk
+    /// is only worth doing for a row that is going to print it.
+    private var coordinatorUnitStandings: [PositionSide: UnitStanding] {
+        let coordRoles: [CoachRole] = [.offensiveCoordinator, .defensiveCoordinator, .specialTeamsCoordinator]
+        guard coordRoles.contains(where: { role in !coaches.contains { $0.role == role } }) else { return [:] }
+        return unitStandings
+    }
+
+    /// The sentence a coordinator vacancy's priority badge owes the user: which
+    /// unit the seat runs, how that unit grades, and where the league puts it.
+    /// `nil` for any seat whose unit this roster cannot grade.
+    private func vacancyPriorityReason(for role: CoachRole,
+                                       standings: [PositionSide: UnitStanding]) -> String? {
+        let side: PositionSide
+        let unit: String
+        switch role {
+        case .offensiveCoordinator:    side = .offense;      unit = "offense"
+        case .defensiveCoordinator:    side = .defense;      unit = "defense"
+        case .specialTeamsCoordinator: side = .specialTeams; unit = "kicking game"
+        default: return nil
+        }
+        guard let standing = standings[side] else { return nil }
+        return "Your \(unit) grades \(standing.grade) \u{00B7} \(standing.standingLabel)"
+    }
+
     /// Estimated salary range string for a vacant role.
     ///
     /// Derived from `CoachRole.salaryRange` — the band the candidate generator
@@ -1257,31 +1333,63 @@ struct CoachingStaffView: View {
         }
     }
 
-    /// Hiring impact description for a coaching role (#51).
+    /// Hiring impact description for a coaching role (#51, #3046).
     ///
     /// These are the CEILING an elite hire reaches, not what the seat pays out
     /// on average — the figure is per-role and knows nothing about who is
     /// actually on the market. Phrased "up to" because the vacancy row read a
     /// flat "+12% offensive efficiency" while the best OC in that very pool
     /// projected -0.1% on his own profile one tap later.
+    ///
+    /// ## Every figure below is an engine coefficient, not a marketing number
+    ///
+    /// The line used to quote "efficiency" percentages that no engine produced:
+    /// nothing in the sim has ever computed an "offensive efficiency", a "staff
+    /// chemistry bonus" or an "overall team performance", so the seat's price
+    /// could not be checked against its effect. Each seat now quotes the lever
+    /// it actually moves, taken from the code that moves it:
+    ///
+    /// * **Head coach** — `CoachingModifiers.disciplineScale`. Discipline scales
+    ///   the club's own penalty AND fumble frequencies; the floor is
+    ///   `disciplineScaleMin` (0.72), reached at discipline 99.
+    /// * **Coordinators** — `CoachingModifiers.offenseAdjustments` Mech 1. A
+    ///   coordinator grade of 99 shifts completion probability by
+    ///   `(99 - 70) · coordCompletionSlope` = 4.35 points, the OC's for his own
+    ///   offense and the DC's against the opponent's.
+    /// * **Development seats** — `CoachingEngine.hierarchicalDevelopmentBonus`.
+    ///   Its four layers are worth 0.08 (HC), 0.04 (AHC), 0.10 (coordinator, and
+    ///   the special-teams coordinator IS the coordinator for a kicker) and 0.15
+    ///   (position coach) per 50 points above `developmentBonusPivot` (60).
+    /// * **Medical** — `MedicalEngine`: `injuryCheck` scales risk by
+    ///   `1 - playerDevelopment/330` (doctor), `recoveryWeeks` by
+    ///   `1 - playerDevelopment/400` (physio), and `processWeeklyRehab` drops the
+    ///   setback roll from 10% by `playerDevelopment · 0.0006` (head trainer).
+    /// * **Strength coach** — `WeekAdvancer.computeRecoveryRate`: camp recovery
+    ///   runs 0.40–0.75 and an unstaffed club sits at 0.55.
+    ///
+    /// Each number is rounded DOWN from the value an attribute of 99 produces,
+    /// so every figure printed here is one the sim can actually reach. The
+    /// position groups follow `CoachingEngine.positionRoleMatch`, which is why
+    /// the WR coach's line names tight ends and the RB coach's names fullbacks —
+    /// they coach them, and the old copy did not say so.
     private func hiringImpactDescription(for role: CoachRole) -> String? {
         switch role {
-        case .offensiveCoordinator:    return "Up to +12% offensive efficiency"
-        case .defensiveCoordinator:    return "Up to +12% defensive efficiency"
-        case .specialTeamsCoordinator: return "Up to +8% special teams performance"
-        case .qbCoach:                 return "Up to +10% QB development speed"
-        case .rbCoach:                 return "Up to +10% RB development speed"
-        case .wrCoach:                 return "Up to +10% WR development speed"
-        case .olCoach:                 return "Up to +10% OL development speed"
-        case .dlCoach:                 return "Up to +10% DL development speed"
-        case .lbCoach:                 return "Up to +10% LB development speed"
-        case .dbCoach:                 return "Up to +10% DB development speed"
-        case .strengthCoach:           return "Up to -15% injury risk across roster"
-        case .teamDoctor:              return "Up to -30% injury severity"
-        case .physio:                  return "Up to +25% recovery speed"
-        case .headTrainer:             return "Fewer rehab setbacks, lower re-injury risk"
-        case .assistantHeadCoach:      return "Up to +5% staff chemistry bonus"
-        case .headCoach:               return "Up to +15% overall team performance"
+        case .offensiveCoordinator:    return "Up to +4 pts completion rate"
+        case .defensiveCoordinator:    return "Up to -4 pts opponent completion"
+        case .specialTeamsCoordinator: return "Up to +7% K & P development"
+        case .qbCoach:                 return "Up to +11% QB development"
+        case .rbCoach:                 return "Up to +11% RB & FB development"
+        case .wrCoach:                 return "Up to +11% WR & TE development"
+        case .olCoach:                 return "Up to +11% OL development"
+        case .dlCoach:                 return "Up to +11% DL development"
+        case .lbCoach:                 return "Up to +11% LB development"
+        case .dbCoach:                 return "Up to +11% DB development"
+        case .strengthCoach:           return "Up to +36% camp recovery"
+        case .teamDoctor:              return "Up to -30% injury risk"
+        case .physio:                  return "Up to -24% injury recovery time"
+        case .headTrainer:             return "Up to -59% rehab setbacks"
+        case .assistantHeadCoach:      return "Up to +3% roster development"
+        case .headCoach:               return "Up to -28% penalties & fumbles"
         }
     }
 
@@ -1994,11 +2102,13 @@ struct CoachingStaffView: View {
                 Section {
                     DisclosureGroup(isExpanded: $isCoordinatorsExpanded) {
                         let coordRoles: [CoachRole] = [.offensiveCoordinator, .defensiveCoordinator, .specialTeamsCoordinator]
+                        // Read once for all three rows — see `unitStandings`.
+                        let standings = coordinatorUnitStandings
                         ForEach(coordRoles, id: \.self) { role in
                             if let coach = coaches.first(where: { $0.role == role }) {
                                 coachRowWithChemistry(coach: coach)
                             } else {
-                                vacantRow(role: role)
+                                vacantRow(role: role, standings: standings)
                             }
                         }
                     } label: {
@@ -4917,7 +5027,9 @@ struct CoachingStaffView: View {
     /// printed "Assistant Head Coach" directly under the header saying the same
     /// thing. There the invitation leads instead.
     @ViewBuilder
-    private func vacantRow(role: CoachRole, showsRoleName: Bool = true) -> some View {
+    private func vacantRow(role: CoachRole,
+                           showsRoleName: Bool = true,
+                           standings: [PositionSide: UnitStanding] = [:]) -> some View {
         Button {
             activeHireSheet = .coach(role)
         } label: {
@@ -4945,6 +5057,15 @@ struct CoachingStaffView: View {
                                 case .normal:
                                     EmptyView()
                                 }
+                            }
+
+                            // #3045: what the badge above is actually about. All
+                            // three coordinator seats are High Priority and stay
+                            // that way; this is the line that tells them apart.
+                            if let reason = vacancyPriorityReason(for: role, standings: standings) {
+                                Text(reason)
+                                    .font(.system(size: DSType.Size.micro, weight: .medium))
+                                    .foregroundStyle(Color.textSecondary)
                             }
                         }
 

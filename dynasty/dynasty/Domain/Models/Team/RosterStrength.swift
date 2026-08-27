@@ -51,4 +51,26 @@ enum RosterStrength {
     static func starterAverage(of players: [Player], keeping predicate: (Player) -> Bool) -> Int? {
         starterAverage(players.filter(predicate))
     }
+
+    /// How many men count as "the unit on the field" for one side of the ball.
+    static let unitCount = 11
+
+    /// Mean `overall` of the best ``unitCount`` players on ONE side of the ball
+    /// — the offense's grade, or the defense's, rather than the whole team's.
+    ///
+    /// Deliberately the same shape as ``starterAverage(_:)`` and NOT a second
+    /// definition of it: eleven men take the field per side, so the team answer
+    /// is this one twice. It lives here for the reason the type comment gives —
+    /// a quantity spelled differently in each place that needs it is this
+    /// codebase's recurring defect, and "how good is my defense" is asked by
+    /// more than one screen.
+    ///
+    /// Callers pass an already-filtered side (see `Position.side`). A unit with
+    /// fewer than eleven men on the books — a kicking unit is two — averages
+    /// whoever is actually there rather than crediting the gap with zeroes.
+    static func unitAverage(_ players: [Player]) -> Int? {
+        guard !players.isEmpty else { return nil }
+        let best = players.map(\.overall).sorted(by: >).prefix(unitCount)
+        return best.reduce(0, +) / best.count
+    }
 }
