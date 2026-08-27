@@ -455,6 +455,16 @@ struct NewCareerView: View {
                 Text(roleBlurb)
                     .font(.subheadline)
                     .foregroundStyle(Color.textSecondary)
+
+                // `Career.role` is written in the initialiser and by nothing
+                // else in the app — no screen, no engine, no migration ever
+                // reassigns it. A choice that decides whether the player calls
+                // plays for the next fifteen seasons was being presented like a
+                // preference he could come back and flip.
+                Label("Locked for the life of the career — you can't switch roles once it starts.",
+                      systemImage: "lock.fill")
+                    .font(.caption)
+                    .foregroundStyle(Color.textTertiary)
             }
         }
     }

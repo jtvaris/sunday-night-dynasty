@@ -951,6 +951,22 @@ extension LeagueTeamDefinition: Identifiable {
 
 // MARK: - Compact Team Row
 
+/// The 3-tier situation ladder (persona audit): blue = building, green =
+/// ascending, gold = competing. Amber and red stay reserved for warnings.
+///
+/// Declared at file scope because the LIST needs it now: the badge used to
+/// exist only on the detail sheet and on the two card layouts nothing
+/// instantiates, so the one place all 32 clubs are actually compared showed the
+/// record and withheld the trajectory that explains it.
+private func situationTint(_ situation: String) -> Color {
+    switch situation {
+    case "Rebuilding":                      return .accentBlue
+    case "Rising":                          return .success
+    case "Contender", "Win Now", "Dynasty": return .accentGold
+    default:                                return .textSecondary
+    }
+}
+
 private struct CompactTeamRow: View {
     let team: LeagueTeamDefinition
     /// Scouting numbers for the league being browsed — static table for a
@@ -1003,6 +1019,20 @@ private struct CompactTeamRow: View {
                     Text(preview.lastSeasonRecord)
                         .font(DSType.display(DSType.Size.caption, .semibold))
                         .foregroundStyle(Color.textTertiary)
+                    // The record says where the club has been; the situation
+                    // says where it is going, and 4-13 means something entirely
+                    // different on a rebuild than it does on a Win Now club.
+                    // Both belong on the row where the 32 are compared.
+                    Text(preview.situation.uppercased())
+                        .font(DSType.display(DSType.Size.micro, .bold))
+                        .foregroundStyle(situationTint(preview.situation))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(
+                            Capsule().fill(situationTint(preview.situation).opacity(0.15))
+                        )
+                        .lineLimit(1)
+                        .fixedSize()
                 }
                 HStack(spacing: 6) {
                     Text(team.city)
@@ -1364,6 +1394,32 @@ private struct TeamDetailSheet: View {
         }
     }
 
+    /// Who this club suits, on the same 1–2 / 4–5 bands `difficultyColor` and
+    /// the star row already split on — no new threshold, and no verdict on the
+    /// middle band, where "moderate" is the honest answer.
+    ///
+    /// A star count is a magnitude, not advice: nothing on the screen told a
+    /// first-time player that two stars is where he should start, or warned a
+    /// returning one that five is not a harder version of the same career.
+    private var experienceRecommendation: (tag: String, detail: String, color: Color)? {
+        switch preview.difficulty {
+        case 1, 2:
+            return (
+                "GOOD FIRST CAREER",
+                "Talent, cap room and picks to work with while you learn the systems.",
+                .success
+            )
+        case 4, 5:
+            return (
+                "FOR VETERANS",
+                "Thin on talent, cap room or picks — and the expectations arrive anyway.",
+                .warning
+            )
+        default:
+            return nil
+        }
+    }
+
     private var ownerPatienceColor: Color {
         switch preview.ownerPatience {
         case "Very Patient": return .success
@@ -1517,6 +1573,28 @@ private struct TeamDetailSheet: View {
                 .font(DSType.text(DSType.Size.caption, .regular, prose: true))
                 .foregroundStyle(Color.textTertiary)
                 .multilineTextAlignment(.center)
+
+            // Who the club is for, not just how hard it is.
+            if let recommendation = experienceRecommendation {
+                VStack(spacing: 4) {
+                    Text(recommendation.tag)
+                        .font(DSType.display(DSType.Size.caption, .heavy))
+                        .tracking(1.0)
+                        .foregroundStyle(recommendation.color)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(
+                            Capsule().fill(recommendation.color.opacity(0.15))
+                        )
+                    Text(recommendation.detail)
+                        .font(DSType.text(DSType.Size.caption, .regular, prose: true))
+                        .foregroundStyle(Color.textSecondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("\(recommendation.tag). \(recommendation.detail)")
+            }
         }
     }
 

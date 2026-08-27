@@ -22,6 +22,11 @@ struct IntroSequenceView: View {
     @State private var coaches: [Coach] = []
     @State private var draftPicks: [DraftPick] = []
     @State private var seasonGoals: SeasonGoals?
+    /// Where the engine reads this franchise in its competitive cycle. Quoted,
+    /// never re-derived: `TradeValueEngine.TeamStance` is what every trade and
+    /// free-agency decision in the game is already priced against, so the
+    /// briefing's verdict and the market's behaviour cannot disagree.
+    @State private var teamStance: TradeValueEngine.TeamStance?
 
     private let totalSteps = 5
 
@@ -62,6 +67,7 @@ struct IntroSequenceView: View {
                         players: players,
                         coaches: coaches,
                         draftPicks: draftPicks,
+                        stance: teamStance,
                         onContinue: { advanceStep() }
                     )
                     .tag(2)
@@ -80,6 +86,14 @@ struct IntroSequenceView: View {
                         // so an 80-OVR contender was being told to write its
                         // legacy while the hub called it a contender.
                         teamOverall: RosterStrength.starterAverage(players) ?? 60,
+                        // The three counts the closing screen states, and the
+                        // owner's own headline goal. All four are already loaded
+                        // for the earlier steps — the last screen used to end the
+                        // briefing without repeating a single number from it.
+                        seasonGoals: seasonGoals,
+                        rosterCount: players.count,
+                        openStaffSeats: openStaffSeats,
+                        draftPickCount: draftPicks.count,
                         onEnter: { completeIntro() }
                     )
                     .tag(4)
@@ -117,6 +131,14 @@ struct IntroSequenceView: View {
     }
 
     // MARK: - Actions
+
+    /// Coaching seats still to fill. `StaffSlots` is the one authority on the
+    /// denominator, so a GM+HC career is never told to fill the chair he is
+    /// sitting in.
+    private var openStaffSeats: Int {
+        StaffSlots.coachRoles(for: career.role).count
+            - StaffSlots.filledCoachSlots(coaches: coaches, careerRole: career.role)
+    }
 
     private func advanceStep() {
         withAnimation(.easeInOut(duration: 0.4)) {
@@ -205,6 +227,27 @@ struct IntroSequenceView: View {
         let avgOverall = players.isEmpty ? 60 : players.map(\.overall).reduce(0, +) / players.count
         let ownerPrefersWinNow = owner?.prefersWinNow ?? false
         seasonGoals = SeasonGoals.generate(teamQuality: avgOverall, ownerPreference: ownerPrefersWinNow)
+
+        // The contend / retool / rebuild verdict, read off the same model the
+        // trade market uses. The league-wide fetch is what buys
+        // `leagueCoreReference` its self-centring reference — the engine's own
+        // note is explicit that a hardcoded 80.0 reads 20 contenders out of 31
+        // on one calibration and none on the next. One fetch, once, on a screen
+        // that already runs four.
+        if let team {
+            let careerID = career.id
+            let leagueDescriptor = FetchDescriptor<Player>(
+                predicate: #Predicate<Player> { $0.careerID == careerID }
+            )
+            let leaguePlayers = (try? modelContext.fetch(leagueDescriptor)) ?? []
+            teamStance = TradeValueEngine.stance(
+                for: team,
+                roster: players,
+                coreReference: leaguePlayers.isEmpty
+                    ? 80.0
+                    : TradeValueEngine.leagueCoreReference(allPlayers: leaguePlayers)
+            )
+        }
     }
 }
 
@@ -358,6 +401,8 @@ private struct TeamOverviewStep: View {
     let players: [Player]
     let coaches: [Coach]
     let draftPicks: [DraftPick]
+    /// `TradeValueEngine`'s read of this franchise's competitive cycle.
+    let stance: TradeValueEngine.TeamStance?
     let onContinue: () -> Void
 
     @State private var showHeader = false
@@ -365,6 +410,12 @@ private struct TeamOverviewStep: View {
     @State private var showPositionGrades = false
     @State private var showCap = false
     @State private var showDraft = false
+    /// Expiring-contract drill-down: the count row opens the names underneath
+    /// it rather than being a dead figure.
+    @State private var showExpiringList = false
+    /// Key-player row tapped — opens the same `PlayerDetailView` the cap screen
+    /// presents in a sheet.
+    @State private var inspectedPlayer: Player?
 
     private var averageOverall: Int {
         guard !players.isEmpty else { return 0 }
@@ -375,9 +426,44 @@ private struct TeamOverviewStep: View {
         players.max(by: { $0.overall < $1.overall })
     }
 
-    /// Top 3 players by overall rating.
-    private var topPlayers: [Player] {
-        Array(players.sorted { $0.overall > $1.overall }.prefix(3))
+    /// The roster's three landmarks, each carrying the tag that says why it is
+    /// on the list.
+    ///
+    /// This was "top 3 by overall", which put three unexplained names on the
+    /// briefing and answered none of the three questions a GM opens a roster
+    /// with: who plays quarterback, what the biggest contract is, and who is
+    /// about to walk. One man can hold two of the three — a franchise QB in a
+    /// contract year is exactly the case worth flagging — so the tags collect on
+    /// the player rather than forcing three distinct rows.
+    private struct KeyPlayer: Identifiable {
+        let player: Player
+        let tags: [String]
+        var id: UUID { player.id }
+    }
+
+    private var keyPlayers: [KeyPlayer] {
+        var tagsByPlayer: [UUID: [String]] = [:]
+        var order: [Player] = []
+
+        func mark(_ candidate: Player?, _ tag: String) {
+            guard let candidate else { return }
+            if tagsByPlayer[candidate.id] == nil { order.append(candidate) }
+            tagsByPlayer[candidate.id, default: []].append(tag)
+        }
+
+        mark(players.filter { $0.position == .QB }.max { $0.overall < $1.overall }, "QB1")
+        mark(players.max { $0.annualSalary < $1.annualSalary }, "TOP CAP")
+        mark(expiringPlayers.first, "EXPIRING")
+
+        return order.map { KeyPlayer(player: $0, tags: tagsByPlayer[$0.id] ?? []) }
+    }
+
+    /// Everyone in the last year of his deal, best first — the names behind the
+    /// "Expiring Contracts" count.
+    private var expiringPlayers: [Player] {
+        players
+            .filter { $0.contractYearsRemaining <= 1 }
+            .sorted { $0.overall > $1.overall }
     }
 
     /// Position group with the lowest starter-average overall, including grade and OVR.
@@ -407,7 +493,7 @@ private struct TeamOverviewStep: View {
     }
 
     private var expiringContracts: Int {
-        players.filter { $0.contractYearsRemaining <= 1 }.count
+        expiringPlayers.count
     }
 
     // MARK: - #18 Position Group Grades
@@ -530,6 +616,53 @@ private struct TeamOverviewStep: View {
         return "$\(total)K"
     }
 
+    private var deadCapFormatted: String {
+        let dead = team.deadCapCurrentYear
+        if dead >= 1_000 {
+            return String(format: "$%.1fM", Double(dead) / 1_000.0)
+        }
+        return "$\(dead)K"
+    }
+
+    private var capUsedFraction: Double {
+        team.salaryCap > 0 ? Double(team.currentCapUsage) / Double(team.salaryCap) : 0
+    }
+
+    /// The cap ladder the app already publishes to the player — `RosterEvaluationView`'s
+    /// own legend: under 80 % healthy, 80–90 moderate, 90–95 tight, over 95
+    /// critical. Quoted rather than re-invented, so the briefing's verdict and
+    /// the roster screen's key cannot drift apart.
+    private var capHealth: (label: String, color: Color) {
+        switch capUsedFraction {
+        case ..<0.80: return ("Healthy", .success)
+        case ..<0.90: return ("Moderate", .warning)
+        case ..<0.95: return ("Tight", .alertOrange)
+        default:      return ("Critical", .dangerText)
+        }
+    }
+
+    /// One line saying what the stance means for the offseason about to start.
+    private func stanceRationale(_ stance: TradeValueEngine.TeamStance) -> String {
+        switch stance {
+        case .contend:
+            return "The core is good enough now. Buy proven help and protect the window."
+        case .retool:
+            return "One good offseason from contending. Trade both ways and stay flexible."
+        case .rebuild:
+            return "The present is not worth defending. Collect picks and young players."
+        }
+    }
+
+    private func stanceColor(_ stance: TradeValueEngine.TeamStance) -> Color {
+        // Same three-tier ladder team selection uses for its situation chips:
+        // gold = competing, green = ascending, blue = building.
+        switch stance {
+        case .contend: return .accentGold
+        case .retool:  return .success
+        case .rebuild: return .accentBlue
+        }
+    }
+
     var body: some View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
@@ -567,6 +700,34 @@ private struct TeamOverviewStep: View {
                         Text(team.fullName)
                             .font(.title2.weight(.bold))
                             .foregroundStyle(Color.textPrimary)
+
+                        // THE VERDICT. Everything below this line is a figure;
+                        // nothing on the screen used to say what the figures add
+                        // up to. `TradeValueEngine.TeamStance` is the same read
+                        // the trade market and free agency price against, so the
+                        // briefing states the club's actual position rather than
+                        // a second opinion about it.
+                        if let stance {
+                            VStack(spacing: 4) {
+                                Text(stance.label.uppercased())
+                                    .font(DSType.display(DSType.Size.footnote, .heavy))
+                                    .tracking(1.6)
+                                    .foregroundStyle(stanceColor(stance))
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 5)
+                                    .background(
+                                        Capsule().fill(stanceColor(stance).opacity(0.15))
+                                    )
+                                Text(stanceRationale(stance))
+                                    .font(.caption)
+                                    .foregroundStyle(Color.textSecondary)
+                                    .multilineTextAlignment(.center)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            .padding(.horizontal, 24)
+                            .accessibilityElement(children: .combine)
+                            .accessibilityLabel("\(stance.label). \(stanceRationale(stance))")
+                        }
                     }
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 }
@@ -595,34 +756,102 @@ private struct TeamOverviewStep: View {
                             Text(String(format: "%.1f", averageAge))
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(Color.textPrimary)
-                            Text("(Avg: 26.0)")
+                            // "(Avg: 26.0)" named no source. The Average Overall
+                            // row directly above already spells the comparison
+                            // out; this one was left behind on the old wording.
+                            Text("vs league avg 26.0")
                                 .font(.caption)
                                 .foregroundStyle(averageAge > 27.5 ? Color.warning : averageAge < 25.0 ? Color.success : Color.textTertiary)
                         }
 
-                        // #20: Expiring contracts
-                        StatRow(
-                            label: "Expiring Contracts",
-                            value: "\(expiringContracts) player\(expiringContracts == 1 ? "" : "s")",
-                            valueColor: expiringContracts > 15 ? Color.dangerText : expiringContracts > 8 ? Color.warning : Color.textPrimary
-                        )
+                        // #20: Expiring contracts — and who they are. The count
+                        // on its own was a dead figure: "17 players" names a
+                        // problem the briefing then refuses to identify.
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                showExpiringList.toggle()
+                            }
+                        } label: {
+                            HStack {
+                                Text("Expiring Contracts")
+                                    .font(.subheadline)
+                                    .foregroundStyle(Color.textSecondary)
+                                Spacer()
+                                Text("\(expiringContracts) player\(expiringContracts == 1 ? "" : "s")")
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(expiringContracts > 15 ? Color.dangerText : expiringContracts > 8 ? Color.warning : Color.textPrimary)
+                                if !expiringPlayers.isEmpty {
+                                    Image(systemName: showExpiringList ? "chevron.up" : "chevron.down")
+                                        .font(.system(size: DSType.Size.micro, weight: .bold))
+                                        .foregroundStyle(Color.textTertiary)
+                                }
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(expiringPlayers.isEmpty)
+                        .accessibilityLabel("Expiring contracts, \(expiringContracts) players")
+                        .accessibilityHint(expiringPlayers.isEmpty ? "" : "Shows who is in the last year of his deal")
 
-                        // #133: Top 3 key players
-                        if !topPlayers.isEmpty {
+                        if showExpiringList, !expiringPlayers.isEmpty {
+                            VStack(alignment: .leading, spacing: 3) {
+                                ForEach(expiringPlayers, id: \.id) { player in
+                                    HStack(spacing: 6) {
+                                        Text(player.position.rawValue)
+                                            .font(DSType.display(DSType.Size.micro, .bold))
+                                            .foregroundStyle(Color.textTertiary)
+                                            .frame(width: 26, alignment: .leading)
+                                        Text(player.fullName)
+                                            .font(DSType.text(DSType.Size.footnote, .medium))
+                                            .foregroundStyle(Color.textSecondary)
+                                        Spacer()
+                                        Text("\(player.overall)")
+                                            .font(DSType.display(DSType.Size.footnote, .bold))
+                                            .foregroundStyle(Color.forRating(player.overall))
+                                    }
+                                }
+                            }
+                            .padding(.leading, 4)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                        }
+
+                        // #133: the roster's three landmarks, tagged and tappable.
+                        if !keyPlayers.isEmpty {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("Key Players")
                                     .font(.caption.weight(.semibold))
                                     .foregroundStyle(Color.textSecondary)
-                                ForEach(topPlayers, id: \.id) { player in
-                                    HStack {
-                                        Text("\(player.fullName)")
-                                            .font(.subheadline.weight(.medium))
-                                            .foregroundStyle(Color.textPrimary)
-                                        Spacer()
-                                        Text("\(player.position.rawValue) — \(player.overall) OVR")
-                                            .font(.subheadline.monospacedDigit())
-                                            .foregroundStyle(Color.forRating(player.overall))
+                                ForEach(keyPlayers) { key in
+                                    Button {
+                                        inspectedPlayer = key.player
+                                    } label: {
+                                        HStack(spacing: 8) {
+                                            Text(key.player.fullName)
+                                                .font(.subheadline.weight(.medium))
+                                                .foregroundStyle(Color.textPrimary)
+                                            ForEach(key.tags, id: \.self) { tag in
+                                                Text(tag)
+                                                    .font(DSType.display(DSType.Size.micro, .heavy))
+                                                    .tracking(0.6)
+                                                    .foregroundStyle(Color.accentGold)
+                                                    .padding(.horizontal, 6)
+                                                    .padding(.vertical, 2)
+                                                    .background(
+                                                        Capsule().fill(Color.accentGold.opacity(0.14))
+                                                    )
+                                            }
+                                            Spacer(minLength: 4)
+                                            Text("\(key.player.position.rawValue) — \(key.player.overall) OVR")
+                                                .font(.subheadline.monospacedDigit())
+                                                .foregroundStyle(Color.forRating(key.player.overall))
+                                            Image(systemName: "chevron.right")
+                                                .font(.system(size: DSType.Size.micro, weight: .bold))
+                                                .foregroundStyle(Color.textTertiary)
+                                        }
+                                        .contentShape(Rectangle())
                                     }
+                                    .buttonStyle(.plain)
+                                    .accessibilityLabel("\(key.player.fullName), \(key.tags.joined(separator: ", ")), \(key.player.position.rawValue), \(key.player.overall) overall")
                                 }
                             }
                         }
@@ -748,26 +977,96 @@ private struct TeamOverviewStep: View {
                 // Cap situation with league average context (#19)
                 if showCap {
                     VStack(alignment: .leading, spacing: 14) {
-                        SectionLabel(text: "SALARY CAP")
+                        // THE VERDICT, beside the head. The card was five
+                        // figures and a bar with no opinion in it — a new GM
+                        // cannot tell whether $18M of room is comfortable or
+                        // the reason he is about to be stuck.
+                        HStack(spacing: 8) {
+                            SectionLabel(text: "SALARY CAP")
+                            Spacer(minLength: 4)
+                            Text(capHealth.label.uppercased())
+                                .font(DSType.display(DSType.Size.micro, .heavy))
+                                .tracking(0.8)
+                                .foregroundStyle(capHealth.color)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(Capsule().fill(capHealth.color.opacity(0.15)))
+                        }
 
                         StatRow(label: "Total Cap", value: totalCapFormatted)
                         StatRow(label: "Used", value: capUsedFormatted)
 
-                        // Cap usage progress bar
+                        // Cap usage bar. It used to be two bare rectangles: no
+                        // caption saying it encodes cap USED, no mark for the
+                        // minimum-spend floor a club can be under, and no
+                        // separation of the money already owed to players who
+                        // have left. All three are what turn a progress bar into
+                        // a cap sheet.
+                        let floorFraction = CapManagementEngine.salaryFloorFraction
+                        let deadFraction = team.salaryCap > 0
+                            ? Double(team.deadCapCurrentYear) / Double(team.salaryCap)
+                            : 0
                         GeometryReader { geo in
-                            let usedFraction = team.salaryCap > 0
-                                ? Double(team.currentCapUsage) / Double(team.salaryCap)
-                                : 0
                             ZStack(alignment: .leading) {
                                 RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                                     .fill(Color.backgroundTertiary)
-                                    .frame(height: 8)
+                                    .frame(height: 10)
                                 RoundedRectangle(cornerRadius: DSCornerRadius.tight)
-                                    .fill(usedFraction > 0.9 ? Color.danger : Color.accentGold)
-                                    .frame(width: geo.size.width * min(usedFraction, 1.0), height: 8)
+                                    .fill(capUsedFraction > 0.9 ? Color.danger : Color.accentGold)
+                                    .frame(width: geo.size.width * min(capUsedFraction, 1.0), height: 10)
+                                if deadFraction > 0 {
+                                    RoundedRectangle(cornerRadius: DSCornerRadius.tight)
+                                        .fill(Color.dangerText)
+                                        .frame(width: geo.size.width * min(deadFraction, 1.0), height: 10)
+                                }
+                                // Minimum-spend floor. Placed off
+                                // `CapManagementEngine.salaryFloorFraction`, the
+                                // same number the floor check itself runs on.
+                                Rectangle()
+                                    .fill(Color.textPrimary.opacity(0.7))
+                                    .frame(width: 2, height: 18)
+                                    .offset(x: geo.size.width * floorFraction - 1)
                             }
+                            .frame(height: 18)
                         }
-                        .frame(height: 8)
+                        .frame(height: 18)
+
+                        // What the bar is, in words.
+                        HStack(spacing: 10) {
+                            Text("Cap used \u{2014} \(String(format: "%.1f%%", capUsedFraction * 100)) of the \(totalCapFormatted) cap")
+                                .font(DSType.text(DSType.Size.caption, .medium, prose: true))
+                                .foregroundStyle(Color.textSecondary)
+                            Spacer(minLength: 0)
+                        }
+                        HStack(spacing: 12) {
+                            HStack(spacing: 4) {
+                                Rectangle()
+                                    .fill(Color.textPrimary.opacity(0.7))
+                                    .frame(width: 2, height: 10)
+                                Text("Minimum spend")
+                                    .font(DSType.text(DSType.Size.micro, .regular, prose: true))
+                                    .foregroundStyle(Color.textTertiary)
+                            }
+                            if team.deadCapCurrentYear > 0 {
+                                HStack(spacing: 4) {
+                                    RoundedRectangle(cornerRadius: 1)
+                                        .fill(Color.dangerText)
+                                        .frame(width: 8, height: 8)
+                                    Text("Dead money \(deadCapFormatted)")
+                                        .font(DSType.text(DSType.Size.micro, .regular, prose: true))
+                                        .foregroundStyle(Color.textTertiary)
+                                }
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .accessibilityElement(children: .combine)
+
+                        if CapManagementEngine.amountBelowFloor(team: team, capMode: career.capMode) > 0 {
+                            Text("Below the minimum spend — the club has to commit more money before the season starts.")
+                                .font(DSType.text(DSType.Size.caption, .regular, prose: true))
+                                .foregroundStyle(Color.warning)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
 
                         // #19: Available cap with league average comparison
                         HStack {
@@ -785,10 +1084,14 @@ private struct TeamOverviewStep: View {
                                 .foregroundStyle(aboveAvg ? Color.success : Color.danger)
                         }
 
-                        // #20: Cap space context
-                        Text("League Avg Cap Space: ~$25.0M")
-                            .font(.caption)
-                            .foregroundStyle(Color.textTertiary)
+                        // #20: Cap space context. Same treatment team selection
+                        // gives the identical fact ("League average: $NNM" on
+                        // the coaching-budget card) — this is the anchor that
+                        // makes the green figure above it mean anything, and it
+                        // was the dimmest ink on the card.
+                        Text("League average cap space: ~$25.0M")
+                            .font(DSType.display(DSType.Size.caption, .semibold))
+                            .foregroundStyle(Color.textSecondary)
                     }
                     .padding(20)
                     .cardBackground()
@@ -868,6 +1171,14 @@ private struct TeamOverviewStep: View {
         }
         }
         }
+        // The player card, in the sheet placement the cap screen already uses
+        // for it. The briefing has no navigation of its own, and a key player
+        // the briefing names is exactly the man a new GM wants to open.
+        .sheet(item: $inspectedPlayer) { player in
+            NavigationStack {
+                PlayerDetailView(player: player)
+            }
+        }
         .onAppear { runAnimations() }
     }
 
@@ -918,15 +1229,30 @@ private struct YourRoadmapStep: View {
                 .font(.caption)
                 .foregroundStyle(Color.textSecondary)
 
+            // WHY THIS ORDER. The list read as ten things that happen to come
+            // in this sequence; it is a dependency chain, and the first link is
+            // the one a new GM is most likely to rush. The staff he hires in
+            // February set the schemes, and the schemes decide who fits in free
+            // agency and which prospects grade out on his own board.
+            Text("The order is a chain: the staff you hire first sets your schemes, and your schemes decide who is worth signing in free agency and who fits on your draft board.")
+                .font(DSType.text(DSType.Size.caption, .regular, prose: true))
+                .foregroundStyle(Color.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(Self.offseasonCalendarEntries.enumerated()), id: \.offset) { index, entry in
                     let isCurrent = index == 0
                     let totalEntries = Self.offseasonCalendarEntries.count
+                    // The last row is not a tenth bullet, it is what the other
+                    // nine are for. It used to go through the identical
+                    // template and then get faded harder than any row above it,
+                    // so the destination was the dimmest thing on the page.
+                    let isDestination = index == totalEntries - 1
                     // #137: Fade distant phases progressively. The floor is
                     // 0.7, not 0.4 — the rows now carry a line of prose each,
                     // and a description has to stay readable at the far end of
                     // the timeline in a way a two-word phase name did not.
-                    let distanceFade: Double = isCurrent ? 1.0 : max(0.7, 1.0 - Double(index) * 0.08)
+                    let distanceFade: Double = (isCurrent || isDestination) ? 1.0 : max(0.7, 1.0 - Double(index) * 0.08)
 
                     HStack(alignment: .top, spacing: 10) {
                         // Timeline connector
@@ -937,9 +1263,17 @@ private struct YourRoadmapStep: View {
                                         .fill(Color.accentGold.opacity(0.25))
                                         .frame(width: 16, height: 16)
                                 }
-                                Circle()
-                                    .fill(isCurrent ? Color.accentGold : Color.textTertiary.opacity(0.3))
-                                    .frame(width: isCurrent ? 10 : 6, height: isCurrent ? 10 : 6)
+                                if isDestination {
+                                    // The chequered flag at the end of the road,
+                                    // not another dot on it.
+                                    Image(systemName: "flag.checkered")
+                                        .font(.system(size: DSType.Size.footnote, weight: .bold))
+                                        .foregroundStyle(Color.accentGold)
+                                } else {
+                                    Circle()
+                                        .fill(isCurrent ? Color.accentGold : Color.textTertiary.opacity(0.3))
+                                        .frame(width: isCurrent ? 10 : 6, height: isCurrent ? 10 : 6)
+                                }
                             }
 
                             if index < totalEntries - 1 {
@@ -954,8 +1288,8 @@ private struct YourRoadmapStep: View {
                         VStack(alignment: .leading, spacing: 1) {
                             HStack(spacing: 6) {
                                 Text(entry.name)
-                                    .font(isCurrent ? .caption.weight(.bold) : .caption.weight(.medium))
-                                    .foregroundStyle(isCurrent ? Color.accentGold : Color.textPrimary)
+                                    .font((isCurrent || isDestination) ? .caption.weight(.bold) : .caption.weight(.medium))
+                                    .foregroundStyle((isCurrent || isDestination) ? Color.accentGold : Color.textPrimary)
 
                                 if isCurrent {
                                     Text("CURRENT")
@@ -966,8 +1300,19 @@ private struct YourRoadmapStep: View {
                                         .background(Capsule().fill(Color.accentGold))
                                 }
 
+                                if isDestination {
+                                    Text("WHERE IT ALL LEADS")
+                                        .font(.system(size: DSType.Size.micro, weight: .black))
+                                        .foregroundStyle(Color.accentGold)
+                                        .padding(.horizontal, 4)
+                                        .padding(.vertical, 1)
+                                        .background(
+                                            Capsule().strokeBorder(Color.accentGold.opacity(0.6), lineWidth: 1)
+                                        )
+                                }
+
                                 // #140: Mandatory vs optional badge
-                                if !isCurrent {
+                                if !isCurrent && !isDestination {
                                     Text(entry.isMandatory ? "REQUIRED" : "OPTIONAL")
                                         .font(.system(size: DSType.Size.micro, weight: .bold))
                                         .foregroundStyle(entry.isMandatory ? Color.textSecondary : Color.textTertiary)
@@ -997,8 +1342,8 @@ private struct YourRoadmapStep: View {
 
                         Spacer()
                     }
-                    .padding(.vertical, isCurrent ? 8 : 4)
-                    .padding(.horizontal, isCurrent ? 8 : 4)
+                    .padding(.vertical, (isCurrent || isDestination) ? 8 : 4)
+                    .padding(.horizontal, (isCurrent || isDestination) ? 8 : 4)
                     .opacity(distanceFade)
                     .background(
                         Group {
@@ -1009,6 +1354,9 @@ private struct YourRoadmapStep: View {
                                         RoundedRectangle(cornerRadius: 10)
                                             .strokeBorder(Color.accentGold.opacity(0.2), lineWidth: 1)
                                     )
+                            } else if isDestination {
+                                RoundedRectangle(cornerRadius: 10)
+                                    .strokeBorder(Color.accentGold.opacity(0.25), lineWidth: 1)
                             }
                         }
                     )
@@ -1023,9 +1371,14 @@ private struct YourRoadmapStep: View {
         VStack(alignment: .leading, spacing: 16) {
             SectionLabel(text: "YOUR FIRST TASKS")
 
-            TaskRow(number: 1, text: "Hire your coaching staff")
+            // Task 3 used to be "Prepare for the Combine and Free Agency" —
+            // two separate jobs, in two different months, under one number.
+            // The Combine is optional scouting in late February; free agency
+            // is a required market that opens in March.
+            TaskRow(number: 1, text: "Hire your coaching staff", isActive: true)
             TaskRow(number: 2, text: "Evaluate the roster")
-            TaskRow(number: 3, text: "Prepare for the Combine and Free Agency")
+            TaskRow(number: 3, text: "Scout the Combine class")
+            TaskRow(number: 4, text: "Prepare for free agency")
         }
         // The calendar card above is stretched by the `Spacer()` in its rows;
         // without this the tasks card hugs its longest task and neither edge
@@ -1038,15 +1391,25 @@ private struct YourRoadmapStep: View {
     var body: some View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
+            // The two intro steps either side of this one run their backdrop at
+            // 0.2 under a gradient; this one sat at 0.1 with no gradient at all,
+            // so the stadium was neither visible enough to be scenery nor
+            // controlled enough to keep the cards clean. Same recipe as its
+            // siblings, so the sequence stops changing its mind mid-way.
             GeometryReader { geo in
                 Image("BgCoachStadium1")
                     .resizable()
                     .aspectRatio(contentMode: .fill)
                     .frame(width: geo.size.width, height: geo.size.height)
                     .clipped()
-                    .opacity(0.1)
+                    .opacity(0.2)
             }
             .ignoresSafeArea()
+
+            LinearGradient(
+                colors: [Color.backgroundPrimary.opacity(0.7), Color.backgroundPrimary.opacity(0.4), Color.backgroundPrimary.opacity(0.7)],
+                startPoint: .top, endPoint: .bottom
+            ).ignoresSafeArea()
 
         ScrollView {
             VStack(spacing: 24) {
@@ -1064,7 +1427,11 @@ private struct YourRoadmapStep: View {
                             .tracking(4)
                             .foregroundStyle(Color.accentGold)
 
-                        Text("Here's what lies ahead in your first offseason")
+                        // Names the destination. The page used to scope itself
+                        // to "your first offseason" while its own list ended on
+                        // the Regular Season, so nothing said what the nine
+                        // offseason phases were building toward.
+                        Text("Ten phases between here and kickoff. Here's your first offseason.")
                             .font(.subheadline)
                             .foregroundStyle(Color.textSecondary)
                             .multilineTextAlignment(.center)
@@ -1118,6 +1485,11 @@ private struct ReadyToBeginStep: View {
     let career: Career
     let team: Team?
     let teamOverall: Int
+    /// The owner's headline demand, generated two steps back and never repeated.
+    let seasonGoals: SeasonGoals?
+    let rosterCount: Int
+    let openStaffSeats: Int
+    let draftPickCount: Int
     let onEnter: () -> Void
 
     @State private var showTitle = false
@@ -1134,25 +1506,43 @@ private struct ReadyToBeginStep: View {
         }
     }
 
+    private var roleTitle: String {
+        career.role == .gm ? "General Manager" : "GM & Head Coach"
+    }
+
+    /// Where on the calendar the dynasty actually starts.
+    ///
+    /// `completeIntro()` sets `.coachingChanges` and week 0, so this is the
+    /// February that opens the League year — NOT Week 1, which is seven phases
+    /// and five months away.
+    private var startStamp: String {
+        "February \(career.currentSeason) \u{2022} \(SeasonPhase.coachingChanges.displayName)"
+    }
+
     var body: some View {
         ZStack {
-            // Dimmed background image
+            // The stadium at dawn, actually visible. It ran at 0.3 under a
+            // gradient that reached 0.85 black, which multiplies out to almost
+            // nothing at the bottom of the frame — the photograph that is meant
+            // to carry the moment was doing no work at all. The image comes up,
+            // the veil comes down, and the bottom stop stays dark enough that
+            // the gold taglines still sit on their own ground.
             GeometryReader { geo in
                 Image("BgStadiumDawn")
                     .resizable()
                     .aspectRatio(contentMode: .fill)
                     .frame(width: geo.size.width, height: geo.size.height)
                     .clipped()
-                    .opacity(0.3)
+                    .opacity(0.55)
             }
             .ignoresSafeArea()
 
             // Dramatic gradient overlay: dark bottom fading to more visible stadium top
             LinearGradient(
                 colors: [
-                    Color.backgroundPrimary.opacity(0.3),
-                    Color.backgroundPrimary.opacity(0.5),
-                    Color.backgroundPrimary.opacity(0.85)
+                    Color.backgroundPrimary.opacity(0.15),
+                    Color.backgroundPrimary.opacity(0.40),
+                    Color.backgroundPrimary.opacity(0.78)
                 ],
                 startPoint: .top,
                 endPoint: .bottom
@@ -1178,25 +1568,43 @@ private struct ReadyToBeginStep: View {
                                 .font(.system(size: DSType.Size.hero, weight: .bold))
                                 .foregroundStyle(Color.textPrimary)
 
+                            // The club's own mark and colour, which the app has
+                            // had all along (`TeamLogoPlaceholder` /
+                            // `TeamColors`) and this screen never used: it named
+                            // the franchise in grey body text and painted every
+                            // accent on the page the same league gold.
                             if let team = team {
-                                Text("with the \(team.fullName)")
-                                    .font(.title3.weight(.medium))
-                                    .foregroundStyle(Color.textSecondary)
+                                HStack(spacing: 10) {
+                                    TeamLogoPlaceholder(abbreviation: team.abbreviation, size: 34)
+                                    Text("with the \(team.fullName)")
+                                        .font(.title3.weight(.medium))
+                                        .foregroundStyle(Color.textSecondary)
+                                }
                             }
+
+                            // Where on the calendar this starts.
+                            Text(startStamp.uppercased())
+                                .font(DSType.display(DSType.Size.caption, .heavy))
+                                .tracking(1.4)
+                                .foregroundStyle(Color.textTertiary)
                         }
                         .transition(.opacity.combined(with: .scale(scale: 0.95)))
                     }
 
                     if showSubtitle {
-                        VStack(spacing: 8) {
-                            Text("Build Your Dynasty.")
-                                .font(.title3.weight(.medium))
-                                .foregroundStyle(Color.accentGold)
-                                .shadow(color: Color.accentGold.opacity(0.5), radius: 12)
+                        VStack(spacing: 22) {
+                            VStack(spacing: 8) {
+                                Text("Build Your Dynasty.")
+                                    .font(.title3.weight(.medium))
+                                    .foregroundStyle(Color.accentGold)
+                                    .shadow(color: Color.accentGold.opacity(0.5), radius: 12)
 
-                            Text(motivationalLine)
-                                .font(.subheadline.italic())
-                                .foregroundStyle(Color.accentGold.opacity(0.75))
+                                Text(motivationalLine)
+                                    .font(.subheadline.italic())
+                                    .foregroundStyle(Color.accentGold.opacity(0.75))
+                            }
+
+                            handoverCard
                         }
                         .transition(.opacity)
                     }
@@ -1207,21 +1615,35 @@ private struct ReadyToBeginStep: View {
         }
         .safeAreaInset(edge: .bottom) {
             if showButton {
-                Button(action: onEnter) {
-                    HStack(spacing: 14) {
-                        Text("Enter the Front Office")
-                            .font(.title3.weight(.bold))
-                        Image(systemName: "arrow.right")
-                            .font(.title3.weight(.bold))
+                VStack(spacing: 8) {
+                    Button(action: onEnter) {
+                        HStack(spacing: 14) {
+                            Text("Enter the Front Office")
+                                .font(.title3.weight(.bold))
+                            Image(systemName: "arrow.right")
+                                .font(.title3.weight(.bold))
+                        }
+                        .foregroundStyle(Color.backgroundPrimary)
+                        .padding(.horizontal, 48)
+                        .padding(.vertical, 22)
+                        .background(
+                            Capsule()
+                                .fill(Color.accentGold)
+                                .shadow(color: Color.accentGold.opacity(0.4), radius: 12, y: 4)
+                        )
                     }
-                    .foregroundStyle(Color.backgroundPrimary)
-                    .padding(.horizontal, 48)
-                    .padding(.vertical, 22)
-                    .background(
-                        Capsule()
-                            .fill(Color.accentGold)
-                            .shadow(color: Color.accentGold.opacity(0.4), radius: 12, y: 4)
-                    )
+                    .accessibilityHint("Starts the offseason on the Coaching Changes phase, with hiring your staff as the first task")
+
+                    // What is actually on the other side of the door.
+                    // `completeIntro()` opens on `.coachingChanges`, and
+                    // `TaskGenerator` files the coordinator hires as that
+                    // phase's required tasks — so the answer is not a guess.
+                    Text(openStaffSeats > 0
+                         ? "First job: hire your coaching staff \u{2014} \(openStaffSeats) seat\(openStaffSeats == 1 ? "" : "s") to fill."
+                         : "First job: review the staff you inherited.")
+                        .font(DSType.text(DSType.Size.caption, .medium, prose: true))
+                        .foregroundStyle(Color.textSecondary)
+                        .multilineTextAlignment(.center)
                 }
                 .padding(.bottom, 16)
                 .padding(.top, 12)
@@ -1231,6 +1653,84 @@ private struct ReadyToBeginStep: View {
             }
         }
         .onAppear { runAnimations() }
+    }
+
+    // MARK: - Hand-over card
+    //
+    // The middle of this screen was empty: a title block between two `Spacer`s,
+    // with nothing on the page that came from the four steps the player had just
+    // sat through. This is that hand-over — who he is, what the owner wants, and
+    // the three counts that describe the club he is walking into.
+
+    private var handoverCard: some View {
+        VStack(spacing: 12) {
+            VStack(spacing: 2) {
+                Text(career.playerName)
+                    .font(DSType.text(DSType.Size.callout, .bold))
+                    .foregroundStyle(Color.textPrimary)
+                Text(roleTitle.uppercased())
+                    .font(DSType.display(DSType.Size.micro, .heavy))
+                    .tracking(1.2)
+                    .foregroundStyle(Color.textTertiary)
+            }
+
+            if let goals = seasonGoals {
+                VStack(spacing: 2) {
+                    Text("THE OWNER WANTS")
+                        .font(DSType.display(DSType.Size.micro, .heavy))
+                        .tracking(1.2)
+                        .foregroundStyle(Color.textTertiary)
+                    Text(goals.primaryGoal)
+                        .font(DSType.text(DSType.Size.footnote, .semibold, prose: true))
+                        .foregroundStyle(Color.textSecondary)
+                        .multilineTextAlignment(.center)
+                }
+            }
+
+            HStack(alignment: .top, spacing: 0) {
+                handoverStat(value: "\(rosterCount)", label: "Players")
+                handoverDivider
+                handoverStat(value: "\(openStaffSeats)", label: "Staff seats open")
+                handoverDivider
+                handoverStat(value: "\(draftPickCount)", label: "Draft picks")
+            }
+        }
+        .padding(.vertical, 14)
+        .padding(.horizontal, 18)
+        .frame(maxWidth: 460)
+        .background(
+            RoundedRectangle(cornerRadius: DSCornerRadius.card)
+                .fill(Color.backgroundPrimary.opacity(0.55))
+                .overlay(
+                    RoundedRectangle(cornerRadius: DSCornerRadius.card)
+                        .strokeBorder(Color.accentGold.opacity(0.25), lineWidth: 1)
+                )
+        )
+        .padding(.horizontal, 24)
+    }
+
+    private func handoverStat(value: String, label: String) -> some View {
+        VStack(spacing: 3) {
+            Text(value)
+                .font(DSType.display(DSType.Size.title2, .black))
+                .foregroundStyle(Color.accentGold)
+            Text(label.uppercased())
+                .font(DSType.display(DSType.Size.micro, .heavy))
+                .tracking(0.8)
+                .foregroundStyle(Color.textTertiary)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .minimumScaleFactor(0.85)
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(value) \(label)")
+    }
+
+    private var handoverDivider: some View {
+        Rectangle()
+            .fill(Color.surfaceBorder)
+            .frame(width: 1, height: 34)
     }
 
     private func runAnimations() {
@@ -1282,21 +1782,46 @@ private struct StatRow: View {
     }
 }
 
+/// A numbered first task.
+///
+/// Every row used to be an identical 26 pt filled-gold disc, so the list said
+/// "here are four equally urgent things" when only the first one is actually
+/// open — the other three are gated behind phases that have not started. The
+/// active row keeps the filled disc and grows; the rest are outlined.
 private struct TaskRow: View {
     let number: Int
     let text: String
+    var isActive: Bool = false
 
     var body: some View {
         HStack(spacing: 14) {
             Text("\(number)")
-                .font(.caption.weight(.black))
-                .foregroundStyle(Color.backgroundPrimary)
-                .frame(width: 26, height: 26)
-                .background(Circle().fill(Color.accentGold))
+                .font(isActive ? .body.weight(.black) : .caption.weight(.black))
+                .foregroundStyle(isActive ? Color.backgroundPrimary : Color.accentGold)
+                .frame(width: isActive ? 34 : 26, height: isActive ? 34 : 26)
+                .background(
+                    Group {
+                        if isActive {
+                            Circle().fill(Color.accentGold)
+                        } else {
+                            Circle().strokeBorder(Color.accentGold.opacity(0.5), lineWidth: 1.5)
+                        }
+                    }
+                )
 
             Text(text)
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(Color.textPrimary)
+                .font(isActive ? .subheadline.weight(.bold) : .subheadline.weight(.medium))
+                .foregroundStyle(isActive ? Color.textPrimary : Color.textSecondary)
+
+            if isActive {
+                Text("START HERE")
+                    .font(DSType.display(DSType.Size.micro, .heavy))
+                    .tracking(0.8)
+                    .foregroundStyle(Color.accentGold)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.accentGold.opacity(0.14)))
+            }
         }
     }
 }

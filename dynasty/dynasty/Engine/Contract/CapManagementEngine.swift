@@ -933,13 +933,21 @@ enum CapManagementEngine {
 
     // MARK: - Minimum Salary Floor
 
+    /// Share of the cap a club must spend to clear the minimum-spend floor.
+    ///
+    /// Published because the floor is not only a check — a cap bar that marks
+    /// where the floor sits has to place the tick at the same fraction the
+    /// check uses, and a second copy of `0.89` in a view is exactly how the
+    /// marker and the verdict end up disagreeing.
+    static let salaryFloorFraction: Double = 0.89
+
     /// Estimates whether the team is meeting the NFL's minimum salary spending requirement
     /// (typically 89% of the cap must be spent over a rolling two-year period).
     ///
     /// - Parameter team: The team to evaluate.
     /// - Returns: `true` if the team appears to be meeting the floor; `false` if at risk.
     static func isAboveSalaryFloor(team: Team) -> Bool {
-        let floorThreshold = Int(Double(team.salaryCap) * 0.89)
+        let floorThreshold = Int(Double(team.salaryCap) * salaryFloorFraction)
         return team.currentCapUsage >= floorThreshold
     }
 
@@ -957,7 +965,7 @@ enum CapManagementEngine {
     /// The dollar amount (in thousands) the team must still spend to reach the salary floor.
     /// Returns 0 if the team is already above the floor.
     static func amountBelowFloor(team: Team) -> Int {
-        let floorThreshold = Int(Double(team.salaryCap) * 0.89)
+        let floorThreshold = Int(Double(team.salaryCap) * salaryFloorFraction)
         let shortfall = floorThreshold - team.currentCapUsage
         return max(0, shortfall)
     }
