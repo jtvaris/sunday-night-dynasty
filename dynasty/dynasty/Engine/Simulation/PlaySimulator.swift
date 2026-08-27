@@ -2143,6 +2143,13 @@ enum PlaySimulator {
     /// Chance a field-goal try is blocked outright at the line (~2.5%).
     private static let fieldGoalBlockChance = 0.025
 
+    /// Past this distance the make chance stops living in a band and decays per yard.
+    private static let fieldGoalLongRangeStart = 55
+    /// Make chance lost for every yard beyond `fieldGoalLongRangeStart`.
+    private static let fieldGoalPerYardDecay = 0.02
+    /// However far back he lines up, the kick is never deader than this.
+    private static let fieldGoalLongRangeFloor = 0.12
+
     private static func simulateFieldGoal(
         offensePlayers: [SimPlayer],
         down: Int,
@@ -2199,7 +2206,15 @@ enum PlaySimulator {
         case 51...55:
             baseMakeChance = 0.64   // real 50+: 58-64 %, was 0.50
         default:
-            baseMakeChance = 0.42   // 56+ is the genuine long shot, was 0.30
+            // Past 55 the band used to be flat at 0.42, so a 62-yarder was priced
+            // exactly like a 56-yarder and the extra seven yards cost the coach
+            // nothing. Decay it 2 pp a yard instead and floor it: 56 lands at 0.40,
+            // 62 at 0.28, and from 70 out it is the 0.12 prayer it should be.
+            let yardsPastBands = Double(fgDistance - fieldGoalLongRangeStart)
+            baseMakeChance = max(
+                0.42 - fieldGoalPerYardDecay * yardsPastBands,
+                fieldGoalLongRangeFloor
+            )
         }
 
         let accuracyModifier = (Double(kickerAccuracy) - 70.0) / 200.0
@@ -3333,7 +3348,14 @@ enum PlaySimulator {
     /// play feed both feature these starters, so concentrating the sim's
     /// targets on them keeps the names on the field, in the feed, and in the
     /// box score pointing at the same players.
-    private static let primaryTargetShare = 0.85
+    ///
+    /// This is 1.0, not a share: the primary group *is* exactly the five
+    /// eligibles `FieldUnit.offense` renders, so any throw outside it named a
+    /// man who was not on the field, and the choreographer then quietly
+    /// animated the ball to the design's primary read instead. WR4+, TE2 and
+    /// RB2 therefore never draw a target. Applies to quick sim and the coached
+    /// game alike — live/quick-sim stat parity is the whole point.
+    private static let primaryTargetShare = 1.0
 
     /// The starters who soak up the vast majority of targets: the club's three
     /// starting WRs plus its starting TE and RB — depth chart first, overall
@@ -3341,7 +3363,7 @@ enum PlaySimulator {
     ///
     /// This is where a chart earns its keep on offense. WR1/WR2/WR3 each rank
     /// their own man 0, so naming a 72-overall possession receiver a starter
-    /// really does move him from the ~15 % depth share to the 85 % primary one,
+    /// really does move him from no targets at all into the primary group,
     /// and drops the 80-overall man the club benched.
     private static func primaryTargets(among receivers: [SimPlayer]) -> Set<UUID> {
         var ids: Set<UUID> = []
@@ -4025,10 +4047,11 @@ enum PlaySimulator {
         }
     }
 
-    /// Selects a pass target: ~85% of throws go to the primary group (top-3
-    /// WR + best TE + best RB), the rest to depth receivers. Within each
-    /// group the pick is weighted by route running + catching ability,
-    /// sharpened or flattened by the QB's awareness (R36).
+    /// Selects a pass target: every throw goes to the primary group (top-3
+    /// WR + best TE + best RB) — the same five the 3D field renders — with
+    /// depth receivers reachable only when the roster cannot field a primary
+    /// group at all. Within the group the pick is weighted by route running +
+    /// catching ability, sharpened or flattened by the QB's awareness (R36).
     private static func weightedReceiverSelection(
         _ receivers: [SimPlayer], qb: SimPlayer? = nil
     ) -> SimPlayer? {
