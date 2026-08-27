@@ -1759,12 +1759,29 @@ enum WeekAdvancer {
             )
 
             // 3. Update owner satisfaction
+            //
+            // The letter it may earn is posted after 4b, not here: that step
+            // ASSIGNS `lastInboxMessages` and would drop anything staged first.
+            var satisfactionLetter: InboxMessage?
             if let owner = playerTeam.owner {
-                OwnerSatisfactionEngine.updateSatisfaction(
+                let satisfactionChange = OwnerSatisfactionEngine.updateSatisfaction(
                     owner: owner,
                     team: playerTeam,
                     career: career,
                     newsItems: lastNewsItems
+                )
+
+                // 3b. …and SAY so when it matters. The score is otherwise a
+                // silent write behind a job-security bar: the user could cross
+                // from Stable to Hot Seat between two advances with nothing on
+                // any screen naming what did it. The engine decides what counts
+                // as worth a letter (band change, or a big single-week swing).
+                satisfactionLetter = OwnerSatisfactionEngine.satisfactionMessage(
+                    change: satisfactionChange,
+                    owner: owner,
+                    career: career,
+                    week: week,
+                    season: season
                 )
 
                 // 4. Check if the owner fires the player.
@@ -1792,6 +1809,12 @@ enum WeekAdvancer {
                 coaches: teamCoaches,
                 owner: playerTeam.owner
             )
+
+            // The owner's note about his own rating (staged at 3b), posted now
+            // that the week's mail has been assigned rather than appended.
+            if let satisfactionLetter {
+                lastInboxMessages.append(satisfactionLetter)
+            }
 
             // 4b-2. R31: Meddler owners fire off 1-2 "suggestions" a season.
             // The whim lands in the inbox; the user responds in Owner Relations.

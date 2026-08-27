@@ -5,42 +5,82 @@ enum OwnerSatisfactionEngine {
 
     // MARK: - Satisfaction Update
 
+    /// What one week did to the owner's opinion, and why.
+    ///
+    /// The score used to move in silence: this engine weighed the record, the
+    /// streak, the week's headlines and the milestones, wrote the sum into
+    /// `owner.satisfaction`, and told nobody. The user's only reading of it is
+    /// the dashboard's job-security bar (`OwnerPersonaEngine.jobSecurity`),
+    /// which is a LABEL over a number — so a coach could walk from "Stable" to
+    /// "Hot Seat" between two advances with nothing on any screen naming the
+    /// cause. Every other engine that moves a number the user can see files a
+    /// letter about it; this one now does too.
+    struct SatisfactionChange {
+        /// Satisfaction before and after the clamp.
+        let before: Int
+        let after: Int
+        /// The reasons that carried weight this week, biggest first, already
+        /// written as sentences.
+        let reasons: [String]
+
+        /// The movement the clamp actually allowed — a +5 week on a 100 owner
+        /// moved nothing and is not worth a letter.
+        var applied: Int { after - before }
+    }
+
     /// Updates the owner's satisfaction based on team performance, media, and personality.
+    ///
+    /// Returns what it did, so the caller can report it. Discardable because
+    /// the season-review path only wants the write.
+    @discardableResult
     static func updateSatisfaction(
         owner: Owner,
         team: Team,
         career: Career,
         newsItems: [NewsItem]
-    ) {
+    ) -> SatisfactionChange {
         var delta = 0
+        // Named contributions, in the order they are weighed below. Only the
+        // ones that actually moved the number are kept.
+        var reasons: [(weight: Int, text: String)] = []
 
         // --- Win/Loss Impact ---
         let totalGames = team.wins + team.losses
         if totalGames > 0 {
             let winPct = Double(team.wins) / Double(totalGames)
 
+            var recordDelta = 0
             if owner.prefersWinNow {
                 // Win-now owners have higher expectations
                 if winPct >= 0.75 {
-                    delta += 5
+                    recordDelta = 5
                 } else if winPct >= 0.55 {
-                    delta += 2
+                    recordDelta = 2
                 } else if winPct < 0.40 {
-                    delta -= 6
+                    recordDelta = -6
                 } else if winPct < 0.50 {
-                    delta -= 3
+                    recordDelta = -3
                 }
             } else {
                 // Patient/rebuilding owners are more forgiving
                 if winPct >= 0.65 {
-                    delta += 4
+                    recordDelta = 4
                 } else if winPct >= 0.50 {
-                    delta += 1
+                    recordDelta = 1
                 } else if winPct < 0.30 {
-                    delta -= 4
+                    recordDelta = -4
                 } else if winPct < 0.45 {
-                    delta -= 2
+                    recordDelta = -2
                 }
+            }
+            delta += recordDelta
+            if recordDelta != 0 {
+                reasons.append((
+                    weight: recordDelta,
+                    text: recordDelta > 0
+                        ? "your \(team.record) record"
+                        : "the \(team.record) record"
+                ))
             }
         }
 
@@ -49,8 +89,10 @@ enum OwnerSatisfactionEngine {
         let lossMargin = team.losses - team.wins
         if lossMargin >= 5 {
             delta -= 4  // Severe losing accelerates decline
+            reasons.append((weight: -4, text: "how far under .500 this team has fallen"))
         } else if lossMargin >= 3 {
             delta -= 2
+            reasons.append((weight: -2, text: "the losing run"))
         }
 
         // --- Patience Modifier ---
@@ -95,19 +137,116 @@ enum OwnerSatisfactionEngine {
             $0.sentiment == .positive && $0.relatedTeamID == team.id
         }.count
 
-        delta -= Int((Double(negativeNewsCount) * mediaPressure).rounded())
+        let negativeNewsCost = Int((Double(negativeNewsCount) * mediaPressure).rounded())
+        delta -= negativeNewsCost
         delta += positiveNewsCount
+        if negativeNewsCost > 0 {
+            reasons.append((
+                weight: -negativeNewsCost,
+                text: "the week's coverage of this club"
+            ))
+        }
+        if positiveNewsCount > 0 {
+            reasons.append((
+                weight: positiveNewsCount,
+                text: "the way the league is talking about this club"
+            ))
+        }
 
         // --- Milestone Bonuses ---
         if career.playoffAppearances > 0 && career.currentPhase == .playoffs {
             delta += 10  // Playoff appearance is a big boost
+            reasons.append((weight: 10, text: "playing football in January"))
         }
         if career.championships > 0 {
             delta += 25  // Championship is a massive boost
+            reasons.append((weight: 25, text: "the ring in the cabinet"))
         }
 
         // Apply the delta and clamp to 0-100
+        let before = owner.satisfaction
         owner.satisfaction = min(100, max(0, owner.satisfaction + delta))
+
+        return SatisfactionChange(
+            before: before,
+            after: owner.satisfaction,
+            // Loudest first, and only the three that would fit in a sentence.
+            reasons: reasons
+                .sorted { abs($0.weight) > abs($1.weight) }
+                .prefix(3)
+                .map(\.text)
+        )
+    }
+
+    // MARK: - Reporting the movement
+
+    /// The letter the owner sends when his opinion has actually moved.
+    ///
+    /// Deliberately NOT sent every week. The delta is recomputed from the
+    /// cumulative record on every advance, so a good team scores +5 fourteen
+    /// weeks running and mail on each of them is noise that trains the user to
+    /// ignore the sender. It goes out when the number crosses into a different
+    /// job-security band — the reading the dashboard actually shows — or when
+    /// one week moves it far enough that the bar visibly jumps.
+    static func satisfactionMessage(
+        change: SatisfactionChange,
+        owner: Owner,
+        career: Career,
+        week: Int,
+        season: Int
+    ) -> InboxMessage? {
+        let applied = change.applied
+        guard applied != 0 else { return nil }
+
+        let bandBefore = OwnerPersonaEngine.jobSecurity(
+            owner: owner, career: career, satisfaction: change.before
+        ).level
+        let bandAfter = OwnerPersonaEngine.jobSecurity(
+            owner: owner, career: career, satisfaction: change.after
+        ).level
+        let bandMoved = bandBefore != bandAfter
+        guard bandMoved || abs(applied) >= 8 else { return nil }
+
+        let cause: String = {
+            guard !change.reasons.isEmpty else { return "how this season is going" }
+            if change.reasons.count == 1 { return change.reasons[0] }
+            return change.reasons.dropLast().joined(separator: ", ")
+                + " and " + (change.reasons.last ?? "")
+        }()
+
+        let subject = bandMoved
+            ? "Your standing: \(bandAfter.label)"
+            : (applied > 0 ? "The owner is happier" : "The owner is not happy")
+
+        let verdict: String = {
+            switch bandAfter {
+            case .secure:   return "You have my backing. Keep it there."
+            case .stable:   return "Nothing to worry about yet. Keep it that way."
+            case .pressure: return "I want to see this turn around, and soon."
+            case .hotSeat:  return "I am going to be blunt: this cannot continue."
+            case .critical: return "I am out of patience. Fix this or I will."
+            }
+        }()
+
+        let movement = applied > 0
+            ? "went up \(applied) point\(applied == 1 ? "" : "s")"
+            : "went down \(abs(applied)) point\(abs(applied) == 1 ? "" : "s")"
+
+        return InboxMessage(
+            sender: .owner(name: owner.name),
+            subject: subject,
+            body: """
+            Coach,
+
+            My rating of the job you are doing \(movement) this week, to \(change.after) out of 100. That is down to \(cause).
+
+            \(bandMoved ? "That moves you from \(bandBefore.label) to \(bandAfter.label). " : "")\(verdict)
+
+            \(owner.name)
+            """,
+            date: "Week \(week), Season \(season)",
+            category: .ownerDirective
+        )
     }
 
     // MARK: - Firing Check

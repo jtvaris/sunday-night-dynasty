@@ -115,8 +115,18 @@ enum OwnerPersonaEngine {
 
     /// Scores the coach's job security 0-100 from owner satisfaction,
     /// patience, and archetype. Higher = safer.
-    static func jobSecurity(owner: Owner, career: Career) -> (score: Int, level: JobSecurityLevel) {
-        var score = owner.satisfaction + (owner.patience - 5) * 3
+    ///
+    /// - Parameter satisfaction: Reads `owner.satisfaction` when omitted. The
+    ///   override exists so a caller can ask what the bar said BEFORE a write
+    ///   it has already made — `OwnerSatisfactionEngine.satisfactionMessage`
+    ///   only sends a letter when the band the user can see has changed, and by
+    ///   then the new score is on the model.
+    static func jobSecurity(
+        owner: Owner,
+        career: Career,
+        satisfaction: Int? = nil
+    ) -> (score: Int, level: JobSecurityLevel) {
+        var score = (satisfaction ?? owner.satisfaction) + (owner.patience - 5) * 3
         switch OwnerArchetype.from(owner) {
         case .winNowTycoon:  score -= 5
         case .patientBuilder: score += 5

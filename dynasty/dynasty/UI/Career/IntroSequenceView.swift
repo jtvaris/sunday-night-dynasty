@@ -22,6 +22,22 @@ struct IntroSequenceView: View {
     @State private var coaches: [Coach] = []
     @State private var draftPicks: [DraftPick] = []
     @State private var seasonGoals: SeasonGoals?
+    /// The owner's mandate in the form the SEASON is actually scored in.
+    ///
+    /// `SeasonGoals.generate` (above) is two prose lines — "Win the division",
+    /// "Build depth through the draft" — with no target on either and no
+    /// evaluation behind them anywhere in the app. The slate the season books
+    /// its verdict against is `OwnerGoalsEngine`'s: counted goals with real
+    /// bars (12+ wins, three rookies at a starts bar) that the Owner Relations
+    /// screen tracks all year and the end-of-season review grades. The intro
+    /// was therefore the one screen where the owner asked for something he
+    /// would never measure.
+    ///
+    /// Generated here off the same engine and the same club, so the meeting
+    /// states the real bar. Display only — `WeekAdvancer.startNewSeason` builds
+    /// and persists the season's own slate at kickoff (after the draft and free
+    /// agency have moved the roster), and this screen must not pre-empt it.
+    @State private var ownerGoals: [SeasonGoal] = []
     /// Where the engine reads this franchise in its competitive cycle. Quoted,
     /// never re-derived: `TradeValueEngine.TeamStance` is what every trade and
     /// free-agency decision in the game is already priced against, so the
@@ -57,6 +73,7 @@ struct IntroSequenceView: View {
                         owner: owner,
                         team: team!,
                         seasonGoals: seasonGoals,
+                        ownerGoals: ownerGoals,
                         onContinue: { advanceStep() }
                     )
                     .tag(1)
@@ -228,6 +245,15 @@ struct IntroSequenceView: View {
         let ownerPrefersWinNow = owner?.prefersWinNow ?? false
         seasonGoals = SeasonGoals.generate(teamQuality: avgOverall, ownerPreference: ownerPrefersWinNow)
 
+        // The same mandate the season is scored against — see `ownerGoals`. One
+        // league-wide fetch inside `rosterTier`, on a screen that already runs
+        // five, and only ever once per career.
+        if let team, let owner {
+            ownerGoals = OwnerGoalsEngine.generateSeasonGoals(
+                team: team, owner: owner, career: career
+            )
+        }
+
         // The contend / retool / rebuild verdict, read off the same model the
         // trade market uses. The league-wide fetch is what buys
         // `leagueCoreReference` its self-centring reference — the engine's own
@@ -271,6 +297,9 @@ private struct OwnerMeetingStep: View {
     let owner: Owner?
     let team: Team
     let seasonGoals: SeasonGoals?
+    /// The owner's tracked slate. Preferred over `seasonGoals` whenever the
+    /// engine produced one — see `IntroSequenceView.ownerGoals`.
+    let ownerGoals: [SeasonGoal]
     let onContinue: () -> Void
 
     @State private var showHeader = false
@@ -278,9 +307,40 @@ private struct OwnerMeetingStep: View {
     @State private var showGoals = false
     @State private var showQuote = false
 
-    /// The generated goals in the briefing's vocabulary. The intro has a freshly
-    /// built `SeasonGoals` (two strings) rather than the hub's live-evaluated
-    /// `SeasonGoal` list, which is exactly why `OwnerBriefingGoal` exists.
+    /// The goals card's rows.
+    ///
+    /// The tracked slate first, mapped exactly the way the Owner Relations hub
+    /// maps it (`OwnerMeetingView.briefingGoals`) so the two screens print the
+    /// same four rows with the same priority tags and the same targets. The
+    /// two-string `SeasonGoals` is the fallback for a save whose league is not
+    /// stocked yet — `generateSeasonGoals` needs a club to rank against.
+    private var goalRows: [OwnerBriefingGoal] {
+        if !ownerGoals.isEmpty {
+            return ownerGoals.prefix(4).map { goal in
+                OwnerBriefingGoal(
+                    id: goal.id.uuidString,
+                    title: goal.title,
+                    priorityLabel: goal.priority == .primary
+                        ? "Primary"
+                        : (goal.priority == .secondary ? "Secondary" : "Bonus"),
+                    isPrimary: goal.priority == .primary,
+                    // No progress fraction, deliberately. The target is already
+                    // IN the engine's title — "Win 12+ Games", "Develop 3
+                    // Rookies" — which is the half the intro's two prose lines
+                    // never had. A `progress` pair on top of it would only say
+                    // "0/12" for a season nobody has played, and it would flip
+                    // `OwnerGoalsCard.hasReading` on and head the first owner
+                    // meeting of a career "0/4 met": the exact zero score that
+                    // card's `hasReading` exists to suppress.
+                    isAchieved: goal.isAchieved
+                )
+            }
+        }
+        if let seasonGoals { return briefingGoals(seasonGoals) }
+        return []
+    }
+
+    /// The legacy two-string goals in the briefing's vocabulary.
     private func briefingGoals(_ goals: SeasonGoals) -> [OwnerBriefingGoal] {
         [
             OwnerBriefingGoal(
@@ -347,9 +407,12 @@ private struct OwnerMeetingStep: View {
                                     .transition(.opacity.combined(with: .move(edge: .bottom)))
                             }
 
-                            if showGoals, let goals = seasonGoals {
-                                OwnerGoalsCard(goals: briefingGoals(goals))
-                                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                            if showGoals {
+                                let rows = goalRows
+                                if !rows.isEmpty {
+                                    OwnerGoalsCard(goals: rows)
+                                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                                }
                             }
 
                             if showQuote, let owner {

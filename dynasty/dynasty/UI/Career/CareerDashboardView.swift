@@ -63,6 +63,13 @@ struct CareerDashboardView: View {
     @State private var previousSeasonRecord: String?
     @State private var previousSeasonYear: Int?
 
+    /// True from the tap on Advance until the week has finished advancing.
+    ///
+    /// Owned here rather than in the rail because this screen owns both advance
+    /// paths — its own `WeekAdvancer` call and the shell's, through `onAdvance`
+    /// — so one flag covers whichever one is wired. See `runAdvance`.
+    @State private var isAdvancing = false
+
     // MARK: Sheets
 
     /// **The one sheet this screen can have open.**
@@ -303,7 +310,7 @@ struct CareerDashboardView: View {
     // MARK: - Advance Logic
 
     private func performAdvance() {
-        guard canAdvance else { return }
+        guard canAdvance, !isAdvancing else { return }
 
         // The user's own game is still unplayed: never let one tap eat it
         // silently. Confirm, then `runAdvance` sims it as part of the week.
@@ -316,8 +323,19 @@ struct CareerDashboardView: View {
     }
 
     /// The actual week advance, past the unplayed-game guard rail.
+    ///
+    /// The work itself is synchronous and main-actor bound — it sims sixteen
+    /// games, moves the market and writes the store — so the screen cannot stay
+    /// interactive through it. What it CAN do is say so: the rail's button was
+    /// simply frozen mid-tap, indistinguishable from an app that had hung, and
+    /// a second tap during the freeze was queued rather than dropped. The flag
+    /// below disables the control and swaps its label for a spinner, and the
+    /// one-frame hop is what lets SwiftUI paint that state before the main
+    /// actor is taken. (Running the advance OFF the main actor is the other
+    /// half of the parent item and is not attempted here — `advanceWeek` takes
+    /// the SwiftData context.)
     private func runAdvance() {
-        guard canAdvance else { return }
+        guard canAdvance, !isAdvancing else { return }
 
         // During coaching changes, show the review sheet instead of advancing
         // directly. Guarded: a second tap while the sheet is already up used to
@@ -330,6 +348,20 @@ struct CareerDashboardView: View {
             return
         }
 
+        isAdvancing = true
+        Task { await runAdvanceWork() }
+    }
+
+    private func runAdvanceWork() async {
+        defer { isAdvancing = false }
+        // One frame of grace before the main actor is taken. Set-the-flag and
+        // do-the-work in the same runloop turn commit as ONE transaction, and
+        // the busy state is then never drawn at all.
+        try? await Task.sleep(nanoseconds: 32_000_000)
+        executeAdvance()
+    }
+
+    private func executeAdvance() {
         if let onAdvance {
             onAdvance()
         } else {
@@ -773,7 +805,8 @@ struct CareerDashboardView: View {
                     onAdvance: { performAdvance() },
                     canAdvance: canAdvance,
                     advanceIsPrimary: !weeklyGameUnplayed,
-                    advanceBlocker: advanceBlocker
+                    advanceBlocker: advanceBlocker,
+                    isAdvancing: isAdvancing
                 )
             }
             .frame(width: TimelineTasksPanel.railWidth)
@@ -835,14 +868,23 @@ struct CareerDashboardView: View {
                     .textCase(.uppercase)
                     .tracking(0.5)
 
+                // The badge SAYS what it counts.
+                //
+                // A bare "5" in a red capsule over a list of the five most
+                // recent messages — read or not — is two numbers that describe
+                // different sets and nothing on screen to tell them apart: a
+                // reader with three unread letters and five rows below has no
+                // way to know the capsule is not counting the rows. The Inbox
+                // tile has always printed "N unread"; so does this now.
                 let unread = inboxMessages.filter { !$0.isRead }.count
                 if unread > 0 {
-                    Text("\(unread)")
+                    Text("\(unread) unread")
                         .font(.system(size: DSType.Size.micro, weight: .bold).monospacedDigit())
                         .foregroundStyle(.white)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(Capsule().fill(Color.danger))
+                        .accessibilityLabel("\(unread) unread message\(unread == 1 ? "" : "s")")
                 }
 
                 Spacer()
@@ -2330,21 +2372,37 @@ struct CareerDashboardView: View {
 
     // MARK: - Roster Tile
 
+    /// The position groups whose STARTERS are under the league bar, worst
+    /// first, at most three.
+    ///
+    /// Not `weakestPositionGroups`: that one is a plain bottom-three and always
+    /// names three groups, which on a stacked roster prints holes that are not
+    /// there. 70 is `PositionGradeCalculator`'s own B-/C+ line and the same cut
+    /// the Position Grades tile's NEED badge uses, so the two marks on this
+    /// screen cannot name different groups.
+    private var rosterHoleGroups: [String] {
+        positionGroupGrades
+            .filter { $0.starterOVR < 70 }
+            .sorted { $0.starterOVR < $1.starterOVR }
+            .prefix(3)
+            .map(\.group)
+    }
+
     private var rosterTile: some View {
-        NavigationLink {
+        let holes = rosterHoleGroups
+        return NavigationLink {
             RosterViewWrapper(career: career)
         } label: {
-            DashboardTile(icon: "person.3.fill", title: "Roster", highlighted: currentPhaseHighlightedTiles.contains("Roster")) {
+            // Headcount inline with the caption (see `DashboardTile.headline`):
+            // "ROSTER 53" says everything the old "Players / 53" row did, and
+            // the row it frees is what the health line below is written in.
+            DashboardTile(
+                icon: "person.3.fill",
+                title: "Roster",
+                highlighted: currentPhaseHighlightedTiles.contains("Roster"),
+                headline: "\(rosterCount)"
+            ) {
                 VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text("Players")
-                            .font(.system(size: DSType.Size.caption))
-                            .foregroundStyle(Color.textSecondary)
-                        Spacer()
-                        Text("\(rosterCount)")
-                            .font(.system(size: DSType.Size.body, weight: .bold).monospacedDigit())
-                            .foregroundStyle(Color.textPrimary)
-                    }
                     HStack {
                         Text("Cap Space")
                             .font(.system(size: DSType.Size.caption))
@@ -2353,6 +2411,28 @@ struct CareerDashboardView: View {
                         Text(formatCap(team?.availableCap ?? 0))
                             .font(.system(size: DSType.Size.body, weight: .bold).monospacedDigit())
                             .foregroundStyle(Color.success)
+                    }
+                    // Roster HEALTH, which a headcount and a cap figure between
+                    // them do not state: 53 men and $12M of room is the same
+                    // tile on a club with no weak room and on one starting a
+                    // 58-OVR line. The letters themselves stay on the Position
+                    // Grades tile — this is the one-line verdict off them.
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("Needs")
+                            .font(.system(size: DSType.Size.caption))
+                            .foregroundStyle(Color.textSecondary)
+                        Spacer()
+                        if positionGroupGrades.isEmpty {
+                            Text("\u{2014}")
+                                .font(.system(size: DSType.Size.footnote, weight: .semibold))
+                                .foregroundStyle(Color.textTertiary)
+                        } else {
+                            Text(holes.isEmpty ? "None" : holes.joined(separator: ", "))
+                                .font(.system(size: DSType.Size.footnote, weight: .bold))
+                                .foregroundStyle(holes.isEmpty ? Color.success : Color.warning)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
+                        }
                     }
                 }
             }
@@ -2797,36 +2877,68 @@ struct CareerDashboardView: View {
 
     // MARK: - Key Players Tile (#18)
 
+    /// The men the tile names, each with the reason he is on it.
+    ///
+    /// Three rows used to be hard-coded — the starting QB, the best defender,
+    /// the highest OVR — which is one roster question ("who is good?") asked
+    /// three times. The two rows added here are the ones the OVR column cannot
+    /// answer and that decide a spring: who the MONEY is on, and who is about
+    /// to be out of contract. Deduplicated by id, so a franchise QB who is also
+    /// the biggest cap hit takes the first tag that fits him rather than
+    /// appearing twice.
+    private var keyPlayerRows: [(label: String, player: Player)] {
+        var rows: [(label: String, player: Player)] = []
+        var seen: Set<UUID> = []
+
+        func add(_ label: String, _ player: Player?) {
+            guard let player, !seen.contains(player.id) else { return }
+            seen.insert(player.id)
+            rows.append((label: label, player: player))
+        }
+
+        add("QB1", startingQB)
+        // Best defensive player (#144) — tagged with his own position.
+        add(bestDefensivePlayer?.position.rawValue ?? "DEF", bestDefensivePlayer)
+        // Labelled "TOP", not "MVP": `bestPlayer` is simply the highest OVR on
+        // the roster, so the row read as a season award in Week 1 before a snap
+        // and never moved by Week 18. The other rows are roster facts; this one
+        // is too.
+        add("TOP", bestPlayer)
+        add("CAP", biggestCapHit)
+        add("EXP", topExpiringPlayer)
+
+        return rows
+    }
+
+    /// The largest single salary on the books — the row the three OVR rows
+    /// could never produce, and the one a cap decision starts from.
+    private var biggestCapHit: Player? {
+        players.max(by: { $0.annualSalary < $1.annualSalary })
+    }
+
+    /// The best man in the last year of his deal. Same `contractYearsRemaining
+    /// <= 1` test the Contracts tile counts on, so the two cannot disagree.
+    private var topExpiringPlayer: Player? {
+        expiringContractPlayers.max(by: { $0.overall < $1.overall })
+    }
+
     private var keyPlayersTile: some View {
-        NavigationLink {
+        let rows = keyPlayerRows
+        return NavigationLink {
             RosterViewWrapper(career: career)
         } label: {
             DashboardTile(icon: "star.fill", title: "Key Players") {
                 VStack(alignment: .leading, spacing: 4) {
-                    if let qb = startingQB {
-                        keyPlayerRow(label: "QB1", player: qb)
-                    } else {
+                    if startingQB == nil {
                         Text("No starting QB")
                             .font(.system(size: DSType.Size.caption))
                             .foregroundStyle(Color.textSecondary)
                     }
-
-                    // Best defensive player (#144)
-                    if let defPlayer = bestDefensivePlayer, defPlayer.id != startingQB?.id {
-                        Divider().overlay(Color.surfaceBorder.opacity(0.4))
-                        keyPlayerRow(label: defPlayer.position.rawValue, player: defPlayer)
-                    }
-
-                    // Best overall if different from QB and defensive star (#144).
-                    // Labelled "TOP", not "MVP": `bestPlayer` is simply the
-                    // highest OVR on the roster, so the row read as a season
-                    // award in Week 1 before a snap and never moved by Week 18.
-                    // The other two rows are depth-chart slots; this one is too.
-                    if let best = bestPlayer,
-                       best.id != startingQB?.id,
-                       best.id != bestDefensivePlayer?.id {
-                        Divider().overlay(Color.surfaceBorder.opacity(0.4))
-                        keyPlayerRow(label: "TOP", player: best)
+                    ForEach(Array(rows.enumerated()), id: \.element.player.id) { index, row in
+                        if index > 0 {
+                            Divider().overlay(Color.surfaceBorder.opacity(0.4))
+                        }
+                        keyPlayerRow(label: row.label, player: row.player)
                     }
                 }
             }
@@ -4502,13 +4614,22 @@ struct CareerDashboardView: View {
             return graded == 0 ? "Not graded yet" : "No A grades — \(graded) graded"
         }()
         let battles = openPositionBattles.count
+        // `phaseHeroCard` routes BOTH `.otas` and `.trainingCamp` here, and the
+        // header was the literal "Training Camp · Install & Evaluation" — so the
+        // spring's first phase, which the rail, the season band and the phase
+        // list all call OTAs, opened under a card announcing a camp that starts
+        // weeks later. One card is right (the two phases offer the same work);
+        // naming the wrong one is not. The rows below hold for both.
+        let isOTAs = career.currentPhase == .otas
         return phaseCardBase(icon: "figure.strengthtraining.traditional", accent: .accentGold) {
-            heroHeader("Training Camp · Install & Evaluation")
+            heroHeader(isOTAs
+                       ? "OTAs · Install & Conditioning"
+                       : "Training Camp · Install & Evaluation")
             // Camp is one visit, and on that visit all three outcome rows are
             // structurally empty — so the roster the player HAS goes first, and
             // gold is kept off the blanks. "Workload heatmap" also named a
             // screen where the label should name the metric beside it.
-            heroStatRow("Roster", value: "\(players.count) in camp")
+            heroStatRow("Roster", value: "\(players.count) \(isOTAs ? "under contract" : "in camp")")
             heroStatRow("Squad workload",
                         value: "\(overloadedShare)% overloaded",
                         accent: overloadedShare >= 20 ? .warning : .textSecondary)
@@ -5385,6 +5506,21 @@ private struct DashboardTile<Content: View>: View {
     let icon: String
     let title: String
     var highlighted: Bool = false
+    /// The tile's headline figure, drawn ON the title row instead of taking a
+    /// row of its own under the divider.
+    ///
+    /// A tile is roughly 120 pt tall and its caption already eats the first
+    /// band of it, so a tile whose first body row was `label + number` spent
+    /// two of its three or four rows saying one thing — "ROSTER" over
+    /// "Players 53". Where the tile HAS one headline number (a headcount, a
+    /// list of holes, an unread count), it belongs beside the name that
+    /// already labels it, and the rows under the divider are then free to
+    /// carry facts the header cannot.
+    ///
+    /// Optional on purpose: tiles whose body is a list (Key Players, Position
+    /// Grades) have no single headline and keep the plain header.
+    var headline: String? = nil
+    var headlineTint: Color = .textPrimary
     @ViewBuilder let content: () -> Content
 
     private var headerInk: Color { highlighted ? .accentGold : .textSecondary }
@@ -5401,7 +5537,18 @@ private struct DashboardTile<Content: View>: View {
                     .foregroundStyle(headerInk)
                     .textCase(.uppercase)
                     .tracking(0.5)
-                Spacer()
+                Spacer(minLength: DSSpacing.xxs)
+                if let headline {
+                    Text(headline)
+                        .font(.system(size: DSType.Size.body, weight: .bold).monospacedDigit())
+                        .foregroundStyle(headlineTint)
+                        .lineLimit(1)
+                        // The header is a fixed-height band shared with the
+                        // caption and the chevron: a long headline ("WR, EDGE,
+                        // CB") shrinks rather than pushing the chevron off the
+                        // tile or wrapping the row.
+                        .minimumScaleFactor(0.7)
+                }
                 if highlighted {
                     Text("ACTIVE")
                         .font(.system(size: DSType.Size.micro, weight: .heavy))

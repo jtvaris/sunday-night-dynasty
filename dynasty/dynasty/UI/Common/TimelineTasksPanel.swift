@@ -31,6 +31,16 @@ struct TimelineTasksPanel: View {
     /// already shows in its own blocker banner, so the two cannot drift.
     var advanceBlocker: AdvanceBlocker? = nil
 
+    /// True while the caller is actually advancing the week.
+    ///
+    /// `canAdvance` does not answer this: it is the GATE, and it says exactly
+    /// the same thing on the frame after the tap as on the frame before it. The
+    /// advance itself is synchronous main-actor work of a second or more, so
+    /// the button simply stopped responding — no spinner, no disable, nothing
+    /// between "tapped" and "the week is different", which reads as a hung app
+    /// and invites the second tap that queues a second advance.
+    var isAdvancing: Bool = false
+
     // #158: `AdvanceBlocker` used to be declared here. It moved to
     // ``StaffLedger``'s file, because the Season Guide sheet has to draw the
     // same sentence and neither surface is allowed to author it — one gate,
@@ -839,14 +849,23 @@ struct TimelineTasksPanel: View {
             }
 
             Button {
-                guard canAdvance else { return }
+                guard canAdvance, !isAdvancing else { return }
                 onAdvance()
             } label: {
                 HStack(spacing: DSSpacing.xs) {
-                    Image(systemName: "chevron.right.2")
-                        .font(.system(size: DSType.Size.body, weight: .bold))
-                    Text(advanceButtonLabel)
-                        .font(.system(size: DSType.Size.body, weight: .bold))
+                    if isAdvancing {
+                        ProgressView()
+                            .progressViewStyle(.circular)
+                            .controlSize(.small)
+                            .tint(advanceForeground)
+                        Text("Advancing\u{2026}")
+                            .font(.system(size: DSType.Size.body, weight: .bold))
+                    } else {
+                        Image(systemName: "chevron.right.2")
+                            .font(.system(size: DSType.Size.body, weight: .bold))
+                        Text(advanceButtonLabel)
+                            .font(.system(size: DSType.Size.body, weight: .bold))
+                    }
                 }
                 .foregroundStyle(advanceForeground)
                 .frame(maxWidth: .infinity, minHeight: 44)
@@ -866,8 +885,9 @@ struct TimelineTasksPanel: View {
                         )
                 )
             }
-            .disabled(!canAdvance)
+            .disabled(!canAdvance || isAdvancing)
             .animation(.spring(duration: 0.3), value: canAdvance)
+            .animation(.easeInOut(duration: 0.15), value: isAdvancing)
             // A STABLE handle for the season's primary progression control.
             //
             // Its label changes every week ("Advance to Week 12", "Advance to
