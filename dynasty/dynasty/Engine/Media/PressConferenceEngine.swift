@@ -499,6 +499,87 @@ enum PressConferenceEngine {
         )
     }
 
+    // MARK: - Delegated Sessions
+
+    /// What one question is worth when the media team fields it: the mean of
+    /// every card that was on the table, each resolved in `context`.
+    ///
+    /// The mean is taken over `resolvedEffects` and never over the authored
+    /// literals on `PressResponse` — the same call the screen makes for a card
+    /// the coach taps — so a delegated answer is priced by the situation, the
+    /// standing, the owner's persona and the writer's posture exactly like a
+    /// spoken one. Rounded per field, because `PressEffects` is integers.
+    static func delegatedEffects(
+        for question: PressQuestion,
+        context: PressContext
+    ) -> PressEffects {
+        let resolved = question.responses.map {
+            resolvedEffects(for: $0, question: question, context: context)
+        }
+        guard !resolved.isEmpty else { return PressEffects() }
+
+        func mean(_ field: (PressEffects) -> Int) -> Int {
+            let sum = resolved.reduce(0) { $0 + field($1) }
+            return Int((Double(sum) / Double(resolved.count)).rounded())
+        }
+
+        return PressEffects(
+            ownerSatisfaction: mean { $0.ownerSatisfaction },
+            playerMorale: mean { $0.playerMorale },
+            mediaPerception: mean { $0.mediaPerception },
+            legacyPoints: mean { $0.legacyPoints },
+            fanExcitement: mean { $0.fanExcitement }
+        )
+    }
+
+    /// A result for a session the media team finished — the WEEKLY presser only
+    /// (see `PressConferenceView.canDelegate`).
+    ///
+    /// Questions the coach answered himself keep their real, context-resolved
+    /// cost: this is not a re-scoring of what he already said, it is
+    /// `buildResult` plus a tail. Every question from `selectedIndices.count`
+    /// onwards is booked at `delegatedEffects`, and the context does NOT advance
+    /// across that tail — a line a PR staffer read out is not a note the coach
+    /// keeps hitting, so the repetition ratchet stands still while they talk.
+    ///
+    /// The RECORD carries only what the coach said. `selectedResponses` and
+    /// `promises` are the answered prefix, so `commit` writes no tone he did not
+    /// use and books no promise nobody made; `dominantTone` is likewise read off
+    /// the prefix, and on a session he never spoke at it is `buildResult`'s own
+    /// no-answers fallback, which the summary declines to print (there is no
+    /// note for the room to have heard).
+    static func buildDelegatedResult(
+        questions: [PressQuestion],
+        selectedIndices: [Int],
+        context: PressContext
+    ) -> PressConferenceResult {
+        let answered = buildResult(
+            questions: questions,
+            selectedIndices: selectedIndices,
+            context: context
+        )
+
+        // The context the room is in when the coach steps away — his own tones,
+        // and nothing after them.
+        var live = context
+        for (qi, si) in selectedIndices.enumerated() where qi < questions.count {
+            guard si < questions[qi].responses.count else { continue }
+            live = live.appending(tone: questions[qi].responses[si].tone)
+        }
+
+        var delegated = PressEffects()
+        for question in questions.dropFirst(selectedIndices.count) {
+            delegated = delegated + delegatedEffects(for: question, context: live)
+        }
+
+        return PressConferenceResult(
+            selectedResponses: answered.selectedResponses,
+            totalEffects: answered.totalEffects + delegated,
+            dominantTone: answered.dominantTone,
+            promises: answered.promises
+        )
+    }
+
     // MARK: - Private Question Generators
 
     /// The introductory presser's team-state wildcard.
