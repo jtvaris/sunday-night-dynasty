@@ -2652,11 +2652,19 @@ struct RosterEvaluationView: View {
         // Scenario D: restructure the biggest contracts that CAN be restructured.
         //
         // The other three are roster moves; this one is a money move, and it is
-        // the one an NFL club reaches for first. It sits on the same baseline as
-        // A/B/C — this league year's cap, with the move applied — because a
-        // restructure frees money in the CURRENT year only. What it costs is a
-        // charge in every later year and dead money if the man is then cut, so
-        // both are stated on the card rather than left to be discovered.
+        // the one an NFL club reaches for first. It is priced on a DIFFERENT
+        // year from A/B/C, and that is not a bug to be flattened away:
+        // `RestructureQuote.immediateRelief` is by the engine's own definition
+        // cap freed in the CURRENT league year, while A/B/C take every expiring
+        // salary off the books and so describe next spring. Rebasing D onto
+        // next spring would not make it comparable, it would make it pointless —
+        // the conversion adds `proratedPerYear` to every later year, so on that
+        // baseline a restructure is a charge and never relief.
+        //
+        // So the card states its own year instead, and it is kept out of the
+        // "most room" comparison below. What the move costs — a charge in every
+        // later year, and dead money if the man is then cut — is on the card
+        // rather than left to be discovered.
         //
         // The quote comes straight from the engine, so a club in Sandbox mode
         // or one whose top deals are all in their final year (nothing to
@@ -2716,15 +2724,19 @@ struct RosterEvaluationView: View {
             }
         }()
 
-        // Factual, not advisory: which projection leaves the most room. Always
-        // A among the roster moves — releasing men can only free cap — so it
-        // earns its place only once the restructure card is in the comparison,
-        // where it can and does change hands.
+        // Factual, not advisory: which of the three NEXT-SPRING projections
+        // leaves the most room. Its value to the reader is the contrast with the
+        // recommendation — "C is the plan, but A is the money".
+        //
+        // D is not in it, and must not be. Its figure is this league year's,
+        // with every expiring salary still being paid, so it is very often the
+        // biggest number on the strip for a reason that has nothing to do with
+        // the restructure: it is carrying money that comes off the books whether
+        // the club acts or not. Ranked here it took "Most room" on that padding.
         let roomiestScenario: String = {
             var best = ("A", scenASpace)
             if scenBSpace > best.1 { best = ("B", scenBSpace) }
             if scenCSpace > best.1 { best = ("C", scenCSpace) }
-            if hasRestructureScenario && scenDSpace > best.1 { best = ("D", scenDSpace) }
             return best.0
         }()
 
@@ -2804,6 +2816,7 @@ struct RosterEvaluationView: View {
                     title: "Release All Expiring",
                     capPct: scenAPct,
                     available: scenASpace,
+                    timeframe: "next spring",
                     tradeoff: "Max flexibility, lose \(expiringCount) player\(expiringCount == 1 ? "" : "s")",
                     isSelected: selectedCapScenario == "A",
                     badge: badge(for: "A")
@@ -2819,6 +2832,7 @@ struct RosterEvaluationView: View {
                     title: "Re-sign Top 3",
                     capPct: scenBPct,
                     available: scenBSpace,
+                    timeframe: "next spring",
                     tradeoff: "Keep core\(top3Expiring.isEmpty ? "" : " (\(topThreeNames))"), release \(releaseRest)",
                     isSelected: selectedCapScenario == "B",
                     badge: badge(for: "B")
@@ -2834,6 +2848,7 @@ struct RosterEvaluationView: View {
                     title: "Re-sign All",
                     capPct: scenCPct,
                     available: scenCSpace,
+                    timeframe: "next spring",
                     tradeoff: scenCSpace < 5_000 ? "Retain all, very tight cap" : "Retain all, moderate flexibility",
                     isSelected: selectedCapScenario == "C",
                     badge: badge(for: "C")
@@ -2850,6 +2865,7 @@ struct RosterEvaluationView: View {
                         title: "Restructure Top \(restructureCandidates.count)",
                         capPct: scenDPct,
                         available: scenDSpace,
+                        timeframe: "this year",
                         tradeoff: "Keep everyone, +\(formatMillions(restructureFutureCharge))/yr later",
                         isSelected: selectedCapScenario == "D",
                         badge: badge(for: "D")
@@ -2917,6 +2933,7 @@ struct RosterEvaluationView: View {
         title: String,
         capPct: Double,
         available: Int,
+        timeframe: String,
         tradeoff: String,
         isSelected: Bool = false,
         badge: ScenarioBadge? = nil
@@ -2976,6 +2993,14 @@ struct RosterEvaluationView: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                     Text("available")
+                        .font(.system(size: DSType.Size.micro))
+                        .foregroundStyle(Color.textTertiary)
+                    // Which year this figure is. A/B/C are next spring, after
+                    // the expiring men have come off the books; D is this league
+                    // year, where they are all still being paid. Unlabelled,
+                    // four numbers in the same slot read as one ladder, and the
+                    // restructure card looked like the roomiest plan on screen.
+                    Text(timeframe)
                         .font(.system(size: DSType.Size.micro))
                         .foregroundStyle(Color.textTertiary)
                 }
