@@ -56,14 +56,17 @@ struct InboxView: View {
     }
 
     private func sortRank(for message: InboxMessage) -> Int {
-        if message.actionRequired && !message.isRead { return 0 }
-        if message.actionRequired                    { return 1 }
-        if !message.isRead                           { return 2 }
-        return 3
+        // A pinned letter outranks everything: pinning is the user overriding
+        // the tray's own idea of what matters.
+        if message.isPinned                              { return 0 }
+        if message.isActionOutstanding && !message.isRead { return 1 }
+        if message.isActionOutstanding                    { return 2 }
+        if !message.isRead                                { return 3 }
+        return 4
     }
 
     private var unreadCount: Int {
-        messages.filter { !$0.isRead }.count
+        messages.filter { !$0.isRead && !$0.isArchived }.count
     }
 
     var body: some View {
@@ -86,6 +89,9 @@ struct InboxView: View {
                         .foregroundStyle(Color.accentBlue)
                 }
             }
+            ToolbarItem(placement: .topBarTrailing) {
+                bulkActionsMenu
+            }
         }
         // The ONE modal slot on this view. The destination handoff runs in
         // `onDismiss`, so the inbox is already gone before the shell navigates —
@@ -105,6 +111,9 @@ struct InboxView: View {
                     },
                     onAppear: {
                         markAsRead(messageID: message.id)
+                    },
+                    onMarkHandled: {
+                        markActionHandled(messageID: message.id)
                     }
                 )
             }
@@ -116,6 +125,108 @@ struct InboxView: View {
         if !messages[index].isRead {
             messages[index].isRead = true
         }
+    }
+
+    // MARK: - Per-message state
+
+    private func mutate(_ messageID: UUID, _ change: (inout InboxMessage) -> Void) {
+        guard let index = messages.firstIndex(where: { $0.id == messageID }) else { return }
+        change(&messages[index])
+    }
+
+    /// Clears an Action Required letter. Reading it never did — that only ever
+    /// flipped `isRead`, so the red chip outlived the job it was asking for.
+    private func markActionHandled(messageID: UUID) {
+        mutate(messageID) { message in
+            guard message.actionRequired, !message.actionCompleted else { return }
+            message.actionCompleted = true
+            message.isRead = true
+        }
+    }
+
+    private func togglePinned(messageID: UUID) {
+        mutate(messageID) { $0.isPinned.toggle() }
+    }
+
+    private func toggleArchived(messageID: UUID) {
+        mutate(messageID) { message in
+            message.isArchived.toggle()
+            // An archived letter is put away, not held up.
+            if message.isArchived { message.isPinned = false }
+        }
+    }
+
+    private func toggleRead(messageID: UUID) {
+        mutate(messageID) { $0.isRead.toggle() }
+    }
+
+    private func delete(messageID: UUID) {
+        messages.removeAll { $0.id == messageID }
+    }
+
+    // MARK: - Bulk actions
+
+    /// The tray had exactly one toolbar item — a read-only unread count — so a
+    /// season's worth of mail could only be cleared one letter at a time.
+    private var bulkActionsMenu: some View {
+        Menu {
+            Button {
+                markAllRead()
+            } label: {
+                Label("Mark all as read", systemImage: "envelope.open")
+            }
+            .disabled(unreadCount == 0)
+
+            Button {
+                archiveRead()
+            } label: {
+                Label("Archive read messages", systemImage: "archivebox")
+            }
+            .disabled(archivableCount == 0)
+
+            Divider()
+
+            Button(role: .destructive) {
+                deleteArchived()
+            } label: {
+                Label("Delete archived", systemImage: "trash")
+            }
+            .disabled(archivedCount == 0)
+        } label: {
+            Image(systemName: "ellipsis.circle")
+                .foregroundStyle(Color.accentGold)
+        }
+        .accessibilityLabel("Inbox actions")
+    }
+
+    /// Read, not archived, and not still asking for something — an outstanding
+    /// Action Required letter is never swept up by a bulk tidy.
+    private var archivableCount: Int {
+        messages.filter { $0.isRead && !$0.isArchived && !$0.isActionOutstanding && !$0.isPinned }.count
+    }
+
+    private var archivedCount: Int {
+        messages.filter(\.isArchived).count
+    }
+
+    private func markAllRead() {
+        for index in messages.indices where !messages[index].isRead {
+            messages[index].isRead = true
+        }
+    }
+
+    private func archiveRead() {
+        for index in messages.indices
+        where messages[index].isRead
+            && !messages[index].isArchived
+            && !messages[index].isActionOutstanding
+            && !messages[index].isPinned {
+            messages[index].isArchived = true
+        }
+    }
+
+    private func deleteArchived() {
+        messages.removeAll(where: \.isArchived)
     }
 
     // MARK: - Filter strip (§2.2)
@@ -138,6 +249,7 @@ struct InboxView: View {
                 case .all:            return "tray.full"
                 case .actionRequired: return "exclamationmark.circle"
                 case .unread:         return "envelope.badge"
+                case .archived:       return "archivebox"
                 }
             },
             title: "Filter"
@@ -204,15 +316,65 @@ struct InboxView: View {
                 RoundedRectangle(cornerRadius: DSCornerRadius.card)
                     .strokeBorder(
                         rowBorderColor(for: message),
-                        lineWidth: message.actionRequired ? 1.5 : 1
+                        lineWidth: message.isActionOutstanding ? 1.5 : 1
                     )
             )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .contextMenu { rowMenu(message) }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(spokenLabel(message))
         .accessibilityHint("Opens the message")
+    }
+
+    /// The row's gestures. A `LazyVStack` is not a `List`, so `swipeActions` is
+    /// unavailable here — a long press is the affordance that works in both the
+    /// stack and under VoiceOver.
+    @ViewBuilder
+    private func rowMenu(_ message: InboxMessage) -> some View {
+        Button {
+            togglePinned(messageID: message.id)
+        } label: {
+            Label(
+                message.isPinned ? "Unpin" : "Pin to top",
+                systemImage: message.isPinned ? "pin.slash" : "pin"
+            )
+        }
+
+        Button {
+            toggleRead(messageID: message.id)
+        } label: {
+            Label(
+                message.isRead ? "Mark as unread" : "Mark as read",
+                systemImage: message.isRead ? "envelope.badge" : "envelope.open"
+            )
+        }
+
+        if message.isActionOutstanding {
+            Button {
+                markActionHandled(messageID: message.id)
+            } label: {
+                Label("Mark as handled", systemImage: "checkmark.circle")
+            }
+        }
+
+        Divider()
+
+        Button {
+            toggleArchived(messageID: message.id)
+        } label: {
+            Label(
+                message.isArchived ? "Move to inbox" : "Archive",
+                systemImage: message.isArchived ? "tray.and.arrow.up" : "archivebox"
+            )
+        }
+
+        Button(role: .destructive) {
+            delete(messageID: message.id)
+        } label: {
+            Label("Delete", systemImage: "trash")
+        }
     }
 
     /// The reserved unread mark plus the sender's disc. The dot's 8 pt is drawn
@@ -234,6 +396,11 @@ struct InboxView: View {
     private func identity(_ message: InboxMessage) -> some View {
         VStack(alignment: .leading, spacing: DSSpacing.xxs) {
             HStack(spacing: DSSpacing.xxs) {
+                if message.isPinned {
+                    Image(systemName: "pin.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color.accentGold)
+                }
                 Text(message.sender.displayName.uppercased())
                     .font(DSType.display(DSType.Size.caption, .heavy))
                     .tracking(0.5)
@@ -242,7 +409,10 @@ struct InboxView: View {
                 Text("\u{00B7}")
                     .font(DSType.display(DSType.Size.caption, .heavy))
                     .foregroundStyle(Color.textTertiary)
-                Text(message.date)
+                // Relative game time, not the phase banner. Every row used to
+                // print the same "Offseason - The Combine, 2026" because that is
+                // all the model carried; it now carries the moment.
+                Text(timeLabel(message))
                     .font(DSType.display(DSType.Size.caption, .semibold))
                     .foregroundStyle(Color.textTertiaryReadable)
                     .lineLimit(1)
@@ -271,13 +441,24 @@ struct InboxView: View {
     /// on an action row and a plain row end on the same vertical.
     private func actionSlot(_ message: InboxMessage) -> some View {
         Group {
-            if message.actionRequired {
+            if message.isActionOutstanding {
                 DSStatusPill(label: "Action", tone: .bad, showsDot: false)
+            } else if message.actionRequired {
+                DSStatusPill(label: "Handled", tone: .ok, showsDot: false)
             } else {
                 Color.clear
             }
         }
         .dsColumn(DSListColumn.state)
+    }
+
+    /// Relative game time for the row, read against where the career is now.
+    private func timeLabel(_ message: InboxMessage) -> String {
+        message.timeLabel(
+            currentWeek: career.currentWeek,
+            currentSeason: career.currentSeason,
+            currentPhase: career.currentPhase
+        )
     }
 
     private func previewText(_ message: InboxMessage) -> String {
@@ -289,8 +470,10 @@ struct InboxView: View {
     private func spokenLabel(_ message: InboxMessage) -> String {
         [
             message.isRead ? nil : "Unread",
-            message.actionRequired ? "Action required" : nil,
-            "\(message.sender.displayName), \(message.date)",
+            message.isPinned ? "Pinned" : nil,
+            message.isActionOutstanding ? "Action required" : nil,
+            message.actionRequired && message.actionCompleted ? "Action handled" : nil,
+            "\(message.sender.displayName), \(timeLabel(message))",
             message.subject
         ]
         .compactMap { $0 }
@@ -298,7 +481,7 @@ struct InboxView: View {
     }
 
     private func rowFill(for message: InboxMessage) -> Color {
-        if message.actionRequired {
+        if message.isActionOutstanding {
             // Subtle red tint so Action Required messages clearly pop above the rest.
             return Color.danger.opacity(0.12)
         }
@@ -306,7 +489,8 @@ struct InboxView: View {
     }
 
     private func rowBorderColor(for message: InboxMessage) -> Color {
-        if message.actionRequired { return Color.danger.opacity(0.7) }
+        if message.isActionOutstanding { return Color.danger.opacity(0.7) }
+        if message.isPinned { return Color.accentGold.opacity(0.5) }
         return Color.surfaceBorder
     }
 

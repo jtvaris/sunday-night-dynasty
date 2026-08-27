@@ -11,8 +11,17 @@ struct MessageDetailView: View {
     /// Called once when the detail view appears so the caller can mark
     /// the message as read in the source list.
     var onAppear: (() -> Void)?
+    /// Called when an Action Required letter has been dealt with — either the
+    /// user followed its call to action or marked it handled by hand. Reading a
+    /// letter is not doing what it asked, so `onAppear` cannot serve here.
+    var onMarkHandled: (() -> Void)?
 
     @Environment(\.dismiss) private var dismiss
+
+    /// Local mirror of `message.actionCompleted`. The sheet is handed a value
+    /// copy, so the badge has to reflect the resolution itself rather than wait
+    /// for the list to hand back a fresh message.
+    @State private var isHandled = false
 
     var body: some View {
         ZStack {
@@ -34,7 +43,11 @@ struct MessageDetailView: View {
                     HStack(spacing: 10) {
                         categoryBadge
                         if message.actionRequired {
-                            actionRequiredBadge
+                            if isHandled {
+                                handledBadge
+                            } else {
+                                actionRequiredBadge
+                            }
                         }
                         Spacer()
                         Text(message.date)
@@ -45,11 +58,7 @@ struct MessageDetailView: View {
                     Divider().overlay(Color.surfaceBorder.opacity(0.5))
 
                     // Body
-                    Text(message.body)
-                        .font(.body)
-                        .foregroundStyle(Color.textSecondary)
-                        .lineSpacing(4)
-                        .fixedSize(horizontal: false, vertical: true)
+                    bodyBlocks
 
                     // Attachments
                     if !message.attachments.isEmpty {
@@ -63,6 +72,13 @@ struct MessageDetailView: View {
                     // softer outlined "Open [destination] →" link.
                     if let destination = message.actionDestination {
                         actionButton(destination: destination, emphasized: message.actionRequired)
+                    }
+
+                    // The only other way an Action Required letter can clear:
+                    // the user says so. Without this a letter whose work was
+                    // done elsewhere sat red in the tray forever.
+                    if message.actionRequired && !isHandled {
+                        markHandledButton
                     }
                 }
                 .padding(20)
@@ -81,8 +97,90 @@ struct MessageDetailView: View {
             }
         }
         .onAppear {
+            isHandled = message.actionCompleted
             onAppear?()
         }
+    }
+
+    // MARK: - Body
+
+    /// One block of the message body: a run of prose, or a run of the "- "
+    /// lines the generators write.
+    private enum BodyBlock {
+        case paragraph(String)
+        case bullets([String])
+    }
+
+    /// The generators have always written their lists as literal `- ` lines
+    /// ("- Several prospects at positions of need tested exceptionally well").
+    /// Rendered as one raw string those stayed hyphens in a wall of prose, so
+    /// the one part of a letter meant to be scanned was the hardest to scan.
+    private var parsedBody: [BodyBlock] {
+        var blocks: [BodyBlock] = []
+        var paragraph: [String] = []
+        var bullets: [String] = []
+
+        func flushParagraph() {
+            let text = paragraph.joined(separator: "\n")
+            paragraph.removeAll()
+            guard !text.isEmpty else { return }
+            blocks.append(.paragraph(text))
+        }
+
+        func flushBullets() {
+            guard !bullets.isEmpty else { return }
+            blocks.append(.bullets(bullets))
+            bullets.removeAll()
+        }
+
+        for rawLine in message.body.components(separatedBy: "\n") {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("- ") || line.hasPrefix("\u{2022} ") {
+                flushParagraph()
+                bullets.append(String(line.dropFirst(2)).trimmingCharacters(in: .whitespaces))
+            } else if line.isEmpty {
+                flushParagraph()
+                flushBullets()
+            } else {
+                flushBullets()
+                paragraph.append(line)
+            }
+        }
+        flushParagraph()
+        flushBullets()
+        return blocks
+    }
+
+    private var bodyBlocks: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            ForEach(Array(parsedBody.enumerated()), id: \.offset) { _, block in
+                switch block {
+                case .paragraph(let text):
+                    Text(text)
+                        .font(.body)
+                        .foregroundStyle(Color.textSecondary)
+                        .lineSpacing(4)
+                        .fixedSize(horizontal: false, vertical: true)
+                case .bullets(let items):
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                                Text("\u{2022}")
+                                    .font(.body.weight(.bold))
+                                    .foregroundStyle(Color.accentGold)
+                                Text(item)
+                                    .font(.body)
+                                    .foregroundStyle(Color.textSecondary)
+                                    .lineSpacing(4)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+                    .padding(.leading, 4)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Sender Header
@@ -136,6 +234,21 @@ struct MessageDetailView: View {
         .padding(.vertical, 3)
         .background(
             Capsule().fill(Color.danger)
+        )
+    }
+
+    private var handledBadge: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.caption2)
+            Text("Handled")
+                .font(.caption2.weight(.bold))
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(
+            Capsule().fill(Color.success)
         )
     }
 
@@ -194,6 +307,10 @@ struct MessageDetailView: View {
 
     private func actionButton(destination: TaskDestination, emphasized: Bool) -> some View {
         Button {
+            // Following the letter's own call to action IS the completion
+            // criterion for an Action Required letter — the user has been sent
+            // to the screen the letter asked about.
+            resolveActionIfNeeded()
             dismiss()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
                 onNavigate?(destination)
@@ -223,6 +340,33 @@ struct MessageDetailView: View {
         }
         .buttonStyle(.plain)
         .padding(.top, 8)
+    }
+
+    private var markHandledButton: some View {
+        Button {
+            resolveActionIfNeeded()
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark.circle")
+                    .font(.system(size: 15))
+                Text("Mark as handled")
+                    .font(.system(size: 14, weight: .semibold))
+            }
+            .foregroundStyle(Color.textSecondary)
+            .frame(maxWidth: .infinity)
+            .frame(minHeight: 44)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func resolveActionIfNeeded() {
+        guard message.actionRequired, !isHandled else { return }
+        isHandled = true
+        onMarkHandled?()
     }
 
     // MARK: - Colors

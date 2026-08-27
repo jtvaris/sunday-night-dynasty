@@ -938,7 +938,9 @@ struct CareerDashboardView: View {
         case .new:
             return inboxMessages.filter { !$0.isRead }
         case .tasks:
-            return inboxMessages.filter { $0.actionRequired }
+            // Outstanding only: a letter the user has dealt with is no longer a
+            // task, and the tray it mirrors has already dropped it.
+            return inboxMessages.filter { $0.isActionOutstanding }
         }
     }
 
@@ -978,7 +980,7 @@ struct CareerDashboardView: View {
                         .foregroundStyle(message.isRead ? Color.textSecondary : Color.textPrimary)
                         .lineLimit(1)
 
-                    if message.actionRequired {
+                    if message.isActionOutstanding {
                         HStack(spacing: 3) {
                             Image(systemName: "exclamationmark.triangle.fill")
                                 .font(.system(size: DSType.Size.micro))
