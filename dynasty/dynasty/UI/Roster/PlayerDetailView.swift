@@ -1065,6 +1065,16 @@ struct PlayerDetailView: View {
                 compactInfoPill(label: "Value", value: marketValueComparison.label, color: marketValueComparison.color)
             }
 
+            // The gap between the Market and Salary pills, and the band the
+            // Value pill is testing them against.
+            if let marketGapNote {
+                DSDetailNote(
+                    text: marketGapNote,
+                    icon: marketValueComparison.icon,
+                    tint: marketValueComparison.color
+                )
+            }
+
             // Market comparables strip — contextualizes the player's salary against
             // top-N peers at the same position (#39).
             if let comparables = marketComparablesText {
@@ -3110,6 +3120,11 @@ struct PlayerDetailView: View {
         ContractEngine.estimateMarketValue(player: player, salaryCap: contextSalaryCap)
     }
 
+    /// The bands the Value pill is testing. Named once, here, so the sentence
+    /// under the card and the verdict on it can never drift apart.
+    private static let bargainRatio = 1.3
+    private static let fairValueRatio = 0.8
+
     /// Bargain / Fair / Overpaid, off the same engine and the same cap as the
     /// Market pill above it — and therefore agreeing with `RosterEvaluationView`,
     /// which has always graded the same player off `ContractEngine`.
@@ -3118,9 +3133,40 @@ struct PlayerDetailView: View {
         // No salary on file (e.g. an unsigned rookie) — surface the upside.
         guard player.annualSalary > 0 else { return .bargain }
         let ratio = Double(market) / Double(player.annualSalary)
-        if ratio > 1.3 { return .bargain }
-        if ratio > 0.8 { return .fairValue }
+        if ratio > Self.bargainRatio { return .bargain }
+        if ratio > Self.fairValueRatio { return .fairValue }
         return .overpaid
+    }
+
+    /// **The gap the card printed two numbers around and never stated.**
+    ///
+    /// Market and Salary sat side by side as two absolute figures, and the
+    /// arithmetic between them — the only thing a GM actually acts on — was
+    /// left to the reader. The verdict beside them says which side of the line
+    /// he is on; this says by how much, and what the line is.
+    private var marketGapNote: String? {
+        guard player.annualSalary > 0 else {
+            return "No salary on file yet, so the market figure is what he would cost to sign rather than a comparison."
+        }
+        let gap = estimateMarketValueAmount - player.annualSalary
+        let gapText = formatDollars(abs(gap))
+        let verdict: String = {
+            if gap > 0 { return "Underpaid by \(gapText) against his market value" }
+            if gap < 0 { return "Overpaid by \(gapText) against his market value" }
+            return "Paid exactly his market value"
+        }()
+        let band = "\"Fair Value\" is a market value between \(String(format: "%.1f", Self.fairValueRatio))× and \(String(format: "%.1f", Self.bargainRatio))× his salary — above that band he is a Bargain, below it Overpaid."
+        return "\(verdict). \(band)"
+    }
+
+    /// Thousands, in the two-decimal millions this card already prints.
+    private func formatDollars(_ thousands: Int) -> String {
+        let millions = Double(thousands) / 1000.0
+        if millions >= 1.0 {
+            return String(format: "$%.2fM", millions)
+        } else {
+            return "$\(thousands)K"
+        }
     }
 
     // MARK: - Development Phase
