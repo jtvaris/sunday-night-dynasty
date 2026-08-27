@@ -14,6 +14,10 @@ struct IntroSequenceView: View {
     @State private var currentStep = 0
     @State private var navigateToDashboard = false
     @State private var pressConferenceComplete = false
+    /// Where the front office opens when the intro hands over. `nil` is the hub
+    /// — the ordinary ending. The Team Overview's staff CTA (#2959) sets
+    /// `.hireHC`, which is the only way out of this sequence that skips it.
+    @State private var shellOpeningRoute: TaskDestination?
 
     // Loaded data
     @State private var team: Team?
@@ -85,7 +89,13 @@ struct IntroSequenceView: View {
                         coaches: coaches,
                         draftPicks: draftPicks,
                         stance: teamStance,
-                        onContinue: { advanceStep() }
+                        onContinue: { advanceStep() },
+                        // #2959 — the vacancy row's CTA. There is no hiring
+                        // screen inside the intro, so the only honest thing the
+                        // button can do is end the briefing and open the staff
+                        // room. Same destination the Coaching Changes task rail
+                        // uses for "Hire Head Coach".
+                        onHireStaff: { completeIntro(openingOn: .hireHC) }
                     )
                     .tag(2)
 
@@ -142,7 +152,7 @@ struct IntroSequenceView: View {
         }
         .navigationBarBackButtonHidden(true)
         .fullScreenCover(isPresented: $navigateToDashboard) {
-            CareerShellView(career: career)
+            CareerShellView(career: career, openingRoute: shellOpeningRoute)
         }
         .task { loadData() }
     }
@@ -208,7 +218,14 @@ struct IntroSequenceView: View {
         try? modelContext.save()
     }
 
-    private func completeIntro() {
+    /// Ends the sequence and opens the front office.
+    ///
+    /// `openingOn` is the one hand-off the intro can make: the Team Overview's
+    /// staff CTA leaves from step 3, so the shell has to be told to push the
+    /// staff room rather than settle on the hub. Everything else — including the
+    /// closing screen's own button — hands over on `nil`.
+    private func completeIntro(openingOn route: TaskDestination? = nil) {
+        shellOpeningRoute = route
         career.hasCompletedIntro = true
         career.currentPhase = .coachingChanges
         career.currentWeek = 0
@@ -467,12 +484,17 @@ private struct TeamOverviewStep: View {
     /// `TradeValueEngine`'s read of this franchise's competitive cycle.
     let stance: TradeValueEngine.TeamStance?
     let onContinue: () -> Void
+    /// #2959 — ends the intro and opens the staff room. See the call site.
+    let onHireStaff: () -> Void
 
     @State private var showHeader = false
     @State private var showRoster = false
     @State private var showPositionGrades = false
     @State private var showCap = false
     @State private var showDraft = false
+    /// #2971 — the First Moves panel, revealed last: it is the conclusion drawn
+    /// from the four cards above it, so it cannot land before them.
+    @State private var showFirstMoves = false
     /// Expiring-contract drill-down: the count row opens the names underneath
     /// it rather than being a dead figure.
     @State private var showExpiringList = false
@@ -716,6 +738,85 @@ private struct TeamOverviewStep: View {
         }
     }
 
+    // MARK: - #2971 First Moves Recommended
+    //
+    // What the four cards above add up to, as things to DO. Every figure on this
+    // screen is a reading and none of them told a first-time GM where to start.
+    //
+    // Deliberately NOT a second copy of the next screen's task list: the roadmap
+    // step names the four PHASE tasks the calendar will hand him anyway ("hire
+    // your coaching staff", "scout the combine class"), which are the same four
+    // for all 32 clubs. These three are about THIS roster — the group that
+    // grades worst, the state of these books, the men whose deals run out — and
+    // they are read straight off the cards the player has just scrolled past, so
+    // the panel can never recommend something the briefing did not show.
+    //
+    // Three levers, in the order a February actually forces them: the hole, the
+    // money that fills it, and the deadline. A lever with nothing to say is
+    // dropped rather than padded — a roster with no expiring deals gets two
+    // moves, not a third that reads "do nothing".
+
+    private struct FirstMove: Identifiable {
+        let id: String
+        let icon: String
+        let headline: String
+        let detail: String
+        let tint: Color
+    }
+
+    /// The weakest group by starter average — the same ranking the "Weakest
+    /// Group" row prints, kept as a struct here so the move can quote the grade.
+    private var weakestGroupGrade: PositionGroupGrade? {
+        positionGroupGrades.min(by: { $0.starterAverage < $1.starterAverage })
+    }
+
+    private var firstMoves: [FirstMove] {
+        var moves: [FirstMove] = []
+
+        if let weakest = weakestGroupGrade {
+            moves.append(FirstMove(
+                id: "group",
+                icon: "chart.bar.doc.horizontal",
+                headline: "Upgrade the \(weakest.name)",
+                detail: "Your worst group: starters grade \(weakest.starterGrade) at \(weakest.starterAverage) OVR. Free agency and the draft both come before Week 1.",
+                tint: Color.accentGold
+            ))
+        }
+
+        // The cap move flips on the ladder the card above already published, so
+        // a club with room is told to spend it and a club without is told to
+        // make some — the same verdict, turned into an instruction.
+        if capUsedFraction < 0.90 && team.availableCap > 0 {
+            moves.append(FirstMove(
+                id: "cap",
+                icon: "dollarsign.circle",
+                headline: "Spend the \(capAvailableFormatted)",
+                detail: "The books are \(capHealth.label.lowercased()). Room this size buys a starter while the market is still deep.",
+                tint: Color.success
+            ))
+        } else {
+            moves.append(FirstMove(
+                id: "cap",
+                icon: "scissors",
+                headline: "Clear cap room",
+                detail: "\(capAvailableFormatted) available against a \(capHealth.label.lowercased()) cap. Restructure or release before free agency opens.",
+                tint: Color.warning
+            ))
+        }
+
+        if let best = expiringPlayers.first {
+            moves.append(FirstMove(
+                id: "expiring",
+                icon: "calendar.badge.exclamationmark",
+                headline: "Settle \(expiringContracts) expiring deal\(expiringContracts == 1 ? "" : "s")",
+                detail: "\(best.fullName) (\(best.position.rawValue), \(best.overall) OVR) is the best of them. Extend, tag or let him walk.",
+                tint: expiringContracts > 15 ? Color.dangerText : Color.textSecondary
+            ))
+        }
+
+        return moves
+    }
+
     private func stanceColor(_ stance: TradeValueEngine.TeamStance) -> Color {
         // Same three-tier ladder team selection uses for its situation chips:
         // gold = competing, green = ascending, blue = building.
@@ -942,6 +1043,39 @@ private struct TeamOverviewStep: View {
                                 }
                             }
                             Spacer()
+                        }
+
+                        // #2959 — the vacancy count's CTA. The row named the
+                        // franchise's most urgent job and offered no way to
+                        // start it: hiring is unreachable from inside the intro,
+                        // because the whole sequence is a `TabView` whose only
+                        // control is Continue. So the button ends the briefing
+                        // and opens the staff room — and says so, since leaving
+                        // here skips the two screens that follow.
+                        if filledCoachingSlots < totalCoachingSlots {
+                            let openSeats = totalCoachingSlots - filledCoachingSlots
+                            VStack(alignment: .leading, spacing: DSSpacing.xs) {
+                                Button(action: onHireStaff) {
+                                    HStack(spacing: DSSpacing.xs) {
+                                        Image(systemName: "person.badge.plus")
+                                            .font(.system(size: DSType.Size.body, weight: .bold))
+                                        Text("Hire Coaching Staff")
+                                            .font(.system(size: DSType.Size.callout, weight: .bold))
+                                    }
+                                    .foregroundStyle(Color.backgroundPrimary)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, DSSpacing.sm)
+                                    .background(Capsule().fill(Color.accentGold))
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("Hire coaching staff, \(openSeats) seat\(openSeats == 1 ? "" : "s") open")
+                                .accessibilityHint("Ends the introduction and opens the staff room")
+
+                                Text("Ends the briefing here and opens the staff room \u{2014} you can hire the rest later.")
+                                    .font(DSType.text(DSType.Size.caption, .regular, prose: true))
+                                    .foregroundStyle(Color.textTertiary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
                     }
                     .padding(20)
@@ -1211,6 +1345,51 @@ private struct TeamOverviewStep: View {
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
 
+                // #2971: what the figures above add up to.
+                if showFirstMoves, !firstMoves.isEmpty {
+                    VStack(alignment: .leading, spacing: DSSpacing.sm) {
+                        SectionLabel(text: "FIRST MOVES RECOMMENDED")
+
+                        Text("Read off this roster, not off the calendar \u{2014} the phase tasks are on the next screen.")
+                            .font(DSType.text(DSType.Size.caption, .regular, prose: true))
+                            .foregroundStyle(Color.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        ForEach(Array(firstMoves.enumerated()), id: \.element.id) { index, move in
+                            HStack(alignment: .top, spacing: DSSpacing.sm) {
+                                Text("\(index + 1)")
+                                    .font(DSType.display(DSType.Size.footnote, .black))
+                                    .foregroundStyle(move.tint)
+                                    .frame(width: 22, height: 22)
+                                    .background(
+                                        Circle().strokeBorder(move.tint.opacity(0.5), lineWidth: 1.5)
+                                    )
+
+                                VStack(alignment: .leading, spacing: DSSpacing.xxs) {
+                                    HStack(spacing: DSSpacing.xxs) {
+                                        Image(systemName: move.icon)
+                                            .font(.system(size: DSType.Size.footnote, weight: .bold))
+                                            .foregroundStyle(move.tint)
+                                        Text(move.headline)
+                                            .font(.system(size: DSType.Size.callout, weight: .bold))
+                                            .foregroundStyle(Color.textPrimary)
+                                    }
+                                    Text(move.detail)
+                                        .font(DSType.text(DSType.Size.footnote, .regular, prose: true))
+                                        .foregroundStyle(Color.textSecondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                            .accessibilityElement(children: .combine)
+                            .accessibilityLabel("Move \(index + 1). \(move.headline). \(move.detail)")
+                        }
+                    }
+                    .padding(20)  // ds-lint:allow(spacing) matches the four sibling cards on this screen
+                    .cardBackground()
+                    .padding(.horizontal, 24)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
+
                 Spacer().frame(height: 80)
             }
             .frame(maxWidth: DSLayout.wideMeasure)
@@ -1227,7 +1406,7 @@ private struct TeamOverviewStep: View {
             DSActionBar(
                 explainer: .init(
                     title: "Team overview",
-                    message: "Keep scrolling — the **salary cap** and the **draft picks** you inherit are below."
+                    message: "Keep scrolling — the **salary cap**, the **draft picks** you inherit and your **first moves** are below."
                 ),
                 primary: .init(title: "Continue", handler: onContinue)
             )
@@ -1251,6 +1430,7 @@ private struct TeamOverviewStep: View {
         withAnimation(.easeOut(duration: 0.5).delay(1.2)) { showPositionGrades = true }
         withAnimation(.easeOut(duration: 0.5).delay(1.7)) { showCap = true }
         withAnimation(.easeOut(duration: 0.5).delay(2.2)) { showDraft = true }
+        withAnimation(.easeOut(duration: 0.5).delay(2.7)) { showFirstMoves = true }
     }
 }
 
@@ -1560,6 +1740,28 @@ private struct ReadyToBeginStep: View {
     @State private var showButton = false
     @State private var glowAmount: CGFloat = 0.3
 
+    /// The pulse, the fall and the staged reveals are all decoration. Under
+    /// Reduce Motion the screen still assembles itself, it just does not move:
+    /// the glow settles on a fixed value and the burst is not built at all.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// The club's colour, lifted to something that survives this dark plate.
+    /// `TeamColors` ships several clubs at near-black (PIT, NE), and a glow in
+    /// one of those behind a badge on a night stadium is an invisible effect —
+    /// which is the exact complaint #3001 was filed about.
+    private var clubAccent: Color {
+        DraftTeamTint.accent(for: team?.abbreviation)
+    }
+
+    /// How big the club's mark is drawn on the closing screen.
+    ///
+    /// #2998 chose the badge over the football glyph rather than a bigger glyph,
+    /// which takes the question off the `DSType.Size` ladder entirely: this is a
+    /// frame, not a type size, so it needs no step above `hero` (48) and adds no
+    /// off-ladder font literal. It is drawn at roughly twice the hero title so
+    /// the mark, and not the sentence under it, is what the page leads with.
+    private static let badgeSize: CGFloat = 108
+
     private var motivationalLine: String {
         switch teamOverall {
         case ...64:   return "Turn this franchise around."
@@ -1618,10 +1820,34 @@ private struct ReadyToBeginStep: View {
                 VStack(spacing: 28) {
                     if showTitle {
                         VStack(spacing: 16) {
-                            Image(systemName: "football.fill")
-                                .font(.system(size: DSType.Size.hero))
-                                .foregroundStyle(Color.accentGold)
-                                .shadow(color: Color.accentGold.opacity(glowAmount), radius: 20, y: 0)
+                            // #2998 / #3001 — the club's badge IS the mark now.
+                            //
+                            // The football glyph was a generic 48 pt symbol
+                            // wearing a 20 pt gold halo that read as neither an
+                            // effect nor an accident, on the one screen in the
+                            // app that belongs to a specific franchise. The
+                            // badge takes both jobs: it is the page's emblem,
+                            // and the pulse is the club's own colour rather
+                            // than the league gold every other accent here is
+                            // already painted in. That leaves the small copy of
+                            // the same badge — which used to sit in the "with
+                            // the …" row below — with nothing to do, so the row
+                            // is text again and the screen carries one emblem.
+                            if let team = team {
+                                TeamLogoPlaceholder(
+                                    abbreviation: team.abbreviation,
+                                    size: Self.badgeSize
+                                )
+                                .shadow(color: clubAccent.opacity(glowAmount), radius: 28)
+                                .accessibilityLabel("\(team.fullName) badge")
+                            } else {
+                                // No club loaded (a save mid-repair). The league
+                                // mark, at the size it always was.
+                                Image(systemName: "football.fill")
+                                    .font(.system(size: DSType.Size.hero))
+                                    .foregroundStyle(Color.accentGold)
+                                    .shadow(color: Color.accentGold.opacity(glowAmount), radius: 20, y: 0)
+                            }
 
                             // `hero` is the size the token scale reserves for
                             // full-bleed moments, and this is the only one in
@@ -1631,18 +1857,10 @@ private struct ReadyToBeginStep: View {
                                 .font(.system(size: DSType.Size.hero, weight: .bold))
                                 .foregroundStyle(Color.textPrimary)
 
-                            // The club's own mark and colour, which the app has
-                            // had all along (`TeamLogoPlaceholder` /
-                            // `TeamColors`) and this screen never used: it named
-                            // the franchise in grey body text and painted every
-                            // accent on the page the same league gold.
                             if let team = team {
-                                HStack(spacing: 10) {
-                                    TeamLogoPlaceholder(abbreviation: team.abbreviation, size: 34)
-                                    Text("with the \(team.fullName)")
-                                        .font(.title3.weight(.medium))
-                                        .foregroundStyle(Color.textSecondary)
-                                }
+                                Text("with the \(team.fullName)")
+                                    .font(.title3.weight(.medium))
+                                    .foregroundStyle(Color.textSecondary)
                             }
 
                             // Where on the calendar this starts.
@@ -1656,16 +1874,32 @@ private struct ReadyToBeginStep: View {
 
                     if showSubtitle {
                         VStack(spacing: 22) {
-                            VStack(spacing: 8) {
+                            // #2997 — BOTH lines stay, as a heading and its
+                            // subtitle rather than as two taglines competing for
+                            // the same job.
+                            //
+                            // "Build Your Dynasty." is the product's own
+                            // name-line and keeps the gold; `motivationalLine`
+                            // is the only sentence on the page graded off THIS
+                            // roster and keeps its place directly under it. What
+                            // made them read as a doubling was that they were
+                            // near-identical ink — two gold lines four points
+                            // apart. The step is typographic now: 22 pt bold
+                            // over 16 pt italic in secondary text, bound tight
+                            // enough (4 pt) to read as one block.
+                            VStack(spacing: DSSpacing.xxs) {
                                 Text("Build Your Dynasty.")
-                                    .font(.title3.weight(.medium))
+                                    .font(.system(size: DSType.Size.title2, weight: .bold))
                                     .foregroundStyle(Color.accentGold)
                                     .shadow(color: Color.accentGold.opacity(0.5), radius: 12)
 
                                 Text(motivationalLine)
-                                    .font(.subheadline.italic())
-                                    .foregroundStyle(Color.accentGold.opacity(0.75))
+                                    .font(.system(size: DSType.Size.callout, weight: .medium).italic())
+                                    .foregroundStyle(Color.textSecondary)
                             }
+                            .multilineTextAlignment(.center)
+                            .accessibilityElement(children: .combine)
+                            .accessibilityLabel("Build your dynasty. \(motivationalLine)")
 
                             handoverCard
                         }
@@ -1674,6 +1908,16 @@ private struct ReadyToBeginStep: View {
                 }
 
                 Spacer()
+            }
+
+            // #3007 — the celebration. Last in the stack so it falls in front of
+            // the badge and the card, and hit-testing off so it cannot come
+            // between the player and the button underneath it. It owns its own
+            // timing (see the type), and it is simply not built under Reduce
+            // Motion.
+            if !reduceMotion {
+                IntroConfettiBurst(clubColor: clubAccent)
+                    .ignoresSafeArea()
             }
         }
         .safeAreaInset(edge: .bottom) {
@@ -1797,6 +2041,17 @@ private struct ReadyToBeginStep: View {
     }
 
     private func runAnimations() {
+        guard !reduceMotion else {
+            // No staged reveal, no pulse, no fall: everything on the page is
+            // simply there, with the glow parked mid-way between the two ends
+            // it used to travel between.
+            showTitle = true
+            showSubtitle = true
+            showButton = true
+            glowAmount = 0.5
+            return
+        }
+
         withAnimation(.easeOut(duration: 0.7).delay(0.3)) { showTitle = true }
         withAnimation(.easeOut(duration: 0.6).delay(1.0)) { showSubtitle = true }
         withAnimation(.easeOut(duration: 0.6).delay(1.7)) { showButton = true }
@@ -1807,6 +2062,105 @@ private struct ReadyToBeginStep: View {
         ) {
             glowAmount = 0.7
         }
+        // #3007's burst is not driven from here — `IntroConfettiBurst` starts
+        // itself on appear, so the fall cannot be restarted by a redraw of this
+        // screen. Its first piece lands with the badge, not with the CTA: the
+        // moment being marked is reaching the end of the briefing.
+    }
+}
+
+// MARK: - Celebration (#3007)
+
+/// One fall of confetti over the closing screen.
+///
+/// The repo has no particle system, no confetti asset and no audio cue for this
+/// moment, and the art direction for it was never settled — so this is
+/// deliberately the restrained version of the decision: SwiftUI rectangles, two
+/// colours (the club's and the league gold), one pass, no repeat, nothing to
+/// import. Sizing and count are the cheap knobs if it wants to be louder later.
+///
+/// Three properties make it safe to leave running on this screen:
+///
+/// * **Every piece animates itself.** One `isFalling` flip in `onAppear`, and
+///   each flake carries its own `.animation(_:value:)` with its own delay and
+///   duration. That is where the stagger and the gravity curve come from —
+///   a single interpolated `progress` handed down from the parent would be
+///   straight-lined between its two endpoints by SwiftUI, and all 26 pieces
+///   would drop together at a constant speed.
+/// * **No clock.** Nothing here repeats; when the last piece has fallen the
+///   screen is static again. There is no `TimelineView` and no
+///   `repeatForever`.
+/// * **No randomness at runtime.** The spread comes from a hash of the flake's
+///   index, so the same 26 pieces fall the same way every time. A `random()` in
+///   a `body` re-rolls on every redraw and the field boils instead of falling.
+///
+/// The caller draws it only when Reduce Motion is off; there is no static
+/// fallback, because confetti frozen in mid-air is a rendering bug, not a
+/// celebration.
+private struct IntroConfettiBurst: View {
+
+    /// The club's colour, already lifted for a dark plate by the caller.
+    let clubColor: Color
+
+    @State private var isFalling = false
+
+    private static let count = 26
+
+    /// Deterministic 0…1 from an index and a salt — an integer bit-mix, which is
+    /// enough scatter for 26 pieces and costs nothing. One call per flake per
+    /// axis, so the same piece keeps the same lane, drift, spin and timing
+    /// however many times the body is re-evaluated.
+    private static func spread(_ index: Int, _ salt: Int) -> CGFloat {
+        var h = UInt32(truncatingIfNeeded: index &* 2_654_435_761 &+ salt &* 40_503)
+        h ^= h >> 13
+        h = h &* 1_274_126_177
+        h ^= h >> 16
+        return CGFloat(h % 10_000) / 10_000
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack {
+                ForEach(0..<Self.count, id: \.self) { index in
+                    flake(index, in: geo.size)
+                }
+            }
+        }
+        .allowsHitTesting(false)
+        // Nothing here is information. VoiceOver gets the badge, the taglines
+        // and the hand-over card; it does not need 26 rectangles.
+        .accessibilityHidden(true)
+        // Flipped after the first render, which is what gives the modifiers
+        // below a change to animate. Setting it during `body` would place every
+        // piece at its end state with nothing to travel.
+        .onAppear { isFalling = true }
+    }
+
+    @ViewBuilder
+    private func flake(_ index: Int, in size: CGSize) -> some View {
+        let width = 5 + Self.spread(index, 2) * 5
+        // The lane, and the sideways drift that stops 26 vertical lines reading
+        // as rain.
+        let lane = size.width * (0.06 + Self.spread(index, 4) * 0.88)
+        let drift = (Self.spread(index, 5) - 0.5) * 90
+        let spin = 180 + Double(Self.spread(index, 3)) * 540
+        // Staggered so the field arrives as a fall rather than as one line
+        // dropping together. The 0.45 holds it until the badge has landed.
+        let delay = 0.45 + Double(Self.spread(index, 1)) * 0.8
+        let duration = 1.8 + Double(Self.spread(index, 6))
+
+        RoundedRectangle(cornerRadius: DSCornerRadius.tight)
+            .fill(index.isMultiple(of: 3) ? Color.accentGold : clubColor)
+            .frame(width: width, height: width * 1.8)
+            .rotationEffect(.degrees(isFalling ? spin : 0))
+            // Parked above the top edge until it falls, so nothing flashes into
+            // place when the screen opens.
+            .position(x: lane, y: -30)
+            .offset(x: isFalling ? drift : 0, y: isFalling ? size.height + 80 : 0)
+            // Gone before it reaches the CTA at the bottom of the page.
+            .opacity(isFalling ? 0 : 1)
+            // `easeIn` IS the gravity: slow off the top, quick past the middle.
+            .animation(.easeIn(duration: duration).delay(delay), value: isFalling)
     }
 }
 

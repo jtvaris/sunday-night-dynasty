@@ -7,6 +7,19 @@ import SwiftData
 struct CareerShellView: View {
 
     @Bindable var career: Career
+
+    /// Where the shell opens, when whatever presented it has already decided the
+    /// player's first stop.
+    ///
+    /// The career intro's staff CTA hands over on `.hireHC` (#2959): the
+    /// briefing's "0 / N filled" row can end the intro and put the player in the
+    /// staff room, rather than naming a job it has no way to start. Routed
+    /// through `handleTaskNavigation`, so the CTA lands on exactly the screen
+    /// the "Hire Head Coach" task row lands on and the two cannot drift apart.
+    /// `nil` opens the hub, which is how every other entry into the shell
+    /// behaves.
+    var openingRoute: TaskDestination? = nil
+
     @Environment(\.modelContext) private var modelContext
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
@@ -785,6 +798,12 @@ struct CareerShellView: View {
             // dismissing is still owed to him — present it on the next open.
             if !career.isGameOver {
                 _ = presentRookieRevealIfArmed()
+            }
+            // The hand-off route, once the shell's own data is loaded so the
+            // pushed screen reads a populated career. A fired career never
+            // takes it — that path owns the whole screen.
+            if let openingRoute, !career.isGameOver {
+                handleTaskNavigation(openingRoute)
             }
         }
         .onChange(of: navigationPath) { _, _ in
