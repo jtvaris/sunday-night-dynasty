@@ -199,6 +199,11 @@ struct ProspectDetailView: View {
     @State private var interviewResult: (personality: PersonalityArchetype, footballIQ: Int, characterNotes: [String])?
     @State private var positionRank: Int?
     @State private var teamPlayers: [Player] = []
+    /// Unsigned players in THIS save — the other way to fill the hole this
+    /// prospect would fill. The comparison card measured him against the club's
+    /// own starter and nothing else, which answers "is he an upgrade" but never
+    /// "is he an upgrade you have to spend a pick on".
+    @State private var freeAgentPool: [Player] = []
     /// The user's club, for the one thing this screen needs money for: pricing a
     /// rookie contract at the league's ACTUAL cap (task #87 / F17).
     @State private var userTeam: Team?
@@ -952,9 +957,14 @@ struct ProspectDetailView: View {
         ) {
             VStack(alignment: .leading, spacing: DSSpacing.xs) {
                 HStack(spacing: 8) {
-                    // Risk badge
+                    // Risk badge. The sentence under it is the one thing this
+                    // pill was missing everywhere it appears: a red BOOM/BUST
+                    // on the club's own #1 reads as a verdict on the player
+                    // until something says it is a spread between reports.
                     if risk != .unknown {
                         assessmentBadge(icon: risk.icon, label: risk.rawValue, color: risk.color)
+                            .help(riskExplanation(risk))
+                            .accessibilityHint(riskExplanation(risk))
                     }
                     // Scheme fit badge
                     if let fit {
@@ -1078,17 +1088,12 @@ struct ProspectDetailView: View {
         }
     }
 
+    /// One sentence per risk level, owned by ``ProspectRiskBadge`` so the pill
+    /// on a board row and the badge on this card cannot explain themselves
+    /// differently. This used to hold the only copy of the text and had no
+    /// call sites at all.
     private func riskExplanation(_ risk: ProspectRiskLevel) -> String {
-        switch risk {
-        case .safePick:
-            return "Consistent evaluations and stable personality. Lower variance in scout reports."
-        case .highCeiling:
-            return "High upside with some uncertainty. Could outperform projection significantly."
-        case .boomOrBust:
-            return "Extreme variance between evaluations. Could be a star or a bust."
-        case .unknown:
-            return "Not enough data to evaluate risk profile."
-        }
+        ProspectRiskBadge.explanation(risk)
     }
 
     // MARK: - Starter Comparison Section
@@ -1103,7 +1108,7 @@ struct ProspectDetailView: View {
                 DSDetailCard(
                     "vs Current Starter",
                     icon: "arrow.left.arrow.right",
-                    explainer: "Both sides on the same letter ladder \u{2014} his fogged band against the man he would be replacing."
+                    explainer: "Both sides on the same letter ladder \u{2014} his fogged band against the man he would be replacing, and against the best man at the position still unsigned."
                 ) {
                     HStack(spacing: 12) {
                         // Prospect side — show grade range
@@ -1161,6 +1166,8 @@ struct ProspectDetailView: View {
                         }
                         .frame(maxWidth: .infinity)
                     }
+
+                    bestFreeAgentRow
                 }
             } else {
                 DSDetailCard("vs Current Starter", icon: "arrow.left.arrow.right") {
@@ -1173,6 +1180,52 @@ struct ProspectDetailView: View {
                             .foregroundStyle(Color.success)
                     }
                 }
+            }
+        }
+    }
+
+    /// The other way to fill the hole: the best UNSIGNED player at the position.
+    ///
+    /// The card compared a prospect against the club's own best man and stopped
+    /// there, which answers "is he an upgrade" but never the question a GM
+    /// actually has in front of him in March — "is he an upgrade I have to
+    /// spend a first-round pick on, when there is a 79 sitting in free agency".
+    /// Same letter ladder as the two columns above it, same `LetterGrade.from`
+    /// the starter side uses, so all three grades on this card are one claim.
+    @ViewBuilder
+    private var bestFreeAgentRow: some View {
+        let best = freeAgentPool
+            .filter { $0.position == prospect.position }
+            .max { $0.overall < $1.overall }
+        Divider().overlay(Color.surfaceBorder)
+        if let best {
+            let faGrade = LetterGrade.from(numericValue: best.overall)
+            let diff = effectiveOverallGrade
+                .map { ProspectFog.approximateValue(of: $0.midGrade) - best.overall } ?? 0
+            HStack(spacing: DSSpacing.xs) {
+                Image(systemName: "figure.stand")
+                    .font(.system(size: DSType.Size.footnote))
+                    .foregroundStyle(Color.accentBlue)
+                Text("Best free agent: \(best.fullName), age \(best.age)")
+                    .font(.system(size: DSType.Size.caption))
+                    .foregroundStyle(Color.textSecondary)
+                    .lineLimit(1)
+                Spacer(minLength: DSSpacing.xxs)
+                Text(faGrade.rawValue)
+                    .font(.system(size: DSType.Size.body, weight: .heavy))
+                    .foregroundStyle(detailGradeColor(faGrade))
+                Text(starterComparisonLabel(diff).replacingOccurrences(of: "\n", with: " "))
+                    .font(.system(size: DSType.Size.caption, weight: .bold))
+                    .foregroundStyle(starterComparisonColor(diff))
+            }
+        } else {
+            HStack(spacing: DSSpacing.xs) {
+                Image(systemName: "figure.stand")
+                    .font(.system(size: DSType.Size.footnote))
+                    .foregroundStyle(Color.textTertiary)
+                Text("No \(prospect.position.rawValue) on the free-agent market \u{2014} the draft is the only door.")
+                    .font(.system(size: DSType.Size.caption))
+                    .foregroundStyle(Color.textTertiaryReadable)
             }
         }
     }
@@ -1442,6 +1495,14 @@ struct ProspectDetailView: View {
                             .foregroundStyle(Color.textTertiaryReadable)
                     }
                 }
+                // What the archetype BUYS. The name and a tier colour were the
+                // whole read: "Mentor" told the user nothing about whether it
+                // was worth a round. One sentence, off the enum, so the roster
+                // card and this one cannot describe the same trait differently.
+                Text(personality.effectSummary)
+                    .font(.system(size: DSType.Size.caption))
+                    .foregroundStyle(Color.textTertiaryReadable)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             // Both grids draw every key, revealed or not, and name what bought
@@ -1847,6 +1908,10 @@ struct ProspectDetailView: View {
                             .foregroundStyle(Color.textTertiaryReadable)
                     }
                 }
+                Text(personality.effectSummary)
+                    .font(.system(size: DSType.Size.caption))
+                    .foregroundStyle(Color.textTertiaryReadable)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             // Football IQ with letter grade (Task 2)
@@ -1866,7 +1931,7 @@ struct ProspectDetailView: View {
                                 .foregroundStyle(Color.textTertiary)
                         }
                     }
-                    Text("Affects scheme learning speed")
+                    Text(InterviewResult.installSpeedHint(iq: iq))
                         .font(.caption2)
                         .foregroundStyle(Color.textTertiary)
 
@@ -2072,11 +2137,10 @@ struct ProspectDetailView: View {
             if notes.contains(where: { $0.contains("\u{2705}") }) { score += 10 }
         }
         score = max(0, min(99, score))
-        if score >= 85 { return "A" }
-        if score >= 75 { return "B" }
-        if score >= 65 { return "C" }
-        if score >= 55 { return "D" }
-        return "F"
+        // The app's ONE grade ladder — see `InterviewResult.interviewGrade`.
+        // A private four-cut here printed "B" for a man the board next door
+        // called "B-", off the same number.
+        return PositionGradeCalculator.letterGrade(for: score)
     }
 
     /// The interview block's letters read the ONE ladder. Its own switch shifted
@@ -2096,11 +2160,7 @@ struct ProspectDetailView: View {
     }
 
     private func footballIQGradeLetter(_ iq: Int) -> String {
-        if iq >= 85 { return "A" }
-        if iq >= 75 { return "B" }
-        if iq >= 65 { return "C" }
-        if iq >= 55 { return "D" }
-        return "F"
+        PositionGradeCalculator.letterGrade(for: iq)
     }
 
     /// Unified onto `Color.forRating` — Football IQ is a 0–99 attribute like
@@ -2842,8 +2902,72 @@ struct ProspectDetailView: View {
                             .foregroundStyle(Color.textSecondary)
                     }
                 }
+
+                // EVERY report, not just the last one.
+                //
+                // `ScoutEvaluationBudget.maxReportsPerProspect` is 3 and the
+                // card surfaced exactly one: the aggregate count above plus the
+                // latest scout's name, with the FILM slot reopening that same
+                // single report. Two men in the building can and do come back
+                // with different letters on the same prospect — that
+                // disagreement is what the second and third report are FOR —
+                // and until this block it was data the save carried and no
+                // screen ever showed.
+                let ledger = ownReportLedger
+                if ledger.count > 1 {
+                    VStack(alignment: .leading, spacing: DSSpacing.xxs) {
+                        ForEach(Array(ledger.enumerated()), id: \.offset) { _, entry in
+                            HStack(spacing: 6) {
+                                Text(entry.grade)
+                                    .font(.system(size: DSType.Size.caption, weight: .heavy))
+                                    // The dash is not a grade, so it does not
+                                    // get a grade's colour — `Color.forGrade`
+                                    // would drop it into F's red.
+                                    .foregroundStyle(
+                                        entry.grade == "\u{2014}"
+                                            ? Color.textTertiary
+                                            : Color.forGrade(entry.grade)
+                                    )
+                                    .frame(width: 26, alignment: .leading)
+                                Text(entry.scoutName)
+                                    .font(.system(size: DSType.Size.caption))
+                                    .foregroundStyle(Color.textSecondary)
+                                    .lineLimit(1)
+                                Spacer(minLength: 0)
+                                Text(entry.occasion)
+                                    .font(.system(size: DSType.Size.caption))
+                                    .foregroundStyle(Color.textTertiaryReadable)
+                            }
+                        }
+                        Text("Your department does not agree with itself for free \u{2014} a wider spread here is why the band above is wide.")
+                            .font(.system(size: DSType.Size.caption))
+                            .foregroundStyle(Color.textTertiaryReadable)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.leading, 2)
+                }
             }
         }
+    }
+
+    /// One row per report THIS regime has filed, oldest first.
+    ///
+    /// The inherited "Previous Staff" baseline is excluded for the same reason
+    /// `ownReportCount` excludes it: it is not this building's opinion. A report
+    /// with no letter on it (an older save, filed before the grade-based system)
+    /// prints an em dash rather than a number reverse-engineered off
+    /// `overallGrade`, which is the raw scouted integer the fog exists to hold
+    /// back.
+    private var ownReportLedger: [(scoutName: String, grade: String, occasion: String)] {
+        prospect.scoutingReports
+            .filter { $0.scoutName != ProspectFog.inheritedScoutName }
+            .map {
+                (
+                    scoutName: $0.scoutName,
+                    grade: $0.overallLetterGrade?.rawValue ?? "\u{2014}",
+                    occasion: $0.phase.displayName
+                )
+            }
     }
 
     // MARK: - Action Button Bar (#48)
@@ -3065,6 +3189,17 @@ struct ProspectDetailView: View {
         teamPlayers = (try? modelContext.fetch(desc)) ?? []
         let teamDesc = FetchDescriptor<Team>(predicate: #Predicate { $0.id == teamID })
         userTeam = try? modelContext.fetch(teamDesc).first
+
+        // The OTHER way to fill the hole. Scoped to this save (`careerID`) as
+        // well as to "unsigned", because `teamID == nil` on its own is every
+        // free agent in every career on the device.
+        let cid = career.id
+        let faDesc = FetchDescriptor<Player>(
+            predicate: #Predicate<Player> {
+                $0.careerID == cid && $0.teamID == nil && !$0.isRetired
+            }
+        )
+        freeAgentPool = (try? modelContext.fetch(faDesc)) ?? []
     }
 
     private func loadPositionRank() {

@@ -468,6 +468,14 @@ struct ProspectRiskBadge: View {
             .padding(.horizontal, 5)
             .padding(.vertical, 2)
             .background(Self.tint(risk).opacity(0.85), in: RoundedRectangle(cornerRadius: DSCornerRadius.tight))
+            // The pill is a red word on the club's best prospect and said
+            // nothing about why. `.danger` here means VARIANCE, not "bad man",
+            // and until now the only place that sentence existed was a private
+            // helper on the prospect card with no call sites.
+            .help(Self.explanation(risk))
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Risk: \(Self.label(risk))")
+            .accessibilityHint(Self.explanation(risk))
         } else {
             Text("--")
                 .font(.system(size: DSType.Size.micro))
@@ -490,6 +498,27 @@ struct ProspectRiskBadge: View {
         case .highCeiling: return .accentBlue
         case .safePick:    return .success
         case .unknown:     return .textTertiary
+        }
+    }
+
+    /// What the pill actually claims, in one sentence.
+    ///
+    /// It lived as a private `riskExplanation(_:)` on `ProspectDetailView` with
+    /// zero call sites, which is why a red BOOM/BUST could sit on the user's
+    /// own #1 with nothing anywhere on any surface to say that the red is a
+    /// spread between reports rather than a verdict on the player. Static and
+    /// here so the board row, the combine table and the prospect card read the
+    /// same sentence.
+    static func explanation(_ risk: ProspectRiskLevel) -> String {
+        switch risk {
+        case .safePick:
+            return "Consistent evaluations and stable personality. Lower variance in scout reports."
+        case .highCeiling:
+            return "High upside with some uncertainty. Could outperform projection significantly."
+        case .boomOrBust:
+            return "Extreme variance between evaluations. Could be a star or a bust."
+        case .unknown:
+            return "Not enough data to evaluate risk profile."
         }
     }
 }

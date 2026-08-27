@@ -2696,6 +2696,23 @@ struct CareerShellView: View {
         if touched { persistTaskProgress() }
     }
 
+    /// How many men in THIS cycle's class the user has put a mark on.
+    ///
+    /// A `fetchCount`, not a fetch: this runs on every screen entry and every
+    /// advance, and the class is ~350 rows. Scoped to the open save, which is
+    /// also what scopes it to the cycle — `WeekAdvancer.purgeStaleSeasonData`
+    /// deletes every `CollegeProspect` row when a season ends, so last spring's
+    /// marks cannot tick this spring's row.
+    private func markedProspectCount() -> Int {
+        let cid = career.id
+        let descriptor = FetchDescriptor<CollegeProspect>(
+            predicate: #Predicate<CollegeProspect> {
+                $0.careerID == cid && $0.userMarkTier != ""
+            }
+        )
+        return (try? modelContext.fetchCount(descriptor)) ?? 0
+    }
+
     /// Mark a task as completed by its destination. Call this from specific
     /// view actions (e.g., after actually setting the depth chart, signing a
     /// player, completing the draft, etc.).
@@ -2838,6 +2855,24 @@ struct CareerShellView: View {
                     currentTasks[index].status = .done
                 } else {
                     currentTasks[index].status = played > 0 ? .inProgress : .todo
+                }
+                continue
+            }
+
+            // "Update Big Board" (#11). Handled ahead of the `.done` guard for
+            // the same reason the two rows above are: the counter on the title
+            // has to move as the user marks men, and the list is only rebuilt
+            // on a phase change. Unmarking cannot un-tick it — the row is a
+            // "you have started working the board" nudge, not a quota with a
+            // gate behind it, and a task that flickers off is worse than one
+            // that stays green.
+            if currentTasks[index].matchKey == TaskGenerator.bigBoardTaskKey {
+                let marked = markedProspectCount()
+                currentTasks[index].title = TaskGenerator.bigBoardTitle(marked: marked)
+                if marked >= TaskGenerator.bigBoardMarkThreshold {
+                    currentTasks[index].status = .done
+                } else if marked > 0, currentTasks[index].status == .todo {
+                    currentTasks[index].status = .inProgress
                 }
                 continue
             }

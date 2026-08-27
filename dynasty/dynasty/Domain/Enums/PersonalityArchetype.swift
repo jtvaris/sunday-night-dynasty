@@ -40,6 +40,40 @@ enum PersonalityArchetype: String, Codable, CaseIterable {
         }
     }
 
+    /// What the archetype actually DOES for the club, in one sentence.
+    ///
+    /// The name alone was the whole read: a card printed "Mentor" in a tinted
+    /// capsule and left the user to guess whether that was worth a round. Every
+    /// clause below is a real term somewhere in the engine —
+    /// `LockerRoomEngine.calculateChemistry` (leadership / toxicity),
+    /// `updateSeasonalMorale` and `updateWeeklyMorale` (the swing multipliers),
+    /// `LockerRoomEngine.activeMentorships` (who tutors whom),
+    /// `activeConflicts` (the hothead pair) and
+    /// `ContractNegotiationEngine`'s archetype term (the discount or premium).
+    /// Nothing here promises an effect the simulation does not carry.
+    var effectSummary: String {
+        switch self {
+        case .teamLeader:
+            return "Lifts team chemistry every week his morale holds up, and re-signs for under market with the club he already plays for."
+        case .loneWolf:
+            return "Barely moves with the room's morale, wants his money in full, and pulls against your leaders and mentors."
+        case .feelPlayer:
+            return "Rides form hard \u{2014} a hot streak lifts him further than anyone, a cold one costs him more."
+        case .steadyPerformer:
+            return "Immune to streaks: his morale hardly moves in either direction, and he signs a little under market."
+        case .dramaQueen:
+            return "Adds toxicity when he is unhappy, amplifies every bad week, and charges the largest premium on the board to sign."
+        case .quietProfessional:
+            return "Absorbs the volatility around him, pairs best with a mentor, and signs slightly under market."
+        case .mentor:
+            return "Tutors a young teammate at his position \u{2014} the protege develops faster \u{2014} and takes a discount to stay."
+        case .fieryCompetitor:
+            return "Rides form, wants his touches, and can set a position room alight beside another hothead."
+        case .classClown:
+            return "Loosens the room but swings with form, and grates on the mentors trying to run a professional position group."
+        }
+    }
+
     /// Personality tier for badge coloring: positive, risky, or neutral.
     var tier: PersonalityTier {
         switch self {
