@@ -24,6 +24,15 @@ struct TeamPreview {
     let spendingWillingness: Int // Owner spending willingness (1-99), used by LeagueGenerator
     let lastSeasonWins: Int      // Previous season wins
     let lastSeasonLosses: Int    // Previous season losses
+
+    /// How last season ended, already phrased for display — "Won the
+    /// Championship", "Lost Divisional round", "Missed the playoffs".
+    ///
+    /// `nil` on the random/generated league, which has no franchise history to
+    /// report: the static preview table carries one authored W-L per club and
+    /// nothing about January. Only the fixed 2026 template knows this, so only
+    /// the fixed path fills it in and every reader must handle the absence.
+    var lastSeasonPlayoffResult: String? = nil
     let startingQBName: String   // Starting QB name for scouting preview
     let startingQBOverall: Int   // Starting QB overall rating
     var isLocked: Bool = false   // Whether the team requires an achievement to unlock

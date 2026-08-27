@@ -169,6 +169,14 @@ struct TeamBrowseCatalog {
         let patienceSeasons = base?.patienceSeasons ?? 3
         let record = team.record2025
 
+        // The template states both halves; the random league states neither, so
+        // this stays nil there and the sheet simply omits the line.
+        let playoffResult: String? = {
+            guard let made = record.madePlayoffs else { return nil }
+            guard made else { return "Missed the playoffs" }
+            return record.playoffResult
+        }()
+
         let qb = startingQB(team)
         // Cap space the import will really produce, to within the $750K salary
         // floor's rounding: same helper, same seed, same draw.
@@ -200,6 +208,7 @@ struct TeamBrowseCatalog {
             spendingWillingness: base?.spendingWillingness ?? 50,
             lastSeasonWins: record.wins,
             lastSeasonLosses: record.losses,
+            lastSeasonPlayoffResult: playoffResult,
             startingQBName: qb.map({ shortName($0) }) ?? "—",
             startingQBOverall: qb?.ratingTarget ?? 0,
             isLocked: base?.isLocked ?? false

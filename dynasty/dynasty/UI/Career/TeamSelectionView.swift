@@ -1526,9 +1526,17 @@ private struct TeamDetailSheet: View {
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(Color.textSecondary)
 
-            Text("Last Season: \(preview.lastSeasonRecord)")
+            // The record alone never said whether 9-8 was a playoff year. It
+            // is stated only where it is known: the fixed 2026 template carries
+            // `madePlayoffs`/`playoffResult` for all 32 clubs, the generated
+            // league carries no franchise history at all, and inventing one
+            // there would be a lie about the roster the player is handed. So
+            // the line simply gets longer when there is something true to add.
+            Text(preview.lastSeasonPlayoffResult.map { "Last Season: \(preview.lastSeasonRecord) · \($0)" }
+                 ?? "Last Season: \(preview.lastSeasonRecord)")
                 .font(DSType.display(DSType.Size.body, .semibold))
                 .foregroundStyle(Color.textTertiary)
+                .multilineTextAlignment(.center)
         }
         .padding(.top, isLandscape ? 12 : 24)
     }
