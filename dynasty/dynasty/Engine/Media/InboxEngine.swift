@@ -15,13 +15,17 @@ enum InboxEngine {
     ///   - team: The player's current team.
     ///   - coaches: Coaches currently on the player's team.
     ///   - owner: The team's owner (if available).
+    ///   - chiefScout: The club's hired Chief Scout, if the chair is filled.
+    ///     Signs every scouting letter in the batch; `nil` falls back to the
+    ///     office title (#3553).
     /// - Returns: An array of 2-5 inbox messages for the phase.
     static func generatePhaseMessages(
         phase: SeasonPhase,
         career: Career,
         team: Team,
         coaches: [Coach],
-        owner: Owner?
+        owner: Owner?,
+        chiefScout: Scout? = nil
     ) -> [InboxMessage] {
         // Stamp the whole batch on the way out. Every letter below carries the
         // same `dateString` — a display label, not a moment — so the tray had no
@@ -29,7 +33,7 @@ enum InboxEngine {
         // at the boundary beats threading week/season through ninety call sites.
         phaseMessages(
             phase: phase, career: career, team: team,
-            coaches: coaches, owner: owner
+            coaches: coaches, owner: owner, chiefScout: chiefScout
         ).map {
             $0.stamped(
                 week: career.currentWeek,
@@ -44,10 +48,12 @@ enum InboxEngine {
         career: Career,
         team: Team,
         coaches: [Coach],
-        owner: Owner?
+        owner: Owner?,
+        chiefScout: Scout?
     ) -> [InboxMessage] {
         let dateString = dateLabel(for: phase, career: career)
         let ownerName = owner?.name ?? "The Owner"
+        let scoutName = scoutSignature(chiefScout)
         let teamName = team.fullName
 
         let oc = coaches.first(where: { $0.role == .offensiveCoordinator })
@@ -61,7 +67,7 @@ enum InboxEngine {
             )
         case .combine:
             return combineMessages(
-                ownerName: ownerName, teamName: teamName,
+                ownerName: ownerName, teamName: teamName, scoutName: scoutName,
                 dateString: dateString
             )
         case .freeAgency:
@@ -76,12 +82,12 @@ enum InboxEngine {
             )
         case .proDays:
             return proDaysMessages(
-                ownerName: ownerName, teamName: teamName,
+                ownerName: ownerName, teamName: teamName, scoutName: scoutName,
                 dateString: dateString
             )
         case .draft:
             return draftMessages(
-                ownerName: ownerName, teamName: teamName,
+                ownerName: ownerName, teamName: teamName, scoutName: scoutName,
                 oc: oc, dc: dc, dateString: dateString
             )
         case .otas:
@@ -91,7 +97,7 @@ enum InboxEngine {
             )
         case .trainingCamp:
             return trainingCampMessages(
-                ownerName: ownerName, teamName: teamName,
+                ownerName: ownerName, teamName: teamName, scoutName: scoutName,
                 dateString: dateString
             )
         case .preseason:
@@ -121,7 +127,7 @@ enum InboxEngine {
             )
         case .tradeDeadline:
             return tradeDeadlineMessages(
-                ownerName: ownerName, teamName: teamName,
+                ownerName: ownerName, teamName: teamName, scoutName: scoutName,
                 dateString: dateString
             )
         }
@@ -252,14 +258,14 @@ enum InboxEngine {
     // MARK: - Combine
 
     private static func combineMessages(
-        ownerName: String, teamName: String,
+        ownerName: String, teamName: String, scoutName: String,
         dateString: String
     ) -> [InboxMessage] {
         var messages: [InboxMessage] = []
 
         // Scout report
         messages.append(InboxMessage(
-            sender: .scout(name: "Director of Scouting"),
+            sender: .scout(name: scoutName),
             subject: "Combine Results Are In",
             body: """
             Coach,
@@ -442,13 +448,13 @@ enum InboxEngine {
     // MARK: - Pro Days
 
     private static func proDaysMessages(
-        ownerName: String, teamName: String,
+        ownerName: String, teamName: String, scoutName: String,
         dateString: String
     ) -> [InboxMessage] {
         var messages: [InboxMessage] = []
 
         messages.append(InboxMessage(
-            sender: .scout(name: "Director of Scouting"),
+            sender: .scout(name: scoutName),
             subject: "Pro Day Schedule Available",
             body: """
                 The college pro day schedule is set. Our scouts are ready to attend \
@@ -468,7 +474,7 @@ enum InboxEngine {
     // MARK: - Draft
 
     private static func draftMessages(
-        ownerName: String, teamName: String,
+        ownerName: String, teamName: String, scoutName: String,
         oc: Coach?, dc: Coach?,
         dateString: String
     ) -> [InboxMessage] {
@@ -476,7 +482,7 @@ enum InboxEngine {
 
         // Scout: final big board
         messages.append(InboxMessage(
-            sender: .scout(name: "Director of Scouting"),
+            sender: .scout(name: scoutName),
             subject: "Final Big Board Ready",
             body: """
             Coach,
@@ -631,7 +637,7 @@ enum InboxEngine {
     // MARK: - Training Camp
 
     private static func trainingCampMessages(
-        ownerName: String, teamName: String,
+        ownerName: String, teamName: String, scoutName: String,
         dateString: String
     ) -> [InboxMessage] {
         [
@@ -668,7 +674,7 @@ enum InboxEngine {
                 category: .mediaRequest
             ),
             InboxMessage(
-                sender: .scout(name: "Director of Scouting"),
+                sender: .scout(name: scoutName),
                 subject: "Camp Standouts to Watch",
                 body: """
                 Coach,
@@ -983,7 +989,7 @@ enum InboxEngine {
     /// `career.currentPhase = .tradeDeadline` on reaching
     /// `tradeDeadlineWeek`, and `generatePhaseMessages` routes that phase here.
     private static func tradeDeadlineMessages(
-        ownerName: String, teamName: String,
+        ownerName: String, teamName: String, scoutName: String,
         dateString: String
     ) -> [InboxMessage] {
         [
@@ -1006,7 +1012,7 @@ enum InboxEngine {
                 ]
             ),
             InboxMessage(
-                sender: .scout(name: "Director of Scouting"),
+                sender: .scout(name: scoutName),
                 subject: "Trade Deadline Targets",
                 body: """
                 Coach,
@@ -1249,7 +1255,8 @@ enum InboxEngine {
     /// nothing.
     static func weeklyScoutingDigestMessage(
         digest: ScoutingEngine.WeeklyScoutingDigest,
-        season: Int
+        season: Int,
+        chiefScout: Scout? = nil
     ) -> InboxMessage {
         var subject = "Scouting: \(digest.reportCount) new report\(digest.reportCount == 1 ? "" : "s")"
         if digest.bandsNarrowed > 0 {
@@ -1277,7 +1284,7 @@ enum InboxEngine {
         lines.append("Scouting Department")
 
         return InboxMessage(
-            sender: .scout(name: "Director of Scouting"),
+            sender: .scout(name: scoutSignature(chiefScout)),
             subject: subject,
             body: lines.joined(separator: "\n"),
             date: "Week \(digest.week), Season \(season)",
@@ -1292,7 +1299,8 @@ enum InboxEngine {
     /// came out of nowhere.
     static func combineMediaDigestMessage(
         mentions: [ScoutingEngine.CombineMediaMention],
-        dateString: String
+        dateString: String,
+        chiefScout: Scout? = nil
     ) -> InboxMessage? {
         guard !mentions.isEmpty else { return nil }
 
@@ -1322,7 +1330,7 @@ enum InboxEngine {
         sections.append("Scouting Department")
 
         return InboxMessage(
-            sender: .scout(name: "Director of Scouting"),
+            sender: .scout(name: scoutSignature(chiefScout)),
             subject: "Combine board movement: \(risers.count) up, \(fallers.count) down",
             body: sections.joined(separator: "\n"),
             date: dateString,
@@ -1337,7 +1345,8 @@ enum InboxEngine {
     /// The Showcase week report.
     static func seniorBowlDigestMessage(
         result: ScoutingEngine.SeniorBowlResult,
-        dateString: String
+        dateString: String,
+        chiefScout: Scout? = nil
     ) -> InboxMessage? {
         guard result.reportsFiled > 0 else { return nil }
 
@@ -1364,7 +1373,7 @@ enum InboxEngine {
         lines.append("Scouting Department")
 
         return InboxMessage(
-            sender: .scout(name: "Director of Scouting"),
+            sender: .scout(name: scoutSignature(chiefScout)),
             subject: "The Showcase: \(result.reportsFiled) evaluations filed",
             body: lines.joined(separator: "\n"),
             date: dateString,
@@ -1378,7 +1387,8 @@ enum InboxEngine {
     /// The spring medical sheet — who got hurt between the combine and the draft.
     static func preDraftAttritionMessage(
         setbacks: [ScoutingEngine.PreDraftSetback],
-        dateString: String
+        dateString: String,
+        chiefScout: Scout? = nil
     ) -> InboxMessage? {
         guard !setbacks.isEmpty else { return nil }
 
@@ -1401,7 +1411,7 @@ enum InboxEngine {
         lines.append("Scouting Department")
 
         return InboxMessage(
-            sender: .scout(name: "Director of Scouting"),
+            sender: .scout(name: scoutSignature(chiefScout)),
             subject: "Pre-draft medical: \(setbacks.count) prospect\(setbacks.count == 1 ? "" : "s") hurt",
             body: lines.joined(separator: "\n"),
             date: dateString,
@@ -1416,7 +1426,8 @@ enum InboxEngine {
     static func proDayCircuitMessage(
         result: ScoutingEngine.ProDayCircuitResult,
         moves: [ScoutingEngine.ProjectionMove],
-        dateString: String
+        dateString: String,
+        chiefScout: Scout? = nil
     ) -> InboxMessage? {
         guard result.tested > 0 else { return nil }
 
@@ -1449,7 +1460,7 @@ enum InboxEngine {
         lines.append("Scouting Department")
 
         return InboxMessage(
-            sender: .scout(name: "Director of Scouting"),
+            sender: .scout(name: scoutSignature(chiefScout)),
             subject: "Pro-day circuit: \(result.tested) late testers on the board",
             body: lines.joined(separator: "\n"),
             date: dateString,
@@ -1477,7 +1488,8 @@ enum InboxEngine {
         schools: [String],
         prospectsEvaluated: Int,
         findings: [String],
-        dateString: String
+        dateString: String,
+        chiefScout: Scout? = nil
     ) -> InboxMessage? {
         guard !schools.isEmpty, prospectsEvaluated > 0 else { return nil }
 
@@ -1503,7 +1515,7 @@ enum InboxEngine {
         lines.append("Scouting Department")
 
         return InboxMessage(
-            sender: .scout(name: "Director of Scouting"),
+            sender: .scout(name: scoutSignature(chiefScout)),
             subject: "Pro day circuit complete \u{2014} \(prospectsEvaluated) \(manWord) seen at \(schoolCount) \(schoolWord)",
             body: lines.joined(separator: "\n"),
             date: dateString,
@@ -1636,7 +1648,8 @@ enum InboxEngine {
     /// built to charge for.
     static func characterFindingsMessage(
         findings: [ScoutingEngine.CharacterFinding],
-        dateString: String
+        dateString: String,
+        chiefScout: Scout? = nil
     ) -> InboxMessage? {
         guard !findings.isEmpty else { return nil }
 
@@ -1656,7 +1669,7 @@ enum InboxEngine {
         lines.append("Scouting Department")
 
         return InboxMessage(
-            sender: .scout(name: "Director of Scouting"),
+            sender: .scout(name: scoutSignature(chiefScout)),
             subject: "Character notes: \(findings.count) name\(findings.count == 1 ? "" : "s") to re-check",
             body: lines.joined(separator: "\n"),
             date: dateString,
@@ -1684,7 +1697,8 @@ enum InboxEngine {
     static func draftCycleHeartbeat(
         phase: SeasonPhase,
         prospects: [CollegeProspect],
-        dateString: String
+        dateString: String,
+        chiefScout: Scout? = nil
     ) -> InboxMessage? {
         guard !prospects.isEmpty else { return nil }
 
@@ -1732,7 +1746,7 @@ enum InboxEngine {
         }
 
         return InboxMessage(
-            sender: .scout(name: "Director of Scouting"),
+            sender: .scout(name: scoutSignature(chiefScout)),
             subject: subject,
             body: ["Coach,", "", body, "", "Scouting Department"].joined(separator: "\n"),
             date: dateString,
@@ -1848,6 +1862,15 @@ enum InboxEngine {
     }
 
     // MARK: - Helpers
+
+    /// Who signs a scouting letter (#3553).
+    ///
+    /// The club's hired Chief Scout by name when the chair is filled; the
+    /// office's own title when it is vacant, because the department still
+    /// files reports between hires.
+    private static func scoutSignature(_ chiefScout: Scout?) -> String {
+        chiefScout?.fullName ?? "Director of Scouting"
+    }
 
     /// Creates a human-readable date string for the given phase.
     private static func dateLabel(for phase: SeasonPhase, career: Career) -> String {

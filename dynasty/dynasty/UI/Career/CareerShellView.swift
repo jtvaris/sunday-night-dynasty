@@ -3581,12 +3581,19 @@ struct CareerShellView: View {
         if inboxMessages.isEmpty, let playerTeam = team {
             let coachDescriptor = FetchDescriptor<Coach>(predicate: #Predicate { $0.teamID == teamID })
             let coaches = (try? modelContext.fetch(coachDescriptor)) ?? []
+            // #3553: the scouting letters in the starter batch are signed by
+            // the man in the chair, not by the office. Role is filtered in
+            // Swift, as `CoachingStaffView` does — `#Predicate` on the enum
+            // buys nothing on a table this small.
+            let scoutDescriptor = FetchDescriptor<Scout>(predicate: #Predicate { $0.teamID == teamID })
+            let scouts = (try? modelContext.fetch(scoutDescriptor)) ?? []
             let messages = InboxEngine.generatePhaseMessages(
                 phase: career.currentPhase,
                 career: career,
                 team: playerTeam,
                 coaches: coaches,
-                owner: playerTeam.owner
+                owner: playerTeam.owner,
+                chiefScout: scouts.first { $0.scoutRole == .chiefScout }
             )
             inboxMessages = messages
             persistInbox()
