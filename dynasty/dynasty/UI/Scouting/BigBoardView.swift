@@ -116,7 +116,8 @@ struct BigBoardView<Header: View>: View {
     @State private var showMarkedOnly: Bool = false
     @State private var editingAssessmentProspect: CollegeProspect?
     @State private var editingMarkNoteProspect: CollegeProspect?
-    /// Compare tray — up to four men, reachable straight off a board row.
+    /// Compare tray — reachable straight off a board row, and the board's ONE
+    /// multi-row selection, so it is also what "Mark All…" writes to.
     @State private var compareSelection: [CollegeProspect] = []
     @State private var showCompareSheet: Bool = false
     @State private var coaches: [Coach] = []
@@ -943,6 +944,25 @@ struct BigBoardView<Header: View>: View {
         }
         .listRowBackground(Color.backgroundSecondary)
         .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 16))
+        // ONE GESTURE INTO THE TRAY (#3406). The tray is the board's bulk-mark
+        // selection now, and its only route in was the long-press menu — two
+        // gestures and a menu scan per man, which is exactly what marking each
+        // row costs, so a bulk mark saved nothing. A full swipe is one gesture,
+        // and it is a row action rather than an interaction MODE, so it does
+        // not have to coexist with the drag-reorder the board already owns.
+        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+            Button {
+                toggleCompareSelection(prospect)
+            } label: {
+                Label(
+                    isSelectedForCompare(prospect) ? "Deselect" : "Select",
+                    systemImage: isSelectedForCompare(prospect)
+                        ? "rectangle.stack.badge.minus"
+                        : "checkmark.rectangle.stack.fill"
+                )
+            }
+            .tint(isSelectedForCompare(prospect) ? Color.textTertiary : Color.accentBlue)
+        }
         .contextMenu {
             tierContextMenu(for: prospect)
         }
@@ -1010,32 +1030,82 @@ struct BigBoardView<Header: View>: View {
 
     // MARK: - Compare tray
 
+    /// How many men the tray will hold.
+    ///
+    /// It used to be `ProspectCompareSheet.maxProspects` — four, the number of
+    /// COLUMNS the compare sheet can draw — because comparing was the only
+    /// thing the tray did. It is now also the board's bulk-mark selection
+    /// (#3406), and "mark these twelve as Avoid" is a real pass over a class
+    /// where "compare these twelve" is not. The two caps are therefore
+    /// separate: the tray holds twelve, the sheet still draws the first four
+    /// and the Compare button says four so the count on the button is the
+    /// count the sheet opens with.
+    ///
+    /// Twelve rather than unbounded: the tray is one line of chrome above a
+    /// 350-row list, and a selection nobody can see the end of is a selection
+    /// somebody bulk-marks by accident.
+    ///
+    /// Computed rather than a stored `static let` because this view is generic
+    /// over its header, and Swift has no static stored properties in a generic
+    /// type.
+    private static var maxTraySelection: Int { 12 }
+
     private func isSelectedForCompare(_ prospect: CollegeProspect) -> Bool {
         compareSelection.contains { $0.id == prospect.id }
     }
 
-    /// Adds or removes a man from the compare tray. Four is the cap: a fifth
-    /// column does not fit a portrait iPad, and a five-way compare is not a
-    /// decision anybody makes.
+    /// Adds or removes a man from the tray, dropping the oldest at the cap.
     private func toggleCompareSelection(_ prospect: CollegeProspect) {
         if let idx = compareSelection.firstIndex(where: { $0.id == prospect.id }) {
             compareSelection.remove(at: idx)
         } else {
-            if compareSelection.count >= ProspectCompareSheet.maxProspects {
+            if compareSelection.count >= Self.maxTraySelection {
                 compareSelection.removeFirst()
             }
             compareSelection.append(prospect)
         }
     }
 
+    /// Names up to the compare cap, then a count. Twelve last names do not fit
+    /// one line, and a list truncated mid-name is worse than a number.
+    private var compareTraySummary: String {
+        let shown = compareSelection.prefix(ProspectCompareSheet.maxProspects).map(\.lastName)
+        let rest = compareSelection.count - shown.count
+        let joined = shown.joined(separator: " \u{00B7} ")
+        return rest > 0 ? "\(joined) +\(rest)" : joined
+    }
+
+    /// Writes ONE verdict across the whole tray (#3406).
+    ///
+    /// Through `setUserMark`, never a raw write to `userMarkTier`: that is what
+    /// mirrors the tier onto `prospectFlag` and the star store, so a mark made
+    /// here is a mark the war room can see.
+    ///
+    /// The selection deliberately survives the write. This tray is a compare
+    /// selection first and a board verdict second, and clearing it after a
+    /// bulk mark would take the four men out of the sheet the user is halfway
+    /// through comparing them in.
+    private func markAllInTray(as tier: ProspectMarkTier) {
+        guard !compareSelection.isEmpty else { return }
+        for prospect in compareSelection {
+            prospect.setUserMark(tier)
+        }
+        try? modelContext.save()
+        refreshCachedBoard()
+    }
+
     @ViewBuilder
     private var compareTrayBar: some View {
         if !compareSelection.isEmpty {
+            // The sheet draws `maxProspects` columns whatever the tray holds,
+            // so the button counts what will actually open rather than what is
+            // selected.
+            let comparable = min(compareSelection.count, ProspectCompareSheet.maxProspects)
             HStack(spacing: 8) {
                 Image(systemName: "rectangle.on.rectangle.angled")
                     .font(.caption)
                     .foregroundStyle(Color.accentBlue)
-                Text(compareSelection.map(\.lastName).joined(separator: " \u{00B7} "))
+                Text(compareTraySummary)
                     .font(.caption.weight(.medium))
                     .foregroundStyle(Color.textPrimary)
                     .lineLimit(1)
@@ -1044,27 +1114,58 @@ struct BigBoardView<Header: View>: View {
                 Button("Clear") { compareSelection.removeAll() }
                     .font(.caption)
                     .foregroundStyle(Color.textSecondary)
+                markAllMenu
                 Button {
                     showCompareSheet = true
                 } label: {
-                    Text("Compare \(compareSelection.count)")
+                    Text("Compare \(comparable)")
                         .font(.caption.weight(.bold))
                         .foregroundStyle(
-                            compareSelection.count >= 2 ? Color.backgroundPrimary : Color.textTertiary
+                            comparable >= 2 ? Color.backgroundPrimary : Color.textTertiary
                         )
                         .padding(.horizontal, 10)
                         .padding(.vertical, 5)
                         .background(
-                            compareSelection.count >= 2 ? Color.accentBlue : Color.backgroundTertiary,
+                            comparable >= 2 ? Color.accentBlue : Color.backgroundTertiary,
                             in: Capsule()
                         )
                 }
-                .disabled(compareSelection.count < 2)
+                .disabled(comparable < 2)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 6)
             .background(Color.backgroundTertiary)
         }
+    }
+
+    /// Bulk marking, in the tray bar (#3406). The board's only other route to a
+    /// verdict is one `ProspectMarkButton` per row, which is one tap per man
+    /// over a class of 350.
+    ///
+    /// Same four tiers and the same "Clear Mark" as `ProspectMarkMenu` draws on
+    /// a row, so the vocabulary of a bulk mark is the vocabulary of a single
+    /// one — there is no tier reachable in bulk that a row cannot write.
+    private var markAllMenu: some View {
+        Menu {
+            ForEach(ProspectMarkTier.choices) { tier in
+                Button {
+                    markAllInTray(as: tier)
+                } label: {
+                    Label(tier.label, systemImage: tier.icon)
+                }
+            }
+            Divider()
+            Button(role: .destructive) {
+                markAllInTray(as: .none)
+            } label: {
+                Label("Clear Mark", systemImage: "xmark.circle")
+            }
+        } label: {
+            Text("Mark All\u{2026}")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.accentGold)
+        }
+        .accessibilityLabel("Mark all \(compareSelection.count) selected prospects")
     }
 
     // MARK: - Mark group header (My Board)

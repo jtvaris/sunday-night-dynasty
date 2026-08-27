@@ -138,6 +138,24 @@ final class CollegeProspect {
     /// Scout grade captured before combine results are applied, used to show grade change arrows.
     var preCombineGrade: String?
 
+    /// The media's projected ROUND for him at the moment the combine opened
+    /// (#3424), captured beside `preCombineGrade` in
+    /// `ScoutingEngine.runLeagueCombine`.
+    ///
+    /// The projection drift that moves the board off the combine fires when the
+    /// club LEAVES the phase, so at the moment the Combine Report is first
+    /// raised — during the combine, from `sendScoutsToCombine` — nothing has
+    /// moved and there is no from/to to print. This snapshot is what lets the
+    /// report, reopened after the phase, quote the real "Rd 2 → Rd 3" instead
+    /// of naming a Stock Faller and leaving the reader to go and look his round
+    /// up somewhere else.
+    ///
+    /// Read it as "where the media had him when the combine opened", which is
+    /// literally what it is: `draftProjection` moves again at every later mock,
+    /// so the pair is a move on the media board rather than a coefficient
+    /// anybody applied to him.
+    var preCombineProjection: Int?
+
     // MARK: - Manual Tier Override
 
     /// When set, overrides the computed tier derived from scoutedOverall.

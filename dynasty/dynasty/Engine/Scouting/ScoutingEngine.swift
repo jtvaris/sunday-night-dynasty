@@ -3633,8 +3633,16 @@ enum ScoutingEngine {
 
         // Snapshot the pre-combine read so the risers/fallers strip has a
         // baseline to diff against. Must happen before any new report lands.
+        //
+        // The PROJECTION is snapshotted here too (#3424). It is the same kind
+        // of baseline and it has to be taken at the same moment: the drift pass
+        // that moves the media board off the combine runs when the club leaves
+        // the phase, so this is the last point at which the pre-combine round
+        // still exists to be recorded. Nothing else moves as a result — the
+        // drift stays exactly where it is; this only remembers where he was.
         for i in prospects.indices {
             prospects[i].preCombineGrade = prospects[i].scoutGrade
+            prospects[i].preCombineProjection = prospects[i].draftProjection
         }
 
         generateCombineResults(for: &prospects, scoutingAbility: scoutingAbility)
@@ -5153,5 +5161,85 @@ struct CombineBenchmarks {
         if pct >= 70 { return "green" }
         if pct >= 40 { return "white" }
         return "orange"
+    }
+}
+
+// MARK: - Composite Athleticism Weights (#3446)
+
+/// What each combine drill is WORTH, per position — the balance data behind the
+/// combine table's ATH column.
+///
+/// The table used to let a manager rank invitees by one drill at a time and
+/// nothing else, so "who is the best athlete in this class at my position" was
+/// six sorts and a memory. The obvious composite — an unweighted mean of the
+/// six percentiles `PercentilePools` already produces — says a guard's shuttle
+/// matters exactly as much as his bench, which is the one thing everybody who
+/// has watched a combine knows is false. Hence weights, and hence their living
+/// here beside `CombineDrillTable` and `CombineBenchmarks`: they are tuning
+/// constants that drive a ranking the user trusts, not an implementation detail
+/// of the view that draws it.
+///
+/// Every vector sums to 100, so a weight reads directly as "this drill is N %
+/// of what athleticism means at this position". The arithmetic itself — and the
+/// renormalisation when a man skipped a drill — lives with the percentile pools
+/// in `PercentilePools.athleticism`, because those percentiles are the class-
+/// relative pools the screens build rather than anything the engine holds.
+///
+/// Positions are grouped where the football answer is genuinely identical (the
+/// two tackles, the three interior linemen, the two specialists), exactly as
+/// `CombineDrillTable` groups them; all 19 are covered.
+struct CombineAthleticismWeights {
+    /// Percentage points out of 100, one per drill.
+    struct DrillWeights {
+        let forty: Double
+        let bench: Double
+        let vertical: Double
+        let broad: Double
+        let threeCone: Double
+        let shuttle: Double
+    }
+
+    /// The reasoning, in one line: what a position is asked to do decides which
+    /// drill predicts it. Long speed carries the perimeter (WR, CB), change of
+    /// direction carries the men who mirror (CB, OT, OLB), raw strength carries
+    /// the phone booth (interior OL, DT, FB), and a quarterback's testing is
+    /// mostly about moving inside the pocket.
+    static func weights(for position: Position) -> DrillWeights {
+        switch position {
+        case .QB:
+            return DrillWeights(forty: 20, bench: 5, vertical: 15, broad: 15, threeCone: 25, shuttle: 20)
+        case .RB:
+            return DrillWeights(forty: 30, bench: 10, vertical: 15, broad: 15, threeCone: 15, shuttle: 15)
+        case .FB:
+            return DrillWeights(forty: 15, bench: 30, vertical: 15, broad: 20, threeCone: 10, shuttle: 10)
+        case .WR:
+            return DrillWeights(forty: 35, bench: 5, vertical: 15, broad: 15, threeCone: 15, shuttle: 15)
+        case .TE:
+            return DrillWeights(forty: 25, bench: 15, vertical: 15, broad: 15, threeCone: 15, shuttle: 15)
+        case .LT, .RT:
+            return DrillWeights(forty: 15, bench: 20, vertical: 10, broad: 15, threeCone: 20, shuttle: 20)
+        case .LG, .C, .RG:
+            return DrillWeights(forty: 10, bench: 30, vertical: 10, broad: 20, threeCone: 15, shuttle: 15)
+        case .DE:
+            return DrillWeights(forty: 25, bench: 15, vertical: 15, broad: 20, threeCone: 15, shuttle: 10)
+        case .DT:
+            return DrillWeights(forty: 15, bench: 30, vertical: 15, broad: 20, threeCone: 10, shuttle: 10)
+        case .OLB:
+            return DrillWeights(forty: 25, bench: 10, vertical: 15, broad: 15, threeCone: 20, shuttle: 15)
+        case .MLB:
+            return DrillWeights(forty: 20, bench: 15, vertical: 15, broad: 15, threeCone: 20, shuttle: 15)
+        case .CB:
+            return DrillWeights(forty: 30, bench: 5, vertical: 15, broad: 10, threeCone: 20, shuttle: 20)
+        case .FS:
+            return DrillWeights(forty: 30, bench: 5, vertical: 15, broad: 15, threeCone: 20, shuttle: 15)
+        case .SS:
+            return DrillWeights(forty: 25, bench: 10, vertical: 15, broad: 15, threeCone: 20, shuttle: 15)
+        case .K, .P:
+            // A specialist's drills are noise against his job, which is why the
+            // combine table keeps him out of the DNP list too. Flat rather than
+            // absent, so a K who did test still ranks against the other
+            // specialists instead of reading as missing data.
+            return DrillWeights(forty: 20, bench: 10, vertical: 20, broad: 20, threeCone: 15, shuttle: 15)
+        }
     }
 }

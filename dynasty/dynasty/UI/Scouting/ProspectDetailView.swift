@@ -571,6 +571,17 @@ struct ProspectDetailView: View {
             explainer: "The mark is in the header \u{2014} it is what the war room sorts by on draft night. This is why.",
             isSubject: true
         ) {
+            // #3515 — the card's opening line. See `fileSoFarSentence` for why
+            // it describes and does not recommend.
+            Text(fileSoFarSentence)
+                .font(.system(size: DSType.Size.body))
+                .foregroundStyle(Color.textPrimary)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Divider().overlay(Color.surfaceBorder)
+
             Button {
                 activeSheet = .markNote
             } label: {
@@ -616,6 +627,88 @@ struct ProspectDetailView: View {
                 }
             }
         }
+    }
+
+    // MARK: - The file so far (#3515)
+    //
+    // The deep dive holds three separate reads of one man — what the department
+    // filed, what the room made of him, what he did in Indianapolis — in three
+    // cards a column apart, and nothing anywhere put them in a sentence. This
+    // does.
+    //
+    // DESCRIPTIVE ONLY, and deliberately. Every clause is a fact one of the
+    // instruments already carries: how many reports this regime has bought,
+    // whether anybody has been in a room with him, whether he tested, the band
+    // those reports produced, and the slot the market has him in. There is no
+    // recommendation and no threshold behind one — a verdict would mean
+    // authoring a rule that weighs grade band against interview grade against
+    // combine percentile against positional need, plus the cut points where it
+    // flips, and inventing those is the game giving draft advice in its own
+    // voice. This says what is on file and stops; the verdict is the mark in
+    // the header, and it is the user's.
+
+    /// The one-sentence file: what has been done, what it produced, where the
+    /// market has him.
+    private var fileSoFarSentence: String {
+        var work: [String] = []
+
+        let reports = ownFilmReportCount
+        if reports > 0 {
+            work.append(Self.spelled(reports, "report", "reports"))
+        }
+        if prospect.interviewCompleted {
+            work.append("a meeting")
+        }
+        switch ScoutingEngine.combineParticipation(for: prospect) {
+        case .full:                        work.append("a full combine")
+        case .partial:                     work.append("a partial combine")
+        case .didNotParticipate:           work.append("no combine workout")
+        case .specialistMeasurementsOnly:  work.append("combine measurements")
+        case .notInvited:                  break
+        }
+
+        // A man nobody has touched still gets a sentence: the second half of it
+        // is the market's, and the market has an opinion about everybody.
+        let doneClause = work.isEmpty
+            ? "Nothing on file"
+            : Self.sentenceCased(Self.listed(work))
+
+        let read = ProspectFog.read(prospect)
+        let bandClause: String
+        switch read.source {
+        case .scouts: bandClause = "band \(read.text)"
+        case .media:  bandClause = "no grade of your own, the media band is \(read.text)"
+        case .none:   bandClause = "nothing graded"
+        }
+
+        let marketClause = DraftIntel.consensusRank(for: prospect.id)
+            .map { "the market has him at #\($0)" }
+            ?? "the market has no slot for him"
+
+        return "\(doneClause); \(bandClause), \(marketClause)."
+    }
+
+    /// Small counts read as words in prose — "two reports", not "2 reports".
+    private static func spelled(_ count: Int, _ singular: String, _ plural: String) -> String {
+        switch count {
+        case 1:  return "one \(singular)"
+        case 2:  return "two \(plural)"
+        case 3:  return "three \(plural)"
+        default: return "\(count) \(plural)"
+        }
+    }
+
+    /// "a", "a and b", "a, b and c".
+    private static func listed(_ parts: [String]) -> String {
+        guard parts.count > 1 else { return parts.first ?? "" }
+        return parts.dropLast().joined(separator: ", ") + " and " + (parts.last ?? "")
+    }
+
+    /// Capitalises the first character only — `capitalized` would title-case
+    /// every word and turn "a full combine" into "A Full Combine".
+    private static func sentenceCased(_ text: String) -> String {
+        guard let first = text.first else { return text }
+        return first.uppercased() + text.dropFirst()
     }
 
     // MARK: - Character & Medical File
@@ -1560,11 +1653,7 @@ struct ProspectDetailView: View {
     /// The three instruments that keep a card are also the way back to it —
     /// see ``ProspectInstrumentStrip`` for why those look different.
     private var instrumentSlots: [ProspectInstrumentSlot] {
-        // Film reports only — `ownReportCount` also counts the private
-        // workout's `.personalWorkout` row, which has its own slot two along.
-        let filmReports = prospect.scoutingReports.filter {
-            $0.scoutName != ProspectFog.inheritedScoutName && $0.phase != .personalWorkout
-        }.count
+        let filmReports = ownFilmReportCount
         // A filed report grades EVERY key (`applyGradeBasedFields`), so this is
         // the honest yield of the film work rather than a slice of it.
         let bands = ProspectFog.mentalDisclosure(prospect).grades.count
@@ -1609,6 +1698,17 @@ struct ProspectDetailView: View {
                 open: nil
             ),
         ]
+    }
+
+    /// Film reports only — `ownReportCount` also counts the private workout's
+    /// `.personalWorkout` row, which has its own slot two along.
+    ///
+    /// One definition, read by the FILM slot AND by the file sentence (#3515),
+    /// so the card cannot open with "two reports" over a slot saying three.
+    private var ownFilmReportCount: Int {
+        prospect.scoutingReports.filter {
+            $0.scoutName != ProspectFog.inheritedScoutName && $0.phase != .personalWorkout
+        }.count
     }
 
     /// The most recent tape report THIS regime ordered — what the FILM slot
