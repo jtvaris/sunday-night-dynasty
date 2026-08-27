@@ -5679,10 +5679,18 @@ private struct CoachingStaffReviewSheet: View {
 
     /// Every coordinator who specialises in one system while the club installs
     /// another, in the words `schemeMismatchWarning(for:)` already wrote. That
-    /// function had no call site, so a coordinator hired for a system nobody
-    /// runs was a reading this sheet computed and threw away.
+    /// function had no call site, so a coordinator asked to run a system he has
+    /// never coached was a reading this sheet computed and threw away — and its
+    /// own test compared him against himself, so it could not have fired even
+    /// once it was wired. See the note on the function for both halves.
+    ///
+    /// Asked of the two coordinators rather than of `coaches`, because they are
+    /// the only roles that can answer and because the section renders these
+    /// `id: \.self`: a save carrying duplicate rows for one chair — the case
+    /// `coachBySeat` exists for — would otherwise put the same sentence in the
+    /// list twice under the same identity.
     private var schemeMismatchWarnings: [String] {
-        coaches.compactMap { schemeMismatchWarning(for: $0) }
+        [oc, dc].compactMap { $0 }.compactMap { schemeMismatchWarning(for: $0) }
     }
 
     // MARK: - Body
@@ -6720,27 +6728,69 @@ private struct CoachingStaffReviewSheet: View {
 
     // MARK: - Scheme Mismatch Warnings
 
+    /// The system this coach knows best on one side of the ball, read from
+    /// `schemeExpertise` rather than from his `offensiveScheme` /
+    /// `defensiveScheme` field. After an install those two are no longer the
+    /// same thing, and the expertise table is the half that still remembers
+    /// where he came from: `initializeSchemeExpertise` seeds 75-95 in the
+    /// system he was generated running, so it stays his maximum.
+    private func bestKnownScheme(_ coach: Coach, isOffensive: Bool) -> (displayName: String, key: String)? {
+        if isOffensive {
+            return OffensiveScheme.allCases
+                .max { coach.expertise(for: $0.rawValue) < coach.expertise(for: $1.rawValue) }
+                .map { (displayName: $0.displayName, key: $0.rawValue) }
+        }
+        return DefensiveScheme.allCases
+            .max { coach.expertise(for: $0.rawValue) < coach.expertise(for: $1.rawValue) }
+            .map { (displayName: $0.displayName, key: $0.rawValue) }
+    }
+
+    /// A coordinator asked to install a system he has never coached.
+    ///
+    /// This no longer compares `coach.offensiveScheme` against the team's. The
+    /// team's offensive scheme IS the OC's `offensiveScheme` everywhere in this
+    /// game — `DraftEngine`, `LiveGameEngine`, `teamSchemeBanner` above all
+    /// resolve it that way, and there is no other store of it — so that test
+    /// compared a man against himself and returned nil for every well-formed
+    /// save. The warning existed and could not fire.
+    ///
+    /// What actually diverges is `schemeExpertise`. `SchemeSelectionView`'s
+    /// install writes `coordinator.offensiveScheme` and leaves the expertise
+    /// table alone, which is the one way in the game for the two to part, and
+    /// it is the headline decision of the Coaching Changes phase. The sim
+    /// already charges him for it — `CoachingModifiers` Mech 6 pays nothing
+    /// below its scheme centre of 70, and `CoachingEngine`'s development
+    /// multiplier deducts up to a full continuity bonus — so the sheet says so
+    /// before the season starts instead of after.
     private func schemeMismatchWarning(for coach: Coach) -> String? {
-        // Only show warnings for OC and DC
-        if coach.role == .offensiveCoordinator,
-           let teamScheme = oc?.offensiveScheme,
-           let coachScheme = coach.offensiveScheme,
-           coachScheme != teamScheme {
-            let expertise = coach.expertise(for: teamScheme.rawValue)
-            if expertise < 40 {
-                return "\(coach.role.abbreviation) specializes in \(coachScheme.displayName) but team runs \(teamScheme.displayName)"
-            }
+        // Only the coordinators: theirs is the mastery the sim actually reads.
+        let installedName: String
+        let installedKey: String
+        let isOffensive: Bool
+        switch coach.role {
+        case .offensiveCoordinator:
+            guard let scheme = oc?.offensiveScheme else { return nil }
+            installedName = scheme.displayName
+            installedKey = scheme.rawValue
+            isOffensive = true
+        case .defensiveCoordinator:
+            guard let scheme = dc?.defensiveScheme else { return nil }
+            installedName = scheme.displayName
+            installedKey = scheme.rawValue
+            isOffensive = false
+        default:
+            return nil
         }
-        if coach.role == .defensiveCoordinator,
-           let teamScheme = dc?.defensiveScheme,
-           let coachScheme = coach.defensiveScheme,
-           coachScheme != teamScheme {
-            let expertise = coach.expertise(for: teamScheme.rawValue)
-            if expertise < 40 {
-                return "\(coach.role.abbreviation) specializes in \(coachScheme.displayName) but team runs \(teamScheme.displayName)"
-            }
-        }
-        return nil
+        // An empty table is a legacy row, not a record of zero — the same read
+        // `CoachingEngine`'s scheme-mastery layer makes before it charges.
+        guard !coach.schemeExpertise.isEmpty else { return nil }
+        // 40 is the top of the band `initializeSchemeExpertise` seeds for a
+        // system a coach holds no record of; family siblings sit at 40-65 and
+        // are a cost, not a problem worth a banner.
+        guard coach.expertise(for: installedKey) < 40 else { return nil }
+        guard let specialty = bestKnownScheme(coach, isOffensive: isOffensive),
+              specialty.key != installedKey else { return nil }
+        return "\(coach.role.abbreviation) specializes in \(specialty.displayName) but team runs \(installedName)"
     }
 
     // MARK: - Scheme Fit Analysis
