@@ -511,6 +511,15 @@ enum PressConferenceEngine {
     /// effects then all agree about what kind of team this is, instead of the
     /// wildcard carrying a private opinion of its own.
     ///
+    /// "The same band" only holds if it is the same roster, so the read is
+    /// `Team.currentRoster()` — the `teamID` query the view already ran to
+    /// hand `introContext` its array (`PressConferenceView.roster`). The
+    /// `players` relationship is a creation-time hand-off that no transaction
+    /// maintains (see ``Team/players``, `TRADE_OVERHAUL_PLAN` §7.5
+    /// "teamID-reads everywhere"); it happens to agree at career creation,
+    /// which is the only moment this presser runs today, but agreeing by
+    /// accident is exactly what the locked decision retired.
+    ///
     /// Effects follow the shape the four authored siblings already use — the
     /// confident card buys fans and legacy at the owner's expense, humble buys
     /// the owner and the room and bores the fans, aggressive buys the back page
@@ -520,7 +529,7 @@ enum PressConferenceEngine {
     /// is the same rule `generateVisionQuestion` applies to a title claim.
     private static func generateInheritedRosterQuestion(team: Team, owner: Owner) -> PressQuestion {
         let r = randomReporter()
-        let band = standing(forTeam: team, roster: team.players)
+        let band = standing(forTeam: team, roster: team.currentRoster())
         let ownerWinNow = owner.prefersWinNow
 
         let question: String
