@@ -157,8 +157,9 @@ final class ExtrasCatalog {
         return ownerEntries
     }
 
-    /// The user-avatar portraits of one gender, id-sorted — the two groups the
-    /// picker shows under its existing "Male" / "Female" dividers.
+    /// The user-avatar portraits of one gender, id-sorted — the two halves the
+    /// career-creation picker's "All / Male / Female" filter selects between
+    /// (`UserPortrait.all(gender:)`). 10 male, 10 female.
     func avatars(gender: FacePersonGender) -> [FaceEntry] {
         avatars.filter { FacePersonGender(tag: $0.bucket.gender) == gender }
     }
