@@ -348,7 +348,7 @@ struct MessageDetailView: View {
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "checkmark.circle")
-                    .font(.system(size: 15))
+                    .font(.system(size: 14))
                 Text("Mark as handled")
                     .font(.system(size: 14, weight: .semibold))
             }
