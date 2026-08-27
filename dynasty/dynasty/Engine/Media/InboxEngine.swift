@@ -23,6 +23,29 @@ enum InboxEngine {
         coaches: [Coach],
         owner: Owner?
     ) -> [InboxMessage] {
+        // Stamp the whole batch on the way out. Every letter below carries the
+        // same `dateString` — a display label, not a moment — so the tray had no
+        // way to say how old a letter was. The batch IS one moment, so one stamp
+        // at the boundary beats threading week/season through ninety call sites.
+        phaseMessages(
+            phase: phase, career: career, team: team,
+            coaches: coaches, owner: owner
+        ).map {
+            $0.stamped(
+                week: career.currentWeek,
+                season: career.currentSeason,
+                phase: phase
+            )
+        }
+    }
+
+    private static func phaseMessages(
+        phase: SeasonPhase,
+        career: Career,
+        team: Team,
+        coaches: [Coach],
+        owner: Owner?
+    ) -> [InboxMessage] {
         let dateString = dateLabel(for: phase, career: career)
         let ownerName = owner?.name ?? "The Owner"
         let teamName = team.fullName
@@ -281,7 +304,14 @@ enum InboxEngine {
             League Network Draft Coverage
             """,
             date: dateString,
-            category: .mediaRequest
+            category: .mediaRequest,
+            // A mock draft that names your club and then leaves you nowhere to
+            // go is a dead end. Same two doors the personnel director's mock
+            // memo opens: the mock itself, and our own board to argue with it.
+            attachments: [
+                MessageAttachment(title: "Open Mock Draft", destination: .mockDraft),
+                MessageAttachment(title: "Open Big Board", destination: .bigBoard)
+            ]
         ))
 
         // Owner check-in

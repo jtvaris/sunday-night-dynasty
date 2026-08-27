@@ -18,6 +18,38 @@ struct InboxMessage: Identifiable, Codable {
     var isRead: Bool
     let attachments: [MessageAttachment]
 
+    // MARK: - Game time
+    //
+    // `date` is a *display* string baked by `InboxEngine.dateLabel` — one label
+    // per phase, so every letter in a batch printed the same coarse text and
+    // nothing on the model could say how long ago a letter arrived. These three
+    // carry the moment itself. They are optional on purpose: mail written before
+    // the stamp existed (and any producer not yet threaded) decodes with `nil`
+    // and falls back to `date`, so no save loses its tray.
+
+    /// League week the message was written in, if the producer knew it.
+    let sentWeek: Int?
+    /// League season the message was written in.
+    let sentSeason: Int?
+    /// Phase the message was written in.
+    let sentPhase: SeasonPhase?
+
+    // MARK: - Tray state
+
+    /// Pinned letters hold the top of the tray regardless of age.
+    var isPinned: Bool
+    /// Archived letters drop out of every lens except `.archived`.
+    var isArchived: Bool
+    /// Set once an `actionRequired` letter has been dealt with — either the user
+    /// followed its call to action or marked it handled by hand. Reading a letter
+    /// is not the same as doing what it asked, which is why `isRead` cannot serve.
+    var actionCompleted: Bool
+
+    /// Whether this letter is still asking for something.
+    var isActionOutstanding: Bool {
+        actionRequired && !actionCompleted
+    }
+
     init(
         id: UUID = UUID(),
         sender: MessageSender,
@@ -28,7 +60,13 @@ struct InboxMessage: Identifiable, Codable {
         actionRequired: Bool = false,
         actionDestination: TaskDestination? = nil,
         isRead: Bool = false,
-        attachments: [MessageAttachment] = []
+        attachments: [MessageAttachment] = [],
+        sentWeek: Int? = nil,
+        sentSeason: Int? = nil,
+        sentPhase: SeasonPhase? = nil,
+        isPinned: Bool = false,
+        isArchived: Bool = false,
+        actionCompleted: Bool = false
     ) {
         self.id = id
         self.sender = sender
@@ -40,6 +78,125 @@ struct InboxMessage: Identifiable, Codable {
         self.actionDestination = actionDestination
         self.isRead = isRead
         self.attachments = attachments
+        self.sentWeek = sentWeek
+        self.sentSeason = sentSeason
+        self.sentPhase = sentPhase
+        self.isPinned = isPinned
+        self.isArchived = isArchived
+        self.actionCompleted = actionCompleted
+    }
+
+    // MARK: - Codable
+    //
+    // Hand-rolled `init(from:)` for ONE reason: `Career.inbox` decodes the whole
+    // mailbox with `try?` and returns `[]` on failure, so a synthesized decoder
+    // meeting a save written before these keys existed would throw `keyNotFound`
+    // and silently erase the user's tray. Every new key is `decodeIfPresent`.
+
+    private enum CodingKeys: String, CodingKey {
+        case id, sender, subject, body, date, category
+        case actionRequired, actionDestination, isRead, attachments
+        case sentWeek, sentSeason, sentPhase
+        case isPinned, isArchived, actionCompleted
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        sender = try container.decode(MessageSender.self, forKey: .sender)
+        subject = try container.decode(String.self, forKey: .subject)
+        body = try container.decode(String.self, forKey: .body)
+        date = try container.decode(String.self, forKey: .date)
+        category = try container.decode(MessageCategory.self, forKey: .category)
+        actionRequired = try container.decode(Bool.self, forKey: .actionRequired)
+        actionDestination = try container.decodeIfPresent(TaskDestination.self, forKey: .actionDestination)
+        isRead = try container.decode(Bool.self, forKey: .isRead)
+        attachments = try container.decodeIfPresent([MessageAttachment].self, forKey: .attachments) ?? []
+        sentWeek = try container.decodeIfPresent(Int.self, forKey: .sentWeek)
+        sentSeason = try container.decodeIfPresent(Int.self, forKey: .sentSeason)
+        sentPhase = try container.decodeIfPresent(SeasonPhase.self, forKey: .sentPhase)
+        isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
+        isArchived = try container.decodeIfPresent(Bool.self, forKey: .isArchived) ?? false
+        actionCompleted = try container.decodeIfPresent(Bool.self, forKey: .actionCompleted) ?? false
+    }
+
+    // MARK: - Stamping
+
+    /// A copy of this message stamped with the game time it was written at.
+    ///
+    /// Lets a producer stamp a whole batch on the way out rather than repeat
+    /// three arguments at ninety construction sites.
+    func stamped(week: Int, season: Int, phase: SeasonPhase) -> InboxMessage {
+        InboxMessage(
+            id: id,
+            sender: sender,
+            subject: subject,
+            body: body,
+            date: date,
+            category: category,
+            actionRequired: actionRequired,
+            actionDestination: actionDestination,
+            isRead: isRead,
+            attachments: attachments,
+            sentWeek: week,
+            sentSeason: season,
+            sentPhase: phase,
+            isPinned: isPinned,
+            isArchived: isArchived,
+            actionCompleted: actionCompleted
+        )
+    }
+
+    // MARK: - Relative time
+
+    /// Compact, *relative* game time for a list row — "This week", "3 weeks ago",
+    /// "Last season", or the phase name inside the current offseason.
+    ///
+    /// Falls back to the stamped `date` string for any message that carries no
+    /// game time, with the redundant "Offseason - " prefix and the current
+    /// season's own year trimmed off so the column still reads as one column.
+    func timeLabel(currentWeek: Int, currentSeason: Int, currentPhase: SeasonPhase) -> String {
+        guard let season = sentSeason, let phase = sentPhase else {
+            return Self.compactedFallback(date, currentSeason: currentSeason)
+        }
+
+        if season != currentSeason {
+            let gap = currentSeason - season
+            guard gap > 0 else { return Self.compactedFallback(date, currentSeason: currentSeason) }
+            return gap == 1 ? "Last season" : "\(gap) seasons ago"
+        }
+
+        // Only the phases that actually count game weeks can express a week gap;
+        // the offseason has phases, not weeks, so it names itself instead.
+        guard Self.countsGameWeeks(phase), Self.countsGameWeeks(currentPhase),
+              let week = sentWeek, week > 0, currentWeek > 0 else {
+            return phase.displayName
+        }
+
+        let gap = currentWeek - week
+        if gap <= 0 { return "This week" }
+        if gap == 1 { return "Last week" }
+        return "\(gap) weeks ago"
+    }
+
+    private static func countsGameWeeks(_ phase: SeasonPhase) -> Bool {
+        switch phase {
+        case .regularSeason, .tradeDeadline, .playoffs: return true
+        default:                                        return false
+        }
+    }
+
+    /// "Offseason - The Combine, 2026" → "The Combine" in season 2026.
+    private static func compactedFallback(_ raw: String, currentSeason: Int) -> String {
+        var label = raw
+        if label.hasPrefix("Offseason - ") {
+            label = String(label.dropFirst("Offseason - ".count))
+        }
+        for suffix in [", Season \(currentSeason)", ", \(currentSeason)"] where label.hasSuffix(suffix) {
+            label = String(label.dropLast(suffix.count))
+            break
+        }
+        return label
     }
 }
 
@@ -154,6 +311,7 @@ enum InboxFilter: String, CaseIterable {
     case all             = "All"
     case actionRequired  = "Action Required"
     case unread          = "Unread"
+    case archived        = "Archived"
 
     /// R38: localized chip label — the raw value stays the stable identifier.
     var label: String {
@@ -161,17 +319,24 @@ enum InboxFilter: String, CaseIterable {
         case .all:            return String(localized: "All")
         case .actionRequired: return String(localized: "Action Required")
         case .unread:         return String(localized: "Unread")
+        case .archived:       return String(localized: "Archived")
         }
     }
 
     func matches(_ message: InboxMessage) -> Bool {
         switch self {
         case .all:
-            return true
+            // Archiving is the "not now" gesture: an archived letter leaves the
+            // three working lenses and lives only under its own.
+            return !message.isArchived
         case .actionRequired:
-            return message.actionRequired
+            // A handled letter drops out of the lens, otherwise the lens can
+            // never empty — which was the whole complaint.
+            return message.isActionOutstanding && !message.isArchived
         case .unread:
-            return !message.isRead
+            return !message.isRead && !message.isArchived
+        case .archived:
+            return message.isArchived
         }
     }
 }
