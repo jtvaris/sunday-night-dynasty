@@ -8892,8 +8892,25 @@ enum WeekAdvancer {
         // Scale per-player estimated training pts off cumulativeLoad as a proxy
         // for how engaged each player has been in camp activities.
         for player in roster {
-            // Load 0..200 → trainingPts 0..30 (matches CampGradeEvaluator's cap).
-            let trainingPts = min(30, max(0, player.cumulativeLoad / 6))
+            // Load → trainingPts 0…30, anchored on what the camp scheduler can
+            // ACTUALLY emit rather than on the 0…200 the runaway guard implies.
+            //
+            // This divided by 6, i.e. it assumed a camp reaching ~180. The
+            // measured end-of-cycle distribution (`./run.sh lockerroom`,
+            // section B) is mean 50, p90 64, max ~89 — so the 40-point training
+            // term paid out 1…9 of 40 and the letter was decided by `OVR/4`
+            // plus a fixed snap score. Modelled over that distribution the
+            // whole league graded C or D: 0 % A, 0 % B, 66 % D.
+            //
+            // `WorkloadEngine.burnoutFloor` is the right anchor because it is
+            // the top of the meaningful range by construction — the load at
+            // which a man reads Burnt — and it moves with the measured curve
+            // whenever the scheduler changes, so this cannot silently drift
+            // again. Re-modelled: A 1.4 %, B 33.4 %, C 57.5 %, D 7.7 %.
+            let trainingPts = min(30, max(
+                0,
+                player.cumulativeLoad * 30 / WorkloadEngine.burnoutFloor
+            ))
             // Snap volume estimate from yearsPro: vets coast (40 snaps), rooks
             // earn it (70 snaps). Real preseason stats override later.
             let estimatedSnaps = player.yearsPro >= 4 ? 35 : 60
