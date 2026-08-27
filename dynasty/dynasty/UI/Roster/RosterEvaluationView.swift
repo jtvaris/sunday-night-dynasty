@@ -23,12 +23,31 @@ private struct EvalPositionGroup: Identifiable {
 
 // MARK: - Key Decision
 
-private struct KeyDecision: Identifiable {
+/// One ranked roster decision — a deal running out, a contract out of step with
+/// the market, a man thinking about walking away.
+///
+/// Internal rather than `private` because the Roster screen prints the top three
+/// of this same list (#3172). The alternative was a second generator over there,
+/// and two generators drift apart the first week either recommendation is
+/// edited — so there is one, ``KeyDecisionBuilder``, and both screens read it.
+struct KeyDecision: Identifiable {
     /// `CaseIterable` so the filter strip can offer the kinds in a fixed order
     /// rather than in whatever order the roster happens to produce them, and
     /// `Hashable` because `DSLensTabs` selects on the value itself.
     enum DecisionType: Hashable, CaseIterable {
         case expiringContract, overpaid, underpaid, agingVeteran, consideringRetirement
+
+        /// The row marker — one word, one colour. Read by both screens so
+        /// "EXPIRING" is the same word in the same amber wherever it appears.
+        var badge: (label: String, color: Color) {
+            switch self {
+            case .expiringContract:       return ("EXPIRING", .warning)
+            case .overpaid:               return ("OVERPAID", .danger)
+            case .underpaid:              return ("UNDERPAID", .success)
+            case .agingVeteran:           return ("AGING", .textTertiary)
+            case .consideringRetirement:  return ("RETIRING?", .danger)
+            }
+        }
     }
     let id: UUID
     let player: Player
@@ -43,6 +62,201 @@ private struct KeyDecision: Identifiable {
         self.type = type
         self.recommendation = recommendation
         self.retirementChance = retirementChance
+    }
+}
+
+// MARK: - Key Decision Builder
+
+/// The one generator behind Roster Evaluation's "Key Decisions" list and the
+/// Roster screen's top-three card (#3172).
+///
+/// Lifted out of `RosterEvaluationView` unchanged — same rules, same order, same
+/// fifteen-row cap — so the two screens cannot disagree about who the pressing
+/// decisions are or what to do about them.
+enum KeyDecisionBuilder {
+
+    /// Build the ranked list.
+    ///
+    /// - Parameters:
+    ///   - availableCap: the club's room, read only to decide whether the
+    ///     franchise tag is worth naming for an elite expiring player. `nil` —
+    ///     a caller that does not hold the club's ledger — simply never
+    ///     mentions the tag.
+    ///   - franchiseTagValue: tag cost at a position. It needs the LEAGUE's
+    ///     top-5 salaries there, which the roster screen does not fetch, so it
+    ///     is a closure defaulting to "no quote" rather than a hard dependency.
+    static func build(
+        players: [Player],
+        salaryCap: Int,
+        availableCap: Int? = nil,
+        franchiseTagValue: (Position) -> Int = { _ in 0 }
+    ) -> [KeyDecision] {
+        var decisions: [KeyDecision] = []
+
+        for player in players {
+            let marketValue = ContractEngine.estimateMarketValue(player: player, salaryCap: salaryCap)
+            let salary = player.annualSalary
+            let isPastPeak = player.age > player.position.peakAgeRange.upperBound
+
+            // Skip players who have already been extended (contract > 1 year means not expiring)
+            // Task 7: Extended players should not appear as expiring
+
+            // Check retirement first — players 34+ may be considering retirement
+            let retireChance = retirementChance(for: player)
+            if retireChance > 0 {
+                let pct = Int(retireChance * 100)
+                decisions.append(KeyDecision(
+                    id: UUID(), // Use unique ID so it doesn't collide with other decisions for same player
+                    player: player,
+                    type: .consideringRetirement,
+                    recommendation: "\(pct)% chance of retirement. \(player.isInjured ? "Injury history increases risk. " : "")\(player.morale < 50 ? "Low morale — may walk away. " : "")Consider talking to him about staying.",
+                    retirementChance: retireChance
+                ))
+            }
+
+            // Expiring contracts — only show if contractYearsRemaining <= 1
+            if player.contractYearsRemaining <= 1 {
+                let rec = expiringRecommendation(
+                    player: player,
+                    marketValue: marketValue,
+                    salaryCap: salaryCap,
+                    availableCap: availableCap,
+                    franchiseTagValue: franchiseTagValue
+                )
+                decisions.append(KeyDecision(
+                    id: player.id,
+                    player: player,
+                    type: .expiringContract,
+                    recommendation: rec
+                ))
+            }
+            // Overpaid: salary is more than 30% above market value
+            else if salary > Int(Double(marketValue) * 1.3) {
+                let excess = formatMillions(salary - marketValue)
+                decisions.append(KeyDecision(
+                    id: UUID(),
+                    player: player,
+                    type: .overpaid,
+                    recommendation: "Paying \(excess) above market value. Consider restructuring or cutting."
+                ))
+            }
+            // Underpaid: market value more than 40% above salary — trade/holdout risk
+            else if marketValue > Int(Double(salary) * 1.4) && player.contractYearsRemaining <= 2 {
+                let upside = formatMillions(marketValue - salary)
+                decisions.append(KeyDecision(
+                    id: UUID(),
+                    player: player,
+                    type: .underpaid,
+                    recommendation: "Worth \(upside) more than current deal. Extension risk — act before he walks."
+                ))
+            }
+            // Aging veteran: past peak, still on a meaningful salary
+            else if isPastPeak && salary > 3_000 && player.overall < 75 {
+                let yearsOver = player.age - player.position.peakAgeRange.upperBound
+                decisions.append(KeyDecision(
+                    id: UUID(),
+                    player: player,
+                    type: .agingVeteran,
+                    recommendation: "\(yearsOver) year\(yearsOver == 1 ? "" : "s") past peak age. Declining production — evaluate before committing long-term."
+                ))
+            }
+        }
+
+        // Sort: retirement first, then expiring, overpaid, underpaid, aging
+        let order: [KeyDecision.DecisionType: Int] = [
+            .consideringRetirement: 0, .expiringContract: 1, .overpaid: 2, .underpaid: 3, .agingVeteran: 4
+        ]
+        return decisions
+            .sorted { (order[$0.type] ?? 99) < (order[$1.type] ?? 99) }
+            .prefix(15)
+            .map { $0 }
+    }
+
+    /// Calculate retirement chance for a player based on age, injuries, and morale.
+    static func retirementChance(for player: Player) -> Double {
+        guard player.age >= 34 else { return 0.0 }
+        var chance: Double
+        switch player.age {
+        case 34:    chance = 0.10
+        case 35:    chance = 0.25
+        case 36:    chance = 0.40
+        case 37:    chance = 0.60
+        default:    chance = 0.80  // 38+
+        }
+        // Injured players retire more often
+        if player.isInjured {
+            chance += 0.15
+        }
+        // Low morale increases retirement chance
+        if player.morale < 50 {
+            chance += 0.15
+        } else if player.morale < 65 {
+            chance += 0.05
+        }
+        // K/P can play longer
+        if player.position == .K || player.position == .P {
+            chance *= 0.5
+        }
+        return min(0.95, chance)
+    }
+
+    /// Money, in the roster screens' voice. `RosterEvaluationView.formatMillions`
+    /// delegates here so a figure quoted in a recommendation and the same figure
+    /// quoted in the cap outlook cannot round differently.
+    static func formatMillions(_ thousands: Int) -> String {
+        let millions = Double(thousands) / 1000.0
+        if millions >= 1.0 {
+            return String(format: "$%.1fM", millions)
+        } else {
+            return "$\(thousands)K"
+        }
+    }
+
+    /// The line printed under an expiring contract.
+    ///
+    /// Every clause about money here now has to be paid for by an actual
+    /// comparison. `marketValue` was a parameter this body never read, so a
+    /// $950K backup and a $5.3M starter were both told their output was
+    /// "declining relative to cost" — one of them is on the minimum and cannot
+    /// be a cost problem at all. And the franchise tag was the final `else`,
+    /// reachable only at 65-69 OVR: the app offered a raise to the one player
+    /// whose deal sits under the tag floor, and never mentioned the tag to the
+    /// star it exists for.
+    private static func expiringRecommendation(
+        player: Player,
+        marketValue: Int,
+        salaryCap: Int,
+        availableCap: Int?,
+        franchiseTagValue: (Position) -> Int
+    ) -> String {
+        let isPastPeak = player.age > player.position.peakAgeRange.upperBound
+        let salary = player.annualSalary
+
+        if player.overall >= 80 && !isPastPeak {
+            // The tag is worth naming only when an extension does not fit: it
+            // costs the top-5 average at the position, so it is the expensive
+            // way to keep a man one more year, not the cheap one.
+            if let availableCap, availableCap < marketValue {
+                let tag = franchiseTagValue(player.position)
+                if tag > 0 {
+                    return "Elite and in his prime, with no room to extend him. The tag holds him a year at \(formatMillions(tag))."
+                }
+            }
+            return "Elite player still in his prime. Prioritize extension before free agency."
+        } else if player.overall >= 70 && !isPastPeak {
+            return "Solid contributor with value. Re-sign at or near his \(formatMillions(marketValue)) market value."
+        } else if isPastPeak || player.overall < 65 {
+            // A deal is a COST problem only when the overpay is itself worth
+            // more than a minimum contract. At $950K against a $750K market
+            // value there is no money to save, whatever his age — which is why
+            // the old copy told the user to walk away from his own cheap depth.
+            let overpay = salary - marketValue
+            return overpay > ContractEngine.veteranMinimum(cap: salaryCap)
+                ? "Paying \(formatMillions(salary)) against a \(formatMillions(marketValue)) market value. Consider letting him walk."
+                : "\(isPastPeak ? "Past peak" : "Rotational") at \(formatMillions(salary)) — no money to save here. Re-sign as depth if he'll take it."
+        } else {
+            return "Fringe starter. Let him reach the market and re-sign only near \(formatMillions(marketValue))."
+        }
     }
 }
 
@@ -79,6 +293,24 @@ struct RosterEvaluationView: View {
     @State private var allPlayers: [Player] = []
     @State private var allTeams: [Team] = []
     @State private var defensiveScheme: DefensiveScheme = .base43
+
+    // MARK: - League Standing per Group (#3320)
+
+    /// Where one position group sits against the rest of the league.
+    private struct LeagueGroupStanding {
+        let rank: Int
+        let of: Int
+    }
+
+    /// Group id → league rank, filled once by `loadData`.
+    ///
+    /// Cached rather than computed, because `sortedGroupRows` — the obvious
+    /// place for it — is a plain computed property that re-runs on EVERY state
+    /// change on this screen, expanding a single Key Decision row included.
+    /// Ranking nine groups means bucketing the league's whole player pool
+    /// (~1700 rows), and doing that per redraw is how a screen starts dropping
+    /// frames on a tap that had nothing to do with it.
+    @State private var leagueGroupRanks: [String: LeagueGroupStanding] = [:]
 
     // MARK: - Table Sorting (#250)
     @State private var sortColumn: SortColumn = .group
@@ -216,7 +448,13 @@ struct RosterEvaluationView: View {
         .navigationTitle("Roster Evaluation")
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
-        .task { loadData() }
+        // `onAppear`, not `task`: #3326 put a contract negotiation one push away
+        // from a Key Decision row, and a signed extension changes the salary,
+        // the years and the cap this whole screen is quoting. `task` runs once,
+        // so the user came back to a screen still printing the deal he had just
+        // replaced; `onAppear` fires again on every return from a push, and
+        // `loadData` is synchronous and idempotent.
+        .onAppear { loadData() }
         .sheet(item: $editingGroup) { group in
             rosterNoteSheet(group: group)
         }
@@ -1317,6 +1555,16 @@ struct RosterEvaluationView: View {
                 }
             }
 
+            // #3326: the ONE action an expanded decision commits to.
+            //
+            // "Let walk" and "Tag" stay reading, deliberately. There is no
+            // let-walk flag on `Player` or `Career` for a button to set — the
+            // closest thing the game has is simply not re-signing him — and the
+            // club's single franchise tag is committed from the pinned bar
+            // (§2.5), not from a row inside a list. Both would need state that
+            // does not exist yet; this one needs nothing new.
+            negotiateButton(for: player)
+
             // Link to player detail — styled as a prominent tappable button
             NavigationLink(destination: PlayerDetailView(player: player)) {
                 HStack(spacing: 8) {
@@ -1347,6 +1595,69 @@ struct RosterEvaluationView: View {
         .padding(.bottom, 12)
         .padding(.top, 4)
         .background(Color.backgroundSecondary.opacity(0.5))
+    }
+
+    /// #3326: open the contract conversation with this man from the decision
+    /// that named him, instead of making the user find him again on another
+    /// screen.
+    ///
+    /// A push rather than a cover: it is the one conversation this screen
+    /// starts, and the thread persists itself, so backing out of it is the same
+    /// gesture as backing out of anything else here. `.extendExisting` because
+    /// every man on this list is still under contract — an expiring deal reads
+    /// `contractYearsRemaining == 1` right up to the rollover — so new years are
+    /// ADDED after the one that is running, exactly as `PlayerDetailView` books
+    /// them. Blue rather than gold: the gold button under it is the screen's
+    /// existing navigation affordance, and two golds in one stack say nothing.
+    private func negotiateButton(for player: Player) -> some View {
+        NavigationLink {
+            ContractNegotiationView(
+                player: player,
+                negotiationType: .extend,
+                teamCapSpace: max(0, team?.availableCap ?? 0),
+                onDealCompleted: { offer in
+                    // Through the engine, which is what actually moves
+                    // `team.currentCapUsage` and writes the detailed contract
+                    // row. Deliberately does NOT reload this screen from here:
+                    // the roster refetch would drop the very row this push came
+                    // from and pop the user out of the handshake. The reload
+                    // happens on return, in `onAppear`.
+                    ContractEngine.applyNegotiatedDeal(
+                        player: player,
+                        team: team,
+                        offer: offer,
+                        application: .extendExisting,
+                        capMode: career.capMode,
+                        careerID: career.id,
+                        modelContext: modelContext
+                    )
+                    try? modelContext.save()
+                }
+            )
+        } label: {
+            HStack(spacing: DSSpacing.xs) {
+                Image(systemName: "bubble.left.and.text.bubble.right")
+                    .font(.system(size: DSType.Size.body, weight: .semibold))
+                Text("Negotiate")
+                    .font(.subheadline.weight(.bold))
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+            }
+            .foregroundStyle(Color.accentBlue)
+            .padding(.horizontal, DSSpacing.sm)
+            .padding(.vertical, DSSpacing.xs)
+            .background(
+                RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                    .fill(Color.accentBlue.opacity(0.1))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                            .strokeBorder(Color.accentBlue.opacity(0.3), lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .padding(.top, DSSpacing.xxs)
     }
 
     private func financialDetailLine(icon: String, text: String, color: Color) -> some View {
@@ -1383,15 +1694,7 @@ struct RosterEvaluationView: View {
     }
 
     private func decisionTypeBadge(_ type: KeyDecision.DecisionType) -> some View {
-        let (label, color): (String, Color) = {
-            switch type {
-            case .expiringContract:       return ("EXPIRING", .warning)
-            case .overpaid:               return ("OVERPAID", .danger)
-            case .underpaid:              return ("UNDERPAID", .success)
-            case .agingVeteran:           return ("AGING", .textTertiary)
-            case .consideringRetirement:  return ("RETIRING?", .danger)
-            }
-        }()
+        let (label, color) = type.badge
 
         return Text(label)
             .font(.caption2.weight(.bold))
@@ -1946,6 +2249,11 @@ struct RosterEvaluationView: View {
                 Color.backgroundPrimary.ignoresSafeArea()
                 ScrollView {
                     VStack(spacing: 20) {
+                        // #3320: the league comparison, one number per group.
+                        if let standing = leagueGroupRanks[group.id] {
+                            leagueStandingRow(standing)
+                        }
+
                         // #266: Your Assessment picker
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Your Assessment")
@@ -2052,6 +2360,49 @@ struct RosterEvaluationView: View {
         .presentationDetents([.large])
         .presentationSizing(.page)
         .presentationDragIndicator(.visible)
+    }
+
+    /// #3320: "4th of 32 clubs" — the group's place in the league by average
+    /// OVR. Read-only, and the only comparison the sheet makes.
+    private func leagueStandingRow(_ standing: LeagueGroupStanding) -> some View {
+        // Inline rather than a `-> Color` helper: this paints a PLACE, not a
+        // rating, so `Color.forRating` is the wrong ladder and a bespoke second
+        // one is exactly what the token lint is there to stop growing.
+        let top = max(1, standing.of / 4)
+        let bottom = standing.of - top
+        let tint: Color = standing.rank <= top
+            ? .success
+            : (standing.rank > bottom ? .warning : .accentBlue)
+
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("League Standing")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color.textSecondary)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(ordinalRank(standing.rank))
+                    .font(.system(size: DSType.Size.title2, weight: .heavy).monospacedDigit())
+                    .foregroundStyle(tint)
+                Text("of \(standing.of) clubs by average OVR")
+                    .font(.caption)
+                    .foregroundStyle(Color.textSecondary)
+                Spacer(minLength: 0)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("League standing, \(ordinalRank(standing.rank)) of \(standing.of) clubs by average overall")
+    }
+
+    private func ordinalRank(_ n: Int) -> String {
+        let suffix: String
+        switch (n % 100, n % 10) {
+        case (11, _), (12, _), (13, _): suffix = "th"
+        case (_, 1):                    suffix = "st"
+        case (_, 2):                    suffix = "nd"
+        case (_, 3):                    suffix = "rd"
+        default:                        suffix = "th"
+        }
+        return "\(n)\(suffix)"
     }
 
     private func priorityColor(_ priority: String) -> Color {
@@ -2322,151 +2673,21 @@ struct RosterEvaluationView: View {
         return EvalPositionGroup.allGroups.first(where: { $0.positions.contains(topNeed) })
     }
 
-    // MARK: - Key Decision Builder
+    // MARK: - Key Decisions
 
-    /// Calculate retirement chance for a player based on age, injuries, and morale.
-    private func retirementChance(for player: Player) -> Double {
-        guard player.age >= 34 else { return 0.0 }
-        var chance: Double
-        switch player.age {
-        case 34:    chance = 0.10
-        case 35:    chance = 0.25
-        case 36:    chance = 0.40
-        case 37:    chance = 0.60
-        default:    chance = 0.80  // 38+
-        }
-        // Injured players retire more often
-        if player.isInjured {
-            chance += 0.15
-        }
-        // Low morale increases retirement chance
-        if player.morale < 50 {
-            chance += 0.15
-        } else if player.morale < 65 {
-            chance += 0.05
-        }
-        // K/P can play longer
-        if player.position == .K || player.position == .P {
-            chance *= 0.5
-        }
-        return min(0.95, chance)
-    }
-
-    private func buildKeyDecisions() -> [KeyDecision] {
-        var decisions: [KeyDecision] = []
-
-        for player in players {
-            let marketValue = ContractEngine.estimateMarketValue(player: player, salaryCap: salaryCap)
-            let salary = player.annualSalary
-            let isPastPeak = player.age > player.position.peakAgeRange.upperBound
-
-            // Skip players who have already been extended (contract > 1 year means not expiring)
-            // Task 7: Extended players should not appear as expiring
-
-            // Check retirement first — players 34+ may be considering retirement
-            let retireChance = retirementChance(for: player)
-            if retireChance > 0 {
-                let pct = Int(retireChance * 100)
-                decisions.append(KeyDecision(
-                    id: UUID(), // Use unique ID so it doesn't collide with other decisions for same player
-                    player: player,
-                    type: .consideringRetirement,
-                    recommendation: "\(pct)% chance of retirement. \(player.isInjured ? "Injury history increases risk. " : "")\(player.morale < 50 ? "Low morale — may walk away. " : "")Consider talking to him about staying.",
-                    retirementChance: retireChance
-                ))
-            }
-
-            // Expiring contracts — only show if contractYearsRemaining <= 1
-            if player.contractYearsRemaining <= 1 {
-                let rec = expiringRecommendation(player: player, marketValue: marketValue)
-                decisions.append(KeyDecision(
-                    id: player.id,
-                    player: player,
-                    type: .expiringContract,
-                    recommendation: rec
-                ))
-            }
-            // Overpaid: salary is more than 30% above market value
-            else if salary > Int(Double(marketValue) * 1.3) {
-                let excess = formatMillions(salary - marketValue)
-                decisions.append(KeyDecision(
-                    id: UUID(),
-                    player: player,
-                    type: .overpaid,
-                    recommendation: "Paying \(excess) above market value. Consider restructuring or cutting."
-                ))
-            }
-            // Underpaid: market value more than 40% above salary — trade/holdout risk
-            else if marketValue > Int(Double(salary) * 1.4) && player.contractYearsRemaining <= 2 {
-                let upside = formatMillions(marketValue - salary)
-                decisions.append(KeyDecision(
-                    id: UUID(),
-                    player: player,
-                    type: .underpaid,
-                    recommendation: "Worth \(upside) more than current deal. Extension risk — act before he walks."
-                ))
-            }
-            // Aging veteran: past peak, still on a meaningful salary
-            else if isPastPeak && salary > 3_000 && player.overall < 75 {
-                let yearsOver = player.age - player.position.peakAgeRange.upperBound
-                decisions.append(KeyDecision(
-                    id: UUID(),
-                    player: player,
-                    type: .agingVeteran,
-                    recommendation: "\(yearsOver) year\(yearsOver == 1 ? "" : "s") past peak age. Declining production — evaluate before committing long-term."
-                ))
-            }
-        }
-
-        // Sort: retirement first, then expiring, overpaid, underpaid, aging
-        let order: [KeyDecision.DecisionType: Int] = [
-            .consideringRetirement: 0, .expiringContract: 1, .overpaid: 2, .underpaid: 3, .agingVeteran: 4
-        ]
-        return decisions
-            .sorted { (order[$0.type] ?? 99) < (order[$1.type] ?? 99) }
-            .prefix(15)
-            .map { $0 }
-    }
-
-    /// The line printed under an expiring contract.
+    /// This screen's ranked decision list.
     ///
-    /// Every clause about money here now has to be paid for by an actual
-    /// comparison. `marketValue` was a parameter this body never read, so a
-    /// $950K backup and a $5.3M starter were both told their output was
-    /// "declining relative to cost" — one of them is on the minimum and cannot
-    /// be a cost problem at all. And the franchise tag was the final `else`,
-    /// reachable only at 65-69 OVR: the app offered a raise to the one player
-    /// whose deal sits under the tag floor, and never mentioned the tag to the
-    /// star it exists for.
-    private func expiringRecommendation(player: Player, marketValue: Int) -> String {
-        let isPastPeak = player.age > player.position.peakAgeRange.upperBound
-        let salary = player.annualSalary
-
-        if player.overall >= 80 && !isPastPeak {
-            // The tag is worth naming only when an extension does not fit: it
-            // costs the top-5 average at the position, so it is the expensive
-            // way to keep a man one more year, not the cheap one.
-            if let team, team.availableCap < marketValue {
-                let tag = franchiseTagValue(for: player.position)
-                if tag > 0 {
-                    return "Elite and in his prime, with no room to extend him. The tag holds him a year at \(formatMillions(tag))."
-                }
-            }
-            return "Elite player still in his prime. Prioritize extension before free agency."
-        } else if player.overall >= 70 && !isPastPeak {
-            return "Solid contributor with value. Re-sign at or near his \(formatMillions(marketValue)) market value."
-        } else if isPastPeak || player.overall < 65 {
-            // A deal is a COST problem only when the overpay is itself worth
-            // more than a minimum contract. At $950K against a $750K market
-            // value there is no money to save, whatever his age — which is why
-            // the old copy told the user to walk away from his own cheap depth.
-            let overpay = salary - marketValue
-            return overpay > ContractEngine.veteranMinimum(cap: salaryCap)
-                ? "Paying \(formatMillions(salary)) against a \(formatMillions(marketValue)) market value. Consider letting him walk."
-                : "\(isPastPeak ? "Past peak" : "Rotational") at \(formatMillions(salary)) — no money to save here. Re-sign as depth if he'll take it."
-        } else {
-            return "Fringe starter. Let him reach the market and re-sign only near \(formatMillions(marketValue))."
-        }
+    /// The rules moved out to ``KeyDecisionBuilder`` when the Roster screen
+    /// started printing the top three of the same list (#3172); what stays here
+    /// is the two inputs only this screen holds — the club's cap room, and the
+    /// league-wide salaries the franchise tag is priced from.
+    private func buildKeyDecisions() -> [KeyDecision] {
+        KeyDecisionBuilder.build(
+            players: players,
+            salaryCap: salaryCap,
+            availableCap: team?.availableCap,
+            franchiseTagValue: { franchiseTagValue(for: $0) }
+        )
     }
 
     /// Tag cost for a position: the average of the league's top-5 salaries
@@ -3058,12 +3279,7 @@ struct RosterEvaluationView: View {
     // MARK: - Formatting Helpers
 
     private func formatMillions(_ thousands: Int) -> String {
-        let millions = Double(thousands) / 1000.0
-        if millions >= 1.0 {
-            return String(format: "$%.1fM", millions)
-        } else {
-            return "$\(thousands)K"
-        }
+        KeyDecisionBuilder.formatMillions(thousands)
     }
 
     private func positionSideColor(_ position: Position) -> Color {
@@ -3075,6 +3291,38 @@ struct RosterEvaluationView: View {
     }
 
     // MARK: - Data Loading
+
+    /// #3320: each position group's place in the league, by the group's average
+    /// OVR.
+    ///
+    /// A RANK, not a delta — "12th of 32" answers "is a 67 weak here?" without
+    /// asking the reader to carry a league average around in his head, and it
+    /// costs no column width, which is why it lives in the group's detail sheet
+    /// and not on the row (Group/Best/Strt/Depth plus two badge stacks already
+    /// fill an iPhone).
+    ///
+    /// Free agents carry no `teamID` and so rank nobody. Ties share the better
+    /// place: two clubs averaging 74.0 at receiver are both 5th.
+    private static func computeLeagueGroupRanks(
+        allPlayers: [Player],
+        ownTeamID: UUID
+    ) -> [String: LeagueGroupStanding] {
+        var result: [String: LeagueGroupStanding] = [:]
+        for group in EvalPositionGroup.allGroups {
+            let positions = Set(group.positions)
+            var totals: [UUID: (sum: Int, count: Int)] = [:]
+            for player in allPlayers {
+                guard let teamID = player.teamID, positions.contains(player.position) else { continue }
+                let running = totals[teamID] ?? (sum: 0, count: 0)
+                totals[teamID] = (sum: running.sum + player.overall, count: running.count + 1)
+            }
+            let averages = totals.mapValues { Double($0.sum) / Double($0.count) }
+            guard let own = averages[ownTeamID] else { continue }
+            let better = averages.values.filter { $0 > own }.count
+            result[group.id] = LeagueGroupStanding(rank: better + 1, of: averages.count)
+        }
+        return result
+    }
 
     private func loadData() {
         guard let teamID = career.teamID else { return }
@@ -3103,6 +3351,10 @@ struct RosterEvaluationView: View {
         allTeams = (try? modelContext.fetch(FetchDescriptor<Team>(
             predicate: #Predicate { $0.careerID == cid }
         ))) ?? []
+
+        // #3320: one pass over the league pool per group, here rather than in
+        // the row builder — see `leagueGroupRanks`.
+        leagueGroupRanks = Self.computeLeagueGroupRanks(allPlayers: allPlayers, ownTeamID: fetchedTeamID)
 
         // Fetch the defensive coordinator's scheme
         let coachDesc = FetchDescriptor<Coach>(

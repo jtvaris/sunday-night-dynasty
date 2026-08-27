@@ -2429,6 +2429,48 @@ struct CareerShellView: View {
             ctx.keyPlayerMentals = readouts
         }
 
+        // #3245: the week's most versatile men, read straight off
+        // `positionFamiliarity`. `conversionCommitFamiliarity` (50) is the bar —
+        // the same number the development engine calls a committed conversion —
+        // so the panel lists men who could genuinely cover a spot rather than
+        // everyone who has ever taken a rep there. Nothing is persisted and
+        // nothing is fed to the simulator: see `GamePlanView.Context.versatility`.
+        if team != nil {
+            let bar = VersatilityDevelopmentEngine.conversionCommitFamiliarity
+            let readouts: [GamePlanView.VersatileReadout] = teamRoster
+                .compactMap { player in
+                    let alternates = Position.allCases
+                        .filter { $0 != player.position && player.familiarity(at: $0) >= bar }
+                        .map {
+                            GamePlanView.VersatileReadout.Alternate(
+                                position: $0,
+                                familiarity: player.familiarity(at: $0)
+                            )
+                        }
+                        .sorted { $0.familiarity > $1.familiarity }
+                    guard !alternates.isEmpty else { return nil }
+                    return GamePlanView.VersatileReadout(
+                        id: player.id,
+                        name: player.fullName,
+                        position: player.position,
+                        alternates: Array(alternates.prefix(3))
+                    )
+                }
+                // Most useful first: the man who covers the most spots, then the
+                // one who covers his best spot best, then by id so the order is
+                // stable across redraws.
+                .sorted {
+                    if $0.alternates.count != $1.alternates.count {
+                        return $0.alternates.count > $1.alternates.count
+                    }
+                    let lhs = $0.alternates.first?.familiarity ?? 0
+                    let rhs = $1.alternates.first?.familiarity ?? 0
+                    if lhs != rhs { return lhs > rhs }
+                    return $0.id.uuidString < $1.id.uuidString
+                }
+            ctx.versatility = Array(readouts.prefix(5))
+        }
+
         return ctx
     }
 
