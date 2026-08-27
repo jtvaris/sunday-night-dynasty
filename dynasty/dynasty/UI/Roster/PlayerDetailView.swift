@@ -1937,6 +1937,16 @@ struct PlayerDetailView: View {
     /// `leagueYearRemaining` the release preview two sections down already uses,
     /// so the number here and the number the ledger moves by cannot disagree.
     /// Sandbox has no cap consequences to state.
+    ///
+    /// **Whose ledger it is depends on whose player he is.** This card renders
+    /// for EVERY non-fogged player the league browser can reach, and
+    /// `TradeCapSplit.traderRelief` is the relief of the club that gives him
+    /// up. Quoting it unqualified on a rival's page printed the RIVAL's saving
+    /// directly above an action bar whose only control is "Trade For", where
+    /// the move goes the other way: `TradeEngine.movePlayer` charges the
+    /// acquiring club `split.salaryAssumed` (and leaves the dead money behind
+    /// with the seller). So the own-roster page quotes the relief and the
+    /// rival's page quotes the charge — both off the same split.
     private var tradeCapReliefText: String? {
         guard let career = careers.first,
               career.capMode != .sandbox,
@@ -1950,6 +1960,13 @@ struct PlayerDetailView: View {
                 week: career.currentWeek
             )
         )
+        guard isUserRosterPlayer else {
+            // Not our man. The dead cap stays on his club's books, so it is
+            // not part of what this move would do to ours — and with no club
+            // of our own there is no "your cap" to charge.
+            guard career.teamID != nil else { return nil }
+            return "Trading for him adds \(formatCapHit(split.salaryAssumed)) to your cap"
+        }
         let relief = split.traderRelief
         let head = relief >= 0
             ? "Trading him frees \(formatCapHit(relief)) of cap"
@@ -2695,10 +2712,12 @@ struct PlayerDetailView: View {
                 // **The warning names the events it feeds.**
                 //
                 // It was a bare `Label`: a real signal with no way to find out
-                // what it costs. `EventEngine.rollEvent` reads
-                // `personality.isDramaticInMedia` in three separate places, and
-                // all three are nameable — so tapping it opens them rather than
-                // leaving the user to infer a mechanic from an adjective.
+                // what it costs. `EventEngine.rollEvent` builds one
+                // `dramaPlayers` list off `personality.isDramaticInMedia` and
+                // steers four things with it — two pool weights, the shared
+                // `negativeBias`, and who the event lands on — so tapping it
+                // opens them rather than leaving the user to infer a mechanic
+                // from an adjective.
                 Button {
                     withAnimation(.easeInOut(duration: 0.15)) {
                         showsDramaTriggers.toggle()
@@ -2724,7 +2743,14 @@ struct PlayerDetailView: View {
                         // Plain prose, no markdown: `DSDetailNote` takes a
                         // `String` and renders it verbatim, so asterisks would
                         // print as asterisks.
-                        text: "Every drama-prone man in the room raises the weekly roll's weight on a Social Media Incident and a Podcast Controversy, and tilts the whole pool toward the negative side — which is what puts a suspension or a clash with the head coach in play. When one of those two lands, he is the man it lands on.",
+                        //
+                        // Every number here is `EventEngine.rollEvent`'s own:
+                        // the two per-man weights, the flat `negativeBias` that
+                        // exists once for the whole room and lands on exactly
+                        // two entries, and `dramaPlayers.randomElement()` — a
+                        // uniform draw among the drama-prone, which is why the
+                        // last sentence promises a candidate and not a name.
+                        text: "Each drama-prone man on the roster adds +3 to the weekly roll's weight on a Social Media Incident and +2 on a Podcast Controversy. Having any at all — one or five, it is the same flat +2 — also nudges two more entries, Suspension and a clash with the head coach. When one of those first two lands, the sim draws its man from the drama-prone group at random: he is a candidate, not a certainty.",
                         icon: "list.bullet.rectangle",
                         tint: .warning
                     )
