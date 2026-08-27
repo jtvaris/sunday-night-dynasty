@@ -240,10 +240,13 @@ struct PlayerRowView: View {
                 spokenLabel: "Scheme fit unknown — he has not taken a rep in this scheme"
             )
         }
-        // Thresholds mirror the development engine's own scheme-fit bands
-        // (`PlayerDevelopmentEngine.updatePotentialRealization`: 0.8 / 0.6 /
-        // 0.4 on a 0–1 scale), so the chip and the engine cannot disagree about
-        // who is comfortable.
+        // Familiarity bands, not fit bands. They used to be described as a
+        // mirror of `PlayerDevelopmentEngine.updatePotentialRealization`'s
+        // 0.8 / 0.6 / 0.4 ladder; #97 / F-71 re-anchored that ladder on
+        // `CoachingEngine.schemeFitNeutral`, and it was never really the same
+        // quantity anyway — this chip reports how well he KNOWS the installed
+        // playbook (0–100), which is one of the two halves `rosterSchemeFit`
+        // weighs, and the smaller half at that.
         let tone: DSStatusPill.Tone
         switch familiarity {
         case 80...:   tone = .ok

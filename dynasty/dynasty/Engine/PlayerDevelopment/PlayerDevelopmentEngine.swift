@@ -246,12 +246,51 @@ enum PlayerDevelopmentEngine {
             strengthBonus = 0.0
         }
 
+        // The merit gate both development channels run once a man is deep in
+        // his prime. The catch-up tail below has had it since plan §5 stage 6;
+        // the base points had never been gated at all (#97 / F-71).
+        //
+        // R is a pure function of the arguments already in hand — attributes,
+        // the stored motivation state, last season's share and the health gate
+        // — so reading it here and again below is one number read twice, not a
+        // second die.
+        // `player.yearsPro`, not `seasonsPro`: `processOffseason` has already
+        // aged him, so this reads "the fifth camp onward" — the same rung the
+        // catch-up table below counts from.
+        let deepInPrime = player.yearsPro >= 5
+            && player.age > peakRange.lowerBound + primeTailYears
+        let primeRealization = realizationFactor(
+            player: player,
+            motivation: motivation,
+            playingTimeShare: playingTimeShare,
+            health: clampedHealth
+        ) * cycleBoost
+        let primeDamper = deepInPrime ? primeWindowDamper(primeRealization) : 1.0
+
         // --- Age factor ---
+        //
+        // #97 / F-71: the in-peak half-rate is the last FLAT fraction left in
+        // the model, and a flat fraction inside the window is a league-wide
+        // ratchet by construction — the exact argument `primeWindowDamper` was
+        // written for on the catch-up channel, never applied to this one. Half a
+        // camp's points landed on every man in the league every year from the
+        // day his window opened to the day it closed: six seasons for an OL,
+        // eight for a QB, ten for a kicker. `DEVELOPMENT_NFL_REFERENCE.md` §2
+        // puts the plateauer — "he is what he is" — at the CENTRE of the
+        // veteran distribution and the ascender at its edge, and a flat 0.5
+        // models neither.
+        //
+        // So the half-rate is merit-gated on the same R and the same
+        // `deepInPrime` condition as the tail: the driven starter keeps every
+        // point he was getting, the plateauing veteran gets what he has earned,
+        // and nothing inside the four-year window the §6 hit-rate curve is
+        // measured over moves at all — `deepInPrime` cannot be true before a
+        // fifth camp.
         let ageFactor: Double
         if player.age < peakRange.lowerBound {
             ageFactor = 1.0       // Full development before peak
         } else {
-            ageFactor = 0.5       // Half development at peak
+            ageFactor = 0.5 * primeDamper   // Half development at peak, on merit
         }
 
         totalPoints *= ageFactor
@@ -449,18 +488,11 @@ enum PlayerDevelopmentEngine {
                 // great room versus a bad one has to be worth more than a tenth
                 // of a player's growth).
                 let coachFactor = min(1.20, max(0.80, coachBonus))
-                let realization = realizationFactor(
-                    player: player,
-                    motivation: motivation,
-                    playingTimeShare: playingTimeShare,
-                    health: clampedHealth
-                ) * cycleBoost
-                let deepInPrime = player.yearsPro >= 5
-                    && player.age > peakRange.lowerBound + primeTailYears
-                let damper = deepInPrime ? primeWindowDamper(realization) : 1.0
+                // The same R and the same damper the age factor above runs on —
+                // computed once, so the two channels can never drift apart.
                 applyCatchUpGrowth(
                     player: player,
-                    fraction: catchUpFraction * realization * coachFactor * damper,
+                    fraction: catchUpFraction * primeRealization * coachFactor * primeDamper,
                     ceiling: ceiling
                 )
             }
@@ -677,6 +709,34 @@ enum PlayerDevelopmentEngine {
         let span = primeDamperCeiling - primeDamperFloor
         return min(1.0, max(0.0, (realization - primeDamperFloor) / span))
     }
+
+    // **Measured and killed (#97 / F-71), so nobody re-tests it: the in-window
+    // tail may not be given a DURATION.** `primeWindowDamper` decides who still
+    // climbs inside the peak window; the obvious companion is how long, since
+    // the tail's own justification above is a bounded thing ("the last stretch
+    // from ~85 to 90+ is exactly what a first-rounder covers in his
+    // mid-twenties") while the code runs it to `peakAgeRange.upperBound` — six
+    // more camps at OL, eight at QB, ten at kicker. Multiplying the damper by a
+    // linear burn-down across the position's own window does move the pyramid,
+    // and in the right direction on both of F-71's asserts at once:
+    //
+    // | burn-down | 6.9b 80+ | 6.9g 33+ | 6.2a R1 elite | 6.2b R2 elite | 6.9a 90+ |
+    // |---|---|---|---|---|---|
+    // | none | 17.67 % | 4.20 % | 11.70 % | 4.40 % | 1.76 % |
+    // | from the midpoint | 16.58 % | **3.70 %** | 7.78 % | 2.22 % | 1.42 % |
+    // | from the window's opening | 14.84 % | **3.51 %** | 5.80 % | 1.67 % | 0.94 % |
+    // | *band* | *[12,19]* | *[≤4.0]* | *[10,18]* | *[3.0,9]* | *[1.0,2.5]* |
+    //
+    // Both versions clear 6.9g, and both break §6.2. The reason is structural
+    // rather than a matter of tuning: **the 80-89 population and the 90+ tail
+    // are the same mechanism.** A cut keyed on AGE cannot separate the elite's
+    // last stretch from the ordinary starter's, because they happen in the same
+    // years — the midpoint split was the attempt to spare exactly those years
+    // and it still cost 3.9 pp of R1 elite to buy 1.1 pp of 80+. Anything that
+    // could separate them would have to be keyed on the ceiling instead, which
+    // is the headroom §6's hit and elite curves are a claim about, and cutting
+    // headroom is the move `DraftClassBuilder.runwayCentre` 0.55 → 0.40 already
+    // failed at.
 
     static let majorInjuryWeeks = 6
 
@@ -1580,15 +1640,44 @@ enum PlayerDevelopmentEngine {
             player.draftTruePotential = player.truePotential
         }
 
-        // Scheme fit contribution: good fit (>0.7) raises ceiling, bad fit (<0.3) lowers it.
+        // Scheme fit contribution: a fit that beats the league's own neutral by
+        // a real margin raises the ceiling, one that falls as far short lowers it.
+        //
+        // **Task #97 / F-71 — this is the morale defect below, in the other half
+        // of the same term.** The ladder used to read 0.8 / 0.6 / 0.4 / 0.2, i.e.
+        // an absolute ladder centred on 0.5. But `rosterSchemeFit` is
+        // deliberately NOT a level: task #54 rebuilt both its halves as an edge
+        // against `CoachingEngine.schemeFitNeutral` precisely so the league's
+        // distribution would be stationary, and that neutral is 0.594. Read
+        // against 0.5, an ORDINARY fit therefore collects ceiling — 18 % of the
+        // league clears 0.80 and half of it clears 0.59 — so the payout rungs
+        // fire on the median locker room and the penalty rungs on almost nobody.
+        // The one consumer of a carefully centred number re-introduced exactly
+        // the non-stationarity the centring existed to remove.
+        //
+        // Measured, not argued (`career` rig, 20 leagues × 30 seasons):
+        // `E[dPot] +0.355/player-season`, and the rung arithmetic over the
+        // measured fit distribution (p10 0.39, p50 0.59, p90 0.86) accounts for
+        // +0.359 of it — i.e. all of it, with the morale half already netting ~0
+        // since its own rung was moved. That is the one-way ceiling ratchet the
+        // morale note names, and this is its larger half: `leaguePot` was still
+        // climbing +0.053/season after thirty seasons and the 80+ share sat on
+        // the 19 % edge of its band with 33+ over its own.
+        //
+        // The SPACING is untouched (±0.30 / ±0.10) and so are the payouts; only
+        // the anchor moves, from an assumed midpoint to the one the fit model is
+        // actually built around. Both ends stay reachable without clamping —
+        // `schemeFitFloor` 0.05 and `schemeFitCeiling` 0.95 sit outside
+        // 0.294…0.894 — which is the property those two rails exist to protect.
+        let fitEdge = schemeFit - CoachingEngine.schemeFitNeutral
         let fitModifier: Int
-        if schemeFit >= 0.8 {
+        if fitEdge >= 0.30 {
             fitModifier = Int.random(in: 1...2)
-        } else if schemeFit >= 0.6 {
+        } else if fitEdge >= 0.10 {
             fitModifier = Int.random(in: 0...1)
-        } else if schemeFit >= 0.4 {
+        } else if fitEdge >= -0.10 {
             fitModifier = 0
-        } else if schemeFit >= 0.2 {
+        } else if fitEdge >= -0.30 {
             fitModifier = Int.random(in: -1...0)
         } else {
             fitModifier = Int.random(in: -2...(-1))

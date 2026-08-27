@@ -2335,14 +2335,25 @@ func crReport(leagues: [CRLeague], elapsed: TimeInterval) {
     // ceiling drift they add up to. THIS is the number the development
     // calibration is sensitive to — a distribution can match on mean and sd and
     // still hand the league a different potential ratchet if its tails differ.
-    let bTop = crShare(fitAll.filter { $0 >= 0.80 }.count, fitAll.count)
-    let bHigh = crShare(fitAll.filter { $0 >= 0.60 && $0 < 0.80 }.count, fitAll.count)
-    let bMid = crShare(fitAll.filter { $0 >= 0.40 && $0 < 0.60 }.count, fitAll.count)
-    let bLow = crShare(fitAll.filter { $0 >= 0.20 && $0 < 0.40 }.count, fitAll.count)
-    let bBot = crShare(fitAll.filter { $0 < 0.20 }.count, fitAll.count)
+    // The rungs are read off `CoachingEngine.schemeFitNeutral` rather than typed
+    // here, because #97 / F-71 moved them: the ladder is an EDGE against the
+    // neutral `rosterSchemeFit` is built around, not an absolute band centred on
+    // 0.5. Typing 0.80 / 0.60 / 0.40 / 0.20 again is how this print would go on
+    // reporting the ratchet the engine no longer has.
+    let rungTop = CoachingEngine.schemeFitNeutral + 0.30
+    let rungHigh = CoachingEngine.schemeFitNeutral + 0.10
+    let rungMid = CoachingEngine.schemeFitNeutral - 0.10
+    let rungLow = CoachingEngine.schemeFitNeutral - 0.30
+    let bTop = crShare(fitAll.filter { $0 >= rungTop }.count, fitAll.count)
+    let bHigh = crShare(fitAll.filter { $0 >= rungHigh && $0 < rungTop }.count, fitAll.count)
+    let bMid = crShare(fitAll.filter { $0 >= rungMid && $0 < rungHigh }.count, fitAll.count)
+    let bLow = crShare(fitAll.filter { $0 >= rungLow && $0 < rungMid }.count, fitAll.count)
+    let bBot = crShare(fitAll.filter { $0 < rungLow }.count, fitAll.count)
     let expectedDrift = (bTop * 1.5 + bHigh * 0.5 - bLow * 0.5 - bBot * 1.5) / 100.0
-    print(String(format: "  updatePotentialRealization buckets: >=.80 %.1f%%  .60-.80 %.1f%%  .40-.60 %.1f%%  .20-.40 %.1f%%  <.20 %.1f%%   E[dPot] %+.3f/player-season",
-                 bTop, bHigh, bMid, bLow, bBot, expectedDrift))
+    print(String(format: "  updatePotentialRealization buckets (rungs = neutral %.3f +-0.30/+-0.10): >=%.2f %.1f%%  %.2f-%.2f %.1f%%  %.2f-%.2f %.1f%%  %.2f-%.2f %.1f%%  <%.2f %.1f%%   E[dPot] %+.3f/player-season",
+                 CoachingEngine.schemeFitNeutral,
+                 rungTop, bTop, rungHigh, rungTop, bHigh, rungMid, rungHigh, bMid,
+                 rungLow, rungMid, bLow, rungLow, bBot, expectedDrift))
     // The playbook half's raw input, and how much of the fit's spread each half
     // is responsible for. `schemeFitFamiliarityPivot` is set off the MEAN below.
     let famAll = leagues.flatMap { $0.activeFamiliarity }
