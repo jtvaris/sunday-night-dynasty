@@ -25,6 +25,14 @@ enum UserPortrait {
     /// Empty only when the extras did not ship.
     static var all: [String] { ExtrasCatalog.shared.avatars.map(\.id) }
 
+    /// The choosable ids of one gender, sorted — the two halves the picker's
+    /// filter offers. Empty when the extras did not ship, and empty for one
+    /// gender if a regenerated manifest ever drops a bucket, which is why the
+    /// picker asks before it draws the control.
+    static func all(gender: FacePersonGender) -> [String] {
+        ExtrasCatalog.shared.avatars(gender: gender).map(\.id)
+    }
+
     /// What a career falls back to when nothing better is known.
     static var fallbackID: String { all.first ?? "avatar_00000" }
 
@@ -101,8 +109,12 @@ enum UserPortrait {
     /// grid does not open with the same portrait in the top-left every career.
     /// A larger pool would take the first 20 of the shuffle, which is why the cap
     /// is applied here and not left to the view.
-    static func shuffled(seed: UInt64, limit: Int = 20) -> [String] {
-        var pool = all
+    ///
+    /// `gender` narrows the pool before the shuffle rather than filtering after
+    /// it, so a filtered grid keeps the full 10 of its half instead of whatever
+    /// survived a 20-wide cap.
+    static func shuffled(seed: UInt64, gender: FacePersonGender? = nil, limit: Int = 20) -> [String] {
+        var pool = gender.map { all(gender: $0) } ?? all
         guard pool.count > 1 else { return pool }
         // Fisher-Yates over a small LCG, so the same seed always produces the
         // same grid (a redraw of the view must not reshuffle under the finger).
@@ -241,14 +253,54 @@ struct BundledFacePhotoView: View {
 /// The order is seeded and held in state, so the grid is stable while the finger
 /// is on it and only moves when "Shuffle" is tapped. Selection is written
 /// straight into the binding the wizard hands to `Career.avatarID`.
+///
+/// The pool is 10 male and 10 female photographs and the grid mixes them, so the
+/// filter above it is how a player finds his own half without scrubbing a
+/// shuffled sheet. It opens on `All` — the control only ever narrows what was
+/// already on screen, and never hides a portrait the player has not asked it to.
 struct UserPortraitPicker: View {
     @Binding var selectedAvatarID: String
     var avatarSize: CGFloat = 72
     var columnCount: Int = 5
 
     @State private var seed: UInt64 = UserPortrait.newSeed()
+    @State private var genderFilter: GenderFilter = .all
 
-    private var choices: [String] { UserPortrait.shuffled(seed: seed) }
+    /// The three states of the filter above the grid. `nil` gender is "no
+    /// filter", which keeps the default identical to the pre-filter picker.
+    private enum GenderFilter: String, CaseIterable, Identifiable {
+        case all, male, female
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .all:    return "All"
+            case .male:   return "Male"
+            case .female: return "Female"
+            }
+        }
+
+        var gender: FacePersonGender? {
+            switch self {
+            case .all:    return nil
+            case .male:   return .male
+            case .female: return .female
+            }
+        }
+    }
+
+    private var choices: [String] {
+        UserPortrait.shuffled(seed: seed, gender: genderFilter.gender)
+    }
+
+    /// Only drawn when both halves of the pool actually have portraits. A build
+    /// without the extras — or a manifest that lost a bucket — would otherwise
+    /// offer a control whose only effect is to empty the grid.
+    private var showsGenderFilter: Bool {
+        !UserPortrait.all(gender: .male).isEmpty
+            && !UserPortrait.all(gender: .female).isEmpty
+    }
 
     private var columns: [GridItem] {
         Array(repeating: GridItem(.flexible(), spacing: 12), count: columnCount)
@@ -263,6 +315,16 @@ struct UserPortraitPicker: View {
                     .foregroundStyle(Color.textTertiary)
                     .frame(maxWidth: .infinity)
             } else {
+                if showsGenderFilter {
+                    Picker("Portraits", selection: $genderFilter) {
+                        ForEach(GenderFilter.allCases) { option in
+                            Text(option.title).tag(option)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityHint("Filters the portraits by gender")
+                }
+
                 LazyVGrid(columns: columns, spacing: 12) {
                     ForEach(choices, id: \.self) { id in
                         portraitCell(id)
