@@ -44,7 +44,7 @@ extension Collection where Element == InjuryRecord {
     /// missed" would over-count exactly the injuries that matter most. The
     /// honest headline is the one the data supports.
     var careerWeeksMissed: Int {
-        reduce(0) { $0 + max(0, $1.weeksOut) }
+        reduce(0) { $0 + Swift.max(0, $1.weeksOut) }
     }
 }
 
