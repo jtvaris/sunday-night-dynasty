@@ -184,6 +184,12 @@ enum LockerRoomEngine {
     /// Hard cap on the once-a-season settlement (`applyMoraleEffects`).
     static let seasonMoraleSwingCap = 8
 
+    /// Weekly morale a `.stats`-motivated player wins or loses on his box
+    /// score. Same weight as the `.winning` motivator, and well inside
+    /// `weeklyMoraleSwingCap` so production colours a week rather than
+    /// deciding it.
+    static let statsProductionSwing = 2
+
     /// Applies one point of pull toward `moraleBaseline`, never overshooting it.
     private static func reversionStep(from morale: Int) -> Int {
         if morale < moraleBaseline { return 1 }
@@ -336,10 +342,20 @@ enum LockerRoomEngine {
     ///
     /// Callers pass only rosters that actually PLAYED this week (a bye week is
     /// not a loss) and skip holdouts, whose morale `HoldoutEngine` owns.
+    ///
+    /// - Parameter gameStats: this week's box score for THIS roster, keyed by
+    ///   player. It is the production signal the `.stats` motivator needs, and
+    ///   it is optional because most weeks it does not exist: every game but
+    ///   the user's is simulated score-only, so 30 of the 32 rosters have no
+    ///   box score at all. `nil` means "no reading was taken" and the
+    ///   production term is skipped entirely — a club is never judged on
+    ///   numbers nobody counted. An empty-but-non-nil dictionary is a real
+    ///   reading in which nobody registered anything.
     static func weeklyMoraleUpdate(
         players: [Player],
         wonLastGame: Bool,
-        chemistry: Int
+        chemistry: Int,
+        gameStats: [UUID: PlayerGameStats]? = nil
     ) {
         for player in players {
             var delta = 0
@@ -400,6 +416,15 @@ enum LockerRoomEngine {
                 delta = wonLastGame ? delta + 2 : delta - 2
             }
 
+            // Stats-motivated players live on the ball. The player card has
+            // always promised "wants volume and usage; unhappy if production
+            // drops" while nothing in the season actually read the motivator;
+            // this is that reading, taken weekly off the one box score the
+            // week produces.
+            if player.personality.motivation == .stats, let gameStats {
+                delta += statsProductionDelta(for: player, line: gameStats[player.id])
+            }
+
             // Damp: cap the week's movement, then pull one point toward the
             // baseline so nothing runs away over a 17-week season.
             delta = max(-weeklyMoraleSwingCap, min(weeklyMoraleSwingCap, delta))
@@ -408,6 +433,55 @@ enum LockerRoomEngine {
             // Apply clamped morale update
             player.morale = max(1, min(100, player.morale + delta))
         }
+    }
+
+    /// One week's morale swing for a `.stats`-motivated player, read straight
+    /// off his line in the box score.
+    ///
+    /// Volume is the whole motivator, so the verdict is a touch count first and
+    /// a yardage bar second: a skill player who dressed and never got the ball
+    /// is the "production dropped" case the card copy promises, a genuine big
+    /// game is the reward, and the ordinary Sunday in between moves nothing.
+    ///
+    /// A `nil` line is a zero-touch game, not missing data — the sim writes a
+    /// line only for a man who registered something, and whether a reading
+    /// exists at all is decided one level up by `gameStats`. An injured player
+    /// is exempt: he had no chance at the volume he is being judged on.
+    ///
+    /// Only the offensive skill positions are judged. `PlayerGameStats` has no
+    /// column an offensive lineman or a punter can fill (see
+    /// `PlayerGameStats.measures`), and neither a defender's nor a kicker's
+    /// idea of volume is a touch, so they are left alone rather than measured
+    /// against a bar that does not describe their job.
+    ///
+    /// The bars are NFL "big game" reference points, not sim-calibrated ones:
+    /// 300 yards / 3 TDs for a passer, 100 scrimmage yards or a two-score day
+    /// for everyone who carries or catches it.
+    private static func statsProductionDelta(for player: Player, line: PlayerGameStats?) -> Int {
+        guard !player.isInjured else { return 0 }
+
+        let s = line ?? PlayerGameStats(
+            playerID: player.id,
+            playerName: player.fullName,
+            position: player.position
+        )
+
+        let touches: Int
+        let bigGame: Bool
+        switch player.position {
+        case .QB:
+            touches = s.attempts + s.carries
+            bigGame = s.passingYards >= 300 || s.passingTDs >= 3
+        case .RB, .FB, .WR, .TE:
+            touches = s.carries + s.receptions
+            bigGame = (s.rushingYards + s.receivingYards) >= 100
+                || (s.rushingTDs + s.receivingTDs) >= 2
+        case .LT, .LG, .C, .RG, .RT, .DE, .DT, .OLB, .MLB, .CB, .FS, .SS, .K, .P:
+            return 0
+        }
+
+        if touches == 0 { return -statsProductionSwing }
+        return bigGame ? statsProductionSwing : 0
     }
 
     // MARK: - Chemistry Color Helper

@@ -1011,11 +1011,12 @@ static func chemistryRating\(
 static func chemistryLabel\(
 private static func reversionStep\(
 static func weeklyMoraleUpdate\(
+private static func statsProductionDelta\(
 EOF
 keeplist_slice "$LOCKERROOM_SOURCE" "$DEVANCHORS" "$DEVSLICE"
 verbatim_guard "$LOCKERROOM_SOURCE" "$DEVSLICE"
-LOCKERROOM_CONSTS="$(grep -E '^[[:space:]]*static let (chemistryPointsPerNetHead|moraleBaseline|weeklyMoraleSwingCap|seasonMoraleSwingCap) =' "$LOCKERROOM_SOURCE")"
-for k in chemistryPointsPerNetHead moraleBaseline weeklyMoraleSwingCap seasonMoraleSwingCap; do
+LOCKERROOM_CONSTS="$(grep -E '^[[:space:]]*static let (chemistryPointsPerNetHead|moraleBaseline|weeklyMoraleSwingCap|seasonMoraleSwingCap|statsProductionSwing) =' "$LOCKERROOM_SOURCE")"
+for k in chemistryPointsPerNetHead moraleBaseline weeklyMoraleSwingCap seasonMoraleSwingCap statsProductionSwing; do
   printf '%s\n' "$LOCKERROOM_CONSTS" | grep -qE "static let $k =" \
     || die "LockerRoomEngine constant $k not found in the repo file."
 done
