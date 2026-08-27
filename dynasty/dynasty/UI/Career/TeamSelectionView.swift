@@ -1544,20 +1544,95 @@ private struct TeamDetailSheet: View {
                     .font(.caption)
                     .foregroundStyle(Color.textTertiary)
             }
+
+            // The tier and the season count both stopped short of the stake, so
+            // "Demanding, 2 seasons" read as a difficulty flavour rather than a
+            // clock. It is the hardest consequence the game has:
+            // `OwnerSatisfactionEngine.checkFiring` rolls once satisfaction
+            // falls through its patience-adjusted threshold, and the screen it
+            // leads to (`FiredSummaryView`) marks the save `isGameOver` and
+            // offers one button — Main Menu.
+            Text("Let that patience run out and you are relieved of duty — the career ends there.")
+                .font(DSType.text(DSType.Size.caption, .regular, prose: true))
+                .foregroundStyle(Color.textTertiary)
+                .multilineTextAlignment(.center)
         }
         .padding(16)
         .frame(maxWidth: .infinity)
         .cardBackground()
     }
 
+    /// One number the media market really moves, with the direction it moves it.
+    ///
+    /// `higherIsBetter` is what keeps the two readings apart: a big market pulls
+    /// free agents (good) and amplifies every bad week (bad), and both arrive as
+    /// a multiplier above 1.0.
+    private func marketEffect(
+        icon: String,
+        label: String,
+        multiplier: Double,
+        detail: String,
+        higherIsBetter: Bool
+    ) -> some View {
+        let tone: Color
+        if multiplier > 1.0 {
+            tone = higherIsBetter ? .success : .warning
+        } else if multiplier < 1.0 {
+            tone = higherIsBetter ? .warning : .success
+        } else {
+            tone = .accentBlue
+        }
+        return VStack(spacing: 4) {
+            HStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.system(size: DSType.Size.caption))
+                    .foregroundStyle(Color.textTertiary)
+                Text(label)
+                    .font(DSType.display(DSType.Size.caption, .semibold))
+                    .foregroundStyle(Color.textTertiary)
+            }
+            Text(String(format: "×%.1f", multiplier))
+                .font(DSType.display(DSType.Size.title3, .black))
+                .foregroundStyle(tone)
+            Text(detail)
+                .font(DSType.display(DSType.Size.micro, .semibold))
+                .foregroundStyle(Color.textTertiary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
     private var marketMediaCard: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 10) {
             sectionLabel(String(localized: "Market & Media"))
 
             Text(preview.marketDescription)
                 .font(.subheadline)
                 .foregroundStyle(Color.textSecondary)
                 .multilineTextAlignment(.center)
+
+            // The market is not flavour — it is the only card on the sheet whose
+            // mechanics were left entirely off it. `MediaMarket.freeAgentAttraction`
+            // scales every free-agent interest score (FreeAgencyEngine), and
+            // `mediaPressureMultiplier` scales every negative owner-satisfaction
+            // swing (OwnerSatisfactionEngine) and the weekly event roll
+            // (EventEngine). Print the two numbers beside the copy (audit).
+            HStack(spacing: 12) {
+                marketEffect(
+                    icon: "person.badge.plus",
+                    label: "Free Agents",
+                    multiplier: team.mediaMarket.freeAgentAttraction,
+                    detail: "pull on players you chase",
+                    higherIsBetter: true
+                )
+                marketEffect(
+                    icon: "antenna.radiowaves.left.and.right",
+                    label: "Media Pressure",
+                    multiplier: team.mediaMarket.mediaPressureMultiplier,
+                    detail: "owner damage when it goes wrong",
+                    higherIsBetter: false
+                )
+            }
         }
         .padding(16)
         .frame(maxWidth: .infinity)
