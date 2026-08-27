@@ -436,6 +436,7 @@ struct RosterView: View {
                 controlStrip
 
                 if viewMode == .list {
+                    topDecisionsCard
                     listContent
                 } else {
                     formationContent
@@ -608,10 +609,31 @@ struct RosterView: View {
     private var analysisLensTabs: some View {
         DSLensTabs(
             selection: $analysisMode,
-            lenses: RosterAnalysisMode.allCases,
+            lenses: lenses(for: selectedSide),
             label: { $0.label },
             icon: { $0.icon }
         )
+    }
+
+    /// The lenses offered on one side of the ball.
+    ///
+    /// #3198 — **Depth is dropped on Special Teams, and only there.** It is the
+    /// one lens that is provably degenerate at two players: `specialTeamsGroups`
+    /// is a single group holding one K and one P, so every man is first at his
+    /// own position and the column can print nothing but "Starter", in every
+    /// save, in every season. That is not a thin reading, it is a column with
+    /// one possible value.
+    ///
+    /// The other six stay. Read against a kicker they all resolve to something
+    /// real — Overview, Contracts, Development and Mental print his actual
+    /// numbers, and Position Skills lands on the kicking pair — and Physical in
+    /// particular was NOT cut: SPD and STR are noise on a kicker, but DUR and
+    /// fatigue are not, and hiding the row to be rid of two cells loses the two
+    /// that matter.
+    private func lenses(for side: RosterFilter) -> [RosterAnalysisMode] {
+        side == .specialTeams
+            ? RosterAnalysisMode.allCases.filter { $0 != .depth }
+            : RosterAnalysisMode.allCases
     }
 
     // MARK: - List Content
@@ -655,6 +677,121 @@ struct RosterView: View {
         backups.sort { $0.overall > $1.overall }
 
         return starters + backups
+    }
+
+    // MARK: - Top Decisions (#3172)
+
+    /// The three most pressing decisions on the roster.
+    ///
+    /// Not a second opinion: this is literally Roster Evaluation's own ranked
+    /// "Key Decisions" list — the same `KeyDecisionBuilder`, whose order already
+    /// puts a man weighing retirement ahead of an expiring deal ahead of a
+    /// contract out of step with the market — cut to its top three. A generator
+    /// of its own here would have disagreed with that screen the first week
+    /// either set of rules was edited.
+    ///
+    /// The franchise-tag quote is left out on purpose: pricing a tag needs the
+    /// LEAGUE's top-5 salaries at the position, which this screen does not fetch
+    /// and has no other reason to, so an elite expiring player reads the generic
+    /// "prioritize extension" line here and the tag number one tap away, on the
+    /// screen that already holds the league.
+    private var topDecisions: [KeyDecision] {
+        Array(
+            KeyDecisionBuilder.build(
+                players: players,
+                salaryCap: teamSalaryCap,
+                availableCap: teamCapUsed.map { teamSalaryCap - $0 }
+            ).prefix(3)
+        )
+    }
+
+    /// Read-only, above the list, and it commits nothing.
+    ///
+    /// The priorities the user types into a group header are his own and stay
+    /// his own (#283) — this sits beside them rather than over them, and its one
+    /// affordance is the way through to the screen that owns these decisions in
+    /// full, with the money, the FA replacements and the negotiation.
+    ///
+    /// Above the list rather than inside it, and only in list mode. Inside it,
+    /// `List` hangs its own disclosure chevron on any `NavigationLink` row — the
+    /// same one the player rows carry and `sortableHeader` reserves a gutter for
+    /// — so a card with its own "Roster Evaluation ›" affordance would have
+    /// shipped with two arrows pointing the same way. It is kept to three tight
+    /// lines for the same reason the control strip was collapsed to one band:
+    /// the screen's job is the players underneath it.
+    @ViewBuilder
+    private var topDecisionsCard: some View {
+        if let career {
+            let decisions = topDecisions
+            if !decisions.isEmpty {
+                NavigationLink {
+                    RosterEvaluationView(career: career)
+                } label: {
+                    VStack(alignment: .leading, spacing: DSSpacing.xs) {
+                        HStack(spacing: DSSpacing.xxs) {
+                            SectionHeaderText(title: "Top Decisions")
+                            Spacer(minLength: DSSpacing.xxs)
+                            Text("Roster Evaluation")
+                                .font(DSType.text(11, .semibold))
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: DSType.Size.micro, weight: .bold))
+                        }
+                        .foregroundStyle(Color.accentGold)
+
+                        ForEach(decisions) { decision in
+                            topDecisionRow(decision)
+                        }
+                    }
+                    .padding(DSSpacing.sm)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: DSCornerRadius.card)
+                            .fill(Color.backgroundSecondary)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: DSCornerRadius.card)
+                                    .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+                            )
+                    )
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, DSSpacing.md)
+                .padding(.bottom, DSSpacing.xxs)
+            }
+        }
+    }
+
+    /// One line: who, what kind of decision, and how good he is. The verb is the
+    /// badge — the reasoning and the money live on the screen this links to, and
+    /// repeating a two-line recommendation three times would cost more height
+    /// than the whole card is worth.
+    private func topDecisionRow(_ decision: KeyDecision) -> some View {
+        let badge = decision.type.badge
+        return HStack(spacing: DSSpacing.xs) {
+            Text(decision.player.position.rawValue)
+                .font(DSType.display(11, .heavy))
+                .foregroundStyle(Color.textTertiary)
+                .frame(width: DSListColumn.position, alignment: .leading)
+
+            Text(decision.player.fullName)
+                .font(DSType.text(12, .semibold, prose: true))
+                .foregroundStyle(Color.textPrimary)
+                .lineLimit(1)
+
+            Text(badge.label)
+                .font(DSType.display(11, .heavy))
+                .foregroundStyle(badge.color)
+                .padding(.horizontal, DSSpacing.xxs)
+                .background(badge.color.opacity(0.15), in: Capsule())
+
+            Spacer(minLength: DSSpacing.xxs)
+
+            Text("\(decision.player.overall)")
+                .font(DSType.display(12, .heavy))
+                .foregroundStyle(Color.forRating(decision.player.overall))
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(decision.player.fullName), \(decision.player.position.rawValue), \(badge.label), \(decision.player.overall) overall")
     }
 
     private var listContent: some View {
@@ -1069,6 +1206,12 @@ struct RosterView: View {
                 Button {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         selectedSide = filter
+                        // #3198: a side that does not offer the current lens
+                        // would otherwise land on a strip with no capsule lit
+                        // while the rows below still drew the hidden column.
+                        if !lenses(for: filter).contains(analysisMode) {
+                            analysisMode = .overview
+                        }
                     }
                 } label: {
                     Text(filter.label)

@@ -86,6 +86,18 @@ struct GamePlanView: View {
         /// live from the roster.
         var keyPlayerMentals: [MentalReadout] = []
 
+        /// #3245: this week's most versatile men and the spots they can cover.
+        ///
+        /// **Read-only, and deliberately so.** Nothing on this panel changes a
+        /// call, a play or a sim result: there is no gadget or decoy mechanic in
+        /// the domain, the `PlayCall` enum or the simulator for a control to
+        /// drive, and inventing one is an engine decision with balance numbers
+        /// attached — not something a game-plan screen gets to make. What the
+        /// panel does is put a fact the depth chart already knows in front of
+        /// the coach at the moment he is planning the week. Defaults empty so
+        /// entry points without a career simply hide it.
+        var versatility: [VersatileReadout] = []
+
         init(
             weekLabel: String? = nil,
             opponentName: String? = nil,
@@ -120,6 +132,25 @@ struct GamePlanView: View {
         let morale: Int
         /// A me-first star at a touch position — earns the feed-him hint.
         let isEgoStar: Bool
+    }
+
+    /// #3245: one man who can line up somewhere other than his listed spot.
+    /// Plain values, derived by the career shell from `positionFamiliarity` the
+    /// same way the roster's out-of-position candidates are, so this panel holds
+    /// no roster access and no threshold of its own.
+    struct VersatileReadout: Identifiable {
+        let id: UUID
+        let name: String
+        let position: Position
+        /// The alternate spots he can genuinely cover, best first, each with his
+        /// familiarity there (0-100).
+        let alternates: [Alternate]
+
+        struct Alternate: Identifiable {
+            let position: Position
+            let familiarity: Int
+            var id: Position { position }
+        }
     }
 
     /// R36: everything the practice-play card needs. Plain values + a
@@ -187,6 +218,10 @@ struct GamePlanView: View {
                                 offensiveSection
                                 defensiveSection
                                 if hasMentalData { mentalReadinessCard }
+                                // Same reason Mental Readiness rides here: the
+                                // left column is the long one, and a fifth card
+                                // under it would strand the right column further.
+                                if hasVersatilityData { versatilityCard }
                             }
                             .frame(maxWidth: .infinity)
                         }
@@ -196,6 +231,7 @@ struct GamePlanView: View {
                         if practice != nil { practiceCard }
                         if hasOpponentData { opponentCard }
                         if hasMentalData { mentalReadinessCard }
+                        if hasVersatilityData { versatilityCard }
                         offensiveSection
                         defensiveSection
                     }
@@ -1060,6 +1096,76 @@ struct GamePlanView: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Morale \(morale) of 100")
+    }
+
+    // MARK: - Versatility Panel (#3245)
+
+    private var hasVersatilityData: Bool {
+        !(context?.versatility.isEmpty ?? true)
+    }
+
+    /// Who on this roster can play somewhere he is not listed.
+    ///
+    /// A reading, not a dial. The screen around it is full of controls that move
+    /// the simulator; this one moves nothing, and the footnote says so out loud
+    /// rather than letting a coach infer that listing a man here does something
+    /// on Sunday. Versatility currently buys a backup label on the depth chart
+    /// and a cheaper injury replacement — the sim fields every man at his own
+    /// position — so the honest thing this panel can say is "here is who you
+    /// could move", and it says exactly that.
+    private var versatilityCard: some View {
+        VStack(alignment: .leading, spacing: DSSpacing.sm) {
+            SectionHeaderText(title: "Versatility")
+
+            ForEach(context?.versatility ?? []) { readout in
+                versatilityRow(readout)
+            }
+
+            DSDetailNote(
+                text: "Cover options only — moving a man is a depth-chart decision and changes nothing in this plan.",
+                icon: "info.circle"
+            )
+        }
+        .padding(DSSpacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardBackground()
+    }
+
+    private func versatilityRow(_ readout: VersatileReadout) -> some View {
+        VStack(alignment: .leading, spacing: DSSpacing.xxs) {
+            HStack(spacing: DSSpacing.xxs) {
+                Text(readout.position.rawValue)
+                    .font(.caption2.monospaced().weight(.bold))
+                    .foregroundStyle(Color.textTertiary)
+                    .frame(width: 26, alignment: .leading)
+                Text(readout.name)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                Spacer(minLength: DSSpacing.xxs)
+            }
+
+            HStack(spacing: DSSpacing.xxs) {
+                Image(systemName: "arrow.triangle.branch")
+                    .font(.system(size: DSType.Size.micro, weight: .bold))
+                    .foregroundStyle(Color.accentBlue)
+                ForEach(readout.alternates) { alternate in
+                    HStack(spacing: 4) {
+                        Text(alternate.position.rawValue)
+                            .font(.system(size: DSType.Size.micro, weight: .bold))
+                            .foregroundStyle(Color.textSecondary)
+                        Text("\(alternate.familiarity)%")
+                            .font(.system(size: DSType.Size.micro, weight: .bold).monospacedDigit())
+                            .foregroundStyle(Color.forRating(alternate.familiarity))
+                    }
+                    .padding(.horizontal, DSSpacing.xxs)
+                    .background(Color.backgroundTertiary, in: Capsule())
+                }
+                Spacer(minLength: 0)
+            }
+        }
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: - Offensive Section
