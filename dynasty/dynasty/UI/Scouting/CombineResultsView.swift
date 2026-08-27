@@ -630,14 +630,21 @@ struct CombineResultsView<Header: View>: View {
     private var canSendScouts: Bool { canAffordTrip && scoutCount > 0 }
 
     /// Why the button is dead, or what it costs when it is not.
-    private var sendScoutsSubtitle: String {
+    ///
+    /// A `Text` rather than a `String`: the three lines are player-facing copy,
+    /// and only a literal reaching `Text(LocalizedStringKey)` is extracted. A
+    /// `String` return would bind the `StringProtocol` overload at both call
+    /// sites and silently drop all three out of the catalog — which is
+    /// what happened to the two lines that were already translated. `Text` also
+    /// satisfies `accessibilityHint`, so the hint stays in step with the label.
+    private var sendScoutsSubtitle: Text {
         if scoutCount == 0 {
-            return "You have no scouts on staff \u{2014} nobody would file a report, so the trip would buy nothing. Hire from Scout Team first."
+            return Text("You have no scouts on staff \u{2014} nobody would file a report, so the trip would buy nothing. Hire from Scout Team first.")
         }
         if !canAffordTrip {
-            return "Not enough scouting budget ($\(tripCost)K needed) \u{2014} reallocate in Owner Relations"
+            return Text("Not enough scouting budget ($\(tripCost)K needed) \u{2014} reallocate in Owner Relations")
         }
-        return "Exact times and drill grades, plus fresh reports on your board \u{2014} $\(tripCost)K from the scouting budget"
+        return Text("Exact times and drill grades, plus fresh reports on your board \u{2014} $\(tripCost)K from the scouting budget")
     }
 
     /// The optional purchase, drawn as an OUTLINE rather than a gold fill.
@@ -663,7 +670,7 @@ struct CombineResultsView<Header: View>: View {
                     Text(blockedOnStaff ? "Hire Scouts First" : "Send Scouts to the Combine")
                         .font(.subheadline.weight(.bold))
                         .foregroundStyle(canSendScouts ? Color.accentGold : Color.textSecondary)
-                    Text(sendScoutsSubtitle)
+                    sendScoutsSubtitle
                         .font(.caption)
                         .foregroundStyle(canSendScouts ? Color.textSecondary : Color.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)
