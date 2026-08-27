@@ -53,8 +53,56 @@ struct NewCareerView: View {
     /// space. One tap still reaches every face.
     @State private var showPortraitGrid = false
     @State private var selectedCoachingStyle: CoachingStyle = .tactician
-    @State private var selectedRole: CareerRole = .gmAndHeadCoach
-    @State private var capSelection: CapModeSelection = .realistic
+    @State private var selectedRole: CareerRole = NewCareerView.recommendedRole
+    @State private var capSelection: CapModeSelection = NewCareerView.recommendedCapMode
+
+    // MARK: - The two step-1 recommendations
+    //
+    // The wizard pre-selects a role and a cap mode, and until now said nothing
+    // about why — a first-time player had two irreversible-feeling choices and
+    // no decision support on either. The "Recommended" badge marks the value the
+    // flow already commits to, so the badge and the default are the same
+    // constant by construction and cannot drift apart.
+
+    /// The role the flow opens on, and the one the badge marks.
+    private static let recommendedRole: CareerRole = .gmAndHeadCoach
+
+    /// The cap mode the flow opens on, and the one the badge marks.
+    private static let recommendedCapMode: CapModeSelection = .realistic
+
+    /// Which segment of the two-wide role picker the badge sits under.
+    private static var recommendedRoleSegmentIndex: Int {
+        switch recommendedRole {
+        case .gm:             return 0
+        case .gmAndHeadCoach: return 1
+        }
+    }
+
+    /// Which segment of the three-wide cap picker the badge sits under.
+    private static var recommendedCapSegmentIndex: Int {
+        switch recommendedCapMode {
+        case .simple:    return 0
+        case .realistic: return 1
+        case .sandbox:   return 2
+        }
+    }
+
+    /// Spoken name of the recommended role, for the badge's VoiceOver label.
+    private static var recommendedRoleName: String {
+        switch recommendedRole {
+        case .gm:             return "General Manager"
+        case .gmAndHeadCoach: return "GM and Head Coach"
+        }
+    }
+
+    /// Spoken name of the recommended cap mode.
+    private static var recommendedCapName: String {
+        switch recommendedCapMode {
+        case .simple:    return "Simple"
+        case .realistic: return "Realistic"
+        case .sandbox:   return "Sandbox"
+        }
+    }
     @State private var currentStep = 1
     @State private var showNameError = false
 
@@ -412,14 +460,27 @@ struct NewCareerView: View {
     private var roleSection: some View {
         cardSection(icon: "briefcase.fill", title: "Career Role") {
             VStack(alignment: .leading, spacing: 12) {
-                Picker("Role", selection: $selectedRole) {
-                    Text("General Manager").tag(CareerRole.gm)
-                    Text("GM & Head Coach").tag(CareerRole.gmAndHeadCoach)
+                VStack(spacing: 6) {
+                    Picker("Role", selection: $selectedRole) {
+                        Text("General Manager").tag(CareerRole.gm)
+                        Text("GM & Head Coach").tag(CareerRole.gmAndHeadCoach)
+                    }
+                    .pickerStyle(.segmented)
+
+                    recommendedBadgeRow(
+                        segmentCount: 2,
+                        recommendedIndex: Self.recommendedRoleSegmentIndex,
+                        accessibilityText: "\(Self.recommendedRoleName) is recommended for a first career."
+                    )
                 }
-                .pickerStyle(.segmented)
 
                 // Role comparison
                 VStack(alignment: .leading, spacing: 10) {
+                    comparisonHeaderRow([
+                        (title: "GM", isSelected: selectedRole == .gm),
+                        (title: "GM & HC", isSelected: selectedRole == .gmAndHeadCoach)
+                    ])
+
                     roleComparisonRow(
                         action: "Build roster, trades & draft",
                         gmAvailable: true,
@@ -485,15 +546,29 @@ struct NewCareerView: View {
     private var capModeSection: some View {
         cardSection(icon: "dollarsign.circle.fill", title: "Salary Cap Mode") {
             VStack(alignment: .leading, spacing: 12) {
-                Picker("Salary Cap", selection: $capSelection) {
-                    Text("Simple").tag(CapModeSelection.simple)
-                    Text("Realistic").tag(CapModeSelection.realistic)
-                    Text("Sandbox").tag(CapModeSelection.sandbox)
+                VStack(spacing: 6) {
+                    Picker("Salary Cap", selection: $capSelection) {
+                        Text("Simple").tag(CapModeSelection.simple)
+                        Text("Realistic").tag(CapModeSelection.realistic)
+                        Text("Sandbox").tag(CapModeSelection.sandbox)
+                    }
+                    .pickerStyle(.segmented)
+
+                    recommendedBadgeRow(
+                        segmentCount: 3,
+                        recommendedIndex: Self.recommendedCapSegmentIndex,
+                        accessibilityText: "\(Self.recommendedCapName) is the recommended salary cap mode."
+                    )
                 }
-                .pickerStyle(.segmented)
 
                 // Feature checklist comparison
                 VStack(alignment: .leading, spacing: 10) {
+                    comparisonHeaderRow([
+                        (title: "Simple", isSelected: capSelection == .simple),
+                        (title: "Realistic", isSelected: capSelection == .realistic),
+                        (title: "Sandbox", isSelected: capSelection == .sandbox)
+                    ])
+
                     capFeatureRow(feature: "Annual salary cap",
                                   simple: true, realistic: true, sandbox: false)
                     capFeatureRow(feature: "Signing bonuses",
@@ -512,13 +587,16 @@ struct NewCareerView: View {
                     .font(.subheadline)
                     .foregroundStyle(Color.textSecondary)
 
-                // Rationale footnote for the Recommended badge shown on Simple.
-                if capSelection == .simple {
-                    Label("Recommended for first-time players: easier learning curve.",
-                          systemImage: "info.circle")
-                        .font(.caption)
-                        .foregroundStyle(Color.textTertiary)
-                }
+                // The rationale behind the Recommended badge, printed whatever is
+                // selected. It used to be gated on `capSelection == .simple`, so
+                // the one line of decision support on this card was invisible to
+                // everybody who had not already moved off the default — which is
+                // precisely the reader it was written for.
+                Label("Realistic is the default and the full front-office game. New to cap management? Simple keeps the money simple; Sandbox turns the cap off entirely.",
+                      systemImage: "info.circle")
+                    .font(.caption)
+                    .foregroundStyle(Color.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -559,21 +637,41 @@ struct NewCareerView: View {
                     .font(.subheadline)
                     .foregroundStyle(Color.textSecondary)
 
+                // Quick Start is the flow the wizard opens on, so these two are
+                // the copies of the role and cap controls a first-time player is
+                // most likely to meet — they carry the same Recommended badge as
+                // the Custom League cards.
                 quickSetting("Career Role", detail: roleBlurb) {
-                    Picker("Career Role", selection: $selectedRole) {
-                        Text("General Manager").tag(CareerRole.gm)
-                        Text("GM & Head Coach").tag(CareerRole.gmAndHeadCoach)
+                    VStack(spacing: 6) {
+                        Picker("Career Role", selection: $selectedRole) {
+                            Text("General Manager").tag(CareerRole.gm)
+                            Text("GM & Head Coach").tag(CareerRole.gmAndHeadCoach)
+                        }
+                        .pickerStyle(.segmented)
+
+                        recommendedBadgeRow(
+                            segmentCount: 2,
+                            recommendedIndex: Self.recommendedRoleSegmentIndex,
+                            accessibilityText: "\(Self.recommendedRoleName) is recommended for a first career."
+                        )
                     }
-                    .pickerStyle(.segmented)
                 }
 
                 quickSetting("Salary Cap", detail: capBlurb) {
-                    Picker("Salary Cap", selection: $capSelection) {
-                        Text("Simple").tag(CapModeSelection.simple)
-                        Text("Realistic").tag(CapModeSelection.realistic)
-                        Text("Sandbox").tag(CapModeSelection.sandbox)
+                    VStack(spacing: 6) {
+                        Picker("Salary Cap", selection: $capSelection) {
+                            Text("Simple").tag(CapModeSelection.simple)
+                            Text("Realistic").tag(CapModeSelection.realistic)
+                            Text("Sandbox").tag(CapModeSelection.sandbox)
+                        }
+                        .pickerStyle(.segmented)
+
+                        recommendedBadgeRow(
+                            segmentCount: 3,
+                            recommendedIndex: Self.recommendedCapSegmentIndex,
+                            accessibilityText: "\(Self.recommendedCapName) is the recommended salary cap mode."
+                        )
                     }
-                    .pickerStyle(.segmented)
                 }
 
                 // Five options each, with names too long for a segmented row at
@@ -677,7 +775,8 @@ struct NewCareerView: View {
                     CoachingStyleCard(
                         style: style,
                         isSelected: selectedCoachingStyle == style,
-                        isRecommended: style == .tactician
+                        isRecommended: style == recommendedCoachingStyle,
+                        recommendationNote: coachingRecommendationNote
                     )
                     .onTapGesture {
                         withAnimation(.spring(response: 0.3)) {
@@ -686,6 +785,41 @@ struct NewCareerView: View {
                     }
                 }
             }
+        }
+    }
+
+    /// The style the Coaching Style card badges as Recommended.
+    ///
+    /// It used to be `.tactician` for everybody, one step after the user chose
+    /// whether he would ever call a play. The Tactician's edge is play-call
+    /// accuracy in close games, and in a GM-only career the head coach the user
+    /// *hires* makes those calls — `CoachingStaffView` only prints the style's
+    /// +10 rating for a `gmAndHeadCoach` career, because that is the only career
+    /// in which the user is sitting in the chair the rating belongs to.
+    ///
+    /// So the recommendation follows the role. For a GM-only career the half of
+    /// the choice that still binds is the one the card prints underneath the
+    /// effect: `FranchiseIdentityDeclaration.seed(for:)`, the identity the other
+    /// 31 front offices price him against. The Players' Coach seeds `.balanced`
+    /// — "no edge in either direction" — which is the market to learn the trade
+    /// board in, and (by that file's own ruling) not a strictly better one.
+    private var recommendedCoachingStyle: CoachingStyle {
+        switch selectedRole {
+        case .gmAndHeadCoach: return .tactician
+        case .gm:             return .playersCoach
+        }
+    }
+
+    /// Why that style is the recommendation, in the terms of the role the user
+    /// picked one step earlier. A badge with no rationale is the complaint the
+    /// footnote exists to answer, and a rationale that ignores the role is the
+    /// same complaint one level down.
+    private var coachingRecommendationNote: String {
+        switch selectedRole {
+        case .gmAndHeadCoach:
+            return "Recommended for GM & Head Coach: you call the plays yourself, so this is the bonus you spend every Sunday."
+        case .gm:
+            return "Recommended for a GM career: your head coach calls the plays, so the front-office read above is the half you spend — and this one leaves the market even both ways."
         }
     }
 
@@ -873,6 +1007,82 @@ struct NewCareerView: View {
 
     // MARK: - Comparison Helpers
 
+    /// One geometry for both comparison tables. A header cell and the mark
+    /// underneath it have to be the same column, so the width and the gap are
+    /// stated once and read by the header row and the two row builders alike —
+    /// a header that has drifted off its column is worse than the bare icons it
+    /// replaced.
+    ///
+    /// The column is wider (and the gutter tighter) than the 30/16 it replaces
+    /// because the header has to fit a word: `Realistic` is the longest of the
+    /// five and it sets the floor.
+    private static let comparisonColumnWidth: CGFloat = 52
+    private static let comparisonColumnSpacing: CGFloat = 4
+
+    /// Column headers for a comparison table, laid on exactly the grid the rows
+    /// below use.
+    ///
+    /// The selected option's header is gold — the tint the segmented picker
+    /// gives its own selection — so the control above and the column below read
+    /// as the same choice. That link is what the checkmark columns were missing:
+    /// a full-width segmented picker cannot be made to register with a table
+    /// that carries a leading label column (the first segment's centre sits at
+    /// one-sixth of the card, well inside the feature text), so the table names
+    /// its own columns instead of chasing the picker's geometry.
+    private func comparisonHeaderRow(_ columns: [(title: String, isSelected: Bool)]) -> some View {
+        HStack(spacing: 8) {
+            Spacer(minLength: 0)
+
+            HStack(spacing: Self.comparisonColumnSpacing) {
+                ForEach(Array(columns.enumerated()), id: \.offset) { _, column in
+                    Text(column.title)
+                        .font(.system(size: DSType.Size.micro, weight: .heavy))
+                        .foregroundStyle(column.isSelected ? Color.accentGold : Color.textTertiary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.9)
+                        .frame(width: Self.comparisonColumnWidth)
+                }
+            }
+        }
+        // Every row below states its own columns for VoiceOver, so a spoken
+        // header would only repeat itself.
+        .accessibilityHidden(true)
+    }
+
+    /// A gold "Recommended" capsule parked under the segment it belongs to.
+    ///
+    /// A segmented `Picker` renders nothing but the `Text` inside each tag, so
+    /// the badge cannot live inside the control. It can still line up with it:
+    /// the segments divide the row into equal parts, so one equal-width cell per
+    /// segment puts the capsule under its own option.
+    private func recommendedBadgeRow(
+        segmentCount: Int,
+        recommendedIndex: Int,
+        accessibilityText: String
+    ) -> some View {
+        HStack(spacing: 0) {
+            ForEach(Array(0..<segmentCount), id: \.self) { index in
+                Group {
+                    if index == recommendedIndex {
+                        Text("Recommended")
+                            .font(.system(size: DSType.Size.micro, weight: .bold))
+                            .foregroundStyle(Color.backgroundPrimary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Capsule().fill(Color.accentGold))
+                    } else {
+                        Color.clear.frame(height: 1)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityText)
+    }
+
     // #102: Role comparison row
     private func roleComparisonRow(action: String, gmAvailable: Bool, gmhcAvailable: Bool) -> some View {
         HStack(spacing: 8) {
@@ -881,20 +1091,28 @@ struct NewCareerView: View {
                 .foregroundStyle(Color.textSecondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            HStack(spacing: 16) {
+            HStack(spacing: Self.comparisonColumnSpacing) {
                 // GM column
                 Image(systemName: gmAvailable ? "checkmark.circle.fill" : "minus.circle")
                     .font(.caption)
                     .foregroundStyle(gmAvailable ? Color.success : Color.textTertiary)
-                    .frame(width: 30)
+                    .frame(width: Self.comparisonColumnWidth)
 
                 // GM&HC column
                 Image(systemName: gmhcAvailable ? "checkmark.circle.fill" : "minus.circle")
                     .font(.caption)
                     .foregroundStyle(gmhcAvailable ? Color.success : Color.textTertiary)
-                    .frame(width: 30)
+                    .frame(width: Self.comparisonColumnWidth)
             }
         }
+        // Unlabelled glyphs read as "checkmark, minus-circle" and nothing else —
+        // the same "which column is which" question the header row answers for
+        // everybody else.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            "\(action). General Manager: \(gmAvailable ? "yes" : "no"). "
+                + "GM and Head Coach: \(gmhcAvailable ? "yes" : "no")."
+        )
     }
 
     // #103: Cap feature comparison row
@@ -905,23 +1123,29 @@ struct NewCareerView: View {
                 .foregroundStyle(Color.textSecondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            HStack(spacing: 16) {
+            HStack(spacing: Self.comparisonColumnSpacing) {
                 Image(systemName: simple ? "checkmark.circle.fill" : "minus.circle")
                     .font(.caption)
                     .foregroundStyle(simple ? Color.success : Color.textTertiary)
-                    .frame(width: 30)
+                    .frame(width: Self.comparisonColumnWidth)
 
                 Image(systemName: realistic ? "checkmark.circle.fill" : "minus.circle")
                     .font(.caption)
                     .foregroundStyle(realistic ? Color.success : Color.textTertiary)
-                    .frame(width: 30)
+                    .frame(width: Self.comparisonColumnWidth)
 
                 Image(systemName: sandbox ? "checkmark.circle.fill" : "minus.circle")
                     .font(.caption)
                     .foregroundStyle(sandbox ? Color.success : Color.textTertiary)
-                    .frame(width: 30)
+                    .frame(width: Self.comparisonColumnWidth)
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            "\(feature). Simple: \(simple ? "yes" : "no"). "
+                + "Realistic: \(realistic ? "yes" : "no"). "
+                + "Sandbox: \(sandbox ? "yes" : "no")."
+        )
     }
 
     // MARK: - Buttons
@@ -1275,6 +1499,10 @@ private struct CoachingStyleCard: View {
     let style: CoachingStyle
     let isSelected: Bool
     var isRecommended: Bool = false
+    /// The rationale printed under the badge. Supplied by the host so it can say
+    /// why *this* career should take *this* style — the reason is different for
+    /// a man who calls his own plays and a man who hires somebody to.
+    var recommendationNote: String = "Recommended for first-time players: easier learning curve."
 
     private var gameplayEffect: String { coachingStyleEffect(style) }
 
@@ -1326,7 +1554,7 @@ private struct CoachingStyleCard: View {
 
                 if isRecommended {
                     // Footnote rationale — prevents the badge from feeling arbitrary.
-                    Text("Recommended for first-time players: easier learning curve.")
+                    Text(recommendationNote)
                         .font(.system(size: DSType.Size.caption, weight: .regular).italic())
                         .foregroundStyle(Color.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1352,6 +1580,9 @@ private struct CoachingStyleCard: View {
         .accessibilityLabel(
             "\(style.displayName). \(gameplayEffect). "
                 + FranchiseIdentityDeclaration.frontOfficeLine(for: style)
+                // `.combine` is overridden by this label, so the badge and its
+                // rationale reach VoiceOver only if they are said here.
+                + (isRecommended ? ". \(recommendationNote)" : "")
         )
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
