@@ -24,7 +24,10 @@ private struct EvalPositionGroup: Identifiable {
 // MARK: - Key Decision
 
 private struct KeyDecision: Identifiable {
-    enum DecisionType {
+    /// `CaseIterable` so the filter strip can offer the kinds in a fixed order
+    /// rather than in whatever order the roster happens to produce them, and
+    /// `Hashable` because `DSLensTabs` selects on the value itself.
+    enum DecisionType: Hashable, CaseIterable {
         case expiringContract, overpaid, underpaid, agingVeteran, consideringRetirement
     }
     let id: UUID
@@ -76,7 +79,10 @@ struct RosterEvaluationView: View {
     @State private var sortAscending: Bool = true
 
     private enum SortColumn: String {
-        case group, avgOVR, starter, depth, expiring, avgAge, capAllocation
+        /// `starterGrade` sorts the `Strt` column on the starting unit's own
+        /// average, which is the number that grade is cut from — `starter`
+        /// sorts the `Best` column and is the group's top OVR, a different man.
+        case group, avgOVR, starter, starterGrade, depth, expiring, avgAge, capAllocation
     }
 
     // MARK: - Cap Detail Popover (#253)
@@ -104,6 +110,11 @@ struct RosterEvaluationView: View {
 
     // #251: Expandable key decision rows
     @State private var expandedDecisions: Set<UUID> = []
+
+    /// Which kind of key decision the list is showing. `nil` is "All", and is
+    /// the state the screen opens in — the filter narrows, it never hides
+    /// anything by default.
+    @State private var keyDecisionFilter: KeyDecision.DecisionType? = nil
 
     // #252: Cap Scenario selection (persists across sessions). #173: the
     // companion `capScenarioConfirmation` receipt is gone — it claimed moves
@@ -220,12 +231,25 @@ struct RosterEvaluationView: View {
     /// `rosterEvaluationConfirmed`) could be missed entirely. The explainer says
     /// what committing does, because a button labelled "confirm" does not.
     private var confirmEvaluationBar: some View {
-        DSActionBar(
+        // Confirming with nothing prioritised said nothing at all: the screen
+        // counts "Priorities set: 0/9" in its own header and then let the
+        // evaluation close as complete, so the one output this screen produces
+        // for the rest of the offseason could be empty and the bar would still
+        // read "checked off". It is a WARNING and not a block — a coach is
+        // allowed to have no priorities — but it names the gap and it names
+        // the one tap that fills it (#108's Auto-Set).
+        let noPrioritiesSet = !rosterEvaluationConfirmed && prioritiesSetCount == 0
+        return DSActionBar(
             explainer: .init(
-                title: rosterEvaluationConfirmed ? "Evaluation confirmed" : "When you have read the roster",
+                title: rosterEvaluationConfirmed
+                    ? "Evaluation confirmed"
+                    : (noPrioritiesSet ? "No priorities set" : "When you have read the roster"),
                 message: rosterEvaluationConfirmed
                     ? "**Review Position Group Grades** and **Analyze Contract Situations** are checked off."
-                    : "Checks off **Review Position Group Grades** and **Analyze Contract Situations**."
+                    : (noPrioritiesSet
+                        ? "You can confirm without them, but **no position group is flagged** for the draft and free agency. **Auto-Set Priorities** fills all \(EvalPositionGroup.allGroups.count) in one tap."
+                        : "Checks off **Review Position Group Grades** and **Analyze Contract Situations**."),
+                isWarning: noPrioritiesSet
             ),
             primary: .init(
                 title: rosterEvaluationConfirmed ? "Evaluation Confirmed" : "Confirm Evaluation Complete",
@@ -347,7 +371,13 @@ struct RosterEvaluationView: View {
         let avgOvr: Int
         let starterGrade: String
         let depthGrade: String
+        /// Top OVR in the group — the `Best` column.
         let starterOVR: Int
+        /// The projected starting unit's average, which is what `starterGrade`
+        /// is cut from. It is what the `Strt` column sorts on; without it that
+        /// column would have had to borrow `Best`'s ordering, and the two are
+        /// routinely different men.
+        let starterUnitOVR: Int
         let depthOVR: Int
         let avgAge: Int
         let capAllocation: Int
@@ -389,7 +419,7 @@ struct RosterEvaluationView: View {
             return GroupRowData(
                 id: group.id, group: group, avgOvr: avgOvr,
                 starterGrade: grades.starterGrade, depthGrade: grades.depthGrade,
-                starterOVR: topOVR, depthOVR: grades.depthOVR,
+                starterOVR: topOVR, starterUnitOVR: grades.starterOVR, depthOVR: grades.depthOVR,
                 avgAge: avgAge, capAllocation: capAllocation, expiringCount: expiringCount,
                 needs: needs, isStrength: isStrength
             )
@@ -402,6 +432,8 @@ struct RosterEvaluationView: View {
             return rows.sorted { sortAscending ? $0.avgOvr < $1.avgOvr : $0.avgOvr > $1.avgOvr }
         case .starter:
             return rows.sorted { sortAscending ? $0.starterOVR < $1.starterOVR : $0.starterOVR > $1.starterOVR }
+        case .starterGrade:
+            return rows.sorted { sortAscending ? $0.starterUnitOVR < $1.starterUnitOVR : $0.starterUnitOVR > $1.starterUnitOVR }
         case .depth:
             return rows.sorted { sortAscending ? $0.depthOVR < $1.depthOVR : $0.depthOVR > $1.depthOVR }
         case .expiring:
@@ -662,11 +694,18 @@ struct RosterEvaluationView: View {
                     // below is framed to match, or every column drifts.
                     sortableHeader("Group", column: .group, width: 56, alignment: .leading)
                     sortableHeader("Best", column: .starter, width: 64)
-                    sortableHeader("Strt / Depth", column: .depth, width: 80)
+                    // Two columns, two headers. One 80pt "Strt / Depth" cell
+                    // held two independent grades, so neither had a header of
+                    // its own and neither could be sorted on separately — the
+                    // whole cell sorted on depth. Same 80pt of row, split 40/40.
+                    sortableHeader("Strt", column: .starterGrade, width: 40)
+                    sortableHeader("Depth", column: .depth, width: 40)
                     if isIPad {
                         sortableHeader("Expiring", column: .expiring, width: 64)
                         sortableHeader("Avg Age", column: .avgAge, width: 60)
-                        sortableHeader("Cap $", column: .capAllocation, width: 72)
+                        // Money right-aligns, or $5.9M and $26.6M do not share
+                        // a decimal column however tabular the digits are.
+                        sortableHeader("Cap $", column: .capAllocation, width: 72, alignment: .trailing)
                     }
                     Spacer()
                     HStack(spacing: 4) {
@@ -692,7 +731,7 @@ struct RosterEvaluationView: View {
                 // The number and the letters beside it measure different men.
                 // Without this line a WR room reading "94 · S: B+" looks like the
                 // app disagreeing with itself.
-                Text("Best = top player in the group \u{00B7} S: = projected starters' average \u{00B7} D: = everyone behind them")
+                Text("Best = top player in the group \u{00B7} Strt = projected starters' average \u{00B7} Depth = everyone behind them")
                     .font(.system(size: DSType.Size.footnote, weight: .medium))
                     .foregroundStyle(Color.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -702,7 +741,7 @@ struct RosterEvaluationView: View {
                 Divider().overlay(Color.surfaceBorder)
 
                 ForEach(Array(sortedGroupRows.enumerated()), id: \.element.id) { index, rowData in
-                    positionGroupRow(rowData: rowData)
+                    positionGroupRow(rowData: rowData, index: index)
 
                     if index < sortedGroupRows.count - 1 {
                         Divider()
@@ -714,7 +753,13 @@ struct RosterEvaluationView: View {
         }
     }
 
-    private func positionGroupRow(rowData: GroupRowData) -> some View {
+    /// `index` is the row's place in `sortedGroupRows`, and it is here only to
+    /// paint the zebra. Nine rows of nine columns separated by hairlines is a
+    /// table the eye loses its place in halfway across; the combine table
+    /// already stripes for exactly this reason. The red "Starter needed" tint
+    /// still wins where it applies — a stripe is scanning furniture, that is a
+    /// verdict.
+    private func positionGroupRow(rowData: GroupRowData, index: Int) -> some View {
         let group = rowData.group
 
         return Button {
@@ -739,25 +784,12 @@ struct RosterEvaluationView: View {
                     .foregroundStyle(rowData.starterOVR == 0 ? Color.textTertiary : Color.forRating(rowData.starterOVR))
                     .frame(width: 64, alignment: .center)
 
-                // Dual grade: Starter / Depth
-                HStack(spacing: 2) {
-                    Text("S:")
-                        .font(.system(size: DSType.Size.micro, weight: .medium))
-                        .foregroundStyle(Color.textTertiary)
-                    Text(rowData.starterGrade)
-                        .font(.system(size: DSType.Size.body, weight: .bold))
-                        .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(rowData.starterGrade))
-                    Text("/")
-                        .font(.system(size: DSType.Size.caption))
-                        .foregroundStyle(Color.textTertiary)
-                    Text("D:")
-                        .font(.system(size: DSType.Size.micro, weight: .medium))
-                        .foregroundStyle(Color.textTertiary)
-                    Text(rowData.depthGrade)
-                        .font(.system(size: DSType.Size.body, weight: .bold))
-                        .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(rowData.depthGrade))
-                }
-                .frame(width: 80)
+                // Starter grade and depth grade, each under its own header.
+                // The inline "S:" / "D:" prefixes and the slash between them
+                // went with the merged cell — they were standing in for the
+                // headers the columns did not have.
+                gradeCell(rowData.starterGrade)
+                gradeCell(rowData.depthGrade)
 
                 // iPad extra columns (#250)
                 if isIPad {
@@ -777,7 +809,7 @@ struct RosterEvaluationView: View {
                     Text(formatMillions(rowData.capAllocation))
                         .font(.caption.weight(.semibold).monospacedDigit())
                         .foregroundStyle(Color.textSecondary)
-                        .frame(width: 72, alignment: .center)
+                        .frame(width: 72, alignment: .trailing)
                 }
 
                 Spacer()
@@ -832,10 +864,26 @@ struct RosterEvaluationView: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
-            .background(rowData.needs.contains(where: { $0.label == "Starter needed" }) ? Color.danger.opacity(0.05) : Color.clear)
+            .background(
+                rowData.needs.contains(where: { $0.label == "Starter needed" })
+                    ? Color.danger.opacity(0.05)
+                    : (index.isMultiple(of: 2) ? Color.clear : Color.backgroundTertiary.opacity(0.4))
+            )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+
+    /// One grade letter in its own column — the shape both `Strt` and `Depth`
+    /// now use, so the two cannot drift apart the way they would as two inline
+    /// copies of the same six lines.
+    private func gradeCell(_ grade: String) -> some View {
+        Text(grade)
+            .font(.system(size: DSType.Size.body, weight: .bold))
+            .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(grade))
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .frame(width: 40, alignment: .center)
     }
 
     // MARK: - Needs Assessment
@@ -896,16 +944,28 @@ struct RosterEvaluationView: View {
         return needs
     }
 
+    /// A status pill that WRAPS rather than shrinking into nothing.
+    ///
+    /// These size to their text inside a row that has already spent its width
+    /// on six columns, so on a phone the badge group gets about 45pt and the
+    /// longest label the staff read produces — "Aging — plan ahead" — was
+    /// scaled to 0.7 of a 10pt font to fit it: ~7pt, beside a "Solid" sitting
+    /// comfortably at full size. A pill nobody can read is not a status.
+    ///
+    /// Two lines with a floor of 0.85 keeps every label the two ladders can
+    /// emit above 8.5pt, and both badge stacks are already `VStack`s that grow
+    /// a second row, so nothing below moves that could not move before.
     private func needBadge(label: String, color: Color, small: Bool = false) -> some View {
         Text(label)
             .font(small ? .system(size: DSType.Size.micro, weight: .bold) : .caption2.weight(.bold))
             .foregroundStyle(color)
+            .lineLimit(2)
+            .minimumScaleFactor(0.85)
+            .multilineTextAlignment(.trailing)
             .padding(.horizontal, small ? 4 : 6)
             .padding(.vertical, small ? 1 : 2)
             .background(color.opacity(0.15), in: Capsule())
             .overlay(Capsule().strokeBorder(color.opacity(0.4), lineWidth: 1))
-            .lineLimit(1)
-            .minimumScaleFactor(0.7)
     }
 
     private func ownAssessmentColor(_ assessment: String) -> Color {
@@ -925,12 +985,22 @@ struct RosterEvaluationView: View {
 
     private var keyDecisionsSection: some View {
         sectionCard(title: "Key Decisions", icon: "checklist.unchecked") {
-            let decisions = buildKeyDecisions()
+            let all = buildKeyDecisions()
+            let decisions = keyDecisionFilter.map { type in all.filter { $0.type == type } } ?? all
 
-            if decisions.isEmpty {
+            if all.isEmpty {
                 emptyStateRow("No pressing decisions at this time.")
             } else {
                 VStack(spacing: 0) {
+                    keyDecisionFilterTabs(all)
+
+                    // The filter can outlive the rows it selected — the screen
+                    // reloads its roster on appear — so the empty case is a
+                    // sentence rather than a blank card under a live chip.
+                    if decisions.isEmpty {
+                        emptyStateRow("Nothing of that kind right now.")
+                    }
+
                     ForEach(Array(decisions.enumerated()), id: \.element.id) { index, decision in
                         VStack(spacing: 0) {
                             // Tappable header row
@@ -963,6 +1033,48 @@ struct RosterEvaluationView: View {
                     }
                 }
             }
+        }
+    }
+
+    /// The filter strip over Key Decisions.
+    ///
+    /// The list can run to fifteen rows of five different kinds — retirements,
+    /// expiring deals, overpays, underpays, aging veterans — sorted by kind and
+    /// with nothing separating one kind from the next, so "show me only the
+    /// contracts that are up" meant reading past everything that was not. Same
+    /// lens strip the roster's own analysis modes use (`DSLensTabs`), with
+    /// `nil` as the "All" lens and a count on every chip, so a kind with
+    /// nothing in it is not offered.
+    @ViewBuilder
+    private func keyDecisionFilterTabs(_ all: [KeyDecision]) -> some View {
+        let present = KeyDecision.DecisionType.allCases.filter { type in
+            all.contains { $0.type == type }
+        }
+        if present.count > 1 {
+            let lenses: [KeyDecision.DecisionType?] = [nil] + present.map { Optional($0) }
+            DSLensTabs(
+                selection: $keyDecisionFilter,
+                lenses: lenses,
+                label: { (type: KeyDecision.DecisionType?) -> String in
+                    guard let type else { return "All \(all.count)" }
+                    let count = all.filter { $0.type == type }.count
+                    return "\(keyDecisionFilterLabel(type)) \(count)"
+                }
+            )
+            .padding(.horizontal, 12)
+            .padding(.bottom, 4)
+        }
+    }
+
+    /// Sentence case, not the row badge's shout. The badge is a marker on a row
+    /// you are already reading; this is a control you tap.
+    private func keyDecisionFilterLabel(_ type: KeyDecision.DecisionType) -> String {
+        switch type {
+        case .expiringContract:      return "Expiring"
+        case .overpaid:              return "Overpaid"
+        case .underpaid:             return "Underpaid"
+        case .agingVeteran:          return "Aging"
+        case .consideringRetirement: return "Retiring"
         }
     }
 
