@@ -1553,6 +1553,13 @@ enum CoachingEngine {
     /// Below `1.0` a player would rather be coached somewhere else; above it,
     /// the building itself is part of the pitch.
     ///
+    /// Two markets read this one number, and that is deliberate. It is a WEIGHT
+    /// on the AI-vs-AI shortlist (`FreeAgencyEngine.simulateAIFreeAgency`), and
+    /// `SigningInterestEngine.developerReputationBonus` re-expresses the same
+    /// value as an additive nudge for the 0...1 interest model the user reads
+    /// and the UDFA scramble decides on. A club's teaching reputation is one
+    /// fact about it, so it must not be two calibrations.
+    ///
     /// The score behind it is `CoachDevelopmentEngine.DeveloperRecord.score` —
     /// each coach's development attributes blended with what the young players
     /// on his watch actually gained (`PlayerSeasonHistory` deltas). Early in a

@@ -2508,13 +2508,21 @@ enum ContractEngine {
     /// clauses from the player's position menu, each set at par and priced off
     /// the deal on the table, scaled down together if the total would break
     /// ``incentivePackageCapFraction``.
+    ///
+    /// The menu is ordered by the man's own motivation, not by his position
+    /// alone — see ``IncentiveCategory/menu(for:motivation:)`` for why a prefix
+    /// of the flat position order made the playoff clause unofferable to the
+    /// exact player it was written about.
     static func suggestedIncentives(
         player: Player,
         annualSalaryK: Int,
         limit: Int = 3
     ) -> [ContractIncentive] {
         guard annualSalaryK > 0, limit > 0 else { return [] }
-        let menu = IncentiveCategory.menu(for: player.position).prefix(limit)
+        let menu = IncentiveCategory.menu(
+            for: player.position,
+            motivation: player.personality.motivation
+        ).prefix(limit)
 
         let raw: [ContractIncentive] = menu.map { category in
             let bonus = Double(annualSalaryK) * incentiveWeight(category)
@@ -2608,6 +2616,75 @@ enum ContractEngine {
         }
     }
 
+    /// How the player's OWN motivation weights one clause — the other half of
+    /// the discount, and a different question from the agent's.
+    ///
+    /// ``personaIncentiveCredit`` asks *how much of this is real money?* This
+    /// asks *is this the season I was going to play anyway?* A stats man handed
+    /// a production tier is being paid for the thing he already gets out of bed
+    /// for, so the clause costs him nothing he was not already doing and he
+    /// counts it high. The same tier offered to a ring-chaser reads as being
+    /// paid to pad, and he marks it down — which is why escalators are a poor
+    /// way to close HIS gap, and a contender is the thing that closes it. That
+    /// is the same shape `FreeAgencyEngine.loserTax` already gives him, reached
+    /// from the other side of the table.
+    ///
+    /// **Money is deliberately the flat reference case.** A dollar is a dollar
+    /// to him whatever it is written on, and the half of his position that
+    /// wants it guaranteed instead is already the agent's job above.
+    ///
+    /// The table spans 0.85…1.30 across the whole motivation × category cross
+    /// product, and it changes only what an offer is WORTH in the room: the
+    /// settlement (``evaluateIncentives`` → `FreeAgencyEngine`) never reads it,
+    /// so a clause that hits costs the club the same money whoever signed it.
+    static func motivationIncentiveCredit(
+        _ motivation: Motivation,
+        category: IncentiveCategory
+    ) -> Double {
+        switch (motivation, category) {
+        case (.money, _):               return 1.00
+
+        case (.stats, .gamesPlayed),
+             (.stats, .playoffBerth):   return 0.95
+        case (.stats, _):               return 1.25
+
+        case (.winning, .playoffBerth): return 1.30
+        case (.winning, .gamesPlayed):  return 1.00
+        case (.winning, _):             return 0.85
+
+        case (.fame, .gamesPlayed):     return 0.95
+        case (.fame, .playoffBerth):    return 1.05
+        case (.fame, _):                return 1.15
+
+        case (.loyalty, .gamesPlayed):  return 1.10
+        case (.loyalty, .playoffBerth): return 1.05
+        case (.loyalty, _):             return 1.00
+        }
+    }
+
+    /// The package-level credit: the per-clause credits above, weighted by what
+    /// each clause pays.
+    ///
+    /// Weighted by `bonusK` rather than by expected value on purpose. The
+    /// alternative means spelling ``expectedSeasonIncentiveValue``'s likelihood
+    /// loop a second time here, and two copies of one arithmetic is how the
+    /// contract card and the cut sheet start quoting different numbers for the
+    /// same deal. What each clause is written for is the honest weight anyway —
+    /// he is looking at the offer sheet, not at a probability table.
+    static func motivationIncentiveCredit(
+        for player: Player,
+        incentives: [ContractIncentive]
+    ) -> Double {
+        let total = Double(maxSeasonIncentiveValue(incentives))
+        guard total > 0 else { return 1.0 }
+        let motivation = player.personality.motivation
+        let weighted = incentives.reduce(0.0) { sum, incentive in
+            sum + Double(incentive.bonusK)
+                * motivationIncentiveCredit(motivation, category: incentive.category)
+        }
+        return weighted / total
+    }
+
     /// What the agent adds to an offer's total for its incentives, across the
     /// whole contract — clauses reset every season, so the credit scales with
     /// the number of years on the deal.
@@ -2619,7 +2696,14 @@ enum ContractEngine {
     ) -> Int {
         guard !incentives.isEmpty, years > 0 else { return 0 }
         let perSeason = Double(expectedSeasonIncentiveValue(incentives, player: player))
-        return Int((perSeason * personaIncentiveCredit(persona) * Double(years)).rounded())
+        // Two independent discounts, applied one after the other because they
+        // are two different people's objections: the agent's read on whether
+        // clause money is real money, then the client's on whether this is a
+        // season he was going to play anyway.
+        let clientCredit = motivationIncentiveCredit(for: player, incentives: incentives)
+        return Int(
+            (perSeason * personaIncentiveCredit(persona) * clientCredit * Double(years)).rounded()
+        )
     }
 
     /// Maximum a package can pay in one season if every clause hits.

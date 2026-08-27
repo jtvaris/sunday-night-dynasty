@@ -14,6 +14,13 @@ import Foundation
 /// own fan base currently feels about his front office. See
 /// ``fanSupportBonus(_:)`` for its size and for why it is the only term in here
 /// that can apply to exactly one of the league's 32 clubs.
+///
+/// A second small term reads the BUILDING rather than the city: whether this
+/// coaching staff has a name for making players better. It invents nothing —
+/// the number is `CoachingEngine.developmentAppeal`, already derived from the
+/// staff's development attributes blended with what the young men on their
+/// watch actually gained, and already the weight the AI-vs-AI market picks a
+/// destination with. See ``developerReputationBonus(_:)``.
 enum SigningInterestEngine {
 
     // MARK: - Tiers
@@ -62,6 +69,10 @@ enum SigningInterestEngine {
         /// -0.05...+0.05. Exactly 0 for all 31 other clubs — see
         /// ``SigningInterestEngine/fanSupportBonus(_:)``.
         let fanSupportBonus: Double
+        /// Signed nudge from the coaching staff's reputation for developing
+        /// players, -0.05...+0.05. Exactly 0 for a club nobody has rated — see
+        /// ``SigningInterestEngine/developerReputationBonus(_:)``.
+        let developerReputationBonus: Double
         /// Weighted total, clamped 0...1.
         let total: Double
 
@@ -118,6 +129,10 @@ enum SigningInterestEngine {
     ///   - fanSupport: The user's `Career.fanSupport` when `team` IS the user's
     ///     club; `nil` — the default, and the truth for the other 31 — leaves the
     ///     reading exactly where it was. See ``fanSupportBonus(_:)``.
+    ///   - developmentAppeal: `CoachingEngine.developmentAppeal(teamID:coaches:)`
+    ///     for `team`. Unlike `fanSupport` every club has one, so a caller that
+    ///     ranks clubs against each other must pass it for all of them or none.
+    ///     See ``developerReputationBonus(_:)``.
     static func interest(
         player: Player,
         askingPrice: Int,
@@ -127,7 +142,8 @@ enum SigningInterestEngine {
         offensiveScheme: OffensiveScheme? = nil,
         defensiveScheme: DefensiveScheme? = nil,
         hostedVisit: Bool = false,
-        fanSupport: Int? = nil
+        fanSupport: Int? = nil,
+        developmentAppeal: Double? = nil
     ) -> Breakdown {
         // Scheme fit when the staff runs a known scheme. Computed here, at the
         // one entry point that has a `Player` to hand it to `CoachingEngine`.
@@ -150,7 +166,8 @@ enum SigningInterestEngine {
             allPlayers: allPlayers,
             schemeFit: scheme,
             hostedVisit: hostedVisit,
-            fanSupport: fanSupport
+            fanSupport: fanSupport,
+            developmentAppeal: developmentAppeal
         )
     }
 
@@ -170,7 +187,8 @@ enum SigningInterestEngine {
         allPlayers: [Player],
         schemeFit: Double? = nil,
         hostedVisit: Bool = false,
-        fanSupport: Int? = nil
+        fanSupport: Int? = nil,
+        developmentAppeal: Double? = nil
     ) -> Breakdown {
         // Money: offer vs. asking. 0.6x -> 0.0, 1.0x -> ~0.67, 1.2x+ -> 1.0.
         let money: Double
@@ -212,7 +230,13 @@ enum SigningInterestEngine {
         // clubs to renormalize against. As a signed term through the same clamp,
         // a neutral (or absent) city is arithmetically identical to no term.
         let fanBonus = fanSupportBonus(fanSupport)
-        total = clamp01(total + visitBonus + fanBonus)
+        // The building, beside the city and for the same structural reason: a
+        // weight of its own would have to renormalise the four above, and a club
+        // whose staff nobody has rated has no number to renormalise against.
+        // Through the same clamp, an unrated — or exactly league-average —
+        // staff is arithmetically identical to no term at all.
+        let developerBonus = developerReputationBonus(developmentAppeal)
+        total = clamp01(total + visitBonus + fanBonus + developerBonus)
 
         return Breakdown(
             money: money,
@@ -221,6 +245,7 @@ enum SigningInterestEngine {
             schemeFit: schemeFit,
             visitBonus: visitBonus,
             fanSupportBonus: fanBonus,
+            developerReputationBonus: developerBonus,
             total: total
         )
     }
@@ -260,6 +285,66 @@ enum SigningInterestEngine {
         guard let fanSupport else { return 0 }
         let tilt = (Double(min(max(fanSupport, 0), 100)) - 50.0) / 50.0 // -1...+1
         return tilt * fanSupportSwing
+    }
+
+    // MARK: - Developer reputation
+
+    /// Largest nudge a staff's developer reputation can apply, at the ends of
+    /// `CoachingEngine.developmentAppealRange`.
+    ///
+    /// Deliberately the SAME size as `fanSupportSwing`. The classroom and the
+    /// city are the two things a club can put in a pitch that are not money,
+    /// role or scheme, and neither has a claim to outrank the other. Together
+    /// they come to 0.10 — still under the 0.12 a hosted visit is worth, so
+    /// everything a club can *say* about itself stays cheaper than actually
+    /// walking the man through the building.
+    ///
+    /// ±0.05 is the theoretical extreme and needs a staff score of 1 or 99,
+    /// which no generated staff reaches. What the market actually feels is the
+    /// middle of the mapping: a league-average staff (50) is exactly 0, a
+    /// genuinely strong one (~75) is +0.025, an elite one (~90) is +0.04. In
+    /// cash that is about a 4 % discount on the asking price to a
+    /// money-motivated man (whose money weight is 0.60) and about 7 % to one
+    /// chasing a ring (0.35) — real money, and nowhere near enough to be the
+    /// reason he signs.
+    private static let developerReputationSwing = 0.05
+
+    /// What a coaching staff's reputation for developing players is worth to a
+    /// free agent, as a signed nudge on the 0...1 interest scale.
+    ///
+    /// - Parameter developmentAppeal: `CoachingEngine.developmentAppeal` for the
+    ///   club being considered — the multiplier the AI-vs-AI market already
+    ///   weights its shortlist with in `FreeAgencyEngine.simulateAIFreeAgency`,
+    ///   re-expressed for an additive model. `nil` means nobody has rated this
+    ///   building and returns exactly 0.
+    ///
+    /// **Nothing new is persisted for this.** The appeal behind it is derived
+    /// from rows the tree already keeps: the staff's development attributes,
+    /// blended with the `PlayerSeasonHistory` deltas of the young players who
+    /// were actually on their watch (`CoachDevelopmentEngine.developerRecord`).
+    /// Early in a career it is therefore a projection off attributes and later
+    /// a record — which is the honest shape of a reputation anyway.
+    ///
+    /// The un-mapping reads `developmentAppealRange` instead of re-typing its
+    /// ±0.15 half-span, so widening the band over there moves both halves of
+    /// the market together rather than silently splitting them apart.
+    ///
+    /// **Symmetric, unlike ``fanSupportBonus(_:)``.** Every club has a staff, so
+    /// a caller that ranks clubs against each other must pass this for ALL of
+    /// them or for NONE — handing it to the user's bid alone would not be a
+    /// reputation model, it would be a home-field bonus wearing one. The size
+    /// above is set on that assumption: small enough to break a tie between two
+    /// clubs, never large enough to overturn the cheque, the depth chart or the
+    /// scheme that put them in a tie.
+    static func developerReputationBonus(_ developmentAppeal: Double?) -> Double {
+        guard let developmentAppeal else { return 0 }
+        let range = CoachingEngine.developmentAppealRange
+        let halfSpan = (range.upperBound - range.lowerBound) / 2.0
+        guard halfSpan > 0 else { return 0 }
+        let neutral = range.lowerBound + halfSpan
+        let clamped = min(range.upperBound, max(range.lowerBound, developmentAppeal))
+        let tilt = (clamped - neutral) / halfSpan // -1...+1
+        return tilt * developerReputationSwing
     }
 
     // MARK: - Role

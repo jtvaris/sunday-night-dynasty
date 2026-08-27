@@ -38,6 +38,24 @@ struct SimPlayer {
     /// memberwise init leave it 0, which makes every mental term exactly 0 →
     /// byte-for-byte parity with pre-round-4 behavior.
     var heat: Double = 0
+    /// Where this man stands in his OWN depth-chart slot: 0 = the starter, 1 =
+    /// the first man off the bench behind him. `nil` = unranked.
+    ///
+    /// Stamped onto the snapshot by `GameSimulator.simulate` from the plain
+    /// `[UUID: Int]` its caller hands over, never read off a `Player`: the depth
+    /// chart is a `Career` field, so it exists for exactly ONE club in the
+    /// league and the engine must not have to know which.
+    ///
+    /// **`nil` prices identically to the pre-chart engine, deliberately.** See
+    /// ``fielded(from:)``: every unranked man sorts to the same
+    /// `Int.max` and the winner falls out of overall, which is the rule this
+    /// simulator has always used. All 31 AI clubs have no chart, so every
+    /// AI-vs-AI game, every league-wide band and every balance-harness roster
+    /// stays byte-for-byte what it was. It is an `Optional var` for the same
+    /// reason `heat` carries an inline default: the harness's memberwise init
+    /// (which replaces `init(from:)`) never mentions it, and an optional stored
+    /// property is auto-`nil`, so the splice keeps compiling unchanged.
+    var depthRank: Int?
     var fatigue: Int
 
     init(from player: Player) {
@@ -105,6 +123,55 @@ struct SimPlayer {
         if personalityArchetype.isFormImmune { return .unflappable }
         if personalityArchetype.isFormSensitive { return .streaky }
         return .neutral
+    }
+
+    // MARK: - Depth Chart
+
+    /// The man a lineup fields out of `candidates`: lowest ``depthRank`` first,
+    /// best `overall` breaking the tie.
+    ///
+    /// ONE comparator, read by both layers — `PlaySimulator`'s finders and
+    /// `GameSimulator.startingPlayer(at:in:)` — because a chart that moved the
+    /// play-by-play but not the box score, or the reverse, would be a new
+    /// version of the same lie: the user would watch one man take the snaps and
+    /// read another man's stat line.
+    ///
+    /// Two properties make it safe to drop in everywhere `.max(by: { $0.overall
+    /// < $1.overall })` used to stand:
+    ///
+    /// * **Unranked is unchanged.** With every rank `nil` this IS
+    ///   `$0.overall < $1.overall` — same comparator, same `max(by:)`, same
+    ///   first-maximal tie behaviour. That is the whole parity argument for the
+    ///   31 chart-less AI clubs and for the balance harness.
+    /// * **An absent man cannot be fielded.** Ranks are stamped from the saved
+    ///   chart, but `candidates` is the DRESSED snapshot, so an injured or
+    ///   held-out starter is simply not in the array and the next rank down
+    ///   wins. The chart can reorder a lineup; it can never field nobody.
+    ///
+    /// The tie is real and intended: sibling slots (WR1/WR2/WR3, CB1/CB2,
+    /// DT1/DT2) each rank their own starter 0, so `overall` is what separates
+    /// three men who are all, correctly, starters.
+    static func fielded(from candidates: [SimPlayer]) -> SimPlayer? {
+        candidates.max { a, b in
+            let aRank = a.depthRank ?? Int.max
+            let bRank = b.depthRank ?? Int.max
+            if aRank != bRank { return aRank > bRank }
+            return a.overall < b.overall
+        }
+    }
+
+    /// ``fielded(from:)`` widened to a whole position group, for the pools that
+    /// take a top-N rather than a single man (the three receivers who soak up
+    /// targets, the front four, the linebacker trio, the secondary). Starters
+    /// first in chart order, then the bench by overall; all-`nil` ranks reduce
+    /// it exactly to `sorted { $0.overall > $1.overall }`.
+    static func lineupOrder(_ candidates: [SimPlayer]) -> [SimPlayer] {
+        candidates.sorted { a, b in
+            let aRank = a.depthRank ?? Int.max
+            let bRank = b.depthRank ?? Int.max
+            if aRank != bRank { return aRank < bRank }
+            return a.overall > b.overall
+        }
     }
 }
 

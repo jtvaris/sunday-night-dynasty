@@ -618,6 +618,63 @@ struct DepthChart: Codable {
         return filled
     }
 
+    // MARK: - Engine Handoff
+
+    /// The chart the CAREER has saved, decoded and reconciled against `roster`.
+    ///
+    /// The single door every engine reader goes through, so "the chart as it
+    /// stands against today's roster" has one definition rather than one per
+    /// caller. Reconciling first is why no reader has to re-derive *is this man
+    /// still on the club* (see ``reconcile(with:)``): a released man's UUID is
+    /// pruned and an emptied starter slot is refilled before anybody reads a
+    /// rank off it.
+    ///
+    /// Reconciles a LOCAL copy and never writes back — persisting the result is
+    /// ``reconcileSaved(career:roster:)``'s job, called from the release paths
+    /// that caused the drift. A week advance must not quietly rewrite the user's
+    /// own work.
+    ///
+    /// `nil` = this career has never saved a chart, which is also the answer for
+    /// all 31 AI clubs: `depthChartData` is a `Career` field, and there is one
+    /// `Career`. See ``depthRanks`` for why that asymmetry is safe.
+    static func saved(career: Career, roster: [Player]) -> DepthChart? {
+        guard let data = career.depthChartData,
+              var chart = try? JSONDecoder().decode(DepthChart.self, from: data) else { return nil }
+        chart.reconcile(with: roster)
+        return chart
+    }
+
+    /// Every listed man's index inside his own slot — 0 for a starter, 1 for the
+    /// first man behind him — flattened into the one shape the simulator reads.
+    ///
+    /// Deliberately a plain `[UUID: Int]` and not the chart itself.
+    /// `GameSimulator` and `PlaySimulator` are mirrored verbatim into
+    /// `tools/balance-harness`, which compiles neither this file nor `Career`; a
+    /// rank is the whole of what they need, and a bare number keeps the engine
+    /// free of the Domain layer it would otherwise have to drag along.
+    ///
+    /// **The returner slots are skipped, and that is the point.**
+    /// `GameSimulator.rollKickoff` takes no player at all — a flat 2 % housed
+    /// return and a random 20-35 start — so KR and PR feed nothing today and
+    /// nothing here pretends otherwise. Ranking them would be worse than
+    /// useless: a man may hold KR on top of a position slot, so his returner
+    /// index 0 would silently promote a WR3 backup into the starting trio. If a
+    /// real return game is ever modelled, it reads the KR/PR slots directly;
+    /// it does not arrive through this map.
+    ///
+    /// A man listed in two position slots (which ``assign(slot:playerID:at:)``
+    /// prevents, but a legacy save may still carry) keeps his best index.
+    var depthRanks: [UUID: Int] {
+        var ranks: [UUID: Int] = [:]
+        for slot in DepthChartSlot.allCases where !slot.acceptsAnyPosition {
+            for (index, id) in depthOrder(for: slot).enumerated() {
+                if let existing = ranks[id], existing <= index { continue }
+                ranks[id] = index
+            }
+        }
+        return ranks
+    }
+
     // MARK: - Analytics
 
     /// Calculates team overall rating from current starters.

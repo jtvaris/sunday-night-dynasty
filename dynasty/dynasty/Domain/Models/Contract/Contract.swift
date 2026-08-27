@@ -346,6 +346,45 @@ enum IncentiveCategory: String, Codable, CaseIterable, Identifiable {
             return [.gamesPlayed, .playoffBerth]
         }
     }
+
+    /// The same menu, reordered by what the man is actually playing for.
+    ///
+    /// **Nothing is added or removed** — a clause his position cannot be graded
+    /// on stays off the list whatever he wants — but the ORDER is load-bearing,
+    /// because every caller takes a prefix: the negotiation screen builds its
+    /// palette from `ContractEngine.suggestedIncentives`' default three, and the
+    /// agent writes one or two of his own. Under the flat position order that
+    /// left `playoffBerth` fourth or fifth on every menu with production on it,
+    /// so the one clause a ring-chaser would actually sign was unreachable at
+    /// the default three for 12 of the 19 positions — every skill spot, both
+    /// interior and edge defenders, both linebackers and the whole secondary.
+    /// Only linemen, kickers and punters could ever be offered it, purely
+    /// because their menus are short. That is a category the settlement grades
+    /// and the club pays for that no GM could put on the deal of the player it
+    /// was written about.
+    ///
+    /// Only the two motivations with a clause of their OWN reorder. Money,
+    /// stats and fame all want the production tier that already leads, so their
+    /// menus come back byte-identical rather than shuffled for the sake of it.
+    static func menu(for position: Position, motivation: Motivation) -> [IncentiveCategory] {
+        let base = menu(for: position)
+        let preferred: IncentiveCategory?
+        switch motivation {
+        case .winning:
+            preferred = .playoffBerth
+        case .loyalty:
+            // The company man's pitch has always been that he will be there.
+            // Availability is the clause that pays him for it.
+            preferred = .gamesPlayed
+        case .money, .stats, .fame:
+            preferred = nil
+        }
+        guard let preferred, let index = base.firstIndex(of: preferred) else { return base }
+        var reordered = base
+        reordered.remove(at: index)
+        reordered.insert(preferred, at: 0)
+        return reordered
+    }
 }
 
 /// One negotiated performance clause on a contract.

@@ -2477,23 +2477,31 @@ enum PlaySimulator {
 
     // MARK: - Player Finders
 
-    // The best player at the position acts as the starter — roster order is
-    // arbitrary, and play descriptions should feature QB1, not the 3rd string.
+    // The man his club's DEPTH CHART puts at the top of the position acts as the
+    // starter, with best-overall standing in wherever no chart ranks him — roster
+    // order is arbitrary, and play descriptions should feature QB1, not the 3rd
+    // string. ``SimPlayer/fielded(from:)`` holds the whole rule, including why an
+    // unranked group behaves exactly as it did before charts were wired in.
     private static func findQB(in players: [SimPlayer]) -> SimPlayer {
-        players.filter { $0.position == .QB }.max(by: { $0.overall < $1.overall })
+        SimPlayer.fielded(from: players.filter { $0.position == .QB })
             ?? players.first!
     }
 
     private static func findRB(in players: [SimPlayer]) -> SimPlayer {
         let backs = players.filter { $0.position == .RB }
-        if let best = backs.max(by: { $0.overall < $1.overall }) { return best }
+        if let best = SimPlayer.fielded(from: backs) { return best }
+        // The last resort stays roster order on purpose. It fires only for a club
+        // that dressed ZERO running backs, and the depth chart says the backfield
+        // is one job (`DepthChartSlot.packageNote`) — so promoting this to a
+        // ranked or best-overall pick would move AI clubs for a case the chart
+        // does not even claim to describe.
         return players.first(where: { $0.position == .FB }) ?? players.first!
     }
 
     /// The X receiver — the man `FieldUnit.offense` seats at role 7, so an
     /// end-around's credited rusher IS the player the 3D field runs.
     private static func findWR(in players: [SimPlayer]) -> SimPlayer? {
-        players.filter { $0.position == .WR }.max(by: { $0.overall < $1.overall })
+        SimPlayer.fielded(from: players.filter { $0.position == .WR })
     }
 
     /// The ball-carrier the CALL designs the run for (`OffensivePlayCall
@@ -2876,16 +2884,22 @@ enum PlaySimulator {
     }
 
     /// The assigned cover defender for THIS target, mirroring `FieldUnit`+`coverFor`:
-    /// the target's rank within its position group (by overall) picks the
-    /// correspondingly-ranked defender. WR1→CB1, WR2→CB2, slot→nickel CB (if the
-    /// front fields one) else better safety, TE→max-cover of {best cover LB,
-    /// better S}, RB→2nd LB.
+    /// the target's rank within its position group (depth chart first, then
+    /// overall) picks the correspondingly-ranked defender. WR1→CB1, WR2→CB2,
+    /// slot→nickel CB (if the front fields one) else better safety, TE→max-cover
+    /// of {best cover LB, better S}, RB→2nd LB.
+    ///
+    /// The ranking runs through ``SimPlayer/lineupOrder(_:)`` on both sides, so a
+    /// club that names a lower-rated corner CB1 really does draw the opponent's
+    /// WR1 all game. Which defender then does the covering BEST is still a
+    /// rating question (`betterSafety`, `lbCoverageRating`) — the chart says who
+    /// is on the field, not who wins the rep.
     private static func coverAssignment(for target: SimPlayer, offense: [SimPlayer],
                                         defense: [SimPlayer], package: DefensivePackage?) -> CoverMatch {
         let neutral = CoverMatch(coverage: 70, speed: 70, ballSkills: nil)
-        let cbs = defense.filter { $0.position == .CB }.sorted { $0.overall > $1.overall }
+        let cbs = SimPlayer.lineupOrder(defense.filter { $0.position == .CB })
         let safeties = defense.filter { $0.position == .FS || $0.position == .SS }
-        let lbs = defense.filter { isLB($0) }.sorted { $0.overall > $1.overall }
+        let lbs = SimPlayer.lineupOrder(defense.filter { isLB($0) })
         func dbMatch(_ p: SimPlayer) -> CoverMatch {
             CoverMatch(coverage: dbCoverageRating(for: p), speed: effectiveSpeed(p),
                        ballSkills: dbBallSkillsRating(for: p),
@@ -2900,7 +2914,7 @@ enum PlaySimulator {
         }
         switch target.position {
         case .WR:
-            let wrs = offense.filter { $0.position == .WR }.sorted { $0.overall > $1.overall }
+            let wrs = SimPlayer.lineupOrder(offense.filter { $0.position == .WR })
             let rank = wrs.firstIndex(where: { $0.id == target.id }) ?? 0
             if rank <= 1, cbs.count > rank { return dbMatch(cbs[rank]) }
             // Slot (rank 2+): the sub-package corner if the front fields one,
@@ -3321,19 +3335,22 @@ enum PlaySimulator {
     /// box score pointing at the same players.
     private static let primaryTargetShare = 0.85
 
-    /// The starters who soak up the vast majority of targets: the three best
-    /// WRs plus the best TE and the best RB (by overall).
+    /// The starters who soak up the vast majority of targets: the club's three
+    /// starting WRs plus its starting TE and RB — depth chart first, overall
+    /// where nothing ranks them.
+    ///
+    /// This is where a chart earns its keep on offense. WR1/WR2/WR3 each rank
+    /// their own man 0, so naming a 72-overall possession receiver a starter
+    /// really does move him from the ~15 % depth share to the 85 % primary one,
+    /// and drops the 80-overall man the club benched.
     private static func primaryTargets(among receivers: [SimPlayer]) -> Set<UUID> {
         var ids: Set<UUID> = []
-        let topWRs = receivers
-            .filter { $0.position == .WR }
-            .sorted { $0.overall > $1.overall }
-            .prefix(3)
+        let topWRs = SimPlayer.lineupOrder(receivers.filter { $0.position == .WR }).prefix(3)
         for wr in topWRs { ids.insert(wr.id) }
-        if let te = receivers.filter({ $0.position == .TE }).max(by: { $0.overall < $1.overall }) {
+        if let te = SimPlayer.fielded(from: receivers.filter { $0.position == .TE }) {
             ids.insert(te.id)
         }
-        if let rb = receivers.filter({ $0.position == .RB }).max(by: { $0.overall < $1.overall }) {
+        if let rb = SimPlayer.fielded(from: receivers.filter { $0.position == .RB }) {
             ids.insert(rb.id)
         }
         return ids
@@ -3928,42 +3945,42 @@ enum PlaySimulator {
         return players.last
     }
 
-    // Starter pools mirroring `FieldUnit`'s best-by-position picks, so the
-    // names the sim credits are the players the live 3D field is showing.
+    // Starter pools mirroring `FieldUnit`'s per-position picks, so the names the
+    // sim credits are the players the live 3D field is showing. All four rank
+    // through ``SimPlayer/lineupOrder(_:)``: the depth chart's starters first,
+    // then the bench by overall — which is exactly the old ordering for anyone
+    // the chart does not rank.
 
-    /// The five starting linemen (best per OL spot).
+    /// The five starting linemen (the chart's man per OL spot, else the best).
     private static func startingOL(_ players: [SimPlayer]) -> [SimPlayer] {
         var starters: [SimPlayer] = []
         for position in [Position.LT, .LG, .C, .RG, .RT] {
-            if let best = players.filter({ $0.position == position })
-                .max(by: { $0.overall < $1.overall }) {
+            if let best = SimPlayer.fielded(from: players.filter { $0.position == position }) {
                 starters.append(best)
             }
         }
         return starters.isEmpty ? players.filter { isOL($0) } : starters
     }
 
-    /// The starting front four (top-2 DE + top-2 DT by overall).
+    /// The starting front four (2 DE + 2 DT). Both interior slots count: DT1 and
+    /// DT2 each rank their own man 0, which is why `DepthChartSlot` splits them.
     private static func startingDL(_ players: [SimPlayer]) -> [SimPlayer] {
-        let ends = players.filter { $0.position == .DE }
-            .sorted { $0.overall > $1.overall }.prefix(2)
-        let tackles = players.filter { $0.position == .DT }
-            .sorted { $0.overall > $1.overall }.prefix(2)
+        let ends = SimPlayer.lineupOrder(players.filter { $0.position == .DE }).prefix(2)
+        let tackles = SimPlayer.lineupOrder(players.filter { $0.position == .DT }).prefix(2)
         let unit = Array(ends) + Array(tackles)
         return unit.isEmpty ? players.filter { isDL($0) } : unit
     }
 
-    /// The starting linebacker trio (top-3 by overall).
+    /// The starting linebacker trio (LOLB/MLB/ROLB, else the top 3).
     private static func startingLBs(_ players: [SimPlayer]) -> [SimPlayer] {
-        Array(players.filter { isLB($0) }.sorted { $0.overall > $1.overall }.prefix(3))
+        Array(SimPlayer.lineupOrder(players.filter { isLB($0) }).prefix(3))
     }
 
-    /// The starting secondary (top-2 CB + top-2 S by overall).
+    /// The starting secondary (2 CB + 2 S).
     private static func startingDBs(_ players: [SimPlayer]) -> [SimPlayer] {
-        let corners = players.filter { $0.position == .CB }
-            .sorted { $0.overall > $1.overall }.prefix(2)
-        let safeties = players.filter { $0.position == .FS || $0.position == .SS }
-            .sorted { $0.overall > $1.overall }.prefix(2)
+        let corners = SimPlayer.lineupOrder(players.filter { $0.position == .CB }).prefix(2)
+        let safeties = SimPlayer.lineupOrder(
+            players.filter { $0.position == .FS || $0.position == .SS }).prefix(2)
         let unit = Array(corners) + Array(safeties)
         return unit.isEmpty ? players.filter { isDB($0) } : unit
     }

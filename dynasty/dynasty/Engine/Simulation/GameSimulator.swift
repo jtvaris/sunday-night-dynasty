@@ -152,6 +152,21 @@ enum GameSimulator {
     ///     plays on the ROAD, and every balance-harness run — is today's exact
     ///     behavior. See ``homeFieldMomentum(fanSupport:)`` for why only one club
     ///     in the league can pass a number here.
+    ///   - homeDepthRanks: The HOME club's saved depth chart, flattened to
+    ///     `playerID -> index inside his own slot` by ``DepthChart/depthRanks``.
+    ///     Stamped onto the snapshot below and read by every lineup pick in
+    ///     `PlaySimulator` and by ``startingPlayer(at:in:)``, so the man who
+    ///     takes the snaps and the man who gets the stat line are the same man.
+    ///
+    ///     On the SAME asymmetry as `homeGamePlan` and `homeFanSupport` above,
+    ///     and for the same structural reason: `depthChartData` is a `Career`
+    ///     field, and a save has one `Career`. There is exactly one chart in the
+    ///     league and it is the user's. `nil` — all 31 AI clubs, every AI-vs-AI
+    ///     game, every harness run — leaves every rank unset, and an unranked
+    ///     group resolves by overall, which is the rule this engine has always
+    ///     used. So this parameter can change the user's lineup and cannot move
+    ///     a league-wide band by a single point.
+    ///   - awayDepthRanks: Same, for the AWAY club.
     static func simulate(
         homeTeam: Team,
         awayTeam: Team,
@@ -164,7 +179,9 @@ enum GameSimulator {
         weather: GameWeather? = nil,
         homeRosterOverride: [Player]? = nil,
         awayRosterOverride: [Player]? = nil,
-        homeFanSupport: Int? = nil
+        homeFanSupport: Int? = nil,
+        homeDepthRanks: [UUID: Int]? = nil,
+        awayDepthRanks: [UUID: Int]? = nil
     ) -> GameResult {
         // -----------------------------------------------------------------
         // 1. Setup
@@ -190,6 +207,17 @@ enum GameSimulator {
         let awayRoster = MedicalEngine.dressed(awayRosterOverride ?? awayTeam.currentRoster())
         var homePlayers = homeRoster.map({ SimPlayer(from: $0) })
         var awayPlayers = awayRoster.map({ SimPlayer(from: $0) })
+        // Stamp the depth chart onto the snapshot, once per game, right where the
+        // snapshot is built — the rest of the engine then reads a plain `Int?` on
+        // a value type instead of carrying a chart down every call.
+        //
+        // Note this runs AFTER `MedicalEngine.dressed`: a rank belongs to a man
+        // who is in the array, so an injured or held-out starter simply has no
+        // entry to look up and the next man down is the lowest rank present.
+        // That is the whole "the chart can never field nobody" guarantee, and it
+        // costs no extra code.
+        stampDepthRanks(homeDepthRanks, onto: &homePlayers)
+        stampDepthRanks(awayDepthRanks, onto: &awayPlayers)
         var livePlayerByID: [UUID: Player] = [:]
         for player in homeRoster { livePlayerByID[player.id] = player }
         for player in awayRoster { livePlayerByID[player.id] = player }
@@ -1441,6 +1469,15 @@ enum GameSimulator {
     /// Rolls one kickoff: ~2% housed return (when allowed), ~55% touchback to
     /// the 30, otherwise a return out to the 20–35.
     /// Internal (not private) because it is shared with `LiveGameEngine`.
+    ///
+    /// **There is no returner here, and the depth chart did not change that.**
+    /// Every branch below is a bare `Double.random` — no player is read, so the
+    /// `KR` and `PR` slots the "Lineup Incomplete" gate makes the user fill still
+    /// feed nothing at all. ``DepthChart/depthRanks`` deliberately omits them
+    /// rather than handing the engine a rank that would only leak into the
+    /// position rooms (a man may hold KR on top of a starting slot). Modelling a
+    /// real return game means reading a player HERE; until then, nothing in the
+    /// code should imply one exists.
     static func rollKickoff(allowReturnTouchdown: Bool = true) -> KickoffResult {
         if allowReturnTouchdown && Double.random(in: 0..<1) < kickoffReturnTouchdownChance {
             return KickoffResult(
@@ -2130,14 +2167,29 @@ enum GameSimulator {
         }
     }
 
-    /// The man the play-by-play treats as the starter at `position`: best
-    /// overall, exactly the rule `PlaySimulator.findQB` and `FieldUnit.offense`
-    /// apply when they decide who is on the field. Box-score credit for a
-    /// position the sim does not name per play (the passer, the kicker) has to
-    /// use the SAME rule, or the stat line and the play feed describe two
-    /// different players (#149).
+    /// The man the play-by-play treats as the starter at `position`: his club's
+    /// depth chart first, best overall where nothing ranks him — exactly the rule
+    /// `PlaySimulator.findQB` and `FieldUnit.offense` apply when they decide who
+    /// is on the field. Box-score credit for a position the sim does not name per
+    /// play (the passer, the kicker) has to use the SAME rule, or the stat line
+    /// and the play feed describe two different players (#149).
+    ///
+    /// Sharing ``SimPlayer/fielded(from:)`` with the finders is what keeps that
+    /// promise true now that a chart can override the rating: if this stayed
+    /// max-overall while the finders read ranks, wiring the chart in would have
+    /// re-created #149 — the benched star collecting the passing line for snaps
+    /// he never took.
     static func startingPlayer(at position: Position, in players: [SimPlayer]) -> SimPlayer? {
-        players.filter { $0.position == position }.max { $0.overall < $1.overall }
+        SimPlayer.fielded(from: players.filter { $0.position == position })
+    }
+
+    /// Copies a club's depth ranks onto its snapshot. No map (every AI club) is
+    /// a no-op, leaving every `depthRank` at its `nil` default.
+    private static func stampDepthRanks(_ ranks: [UUID: Int]?, onto players: inout [SimPlayer]) {
+        guard let ranks, !ranks.isEmpty else { return }
+        for index in players.indices {
+            players[index].depthRank = ranks[players[index].id]
+        }
     }
 
     /// Selects a player from the array with slight randomness so that touches

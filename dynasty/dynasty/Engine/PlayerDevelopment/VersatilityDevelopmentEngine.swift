@@ -81,15 +81,40 @@ enum VersatilityDevelopmentEngine {
 
     /// The maximum familiarity a player can reach at a given position,
     /// based on their physical attributes and VersatilityEngine rating.
+    ///
+    /// **Never answers less than what he has already banked there**, and that
+    /// ratchet is load-bearing. `VersatilityEngine.rate` is a hard-threshold
+    /// step function on raw physicals — `(.WR, .TE)` is `strength > 65`,
+    /// `(.CB, .SS)` is `speed > 75`, `(.OLB, .DE)` is `strength > 75` — so ONE
+    /// point of age regression flips a pair from Competent to Unconvincing and
+    /// the graded ceiling falls 65 → 40 in a single offseason. Every caller
+    /// that banks familiarity writes `min(ceiling, current + gain)`
+    /// (`WeekAdvancer` §8b's in-season reps, `PlayerDevelopmentEngine`'s
+    /// offseason pass, `tickConversions` below), so the ungated step DELETED
+    /// reps: a receiver sitting at 60 familiarity at tight end was knocked to
+    /// 40 the week after his strength ticked 66 → 65, with no notice, and the
+    /// roster and formation screens that rank backups by familiarity
+    /// re-ordered around the loss.
+    ///
+    /// Reps already taken are not refundable — he really did learn it. What the
+    /// slipped grade takes away is the FUTURE: with the ceiling pinned at what
+    /// he has banked, `positionLearningRate`'s headroom term collapses to its
+    /// 0.1 floor and he stops gaining, which is the honest answer for a man
+    /// whose body no longer supports the job but who already knows it.
+    ///
+    /// For a player below his graded ceiling — everybody, almost always — this
+    /// is `max(graded, smaller)` and therefore a no-op.
     static func versatilityCeiling(player: Player, at position: Position) -> Int {
         let rating = VersatilityEngine.rate(player: player, at: position)
+        let graded: Int
         switch rating {
-        case .natural:      return 100
-        case .accomplished: return 85
-        case .competent:    return 65
-        case .unconvincing: return 40
-        case .unqualified:  return 15
+        case .natural:      graded = 100
+        case .accomplished: graded = 85
+        case .competent:    graded = 65
+        case .unconvincing: graded = 40
+        case .unqualified:  graded = 15
         }
+        return max(graded, player.familiarity(at: position))
     }
 
     // MARK: - Scheme Change Consequences (plan §2.9.2)
@@ -343,6 +368,20 @@ enum VersatilityDevelopmentEngine {
     /// - 100 familiarity = 1.0 (full performance)
     /// - 50 familiarity  = 0.825 (17.5% penalty)
     /// - 0 familiarity   = 0.65 (35% penalty)
+    ///
+    /// **Nothing calls this, and as the sim stands nothing can.**
+    /// `GameSimulator` builds every unit by filtering the roster on
+    /// `player.position` (`offensePlayers.filter { $0.position == .WR ... }`),
+    /// so a man is only ever simulated at his OWN position and there is no
+    /// out-of-position snap for this to dock. That is why a conversion — which
+    /// rewrites `player.position` and his attribute block — is the only route
+    /// by which cross-training reaches the field, and why familiarity below
+    /// `conversionCommitFamiliarity` currently buys a backup label on the
+    /// roster and formation screens rather than playing time. Wiring this up
+    /// means teaching the sim to field a man out of position at all: it needs
+    /// `positionFamiliarity` carried onto `SimPlayer` (which does not hold it)
+    /// and a lineup step that can put him somewhere he is not listed. Left in
+    /// place because it is the right curve for that day, not because it is live.
     static func positionPerformanceModifier(player: Player, playingAt position: Position) -> Double {
         let familiarity = Double(player.familiarity(at: position))
         return 0.65 + (familiarity / 100.0) * 0.35
@@ -706,6 +745,16 @@ enum VersatilityDevelopmentEngine {
     /// the pair is in `conversionMatrix` and the ceiling clears
     /// `conversionCeilingFloor`; a player cross-training at an emergency
     /// position never trips the switch below.
+    ///
+    /// The ceiling read here is the ratcheted one, so a path a man has already
+    /// banked 65+ familiarity on survives the body grade slipping under it —
+    /// without that, one point of age regression made a running conversion
+    /// silently cease to exist (no more programme reps, the row vanishes from
+    /// the development report, `trainingPosition` still burning reps on a
+    /// target he can never reach). Between 40 and 64 banked he is still
+    /// dropped, because there the engine genuinely cannot tell a conversion the
+    /// club approved from a veteran `LeagueGenerator` seeded there — telling
+    /// them apart needs the approval stored on the player, not inferred.
     static func activeConversion(for player: Player) -> ConversionProgress? {
         guard let target = player.trainingPosition, target != player.position else { return nil }
         guard conversionMatrix[player.position]?.contains(target) == true else { return nil }

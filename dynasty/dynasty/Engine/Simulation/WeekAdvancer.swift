@@ -1363,6 +1363,21 @@ enum WeekAdvancer {
                                        by: { $0.teamID! })
         let playersByTeam = Dictionary(grouping: allPlayers.filter { $0.teamID != nil },
                                        by: { $0.teamID! })
+
+        // The user's depth chart, decoded and reconciled against his roster ONCE
+        // for the whole advance, then read by all three consumers below: the
+        // lineup the play-by-play fields, the weekly starter tally, and the
+        // development pass. They have to be the same lineup — a chart that moved
+        // the man on the field but not the man in the stat line, or the man who
+        // develops, is the same defect in a new place.
+        //
+        // One chart, because `Career.depthChartData` is a `Career` field and a
+        // save has one `Career`. The other 31 clubs pass `nil` everywhere below
+        // and keep max-overall exactly as they always have.
+        let userChart = career.teamID.flatMap { teamID in
+            DepthChart.saved(career: career, roster: playersByTeam[teamID] ?? [])
+        }
+        let userDepthRanks = userChart?.depthRanks
         perf.lap("fetch")
 
         // Plan §5 in-flight save migration: seed `learning` on pre-overhaul rows
@@ -1468,7 +1483,13 @@ enum WeekAdvancer {
                     // the flat calibrated 0.1 — so every AI-vs-AI game and every
                     // game the user plays on the ROAD stays byte-identical, and
                     // so does every harness run.
-                    homeFanSupport: homeTeam.id == userTeamID ? career.fanSupport : nil
+                    homeFanSupport: homeTeam.id == userTeamID ? career.fanSupport : nil,
+                    // The depth chart, on the identical asymmetry: it is the
+                    // user's club that has one, so the ranks go to whichever
+                    // side he is on and the opponent stays `nil` — i.e. exactly
+                    // the max-overall lineup it fielded before this existed.
+                    homeDepthRanks: homeTeam.id == userTeamID ? userDepthRanks : nil,
+                    awayDepthRanks: awayTeam.id == userTeamID ? userDepthRanks : nil
                 )
                 game.homeScore = result.homeScore
                 game.awayScore = result.awayScore
@@ -1549,8 +1570,12 @@ enum WeekAdvancer {
                 let roster = playersByTeam[teamID] ?? []
                 let available = roster.filter { !$0.isInjured && !$0.isHoldingOut && !$0.isRetired }
                 // #40: derive this week's starters from the available roster,
-                // mirroring the best-available lineup the sim would field.
-                let starterIDs = startingLineupIDs(available: available)
+                // mirroring the lineup the sim would field — the user's own
+                // depth chart for his club, best-available for the other 31.
+                let starterIDs = startingLineupIDs(
+                    available: available,
+                    chart: teamID == career.teamID ? userChart : nil
+                )
                 for player in available {
                     player.gamesPlayedThisSeason += 1
                     if starterIDs.contains(player.id) {
@@ -2010,10 +2035,16 @@ enum WeekAdvancer {
         // man behind him, which is where a backup's breakout season comes from.
         var playingTimeRoleByPlayer: [UUID: PlayerDevelopmentEngine.PlayingTimeRole] = [:]
         for (teamID, roster) in playersByTeam {
-            _ = teamID
             let available = roster.filter { !$0.isInjured && !$0.isHoldingOut && !$0.isRetired }
             guard !available.isEmpty else { continue }
-            let starterIDs = startingLineupIDs(available: available)
+            // The same chart the game and the starter tally read, so a man the
+            // user benched develops like a backup — which is the point of
+            // benching him, and the half of this that a player feels over a
+            // season rather than in one box score.
+            let starterIDs = startingLineupIDs(
+                available: available,
+                chart: teamID == career.teamID ? userChart : nil
+            )
             let roles = PlayerDevelopmentEngine.playingTimeRoles(
                 roster: available, starterIDs: starterIDs
             )
@@ -7246,21 +7277,57 @@ enum WeekAdvancer {
     // MARK: - Private: Starting Lineup (#40)
 
     /// Returns the set of player IDs that make up a team's projected starting
-    /// lineup for a week, given its AVAILABLE roster. Mirrors the best-available
-    /// role selection used by `MatchupResolver.FieldUnit` (11 offense + 11
-    /// defense) plus a kicker and punter, so the "started" tally matches who the
-    /// simulator would actually field. Each slot picks the highest-overall
-    /// available player at that position who has not already been slotted; a slot
-    /// with no eligible player is simply left empty (unlike the 3D `FieldUnit`,
-    /// which back-fills with an arbitrary body — we never credit a bogus start).
+    /// lineup for a week, given its AVAILABLE roster. Mirrors the role selection
+    /// used by `MatchupResolver.FieldUnit` (11 offense + 11 defense) plus a
+    /// kicker and punter, so the "started" tally matches who the simulator would
+    /// actually field. A slot with no eligible player is simply left empty
+    /// (unlike the 3D `FieldUnit`, which back-fills with an arbitrary body — we
+    /// never credit a bogus start).
     ///
     /// This is the league-wide starter signal (AI games are score-only, so no
-    /// real box score exists for 31 of 32 teams).
-    static func startingLineupIDs(available: [Player]) -> Set<UUID> {
+    /// real box score exists for 31 of 32 teams), and it feeds two things that
+    /// have to agree with each other and with the game: the weekly
+    /// `gamesStartedThisSeason` tally, and `PlayerDevelopmentEngine
+    /// .playingTimeRoles`, which decides how much a man develops.
+    ///
+    /// ## The chart
+    ///
+    /// `chart` is the club's saved depth chart, already reconciled against its
+    /// roster (``DepthChart/saved(career:roster:)``). Each slot is walked in the
+    /// user's own order and the first man who is available and not already
+    /// spoken for takes the start; only when a slot names nobody usable does the
+    /// old highest-overall search run. So the chart reorders a lineup and can
+    /// never empty one.
+    ///
+    /// `nil` is the answer for all 31 AI clubs — `depthChartData` lives on
+    /// `Career`, and there is one `Career` — and it is byte-for-byte the
+    /// pre-chart behaviour: every slot falls straight through to the
+    /// highest-overall search. This is the SAME chart the game itself reads
+    /// (`GameSimulator.simulate`'s depth ranks). Wiring one layer and not the
+    /// other would put the user's starter on the field while his stat line and
+    /// his development went to the man the ratings preferred.
+    static func startingLineupIDs(available: [Player], chart: DepthChart? = nil) -> Set<UUID> {
         var picked = Set<UUID>()
+        // Built only for the one club that HAS a chart; the other 31 never look
+        // at it, and this runs for all 32 twice a week.
+        let availableByID: [UUID: Player] = chart == nil ? [:] : Dictionary(
+            available.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
 
-        /// Slots the best unused player from the first non-empty preference list.
-        func fill(_ preferences: [Position]) {
+        /// Slots this week's man for one lineup spot: the chart's `slot` if it
+        /// names anyone usable, otherwise the best unused player from the first
+        /// non-empty preference list.
+        func fill(_ preferences: [Position], _ slot: DepthChartSlot? = nil) {
+            if let slot, let chart {
+                for id in chart.depthOrder(for: slot) where !picked.contains(id) {
+                    // The position guard is belt-and-braces: the chart UI only
+                    // offers a slot's own room, but a legacy save must not be
+                    // able to start a guard at cornerback.
+                    guard let charted = availableByID[id],
+                          preferences.contains(charted.position) else { continue }
+                    picked.insert(charted.id)
+                    return
+                }
+            }
             var choice: Player?
             for position in preferences {
                 for player in available
@@ -7273,20 +7340,22 @@ enum WeekAdvancer {
         }
 
         // Offense — 11 starters.
-        fill([.QB])
-        fill([.RB, .FB])          // RB starts; FB only if no RB available
-        fill([.LT]); fill([.LG]); fill([.C]); fill([.RG]); fill([.RT])
-        fill([.WR]); fill([.WR]); fill([.WR])
-        fill([.TE])
+        fill([.QB], .QB)
+        fill([.RB, .FB], .RB)     // RB starts; FB only if no RB available
+        fill([.LT], .LT); fill([.LG], .LG); fill([.C], .C); fill([.RG], .RG); fill([.RT], .RT)
+        fill([.WR], .WR1); fill([.WR], .WR2); fill([.WR], .WR3)
+        fill([.TE], .TE)
 
-        // Defense — 11 starters.
-        fill([.DE]); fill([.DT]); fill([.DT]); fill([.DE])
-        fill([.OLB]); fill([.MLB, .OLB]); fill([.OLB, .MLB])
-        fill([.CB]); fill([.CB])
-        fill([.FS, .SS]); fill([.SS, .FS])
+        // Defense — 11 starters. The interior line is TWO jobs (DT1/DT2), which
+        // is exactly why `DepthChartSlot` splits them.
+        fill([.DE], .LE); fill([.DT], .DT1); fill([.DT], .DT2); fill([.DE], .RE)
+        fill([.OLB], .LOLB); fill([.MLB, .OLB], .MLB); fill([.OLB, .MLB], .ROLB)
+        fill([.CB], .CB1); fill([.CB], .CB2)
+        fill([.FS, .SS], .FS); fill([.SS, .FS], .SS)
 
-        // Specialists.
-        fill([.K]); fill([.P])
+        // Specialists. KR and PR are deliberately absent: `GameSimulator
+        // .rollKickoff` reads no player, so a returner starts nothing.
+        fill([.K], .K); fill([.P], .P)
 
         return picked
     }
@@ -7562,6 +7631,15 @@ enum WeekAdvancer {
         var userResult: GameSimulator.GameResult?
         // Coaches are needed by every game since #213 — fetched at most once.
         var coachesCache: [Coach]?
+        // The user's depth chart, resolved ONCE for the whole round — not per
+        // game, and emphatically not inside the tie-retry loop below. Costs one
+        // roster fetch, and only while he is still alive in the bracket.
+        let userTeamInRound: UUID? = career.teamID.flatMap { id -> UUID? in
+            games.contains { $0.homeTeamID == id || $0.awayTeamID == id } ? id : nil
+        }
+        let userDepthRanks: [UUID: Int]? = userTeamInRound
+            .flatMap { teamsByID[$0] }
+            .flatMap { DepthChart.saved(career: career, roster: $0.currentRoster())?.depthRanks }
 
         for game in games {
             let userTeamID = career.teamID
@@ -7591,7 +7669,13 @@ enum WeekAdvancer {
                             id: game.id,
                             week: game.week,
                             homeTeamAbbreviation: homeTeam.abbreviation
-                        )
+                        ),
+                        // His chart shades his own side only, exactly as his
+                        // game plan does; the opponent stays `nil` and keeps
+                        // max-overall. Constant across the retries, so a re-roll
+                        // re-rolls the dice and not the lineup.
+                        homeDepthRanks: homeTeam.id == userTeamID ? userDepthRanks : nil,
+                        awayDepthRanks: awayTeam.id == userTeamID ? userDepthRanks : nil
                     )
                     if attempt.homeScore != attempt.awayScore {
                         decided = attempt
