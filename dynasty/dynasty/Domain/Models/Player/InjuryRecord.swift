@@ -27,6 +27,27 @@ struct InjuryRecord: Codable, Identifiable, Equatable {
     }
 }
 
+// MARK: - Career totals
+
+extension Collection where Element == InjuryRecord {
+
+    /// **Weeks, deliberately — not games.**
+    ///
+    /// The player card showed per-injury summaries and a durability rating and
+    /// nothing that added them up, so "Durability 83" had nothing to be measured
+    /// against. This is that total.
+    ///
+    /// It counts `weeksOut`, the projection recorded at the moment of the
+    /// injury, because that is the only quantity the history stores. A week of
+    /// the regular season is a game, but a long lay-off can run past Week 18
+    /// into an offseason nobody plays games in — so calling the sum "games
+    /// missed" would over-count exactly the injuries that matter most. The
+    /// honest headline is the one the data supports.
+    var careerWeeksMissed: Int {
+        reduce(0) { $0 + max(0, $1.weeksOut) }
+    }
+}
+
 // MARK: - Rehab Status (R28)
 
 /// Weekly rehab trajectory for an injured player, set by

@@ -463,6 +463,11 @@ struct PlayerDetailView: View {
 
     @State private var showCutConfirmation = false
 
+    /// Whether the personality card is showing what "can generate media drama"
+    /// actually costs. Collapsed by default — the chip is the signal, the list
+    /// is the answer to a question the user has to ask.
+    @State private var showsDramaTriggers = false
+
     /// **The one sheet slot on this screen** — an enum, not a `Bool`.
     ///
     /// Repeat bug class: several screens shipped two `.sheet(isPresented:)`
@@ -753,6 +758,23 @@ struct PlayerDetailView: View {
                                 .padding(.horizontal, DSSpacing.xs)
                                 .padding(.vertical, 2)
                                 .background(Color.accentGold, in: Capsule())
+                        }
+                        // …and the same rank inside his own position room, in
+                        // the quieter tier, directly under it — see
+                        // ``teamPositionRank``. Stacked rather than set beside
+                        // the gold capsule because this column already sits
+                        // between a 96 pt portrait and the name block, and at
+                        // iPhone width a second capsule on the same line takes
+                        // its width straight out of the player's name.
+                        if let room = teamPositionRank, !isRookieFogged {
+                            Text("Team #\(room.rank) of \(room.total)")
+                                .font(.system(size: DSType.Size.micro, weight: .heavy))
+                                .foregroundStyle(Color.textSecondary)
+                                .lineLimit(1)
+                                .padding(.horizontal, DSSpacing.xs)
+                                .padding(.vertical, 2)
+                                .background(Color.backgroundTertiary, in: Capsule())
+                                .accessibilityLabel("Ranked \(room.rank) of \(room.total) at \(player.position.rawValue) on his own roster")
                         }
                     }
 
@@ -1067,14 +1089,23 @@ struct PlayerDetailView: View {
 
             // Market comparables strip — contextualizes the player's salary against
             // top-N peers at the same position (#39).
+            //
+            // PROMOTED. This is the line that tells a GM whether the number two
+            // pills above it is a bargain or a millstone, and it was drawn at
+            // caption size in `textTertiary` — the quietest ink on the card, the
+            // same tier as the "Yr 3" gutter labels under it. Moving it up the
+            // card was only half the fix: it now carries the weight of the fact
+            // it states (footnote / semibold / `textSecondary`) and the icon
+            // takes the card's accent, which is what separates a finding from a
+            // caption everywhere else in this design system.
             if let comparables = marketComparablesText {
                 HStack(spacing: 4) {
                     Image(systemName: "chart.bar.xaxis")
-                        .font(.system(size: DSType.Size.micro))
-                        .foregroundStyle(Color.textTertiary)
+                        .font(.system(size: DSType.Size.footnote, weight: .semibold))
+                        .foregroundStyle(Color.accentGold)
                     Text(comparables)
-                        .font(.system(size: DSType.Size.caption))
-                        .foregroundStyle(Color.textTertiary)
+                        .font(.system(size: DSType.Size.footnote, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(Color.textSecondary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.85)
                 }
@@ -1791,10 +1822,31 @@ struct PlayerDetailView: View {
                         Text("If \(player.lastName) leaves")
                             .font(.system(size: DSType.Size.caption, weight: .semibold))
                             .foregroundStyle(Color.textSecondary)
-                        Text(replacement)
-                            .font(.system(size: DSType.Size.caption).monospacedDigit())
-                            .foregroundStyle(Color.textTertiaryReadable)
-                            .fixedSize(horizontal: false, vertical: true)
+                        // The OVR swing is a VERDICT, not part of the sentence.
+                        // It shipped as "— 70 OVR (-14)" inside one tertiary
+                        // string, so the single most decision-relevant figure in
+                        // the card read at the same weight as the em-dash beside
+                        // it. It gets the app's own badge instead, on the tone
+                        // that names which way it cuts.
+                        HStack(spacing: DSSpacing.xxs) {
+                            Text(replacement.sentence)
+                                .font(.system(size: DSType.Size.caption).monospacedDigit())
+                                .foregroundStyle(Color.textTertiaryReadable)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if let badge = replacement.deltaBadge {
+                                DSStatusPill(label: badge.label, tone: badge.tone, showsDot: false)
+                            }
+                        }
+                        // …and what it does to the cap. Draft capital is at the
+                        // top of this card and the depth-chart cost is the line
+                        // above; the money was the third leg of the same
+                        // decision and the only one the screen never quoted.
+                        if let relief = tradeCapReliefText {
+                            Text(relief)
+                                .font(.system(size: DSType.Size.caption).monospacedDigit())
+                                .foregroundStyle(Color.textTertiaryReadable)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                     Spacer(minLength: 0)
                 }
@@ -1822,23 +1874,78 @@ struct PlayerDetailView: View {
         }
     }
 
+    /// The replacement preview, split so the swing can be drawn as a badge.
+    ///
+    /// It used to be one string with the delta parenthesised inside it, which is
+    /// why the number that decides the question rendered in the same tertiary
+    /// ink as the words around it.
+    private struct ReplacementPreview {
+        /// "Coleman starts at QB · 70 OVR", or the no-backup sentence.
+        let sentence: String
+        /// `nil` when there is nobody to compare against.
+        let deltaBadge: (label: String, tone: DSStatusPill.Tone)?
+    }
+
     /// Next-best player on the same team at the same position, used for the
     /// "if cut/traded" depth-chart preview (#37).
-    /// Returns text like "Smith starts at QB — 71 OVR (-13)".
-    private var replacementPlayerInfo: String? {
+    private var replacementPlayerInfo: ReplacementPreview? {
         guard let teamID = player.teamID else { return nil }
         let teammates = allLeaguePlayers
             .filter { $0.teamID == teamID && $0.position == player.position && $0.id != player.id }
             .sorted { $0.overall > $1.overall }
         guard let next = teammates.first else {
-            return "No backup on roster — would need free agent / draft pick"
+            return ReplacementPreview(
+                sentence: "No backup on roster — would need free agent / draft pick",
+                deltaBadge: nil
+            )
         }
         let delta = next.overall - player.overall
-        let deltaText: String
-        if delta > 0 { deltaText = "+\(delta)" }
-        else if delta < 0 { deltaText = "\(delta)" }
-        else { deltaText = "±0" }
-        return "\(next.lastName) starts at \(player.position.rawValue) — \(next.overall) OVR (\(deltaText))"
+        let badge: (label: String, tone: DSStatusPill.Tone)
+        if delta > 0 {
+            badge = ("+\(delta) OVR", .ok)
+        } else if delta < 0 {
+            // The typographic minus, matching `multiplierText` on this screen.
+            badge = ("\u{2212}\(abs(delta)) OVR", .bad)
+        } else {
+            badge = ("\u{00B1}0 OVR", .neutral)
+        }
+        return ReplacementPreview(
+            sentence: "\(next.lastName) starts at \(player.position.rawValue) \u{00B7} \(next.overall) OVR",
+            deltaBadge: badge
+        )
+    }
+
+    /// **What a trade would do to the cap** — the third leg of the decision.
+    ///
+    /// The card already prices the draft capital (`tradeValuePoints`) and the
+    /// roster impact (`replacementPlayerInfo`) and said nothing at all about the
+    /// money, which is the leg a GM cannot work out in his head: a bonus-heavy
+    /// deal can cost MORE to move than to keep once the proration accelerates.
+    ///
+    /// Quoted from `CapManagementEngine.tradeCapSplit` — the same call
+    /// `TradeEngine.movePlayer` books the trade with, priced through the same
+    /// `leagueYearRemaining` the release preview two sections down already uses,
+    /// so the number here and the number the ledger moves by cannot disagree.
+    /// Sandbox has no cap consequences to state.
+    private var tradeCapReliefText: String? {
+        guard let career = careers.first,
+              career.capMode != .sandbox,
+              player.annualSalary > 0 else { return nil }
+        let split = CapManagementEngine.tradeCapSplit(
+            player: player,
+            contract: playerContract,
+            capMode: career.capMode,
+            leagueYearRemaining: CapManagementEngine.leagueYearRemaining(
+                phase: career.currentPhase,
+                week: career.currentWeek
+            )
+        )
+        let relief = split.traderRelief
+        let head = relief >= 0
+            ? "Trading him frees \(formatCapHit(relief)) of cap"
+            : "Trading him costs \(formatCapHit(-relief)) of cap"
+        guard split.deadCap > 0 else { return head }
+        return "\(head) \u{00B7} \(formatCapHit(split.deadCap)) dead"
     }
 
     /// Which way a factor pushes the player's price.
@@ -1950,7 +2057,7 @@ struct PlayerDetailView: View {
             DSActionBar(
                 explainer: ownRosterBarExplainer,
                 destructive: cutAction,
-                ghost: .init(title: "Change Position", handler: { activeSheet = .positionChange }),
+                ghost: changePositionAction,
                 secondary: secondaryContractAction,
                 primary: primaryContractAction
             )
@@ -1981,6 +2088,34 @@ struct PlayerDetailView: View {
                 )
             }
         }
+    }
+
+    /// Alternate spots this man could realistically be trained into — the same
+    /// two-stage filter the versatility card and the conversion sheet apply:
+    /// `VersatilityEngine` says what he is *qualified* for,
+    /// `positionCompatibilityMap` says which of those a real coaching staff
+    /// would ever try (#176/#177).
+    private var viableAlternatePositions: [(Position, VersatilityRating)] {
+        VersatilityEngine.viablePositions(for: player)
+            .filter { $0.0 != player.position && isRealisticConversion(from: player.position, to: $0.0) }
+    }
+
+    /// **A door with nothing behind it is not offered** (§2.12).
+    ///
+    /// "Change Position" was an unconditional ghost slot, so an 84 OVR
+    /// quarterback with no compatible spot on the matrix got the same live
+    /// button as a swing tackle — and the emptiness was only discovered inside
+    /// the sheet, which then had nothing to list but a sentence saying so. The
+    /// bar asks the same question the sheet does, up front, and says why it is
+    /// shut rather than making the user open it to find out.
+    private var changePositionAction: DSActionBar.Action {
+        let viable = !viableAlternatePositions.isEmpty
+        return .init(
+            title: "Change Position",
+            caption: viable ? nil : "No viable alternate spot",
+            isEnabled: viable,
+            handler: { if viable { activeSheet = .positionChange } }
+        )
     }
 
     /// §2.12 — a blocked commit swaps the gold rule for orange and the
@@ -2275,6 +2410,25 @@ struct PlayerDetailView: View {
             // R28: permanent injury history (newest first), with recurrence flags
             let history = player.injuryHistory
             if !history.isEmpty {
+                // **The career total the card never had.** The list below shows
+                // at most the last six lay-offs and each of them one at a time,
+                // so the durability rating on the right had nothing to be
+                // measured against — a 30-year-old with six recorded knocks and
+                // one with six seasons of them read identically. Weeks, not
+                // games: see ``InjuryRecord.careerWeeksMissed``.
+                let missed = history.careerWeeksMissed
+                HStack(spacing: 8) {
+                    Image(systemName: "calendar.badge.exclamationmark")
+                        .font(.system(size: DSType.Size.footnote))
+                        .foregroundStyle(Color.warning)
+                    Text("Career: \(history.count) injur\(history.count == 1 ? "y" : "ies") \u{00B7} \(missed) week\(missed == 1 ? "" : "s") missed")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.textSecondary)
+                    Spacer()
+                    Text("Durability \(player.physical.durability)")
+                        .font(.system(size: DSType.Size.micro, weight: .bold).monospacedDigit())
+                        .foregroundStyle(colorForAttribute(player.physical.durability))
+                }
                 ForEach(history.suffix(6).reversed()) { record in
                     let repeatCount = history.filter { $0.injuryTypeRaw == record.injuryTypeRaw }.count
                     HStack(spacing: 8) {
@@ -2306,7 +2460,11 @@ struct PlayerDetailView: View {
                         Text("No injury history")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(Color.success)
-                        Text("Durability: \(player.physical.durability)")
+                        // Was "Durability: 83", which is the same number the
+                        // indicator to its right already states in a larger
+                        // type. The line the card was missing is the career
+                        // total the rating is supposed to predict.
+                        Text("0 weeks missed in his career")
                             .font(.caption2)
                             .foregroundStyle(Color.textTertiary)
                     }
@@ -2483,19 +2641,40 @@ struct PlayerDetailView: View {
             icon: "person.crop.circle",
             explainer: "His archetype and his motivation state — the two dials the development pass and the locker room read."
         ) {
-            // Archetype with explanation (#183)
-            DSDetailRow("Archetype", archetypeDisplayName)
-            DSDetailNote(text: archetypeEffectDescription)
+            // **The card is about a man, so it leads with his face.**
+            //
+            // Archetype and motivator were two `DSDetailRow`s — "Archetype
+            // ———— Fiery Competitor" — which is the form-field treatment every
+            // other fact on this screen gets, and it made the one card that
+            // describes a personality read like a database row. The portrait is
+            // already loaded for the hero (`PersonFaceView`, same cache), so
+            // this costs nothing and gives the block the subject the copy is
+            // written about.
+            //
+            // NOTE (#140): "Motivated by" is the *trait* — what drives him
+            // (Money / Winning / Stats / Loyalty / Fame). The Overview card's
+            // "Motivation" pill is the transient `motivationState` (Driven /
+            // Focused / …). Two different things, so they must not share a
+            // label or the two cards read as a contradiction ("Motivation:
+            // Focused" vs "Motivation: Fame").
+            HStack(alignment: .center, spacing: DSSpacing.sm) {
+                PersonFaceView(player: player, size: .medium, ringColor: teamRingColor)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(archetypeDisplayName)
+                        .font(.system(size: DSType.Size.callout, weight: .bold))
+                        .foregroundStyle(Color.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("Motivated by \(player.personality.motivation.rawValue)")
+                        .font(.system(size: DSType.Size.footnote, weight: .semibold))
+                        .foregroundStyle(Color.accentGold)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
 
-            // Motivator with explanation (#183).
-            // NOTE (#140): this row is the *trait* — what drives him (Money /
-            // Winning / Stats / Loyalty / Fame). The Overview card's
-            // "Motivation" pill is the transient `motivationState`
-            // (Driven / Focused / …). Two different things, so they must not
-            // share a label or the card reads as a contradiction
-            // ("Motivation: Focused" vs "Motivation: Fame").
-            DSDetailRow("Motivator", player.personality.motivation.rawValue)
-            DSDetailNote(text: motivationEffectDescription)
+            // The two "what it does" lines the rows above used to carry (#183).
+            DSDetailNote(text: archetypeEffectDescription)
+            DSDetailNote(text: motivationEffectDescription, icon: "target")
 
             if player.personality.isMentor {
                 Label("Mentor influence on team", systemImage: "person.2.fill")
@@ -2503,9 +2682,43 @@ struct PlayerDetailView: View {
                     .foregroundStyle(Color.textSecondary)
             }
             if player.personality.isDramaticInMedia {
-                Label("Can generate media drama", systemImage: "exclamationmark.bubble.fill")
+                // **The warning names the events it feeds.**
+                //
+                // It was a bare `Label`: a real signal with no way to find out
+                // what it costs. `EventEngine.rollEvent` reads
+                // `personality.isDramaticInMedia` in three separate places, and
+                // all three are nameable — so tapping it opens them rather than
+                // leaving the user to infer a mechanic from an adjective.
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        showsDramaTriggers.toggle()
+                    }
+                } label: {
+                    HStack(spacing: DSSpacing.xxs) {
+                        Image(systemName: "exclamationmark.bubble.fill")
+                        Text("Can generate media drama")
+                        Image(systemName: showsDramaTriggers ? "chevron.up" : "chevron.down")
+                            .font(.system(size: DSType.Size.micro, weight: .bold))
+                        Spacer(minLength: 0)
+                    }
                     .font(.system(size: DSType.Size.footnote))
                     .foregroundStyle(Color.warning)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Can generate media drama")
+                .accessibilityHint(showsDramaTriggers ? "Hides the events he makes more likely" : "Shows the events he makes more likely")
+
+                if showsDramaTriggers {
+                    DSDetailNote(
+                        // Plain prose, no markdown: `DSDetailNote` takes a
+                        // `String` and renders it verbatim, so asterisks would
+                        // print as asterisks.
+                        text: "Every drama-prone man in the room raises the weekly roll's weight on a Social Media Incident and a Podcast Controversy, and tilts the whole pool toward the negative side — which is what puts a suspension or a clash with the head coach in play. When one of those two lands, he is the man it lands on.",
+                        icon: "list.bullet.rectangle",
+                        tint: .warning
+                    )
+                }
             }
         }
     }
@@ -2651,11 +2864,29 @@ struct PlayerDetailView: View {
                 }.sorted { $0.1 > $1.1 }
             }()
 
-            ForEach(allSchemes, id: \.0) { scheme, familiarity in
+            // **A row per scheme he has never installed is a row of nothing.**
+            //
+            // #181 was right that the card must show every scheme on his side of
+            // the ball, not only the learned ones — otherwise the user cannot
+            // see what he would be asking the man to learn. But an unlearned
+            // scheme has no bar to draw and no number worth reading, and on a
+            // defender that is four full rows of grey label, empty track and
+            // "0%" sinking the four that carry the story. They collapse into one
+            // named footnote instead: the set is still complete, it just stops
+            // costing four rows to say "none of these".
+            //
+            // Sorted by name rather than left in the `sorted` order above: with
+            // every value tied at 0 that comparator gives no ordering guarantee,
+            // and a footnote whose words reshuffle between renders is the same
+            // instability #134a fixed in the rank badge.
+            let installed = allSchemes.filter { $0.1 > 0 }
+            let unlearned = allSchemes.filter { $0.1 == 0 }.map(\.0).sorted()
+
+            ForEach(installed, id: \.0) { scheme, familiarity in
                 HStack(spacing: 8) {
                     Text(scheme)
                         .font(.caption)
-                        .foregroundStyle(familiarity > 0 ? Color.textSecondary : Color.textTertiary)
+                        .foregroundStyle(Color.textSecondary)
                         .frame(width: 80, alignment: .leading)
                         .lineLimit(1)
 
@@ -2664,20 +2895,25 @@ struct PlayerDetailView: View {
                             RoundedRectangle(cornerRadius: DSCornerRadius.tight)
                                 .fill(Color.backgroundTertiary)
                                 .frame(height: 6)
-                            if familiarity > 0 {
-                                RoundedRectangle(cornerRadius: DSCornerRadius.tight)
-                                    .fill(schemeFamColor(familiarity))
-                                    .frame(width: geo.size.width * CGFloat(familiarity) / 100.0, height: 6)
-                            }
+                            RoundedRectangle(cornerRadius: DSCornerRadius.tight)
+                                .fill(schemeFamColor(familiarity))
+                                .frame(width: geo.size.width * CGFloat(familiarity) / 100.0, height: 6)
                         }
                     }
                     .frame(height: 6)
 
                     Text("\(familiarity)%")
                         .font(.caption2.weight(.bold).monospacedDigit())
-                        .foregroundStyle(familiarity > 0 ? schemeFamColor(familiarity) : Color.textTertiary)
+                        .foregroundStyle(schemeFamColor(familiarity))
                         .frame(width: 36, alignment: .trailing)
                 }
+            }
+
+            if !unlearned.isEmpty {
+                DSDetailNote(
+                    text: "Not familiar with: \(unlearned.joined(separator: ", "))",
+                    icon: "circle.dashed"
+                )
             }
         }
     }
@@ -3222,6 +3458,32 @@ struct PlayerDetailView: View {
         } else {
             return "Top \(pct)% \(player.position.rawValue)"
         }
+    }
+
+    /// **The same rank, measured against the room he actually walks into.**
+    ///
+    /// "Top 11% QB" is a league fact and answers a league question. The question
+    /// a GM asks on this screen is the club one — is he the starter, or the man
+    /// behind him — and nothing on the page answered it, because `leagueRanking`
+    /// never filtered by `teamID`.
+    ///
+    /// Same total order as the league rank (OVR, then the persisted id) for the
+    /// same reason: a position room is thick with ties, and an unstable sort
+    /// would let the badge disagree with itself between renders (#134a).
+    /// `nil` for a free agent and for a one-man room, where "#1 of 1" is noise.
+    private var teamPositionRank: (rank: Int, total: Int)? {
+        guard let teamID = player.teamID else { return nil }
+        let room = allLeaguePlayers.filter {
+            $0.teamID == teamID && $0.position == player.position
+        }
+        guard room.count > 1 else { return nil }
+        let sorted = room.sorted {
+            $0.overall != $1.overall
+                ? $0.overall > $1.overall
+                : $0.id.uuidString < $1.id.uuidString
+        }
+        guard let index = sorted.firstIndex(where: { $0.id == player.id }) else { return nil }
+        return (rank: index + 1, total: sorted.count)
     }
 
     // MARK: - Trade Value (#37)
