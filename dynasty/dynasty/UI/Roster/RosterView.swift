@@ -319,17 +319,24 @@ struct RosterView: View {
     }
 
     /// Name of the weakest position group on the current side (lowest average OVR).
+    ///
+    /// "Biggest Need" is a RANKING, so it needs a field to rank. The Special
+    /// Teams side holds exactly one group (`specialTeamsGroups` is
+    /// single-element, because only K and P are on `.specialTeams`), so the
+    /// chip fired on Specialists in every save, in every season, whatever the
+    /// kicker's rating — a red alarm that carried no information because
+    /// nothing could ever have out-ranked it. With fewer than two groups to
+    /// compare there is no weakest one, and the header draws no chip.
     private var weakestGroupName: String? {
-        var worst: (name: String, avg: Double)? = nil
+        var stocked: [(name: String, avg: Double)] = []
         for group in activeGroups {
             let groupPlayers = filteredPlayers.filter { group.positions.contains($0.position) }
             guard !groupPlayers.isEmpty else { continue }
             let avg = Double(groupPlayers.reduce(0) { $0 + $1.overall }) / Double(groupPlayers.count)
-            if worst == nil || avg < worst!.avg {
-                worst = (group.name, avg)
-            }
+            stocked.append((group.name, avg))
         }
-        return worst?.name
+        guard stocked.count > 1 else { return nil }
+        return stocked.min { $0.avg < $1.avg }?.name
     }
 
     // MARK: - Depth Index Helper
@@ -905,9 +912,11 @@ struct RosterView: View {
                 sortButton("OVR", sort: .overall, width: PlayerRowView.Column.ovr)
                 headerLabel("Pot", width: 20)
                 sortButton("Salary", sort: .salary, width: 52)
-                headerLabel("Yrs", width: 30)
-                headerIcon("face.smiling", width: 24)
-                headerIcon("cross.case.fill", width: 28)
+                // The `Yrs` and health columns left this lens with the cells
+                // they headed — the EXT and HLTH slots beside the name already
+                // carry both facts, and drawing them twice per row is the
+                // "one encoding per quantity" rule this row documents twice.
+                headerLabel("Mor", width: 24)
             }
         case .contracts:
             Group {
@@ -944,6 +953,11 @@ struct RosterView: View {
                 headerLabel("STR", width: 34)
                 headerLabel("STA", width: 34)
                 headerLabel("DUR", width: 34)
+                // `Player.fatigue` and `Player.workloadStatus` are both live
+                // all season — the sim charges a rating penalty above 70 and
+                // an injury multiplier above 50 — and no roster lens drew
+                // either. The Physical lens is where the body is read.
+                headerLabel("Ftg", width: DSListColumn.attribute)
                 headerLabel("Health", width: 28)
                 sortButton("OVR", sort: .overall, width: PlayerRowView.Column.ovr)
             }
@@ -986,15 +1000,11 @@ struct RosterView: View {
         DSColumnHeader(title, width: width)
     }
 
-    /// Icon column header — for columns whose cells are SF Symbols rather than
-    /// text (morale, health). Emoji were used here, which rendered in full
-    /// colour at a different optical weight than every neighbouring header.
-    private func headerIcon(_ systemName: String, width: CGFloat) -> some View {
-        Image(systemName: systemName)
-            .font(.system(size: DSType.Size.caption, weight: .semibold))
-            .frame(width: width, alignment: .center)
-            .foregroundStyle(Color.textTertiary)
-    }
+    // The icon column header is gone with its last caller. It headed the
+    // morale and health columns with the same glyph the cell under it drew, so
+    // the header said nothing the row did not already say — and on the morale
+    // column, where the glyph is a face, nothing on the screen named the
+    // quantity at all. Both columns now carry a word.
 
     /// Width the `NavigationLink` disclosure chevron occupies on every player
     /// row. The header row has no chevron, so without reserving the same gutter

@@ -370,17 +370,17 @@ struct PlayerRowView: View {
             }
             .dsColumn(DSListColumn.money, alignment: .trailing)
 
-            // Contract years remaining
-            contractYearsLabel
-                .dsColumn(DSListColumn.tight)
-
-            // Morale icon
+            // Contract years and health are NOT drawn here. The `EXT` and
+            // `HLTH` slots two inches to the left already carry both facts,
+            // each with its own tone ladder, and this lens drew them a second
+            // time as a bare "3yr" and a second health marker — the same
+            // "one encoding per quantity, never both" the `contractYearsLabel`
+            // and "Invested" notes below were written for, applied to the
+            // duplication rather than to the colour.
+            //
+            // Morale keeps its column: nothing else on the row carries it.
             moraleIndicator
                 .dsColumn(DSListColumn.glyph)
-
-            // Health status
-            healthIndicator
-                .dsColumn(DSListColumn.health)
         }
     }
 
@@ -523,12 +523,67 @@ struct PlayerRowView: View {
             colorCodedMiniAttribute(value: player.physical.durability, label: "DUR")
                 .dsColumn(DSListColumn.attribute)
 
+            // How much is left in the legs, and what the training load is
+            // doing to him.
+            fatigueCell
+                .dsColumn(DSListColumn.attribute)
+
             // Health
             healthIndicator
                 .dsColumn(DSListColumn.health)
 
             // OVR
             ovrCell(font: .caption.monospacedDigit())
+        }
+    }
+
+    // MARK: - Fatigue / Training Load
+
+    /// The two facts the engine keeps about a man's freshness, in the
+    /// attribute cells' own shape: the number on top, the state under it.
+    ///
+    /// Both were modelled per player and drawn nowhere on the roster — the
+    /// only reader was the camp's Workload dashboard, which is a different
+    /// screen in a different phase. They are not the same quantity, which is
+    /// why they are stacked rather than merged: `fatigue` is match wear that
+    /// `WeekAdvancer` adds and recovery removes every week, and
+    /// `workloadStatus` is the training load `WorkloadEngine` classifies.
+    private var fatigueCell: some View {
+        VStack(spacing: 0) {
+            Text("\(player.fatigue)")
+                .font(DSType.display(11, .bold))
+                .monospacedDigit()
+                .foregroundStyle(fatigueColor)
+            Image(systemName: player.workloadStatus.symbolName)
+                .font(.system(size: DSType.Size.micro, weight: .semibold))
+                .foregroundStyle(workloadColor)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            "Fatigue \(player.fatigue) of 100, training load \(player.workloadStatus.displayLabel)"
+        )
+    }
+
+    /// High is BAD here, so the ladder is the inverse of `Color.forRating`'s
+    /// and the two edges are the sim's own, not new numbers: `PlaySimulator`
+    /// starts charging an effective-rating penalty above 70, and
+    /// `LiveGameEngine` starts raising injury probability above 50.
+    private var fatigueColor: Color {
+        switch player.fatigue {
+        case 70...:   return .dangerText
+        case 50..<70: return .warning
+        default:      return .textSecondary
+        }
+    }
+
+    /// The training-load state's tone, on the same words and colours the camp's
+    /// training-plan row uses (`WorkloadStatus.displayLabel`).
+    private var workloadColor: Color {
+        switch player.workloadStatus {
+        case .underloaded: return .textTertiary
+        case .healthy:     return .success
+        case .overloaded:  return .warning
+        case .burnedOut:   return .danger
         }
     }
 
