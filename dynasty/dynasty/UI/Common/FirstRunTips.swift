@@ -16,6 +16,9 @@ enum FirstRunTip: String, CaseIterable {
     case twoPointTry = "tip.twoPointTry.done"
     /// One-line banner the first time the AUDIBLE button is available.
     case audible = "tip.audible.done"
+    /// One rookie-GM mistake, on the closing screen of the intro sequence.
+    /// The line itself comes from ``RookieGMTip``.
+    case rookieGM = "tip.rookieGM.done"
 
     var isDone: Bool {
         UserDefaults.standard.bool(forKey: rawValue)
@@ -30,6 +33,54 @@ enum FirstRunTip: String, CaseIterable {
         for tip in allCases {
             UserDefaults.standard.removeObject(forKey: tip.rawValue)
         }
+    }
+}
+
+// MARK: - Rookie-GM Tips (#3008)
+
+/// The pool the intro's closing screen draws one line from — one mistake a
+/// first-time GM makes, picked per career and then never seen again.
+///
+/// **Every line is about THIS game's engine**, not general football wisdom, and
+/// every number in one is interpolated from the constant that produces it so the
+/// advice cannot outlive the balance it describes. The sources, in order:
+///
+/// 1. `FreeAgencyEngine.capReservePercent` — the reserve exists because the
+///    draft class and the in-season refill cost a measured 6.6 % of cap that
+///    nothing asks permission for.
+/// 2. `FreeAgencyEngine.simulateAIFreeAgency` — `CoachingEngine.developmentAppeal`
+///    (0.85-1.15) weights which club a free agent picks off his shortlist.
+/// 3. `FreeAgencyEngine.marketAgeDiscountFrom` / `marketAgeDiscountPerYear`, which
+///    match `RosterValue.keepScore`'s rate exactly — the market and cutdown day
+///    ask the same question the same way.
+/// 4. `ContractEngine.impliedGuaranteeRate` — a release books that share of the
+///    salary for every year left; `CampRosterEngine.campContractYears` is 1 and a
+///    camp body's release books nothing at all.
+/// 5. `FreeAgencyEngine.ownCoreRetentionsPerClub` — an AI club keeps that many of
+///    its own before the market opens, out of a cohort of ~30 expiring deals.
+///
+/// A pool and not one fixed line so a second career opens on something new; the
+/// draw is off the career's own id, so it is stable for that save and cannot
+/// re-roll on a redraw.
+enum RookieGMTip {
+
+    static let pool: [LocalizedStringKey] = [
+        "Don't spend to the last dollar in March. Rival clubs hold back about \(Int(FreeAgencyEngine.capReservePercent * 100)) % of the cap for the draft class and the men who replace the injured — those bills arrive whether you budgeted for them or not.",
+        "Hire the coordinators before the market opens. Their schemes decide who actually fits your roster, and a staff with a reputation for developing players pulls free agents your way.",
+        "Age is priced twice. The market marks a free agent down for every year past \(FreeAgencyEngine.marketAgeDiscountFrom), and your own cutdown day marks him down at exactly the same rate — the cheap 30-year-old is cheap for a reason.",
+        "Cutting a veteran is not free: a release books dead money at roughly \(Int(ContractEngine.impliedGuaranteeRate * 100)) % of his salary for every year left on the deal. A camp body on a one-year minimum is the man you can afford to be wrong about.",
+        "Re-sign your own before free agency. A rival club keeps up to \(FreeAgencyEngine.ownCoreRetentionsPerClub) of its own men off the market; anyone you leave unsigned is out there bidding against 31 other front offices.",
+    ]
+
+    /// The line this career gets — the same one every time it is asked.
+    ///
+    /// Seeded off the career id rather than `randomElement()`, for the reason
+    /// the intro's confetti is seeded off a flake index: a draw inside a
+    /// SwiftUI `body` re-rolls on every redraw, so the tip would change while
+    /// the player was reading it.
+    static func line(forCareer id: UUID) -> LocalizedStringKey {
+        let seed = id.uuid.0 &+ id.uuid.7 &+ id.uuid.15
+        return pool[Int(seed) % pool.count]
     }
 }
 
