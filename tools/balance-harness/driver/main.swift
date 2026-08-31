@@ -1907,7 +1907,7 @@ func lrPad(_ s: String, _ n: Int) -> String {
     s.count >= n ? s : s + String(repeating: " ", count: n - s.count)
 }
 
-/// Builds ONE 53-man roster the way `LeagueGenerator.generateRoster` builds one.
+/// Builds ONE 53-man roster out of the staged shipped RATING functions.
 ///
 /// Scaffolding here is only the loop and the depth chart (both mirrored from the
 /// `leaguegen` scenario, which pins them against the Python mirror); every value
@@ -1915,6 +1915,20 @@ func lrPad(_ s: String, _ n: Int) -> String {
 /// runway and MORALE — is drawn by the staged shipped functions. `forced` pins
 /// every man to one archetype so the travel table can walk the extremes; `nil`
 /// reproduces the shipped uniform `PersonalityArchetype.allCases.randomElement()`.
+///
+/// WHAT THIS IS NOT. It is not `LeagueGenerator.generateRoster`, and the older
+/// wording here ("the way generateRoster builds one") claimed more than it can
+/// deliver. That function now deals a club's talent draws room by room rather
+/// than per player, honours the Team Selection sheet's authored quarterback and
+/// stars, and repairs the roster until the sheet's strongest/weakest claim is
+/// true under the club's own defensive scheme. None of that is reachable from
+/// here: `sync_sources.sh` slices `LeagueGeneratorExtract.swift` from an awk
+/// keep-list that carries the pure rating functions and nothing else, so
+/// `generateRoster`, `dealTalent` and the group-claim repair are not in
+/// `build/src` at all. This roster is therefore the right instrument for what
+/// its callers measure — morale, chemistry, workload, the intake pyramid — and
+/// says nothing whatsoever about the Team Selection promises. A harness run is
+/// not evidence for those; changing the keep-list is what would make it one.
 func lrBuildRoster(forced: PersonalityArchetype?, rng: inout SystemRandomNumberGenerator) -> [Player] {
     let cap = ContractEngine.openingSalaryCap
     var depthChart: [Position: Int] = [:]

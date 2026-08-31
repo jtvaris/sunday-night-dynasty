@@ -174,9 +174,25 @@ enum LeagueGenerator {
                 owner: owner
             )
 
+            // The club's defence is decided HERE, before the roster exists,
+            // because the roster has to be built to satisfy it. The roster
+            // screen grades a defensive room with the counts the club's
+            // defensive coordinator runs (`RosterView.swift`, `PositionGrade-
+            // Calculator.starterCounts(for:)`) — a 3-4 fields one nose tackle
+            // and two inside linebackers where a 4-3 fields two tackles and
+            // one. So the same value that makes the strongest/weakest claim
+            // true down in `generateRoster` is the one the DC is then hired
+            // with, and the two cannot disagree. Drawn from the same uniform
+            // `allCases` pick `generateCoach` would have used.
+            let defensiveScheme = DefensiveScheme.allCases.randomElement()!
+
             // Create 53-man roster with realistic salary tiers.
             // Pass the team abbreviation so the starting QB matches the TeamPreview data.
-            let teamPlayers = generateRoster(teamID: team.id, teamAbbreviation: teamDef.abbreviation)
+            let teamPlayers = generateRoster(
+                teamID: team.id,
+                teamAbbreviation: teamDef.abbreviation,
+                defensiveScheme: defensiveScheme
+            )
             team.players = teamPlayers
 
             // Bug fix #1: Set cap usage to sum of all player salaries
@@ -187,7 +203,15 @@ enum LeagueGenerator {
             // Create coaching staff (12 coaches)
             var teamCoaches: [Coach] = []
             for role in coachingStaffRoles {
-                let coach = generateCoach(role: role, teamID: team.id)
+                // Only the DC is pinned: he is the one the roster screen reads
+                // its starter counts from (`RosterEvaluationView` line 3365).
+                // The head coach and his assistant keep their own independent
+                // draws, exactly as before.
+                let coach = generateCoach(
+                    role: role,
+                    teamID: team.id,
+                    defensiveSchemeOverride: role == .defensiveCoordinator ? defensiveScheme : nil
+                )
                 allCoaches.append(coach)
                 teamCoaches.append(coach)
             }
@@ -618,10 +642,22 @@ enum LeagueGenerator {
         var isPromised: Bool { promisedOverall != nil }
     }
 
-    /// How many passes the strongest/weakest repair is allowed. Measured over
-    /// 8 000 generated clubs the claim held immediately on 51 % of them and
-    /// within 5 passes on 99.9 %; the worst case seen was 12. The cap is a
-    /// guard against a pathological draw looping forever, not a working limit.
+    /// How many passes the strongest/weakest repair is allowed.
+    ///
+    /// The cap is meant as a guard against a pathological draw looping forever,
+    /// not as a working limit — but it was reachable, and reaching it left the
+    /// claim FALSE with nothing to say so. The old repair moved ONE room per
+    /// pass and its two halves were uncoupled: the strongest half picked the
+    /// highest movable rival and pushed it under the leader, the weakest half
+    /// picked the lowest and pulled it back over the floor, and neither knew
+    /// what the other had just done, so a correction could be undone by the
+    /// next pass rather than added to. Measured over 12 800 generated clubs it
+    /// failed 2 of them under the very counts it was grading with.
+    ///
+    /// It now moves every blocking room in one pass, from a single grade
+    /// snapshot, and clamps each target into the band the other half needs.
+    /// Corrections compose instead of fighting, and a pass that can move
+    /// nothing stops the loop rather than spinning out the cap.
     private static let groupClaimPassLimit = 24
 
     /// How many re-draws a named man gets to land on his promised `overall`.
@@ -645,11 +681,37 @@ enum LeagueGenerator {
     /// The multiset of draws per tier is exactly what it always was, so the
     /// league's rating distribution is untouched — only which man got which
     /// draw changes. Second, the result is MEASURED with the roster screen's
-    /// own `PositionGradeCalculator` and repaired until the claim is true, so
-    /// the label is verified rather than hoped for.
+    /// own `PositionGradeCalculator` — same calculator, same starter counts,
+    /// **and the same defensive scheme**, which is the part that used to be
+    /// missing — and repaired until the claim is true, so the label is verified
+    /// rather than hoped for. Using the calculator was never enough on its own:
+    /// it takes different counts for a 3-4 club than for a 4-3 one, and
+    /// verifying under the 4-3 default while the screen graded under the club's
+    /// real coordinator is exactly how a verified label came out false.
     ///
     /// Total salary targets ~$200-230M (80-90% of $255M cap).
-    private static func generateRoster(teamID: UUID, teamAbbreviation: String) -> [Player] {
+    ///
+    /// - Parameter defensiveScheme: the defence this club will run, drawn by
+    ///   `generate` before the roster exists and handed to the defensive
+    ///   coordinator afterwards. It belongs here because the roster screen does
+    ///   not grade a defensive room with one fixed starter count: a 3-4 club
+    ///   fields one nose tackle and two inside linebackers where a 4-3 club
+    ///   fields two tackles and one, and three of the seven `DefensiveScheme`
+    ///   cases are 3-4 family. Verifying the claim under the 4-3 default while
+    ///   the screen graded under the club's own scheme is what made the label
+    ///   false. Measured over 12 800 generated clubs, graded the way the roster
+    ///   screen grades them: the strongest half held on 97.68 % and the weakest
+    ///   on 99.34 %, with every failure inside the 3-4 family (Base34 94.84 %,
+    ///   Hybrid 94.08 %, Multiple 95.04 %; the four 4-3 schemes 100 %) and
+    ///   concentrated on the LB-strongest clubs — TEN 79.0 %, WAS 82.5 %,
+    ///   NO 87.8 %. With the scheme threaded through, all seven schemes and all
+    ///   32 clubs hold. `nil` keeps the default counts, for a caller with no
+    ///   defence to name.
+    private static func generateRoster(
+        teamID: UUID,
+        teamAbbreviation: String,
+        defensiveScheme: DefensiveScheme? = nil
+    ) -> [Player] {
         let preview = LeagueTeamData.previews[teamAbbreviation]
 
         // --- 1. The 53 slots the blueprint asks for -------------------------
@@ -724,13 +786,23 @@ enum LeagueGenerator {
         // again. The nudge is applied to the room, never to a man the card has
         // already promised a number for.
 
-        /// The nine rooms, graded exactly as the roster screen grades them.
+        /// The nine rooms, graded exactly as the roster screen grades them —
+        /// same calculator, same starter counts, same defensive scheme. The
+        /// scheme is passed for defensive rooms only, which is precisely what
+        /// `RosterView` (line 120) and `RosterEvaluationView` (lines 649/839)
+        /// do; passing it to an offensive room would be a difference, and a
+        /// difference is the whole defect this closes.
         func starterGrades() -> [String: Int] {
             var grades: [String: Int] = [:]
             for group in LeagueTeamData.positionGroups {
                 let room = players.filter { group.positions.contains($0.position) }
+                let isDefensive = group.positions.first?.side == .defense
                 grades[group.label] = PositionGradeCalculator
-                    .calculatePositionGrades(players: room, positions: group.positions)
+                    .calculatePositionGrades(
+                        players: room,
+                        positions: group.positions,
+                        scheme: isDefensive ? defensiveScheme : nil
+                    )
                     .starterOVR
             }
             return grades
@@ -768,33 +840,72 @@ enum LeagueGenerator {
                 let weakestHolds = weakestGrade < worstRival
                 if strongestHolds && weakestHolds { break }
 
-                if !strongestHolds {
-                    if movable(strongest) {
-                        groupBias[strongest, default: 0] += Double(bestRival - strongestGrade) + 1
-                        rebuild(strongest)
-                    } else if let rival = labels
-                        .filter({ $0 != strongest && movable($0) })
-                        .max(by: { (grades[$0] ?? 0) < (grades[$1] ?? 0) }),
-                        (grades[rival] ?? 0) >= strongestGrade {
-                        // The strongest room is all promised men, so it cannot
-                        // be lifted. Bring the room that outranks it down.
-                        groupBias[rival, default: 0] -= Double((grades[rival] ?? 0) - strongestGrade) + 1
-                        rebuild(rival)
-                    }
+                // Every correction in this pass is computed from the SAME
+                // grade snapshot and applied together. That is the whole point:
+                // the old repair moved one room per pass, so the strongest half
+                // could push a room under the leader and the weakest half pull
+                // the same room back over the floor on the next pass, forever.
+                var touched: Set<String> = []
+                func retarget(_ label: String, from grade: Int, to target: Int) {
+                    guard target != grade else { return }
+                    groupBias[label, default: 0] += Double(target - grade)
+                    touched.insert(label)
                 }
-                if !weakestHolds {
-                    if movable(weakest) {
-                        groupBias[weakest, default: 0] -= Double(weakestGrade - worstRival) + 1
-                        rebuild(weakest)
-                    } else if let rival = labels
-                        .filter({ $0 != weakest && movable($0) })
-                        .min(by: { (grades[$0] ?? 0) < (grades[$1] ?? 0) }),
-                        (grades[rival] ?? 0) <= weakestGrade {
-                        groupBias[rival, default: 0] += Double(weakestGrade - (grades[rival] ?? 0)) + 1
-                        rebuild(rival)
-                    }
+
+                // The two named rooms move first — moving them is always safe,
+                // and it is the cheapest way to open the band the other seven
+                // have to fit inside.
+                var lifted = strongestGrade
+                var dropped = weakestGrade
+                if !strongestHolds, movable(strongest) {
+                    lifted = bestRival + 1
+                    retarget(strongest, from: strongestGrade, to: lifted)
                 }
+                if !weakestHolds, movable(weakest) {
+                    dropped = worstRival - 1
+                    retarget(weakest, from: weakestGrade, to: dropped)
+                }
+
+                // ...then every other room is squeezed into the open band
+                // between them. A room already inside it is left alone rather
+                // than redrawn, so the repair perturbs as little as it can.
+                for label in labels
+                where label != strongest && label != weakest && movable(label) {
+                    let grade = grades[label] ?? 0
+                    let target = min(max(grade, dropped + 1), lifted - 1)
+                    retarget(label, from: grade, to: target)
+                }
+
+                // Nothing could be moved — every room blocking the claim is all
+                // promised men. Another pass would draw the same conclusion.
+                if touched.isEmpty { break }
+                for label in touched { rebuild(label) }
             }
+
+            #if DEBUG
+            // The card is printed BEFORE this roster exists, so a claim that
+            // cannot be made true here ships as a label the roster screen will
+            // contradict. There is no runtime recovery — the only fix is the
+            // authored pair in `LeagueTeamData` — so it is worth failing loudly
+            // in development rather than quietly in a player's first save.
+            let finalGrades = starterGrades()
+            let finalStrongest = finalGrades[strongest] ?? 0
+            let finalWeakest = finalGrades[weakest] ?? 0
+            let finalBest = labels.filter { $0 != strongest }
+                .compactMap { finalGrades[$0] }.max() ?? 0
+            let finalWorst = labels.filter { $0 != weakest }
+                .compactMap { finalGrades[$0] }.min() ?? 0
+            assert(
+                finalStrongest > finalBest && finalWeakest < finalWorst,
+                """
+                \(teamAbbreviation): the authored strongest/weakest pair \
+                (\(strongest)/\(weakest)) could not be made true under \
+                \(defensiveScheme.map(String.init(describing:)) ?? "the default 4-3") \
+                starter counts — graded \(strongest) \(finalStrongest) vs best rival \
+                \(finalBest), \(weakest) \(finalWeakest) vs worst rival \(finalWorst).
+                """
+            )
+            #endif
         }
 
         // Adjust total salary to target 80-95 % of the cap. `realisticSalary`
@@ -820,18 +931,27 @@ enum LeagueGenerator {
     /// Deals one `talentLevelShift` draw to every slot, best-first to the room
     /// the preview calls strongest and worst-last to the one it calls weakest.
     ///
-    /// This is the whole trick behind the group claim, and the reason it costs
-    /// the league nothing. The draws are still one per slot, still from
+    /// This is the whole trick behind the group claim, and the DEALING half of
+    /// it costs the league nothing. The draws are still one per slot, still from
     /// `talentLevelShift` at the slot's own depth tier, so **the multiset of
     /// draws a club takes is exactly the multiset it always took** — the league
     /// mean, the spread and the §8 quality pyramid are untouched by
     /// construction. Only the pairing changes: the club's best draws land in
     /// the room the card calls its strength instead of wherever they fell.
+    /// (The AUTHORED men are a separate story; see the paragraph below.)
     ///
-    /// A promised man draws too and then discards it. That is deliberate: an
-    /// authored star CONSUMES one of his club's talent draws rather than being
-    /// handed out on top of them, so naming three players does not quietly make
-    /// every club in the league better than the generator intended.
+    /// A promised man draws too and then discards it. That is deliberate, but
+    /// it is worth being exact about what it does and does not buy. It stops a
+    /// named star from being handed a draw ON TOP of the club's allocation —
+    /// the man beside him does not get a free extra roll because a star took
+    /// one. It does NOT neutralise the star: his `overall` is a hard authored
+    /// target, usually well above the tier mean, and the draw he discarded is
+    /// simply lost rather than redistributed. Naming players therefore does
+    /// lift the league a little, by construction. Measured against a mirror of
+    /// this path, the §8 80+ share is 17.4 % with the authored stars removed
+    /// and 18.9 % as shipped, against a `8.80+` assertion-band ceiling of
+    /// 19.0 % — real headroom, but only 0.1 pp of it. Adding another authored
+    /// star per club would breach a band the harness cannot currently see.
     ///
     /// With no groups named (an abbreviation the preview table does not know)
     /// the draws are handed out in blueprint order, which is what the old
@@ -996,9 +1116,16 @@ enum LeagueGenerator {
             ),
             position: position
         )
-        player.learning = learningValue(mental: mental)
+        // `player.mental`, not the local `mental`. For an ordinary generated
+        // man they are the same object; for a man the preview card put a number
+        // on, the target-overall solve above has already replaced the player's
+        // block with a draw from a level 10-15 higher. Reading the local one
+        // seeded a 91-OVR authored star's playbook absorption and fighter
+        // mentality off a ~78-level mental block, which is neither the block he
+        // carries nor consistent with the awareness the roster screen shows him.
+        player.learning = learningValue(mental: player.mental)
         player.competitiveness = competitivenessValue(
-            archetype: personality.archetype, mental: mental
+            archetype: personality.archetype, mental: player.mental
         )
         // Where he is from. Written here because nothing else ever wrote it:
         // the whole hometown layer (`HometownDetector`'s regional discount, the
@@ -1561,9 +1688,22 @@ enum LeagueGenerator {
         return values
     }
 
-    private static func generateCoach(role: CoachRole, teamID: UUID) -> Coach {
+    /// - Parameter defensiveSchemeOverride: the defence this coach must run.
+    ///   `generate` pins the defensive coordinator's, because the roster was
+    ///   built and verified against that scheme's starter counts and the roster
+    ///   screen will grade it back under the DC's. `nil` keeps the free draw.
+    private static func generateCoach(
+        role: CoachRole,
+        teamID: UUID,
+        defensiveSchemeOverride: DefensiveScheme? = nil
+    ) -> Coach {
         var rng = SystemRandomNumberGenerator()
-        return generateCoach(role: role, teamID: teamID, using: &rng)
+        return generateCoach(
+            role: role,
+            teamID: teamID,
+            schemeOverride: defensiveSchemeOverride.map { (offensive: nil, defensive: $0) },
+            using: &rng
+        )
     }
 
     /// Seeded variant of `generateCoach`.

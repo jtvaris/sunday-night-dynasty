@@ -266,7 +266,8 @@ struct TeamSelectionView: View {
                         team: team,
                         catalog: catalog,
                         setupSummary: setupSummary,
-                        selectTitle: gameMode == .fantasyDraft ? "START FANTASY DRAFT" : "SELECT THIS TEAM"
+                        selectTitle: gameMode == .fantasyDraft ? "START FANTASY DRAFT" : "SELECT THIS TEAM",
+                        gameMode: gameMode
                     ) {
                         activeCover = nil
                         startCareer(with: team)
@@ -1360,6 +1361,11 @@ private struct TeamDetailSheet: View {
     var setupSummary: String = ""
     /// R40 — confirm-button title (fantasy draft changes the next step).
     var selectTitle: String = "SELECT THIS TEAM"
+    /// The mode the career will start in. Fantasy Draft dissolves every roster
+    /// in the league the moment this sheet is confirmed, so the three cards
+    /// that describe *this club's players* are suppressed for it — see
+    /// `rosterPromisesHold`.
+    var gameMode: CareerGameMode = .standard
     let onSelect: () -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -1771,6 +1777,38 @@ private struct TeamDetailSheet: View {
         .cardBackground()
     }
 
+    // MARK: - Roster Promises
+
+    /// Whether the three cards that describe THIS CLUB'S PLAYERS — the starting
+    /// quarterback, the key players and the strongest/weakest room — still
+    /// describe the league the player is about to start.
+    ///
+    /// They do in Standard, which is what they were built for:
+    /// `LeagueGenerator.generateRoster` opens by naming those exact three
+    /// things as "promises about a roster that does not exist yet", and keeps
+    /// all three. They do not in Fantasy Draft. Confirming this sheet in that
+    /// mode hands every player in the league to `FantasyDraftEngine`, which
+    /// pools all ~1 700 of them and re-drafts all 32 rosters from scratch — so
+    /// the named quarterback will very likely be somebody else's, and the room
+    /// the card calls strongest is decided at the draft board, not here.
+    ///
+    /// Everything else on the sheet is a fact about the FRANCHISE — market,
+    /// owner, budget, division, last season's record — and survives either way.
+    private var rosterPromisesHold: Bool { gameMode != .fantasyDraft }
+
+    /// The three roster-promise cards, or nothing at all in a mode that is
+    /// about to re-draft them. The sheet already names the mode in
+    /// `setupSummary` directly above the confirm button, so their absence reads
+    /// as "not decided yet" rather than as missing data.
+    @ViewBuilder
+    private var rosterPromiseCards: some View {
+        if rosterPromisesHold {
+            startingQBCard
+            keyPlayersCard
+            groupStrengthCard
+        }
+    }
+
     // MARK: - Starting QB Card
 
     private var startingQBCard: some View {
@@ -1852,9 +1890,12 @@ private struct TeamDetailSheet: View {
     // MARK: - Position Group Strengths Card
 
     /// The best and the worst room on the roster. Both halves are true of the
-    /// league the player is about to start: the fixed template derives them
+    /// league the player is about to start — in the modes where this card is
+    /// shown at all; see `rosterPromisesHold`. The fixed template derives them
     /// from its real ratings, and the random league's generator builds a roster
-    /// that backs the claim up rather than one that merely might.
+    /// that backs the claim up rather than one that merely might. Both grade
+    /// the defensive rooms under the club's OWN defensive scheme, because that
+    /// is what the roster screen the player checks this against does.
     @ViewBuilder
     private var groupStrengthCard: some View {
         if !preview.strongestGroup.isEmpty, !preview.weakestGroup.isEmpty {
@@ -2051,9 +2092,7 @@ private struct TeamDetailSheet: View {
             // Franchise vitals promoted directly under the header — the three
             // most decision-critical numbers read first (audit).
             statsRow
-            startingQBCard
-            keyPlayersCard
-            groupStrengthCard
+            rosterPromiseCards
             ownerExpectationsCard
             marketMediaCard
             coachingBudgetCard
@@ -2077,9 +2116,7 @@ private struct TeamDetailSheet: View {
             LazyVGrid(columns: columns, spacing: 12) {
                 // Franchise vitals first — most decision-critical numbers (audit).
                 statsRow
-                startingQBCard
-                keyPlayersCard
-                groupStrengthCard
+                rosterPromiseCards
                 ownerExpectationsCard
                 marketMediaCard
                 coachingBudgetCard

@@ -253,19 +253,45 @@ struct TeamBrowseCatalog {
     /// `LeagueGenerator` checks its own claim against, so the two league
     /// sources answer "which room is strongest" the same way.
     ///
+    /// N is scheme-aware for the defensive rooms, because the roster screen's
+    /// is (`RosterView` line 120). The template authors a real `staff.defScheme`
+    /// per club and exactly 16 of the 32 run a 3-4 family defence, which fields
+    /// one nose tackle and two inside linebackers where a 4-3 fields two
+    /// tackles and one.
+    ///
+    /// Recomputed both ways over `league_2026_publish.json`, grading with the
+    /// 4-3 default cost one club a headline outright: PIT's card said its
+    /// linebackers were the strongest room (LB 84 under 4-3 counts) where its
+    /// own Hybrid coordinator grades LB 82 behind DB 83. Three more — LAR, LV
+    /// and NO — were ties under the default that the club's real scheme breaks
+    /// cleanly. IND and NYG change headline between two rooms that grade level
+    /// under their own scheme.
+    ///
     /// Ordered, not a dictionary: two rooms can grade out identically and the
     /// sheet must name the same one on every launch.
     private static func roomGrades(
         _ team: LeagueTemplate.TeamTemplate
     ) -> [(label: String, grade: Int)] {
-        LeagueTeamData.positionGroups.compactMap { group in
+        // Resolved exactly as `LeagueTemplateImporter.makeStaff` resolves it, so
+        // the scheme the card grades under is the one the imported DC carries.
+        let scheme = team.staff.defScheme.flatMap(DefensiveScheme.init(rawValue:))
+        return LeagueTeamData.positionGroups.compactMap { group in
             let wanted = Set(group.positions.map(\.rawValue))
             let room = team.players
                 .filter { wanted.contains($0.pos) }
                 .map(\.ratingTarget)
                 .sorted(by: >)
             guard !room.isEmpty else { return nil }
-            let starters = Array(room.prefix(PositionGradeCalculator.starterCount(for: group.positions)))
+            let isDefensive = group.positions.first?.side == .defense
+            let starterCount: Int
+            if isDefensive, let scheme {
+                starterCount = PositionGradeCalculator.starterCount(
+                    for: group.positions, scheme: scheme
+                )
+            } else {
+                starterCount = PositionGradeCalculator.starterCount(for: group.positions)
+            }
+            let starters = Array(room.prefix(starterCount))
             return (group.label, starters.reduce(0, +) / starters.count)
         }
     }
