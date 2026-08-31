@@ -3550,7 +3550,7 @@ Game Design:
 - [ ] Game: [Inbox] No timestamp distinction — Combine Results and Welcome message both say "Offseason - NFL Combine, 2026" but Welcome should be older; track real game-time
 - [ ] Game: [Inbox] "Mock Draft: Green Bay Packers Projected to Select…" message with no Action Required — should it have a "View Mock Draft" CTA?
 - [ ] Game: [Inbox] No archive or pin — important messages get buried fast in a long save
-- [ ] Game: [Inbox] No reply / response options for messages from staff (Coach can email back?)
+- [ ] Game: [Inbox] No reply / response options for messages from staff (Coach can email back?) — covers the MessageDetail read-only view too (merged duplicate, decided 2026-08-27)
 
 Decision Support:
 - [ ] Game: [Inbox] Add a sticky "1 action required" bar at top that jumps to the next unresolved message
@@ -3568,7 +3568,6 @@ Visual Design:
 Game Design:
 - [ ] Game: [MessageDetail] Action Required tag but reading the message doesn't clear the requirement — messages should be tied to a real task with completion criteria
 - [ ] Game: [MessageDetail] Director of Scouting message text is generic ("Several prospects at positions of need tested exceptionally well") — should name actual prospects from this team's needs
-- [ ] Game: [MessageDetail] No "Reply / Discuss" affordance — closes the loop one-way only
 - [ ] Game: [MessageDetail] No deep-link CTAs ("Open Combine Results", "Open Big Board") inside the body — text references "full scouting reports" but doesn't link
 - [ ] Game: [MessageDetail] Same Director of Scouting personality should send messages with consistent voice; verify tone matches their hired profile
 
