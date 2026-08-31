@@ -247,12 +247,21 @@ enum InSeasonMarketEngine {
             )
         }
 
-        // A man off the street lands on the 53, not in a camp bunk. Cut camp
-        // bodies keep `rosterStatus == .campBody` after their release
-        // (`CampRosterEngine` only clears it for players still under contract),
-        // so without this the same player could be signed here and still read
-        // as a camp body on every roster surface. Set in the shared door so the
-        // AI's signing and the user's cannot disagree about what a signing is.
+        // A man off the street lands on the 53, not in a camp bunk.
+        //
+        // Belt to the braces, NOT a repair: every door that puts a player on
+        // the wire already clears the flag — `CapManagementEngine.applyRelease`
+        // calls `CampRosterEngine.clearCampBodyStatus` unconditionally, the
+        // league-year expiry in `FreeAgencyEngine` calls it too, and
+        // `PracticeSquadEngine.release` writes `.active` outright. A camp body
+        // also carries `contractYearsRemaining == campContractYears`, so a
+        // still-flagged one could not satisfy `streetPool` in the first place.
+        // The write stays because the flag is a ledger switch rather than a
+        // label (`clearCampBodyStatus`: a man who kept it would be exempted
+        // from the cap credit on his next, fully charged release), and an
+        // invariant with one unguarded door is a bug waiting for a save file.
+        // Set in the shared door so the AI's signing and the user's cannot
+        // disagree about what a signing is.
         player.rosterStatus = .active
         ContractEngine.signPlayer(
             player: player,
@@ -355,8 +364,16 @@ enum InSeasonMarketEngine {
     /// The entry point `runWeeklyPass` has never had: that pass filters the user
     /// out (`teams.filter { $0.id != career.teamID }`) and its header says why —
     /// "the user's half is a screen". This is that screen's half of the door.
-    /// Same pool, same one-year veteran minimum, same `ChurnDiag` stage, so the
-    /// street means one thing for all 32 clubs.
+    /// Same pool, same one-year veteran minimum, same `ChurnDiag` stage, so a
+    /// street DEAL is priced one way for all 32 clubs.
+    ///
+    /// Volume is not matched, and saying so is not the same as defending it:
+    /// ``maxSigningsPerClubPerWeek`` and ``weeklyLeagueSigningCap`` are counted
+    /// inside `runWeeklyPass`'s loop and there is no per-week counter on this
+    /// side, so the user's only volume limits are the roster ceiling and the
+    /// cap. Whether the human half should carry those two rails — and where a
+    /// per-week count would be persisted, which `Career` has no field for — is
+    /// open, not settled here.
     ///
     /// - Parameter roster: the club's active roster (`teamID == team.id`,
     ///   unretired), which the caller already holds.
