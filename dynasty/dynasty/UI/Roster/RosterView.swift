@@ -695,10 +695,20 @@ struct RosterView: View {
     /// and has no other reason to, so an elite expiring player reads the generic
     /// "prioritize extension" line here and the tag number one tap away, on the
     /// screen that already holds the league.
+    ///
+    /// Sharing the generator was only half of "the same three". `build` ranks by
+    /// decision KIND and nothing else, so inside a kind the order is whatever
+    /// order it was handed the roster in — and Roster Evaluation hands it a
+    /// salary-descending fetch (`loadData`) while this screen's fetch
+    /// (`RosterViewWrapper`) asks for no order at all. With no retirement
+    /// candidates and a dozen expiring deals, the common case, that screen
+    /// listed the three highest-paid expiring men and this card listed three
+    /// arbitrary ones — the exact drift a shared builder was supposed to end.
+    /// So the roster is put in the same order here before it goes in.
     private var topDecisions: [KeyDecision] {
         Array(
             KeyDecisionBuilder.build(
-                players: players,
+                players: players.sorted { $0.annualSalary > $1.annualSalary },
                 salaryCap: teamSalaryCap,
                 availableCap: teamCapUsed.map { teamSalaryCap - $0 }
             ).prefix(3)
