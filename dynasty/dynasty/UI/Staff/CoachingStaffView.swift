@@ -3191,6 +3191,11 @@ struct CoachingStaffView: View {
             ))
         }
 
+        // The blocking rows NAME THE PHASE. `advanceBlocker(phase:)` refuses for
+        // `.coachingChanges` and returns nil for every other phase (StaffLedger:241),
+        // and this card asks it for that fixed phase rather than the live one — so
+        // "the advance is held" in the present tense is a false reading of Week 9,
+        // where nothing is being held. The hold is real, it is just February's.
         for role in book.requiredCoachRoles {
             if let coach = coaches.first(where: { $0.role == role }) {
                 checks.append(.init(
@@ -3206,7 +3211,8 @@ struct CoachingStaffView: View {
                     id: "req-\(role.rawValue)",
                     weight: .blocking,
                     label: role.displayName,
-                    detail: "Vacant. This seat is what the advance is held on. "
+                    detail: "Vacant. \(SeasonPhase.coachingChanges.displayName) will not advance "
+                        + "until this seat is filled. "
                         + "The market asks \(estimatedSalaryRange(for: role)).",
                     tab: .staff
                 ))
@@ -3311,7 +3317,8 @@ struct CoachingStaffView: View {
                 weight: book.isBlockedOnFirstScout ? .blocking : .gap,
                 label: "Scouting department",
                 detail: book.isBlockedOnFirstScout
-                    ? "Nobody is scouting the draft class. This seat is what the advance is held on."
+                    ? "Nobody is scouting the draft class. \(SeasonPhase.coachingChanges.displayName) "
+                        + "will not advance until somebody is."
                     : "Nobody is scouting the draft class, and the scouting pot cannot guarantee a "
                         + "signing — so the calendar is not held on it.",
                 tab: .staff
