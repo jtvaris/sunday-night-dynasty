@@ -1455,19 +1455,51 @@ private struct YourRoadmapStep: View {
         let description: String
         let duration: String
         let isMandatory: Bool
+        /// #2987 — what the LEAGUE does in this phase, in the league's own
+        /// numbers, or `nil` where nothing in the engine can answer.
+        ///
+        /// **Not a target, and never authored.** Every figure below is read
+        /// out of the engine that produces it — interpolated from the constant
+        /// itself wherever one is exported, so the copy cannot drift when
+        /// balance moves. Two phases carry no line at all (Roster Evaluation,
+        /// OTAs) because there is genuinely no number behind them: nothing in
+        /// the repo counts how many players a club re-grades or how many
+        /// mentoring pairs it makes, and a plausible-looking figure on the
+        /// onboarding screen would be a benchmark the game never holds itself
+        /// to. That is the whole reason "how many free agents does a typical
+        /// club sign" is answered below with the club's BUDGET rather than a
+        /// count: the count is emergent, it is not a constant anywhere, and
+        /// the roster is what decides it.
+        var leagueNote: String? = nil
     }
 
     private static let offseasonCalendarEntries: [CalendarEntry] = [
-        CalendarEntry(name: "Coaching Changes", description: "Hire and fire coaches, set coordinator schemes, build your staff", duration: "Feb", isMandatory: true),
+        CalendarEntry(name: "Coaching Changes", description: "Hire and fire coaches, set coordinator schemes, build your staff", duration: "Feb", isMandatory: true,
+                      leagueNote: "A full organisation is \(CoachRole.allCases.count) coaching seats and \(ScoutRole.allCases.count) scouting ones — the shape of the org chart, not a quota."),
         CalendarEntry(name: "Roster Evaluation", description: "Review every player, identify positional needs, plan your offseason strategy", duration: "Feb", isMandatory: true),
-        CalendarEntry(name: "The Combine", description: "Scout draft prospects, evaluate measurables, update your draft board", duration: "Late Feb", isMandatory: false),
-        CalendarEntry(name: "Free Agency", description: "Sign free agents, re-sign your own players, fill roster gaps", duration: "Mar", isMandatory: true),
-        CalendarEntry(name: "The Draft & UDFAs", description: "Select new talent across 7 rounds, then sign undrafted free agents", duration: "Late Apr", isMandatory: true),
+        // 330 of ~350: `ScoutingEngine.generateCombineResults` invites
+        // `min(330, …)` of the class `generateDraftClass(count: 350)` builds.
+        // Neither is exported as a constant, so these two are the one pair on
+        // this list that cannot be interpolated — change them together with it.
+        CalendarEntry(name: "The Combine", description: "Scout draft prospects, evaluate measurables, update your draft board", duration: "Late Feb", isMandatory: false,
+                      leagueNote: "330 of the ~350 prospects get an invite, so the invite is not the filter — your scouts are."),
+        CalendarEntry(name: "Free Agency", description: "Sign free agents, re-sign your own players, fill roster gaps", duration: "Mar", isMandatory: true,
+                      leagueNote: "A club carries at most \(FreeAgencyEngine.faRosterCeiling) men out of the market and keeps ~\(Int(FreeAgencyEngine.capReservePercent * 100)) % of the cap back for the draft class and the season. How many signings that is depends on how many lockers are already full."),
+        CalendarEntry(name: "The Draft & UDFAs", description: "Select new talent across 7 rounds, then sign undrafted free agents", duration: "Late Apr", isMandatory: true,
+                      leagueNote: "Seven rounds of \(DraftIntel.picksPerRound) picks, then \(UDFAMarketEngine.roundCount) rounds of undrafted signings."),
         CalendarEntry(name: "OTAs", description: "Set depth chart, assign mentoring pairs, install playbook basics", duration: "May-Jun", isMandatory: false),
-        CalendarEntry(name: "Training Camp", description: "Player development, position battles, final roster decisions", duration: "Jul-Aug", isMandatory: true),
-        CalendarEntry(name: "Preseason", description: "Evaluate young players and bubble roster candidates in live games", duration: "Aug", isMandatory: false),
-        CalendarEntry(name: "Roster Cuts", description: "Cut to 53-man roster — tough decisions on borderline players", duration: "Late Aug", isMandatory: true),
-        CalendarEntry(name: "Regular Season", description: "18 weeks of football — manage injuries, trades, and weekly gameplans", duration: "Sep-Jan", isMandatory: true),
+        CalendarEntry(name: "Training Camp", description: "Player development, position battles, final roster decisions", duration: "Jul-Aug", isMandatory: true,
+                      leagueNote: "Between the draft and cutdown day clubs carry 80-\(TradeValueEngine.offseasonRosterCeiling) players."),
+        CalendarEntry(name: "Preseason", description: "Evaluate young players and bubble roster candidates in live games", duration: "Aug", isMandatory: false,
+                      leagueNote: "\(PreseasonEngine.gamesPerPreseason) exhibition games, with only ~\(Int(PreseasonEngine.starterSnapShare * 100)) % of the projected first team opening any one of them — the rest of the lineup is men fighting for the 53."),
+        // The three waves are `CutDay`'s own cases (cut90To75 / cut75To65 /
+        // cut65To53) — names, not numbers, so they are spelled out here.
+        CalendarEntry(name: "Roster Cuts", description: "Cut to 53-man roster — tough decisions on borderline players", duration: "Late Aug", isMandatory: true,
+                      leagueNote: "The league gets there in three waves: 90 to 75, 75 to 65, 65 to 53."),
+        // 7 seeds a conference — `StandingsCalculator.playoffTeams` takes
+        // `prefix(7)` of each conference (4 division winners + 3 wild cards).
+        CalendarEntry(name: "Regular Season", description: "18 weeks of football — manage injuries, trades, and weekly gameplans", duration: "Sep-Jan", isMandatory: true,
+                      leagueNote: "14 of the 32 clubs reach the playoffs — four division winners and three wild cards a conference."),
     ]
 
     private var calendarCard: some View {
@@ -1587,6 +1619,23 @@ private struct YourRoadmapStep: View {
                                 .font(.caption2)
                                 .foregroundStyle(Color.textSecondary)
                                 .fixedSize(horizontal: false, vertical: true)
+
+                            // #2987 — what the league actually does here, where
+                            // the engine publishes a number for it. A tier below
+                            // the description in colour, because it is a fact
+                            // about the league and not an instruction to the
+                            // player; the card's closing line says so in words.
+                            if let note = entry.leagueNote {
+                                HStack(alignment: .top, spacing: DSSpacing.xxs) {
+                                    Image(systemName: "info.circle")
+                                        .font(.system(size: DSType.Size.micro))
+                                    Text(note)
+                                        .font(.caption2)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                .foregroundStyle(Color.textTertiary)
+                                .padding(.top, DSSpacing.xxs)
+                            }
                         }
 
                         Spacer()
@@ -1611,6 +1660,17 @@ private struct YourRoadmapStep: View {
                     )
                 }
             }
+
+            // #2987 — the disclaimer the numbers above need, because a figure
+            // on an onboarding screen reads as an assignment unless something
+            // says otherwise. It is also literally true: every one of them is
+            // read out of the engine that produces it, and the phases where the
+            // engine publishes nothing carry no figure at all.
+            Text("The figures are the league's own — what clubs do here, read from the game's rules. None of them is a score you are held to.")
+                .font(DSType.text(DSType.Size.caption, .regular, prose: true))
+                .foregroundStyle(Color.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, DSSpacing.xxs)
         }
         .padding(20)
         .cardBackground()
@@ -1756,6 +1816,13 @@ private struct ReadyToBeginStep: View {
     @State private var showSubtitle = false
     @State private var showButton = false
     @State private var glowAmount: CGFloat = 0.3
+
+    /// #3008 — whether this save has still to see its rookie-GM tip.
+    ///
+    /// Read once, at construction, rather than per redraw: the banner has to
+    /// survive its own dismissal animation, and `FirstRunTip.markDone()` writes
+    /// the flag the instant "Got it" is tapped.
+    @State private var showRookieTip = !FirstRunTip.rookieGM.isDone
 
     /// The pulse, the fall and the staged reveals are all decoration. Under
     /// Reduce Motion the screen still assembles itself, it just does not move:
@@ -1952,6 +2019,29 @@ private struct ReadyToBeginStep: View {
                             .accessibilityLabel("Build your dynasty. \(motivationalLine)")
 
                             handoverCard
+
+                            // #3008 — one rookie-GM mistake, under the card that
+                            // hands the club over.
+                            //
+                            // Here rather than beside the CTA because the bar at
+                            // the bottom already carries the button and the "first
+                            // job" caption, and a third line down there would put
+                            // advice about the next five months next to the
+                            // sentence about the next five minutes. It is the same
+                            // `TipBanner` the 4th-down and audible hints use, it
+                            // is dismissed the same way, and Settings → "Reset
+                            // Tips" brings it back with the rest of them.
+                            if showRookieTip {
+                                TipBanner(
+                                    icon: "lightbulb.fill",
+                                    text: RookieGMTip.line(forCareer: career.id)
+                                ) {
+                                    FirstRunTip.rookieGM.markDone()
+                                    withAnimation(.easeInOut(duration: 0.2)) { showRookieTip = false }
+                                }
+                                .frame(maxWidth: 460)
+                                .padding(.horizontal, 24)
+                            }
                         }
                         .transition(.opacity)
                     }
