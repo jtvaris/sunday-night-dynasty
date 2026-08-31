@@ -868,6 +868,21 @@ struct RosterView: View {
                     }
                 }
             }
+
+            // #3196 / #3202 / #3199 / #3209 — what the Special Teams side holds
+            // BELOW the two men the domain actually seats. Offense and Defense
+            // are untouched: they have eight stocked groups between them and
+            // none of this reading to do.
+            if selectedSide == .specialTeams {
+                // Decoded and reconciled ONCE for the whole block — the units
+                // and the rating both want the chart, and it is real work.
+                let chart = savedDepthChart
+                ForEach(SpecialTeamsUnitBuilder.units(roster: players, chart: chart)) { unit in
+                    specialTeamsUnitSection(unit)
+                }
+                kickingGameSection
+                unitRatingSection(chart: chart)
+            }
         }
         .scrollContentBackground(.hidden)
         .listStyle(.insetGrouped)
@@ -876,6 +891,225 @@ struct RosterView: View {
         // roughly a third of a screen before any player was visible.
         .listSectionSpacing(12)
         .contentMargins(.top, 0, for: .scrollContent)
+    }
+
+    // MARK: - Special Teams: Derived Units (#3196, #3202)
+
+    /// The saved depth chart, reconciled against today's roster — or `nil` when
+    /// this save has never set one (and for every preview / lightweight call
+    /// site, which carry no `Career`).
+    ///
+    /// Read ONLY on the Special Teams side, because decoding and reconciling a
+    /// chart is real work and the other two sides ask nothing of it.
+    private var savedDepthChart: DepthChart? {
+        guard selectedSide == .specialTeams, let career else { return nil }
+        return DepthChart.saved(career: career, roster: players)
+    }
+
+    /// One derived unit as a section: its men, then the line saying where they
+    /// came from and what the simulator does with them.
+    ///
+    /// The rows are `NavigationLink`s to the player card and nothing else. That
+    /// is the whole of "read-only": you can look the man up, you cannot give
+    /// him the job, because there is no job in the save to give.
+    @ViewBuilder
+    private func specialTeamsUnitSection(_ unit: SpecialTeamsUnit) -> some View {
+        Section {
+            if unit.members.isEmpty {
+                Text("Nobody on the roster fits this job.")
+                    .font(DSType.text(DSType.Size.footnote, .medium, prose: true))
+                    .foregroundStyle(Color.textTertiaryReadable)
+                    .listRowBackground(Color.backgroundSecondary)
+            } else {
+                ForEach(unit.members) { member in
+                    NavigationLink(destination: PlayerDetailView(player: member.player)) {
+                        specialTeamsMemberRow(member)
+                    }
+                    .listRowBackground(member.isListed ? Color.backgroundTertiary : Color.backgroundSecondary)
+                }
+            }
+            DSDetailNote(text: unit.note)
+                .listRowBackground(Color.backgroundSecondary)
+        } header: {
+            DSGroupRollup(title: unit.title, facts: unit.facts, tint: .textPrimary)
+                .textCase(nil)
+        }
+    }
+
+    /// Job, position, name, and the measured traits he was picked on.
+    ///
+    /// Deliberately NOT `PlayerRowView`: that row's anatomy is a depth chip, a
+    /// tappable position badge and a starter badge — three affordances that
+    /// change the man's job — and a unit nothing can be assigned to must not
+    /// offer them.
+    private func specialTeamsMemberRow(_ member: SpecialTeamsUnit.Member) -> some View {
+        HStack(spacing: DSSpacing.xs) {
+            Text(member.role)
+                .font(DSType.display(11, .heavy))
+                .foregroundStyle(member.isListed ? Color.accentBlue : Color.textTertiary)
+                .frame(width: DSListColumn.position, alignment: .leading)
+
+            Text(member.player.position.rawValue)
+                .font(DSType.display(11, .heavy))
+                .foregroundStyle(Color.textTertiary)
+                .frame(width: DSListColumn.position, alignment: .leading)
+
+            Text(member.player.fullName)
+                .font(DSType.text(12, .semibold, prose: true))
+                .foregroundStyle(Color.textPrimary)
+                .lineLimit(1)
+
+            Spacer(minLength: DSSpacing.xxs)
+
+            traitCell(member.traitLabel, member.traitValue)
+            if let label = member.secondLabel, let value = member.secondValue {
+                traitCell(label, value)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            "\(member.player.fullName), \(member.player.position.rawValue), \(member.role)"
+            + (member.isListed ? ", listed on the depth chart" : "")
+            + ", \(member.traitLabel) \(member.traitValue)"
+        )
+    }
+
+    /// A measured trait over its own three-letter caption — the same number
+    /// over caption the analysis lenses draw in the rows above.
+    private func traitCell(_ label: String, _ value: Int) -> some View {
+        VStack(spacing: 0) {
+            Text("\(value)")
+                .font(DSType.display(12, .heavy))
+                .foregroundStyle(Color.forRating(value))
+            Text(label)
+                .font(DSType.display(DSType.Size.micro, .semibold))
+                .foregroundStyle(Color.textTertiary)
+        }
+        .frame(width: DSListColumn.attribute)
+    }
+
+    // MARK: - Special Teams: The Kicking Game (#3199)
+
+    /// What fills the space under a two-row list: the kicking game, in the two
+    /// numbers the engine actually uses and the production it actually recorded.
+    ///
+    /// Every figure here is quoted, not modelled:
+    ///
+    ///   * **Longest attempt** is `PlaySimulator.fieldGoalRangeYards` — the
+    ///     club's real 4th-down cutoff, which reads `kickPower` and nothing
+    ///     else — plus the 17 yards of snap and hold its own documentation
+    ///     names. It is the one place a kicker's leg is visible as the yard
+    ///     line it changes rather than as a 0-99 attribute.
+    ///   * **Field goals / punts** come off `Player.seasonStatLine`, which is
+    ///     what the simulator recorded. Nothing is projected: a club that has
+    ///     not kicked yet is told it has not kicked yet.
+    @ViewBuilder
+    private var kickingGameSection: some View {
+        let kicker = SpecialTeamsUnitBuilder.best(.K, in: players)
+        let punter = SpecialTeamsUnitBuilder.best(.P, in: players)
+        Section {
+            VStack(alignment: .leading, spacing: DSSpacing.xxs) {
+                if let kicker {
+                    let line = kicker.seasonStatLine
+                    let attempt = PlaySimulator.fieldGoalRangeYards(for: SimPlayer(from: kicker)) + 17
+                    DSDetailRow("Kicker", kicker.fullName)
+                    DSDetailRow("Longest attempt", "\(attempt) yd", tint: .accentGold)
+                    DSDetailRow(
+                        "Field goals",
+                        line.fieldGoalsAttempted > 0
+                            ? "\(line.fieldGoalsMade) of \(line.fieldGoalsAttempted)"
+                            : "none attempted yet",
+                        tint: line.fieldGoalsAttempted > 0 ? .textPrimary : .textTertiary
+                    )
+                } else {
+                    DSDetailRow("Kicker", "nobody on the roster", tint: .danger)
+                }
+
+                if let punter {
+                    let line = punter.seasonStatLine
+                    DSDetailRow("Punter", punter.fullName)
+                    DSDetailRow(
+                        "Punts",
+                        line.punts > 0
+                            ? "\(line.punts) at \(String(format: "%.1f", line.puntAverage)) avg"
+                            : "none yet",
+                        tint: line.punts > 0 ? .textPrimary : .textTertiary
+                    )
+                } else {
+                    DSDetailRow("Punter", "nobody on the roster", tint: .danger)
+                }
+
+                DSDetailNote(
+                    text: "Longest attempt is the engine's own cutoff — it reads the kicker's leg and "
+                        + "nothing else, and the staff punts rather than try past it. The punt average "
+                        + "is a net the simulator recorded, centred on the punter's leg; neither figure "
+                        + "is a projection."
+                )
+            }
+            .listRowBackground(Color.backgroundSecondary)
+        } header: {
+            DSGroupRollup(title: "Kicking Game", facts: ["what the sim reads"], tint: .textPrimary)
+                .textCase(nil)
+        }
+    }
+
+    // MARK: - Special Teams: Unit Rating (#3209)
+
+    /// The unit as one number, with every term it was cut from printed beneath
+    /// it — because two of those terms are stand-ins and a bare 74 could not
+    /// say so.
+    @ViewBuilder
+    private func unitRatingSection(chart: DepthChart?) -> some View {
+        let unit = SpecialTeamsUnitBuilder.rating(roster: players, chart: chart)
+        Section {
+            VStack(alignment: .leading, spacing: DSSpacing.xxs) {
+                HStack(alignment: .firstTextBaseline, spacing: DSSpacing.xs) {
+                    Text(unit.rating.map { "\($0)" } ?? "\u{2014}")
+                        .font(DSType.display(DSType.Size.title1, .black))
+                        .foregroundStyle(unit.rating.map { Color.forRating($0) } ?? Color.textTertiary)
+                    Text("of 100")
+                        .font(DSType.display(DSType.Size.caption, .semibold))
+                        .foregroundStyle(Color.textTertiary)
+                    Spacer(minLength: 0)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(
+                    unit.rating.map { "Special teams unit rating \($0) of 100" }
+                        ?? "Special teams unit rating unavailable"
+                )
+
+                ForEach(unit.terms) { term in
+                    DSDetailRow(label: term.label) {
+                        HStack(spacing: DSSpacing.xs) {
+                            Text(term.detail)
+                                .font(DSType.display(DSType.Size.caption, .semibold))
+                                .foregroundStyle(Color.textTertiary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
+                            Text(term.value.map { "\($0)" } ?? "\u{2014}")
+                                .font(DSType.display(DSType.Size.callout, .heavy))
+                                .foregroundStyle(term.value.map { Color.forRating($0) } ?? Color.textTertiary)
+                                .frame(width: DSListColumn.tight, alignment: .trailing)
+                        }
+                    }
+                }
+
+                DSDetailNote(
+                    text: "An even average of the five jobs, each read on the trait that job is picked "
+                        + "on. The kicker and the punter are the halves the simulator uses today; the "
+                        + "return and coverage terms are a stand-in, because kickoff returns are rolled "
+                        + "without reading a player and no coverage unit exists to field."
+                )
+            }
+            .listRowBackground(Color.backgroundSecondary)
+        } header: {
+            DSGroupRollup(
+                title: "Unit Rating",
+                facts: ["\(unit.terms.compactMap(\.value).count) of \(unit.terms.count) jobs filled"],
+                tint: .textPrimary
+            )
+            .textCase(nil)
+        }
     }
 
     // MARK: - Group Assessment Sheet (#283)
@@ -1836,6 +2070,380 @@ enum PositionGradeCalculator {
         let dGrade = backups.isEmpty ? noDepthGrade : letterGrade(for: depthAvg)
 
         return (sGrade, dGrade, starterAvg, depthAvg)
+    }
+}
+
+// MARK: - Special Teams Derived Units (#3196, #3202)
+
+/// One special-teams job the roster can be **read** for and not assigned to.
+///
+/// `Position.side` puts exactly two men on `.specialTeams` — the kicker and the
+/// punter — so the return, coverage and blocking units below are DERIVED from
+/// players who already hold another job. Nothing here writes: no slot, no depth
+/// order, no `Player` field. It is a reading of the roster the club already has,
+/// which is why every row carries the measured trait it was picked on rather
+/// than a rank.
+///
+/// **Written so the two real positions can land without a rewrite.** When the
+/// long snapper and the holder become `Position` cases with their own ideal
+/// roster counts and generation (their own gated wave), they join
+/// ``RosterView/specialTeamsGroups``' `positions` array and list themselves
+/// beside the kicker like any other stocked room. Nothing in this file moves:
+/// these units are keyed on traits and roster membership, never on the
+/// `.specialTeams` side, so two more real specialists change only the group
+/// above them.
+struct SpecialTeamsUnit: Identifiable {
+    /// "Return Men", "Coverage Unit", "Blocking Wall".
+    let title: String
+    /// Short facts for the header rollup — already formatted.
+    let facts: [String]
+    /// Where the men came from, and what the simulator does with them. Every
+    /// unit here says the second part, because for two of the three the honest
+    /// answer today is "nothing".
+    let note: String
+    let members: [Member]
+
+    var id: String { title }
+
+    struct Member: Identifiable {
+        let player: Player
+        /// The job, as the depth chart spells it where the chart has one: KR,
+        /// PR, GUN, WALL.
+        let role: String
+        /// The trait he was picked on, named and measured.
+        let traitLabel: String
+        let traitValue: Int
+        /// A second measured trait, present ONLY where the domain models it for
+        /// this man — a running back has elusiveness and a corner does not, and
+        /// the row prints nothing rather than a substitute.
+        let secondLabel: String?
+        let secondValue: Int?
+        /// True when the saved depth chart already lists him in this job. The
+        /// only real state any of these rows can report.
+        let isListed: Bool
+
+        var id: UUID { player.id }
+    }
+}
+
+/// Derives the special-teams units, and the unit rating, from a roster.
+///
+/// Kept out of the view for the same reason `PositionGradeCalculator` is: the
+/// arithmetic is the part worth reading, and it must be quotable from one place
+/// when the long snapper and the holder arrive.
+enum SpecialTeamsUnitBuilder {
+
+    // MARK: Populations
+
+    /// Where the return game is scouted from (#3196).
+    static let returnPool: [Position] = [.WR, .RB, .CB]
+
+    /// Where the punt / field-goal wall is scouted from — the rooms whose
+    /// attributes actually model blocking. A running back blocks in real
+    /// football and `RBAttributes` has no field for it, so the fullback and the
+    /// backs are deliberately absent rather than ranked on a stand-in.
+    static let blockingPool: [Position] = [.LT, .LG, .C, .RG, .RT, .TE]
+
+    /// Ten men cover a kick; the kicker is the eleventh.
+    static let coverageSize = 10
+
+    /// Five hold the interior wall in front of the snap.
+    static let blockingSize = 5
+
+    // MARK: Traits
+
+    /// Deterministic ranking: the trait, then overall, then the id — because a
+    /// comparator that calls two equal-speed men "not less than each other" is
+    /// not an ordering, and this list is rebuilt on every redraw.
+    static func ranked(_ players: [Player], by trait: (Player) -> Int) -> [Player] {
+        players.sorted { lhs, rhs in
+            let a = trait(lhs), b = trait(rhs)
+            if a != b { return a > b }
+            if lhs.overall != rhs.overall { return lhs.overall > rhs.overall }
+            return lhs.id.uuidString < rhs.id.uuidString
+        }
+    }
+
+    /// The best man at a position by overall, or `nil` if the club has none.
+    static func best(_ position: Position, in roster: [Player]) -> Player? {
+        ranked(roster.filter { $0.position == position && !$0.isRetired }, by: { $0.overall }).first
+    }
+
+    /// Elusiveness, where the domain models it. Only `RBAttributes` carries the
+    /// field, so this is `nil` for the receivers and corners in the same list.
+    static func elusiveness(of player: Player) -> Int? {
+        if case .runningBack(let a) = player.positionAttributes { return a.elusiveness }
+        return nil
+    }
+
+    /// Tackling, where the domain models it. Only `LBAttributes` carries the
+    /// field — the defensive backs and receivers who make up most of a real
+    /// coverage unit have no tackling rating at all — so the row prints it for
+    /// the linebackers and prints nothing for everyone else.
+    static func tackling(of player: Player) -> Int? {
+        if case .linebacker(let a) = player.positionAttributes { return a.tackling }
+        return nil
+    }
+
+    /// The blocking read for the wall, on each room's own attributes: pass
+    /// protection and anchor for a lineman, the tight end's blocking grade.
+    static func blocking(of player: Player) -> (label: String, value: Int)? {
+        switch player.positionAttributes {
+        case .offensiveLine(let a): return ("PBK", (a.passBlock + a.anchor) / 2)
+        case .tightEnd(let a):      return ("BLK", a.blocking)
+        default:                    return nil
+        }
+    }
+
+    /// How a coverage man is ranked: speed, plus tackling **where it exists**.
+    ///
+    /// #3209 asked for "speed + tackling". `tackling` is a field on
+    /// `LBAttributes` and on nothing else, so for the corners, receivers and
+    /// backs who make up most of a gunner unit there is no second half to add —
+    /// and inventing one (borrowing man coverage, scaling strength) would be
+    /// exactly the coefficient this screen refuses to print. Where the man has
+    /// a tackling rating the term is the mean of the two; where he does not it
+    /// is his speed, and the row shows which by printing a TAK cell or not.
+    static func coverageScore(_ player: Player) -> Int {
+        guard let tackle = tackling(of: player) else { return player.physical.speed }
+        return (player.physical.speed + tackle) / 2
+    }
+
+    /// The men who are not first choice in their own room, kicker and punter
+    /// excluded — a club fields one of each and neither covers a kick.
+    ///
+    /// Uses the same `idealStarterCounts` the roster's own group grades use, so
+    /// "non-starter" means here what it means three rows up the screen.
+    static func nonStarters(in roster: [Player]) -> [Player] {
+        var byPosition: [Position: [Player]] = [:]
+        for player in roster where !player.isRetired && player.position.side != .specialTeams {
+            byPosition[player.position, default: []].append(player)
+        }
+        var reserves: [Player] = []
+        for (position, room) in byPosition {
+            let starters = PositionGradeCalculator.idealStarterCounts[position] ?? 1
+            reserves.append(contentsOf: ranked(room, by: { $0.overall }).dropFirst(starters))
+        }
+        return reserves
+    }
+
+    // MARK: Units
+
+    /// The listed man for a returner slot, plus the men the roster would put
+    /// there — the chart's own holder first, so a coach who has set the slot
+    /// always sees his choice even when a faster body has since arrived.
+    private static func returners(
+        pool: [Player],
+        roster: [Player],
+        trait: DepthChartSlot.RankingTrait,
+        depth: Int,
+        listed: UUID?
+    ) -> [Player] {
+        var picked = Array(ranked(pool, by: { trait.value(of: $0) }).prefix(depth))
+        if let listed,
+           !picked.contains(where: { $0.id == listed }),
+           let holder = roster.first(where: { $0.id == listed }) {
+            picked.insert(holder, at: 0)
+        }
+        return picked
+    }
+
+    static func units(roster: [Player], chart: DepthChart?) -> [SpecialTeamsUnit] {
+        let active = roster.filter { !$0.isRetired }
+        let returnCandidates = active.filter { returnPool.contains($0.position) }
+        // `chart?.starter(for:)` is doubly optional — no chart, or a chart with
+        // an empty slot — and the two mean the same thing here, so they are
+        // flattened once rather than unwrapped twice at every use.
+        let krListed: UUID? = chart?.starter(for: .KR) ?? nil
+        let prListed: UUID? = chart?.starter(for: .PR) ?? nil
+
+        // Return men — ranked on the trait the depth chart's own slot ranks on
+        // (`DepthChartSlot.rankingTrait`: KR speed, PR agility), and as deep as
+        // that slot goes, so this list and the chart's candidate picker cannot
+        // disagree about who the club's returners are.
+        let kickReturners = returners(
+            pool: returnCandidates, roster: active, trait: .speed,
+            depth: DepthChartSlot.KR.maxDepth, listed: krListed
+        )
+        let puntReturners = returners(
+            pool: returnCandidates, roster: active, trait: .agility,
+            depth: DepthChartSlot.PR.maxDepth, listed: prListed
+        )
+        let returnUnit = SpecialTeamsUnit(
+            title: "Return Men",
+            facts: ["from WR / RB / CB", "\(returnCandidates.count) candidates"],
+            note: "Derived from the roster — nothing here is assignable. The depth chart's KR and PR "
+                + "slots are the only return jobs the save holds, and a kickoff is still rolled "
+                + "without reading a returner, so these men change no result yet.",
+            members: kickReturners.map { player in
+                SpecialTeamsUnit.Member(
+                    player: player,
+                    role: DepthChartSlot.KR.rawValue,
+                    traitLabel: DepthChartSlot.RankingTrait.speed.shortLabel,
+                    traitValue: player.physical.speed,
+                    secondLabel: elusiveness(of: player) == nil ? nil : "ELU",
+                    secondValue: elusiveness(of: player),
+                    isListed: player.id == krListed
+                )
+            } + puntReturners.map { player in
+                SpecialTeamsUnit.Member(
+                    player: player,
+                    role: DepthChartSlot.PR.rawValue,
+                    traitLabel: DepthChartSlot.RankingTrait.agility.shortLabel,
+                    traitValue: player.physical.agility,
+                    secondLabel: elusiveness(of: player) == nil ? nil : "ELU",
+                    secondValue: elusiveness(of: player),
+                    isListed: player.id == prListed
+                )
+            }
+        )
+
+        // Coverage — the gunners, i.e. the fastest men who are not first choice
+        // anywhere else, which is how a real coverage unit is staffed.
+        let reserves = nonStarters(in: active)
+        let coverage = Array(ranked(reserves, by: coverageScore).prefix(coverageSize))
+        let coverageUnit = SpecialTeamsUnit(
+            title: "Coverage Unit",
+            facts: ["fastest reserves", "\(reserves.count) available"],
+            note: "The fastest men not first choice in their own room. Speed is measured for all of "
+                + "them; tackling only where the domain models it, so a TAK cell appears on the "
+                + "linebackers and nowhere else. No coverage unit is fielded by the simulator.",
+            members: coverage.map { player in
+                SpecialTeamsUnit.Member(
+                    player: player,
+                    role: "GUN",
+                    traitLabel: DepthChartSlot.RankingTrait.speed.shortLabel,
+                    traitValue: player.physical.speed,
+                    secondLabel: tackling(of: player) == nil ? nil : "TAK",
+                    secondValue: tackling(of: player),
+                    isListed: false
+                )
+            }
+        )
+
+        // The wall in front of the snap.
+        let blockers = active.filter { blockingPool.contains($0.position) }
+        let wall = Array(
+            ranked(blockers, by: { blocking(of: $0)?.value ?? 0 }).prefix(blockingSize)
+        )
+        let blockingUnit = SpecialTeamsUnit(
+            title: "Blocking Wall",
+            facts: ["from the line and the tight ends", "\(blockers.count) candidates"],
+            note: "Punt and field-goal protection, ranked on the blocking attributes each room "
+                + "already stores. The simulator prices a punt as a net draw centred on the "
+                + "punter's leg and a field goal as a flat block chance, so this wall is a reading "
+                + "of the roster and not an input.",
+            members: wall.compactMap { player in
+                guard let read = blocking(of: player) else { return nil }
+                return SpecialTeamsUnit.Member(
+                    player: player,
+                    role: "WALL",
+                    traitLabel: read.label,
+                    traitValue: read.value,
+                    secondLabel: "STR",
+                    secondValue: player.physical.strength,
+                    isListed: false
+                )
+            }
+        )
+
+        return [returnUnit, coverageUnit, blockingUnit]
+    }
+
+    // MARK: Unit Rating (#3209)
+
+    /// The special-teams unit as one 0-100 number, and the terms it is cut from.
+    struct Rating {
+        struct Term: Identifiable {
+            let label: String
+            /// Who, in one line — the term is only as trustworthy as the man.
+            let detail: String
+            /// `nil` when the club has nobody for the job. A hole is not a zero:
+            /// averaging a 0 would price an empty slot as the worst player alive
+            /// rather than as absent, so a missing term leaves the average.
+            let value: Int?
+
+            var id: String { label }
+        }
+
+        let terms: [Term]
+
+        /// An EVEN average of the terms that have a man. There is no weighting
+        /// because there is nothing to weight it with — the simulator prices a
+        /// kick and a punt and prices no return or coverage snap at all, so any
+        /// ratio between the five would be a number this screen invented.
+        var rating: Int? {
+            let values = terms.compactMap(\.value)
+            guard !values.isEmpty else { return nil }
+            return Int((Double(values.reduce(0, +)) / Double(values.count)).rounded())
+        }
+    }
+
+    /// K + P + the chart's KR and PR, each on the trait its own job is picked
+    /// on, plus a coverage term over the fastest reserves (#3209).
+    ///
+    /// The kicker and the punter are read on their kicking attributes rather
+    /// than on overall, because overall folds in the physical and mental blocks
+    /// that no kicking play consults — the leg and the accuracy are the whole of
+    /// what `PlaySimulator` asks a specialist for.
+    ///
+    /// The returner terms prefer the chart's own holder and fall back to the man
+    /// `DepthChart.reconcile` would install if the slot were left empty (the
+    /// roster leader on that trait), so the number does not change the moment a
+    /// coach opens the depth chart and saves it unchanged.
+    static func rating(roster: [Player], chart: DepthChart?) -> Rating {
+        let active = roster.filter { !$0.isRetired }
+
+        func specialist(_ position: Position, label: String) -> Rating.Term {
+            guard let man = best(position, in: active),
+                  case .kicking(let attrs) = man.positionAttributes else {
+                return Rating.Term(label: label, detail: "nobody on the roster", value: nil)
+            }
+            return Rating.Term(
+                label: label,
+                detail: "\(man.fullName) \u{00B7} PWR \(attrs.kickPower) / ACC \(attrs.kickAccuracy)",
+                value: Int(attrs.overall.rounded())
+            )
+        }
+
+        func returner(_ slot: DepthChartSlot, label: String) -> Rating.Term {
+            guard let trait = slot.rankingTrait else {
+                return Rating.Term(label: label, detail: "no ranking trait", value: nil)
+            }
+            let listedID: UUID? = chart?.starter(for: slot) ?? nil
+            let listedMan = listedID.flatMap { id in active.first { $0.id == id } }
+            let man = listedMan ?? ranked(active, by: { trait.value(of: $0) }).first
+            guard let man else {
+                return Rating.Term(label: label, detail: "nobody on the roster", value: nil)
+            }
+            let source = listedMan == nil ? "unlisted" : "listed"
+            return Rating.Term(
+                label: label,
+                detail: "\(man.fullName) \u{00B7} \(source)",
+                value: trait.value(of: man)
+            )
+        }
+
+        let reserves = ranked(nonStarters(in: active), by: coverageScore).prefix(coverageSize)
+        let coverage: Rating.Term
+        if reserves.isEmpty {
+            coverage = Rating.Term(label: "Coverage", detail: "no reserves", value: nil)
+        } else {
+            let mean = reserves.map(coverageScore).reduce(0, +) / reserves.count
+            coverage = Rating.Term(
+                label: "Coverage",
+                detail: "fastest \(reserves.count) reserves",
+                value: mean
+            )
+        }
+
+        return Rating(terms: [
+            specialist(.K, label: "Kicker"),
+            specialist(.P, label: "Punter"),
+            returner(.KR, label: "Kick return"),
+            returner(.PR, label: "Punt return"),
+            coverage,
+        ])
     }
 }
 
