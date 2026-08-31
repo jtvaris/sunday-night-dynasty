@@ -1522,7 +1522,7 @@ private struct YourRoadmapStep: View {
         // school / 0.08 aggressive. Keyed on a team id, so it cannot be
         // interpolated; change 8-18 with that switch.
         CalendarEntry(name: "Free Agency", description: "Sign free agents, re-sign your own players, fill roster gaps", duration: "Mar", isMandatory: true,
-                      leagueNote: "Rival clubs stop shopping at \(FreeAgencyEngine.faRosterCeiling) men and hold 8-18 % of the cap back for the draft class and the season — the boldest keep the least. Your own roster may carry \(TradeValueEngine.offseasonRosterCeiling) until cutdown day."),
+                      leagueNote: "Rival clubs stop shopping at \(FreeAgencyEngine.faRosterCeiling) men and hold 8-18 % of the cap back for the draft class and the season — the boldest keep the least. Your own roster may carry \(TradeValueEngine.offseasonRosterCeiling) until camp breaks."),
         // NOT "seven rounds of 32 picks". `DraftIntel.picksPerRound` is the
         // number of clubs in the draft order, and the constant's own note three
         // lines below it says compensatory awards land at the END of rounds 3-7

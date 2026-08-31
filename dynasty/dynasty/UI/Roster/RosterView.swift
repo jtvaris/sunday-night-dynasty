@@ -2345,7 +2345,7 @@ enum SpecialTeamsUnitBuilder {
             title: "Coverage Unit",
             facts: ["fastest reserves", "\(reserves.count) available"],
             note: "The fastest men not first choice in their own room. Speed is measured for all of "
-                + "them; tackling only where the domain models it, so a TAK cell appears on the "
+                + "them; tackling only where the domain models it, so a TKL cell appears on the "
                 + "linebackers and nowhere else. No coverage unit is fielded by the simulator.",
             members: coverage.map { player in
                 SpecialTeamsUnit.Member(
@@ -2353,7 +2353,12 @@ enum SpecialTeamsUnitBuilder {
                     role: "GUN",
                     traitLabel: DepthChartSlot.RankingTrait.speed.shortLabel,
                     traitValue: player.physical.speed,
-                    secondLabel: tackling(of: player) == nil ? nil : "TAK",
+                    // TKL, not TAK. This is `LBAttributes.tackling`, and PlayerRowView,
+                    // ScoutingEngine and ProspectFog all caption that exact attribute TKL —
+                    // the same linebacker must not read TAK here and TKL on his player card.
+                    // ProspectDetailView already carries a comment about this exact three
+                    // letters never matching what the engine writes.
+                    secondLabel: tackling(of: player) == nil ? nil : "TKL",
                     secondValue: tackling(of: player),
                     isListed: false
                 )
