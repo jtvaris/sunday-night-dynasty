@@ -34,6 +34,12 @@ struct InboxView: View {
     @Binding var messages: [InboxMessage]
     var onNavigate: ((TaskDestination) -> Void)?
 
+    /// Needed for the reply side only. A reply has to reach the owner row and
+    /// the roster, and this screen is handed the career and the mailbox and
+    /// nothing else — the same fetch the shell already does before it books a
+    /// press conference's room effects.
+    @Environment(\.modelContext) private var modelContext
+
     @State private var activeFilter: InboxFilter = .all
     @State private var selectedMessage: InboxMessage?
     /// Where the dismissed message wanted to send the user. Replayed from
@@ -114,6 +120,13 @@ struct InboxView: View {
                     },
                     onMarkHandled: {
                         markActionHandled(messageID: message.id)
+                    },
+                    replyOptions: availableReplyOptions(for: message),
+                    // Non-nil only when the season's budget is what removed the
+                    // buttons, so the two can never both be showing.
+                    replyBudgetNote: replyBudgetNote(for: message),
+                    onReply: { option in
+                        sendReply(option, to: message.id)
                     }
                 )
             }
@@ -161,7 +174,132 @@ struct InboxView: View {
     }
 
     private func delete(messageID: UUID) {
-        messages.removeAll { $0.id == messageID }
+        messages.removeAll { $0.id == messageID && !isReplyLocked($0) }
+    }
+
+    /// A letter answered THIS season cannot be deleted.
+    ///
+    /// The per-season reply budget is counted off the tray itself
+    /// (`InboxEngine.repliesBooked`), so deleting an answered letter would hand
+    /// its reply back and let the same +1 be bought again and again. Answered
+    /// mail can still be archived — it leaves every working lens — it just
+    /// cannot be shredded until the season turns and the budget resets anyway.
+    private func isReplyLocked(_ message: InboxMessage) -> Bool {
+        message.repliedSeason == career.currentSeason
+    }
+
+    // MARK: - Replies
+    //
+    // The tray was read-only: a letter could ask the coach a question and he
+    // had nowhere to answer it. `InboxEngine` holds the catalogue, the season
+    // budget and the apply-site, with every delta anchored there. This screen
+    // does the two things only it can: decide what is offerable on THIS save,
+    // and write the reply back onto the letter.
+
+    /// The user's club, for the owner row a reply to the owner moves.
+    private var userTeam: Team? {
+        guard let teamID = career.teamID else { return nil }
+        var descriptor = FetchDescriptor<Team>(predicate: #Predicate<Team> { $0.id == teamID })
+        descriptor.fetchLimit = 1
+        return (try? modelContext.fetch(descriptor))?.first
+    }
+
+    /// The user's roster — his club only, which is the rule
+    /// `PressConferenceEngine.applyRoomEffects` states for the same reason: a
+    /// word to your own coordinator has no business in another team's room.
+    private var userRoster: [Player] {
+        guard let teamID = career.teamID else { return [] }
+        let descriptor = FetchDescriptor<Player>(predicate: #Predicate<Player> { $0.teamID == teamID })
+        return (try? modelContext.fetch(descriptor)) ?? []
+    }
+
+    /// What this letter can actually be answered with right now: the catalogue,
+    /// minus any channel whose season budget is spent, minus any channel with
+    /// nothing on this save to receive it. A control that would book nothing is
+    /// not shown at all.
+    private func availableReplyOptions(for message: InboxMessage) -> [InboxEngine.ReplyOption] {
+        let catalogue = InboxEngine.replyOptions(for: message)
+        guard !catalogue.isEmpty else { return [] }
+
+        let hasOwner = userTeam?.owner != nil
+        let roster = userRoster
+
+        return catalogue.filter { option in
+            guard InboxEngine.repliesRemaining(
+                in: messages,
+                channel: option.channel,
+                season: career.currentSeason
+            ) > 0 else { return false }
+
+            switch option.channel {
+            case .ownerTrust:
+                return hasOwner
+            case .mediaReputation:
+                // `Career.legacy` is always there, so this channel is always
+                // able to take the movement.
+                return true
+            case .offenseMorale, .defenseMorale:
+                guard let side = option.channel.unitSide else { return false }
+                return roster.contains { $0.position.side == side }
+            }
+        }
+    }
+
+    /// The line the detail view prints in place of the buttons — set ONLY when
+    /// the reason they are gone is the spent season budget. A missing owner row
+    /// or an empty unit gets no note and no section: there is nothing behind
+    /// that reply on this save, and inventing an explanation for it would be
+    /// worse than the silence.
+    private func replyBudgetNote(for message: InboxMessage) -> String? {
+        guard let channel = InboxEngine.replyOptions(for: message).first?.channel else { return nil }
+        guard InboxEngine.repliesRemaining(
+            in: messages,
+            channel: channel,
+            season: career.currentSeason
+        ) == 0 else { return nil }
+        return InboxEngine.budgetSpentNote(
+            channel: channel,
+            senderName: message.sender.displayName
+        )
+    }
+
+    /// Books the reply and returns the receipt the engine wrote — the movement
+    /// that actually landed. `nil` means nothing was booked, and the detail
+    /// view then claims nothing.
+    ///
+    /// The whole letter is rewritten in one assignment: `messages` is a binding
+    /// whose setter re-encodes the mailbox and saves the context, so five
+    /// separate field writes would be five saves. That one save is also what
+    /// persists the owner, roster and legacy movements the engine just made.
+    private func sendReply(_ option: InboxEngine.ReplyOption, to messageID: UUID) -> String? {
+        guard let index = messages.firstIndex(where: { $0.id == messageID }),
+              !messages[index].hasReplied,
+              InboxEngine.repliesRemaining(
+                in: messages,
+                channel: option.channel,
+                season: career.currentSeason
+              ) > 0
+        else { return nil }
+
+        guard let receipt = InboxEngine.applyReply(
+            option,
+            owner: userTeam?.owner,
+            career: career,
+            roster: userRoster
+        ) else { return nil }
+
+        var replied = messages[index]
+        replied.sentReplyID = option.id
+        replied.sentReplyLabel = option.label
+        replied.sentReplyReceipt = receipt
+        replied.repliedSeason = career.currentSeason
+        // Answering a letter is reading it. It is NOT doing what it asked, so
+        // `actionCompleted` stays where it was — the same distinction
+        // `markActionHandled` exists to keep.
+        replied.isRead = true
+        messages[index] = replied
+
+        return receipt
     }
 
     // MARK: - Bulk actions
@@ -205,8 +343,10 @@ struct InboxView: View {
         messages.filter { $0.isRead && !$0.isArchived && !$0.isActionOutstanding && !$0.isPinned }.count
     }
 
+    /// Archived letters the bulk delete will actually remove — a letter
+    /// answered this season is held back, so the count matches the outcome.
     private var archivedCount: Int {
-        messages.filter(\.isArchived).count
+        messages.filter { $0.isArchived && !isReplyLocked($0) }.count
     }
 
     private func markAllRead() {
@@ -226,7 +366,7 @@ struct InboxView: View {
     }
 
     private func deleteArchived() {
-        messages.removeAll(where: \.isArchived)
+        messages.removeAll { $0.isArchived && !isReplyLocked($0) }
     }
 
     // MARK: - Filter strip (§2.2)
@@ -370,11 +510,18 @@ struct InboxView: View {
             )
         }
 
+        // A letter answered this season is held in the tray — see
+        // `isReplyLocked`. The row says so rather than showing a Delete that
+        // quietly does nothing.
         Button(role: .destructive) {
             delete(messageID: message.id)
         } label: {
-            Label("Delete", systemImage: "trash")
+            Label(
+                isReplyLocked(message) ? "Answered this season \u{2014} can't delete" : "Delete",
+                systemImage: isReplyLocked(message) ? "lock" : "trash"
+            )
         }
+        .disabled(isReplyLocked(message))
     }
 
     /// The reserved unread mark plus the sender's disc. The dot's 8 pt is drawn
@@ -400,6 +547,14 @@ struct InboxView: View {
                     Image(systemName: "pin.fill")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(Color.accentGold)
+                }
+                // An answered letter says so in the list. Without it the only
+                // record of a reply was inside the letter, and the tray gave no
+                // sign that a season's replies had been spent.
+                if message.hasReplied {
+                    Image(systemName: "arrowshape.turn.up.left.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color.textTertiaryReadable)
                 }
                 Text(message.sender.displayName.uppercased())
                     .font(DSType.display(DSType.Size.caption, .heavy))
@@ -471,6 +626,7 @@ struct InboxView: View {
         [
             message.isRead ? nil : "Unread",
             message.isPinned ? "Pinned" : nil,
+            message.hasReplied ? "Replied" : nil,
             message.isActionOutstanding ? "Action required" : nil,
             message.actionRequired && message.actionCompleted ? "Action handled" : nil,
             "\(message.sender.displayName), \(timeLabel(message))",

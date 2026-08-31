@@ -16,12 +16,37 @@ struct MessageDetailView: View {
     /// letter is not doing what it asked, so `onAppear` cannot serve here.
     var onMarkHandled: (() -> Void)?
 
+    // MARK: - Replies
+    //
+    // The tray was one-way. These three carry the answer side; the caller
+    // decides what is offerable, because only the caller can see the roster,
+    // the owner row and the rest of the mailbox.
+
+    /// Replies this letter can take right now. Empty means no reply control —
+    /// which is the correct rendering for a sender with no system behind it,
+    /// for a letter whose decision is made on another screen, and for a letter
+    /// already answered. See `InboxEngine.replyOptions(for:)`.
+    var replyOptions: [InboxEngine.ReplyOption] = []
+    /// Set when this letter *could* be answered but the season's budget on its
+    /// channel is spent. Shown in place of the buttons, so the absence of a
+    /// control is explained rather than silent.
+    var replyBudgetNote: String?
+    /// Books the reply and hands back the receipt — the movement that actually
+    /// landed. `nil` means nothing was booked and nothing is claimed.
+    var onReply: ((InboxEngine.ReplyOption) -> String?)?
+
     @Environment(\.dismiss) private var dismiss
 
     /// Local mirror of `message.actionCompleted`. The sheet is handed a value
     /// copy, so the badge has to reflect the resolution itself rather than wait
     /// for the list to hand back a fresh message.
     @State private var isHandled = false
+
+    /// Local mirror of the sent reply, for the same reason `isHandled` is one:
+    /// the sheet holds a value copy of the message, so the thread it prints
+    /// after the coach hits send has to come from here.
+    @State private var sentReplyLabel: String?
+    @State private var sentReplyReceipt: String?
 
     var body: some View {
         ZStack {
@@ -66,6 +91,13 @@ struct MessageDetailView: View {
                         attachmentsSection
                     }
 
+                    // The answer side. Present only where a system is actually
+                    // waiting for it — see `InboxEngine.replyOptions(for:)`.
+                    if sentReplyLabel != nil || !replyOptions.isEmpty || replyBudgetNote != nil {
+                        Divider().overlay(Color.surfaceBorder.opacity(0.5))
+                        replySection
+                    }
+
                     // CTA to open the related screen. Shown for any message
                     // that has a destination — Action Required messages get
                     // a high-emphasis gold button, regular messages get a
@@ -98,8 +130,120 @@ struct MessageDetailView: View {
         }
         .onAppear {
             isHandled = message.actionCompleted
+            sentReplyLabel = message.sentReplyLabel
+            sentReplyReceipt = message.sentReplyReceipt
             onAppear?()
         }
+    }
+
+    // MARK: - Reply
+
+    /// Three states, one section: the reply already sent, the replies still
+    /// available, or the reason there are none. The third is the important one
+    /// — an empty space where a control used to be teaches the user nothing.
+    @ViewBuilder
+    private var replySection: some View {
+        VStack(alignment: .leading, spacing: DSSpacing.sm) {
+            HStack(spacing: DSSpacing.xxs) {
+                Image(systemName: "arrowshape.turn.up.left.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.accentGold)
+                Text(sentReplyLabel == nil ? "YOUR REPLY" : "YOU REPLIED")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Color.accentGold)
+                    .tracking(0.5)
+            }
+
+            if let label = sentReplyLabel {
+                sentReplyBlock(label: label, receipt: sentReplyReceipt)
+            } else if !replyOptions.isEmpty {
+                ForEach(replyOptions) { option in
+                    replyButton(option)
+                }
+            } else if let note = replyBudgetNote {
+                Text(note)
+                    .font(.footnote)
+                    .foregroundStyle(Color.textTertiaryReadable)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func sentReplyBlock(label: String, receipt: String?) -> some View {
+        VStack(alignment: .leading, spacing: DSSpacing.xs) {
+            Text("\u{201C}\(label)\u{201D}")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(Color.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let receipt {
+                HStack(alignment: .firstTextBaseline, spacing: DSSpacing.xxs) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(Color.success)
+                    Text(receipt)
+                        .font(.caption)
+                        .foregroundStyle(Color.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(DSSpacing.sm)
+        .background(
+            RoundedRectangle(cornerRadius: DSCornerRadius.card)
+                .fill(Color.backgroundTertiary)
+                .overlay(
+                    RoundedRectangle(cornerRadius: DSCornerRadius.card)
+                        .strokeBorder(Color.success.opacity(0.35), lineWidth: 1)
+                )
+        )
+    }
+
+    /// The button carries its own consequence: `option.forecast` is the exact
+    /// movement `InboxEngine.applyReply` will book, so nothing about the
+    /// exchange is a surprise after the fact.
+    private func replyButton(_ option: InboxEngine.ReplyOption) -> some View {
+        Button {
+            send(option)
+        } label: {
+            HStack(alignment: .firstTextBaseline, spacing: DSSpacing.sm) {
+                VStack(alignment: .leading, spacing: DSSpacing.xxs) {
+                    Text(option.label)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.textPrimary)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(option.forecast)
+                        .font(.caption)
+                        .foregroundStyle(option.delta >= 0 ? Color.success : Color.danger)
+                }
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(minHeight: 44)
+            .padding(DSSpacing.sm)
+            .background(
+                RoundedRectangle(cornerRadius: DSCornerRadius.card)
+                    .fill(Color.backgroundTertiary)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DSCornerRadius.card)
+                            .strokeBorder(Color.accentGold.opacity(0.4), lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(option.label). \(option.forecast)")
+    }
+
+    private func send(_ option: InboxEngine.ReplyOption) {
+        guard sentReplyLabel == nil else { return }
+        // Only claim what the caller says actually landed. A refused booking
+        // leaves the buttons alone rather than printing a reply that moved
+        // nothing.
+        guard let receipt = onReply?(option) else { return }
+        sentReplyLabel = option.label
+        sentReplyReceipt = receipt
     }
 
     // MARK: - Body

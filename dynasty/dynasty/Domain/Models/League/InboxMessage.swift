@@ -45,6 +45,42 @@ struct InboxMessage: Identifiable, Codable {
     /// is not the same as doing what it asked, which is why `isRead` cannot serve.
     var actionCompleted: Bool
 
+    // MARK: - Replies
+    //
+    // The tray used to be one-way. Every letter that put a question to the
+    // coach could only be read; there was nowhere to answer it and nothing an
+    // answer would have moved. These four fields carry the one reply a letter
+    // may take, and the receipt of what that reply actually moved.
+    //
+    // `nil` means "not answered" and that is ALL it means. Nothing reads an
+    // unanswered letter as a refusal, a snub, or a negative of any kind — the
+    // `PlayerGameStats.measures` principle, "Ask before turning an empty line
+    // into a judgement", governs a blank reply exactly as it governs a blank
+    // stat line. Only a reply the coach actually sent books anything.
+
+    /// `InboxEngine.ReplyOption.id` of the reply the coach sent.
+    var sentReplyID: String?
+    /// The reply as it read on the button, stored so an old thread survives a
+    /// later copy edit to the catalogue.
+    var sentReplyLabel: String?
+    /// What the reply moved, in the words the tray showed when it was sent.
+    var sentReplyReceipt: String?
+    /// League season the reply was sent in. The per-season reply budget in
+    /// `InboxEngine.repliesBooked` counts this and nothing else, so a reply to
+    /// an unstamped letter from an old save still lands in the right season.
+    var repliedSeason: Int?
+
+    /// True when the choice this letter carries is already made, with real
+    /// consequences, on another screen — an owner whim is answered in Owner
+    /// Relations, where `OwnerPersonaEngine.respond(to:comply:owner:)` books
+    /// +3 satisfaction for complying and −4/−5 for defying. Answering it again
+    /// in the tray would book one decision twice, so a letter that sets this
+    /// gets no reply affordance at all.
+    let decisionHandledElsewhere: Bool
+
+    /// Whether this letter's reply has already been sent.
+    var hasReplied: Bool { sentReplyID != nil }
+
     /// Whether this letter is still asking for something.
     var isActionOutstanding: Bool {
         actionRequired && !actionCompleted
@@ -66,7 +102,12 @@ struct InboxMessage: Identifiable, Codable {
         sentPhase: SeasonPhase? = nil,
         isPinned: Bool = false,
         isArchived: Bool = false,
-        actionCompleted: Bool = false
+        actionCompleted: Bool = false,
+        sentReplyID: String? = nil,
+        sentReplyLabel: String? = nil,
+        sentReplyReceipt: String? = nil,
+        repliedSeason: Int? = nil,
+        decisionHandledElsewhere: Bool = false
     ) {
         self.id = id
         self.sender = sender
@@ -84,6 +125,11 @@ struct InboxMessage: Identifiable, Codable {
         self.isPinned = isPinned
         self.isArchived = isArchived
         self.actionCompleted = actionCompleted
+        self.sentReplyID = sentReplyID
+        self.sentReplyLabel = sentReplyLabel
+        self.sentReplyReceipt = sentReplyReceipt
+        self.repliedSeason = repliedSeason
+        self.decisionHandledElsewhere = decisionHandledElsewhere
     }
 
     // MARK: - Codable
@@ -98,6 +144,8 @@ struct InboxMessage: Identifiable, Codable {
         case actionRequired, actionDestination, isRead, attachments
         case sentWeek, sentSeason, sentPhase
         case isPinned, isArchived, actionCompleted
+        case sentReplyID, sentReplyLabel, sentReplyReceipt, repliedSeason
+        case decisionHandledElsewhere
     }
 
     init(from decoder: Decoder) throws {
@@ -118,6 +166,11 @@ struct InboxMessage: Identifiable, Codable {
         isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
         isArchived = try container.decodeIfPresent(Bool.self, forKey: .isArchived) ?? false
         actionCompleted = try container.decodeIfPresent(Bool.self, forKey: .actionCompleted) ?? false
+        sentReplyID = try container.decodeIfPresent(String.self, forKey: .sentReplyID)
+        sentReplyLabel = try container.decodeIfPresent(String.self, forKey: .sentReplyLabel)
+        sentReplyReceipt = try container.decodeIfPresent(String.self, forKey: .sentReplyReceipt)
+        repliedSeason = try container.decodeIfPresent(Int.self, forKey: .repliedSeason)
+        decisionHandledElsewhere = try container.decodeIfPresent(Bool.self, forKey: .decisionHandledElsewhere) ?? false
     }
 
     // MARK: - Stamping
@@ -143,7 +196,12 @@ struct InboxMessage: Identifiable, Codable {
             sentPhase: phase,
             isPinned: isPinned,
             isArchived: isArchived,
-            actionCompleted: actionCompleted
+            actionCompleted: actionCompleted,
+            sentReplyID: sentReplyID,
+            sentReplyLabel: sentReplyLabel,
+            sentReplyReceipt: sentReplyReceipt,
+            repliedSeason: repliedSeason,
+            decisionHandledElsewhere: decisionHandledElsewhere
         )
     }
 
