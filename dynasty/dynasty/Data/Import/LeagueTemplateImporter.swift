@@ -281,9 +281,25 @@ enum LeagueTemplateImporter {
         )
 
         var contractRNG = SeededLeagueRandom(seed: seed &+ contractSeedOffset)
-        let contractYears = LeagueGenerator.realisticContractYears(
+        // COUPLING — `make_templates.py::template_contract_years` replays THIS
+        // draw to bake `template.contractYears`, so a pre-career reader (the
+        // team picker) can see a club's expiring men without importing anything.
+        // The draw therefore stays here even though the row now carries the
+        // answer: `realisticSalary` and `initialMorale` below run on the SAME
+        // sub-stream, so dropping it would re-price and re-mood every man in the
+        // fixed league. Adding a draw ahead of it — here or in the mirror — makes
+        // the baked number a lie, which the assert catches in DEBUG and
+        // make_templates gate 20 catches at bake time.
+        let drawnContractYears = LeagueGenerator.realisticContractYears(
             yearsPro: template.yearsPro, age: template.age, using: &contractRNG
         )
+        assert(
+            template.contractYears == nil || template.contractYears == drawnContractYears,
+            "template contractYears \(String(describing: template.contractYears)) disagrees "
+            + "with the importer's draw \(drawnContractYears) for \(template.name) — the "
+            + "make_templates.py mirror has drifted from realisticContractYears"
+        )
+        let contractYears = template.contractYears ?? drawnContractYears
 
         let (firstName, lastName) = splitName(template)
         // Built before priced, exactly as `LeagueGenerator.generatePlayer` does

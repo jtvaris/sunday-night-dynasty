@@ -10,7 +10,7 @@ Hard gates (any failure blocks the release):
    `SWIFT_NAME_POOLS` in `scan_bundle.py` — a NEW runtime name source must be
    added there or the gate is blind to it). Must exit 0.
 2. **Template QA** — `cd tools/league-data && python3 make_templates.py`
-   (19/19 gates; regenerates both templates deterministically). Re-run
+   (20/20 gates; regenerates both templates deterministically). Re-run
    `check_bundle.sh` if templates changed.
 3. **Balance suites** — `cd tools/balance-harness && ./run.sh all && ./run.sh
    draftclass && ./run.sh career && ./run.sh familiarity` — all green.
