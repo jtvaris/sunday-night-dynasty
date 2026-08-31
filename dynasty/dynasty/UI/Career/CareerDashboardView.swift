@@ -2969,8 +2969,11 @@ struct CareerDashboardView: View {
 
     private var positionStrengthsTile: some View {
         // NOTE: Outer NavigationLink intentionally removed — per-grade letters are now
-        // tap targets that open an explainer popover. The route out of the tile is the
-        // link at the FOOT of it, not the header chevron.
+        // tap targets that open an explainer popover, and the tile carries no
+        // navigation of its own. The full table lives on Roster Evaluation, which
+        // the hub already reaches; a link row here bought nothing a glance needed
+        // and cost 44pt, which is what made the "condensed" tile taller than the
+        // eleven-group table it replaced.
         DashboardTile(icon: "chart.bar.fill", title: "Position Grades") {
             VStack(alignment: .leading, spacing: 4) {
                 if positionGroupGrades.isEmpty {
@@ -3028,27 +3031,6 @@ struct CareerDashboardView: View {
                         .foregroundStyle(Color.textTertiary)
                         .lineLimit(2)
                         .padding(.top, 2)
-                    // The middle of the table has moved, not gone, so the tile
-                    // says where to. The header chevron cannot carry this —
-                    // the tile has no outer link by design, because the grade
-                    // letters inside it are tap targets of their own.
-                    if positionGroupGrades.count > strongest.count + thinnest.count {
-                        Button {
-                            onTaskSelected(.rosterEvaluation)
-                        } label: {
-                            HStack(spacing: DSSpacing.xxs) {
-                                Text("All \(positionGroupGrades.count) groups")
-                                    .font(.system(size: DSType.Size.caption, weight: .semibold))
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: DSType.Size.micro, weight: .semibold))
-                            }
-                            .foregroundStyle(Color.accentGold)
-                            // §2.12: this is a touch target, not a caption.
-                            .frame(minHeight: 44, alignment: .leading)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                    }
                 }
             }
         }
@@ -6009,16 +5991,29 @@ private struct CoachingStaffReviewSheet: View {
         if agers.isEmpty {
             ageClause = "and nobody is old enough yet for the engine's ageing decline"
         } else {
-            // `shouldRetire` only fires from 65, so that is the age at which
-            // "declining" becomes "may not be here next year".
-            let retirementRisk = agers.contains { $0.age >= 65 }
+            // Two gates, so two clauses. `applyAgingDecline` opens at 50 and
+            // covers everyone named here; `shouldRetire` returns false under 65
+            // and will never roll a man in the 50–64 bands. Hung off the end of
+            // the whole list, the rider said a 52-year-old could walk because a
+            // 66-year-old shares the sentence with him — so it now names the
+            // men the engine can actually take, whenever that is not all of them.
+            let retirees = agers.filter { $0.age >= 65 }
             let agerNames: [String] = agers.map { coach in
                 let name: String = coach.fullName
                 return "\(name) (\(coach.age))"
             }
+            let retirementRider: String
+            if retirees.isEmpty {
+                retirementRider = ""
+            } else if retirees.count == agers.count {
+                retirementRider = " and can retire on you this offseason"
+            } else {
+                let retireeNames: [String] = retirees.map { coach in coach.fullName }
+                retirementRider = ", and \(nameList(retireeNames)) can retire on you this offseason"
+            }
             ageClause = "while \(nameList(agerNames)) "
                 + (agers.count == 1 ? "is" : "are") + " into the ageing-decline bands"
-                + (retirementRisk ? " and can retire on you this offseason" : "")
+                + retirementRider
         }
 
         return "\(lead): \(growClause), \(ageClause)."
