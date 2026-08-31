@@ -712,9 +712,13 @@ enum LeagueNarrativeEngine {
     ///
     /// Each position is measured against an MVP-grade PER-GAME rate — 300 pass
     /// yards, 110 rush yards, 95 receiving yards, a sack a game — so the result
-    /// lands in the same 0...5.25 band as `ratingStarPower`. Linemen and punters
-    /// return `nil`: nothing they produce has ever won this award, so they fall
-    /// back to the rating proxy like everyone else without a box score.
+    /// lands in the same 0...5.25 band as `ratingStarPower`. Linemen, punters,
+    /// long snappers and holders return `nil`: nothing they produce has ever won
+    /// this award, so they fall back to the rating proxy like everyone else
+    /// without a box score. `nil` is NOT "no MVP score" — a healthy 82+ snapper
+    /// still clears the candidate filter in `accumulateMVPRace`, and still banks
+    /// `ratingStarPower` plus `mvpPositionWeight`'s 0.6 default every week,
+    /// exactly like the left tackle beside him.
     /// Internal (not private) since #154b: `NewsGenerator`'s Player-of-the-Week
     /// ranking reads the same real-production term, so the two awards cannot
     /// drift into measuring production two different ways.
