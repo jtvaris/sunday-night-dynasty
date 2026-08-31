@@ -403,7 +403,14 @@ struct ScoutingHubView: View {
         .sheet(item: $activeHubSheet, onDismiss: { loadData() }) { sheet in
             switch sheet {
             case .hireScout:     HireScoutSheet(career: career)
-            case .combineReport: CombineReportSheet(mentions: combineMedia, career: career, prospects: prospects)
+            case .combineReport: CombineReportSheet(
+                mentions: combineMedia,
+                career: career,
+                prospects: prospects,
+                // The sheet's closing line is about the FILING, not the
+                // headlines, and only the trip files anything.
+                scoutsAttended: scoutsSentToCombine
+            )
             }
         }
     }
@@ -1779,6 +1786,22 @@ private struct CombineReportSheet: View {
     /// one named ten men in prose and offered `Done`.
     let career: Career
     let prospects: [CollegeProspect]
+    /// Whether THIS club sent its department to Indianapolis.
+    ///
+    /// The report is a PUBLIC document and the sheet is offered either way:
+    /// `generateCombineMedia` stamps the mentions inside `runLeagueCombine`,
+    /// which holds the event for every club whether or not one bought the trip.
+    /// The headlines, the projected rounds and the board slots below are all
+    /// true for a club that watched it on television.
+    ///
+    /// The FILING is not public. `applyCombineScouting` — the fresh report, the
+    /// narrower band, the updated letter — runs only inside
+    /// `sendScoutsToCombine`, so the closing line claims work that a
+    /// non-attending club never bought. Before the reopen door shipped the
+    /// sheet was unreachable in that state and the claim could not be read;
+    /// now it is one tap from the Combine tab, so it has to know which club it
+    /// is talking to.
+    let scoutsAttended: Bool
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
 
@@ -1894,9 +1917,9 @@ private struct CombineReportSheet: View {
                     // reasonably close it believing he still had work to do.
                     Section {
                         HStack(alignment: .top, spacing: 8) {
-                            Image(systemName: "checkmark.seal.fill")
+                            Image(systemName: scoutsAttended ? "checkmark.seal.fill" : "tv")
                                 .font(.caption)
-                                .foregroundStyle(Color.success)
+                                .foregroundStyle(scoutsAttended ? Color.success : Color.textTertiary)
                             // Precise about WHAT was written. `applyCombineScouting`
                             // files a `.combine` report on every man the board
                             // tracks, which narrows his band and moves his
@@ -1904,7 +1927,16 @@ private struct CombineReportSheet: View {
                             // moved later, by the drift pass at the end of the
                             // phase. Claiming both here would be a promise the
                             // next screen contradicts.
-                            Text("These results are already on your Big Board \u{2014} every man you track has a fresh report, a narrower grade band and an updated letter. Nothing here is waiting on you.")
+                            //
+                            // And precise about WHOSE board. See
+                            // `scoutsAttended`: nothing above this line is
+                            // gated on the trip, so the report is worth
+                            // reading either way — but a club that stayed
+                            // home has no fresh report, no narrower band and
+                            // no new letter, and telling it "nothing here is
+                            // waiting on you" would close the one screen that
+                            // could still sell it the trip.
+                            closingLine
                                 .font(.caption)
                                 .foregroundStyle(Color.textSecondary)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -1949,6 +1981,19 @@ private struct CombineReportSheet: View {
                 }
             }
         }
+    }
+
+    /// What this club got out of the week, in one line.
+    ///
+    /// A `Text` rather than a `String`, and two whole literals rather than one
+    /// interpolated: only a literal reaching `Text(LocalizedStringKey)` is
+    /// extracted for translation, which is the same reason
+    /// `CombineResultsView.sendScoutsSubtitle` is shaped this way.
+    private var closingLine: Text {
+        if scoutsAttended {
+            return Text("These results are already on your Big Board \u{2014} every man you track has a fresh report, a narrower grade band and an updated letter. Nothing here is waiting on you.")
+        }
+        return Text("Your department stayed home, so nothing here was filed on your Big Board \u{2014} no new report, no narrower band, no new letter. These are the televised numbers and what the media made of them.")
     }
 
     /// The one row action: put him on the board, or take him off it.
@@ -2089,15 +2134,49 @@ private struct CombineReportSheet: View {
     /// It is a MOVE ON THE MEDIA BOARD SINCE THE COMBINE OPENED, which is what
     /// the footnote calls it, and deliberately not "what the combine cost him":
     /// the combine's own drift pass and the post-combine mock re-read both run
-    /// when the club leaves the phase, and every later mock moves the board
-    /// again. Attributing the whole of it to the drills would be a claim the
-    /// engine does not support.
+    /// when the club leaves the phase. Attributing the whole of it to the
+    /// drills would be a claim the engine does not support.
+    ///
+    /// WINDOWED, because past a point that hedge stops being enough. The delta
+    /// is only honest while everything inside it happened at the combine's
+    /// departure — see `deltaIsStillTheCombine`.
     private func projectionMove(for prospect: CollegeProspect) -> (from: Int, to: Int)? {
-        guard let from = prospect.preCombineProjection,
+        guard deltaIsStillTheCombine,
+              let from = prospect.preCombineProjection,
               let to = prospect.draftProjection,
               from != to
         else { return nil }
         return (from, to)
+    }
+
+    /// Whether `preCombineProjection` → `draftProjection` is still a statement
+    /// about the combine.
+    ///
+    /// `preCombineProjection` is stamped once, at combine ENTRY, and never
+    /// restamped; `draftProjection` is then moved by six separate passes. Two
+    /// of them fire as the club leaves `.combine` — the combine drift itself
+    /// (`WeekAdvancer` at the `.combine` hook, maxShift 2) and the post-combine
+    /// mock re-read (drift moment 2) — and those are the combine's own
+    /// departure, which is what the footnote describes.
+    ///
+    /// The other four fire on ENTERING `.proDays` or later: the pro-day
+    /// circuit's drift, mock moments 3 and 4, and `applyPreDraftAttrition`,
+    /// which knocks a man down as many as three rounds for a spring injury. A
+    /// report reopened from there prints a torn hamstring as a "Stock Faller"
+    /// arrow in a sheet titled Combine Report — a number the reader would
+    /// reasonably attribute to the drills, which is precisely the invented
+    /// figure this cell exists to replace.
+    ///
+    /// So the arrow is drawn while it means what it says and withheld after,
+    /// where the row falls back to the live projected round — a fact that is
+    /// true in every phase. The whole delta is not recoverable here: that needs
+    /// the combine drift's own `[ProjectionMove]` persisted at the phase
+    /// transition, which is engine work (#3424).
+    private var deltaIsStillTheCombine: Bool {
+        switch career.currentPhase {
+        case .combine, .freeAgency: return true
+        default:                    return false
+        }
     }
 
     /// True once at least one man on the report has moved — the footnote is

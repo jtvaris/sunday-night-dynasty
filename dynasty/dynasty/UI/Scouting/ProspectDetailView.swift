@@ -673,10 +673,31 @@ struct ProspectDetailView: View {
             ? "Nothing on file"
             : Self.sentenceCased(Self.listed(work))
 
+        // THE TWO HALVES HAVE TO AGREE ABOUT WHOSE WORK THIS IS.
+        //
+        // The work clause counts `ownFilmReportCount`, which drops the
+        // `Previous Staff` rows; `ProspectFog.read` cannot, because it reads
+        // `effectiveOverallGrade` and `applyPreScoutedData` writes
+        // `scoutedOverall` / `scoutGrade` onto the top ~250 of every first
+        // season — so `read.source` comes back `.scouts` for a man nobody in
+        // this building has touched. On the whole top of a season-1 class the
+        // sentence therefore opened "Nothing on file; band B+/A-", the two
+        // halves denying each other, with the previous regime's guess wearing
+        // the `.scouts` phrasing that the `.media` branch's "no grade of your
+        // own" proves reads as YOURS.
+        //
+        // `hasOnlyInheritedReport` is the predicate that separates them, and
+        // naming the previous staff is what the rest of the card already does
+        // for the same paper (see the potential row's fallback). The band is
+        // still spoken — refusing to would throw away a read the user really
+        // does have — it is just correctly attributed.
         let read = ProspectFog.read(prospect)
         let bandClause: String
         switch read.source {
-        case .scouts: bandClause = "band \(read.text)"
+        case .scouts:
+            bandClause = ProspectFog.hasOnlyInheritedReport(prospect)
+                ? "the previous staff's band is \(read.text)"
+                : "band \(read.text)"
         case .media:  bandClause = "no grade of your own, the media band is \(read.text)"
         case .none:   bandClause = "nothing graded"
         }
