@@ -1498,6 +1498,16 @@ struct CoachingStaffView: View {
         .navigationTitle("Coaching Staff")
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
+        // The one door to saved staff templates (#3110). Without this line the
+        // whole feature — StaffTemplatesView, its store, both affordances —
+        // shipped with no call site and could not be reached from the running
+        // app at all. The staff room is the right home for it: it is where the
+        // plan being saved is built, and where a plan being re-applied lands.
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                StaffTemplatesLink(career: career)
+            }
+        }
         // R30: keep the coaching tree in sync with the actual staff
         // (backfills open entries for careers that predate the tree).
         .task {

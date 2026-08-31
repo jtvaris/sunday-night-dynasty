@@ -436,7 +436,7 @@ enum ScoutingEngine {
         case .kicking(let a):
             return ["PWR": gradeWithNoise(a.kickPower), "ACC": gradeWithNoise(a.kickAccuracy)]
         case .snapping(let a):
-            return ["VEL": gradeWithNoise(a.snapVelocity), "SNP": gradeWithNoise(a.snapAccuracy)]
+            return ["VEL": gradeWithNoise(a.snapVelocity), "AIM": gradeWithNoise(a.snapAccuracy)]
         case .holding(let a):
             return ["HND": gradeWithNoise(a.handling), "PLC": gradeWithNoise(a.placement)]
         }

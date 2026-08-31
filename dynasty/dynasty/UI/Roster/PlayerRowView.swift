@@ -616,7 +616,11 @@ struct PlayerRowView: View {
         case .kicking(let a):
             return [(a.kickPower, "PWR"), (a.kickAccuracy, "ACC")]
         case .snapping(let a):
-            return [(a.snapVelocity, "VEL"), (a.snapAccuracy, "SNP")]
+            // AIM, not SNP. "SNP" is already the snaps-PLAYED badge elsewhere on
+            // this same row, and two different quantities cannot share three
+            // letters on one screen — the project has burned itself on exactly
+            // that once already (see the TAK/TKL note in RosterView).
+            return [(a.snapVelocity, "VEL"), (a.snapAccuracy, "AIM")]
         case .holding(let a):
             return [(a.handling, "HND"), (a.placement, "PLC")]
         }

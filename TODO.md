@@ -3552,6 +3552,9 @@ Game Design:
 - [ ] Game: [Inbox] No archive or pin — important messages get buried fast in a long save
 - [ ] Game: [Inbox] No reply / response options for messages from staff (Coach can email back?) — covers the MessageDetail read-only view too (merged duplicate, decided 2026-08-27)
 
+- [ ] Sim: [CoachedGame] `simToEnd()` scores +6.7…+7.0 pts/team-game above the quick sim — measured by the new `coachedgame` harness scenario (CG-1), which currently rails the gap rather than closing it. The two paths must agree on scoring or the rail has to be justified as a design choice.
+- [ ] Balance: [DraftClass] assert 7.7a fails for LS and H (+0.056 / +0.073 s on the 40). Not a tuning bug: both positions are UDFA-band only, so their cohort tests ~4.9 athleticism points below the class, and `drillResult` converts that faithfully. Moving the declared reference is a proven no-op — the delta is invariant under it. Decide between excluding them from 7.7a as K/P already are, and giving them a cohort-relative reference.
+
 Decision Support:
 - [ ] Game: [Inbox] Add a sticky "1 action required" bar at top that jumps to the next unresolved message
 
