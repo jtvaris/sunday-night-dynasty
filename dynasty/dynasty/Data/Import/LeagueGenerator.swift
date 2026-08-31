@@ -28,7 +28,12 @@ enum LeagueGenerator {
     ]
     // Total: 3+3+1+6+3+2+2+2+2+1+4+3+4+3+5+2+2+1+1+1+1+1 = 53
 
-    /// All 15 coaching roles, one per staff member.
+    /// All 16 coaching roles, one per staff member.
+    ///
+    /// Counted, not remembered: the list below is head coach, assistant head
+    /// coach, three coordinators, seven position coaches, strength, doctor,
+    /// physio and head trainer. It read "15" and, thirty lines further down,
+    /// "12"; a generated league has always hired sixteen.
     private static let coachingStaffRoles: [CoachRole] = [
         .headCoach,
         .assistantHeadCoach,
@@ -228,7 +233,7 @@ enum LeagueGenerator {
 
             allPlayers.append(contentsOf: teamPlayers)
 
-            // Create coaching staff (12 coaches)
+            // Create the coaching staff — one man per `coachingStaffRoles`.
             var teamCoaches: [Coach] = []
             for role in coachingStaffRoles {
                 // The three seats that ARE the club's install get pinned to it.
