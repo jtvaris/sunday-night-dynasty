@@ -52,9 +52,17 @@ let lgSDBand = (8.2, 9.6)
 
 /// The Python mirror's own measurement of the same population, for the pin.
 /// Source: `tools/league-data/make_templates.py`, 400-league Monte-Carlo of
-/// `reference_overall` (`blueprint_league_stats()`), 2026-07-30.
+/// `reference_overall` (`blueprint_league_stats()`), **re-measured 2026-08-31**.
+///
+/// Why it moved off (71.00, 8.86, 1.7, 16.9, 34.8, 23.3): until this wave the
+/// mirror's `ROSTER_BLUEPRINT` had no `.LS` and no `.H` seat and spent those two
+/// slots on a seventh receiver and a fifth end instead, and it restarted the
+/// depth counter on the blueprint's trailing "extra depth" entry rather than
+/// continuing the corner ladder. Both are now transcribed from the Swift array
+/// and walked by `blueprint_slots()`, which is why the shares rose ~1.3-1.9 pp:
+/// the drift this pin was reporting was the MIRROR's, and it is now gone.
 let lgMirror: (mean: Double, sd: Double, p90: Double, p80: Double, p75: Double, sub65: Double) =
-    (71.00, 8.86, 1.7, 16.9, 34.8, 23.3)
+    (71.38, 8.91, 2.0, 18.1, 36.7, 22.3)
 /// How far the Swift may sit from the mirror before the two are considered
 /// drifted. Both sides are Monte-Carlo, so this is sampling slack, not tolerance
 /// for a real difference: at 400 leagues a 1.7 % share carries ~±0.15 pp.

@@ -30,9 +30,11 @@ Reference documents (binding):
 CALIBRATION DECISION (binding, 2026-07-29)
 ------------------------------------------
 The template league must sit at the SAME level and spread as the existing random
-`LeagueGenerator` output — league mean OVR ~= 76.4 with its starter / backup /
-depth tier structure — so every balance threshold in the engine behaves
-identically no matter which of the three league sources the player picked.
+`LeagueGenerator` output — league mean OVR ~= 71.4 (`blueprint_league_mean()`,
+re-measured 2026-08-31 with the long snapper and the holder seated) with its
+starter / backup / depth tier structure — so every balance threshold in the
+engine behaves identically no matter which of the three league sources the
+player picked.
 This is deliberately NOT the DEVELOPMENT_NFL_REFERENCE.md section-8 absolute
 band exercise; that is a separate, deferred wave.
 
@@ -84,13 +86,21 @@ NO_COLLEGE = "No College"       # QA_REPORT carry-in #3: sentinel, never null
 #   mean   band was (75.4, 77.4) = anchor 76.46 ± 1.0   →  anchor 71.00 ± 1.0
 #   sd     band was (7.0, 9.4)   = anchor  8.23 −1.23/+1.17 → anchor 8.86, same offsets
 #
-# Both anchors are measured, not asserted: `blueprint_league_mean()` returns
-# 71.005 and a 26 500-draw Monte-Carlo of `reference_overall` gives sd 8.83-8.90
-# across four independent seed streams (mean 70.91-71.09). The `assert`s below
-# make that traceability mechanical — if the mirror is ever edited without moving
-# the bands, the run stops instead of silently calibrating onto a stale target.
-CALIB_MEAN_BAND = (70.0, 72.0)      # league mean OVR; reference generator = 71.00
-CALIB_SD_BAND = (7.6, 10.0)         # league OVR sd;   reference generator = 8.86
+# **Re-measured in the long-snapper / holder port (2026-08-31).** The blueprint
+# gained the `.LS` and `.H` seats and lost the phantom WR/DE depth the mirror had
+# been carrying instead of them, so the anchors moved again — measured, not
+# assumed: `blueprint_league_mean()` now returns 71.38 (was 71.005) and the same
+# 26 500-draw Monte-Carlo over four independent seed streams gives mean
+# 71.32-71.40, sd 8.81-8.86 (the anchor stream itself: 71.376 / 8.908).
+#
+# The BANDS ARE NOT MOVED for that: both still contain their anchor with room
+# (mean 71.38 sits at −1.38/+0.62 inside its window instead of dead centre),
+# and re-centring a gate window on a 0.4-point move would be re-cutting the
+# gate rather than reading it. The `assert`s below make that mechanical — if the
+# mirror is ever edited until an anchor leaves its window, the run stops instead
+# of silently calibrating onto a stale target.
+CALIB_MEAN_BAND = (70.0, 72.0)      # league mean OVR; reference generator = 71.38
+CALIB_SD_BAND = (7.6, 10.0)         # league OVR sd;   reference generator = 8.91
 TEAM_SPREAD_TARGET = 5.0            # best team mean minus worst team mean
 TEAM_SPREAD_BAND = (4.0, 6.0)
 TEAM_STRENGTH_CORR_MIN = 0.55       # Spearman(team mean OVR, 2025 wins)
@@ -132,14 +142,22 @@ def stable_id(*parts) -> str:
 #    Used ONLY to build the reference OVR distribution we calibrate onto.
 # ---------------------------------------------------------------------------
 
+# `Position.allCases`, in the enum's own declaration order — which is also the
+# order the shipped roster is written in (see the `POSITIONS.index` sort at the
+# end of `build_templates`). `LS` and `H` are the two specialist jobs the Swift
+# side added as first-class roster positions.
 POSITIONS = ["QB", "RB", "FB", "WR", "TE", "LT", "LG", "C", "RG", "RT",
-             "DE", "DT", "OLB", "MLB", "CB", "FS", "SS", "K", "P"]
+             "DE", "DT", "OLB", "MLB", "CB", "FS", "SS", "K", "P", "LS", "H"]
 
+# `Position.peakAgeRange`. The snapper and the holder age like the kicker and
+# the punter (Swift: `case .K, .P, .LS, .H: return 28...38`) — the skill is
+# technique and repetition.
 PEAK_AGE = {
     "QB": (28, 35), "RB": (24, 28), "FB": (24, 28), "WR": (26, 31), "TE": (26, 31),
     "LT": (26, 32), "LG": (26, 32), "C": (26, 32), "RG": (26, 32), "RT": (26, 32),
     "DE": (26, 31), "DT": (26, 31), "OLB": (25, 30), "MLB": (25, 30), "CB": (25, 30),
     "FS": (26, 31), "SS": (26, 31), "K": (28, 38), "P": (28, 38),
+    "LS": (28, 38), "H": (28, 38),
 }
 
 # LeagueGenerator.careerAgeSpan — the generator draws `min(U, U)` from this
@@ -152,15 +170,44 @@ CAREER_AGE_SPAN = {
     "LT": (22, 35), "LG": (22, 35), "C": (22, 35), "RG": (22, 35), "RT": (22, 35),
     "DE": (22, 34), "DT": (22, 34), "OLB": (22, 33), "MLB": (22, 33), "CB": (21, 33),
     "FS": (22, 33), "SS": (22, 33), "K": (22, 40), "P": (22, 40),
+    "LS": (22, 40), "H": (22, 40),
 }
 
 # LeagueGenerator.rosterBlueprint — the 53-man shape whose league mean OVR
-# (~71.00 since the P1 quality-pyramid wave; was ~76.46) is the binding
-# calibration anchor.
-ROSTER_BLUEPRINT = [("QB", 3), ("RB", 3), ("FB", 1), ("WR", 7), ("TE", 3),
+# is the binding calibration anchor. TRANSCRIBED VERBATIM from the Swift array,
+# trailing "Extra depth" entry included: the Swift loop keeps a running
+# `depthChart[position]`, so that entry CONTINUES the corner ladder at depth
+# index 5 rather than opening a second one at 0. `blueprint_slots()` below is
+# that loop; nothing here may re-fold the duplicate entry into a single count,
+# because the mirror's whole job is to be the same league the Swift builds.
+ROSTER_BLUEPRINT = [("QB", 3), ("RB", 3), ("FB", 1), ("WR", 6), ("TE", 3),
                     ("LT", 2), ("LG", 2), ("C", 2), ("RG", 2), ("RT", 1),
-                    ("DE", 5), ("DT", 3), ("OLB", 4), ("MLB", 3),
-                    ("CB", 6), ("FS", 2), ("SS", 2), ("K", 1), ("P", 1)]
+                    ("DE", 4), ("DT", 3), ("OLB", 4), ("MLB", 3),
+                    ("CB", 5), ("FS", 2), ("SS", 2),
+                    ("K", 1), ("P", 1), ("LS", 1), ("H", 1),
+                    # Extra depth
+                    ("CB", 1)]
+
+
+def blueprint_slots() -> list:
+    """`(position, depthIndex)` for all 53 slots, in the Swift generator's own
+    order — `LeagueGenerator.generateRoster`'s
+
+        for (position, count) in rosterBlueprint {
+            for _ in 0..<count {
+                let depthIndex = depthChart[position, default: 0]
+                depthChart[position] = depthIndex + 1
+
+    i.e. the depth counter is per POSITION and survives across blueprint
+    entries."""
+    depth = defaultdict(int)
+    out = []
+    for pos, count in ROSTER_BLUEPRINT:
+        for _ in range(count):
+            out.append((pos, depth[pos]))
+            depth[pos] += 1
+    return out
+
 
 _STAM = (70.0, 8.0)
 _DUR = (72.0, 9.0)
@@ -184,11 +231,22 @@ PHYS_PRIORS = {
     "SS":  [(82, 5), (83, 5), (58, 7), (80, 5)],
     "K":   [(50, 8), (52, 8), (45, 8), (55, 8)],
     "P":   [(50, 8), (52, 8), (45, 8), (55, 8)],
+    # `PositionPhysicalProfile.profile(for:)`: the holder shares the kicking-room
+    # shape (`case .K, .P, .H`); the snapper does not — he is a tight end /
+    # centre body and carries his own row (`case .LS`).
+    "H":   [(50, 8), (52, 8), (45, 8), (55, 8)],
+    "LS":  [(60, 7), (64, 6), (74, 6), (62, 6)],
 }
+# How many position-skill values `LeagueGenerator.randomPositionAttributes`
+# draws: 6 for the QB, 2 for each specialist (`KickingAttributes`,
+# `SnapAttributes(snapVelocity:snapAccuracy:)`,
+# `HoldAttributes(handling:placement:)`), 4 for everyone else.
 N_POS_ATTRS = {p: 4 for p in POSITIONS}
 N_POS_ATTRS["QB"] = 6
 N_POS_ATTRS["K"] = 2
 N_POS_ATTRS["P"] = 2
+N_POS_ATTRS["LS"] = 2
+N_POS_ATTRS["H"] = 2
 
 MENTAL_HIGH_AWARENESS = {"QB", "FS", "SS", "MLB", "C"}
 MENTAL_PRIORS_TAIL = [(56.0, 9.0), (55.0, 10.0), (58.0, 11.0), (58.0, 10.0), (52.0, 11.0)]
@@ -294,12 +352,12 @@ def blueprint_league_stats() -> dict:
     """Mean, sd and quality-pyramid shares of the actual random
     `LeagueGenerator` league — the binding calibration anchor."""
     rng = seeded("blueprint")
+    slots = blueprint_slots()
     vals = []
     for _ in range(400):
-        for pos, count in ROSTER_BLUEPRINT:
-            for idx in range(count):
-                vals.append(reference_overall(rng, pos, min(idx, 2),
-                                              generator_age(rng, pos)))
+        for pos, idx in slots:
+            vals.append(reference_overall(rng, pos, min(idx, 2),
+                                          generator_age(rng, pos)))
     n = len(vals)
     share = lambda f: 100.0 * sum(1 for v in vals if f(v)) / n
     return {
@@ -317,7 +375,8 @@ def blueprint_league_stats() -> dict:
 
 def blueprint_league_mean() -> float:
     """League mean OVR of the actual random `LeagueGenerator` league — the
-    binding calibration anchor (~71.00 since the P1 pyramid wave)."""
+    binding calibration anchor (~71.38 since the long snapper and the holder
+    took their blueprint seats; ~71.00 before that, ~76.46 before the P1 wave)."""
     return blueprint_league_stats()["mean"]
 
 
@@ -368,11 +427,17 @@ def blueprint_tier_means() -> dict:
     is supposed to measure: whether the template's tier STRUCTURE matches the
     generator's."""
     rng = seeded("blueprint-tiers")
+    # Grouped by POSITION, not by blueprint entry: `depthRank` on the template
+    # side is a per-position rank, so the corner ladder has to be re-ranked as
+    # the six men it is — not as a group of five plus a group of one.
+    groups = defaultdict(list)
+    for pos, idx in blueprint_slots():
+        groups[pos].append(idx)
     buckets = defaultdict(list)
     for _ in range(300):
-        for pos, count in ROSTER_BLUEPRINT:
+        for pos, idxs in groups.items():
             drawn = [reference_overall(rng, pos, min(idx, 2), generator_age(rng, pos))
-                     for idx in range(count)]
+                     for idx in idxs]
             drawn.sort(reverse=True)
             for rank, ovr in enumerate(drawn):
                 buckets[min(rank, 2)].append(ovr)
@@ -424,6 +489,15 @@ FAMILY_OF = {
     "LT": "OL", "LG": "OL", "C": "OL", "RG": "OL", "RT": "OL",
     "DE": "DL", "DT": "DL", "OLB": "LB", "MLB": "LB",
     "CB": "DB", "FS": "DB", "SS": "DB", "K": "K", "P": "P",
+    # The snapper and the holder are their own families and have NO entry in
+    # `METRIC_WEIGHTS` below, on purpose: the raw snapshot carries no LS or H
+    # row at all (`build_raw.py::resolve_position` drops the position), so there
+    # is no production to model and inventing weights here would be fabricating
+    # a heuristic against zero observations. `season_score` is therefore never
+    # reached with these two — the only rows that carry them are the generated
+    # specialists in `invent_specialists`, which never enter the percentile
+    # tables.
+    "LS": "LS", "H": "H",
 }
 
 # metric -> weight, per family. Weights sum to 1.0 inside a family.
@@ -557,6 +631,11 @@ AREA_ATTRS = {
     "DB": ["manCoverage", "zoneCoverage", "press", "ballSkills"],
     "K":  ["kickPower", "kickAccuracy"],
     "P":  ["kickPower", "kickAccuracy"],
+    # `PositionAttributes.snapping(SnapAttributes)` / `.holding(HoldAttributes)`.
+    # No branch in `area_hints` fills these: a generated specialist has no
+    # career to tilt on, so every hint is the mean-zero 0 the solver wants.
+    "LS": ["snapVelocity", "snapAccuracy"],
+    "H":  ["handling", "placement"],
 }
 
 AREA_CAP = 8            # max |delta| in rating points
@@ -1197,7 +1276,7 @@ STARTER_QUOTA_HINT = {          # only used to shape the role anchor
     "QB": 1, "RB": 1, "FB": 1, "WR": 3, "TE": 1,
     "LT": 1, "LG": 1, "C": 1, "RG": 1, "RT": 1,
     "DE": 2, "DT": 2, "OLB": 2, "MLB": 1, "CB": 3, "FS": 1, "SS": 1,
-    "K": 1, "P": 1,
+    "K": 1, "P": 1, "LS": 1, "H": 1,
 }
 ROLE_BASE = {"starter": 0.80, "rotation": 0.60, "backup": 0.42, "depth": 0.28}
 
@@ -1524,7 +1603,7 @@ def calibrate(raw: dict, scores: dict, pools: dict, strength: dict, log: list):
 
     1. LEVEL + SHAPE — each position's players are rank-mapped onto that
        position's reference pool, so the template reproduces the random
-       generator's per-position distribution (and therefore its ~76.4 league
+       generator's per-position distribution (and therefore its ~71.4 league
        mean and its starter/backup/depth tier structure) by construction.
     2. TEAM SPREAD — a per-team offset in score space is solved by fixed-point
        iteration so team mean OVR tracks real 2025 strength with a
@@ -1844,7 +1923,11 @@ class NameFactory:
         return rng.choice(self._SYL_A) + rng.choice(self._SYL_B)
 
     def make(self, salt: str, real_name: str, team: str, pos: str) -> str:
-        real_first, real_last, _ = split_name(real_name)
+        # `real_name` is EMPTY for a row with no real counterpart — the
+        # generated specialists in section 12b. Nothing to resemble, so the two
+        # resemblance guards below simply never fire; the empty string still
+        # goes into the seed, so the name is stable across rebuilds.
+        real_first, real_last, _ = split_name(real_name) if real_name else ("", "", "")
         real_last_head = real_last.split()[-1] if real_last else ""
         real_initials = (real_first[:1].upper(), real_last_head[:1].upper())
         for attempt in range(600):
@@ -1902,6 +1985,11 @@ JERSEY_BANDS = {
     "OLB": [(40, 59), (90, 99)], "MLB": [(40, 59), (90, 99)],
     "CB": [(20, 39)], "FS": [(20, 39)], "SS": [(20, 39)],
     "K": [(1, 19)], "P": [(1, 19)],
+    # Inside `LeagueTemplateImporter.jerseyBand(for:)`'s own 2023-rule bands:
+    # `.LS` is 40...49 + 50...59 there, and the holder (`.H`, 1...49 + 90...99)
+    # is a kicking-room body who wears what the punter wears, so he takes the
+    # K/P window of that band rather than its whole width.
+    "LS": [(40, 59)], "H": [(1, 19)],
 }
 
 
@@ -1925,11 +2013,13 @@ def publish_jerseys(players, real_jerseys, abbr):
 ROUND_BOUNDS = {1: (1, 32), 2: (33, 64), 3: (65, 105), 4: (106, 145),
                 5: (146, 185), 6: (186, 225), 7: (226, 262)}
 
+# `PositionPhysicalProfile.heightWeightRange(for:)`, split into two tables.
 HEIGHT_RANGE = {
     "QB": (73, 77), "RB": (68, 73), "FB": (71, 74), "WR": (69, 76), "TE": (74, 78),
     "LT": (76, 80), "RT": (76, 80), "LG": (74, 78), "RG": (74, 78), "C": (73, 77),
     "DE": (74, 79), "DT": (73, 77), "OLB": (73, 77), "MLB": (72, 76), "CB": (69, 74),
     "FS": (71, 75), "SS": (71, 75), "K": (71, 75), "P": (72, 76),
+    "LS": (73, 77), "H": (72, 76),
 }
 WEIGHT_RANGE = {
     "QB": (205, 240), "RB": (195, 230), "FB": (235, 260), "WR": (175, 215),
@@ -1937,6 +2027,7 @@ WEIGHT_RANGE = {
     "RG": (295, 335), "C": (290, 320), "DE": (250, 285), "DT": (280, 330),
     "OLB": (230, 260), "MLB": (235, 260), "CB": (180, 205), "FS": (195, 215),
     "SS": (200, 225), "K": (185, 215), "P": (200, 225),
+    "LS": (235, 260), "H": (195, 220),
 }
 
 
@@ -2128,6 +2219,11 @@ FACE_POSITION_BUILDS = {
     "CB": [("heavy", 0.01), ("athletic", 0.39), ("lean", 0.60)],
     "K":  [("heavy", 0.08), ("athletic", 0.42), ("lean", 0.50)],
     "P":  [("heavy", 0.08), ("athletic", 0.42), ("lean", 0.50)],
+    # `case .K, .P, .H` and the snapper's own `case .LS` in
+    # `FaceLibrary.playerBuildWeights` — he is built like the tight end /
+    # centre he is, not like the kicker he stands next to.
+    "H":  [("heavy", 0.08), ("athletic", 0.42), ("lean", 0.50)],
+    "LS": [("heavy", 0.30), ("athletic", 0.62), ("lean", 0.08)],
 }
 
 # Assignment priority: the most visible people pick first, so the ids whose
@@ -2471,6 +2567,189 @@ def assign_faces(doc: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# 12b. Generated specialists — the long snapper and the holder
+#
+#    `LeagueGenerator.rosterBlueprint` seats one `.LS` and one `.H` on every
+#    53-man roster, and `Position`, `DepthChart`, `DraftClassBuilder`,
+#    `PositionPhysicalProfile` and `FaceLibrary` all carry the two as
+#    first-class jobs. THE RAW SNAPSHOT DOES NOT: `build_raw.py`'s
+#    `resolve_position` returns `None, "ls"` for every real long snapper, and no
+#    source lists a holder at all. So the shipped fixed-2026 league had zero of
+#    each while a random league had 64 — a club there cannot seat either slot on
+#    its depth chart, which is the half of this a player can see.
+#
+#    There is nothing real to anonymize here, so these men are GENERATED rather
+#    than transformed: age, tenure, rating, potential, body and backstory all
+#    come from the Swift generator's own rules (mirrored in section 2), and the
+#    name comes from the same `NameFactory` pools every publish name comes from.
+#    Both profiles therefore carry the SAME row — a dev profile that invented a
+#    DIFFERENT fictional man would be asserting a real counterpart that does not
+#    exist. Only the jersey differs, because each profile's numbers have to be
+#    unique inside their own roster.
+# ---------------------------------------------------------------------------
+
+BACKSTORY_SEASON_CAP = 8        # LeagueGenerator.backstorySeasonCap
+
+# What `transform_counts` records for a generated row. Gate 6 counts BIO
+# TRANSFORMS — the de-identification measures applied to a real person's bio —
+# so it partitions on this marker rather than demanding three transforms of a
+# man who has no bio to transform.
+GENERATED_TRANSFORM_MARK = ["generated"]
+
+# `ScoutingEngine.colleges.randomElement()` is how the game's own invented
+# players get a school: one flat list, uniform. The three tier pools above are
+# this file's equivalent list, so a generated specialist draws from their union.
+GENERATED_COLLEGE_POOL = sorted(set(P5_COLLEGES + G5_COLLEGES + FCS_COLLEGES))
+
+
+def swift_round(v: float) -> int:
+    """Swift's `Double.rounded()` — half away from zero, where Python's `round`
+    is half to even. Used only where a mirror has to land on the same integer."""
+    return int(math.floor(v + 0.5)) if v >= 0 else -int(math.floor(0.5 - v))
+
+
+def ability_ratio(age: int, pos: str) -> float:
+    """`LeagueGenerator.abilityRatio` — the fraction of his own peak ability a
+    player of `age` holds at `pos`. Flat 1.0 inside the peak window; the
+    pre-peak climb (0.045/yr, floor 0.62) is steeper than the post-peak decline
+    (0.030/yr, floor 0.70)."""
+    lo, hi = PEAK_AGE[pos]
+    if age < lo:
+        return max(0.62, 1.0 - 0.045 * (lo - age))
+    if age > hi:
+        return max(0.70, 1.0 - 0.030 * (age - hi))
+    return 1.0
+
+
+def generated_career_arc(pos: str, abbr: str, age: int, years_pro: int,
+                         rating: int, potential: int) -> list:
+    """`LeagueGenerator.syntheticCareerHistory`, written as template arc rows.
+
+    Same cap (`backstorySeasonCap`), same ceiling (`min(99, max(overall,
+    truePotential))`), same floor (40) and the same `abilityRatio` back-cast.
+
+    Two differences, both forced by the template schema rather than chosen:
+      * the seasons run back from `SNAPSHOT_YEAR`, because a template row's
+        `age` is the age at the end of 2025 (`career_arc` uses that convention
+        too and `LeagueTemplateImporter.seasonHistory` re-derives ages from it),
+        so the newest row is this man exactly as he ships;
+      * `role`, `gp` and `gs` stay null — which IS the `role: nil` the Swift
+        hands `SeasonStatSynthesizer.participation`. The importer then draws
+        participation and the stat line off its own seeded stream, the same way
+        it does for every publish row.
+    """
+    seasons = min(years_pro, BACKSTORY_SEASON_CAP)
+    if seasons <= 0:
+        return []
+    ceiling = min(99, max(rating, potential))
+    now_ratio = ability_ratio(age, pos)
+    rows = []
+    for offset in range(seasons):
+        age_then = max(20, age - offset)
+        ovr = swift_round(rating * ability_ratio(age_then, pos) / now_ratio)
+        rows.append({
+            "year": SNAPSHOT_YEAR - offset,
+            "team": abbr,
+            "ovr": min(ceiling, max(40, ovr)),
+            "role": None,
+            "gp": None,
+            "gs": None,
+        })
+    rows.sort(key=lambda r: r["year"])
+    return rows
+
+
+def generated_jersey(abbr: str, pos: str, slot: int, profile: str, taken: set) -> int:
+    """Lowest-collision number from the position's band, unique on the roster.
+
+    Same rule `publish_jerseys` uses, run per profile: the dev roster's numbers
+    are the real ones and the publish roster's are re-issued, so the free set
+    differs and each profile has to draw its own."""
+    pool = [n for lo, hi in JERSEY_BANDS[pos] for n in range(lo, hi + 1)]
+    rng = seeded("specialist-jersey", profile, abbr, pos, slot)
+    rng.shuffle(pool)
+    pick = next((n for n in pool if n not in taken), None)
+    if pick is None:                            # band exhausted: fall back 0-99
+        pick = next(n for n in range(0, 100) if n not in taken)
+    taken.add(pick)
+    return pick
+
+
+def blueprint_positions_missing_from(raw: dict) -> dict:
+    """Blueprint positions with no row anywhere in the raw snapshot -> how many
+    seats the blueprint gives them.
+
+    Derived, never hard-coded: the day `build_raw.py` starts emitting real long
+    snappers, this returns `{}` and the generator stops inventing them instead
+    of shipping 32 duplicates."""
+    have = {p["pos"] for t in raw["teams"] for p in t["players"]}
+    counts = defaultdict(int)
+    for pos, count in ROSTER_BLUEPRINT:
+        if pos not in have:
+            counts[pos] += count
+    return {pos: counts[pos] for pos in POSITIONS if pos in counts}
+
+
+def invent_specialists(abbr: str, wanted: dict, factory: NameFactory,
+                       dev_taken: set, pub_taken: set):
+    """One generated player per missing blueprint seat, as (dev row, pub row).
+
+    Every number below is a Swift call, mirrored in section 2:
+    `randomAge` -> `generatePlayer`'s tenure line -> the rating path
+    (`ageLevelShift` + `talentLevelShift` -> position skills / physical priors /
+    mental priors -> `Player.overall`) -> `veteranPotential` ->
+    `PositionPhysicalProfile.heightWeightRange`.
+    """
+    dev_rows, pub_rows = [], []
+    for pos, count in wanted.items():
+        for slot in range(count):
+            rng = seeded("specialist", abbr, pos, slot)
+            depth_index = min(slot, 2)
+            age = generator_age(rng, pos)                     # randomAge(for:)
+            years_pro = max(0, age - rng.randint(21, 23))     # generatePlayer
+            rating = reference_overall(rng, pos, depth_index, age)
+            potential = veteran_potential(rng, rating, age, pos, depth_index)
+            height = rng.randint(*HEIGHT_RANGE[pos])
+            weight = rng.randint(*WEIGHT_RANGE[pos])
+            college = rng.choice(GENERATED_COLLEGE_POOL)
+            # `real_name` is empty: there is no counterpart to avoid resembling.
+            name = factory.make(f"specialist|{abbr}|{pos}|{slot}", "", abbr, pos)
+            first, last, suffix = split_name(name)
+            pid = stable_id("specialist", abbr, pos, slot)
+            arc = generated_career_arc(pos, abbr, age, years_pro, rating, potential)
+            hints = area_hints(pos, {}, height, weight)
+            base = {
+                "id": pid, "name": name,
+                "firstName": first,
+                "lastName": (last + (" " + suffix if suffix else "")).strip(),
+                "pos": pos,
+                "age": age, "yearsPro": years_pro,
+                "college": college,
+                # Undrafted. A long snapper who reaches a roster through the
+                # draft is the exception, the schema already carries the UDFA
+                # branch for 469 real rows, and there is no real slot to fuzz.
+                "draftYear": None, "draftRound": None,
+                "draftPick": None, "fuzzedPick": None,
+                "heightIn": height, "weightLb": weight,
+                "ratingTarget": rating,
+                "potential": potential,
+                # No source row, so no source hint. Nothing reads these two.
+                "roleHint": None, "depthRankHint": None,
+                "statLines": None,
+                "notes": None,
+            }
+            for rows, profile, taken in ((dev_rows, "dev", dev_taken),
+                                         (pub_rows, "publish", pub_taken)):
+                rows.append(dict(
+                    base,
+                    jersey=generated_jersey(abbr, pos, slot, profile, taken),
+                    areaHints=dict(hints),
+                    careerArc=[dict(r) for r in arc],
+                ))
+    return dev_rows, pub_rows
+
+
+# ---------------------------------------------------------------------------
 # 13. Assembly
 # ---------------------------------------------------------------------------
 
@@ -2542,6 +2821,18 @@ def build_templates(raw: dict, log: list):
     blocklist = build_blocklist(raw)
     factory = NameFactory(blocklist)
     swapper = CollegeSwapper()
+    # Blueprint seats no raw row can fill — see section 12b. Derived from the
+    # snapshot, so this list empties itself the day the raw carries them.
+    generated_seats = blueprint_positions_missing_from(raw)
+    if generated_seats:
+        log.append(
+            "generated specialists: "
+            + ", ".join(f"{n}x {pos}" for pos, n in generated_seats.items())
+            + " per club (LeagueGenerator.rosterBlueprint seats them; the raw "
+              "snapshot carries no row at either position, so they are drawn "
+              "from the Swift generator's own rules rather than transformed "
+              "from a real player — identical in both profiles except the "
+              "jersey)")
     used_picks = defaultdict(set)          # (draftYear, round) -> fuzzed slots
 
     # Balanced age jitter: exactly half the league goes -1, half +1, ordered by
@@ -2709,6 +3000,19 @@ def build_templates(raw: dict, log: list):
                 "notes": None,
             })
 
+        # --- the blueprint seats the raw snapshot cannot fill ---------------
+        # See section 12b. `float_of` gets the rating verbatim: a generated
+        # specialist has no calibration residue behind him, and he is the only
+        # man at his position anyway, so the depth sort below is a no-op on him.
+        dev_extra, pub_extra = invent_specialists(
+            abbr, generated_seats, factory, set(jerseys.values()),
+            set(pub_jerseys.values()))
+        for extra in dev_extra:
+            float_of[extra["id"]] = float(extra["ratingTarget"])
+            transform_counts[extra["id"]] = GENERATED_TRANSFORM_MARK
+        dev_players.extend(dev_extra)
+        pub_players.extend(pub_extra)
+
         # Contract years are replayed off the row that actually ships — its own
         # `id` (which is the seed) and its own `yearsPro` (which picks the
         # branch), not the raw record — so the baked number cannot disagree with
@@ -2809,7 +3113,7 @@ def build_templates(raw: dict, log: list):
             # referenced in the module comment above instead, where it cannot
             # reach a product string scan.
             "decision": "Match the random LeagueGenerator level and spread "
-                        "(league mean OVR ~76.4, its starter/backup/depth tier "
+                        "(league mean OVR ~71.4, its starter/backup/depth tier "
                         "structure). NOT the section-8 absolute reference bands "
                         "— that is a separate deferred wave.",
             "referenceSimReps": REF_SIM_REPS,
@@ -3027,16 +3331,28 @@ def run_gates(dev, pub, ctx, log):
          "team + position" if not init_viol else f"{len(init_viol)}: {init_viol[:5]}")
 
     # ---- G6 bio transform coverage ----------------------------------------
-    thin = []
+    # Scoped to the rows that ANONYMIZE somebody. A generated specialist
+    # (section 12b) has no real counterpart, so "how many of his bio fields were
+    # moved off the real man's" is not a question about him — there is no real
+    # man. Counting him as a 0-transform row would fail this gate on a player
+    # whose whole bio is already fictional. He is reported separately instead,
+    # so a regression that stopped transforming REAL rows still fails here.
+    thin, generated = [], 0
     for t in pub["teams"]:
         for p in t["players"]:
             fields = ctx["transform_counts"].get(p["id"], [])
+            if fields == GENERATED_TRANSFORM_MARK:
+                generated += 1
+                continue
             if len(set(fields)) < 3:
                 thin.append(f"{p['name']} ({len(set(fields))}: {sorted(set(fields))})")
-    counts = [len(set(ctx["transform_counts"][pid])) for pid in ctx["transform_counts"]]
+    counts = [len(set(f)) for f in ctx["transform_counts"].values()
+              if f != GENERATED_TRANSFORM_MARK]
     gate(res, "publish-bio-jitter>=3-fields", not thin,
-         f"every publish player carries >= 3 transformed bio fields "
-         f"(min {min(counts)}, mean {statistics.mean(counts):.2f})"
+         f"every publish player transformed from a real one carries >= 3 "
+         f"transformed bio fields (n={len(counts)}, min {min(counts)}, "
+         f"mean {statistics.mean(counts):.2f}); {generated} generated "
+         f"specialists carry no real bio to transform"
          if not thin else f"{len(thin)} thin: {thin[:5]}")
 
     # ---- G7 no stat lines in publish --------------------------------------
@@ -3059,6 +3375,20 @@ def run_gates(dev, pub, ctx, log):
     tmeans = {t["identity"]["key"]: statistics.mean([p["ratingTarget"] for p in t["players"]])
               for t in dev["teams"]}
     spread = max(tmeans.values()) - min(tmeans.values())
+    # Reported alongside, because the two numbers answer different questions.
+    # `calibrate`'s fixed point solves `TEAM_SPREAD_TARGET` over the CALIBRATED
+    # population — the rows rank-mapped from real production. The generated
+    # specialists (section 12b) are drawn independently, exactly as the random
+    # generator draws its own, so each club's two draws add uncorrelated noise
+    # to its mean and widen the best-minus-worst extreme. That widening is
+    # sampling, not a calibration failure, and this line makes it visible
+    # instead of leaving a reader to read it as drift in the fixed point.
+    ctmeans = {t["identity"]["key"]:
+               statistics.mean([p["ratingTarget"] for p in t["players"]
+                                if ctx["transform_counts"].get(p["id"])
+                                != GENERATED_TRANSFORM_MARK])
+               for t in dev["teams"]}
+    cspread = max(ctmeans.values()) - min(ctmeans.values())
     raw_wins = {t["abbr"]: t["record2025"]["wins"] for t in raw["teams"]}
     keys = list(tmeans.keys())
     corr = spearman([tmeans[k] for k in keys], [raw_wins[k] for k in keys])
@@ -3068,7 +3398,10 @@ def run_gates(dev, pub, ctx, log):
           and corr >= TEAM_STRENGTH_CORR_MIN)
     gate(res, "calibration-bands", ok,
          f"league mean {mean:.2f} (band {CALIB_MEAN_BAND}), sd {sd:.2f} "
-         f"(band {CALIB_SD_BAND}), team spread {spread:.2f} (band {TEAM_SPREAD_BAND}), "
+         f"(band {CALIB_SD_BAND}), team spread {spread:.2f} (band {TEAM_SPREAD_BAND}; "
+         f"{cspread:.2f} over the calibrated rows alone — the fixed point's own "
+         f"target is {TEAM_SPREAD_TARGET}, the rest is the generated "
+         f"specialists' independent draws), "
          f"Spearman(team OVR, 2025 wins) {corr:.2f} (min {TEAM_STRENGTH_CORR_MIN})")
 
     # ---- G9 tier structure -------------------------------------------------
@@ -3499,8 +3832,12 @@ def write_qa_report(path, dev, pub, ctx, gates, log):
       f"90+ {_bp['p90']:.2f}% [1-2] · 80+ {_bp['p80']:.2f}% [12-16] · "
       f"75+ {_bp['p75']:.2f}% [30-40] · sub-65 {_bp['sub65']:.2f}% [~25] · "
       f"range {_bp['min']}-{_bp['max']}")
-    A(f"- team mean spread **{tmeans[0][0] - tmeans[-1][0]:.2f}** OVR "
-      f"(target {TEAM_SPREAD_TARGET}, band {TEAM_SPREAD_BAND})")
+    A(f"- team mean spread **{tmeans[0][0] - tmeans[-1][0]:.2f}** OVR over the whole "
+      f"roster, band {TEAM_SPREAD_BAND}. `calibrate`'s fixed point solves "
+      f"{TEAM_SPREAD_TARGET} over the CALIBRATED rows only; the generated "
+      f"specialists are independent draws (as they are in the random league), so "
+      f"each club's pair moves its mean a little and widens the best-minus-worst "
+      f"extreme — see gate 8 for both numbers")
     A(f"- OVR 90+: {sum(1 for v in all_ovr if v >= 90)} players; max {max(all_ovr)}; "
       f"min {min(all_ovr)}")
     A("")
@@ -3514,6 +3851,39 @@ def write_qa_report(path, dev, pub, ctx, gates, log):
           f"{'-' + str(r['ties']) if r['ties'] else ''} | {r.get('playoffResult') or '—'} |")
     A("")
 
+    A("### Generated specialists (long snapper, holder)")
+    A("")
+    gen_rows = [p for t in dev["teams"] for p in t["players"]
+                if ctx["transform_counts"].get(p["id"]) == GENERATED_TRANSFORM_MARK]
+    if gen_rows:
+        by_pos = defaultdict(list)
+        for p in gen_rows:
+            by_pos[p["pos"]].append(p)
+        A("`LeagueGenerator.rosterBlueprint` seats one `LS` and one `H` on every "
+          "53-man roster; the raw snapshot carries neither "
+          "(`build_raw.py::resolve_position` drops every real long snapper and no "
+          "source lists a holder), so these rows are **generated, not "
+          "transformed**: age, tenure, rating, potential, body and backstory come "
+          "from the Swift generator's own rules (`randomAge`, the rating path, "
+          "`veteranPotential`, `heightWeightRange`, `syntheticCareerHistory`), the "
+          "name from the same `NameFactory` pools as every publish name. Both "
+          "profiles carry the identical row apart from the jersey — there is no "
+          "real man behind them to keep in the dev profile.")
+        A("")
+        for pos in sorted(by_pos):
+            vals = [p["ratingTarget"] for p in by_pos[pos]]
+            ages = [p["age"] for p in by_pos[pos]]
+            A(f"- **{pos}** — {len(vals)} rows, mean OVR {statistics.mean(vals):.2f} "
+              f"(sd {statistics.pstdev(vals):.2f}, range {min(vals)}-{max(vals)}), "
+              f"mean age {statistics.mean(ages):.1f}, all `depthRank` 1 / `starter`, "
+              f"all undrafted, `areaHints` all zero (no career to tilt on)")
+        A("")
+        A("They are NOT in the reference pools or in `calibrate`'s team-spread "
+          "fixed point — they are drawn independently, exactly as the random "
+          "generator draws its own — so each club's pair adds uncorrelated noise "
+          "to its team mean. That is why gate 8 reports the full-roster spread "
+          "and the calibrated-rows-only spread separately.")
+        A("")
     A("## 3. Ratings derivation (position heuristics)")
     A("")
     A("Per player: `quality = (1 - w_ped) * (0.60 * production + 0.40 * role) "
