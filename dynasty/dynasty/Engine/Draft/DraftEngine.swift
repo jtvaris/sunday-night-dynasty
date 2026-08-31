@@ -222,7 +222,12 @@ enum DraftEngine {
         // multiplier is a fact about this roster, the weight is the league-wide
         // positional-value ranking every club shares. They are priced
         // separately below because they are not the same kind of claim.
-        let needs = teamNeedComponents(roster: teamRoster)
+        //
+        // The club goes in as well as the roster: the evidence half now includes
+        // whether the men at a position know the system this club installed
+        // (`schemeMismatchBump`), and that is a fact about the pairing, not
+        // about the roster alone.
+        let needs = teamNeedComponents(roster: teamRoster, club: team)
         // One lens per pick, not per prospect — the archetype draw is the same
         // for all 300 names on the board.
         let lens = perceptionEnabled ? AIDraftPerception.lens(forTeam: team.id) : nil
@@ -437,6 +442,10 @@ enum DraftEngine {
             // roster and is why this is additive: a club with no hole should
             // draft the best man, not a discounted version of him. Scaled by
             // round (F-29): loud in round 1, neutral on day 2, quiet on day 3.
+            //
+            // Since `schemeMismatchBump` it also carries the install: a room
+            // whose reps average under 55 familiarity in this club's system is
+            // a hole worth +1.75 here in round 1, the same rung as a 60-70 room.
             score += deficitPoints * roundScale * max(0.0, need.multiplier - 1.0)
 
             // OPINION — the league-wide positional premium, the same for all 32
@@ -1363,9 +1372,18 @@ enum DraftEngine {
     }
 
     /// Returns the top team need positions sorted by priority (highest need first).
-    static func topTeamNeeds(roster: [Player], limit: Int = 5) -> [Position] {
+    ///
+    /// - Parameter club: pass it and the scheme rung of the need model turns on
+    ///   for this roster (see ``teamNeedComponents``); omit it and the answer is
+    ///   the depth-and-grade one this has always returned. Note the shape of the
+    ///   scheme term here: it is a RANKING that is being asked for, and a club
+    ///   in its first year under a new coordinator has every room under the
+    ///   familiarity bar at once, so the bump lands on all nineteen positions
+    ///   equally and cancels out of the order. It separates clubs whose fit is
+    ///   UNEVEN, which is the ordinary case.
+    static func topTeamNeeds(roster: [Player], limit: Int = 5, club: Team? = nil) -> [Position] {
         guard !roster.isEmpty else { return [] }
-        let needs = evaluateTeamNeeds(roster: roster)
+        let needs = evaluateTeamNeeds(roster: roster, club: club)
         return needs.sorted { $0.value > $1.value }.prefix(limit).map(\.key)
     }
 
@@ -1396,8 +1414,12 @@ enum DraftEngine {
 
     /// Evaluates which positions a team needs most.
     /// Returns a dictionary of position -> multiplier (> 1.0 means higher need).
-    private static func evaluateTeamNeeds(roster: [Player]) -> [Position: Double] {
-        teamNeedComponents(roster: roster).mapValues { $0.multiplier * $0.weight }
+    ///
+    /// - Parameter club: the club whose installed system the roster is measured
+    ///   against. `nil` — every caller that has a roster but no `Team` — scores
+    ///   exactly as before: the scheme half is silent, never guessed.
+    private static func evaluateTeamNeeds(roster: [Player], club: Team? = nil) -> [Position: Double] {
+        teamNeedComponents(roster: roster, club: club).mapValues { $0.multiplier * $0.weight }
     }
 
     /// The two halves of a need score, kept apart.
@@ -1405,8 +1427,9 @@ enum DraftEngine {
     /// `evaluateTeamNeeds` multiplies them together and the product is all any
     /// caller could read, which hid a real distinction: **`multiplier` is
     /// evidence, `weight` is opinion.** The multiplier is a fact about this
-    /// roster — a body short of the ideal count, or a position group whose mean
-    /// grades under 70 — and sits at exactly 1.0 when the club has no problem
+    /// roster — a body short of the ideal count, a position group whose mean
+    /// grades under 70, or a group that does not know the installed playbook —
+    /// and sits at exactly 1.0 when the club has no problem
     /// there at all. The weight is the league-wide positional-value ranking,
     /// derived from ``draftPositionalWeight``, and is the same for all 32 clubs.
     ///
@@ -1440,8 +1463,35 @@ enum DraftEngine {
     /// squad, the UDFA market, camp, retirement and a dozen screens — and moving
     /// it is a league-wide behaviour change that deserves its own measured pass
     /// rather than a ride on a draft-board wave.
+    ///
+    /// ## The third rung: a room that cannot run the install
+    ///
+    /// Depth and grade were the whole model. A club could field two 74-OVR
+    /// guards who had never taken a rep in the system it runs and the need
+    /// table read `1.0` — no hole — while the play engine docked them on every
+    /// snap. `CareerDashboardView.calculateRosterFit` measured that gap on the
+    /// user's own screen and no engine counterpart existed, so it moved nothing:
+    /// not an AI pick, not a free-agent target, not a board.
+    ///
+    /// ``schemeMismatchBump`` is that rung, and it is priced at exactly
+    /// ``belowAverageBump``. The argument is that a starter who is guessing at
+    /// the install IS a below-average starter at that spot — he has the grade
+    /// and cannot execute it — so the knowledge gap is worth what the grade gap
+    /// is worth, and strictly less than ``replacementLevelBump``, which is a
+    /// room with no answer at all. The two stack, deliberately: talent and
+    /// knowledge are different facts about a room, and a group that is both
+    /// weak and lost is the loudest hole on the roster.
+    ///
+    /// - Parameters:
+    ///   - roster: the club's players.
+    ///   - club: the club whose installed system the roster is measured against,
+    ///     read off ``Team/lastOffensiveSchemeRaw`` / ``Team/lastDefensiveSchemeRaw``.
+    ///     `nil` — the default, and every caller that holds a roster without a
+    ///     `Team` — leaves the scheme half silent and reproduces the previous
+    ///     behaviour exactly.
     private static func teamNeedComponents(
-        roster: [Player]
+        roster: [Player],
+        club: Team? = nil
     ) -> [Position: (multiplier: Double, weight: Double)] {
         // Ideal roster composition targets (starters per position).
         let idealCounts: [Position: Int] = [
@@ -1452,23 +1502,27 @@ enum DraftEngine {
             .K: 1, .P: 1
         ]
 
-        // Count current roster players by position.
-        var currentCounts: [Position: Int] = [:]
+        // The rooms themselves — the one pass every half of the multiplier
+        // reads: the count for the deficit, the grades for the quality bumps,
+        // and what the men who will play actually know for the scheme bump.
+        var positionRooms: [Position: [Player]] = [:]
         for player in roster {
-            currentCounts[player.position, default: 0] += 1
+            positionRooms[player.position, default: []].append(player)
         }
 
-        // Calculate average overall by position to detect quality gaps.
-        var positionOveralls: [Position: [Int]] = [:]
-        for player in roster {
-            positionOveralls[player.position, default: []].append(player.overall)
-        }
+        // What this club installs, as `Player.schemeFamiliarity` keys it. The
+        // snapshot `WeekAdvancer` writes at every camp for all 32 clubs — the
+        // domain's one answer to "what does this team run" — so no coach fetch
+        // is needed here. `nil` (a league whose first camp has not run, or a
+        // save older than the property) leaves the scheme half silent.
+        let offensiveInstall = club?.lastOffensiveSchemeRaw
+        let defensiveInstall = club?.lastDefensiveSchemeRaw
 
         var needs: [Position: (multiplier: Double, weight: Double)] = [:]
         for position in Position.allCases {
             let ideal = idealCounts[position] ?? 1
-            let current = currentCounts[position] ?? 0
-            let deficit = max(0, ideal - current)
+            let room = positionRooms[position] ?? []
+            let deficit = max(0, ideal - room.count)
 
             // Base multiplier: higher deficit = higher need.
             var multiplier = 1.0 + Double(deficit) * 0.15
@@ -1477,15 +1531,47 @@ enum DraftEngine {
             // boost need. F-28: these two bumps used to be 0.2 / 0.1, which
             // priced a replacement-level starting group BELOW a two-body
             // shortfall at fullback. See the doc comment above.
-            if let overalls = positionOveralls[position], !overalls.isEmpty {
-                let avgOverall = Double(overalls.reduce(0, +)) / Double(overalls.count)
+            if !room.isEmpty {
+                let avgOverall = Double(room.reduce(0) { $0 + $1.overall }) / Double(room.count)
                 if avgOverall < 60.0 {
                     multiplier += replacementLevelBump
                 } else if avgOverall < 70.0 {
                     multiplier += belowAverageBump
                 }
+
+                // SCHEME FIT. Talent the club cannot deploy is a hole too: the
+                // men at the top of this room are the ones who take the reps,
+                // and if their mean familiarity with the installed system sits
+                // under `schemeInstallFamiliarityBar` the play engine is busting
+                // their assignments every week.
+                //
+                // Measured over the room's best `ideal` men by OVR — the same
+                // count the deficit half above is written against, so both
+                // halves of the multiplier are talking about the same room —
+                // and only on the side of the ball the scheme belongs to. A
+                // kicker belongs to neither install and is never scored here.
+                // Same resolution `RosterView.installedScheme(for:)` uses for
+                // the roster list's FIT slot: a man is measured against his own
+                // unit's install and never borrows the other side's.
+                let installedScheme: String?
+                switch position.side {
+                case .offense:      installedScheme = offensiveInstall
+                case .defense:      installedScheme = defensiveInstall
+                case .specialTeams: installedScheme = nil
+                }
+                if let installed = installedScheme {
+                    let reps = room.sorted { $0.overall > $1.overall }.prefix(ideal)
+                    let meanFamiliarity = Double(
+                        reps.reduce(0) { $0 + $1.schemeFam(for: installed) }
+                    ) / Double(reps.count)
+                    if meanFamiliarity < schemeInstallFamiliarityBar {
+                        multiplier += schemeMismatchBump
+                    }
+                }
             } else {
-                // No players at all at this position — significant need.
+                // No players at all at this position — significant need. Nobody
+                // to know the playbook either, so the scheme half stays out of
+                // it rather than charging the same club twice for one hole.
                 multiplier += 0.3
             }
 
@@ -1510,6 +1596,59 @@ enum DraftEngine {
     /// Roughly half of ``replacementLevelBump`` so the two rungs stay ordered
     /// and a mediocre room is a nudge rather than an emergency.
     private static let belowAverageBump = 0.25
+
+    /// Multiplier bump for a position group whose reps do not know the system
+    /// the club installed — the scheme rung of the same ladder.
+    ///
+    /// ## Why it is exactly `belowAverageBump`
+    ///
+    /// The ladder above prices ROOMS: `0.45` for one with no answer at all
+    /// (sub-60), `0.25` for one that is startable and not good (60-70), `0.15`
+    /// per missing body. A room that grades fine and cannot run the install
+    /// belongs on the middle rung, because that is what it plays like — the
+    /// grade is real and the club cannot deploy it. Anything higher would say a
+    /// guard who has not learned the playbook is a worse problem than a guard
+    /// who cannot block, which is the same inversion F-28 removed; anything
+    /// lower would put it under a single missing body, which is what the item
+    /// was raised about.
+    ///
+    /// ## What it is worth, traced
+    ///
+    /// `aiMakePick` scores need as `deficitPoints × roundScale × (multiplier −
+    /// 1)`, with `deficitPoints = 3.5` and `roundScale` 2.0 / 1.0 / 0.6 by day.
+    /// So this rung is **+1.75 board points in round 1**, +0.875 on day two and
+    /// +0.525 on day three — above a one-body shortfall (+1.05 in round 1),
+    /// below a replacement-level room (+3.15).
+    ///
+    /// Two consequences worth naming rather than discovering later:
+    ///
+    /// - **It stacks.** Two bodies short, sub-60 AND lost in the install is
+    ///   `0.30 + 0.45 + 0.25 = 1.0` of multiplier — 3.5 points, 7.0 in round 1,
+    ///   against the 5.25 that was the worst case before. A club really can
+    ///   reach that far, and only for a room that is broken three ways.
+    /// - **It does not, on its own, trip `quarterbackNeedBar` (1.3).** Two
+    ///   startable quarterbacks who do not know the system score `1.25` and get
+    ///   the ordinary need bump without the QB panic premium. Thin AND lost
+    ///   (`1.15 + 0.25 = 1.40`) does trip it, which reads correctly.
+    private static let schemeMismatchBump = 0.25
+
+    /// The familiarity a position group's reps have to average before the
+    /// installed playbook counts as KNOWN.
+    ///
+    /// Not a new opinion: `PlaySimulator.famBustPivot` is 55 and
+    /// `VersatilityDevelopmentEngine.unusedSchemeFloor` is the same 55,
+    /// deliberately, and ``rookieFamiliarityFloor``'s note above already calls
+    /// that number "the line between 'this room knows the playbook' and 'this
+    /// room is guessing'". Under it the sim rolls blown assignments on real
+    /// snaps and docks the completion channel, so a board that reaches for a
+    /// position under it is reaching for a cost the club is actually paying.
+    ///
+    /// Copied rather than referenced because both owners are `private` to their
+    /// own engines. If the pivot ever moves, this moves with it — it is defined
+    /// as that pivot, not as a round number near it. The league's measured
+    /// familiarity equilibrium is 60.5 (task #66), so a group averaging under 55
+    /// is genuinely below where the league sits rather than merely typical.
+    private static let schemeInstallFamiliarityBar = 55.0
 
     /// THE positional-value table for the draft board, derived from the money.
     ///
@@ -1639,10 +1778,34 @@ enum DraftEngine {
     ///
     /// ``topTeamNeeds`` is deliberately left alone: the draft room and
     /// `WeekAdvancer.refillAIRosters` want the value ranking they were built on.
-    static func teamNeedDeficits(roster: [Player], limit: Int = 5) -> [Position] {
+    ///
+    /// ## Passing a `club` (the scheme rung)
+    ///
+    /// With a `club` the evidence half also asks whether the men at a position
+    /// know the system it installed, so a room that is deep and graded and
+    /// entirely unfamiliar clears 1.0 and shows up here as the hole it is. That
+    /// is the point of the change, and it is what makes a weak fit a market
+    /// signal rather than a screen.
+    ///
+    /// It comes with one edge the caller has to know about, because this
+    /// function's whole contract is "an empty result is a real answer": the
+    /// season a club installs a NEW system, `VersatilityDevelopmentEngine`'s
+    /// install baseline puts every room under the bar at once, so every position
+    /// clears 1.0 and the `prefix(limit)` falls back to ranking by positional
+    /// weight — the {QB, DE, CB, WR, LT} quintet this function exists to avoid
+    /// handing out. It is a true statement about an install year (that club
+    /// genuinely needs men who fit) but it is not a HOLE list, so a market that
+    /// treats the top five as holes should either skip the scheme term in an
+    /// install season or read the count before it reads the ranking.
+    ///
+    /// No shipping caller passes `club` yet: free agency's three call sites
+    /// (`FreeAgencyEngine.executeNewLeagueYear` and the two market passes) each
+    /// hold the `Team` and are the intended next step, with the install-year
+    /// question above settled first.
+    static func teamNeedDeficits(roster: [Player], limit: Int = 5, club: Team? = nil) -> [Position] {
         guard !roster.isEmpty else { return [] }
         var scored: [(position: Position, score: Double)] = []
-        for (position, components) in teamNeedComponents(roster: roster) {
+        for (position, components) in teamNeedComponents(roster: roster, club: club) {
             guard components.multiplier > 1.0 else { continue }
             scored.append((position: position, score: components.multiplier * components.weight))
         }

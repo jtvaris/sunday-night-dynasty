@@ -323,6 +323,16 @@ final class Team {
     let id: UUID
     var players: [Player]
     var currentCapUsage: Int = 0
+
+    /// The scheme snapshots `DraftEngine.teamNeedComponents` reads for its
+    /// scheme-fit rung — mirrors the shipped `Team.lastOffensiveSchemeRaw` /
+    /// `lastDefensiveSchemeRaw`, including their `nil` = "never recorded"
+    /// contract. No harness scenario installs a scheme (camp is out of scope
+    /// here), so both stay `nil` and the scheme rung is silent, which is the
+    /// shipped behaviour for a club whose first camp has not run.
+    var lastOffensiveSchemeRaw: String? = nil
+    var lastDefensiveSchemeRaw: String? = nil
+
     init(id: UUID = UUID(), players: [Player]) {
         self.id = id
         self.players = players

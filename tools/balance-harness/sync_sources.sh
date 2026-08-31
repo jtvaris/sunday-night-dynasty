@@ -796,7 +796,7 @@ grep -q 'static func draftPositionalWeight(' "$DEVSLICE" \
   || die "DraftEngine slice lost the derived positional-value table (F-30)."
 grep -q 'let weights: \[Double\] = \[0.65, 0.20, 0.10, 0.05\]' "$DEVSLICE" \
   && die "DraftEngine slice still carries the R24 top-4 draw — F-62 removed it."
-DRAFTENGINE_CONSTS="$(grep -E '^[[:space:]]*(private )?static let (attributeFloor|rawnessPivot|veteranMinimumCapPercent|rookieFamiliarity[A-Za-z]*|replacementLevelBump|belowAverageBump|positionalWeight(Divisor|Ceiling|Floor)) =' "$DRAFTENGINE_SOURCE")"
+DRAFTENGINE_CONSTS="$(grep -E '^[[:space:]]*(private )?static let (attributeFloor|rawnessPivot|veteranMinimumCapPercent|rookieFamiliarity[A-Za-z]*|replacementLevelBump|belowAverageBump|schemeMismatchBump|schemeInstallFamiliarityBar|positionalWeight(Divisor|Ceiling|Floor)) =' "$DRAFTENGINE_SOURCE")"
 echo "$DRAFTENGINE_CONSTS" | grep -q attributeFloor || die "DraftEngine attributeFloor constant not found in the repo file."
 echo "$DRAFTENGINE_CONSTS" | grep -q rawnessPivot  || die "DraftEngine rawnessPivot constant not found in the repo file."
 # Task #89 follow-up: the rookie slot curve now extrapolates past the last
@@ -810,10 +810,12 @@ for k in rookieFamiliarityFloor rookieFamiliarityReadinessWeight rookieFamiliari
   echo "$DRAFTENGINE_CONSTS" | grep -q "$k" || die "DraftEngine constant $k not found in the repo file."
 done
 # F-28 / F-30: the need model's quality bumps and the derived positional-value
-# table's clamp. Grepped straight out of the repo rather than sliced (they are
-# brace-free one-liners) and asserted, so the `perception` scenario can never
-# measure a board with a hand-typed weight ladder.
-for k in replacementLevelBump belowAverageBump positionalWeightDivisor positionalWeightCeiling positionalWeightFloor; do
+# table's clamp, plus the scheme-fit rung that joined them (schemeMismatchBump /
+# schemeInstallFamiliarityBar — the 55 that mirrors PlaySimulator.famBustPivot).
+# Grepped straight out of the repo rather than sliced (they are brace-free
+# one-liners) and asserted, so the `perception` scenario can never measure a
+# board with a hand-typed weight ladder.
+for k in replacementLevelBump belowAverageBump schemeMismatchBump schemeInstallFamiliarityBar positionalWeightDivisor positionalWeightCeiling positionalWeightFloor; do
   echo "$DRAFTENGINE_CONSTS" | grep -q "$k" || die "DraftEngine constant $k not found in the repo file."
 done
 grep -q 'skill: .*readinessShare \*' "$DEVSLICE" || die "DraftEngine slice lost the rookie skill-scaling term."
