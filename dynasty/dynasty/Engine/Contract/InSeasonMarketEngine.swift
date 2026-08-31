@@ -247,6 +247,13 @@ enum InSeasonMarketEngine {
             )
         }
 
+        // A man off the street lands on the 53, not in a camp bunk. Cut camp
+        // bodies keep `rosterStatus == .campBody` after their release
+        // (`CampRosterEngine` only clears it for players still under contract),
+        // so without this the same player could be signed here and still read
+        // as a camp body on every roster surface. Set in the shared door so the
+        // AI's signing and the user's cannot disagree about what a signing is.
+        player.rosterStatus = .active
         ContractEngine.signPlayer(
             player: player,
             years: 1,
@@ -255,5 +262,131 @@ enum InSeasonMarketEngine {
             capMode: capMode
         )
         return true
+    }
+
+    // MARK: - The User's Door (D6)
+
+    /// Why the user's club cannot sign off the street right now.
+    ///
+    /// A reason rather than a `false`: this is the half of the market the user
+    /// plays in, and "no" without a next action is the failure this screen was
+    /// written to end.
+    enum StreetRefusal: Equatable {
+        /// Free agency itself is open — the market screen prices these men.
+        case marketOpen
+        /// The roster is at the ceiling in force this phase.
+        case rosterFull(ceiling: Int)
+        /// Not enough room for the veteran minimum. Both figures in $K.
+        case shortOfCap(needed: Int, available: Int)
+    }
+
+    /// What happened when the user pressed Sign. `salary` is $K per year.
+    enum StreetOutcome: Equatable {
+        case signed(salary: Int)
+        case refused(StreetRefusal)
+    }
+
+    /// Whether the street is open to the USER in this phase.
+    ///
+    /// Shut in `.freeAgency` and nowhere else. Not a balance dial: during the
+    /// market the unsigned pool IS the free-agent class, and `streetPool`'s
+    /// filter (`teamID == nil`, contract expired) cannot tell a March free agent
+    /// from a September castoff. A minimum-salary side door open during those
+    /// weeks would let the user buy men the market screen is bidding real money
+    /// for, and price the same player two ways in the same afternoon.
+    ///
+    /// Every other phase is open, which is the point of the screen: the club
+    /// that left free agency without a kicker finds out in the middle of camp,
+    /// not in the following March.
+    static func isOpenToUser(phase: SeasonPhase) -> Bool {
+        phase != .freeAgency
+    }
+
+    /// The roster ceiling in force for the user this phase.
+    ///
+    /// The same split `RosterSummaryBar` prints in the roster header — 53 once
+    /// the games count, `TradeValueEngine.offseasonRosterCeiling` (90) while the
+    /// league legitimately carries a camp roster. Read from those two constants
+    /// rather than retyped, so this door and that header cannot disagree about
+    /// how many men the club is allowed to have.
+    static func userRosterCeiling(phase: SeasonPhase) -> Int {
+        switch phase {
+        case .regularSeason, .tradeDeadline, .playoffs, .proBowl, .superBowl:
+            return activeRosterCeiling
+        default:
+            return TradeValueEngine.offseasonRosterCeiling
+        }
+    }
+
+    /// What a street deal costs this club: one year at the veteran minimum.
+    ///
+    /// `ContractEngine.veteranMinimum` scales with the club's own cap, which is
+    /// why it takes the team and not a flat constant — the same call the AI half
+    /// makes two screens up.
+    static func streetSalary(for team: Team) -> Int {
+        ContractEngine.veteranMinimum(cap: team.salaryCap)
+    }
+
+    /// The reason the user cannot sign right now, or `nil` when he can.
+    ///
+    /// Deliberately NOT the AI's rule. The AI half makes its own corresponding
+    /// move — it releases its lowest keep-score body to open the spot — because
+    /// nobody is there to ask. Doing that on the user's behalf would cut a
+    /// player he never chose, so a full roster is a refusal here and the release
+    /// stays his decision, on the screens that already make it.
+    static func userRefusal(
+        team: Team,
+        roster: [Player],
+        capMode: CapMode,
+        phase: SeasonPhase
+    ) -> StreetRefusal? {
+        guard isOpenToUser(phase: phase) else { return .marketOpen }
+        let ceiling = userRosterCeiling(phase: phase)
+        guard roster.count < ceiling else { return .rosterFull(ceiling: ceiling) }
+        let salary = streetSalary(for: team)
+        if capMode != .sandbox, team.availableCap < salary {
+            return .shortOfCap(needed: salary, available: team.availableCap)
+        }
+        return nil
+    }
+
+    /// Signs one street free agent to the USER's active roster.
+    ///
+    /// The entry point `runWeeklyPass` has never had: that pass filters the user
+    /// out (`teams.filter { $0.id != career.teamID }`) and its header says why —
+    /// "the user's half is a screen". This is that screen's half of the door.
+    /// Same pool, same one-year veteran minimum, same `ChurnDiag` stage, so the
+    /// street means one thing for all 32 clubs.
+    ///
+    /// - Parameter roster: the club's active roster (`teamID == team.id`,
+    ///   unretired), which the caller already holds.
+    @discardableResult
+    static func signForUser(
+        _ player: Player,
+        to team: Team,
+        roster: [Player],
+        capMode: CapMode,
+        phase: SeasonPhase
+    ) -> StreetOutcome {
+        if let refusal = userRefusal(team: team, roster: roster, capMode: capMode, phase: phase) {
+            return .refused(refusal)
+        }
+
+        let salary = streetSalary(for: team)
+        player.rosterStatus = .active
+        ContractEngine.signPlayer(
+            player: player,
+            years: 1,
+            annualSalary: salary,
+            team: team,
+            capMode: capMode
+        )
+        // `inSeasonFA` counts street signings made DURING the season — the stage
+        // its own comment defines. An offseason signing through this same door
+        // is a real transaction but not that stage, so it is not counted as one.
+        if phase == .regularSeason || phase == .tradeDeadline || phase == .playoffs {
+            ChurnDiag.record(ChurnDiag.inSeasonFA, player)
+        }
+        return .signed(salary: salary)
     }
 }
