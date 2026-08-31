@@ -1385,12 +1385,29 @@ enum DraftEngine {
     ///
     /// - Parameter club: pass it and the scheme rung of the need model turns on
     ///   for this roster (see ``teamNeedComponents``); omit it and the answer is
-    ///   the depth-and-grade one this has always returned. Note the shape of the
-    ///   scheme term here: it is a RANKING that is being asked for, and a club
-    ///   in its first year under a new coordinator has every room under the
-    ///   familiarity bar at once, so the bump lands on all nineteen positions
-    ///   equally and cancels out of the order. It separates clubs whose fit is
-    ///   UNEVEN, which is the ordinary case.
+    ///   the depth-and-grade one this has always returned.
+    ///
+    ///   Note the shape of the scheme term here, because a RANKING is what is
+    ///   being asked for and a uniform bump does NOT leave one alone. Two things
+    ///   an earlier draft of this comment got wrong:
+    ///
+    ///   - The bump lands on **seventeen** positions, not on every one. `.K`,
+    ///     `.P`, `.LS` and `.H` resolve `PositionSide.specialTeams`, and the
+    ///     switch in ``teamNeedComponents`` hands that side `nil` — a kicker
+    ///     belongs to neither install and is never charged.
+    ///   - It does not cancel out of the order. ``evaluateTeamNeeds`` ranks on
+    ///     `multiplier × weight`, so adding a constant `c` to every multiplier
+    ///     adds `c × weight_i`, which is strictly larger where the weight is —
+    ///     a uniform bump TILTS the ranking toward positional weight. Reachable
+    ///     example, on the shipped weights (CB 0.76, WR 1.04): a corner three
+    ///     bodies short scores `1.45 × 0.76 = 1.102` against a receiver one body
+    ///     short at `1.05 × 1.04 = 1.092`, so CB leads; add 0.25 to both and WR
+    ///     leads, `1.352` against `1.292`. The order flips.
+    ///
+    ///   So in a season where every offensive and defensive room sits under the
+    ///   bar at once, this list drifts toward the positional-weight quintet —
+    ///   the same edge ``teamNeedDeficits`` records for itself. It still
+    ///   separates clubs whose fit is UNEVEN, which is the ordinary case.
     static func topTeamNeeds(roster: [Player], limit: Int = 5, club: Team? = nil) -> [Position] {
         guard !roster.isEmpty else { return [] }
         let needs = evaluateTeamNeeds(roster: roster, club: club)
@@ -1492,6 +1509,27 @@ enum DraftEngine {
     /// knowledge are different facts about a room, and a group that is both
     /// weak and lost is the loudest hole on the roster.
     ///
+    /// ### It is NOT the dashboard's measurement, and should not be read as one
+    ///
+    /// `CareerDashboardView.calculateRosterFit` is the screen this rung was
+    /// raised about, not a definition it inherits. The two answer different
+    /// questions and will legitimately disagree:
+    ///
+    /// | | dashboard | here |
+    /// |---|---|---|
+    /// | population | best 11 on a whole SIDE | best `ideal` in ONE room |
+    /// | statistic | share of men clearing the bar | the group's MEAN |
+    /// | bar | `>= 50` | `< 55` (``schemeInstallFamiliarityBar``) |
+    ///
+    /// Deliberate on all three counts: a draft board picks one position at a
+    /// time, so it has to ask per room, and a room is carried or sunk by what
+    /// its reps average rather than by a headcount. The bar differs because the
+    /// engine's is defined as `PlaySimulator.famBustPivot` — the line the sim
+    /// actually busts assignments under — while the dashboard's 50 predates it.
+    /// Aligning the screen to 55 is a user-facing change with its own reading
+    /// and was not taken here; until it is, a club can show a healthy fit
+    /// percentage on the dashboard while the board flags one of its rooms.
+    ///
     /// - Parameters:
     ///   - roster: the club's players.
     ///   - club: the club whose installed system the roster is measured against,
@@ -1520,11 +1558,26 @@ enum DraftEngine {
             positionRooms[player.position, default: []].append(player)
         }
 
-        // What this club installs, as `Player.schemeFamiliarity` keys it. The
-        // snapshot `WeekAdvancer` writes at every camp for all 32 clubs — the
-        // domain's one answer to "what does this team run" — so no coach fetch
-        // is needed here. `nil` (a league whose first camp has not run, or a
-        // save older than the property) leaves the scheme half silent.
+        // What this club ran AT THE LAST CAMP, as `Player.schemeFamiliarity`
+        // keys it — not necessarily what it installs today. Say it plainly,
+        // because the distinction bites exactly here:
+        //
+        // `Team.lastOffensiveSchemeRaw` is a snapshot, written only by the
+        // `.trainingCamp` pass in `WeekAdvancer` and by nothing else in the
+        // tree. `SeasonPhase` orders the year `.coachingChanges` → … →
+        // `.draft` → `.otas` → `.trainingCamp`, so a coordinator hired at
+        // `.coachingChanges` does not reach this snapshot until the camp AFTER
+        // the draft. For the whole pre-draft window a club that has just
+        // changed a coordinator is therefore measured against the system its
+        // room is already fluent in, reads no hole, and drafts as before —
+        // silent for the population the rung exists for. The live answer needs
+        // the staff resolution (`WeekAdvancer.installedOffensiveScheme(staff:)`,
+        // `private` to that engine), which no caller of this function supplies.
+        // Recorded rather than papered over; threading the current install
+        // through `aiMakePick` is the fix and is a call-site change.
+        //
+        // `nil` (a league whose first camp has not run, or a save older than
+        // the property) leaves the scheme half silent.
         let offensiveInstall = club?.lastOffensiveSchemeRaw
         let defensiveInstall = club?.lastDefensiveSchemeRaw
 
@@ -1560,9 +1613,14 @@ enum DraftEngine {
                 // halves of the multiplier are talking about the same room —
                 // and only on the side of the ball the scheme belongs to. A
                 // kicker belongs to neither install and is never scored here.
-                // Same resolution `RosterView.installedScheme(for:)` uses for
-                // the roster list's FIT slot: a man is measured against his own
-                // unit's install and never borrows the other side's.
+                // The SIDE-OF-BALL split is the one `RosterView`'s FIT slot
+                // uses (`RosterView.installedScheme(for:)`): a man is measured
+                // against his own unit's install and never borrows the other
+                // side's. The SCHEME VALUE is not the same — RosterView reads
+                // the current coordinator live off the `Coach` query, this
+                // reads the last camp's snapshot (see above) — so from
+                // `.coachingChanges` to `.draft` the two surfaces will disagree
+                // for any club that changed a coordinator.
                 let installedScheme: String?
                 switch position.side {
                 case .offense:      installedScheme = offensiveInstall
@@ -1630,16 +1688,34 @@ enum DraftEngine {
     /// +0.525 on day three — above a one-body shortfall (+1.05 in round 1),
     /// below a replacement-level room (+3.15).
     ///
-    /// Two consequences worth naming rather than discovering later:
+    /// Three consequences worth naming rather than discovering later:
     ///
     /// - **It stacks.** Two bodies short, sub-60 AND lost in the install is
     ///   `0.30 + 0.45 + 0.25 = 1.0` of multiplier — 3.5 points, 7.0 in round 1,
-    ///   against the 5.25 that was the worst case before. A club really can
-    ///   reach that far, and only for a room that is broken three ways.
+    ///   against 5.25 for the same room before this rung existed. A club really
+    ///   can reach that far, and only for a room that is broken three ways.
+    ///   5.25 is that EXAMPLE's before-value and not the old ceiling: `deficit`
+    ///   runs to `ideal - 1` and `idealCounts` reaches 5 at `.WR` and `.CB`, so
+    ///   a club with one sub-60 wideout already scored `1 + 4 × 0.15 + 0.45 =
+    ///   2.05`, i.e. **+7.35 in round 1** — and an empty room scored the same
+    ///   `1 + 5 × 0.15 + 0.3 = 2.05`. The ceiling this rung moves is therefore
+    ///   7.35 → `3.5 × 2.0 × (0.60 + 0.45 + 0.25)` = **+9.10**, at `.WR` /
+    ///   `.CB` and nowhere else.
     /// - **It does not, on its own, trip `quarterbackNeedBar` (1.3).** Two
     ///   startable quarterbacks who do not know the system score `1.25` and get
     ///   the ordinary need bump without the QB panic premium. Thin AND lost
     ///   (`1.15 + 0.25 = 1.40`) does trip it, which reads correctly.
+    /// - **It moves kickers and punters DOWN the board, relatively.** The need
+    ///   term in `aiMakePick` is additive and priced apart from positional
+    ///   weight, so wherever this rung fires across a club's offensive and
+    ///   defensive rooms, every prospect on those sides gains up to +1.75 in
+    ///   round 1 and `.K` / `.P` / `.LS` / `.H` gain nothing — they resolve
+    ///   `PositionSide.specialTeams` and are never scored here. The carve-out
+    ///   is right (a kicker belongs to neither install), but the relative
+    ///   demotion is a real board effect for a reason that has nothing to do
+    ///   with kicking. Left as is: it is small against the `specialistDiscount`
+    ///   of 8.0 those four already carry, and undoing it would mean charging a
+    ///   kicker for a playbook he never opens.
     private static let schemeMismatchBump = 0.25
 
     /// The familiarity a position group's reps have to average before the
