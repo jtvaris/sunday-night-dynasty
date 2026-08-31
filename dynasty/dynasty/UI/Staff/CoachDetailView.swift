@@ -730,8 +730,8 @@ struct CoachDetailView: View {
 
     // MARK: - Projected Impact (concrete bonuses for the role)
 
-    /// Concrete impact bullets for this coach in their current role.
-    /// Combines role-baseline expected bonuses with attribute-driven multipliers.
+    /// One line of the card: what the sim does differently because this man is
+    /// in this seat.
     private struct ImpactRow: Identifiable {
         let id = UUID()
         let icon: String
@@ -739,95 +739,326 @@ struct CoachDetailView: View {
         let text: String
     }
 
-    /// Returns up to 4 concrete projected-impact bullets for the coach's role.
+    /// Signed percentage, one decimal — the house format for the figures below.
+    private func pctText(_ value: Double) -> String {
+        "\(value >= 0 ? "+" : "")\(String(format: "%.1f", value))%"
+    }
+
+    /// Signed points, one decimal.
+    private func ptsText(_ value: Double) -> String {
+        "\(value >= 0 ? "+" : "")\(String(format: "%.1f", value))"
+    }
+
+    /// One layer of `CoachingEngine.hierarchicalDevelopmentBonus`, as the
+    /// percentage it adds to the development points of the players that layer
+    /// covers. The weights are the engine's own — 0.08 (HC, off `motivation`),
+    /// 0.04 (AHC), 0.10 (coordinator) and 0.15 (position coach) per 50 rating
+    /// points above `developmentBonusPivot`.
+    private func developmentPct(_ rating: Int, layer: Double) -> Double {
+        (Double(rating) - CoachingEngine.developmentBonusPivot) / 50.0 * layer * 100.0
+    }
+
+    /// The other men in this coach's building. Two of the mechanics below are
+    /// MAXIMA over the staff — `CoachingModifiers.ratings` takes the best game
+    /// planner and the best morale influence on the payroll — so whether this
+    /// man's number reaches the sim at all is a fact about the room and not
+    /// about him.
+    private var staffmates: [Coach] {
+        guard let teamID = coach.teamID else { return [] }
+        return allCoaches.filter { $0.teamID == teamID && $0.id != coach.id && !$0.isRetired }
+    }
+
+    /// Mech 2 — game planning onto completion probability, taken as a max over
+    /// HC / AHC / OC / DC. A planner sitting behind a sharper colleague is
+    /// worth exactly zero, which is worth saying plainly on the card that
+    /// exists to justify his salary.
+    private var gamePlanRow: ImpactRow {
+        let best = staffmates
+            .filter {
+                $0.role == .headCoach || $0.role == .assistantHeadCoach
+                    || $0.role == .offensiveCoordinator || $0.role == .defensiveCoordinator
+            }
+            .map(\.gamePlanning)
+            .max()
+        if let best, best > coach.gamePlanning {
+            return ImpactRow(
+                icon: "doc.text",
+                color: .textTertiary,
+                text: "Game planning \(coach.gamePlanning) sits behind the staff's best (\(best)), and the sim reads only the best"
+            )
+        }
+        let edge = min(CoachingModifiers.planCompletionCap,
+                       max(-CoachingModifiers.planCompletionCap,
+                           (Double(coach.gamePlanning) - CoachingModifiers.planCenter)
+                               * CoachingModifiers.planCompletionSlope)) * 100.0
+        return ImpactRow(
+            icon: "doc.text.fill",
+            color: edge >= 0 ? .success : .danger,
+            text: "Sets the week's game plan: \(ptsText(edge)) pts of completion probability"
+        )
+    }
+
+    /// Mech 3 — morale influence onto the pre-game morale bump, the staff's
+    /// other max. `nil` when a colleague's influence is higher, because then
+    /// this man's contributes nothing at all. The head coach's motivation rides
+    /// on top of it (Mech 5) and `CoachingModifiers.moraleBump` rounds the SUM
+    /// of the two to a whole point, so what is quoted is his own term and not
+    /// the applied bump.
+    private var moraleInfluenceRow: ImpactRow? {
+        if let best = staffmates.map(\.moraleInfluence).max(), best > coach.moraleInfluence {
+            return nil
+        }
+        let term = (Double(coach.moraleInfluence) - CoachingModifiers.moraleCenter)
+            * CoachingModifiers.moraleInfluenceSlope
+        return ImpactRow(
+            icon: "flame.fill",
+            color: term >= 0 ? .accentGold : .danger,
+            text: "Best morale influence on staff: \(ptsText(term)) pts into the pre-game morale bump"
+        )
+    }
+
+    /// Mech 6 and development layer 3b — the coordinator's command of the
+    /// system his unit actually installs, which the sim reads TWICE: a
+    /// positive-only completion bonus above `CoachingModifiers.schemeCenter`,
+    /// and a charge on his unit's development multiplier below it, reaching a
+    /// full `CoachingEngine.coordinatorContinuityBonus` at expertise 20.
+    ///
+    /// This replaces "Players gain scheme familiarity faster", which named an
+    /// effect the coordinator does not have: a roster's
+    /// `activeSchemeFamiliarity` is its own install progress and does not read
+    /// his expertise.
+    ///
+    /// `nil` for a coach carrying no `schemeExpertise` record at all (legacy
+    /// rows written before the field existed) — layer 3b skips those, and
+    /// `expertise(for:)`'s 20 fallback buys nothing under Mech 6 either.
+    private func schemeRow(scheme: String, display: String) -> ImpactRow? {
+        guard !coach.schemeExpertise.isEmpty else { return nil }
+        let mastery = Double(coach.expertise(for: scheme))
+        if mastery >= CoachingModifiers.schemeCenter {
+            let bonus = min((mastery - CoachingModifiers.schemeCenter)
+                                * CoachingModifiers.schemeCompletionSlope,
+                            CoachingModifiers.schemeCompletionCap) * 100.0
+            return ImpactRow(
+                icon: "checkmark.seal.fill",
+                color: .success,
+                text: "Knows \(display) at \(Int(mastery)): \(ptsText(bonus)) pts of completion on top"
+            )
+        }
+        let ignorance = min(1.0, max(0.0, (CoachingModifiers.schemeCenter - mastery) / 50.0))
+        let charge = CoachingEngine.coordinatorContinuityBonus * ignorance * 100.0
+        return ImpactRow(
+            icon: "exclamationmark.triangle.fill",
+            color: .warning,
+            text: "Installing \(display) at expertise \(Int(mastery)), below par 70 — costs his unit \(String(format: "%.1f", charge))% development"
+        )
+    }
+
+    /// Up to four projected-impact bullets for the coach in his current seat.
+    ///
+    /// ## Every line is an engine coefficient (#3046)
+    ///
+    /// This card used to quote "+12% offensive efficiency in games", "+12%
+    /// defensive efficiency", "+5% staff chemistry", "+8% special teams
+    /// performance", "-15% injury risk across the roster" off `discipline`,
+    /// "-30% injury severity" and "+25% recovery speed" off `reputation`, each
+    /// of them a hand-picked baseline run through a local `scaled(_:by:)`
+    /// helper that multiplied it by `0.5 + attribute/99`.
+    ///
+    /// None of those quantities exists. Nothing in the sim has ever computed an
+    /// "efficiency", a "staff chemistry" or a "special teams performance", and
+    /// `reputation` and `discipline` do not appear ANYWHERE in `MedicalEngine`
+    /// — the three medical seats are read for `playerDevelopment` and for
+    /// nothing else. So the doctor's and the physio's headline numbers moved
+    /// with an attribute no medical code reads, and the strength coach's injury
+    /// line was driven by an attribute the engine uses for nothing of the kind.
+    /// `HireCoachView`'s own projection card was corrected to the real
+    /// coefficients; this card describes the same men two screens later and
+    /// still answered in the invented units.
+    ///
+    /// Sources, one per line kind:
+    ///
+    /// * `CoachingModifiers` Mech 1 — coordinator grade, which is
+    ///   `(playCalling + adaptability)/2` and not play-calling alone, onto
+    ///   completion probability.
+    /// * `CoachingModifiers` Mech 2 — game planning onto completion, a MAX over
+    ///   HC/AHC/OC/DC (see ``gamePlanRow``).
+    /// * `CoachingModifiers` Mech 3/5 — morale influence (a MAX over the whole
+    ///   staff) and the head coach's motivation, onto pre-game morale.
+    /// * `CoachingModifiers.disciplineScale` (Mech 4) — the head coach's
+    ///   discipline scaling this club's own penalty AND fumble frequencies.
+    /// * `CoachingModifiers` Mech 6 and `hierarchicalDevelopmentBonus` layer 3b
+    ///   — coordinator scheme mastery (see ``schemeRow``).
+    /// * `CoachingEngine.hierarchicalDevelopmentBonus` — its four layers (see
+    ///   ``developmentPct``). The head coach's layer reads `motivation`; no
+    ///   layer asks a head coach for `playerDevelopment`.
+    /// * `PlayerDevelopmentEngine`'s `strengthBonus` and `resolvePositionCoach`,
+    ///   and `WeekAdvancer.computeRecoveryRate`, for the strength coach.
+    /// * `MedicalEngine.injuryCheck`, `.recoveryWeeks`, `.weeklyFatigueRecovery`
+    ///   and `.processWeeklyRehab` for the three medical seats.
+    ///
+    /// Each line is what the SEAT is worth against it standing empty, which is
+    /// the engine's own zero for every mechanic here — except the two maxima,
+    /// which are stated against the rest of the staff, because that is the only
+    /// way they are true.
     private var projectedImpacts: [ImpactRow] {
         var rows: [ImpactRow] = []
 
-        // Role-driven core bonus (what this position contributes when staffed)
         switch coach.role {
         case .headCoach:
-            rows.append(.init(icon: "trophy.fill", color: .accentGold,
-                              text: "+\(scaled(15, by: coach.motivation))% team-wide morale & game-day performance"))
+            // Mech 4 — his discipline scales this club's own penalty AND fumble
+            // frequencies. Mirrors `CoachingModifiers.disciplineScale`, which is
+            // private to that file.
+            let scale = min(CoachingModifiers.disciplineScaleMax,
+                            max(CoachingModifiers.disciplineScaleMin,
+                                1.0 - (Double(coach.discipline) - CoachingModifiers.disciplineCenter)
+                                    * CoachingModifiers.disciplineSlope))
+            let penaltyPct = (scale - 1.0) * 100.0
+            rows.append(.init(icon: "flag.fill", color: penaltyPct <= 0 ? .success : .danger,
+                              text: "\(pctText(penaltyPct)) penalty and fumble frequency on your own snaps"))
+            let devPct = developmentPct(coach.motivation, layer: 0.08)
+            rows.append(.init(icon: "arrow.up.forward.circle.fill", color: devPct >= 0 ? .success : .danger,
+                              text: "\(pctText(devPct)) roster-wide development per season, off his motivation"))
+            // Mech 5 — motivation is the head coach's lever and nobody else's.
+            let motivationTerm = (Double(coach.motivation) - CoachingModifiers.moraleCenter)
+                * CoachingModifiers.motivationSlope
+            rows.append(.init(icon: "trophy.fill", color: motivationTerm >= 0 ? .accentGold : .danger,
+                              text: "\(ptsText(motivationTerm)) pts into the pre-game morale bump, off his motivation"))
+
         case .assistantHeadCoach:
-            rows.append(.init(icon: "person.2.fill", color: .accentBlue,
-                              text: "+\(scaled(5, by: coach.moraleInfluence))% staff chemistry, +\(scaled(3, by: coach.gamePlanning))% halftime adjustments"))
-        case .offensiveCoordinator:
-            rows.append(.init(icon: "football.fill", color: .accentBlue,
-                              text: "+\(scaled(12, by: coach.playCalling))% offensive efficiency in games"))
-            if let scheme = coach.offensiveScheme {
-                rows.append(.init(icon: "checkmark.seal.fill", color: .success,
-                                  text: "Players gain scheme familiarity faster (\(scheme.displayName))"))
+            let devPct = developmentPct(coach.playerDevelopment, layer: 0.04)
+            rows.append(.init(icon: "arrow.up.forward.circle.fill", color: devPct >= 0 ? .success : .danger,
+                              text: "\(pctText(devPct)) roster-wide development per season"))
+            rows.append(gamePlanRow)
+
+        case .offensiveCoordinator, .defensiveCoordinator:
+            // Mech 1 — the grade the sim reads is the average of play-calling
+            // and adaptability. The OC pays it into his own offense's completion
+            // probability; the DC takes the same magnitude out of the
+            // opponent's.
+            let grade = Double(coach.playCalling + coach.adaptability) / 2.0
+            let shift = min(CoachingModifiers.coordCompletionCap,
+                            max(-CoachingModifiers.coordCompletionCap,
+                                (grade - CoachingModifiers.coordinatorCenter)
+                                    * CoachingModifiers.coordCompletionSlope)) * 100.0
+            let isOffense = coach.role == .offensiveCoordinator
+            rows.append(.init(icon: isOffense ? "football.fill" : "shield.fill",
+                              color: shift >= 0 ? .success : .danger,
+                              text: isOffense
+                                ? "\(ptsText(shift)) pts of completion probability for your offense"
+                                : "\(ptsText(-shift)) pts of completion probability for the offenses he faces"))
+            let devPct = developmentPct(coach.playerDevelopment, layer: 0.10)
+            rows.append(.init(icon: "arrow.up.forward.circle.fill", color: devPct >= 0 ? .success : .danger,
+                              text: "\(pctText(devPct)) development per season for his side of the ball"))
+            if isOffense, let scheme = coach.offensiveScheme,
+               let row = schemeRow(scheme: scheme.rawValue, display: scheme.displayName) {
+                rows.append(row)
+            } else if !isOffense, let scheme = coach.defensiveScheme,
+                      let row = schemeRow(scheme: scheme.rawValue, display: scheme.displayName) {
+                rows.append(row)
             }
-        case .defensiveCoordinator:
-            rows.append(.init(icon: "shield.fill", color: .danger,
-                              text: "+\(scaled(12, by: coach.playCalling))% defensive efficiency in games"))
-            if let scheme = coach.defensiveScheme {
-                rows.append(.init(icon: "checkmark.seal.fill", color: .success,
-                                  text: "Defenders gain scheme familiarity faster (\(scheme.displayName))"))
-            }
+
         case .specialTeamsCoordinator:
-            rows.append(.init(icon: "figure.american.football", color: .success,
-                              text: "+\(scaled(8, by: coach.playCalling))% special teams performance"))
-        case .qbCoach:
-            rows.append(.init(icon: "arrow.up.forward.circle.fill", color: .success,
-                              text: "+\(scaled(10, by: coach.playerDevelopment))% QB development per season"))
-        case .rbCoach:
-            rows.append(.init(icon: "arrow.up.forward.circle.fill", color: .success,
-                              text: "+\(scaled(10, by: coach.playerDevelopment))% RB development per season"))
-        case .wrCoach:
-            rows.append(.init(icon: "arrow.up.forward.circle.fill", color: .success,
-                              text: "+\(scaled(10, by: coach.playerDevelopment))% WR development per season"))
-        case .olCoach:
-            rows.append(.init(icon: "arrow.up.forward.circle.fill", color: .success,
-                              text: "+\(scaled(10, by: coach.playerDevelopment))% OL development per season"))
-        case .dlCoach:
-            rows.append(.init(icon: "arrow.up.forward.circle.fill", color: .success,
-                              text: "+\(scaled(10, by: coach.playerDevelopment))% DL development per season"))
-        case .lbCoach:
-            rows.append(.init(icon: "arrow.up.forward.circle.fill", color: .success,
-                              text: "+\(scaled(10, by: coach.playerDevelopment))% LB development per season"))
-        case .dbCoach:
-            rows.append(.init(icon: "arrow.up.forward.circle.fill", color: .success,
-                              text: "+\(scaled(10, by: coach.playerDevelopment))% DB development per season"))
+            // He is the coordinator layer for a kicker or a punter and for
+            // nobody else: `PlayerDevelopmentEngine` picks the coordinator by
+            // the player's side of the ball. Neither Mech 1 nor Mech 2 reads him
+            // at all — the planner list is HC/AHC/OC/DC.
+            let devPct = developmentPct(coach.playerDevelopment, layer: 0.10)
+            rows.append(.init(icon: "arrow.up.forward.circle.fill", color: devPct >= 0 ? .success : .danger,
+                              text: "\(pctText(devPct)) development per season for kickers and punters"))
+
+        case .qbCoach, .rbCoach, .wrCoach, .olCoach, .dlCoach, .lbCoach, .dbCoach:
+            let group = coach.role.displayName
+                .replacingOccurrences(of: "Coach", with: "")
+                .trimmingCharacters(in: .whitespaces)
+            let devPct = developmentPct(coach.playerDevelopment, layer: 0.15)
+            rows.append(.init(icon: "arrow.up.forward.circle.fill", color: devPct >= 0 ? .success : .danger,
+                              text: "\(pctText(devPct)) \(group) development per season — the heaviest of the four layers"))
+
         case .strengthCoach:
-            rows.append(.init(icon: "heart.fill", color: .danger,
-                              text: "-\(scaled(15, by: coach.discipline))% injury risk across the roster"))
+            // `PlayerDevelopmentEngine` adds `strengthBonus` onto EVERY player's
+            // physical development points each offseason. Quoted in points
+            // because that is the unit the engine adds it in.
+            let strengthBonus = 0.5 + Double(coach.playerDevelopment) / 99.0 * 0.5
+            rows.append(.init(icon: "figure.strengthtraining.traditional", color: .success,
+                              text: "+\(String(format: "%.2f", strengthBonus)) physical development points per player per season"))
+            // `WeekAdvancer.computeRecoveryRate` maps his `playerDevelopment`
+            // onto a camp recovery rate of 0.40...0.75. A club with neither a
+            // strength coach nor a physio sits at 0.55.
+            let rating = Double(max(1, min(99, coach.playerDevelopment)))
+            let rate = 0.40 + (rating - 1.0) / 98.0 * 0.35
+            let campPct = (rate / 0.55 - 1.0) * 100.0
+            rows.append(.init(icon: "bed.double.fill", color: campPct >= 0 ? .success : .danger,
+                              text: "\(pctText(campPct)) camp recovery against a club with no strength coach"))
+            // `resolvePositionCoach` falls back to him for the positions no
+            // specialist role covers, which `CoachingEngine.positionRoleMatch`
+            // makes exactly K and P.
+            let kpPct = developmentPct(coach.playerDevelopment, layer: 0.15)
+            rows.append(.init(icon: "arrow.up.forward.circle.fill", color: kpPct >= 0 ? .success : .danger,
+                              text: "\(pctText(kpPct)) K and P development — no specialist covers them, so he is their position coach"))
+
         case .teamDoctor:
-            rows.append(.init(icon: "cross.case.fill", color: .accentBlue,
-                              text: "-\(scaled(30, by: coach.reputation))% injury severity"))
+            // `MedicalEngine.injuryCheck` scales risk by 1 - pd/330, and
+            // `recoveryWeeks` takes pd/660 off the prognosis.
+            rows.append(.init(icon: "cross.case.fill", color: .success,
+                              text: "\(pctText(-Double(coach.playerDevelopment) / 330.0 * 100.0)) injury risk on every snap"))
+            rows.append(.init(icon: "bandage.fill", color: .success,
+                              text: "\(pctText(-Double(coach.playerDevelopment) / 660.0 * 100.0)) weeks on the injury report"))
+
         case .physio:
-            rows.append(.init(icon: "bandage.fill", color: .accentBlue,
-                              text: "+\(scaled(25, by: coach.reputation))% recovery speed"))
+            // `MedicalEngine.recoveryWeeks` takes pd/400 off the prognosis, and
+            // `weeklyFatigueRecovery` adds pd/10 to the base 15 points a week.
+            rows.append(.init(icon: "bandage.fill", color: .success,
+                              text: "\(pctText(-Double(coach.playerDevelopment) / 400.0 * 100.0)) weeks on the injury report"))
+            let fatigue = Int(Double(coach.playerDevelopment) / 10.0)
+            rows.append(.init(icon: "bolt.heart.fill", color: fatigue > 0 ? .success : .textTertiary,
+                              text: "+\(fatigue) fatigue recovered per week on top of the base 15"))
+
         case .headTrainer:
-            rows.append(.init(icon: "figure.strengthtraining.traditional", color: .accentBlue,
-                              text: "Rehab: +\(scaled(10, by: coach.playerDevelopment))% ahead-of-schedule odds, fewer setbacks, safer early returns"))
+            // `MedicalEngine.processWeeklyRehab` rolls a setback at
+            // max(0.02, 0.10 - pd * 0.0006), against the 10 % a club with no
+            // trainer rolls.
+            let setback = max(0.02, 0.10 - Double(coach.playerDevelopment) * 0.0006)
+            rows.append(.init(icon: "arrow.triangle.2.circlepath", color: .success,
+                              text: "\(pctText((setback / 0.10 - 1.0) * 100.0)) rehab setbacks — \(String(format: "%.1f", setback * 100.0))% a week against a bare 10%"))
         }
 
-        // Generic motivation/morale bonus when high
-        if coach.moraleInfluence >= 75 {
-            rows.append(.init(icon: "flame.fill", color: .accentGold,
-                              text: "Strong locker-room presence (+\(coach.moraleInfluence / 10) team morale tick)"))
+        if let moraleRow = moraleInfluenceRow {
+            rows.append(moraleRow)
         }
 
-        // Reputation-based recruiting bonus
-        if coach.reputation >= 75 {
-            rows.append(.init(icon: "person.3.fill", color: .accentBlue,
-                              text: "Reputation attracts higher-tier prospects in offseason"))
-        }
-
-        // Adjustment penalty hint
+        // `isInAdjustmentPeriod` is read in exactly three places — layers 1 and
+        // 3 of `hierarchicalDevelopmentBonus`, and the continuity gate in
+        // `WeekAdvancer` — and for nobody outside those seats. The row here used
+        // to read "bonuses reduced ~25% this season" for every man on the
+        // payroll, a figure no engine produces for anyone.
         if coach.isInAdjustmentPeriod {
-            rows.append(.init(icon: "hourglass", color: .warning,
-                              text: "Currently adjusting — bonuses reduced ~25% this season"))
+            switch coach.role {
+            case .headCoach:
+                rows.append(.init(icon: "hourglass", color: .warning,
+                                  text: "First season in the building: 0.05 off the roster's development multiplier"))
+            case .offensiveCoordinator, .defensiveCoordinator, .specialTeamsCoordinator:
+                rows.append(.init(icon: "hourglass", color: .warning,
+                                  text: "First season in the building: 0.03 off his unit's development multiplier, and no continuity bonus"))
+            default:
+                break
+            }
+        }
+
+        // What a coach's reputation actually does: `CoachingEngine` builds each
+        // club's head-coaching candidate pool from it — 0-99 maps to a 0.00-0.40
+        // poach chance, plus 0.15 for a coordinator — and excludes head coaches,
+        // assistant head coaches and the medical seats. It is a risk to the GM,
+        // not the recruiting perk the old row advertised; nothing on the player
+        // market reads a coach's reputation at all.
+        if coach.reputation >= 75,
+           coach.role != .headCoach,
+           coach.role != .assistantHeadCoach,
+           coach.role.family != .medical {
+            rows.append(.init(icon: "person.3.fill", color: .warning,
+                              text: "Reputation \(coach.reputation) — rival clubs pull men like him into head-coaching searches"))
         }
 
         return Array(rows.prefix(4))
-    }
-
-    /// Scales a baseline percentage by an attribute (50 = baseline, 99 = +50% relative).
-    private func scaled(_ baseline: Int, by attribute: Int) -> Int {
-        let mult = 0.5 + (Double(attribute) / 99.0)
-        return max(1, Int(Double(baseline) * mult))
     }
 
     /// **The screen's subject** (§2.11) — the one bordered, lifted insert.

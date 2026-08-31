@@ -1978,6 +1978,14 @@ private struct CandidateDetailSheet: View {
     /// Mech 3/5 as a DELTA, for the same reason as `gamePlanImpact`: morale
     /// influence is a max over the WHOLE staff. Motivation is the head coach's
     /// lever alone, so it only moves when the seat being filled is his.
+    ///
+    /// The two figures are ROUNDED before they are subtracted, because
+    /// `CoachingModifiers.moraleBump` returns `Int(clampSym(...).rounded())` —
+    /// the sim applies whole points of morale and nothing else. Differencing
+    /// the raw doubles instead printed changes the engine never makes: a staff
+    /// at 2.6 (applied 3) hiring a man who takes it to 3.4 (still applied 3)
+    /// read "+0.8 pts" in green for an applied change of zero, and 2.49 → 2.51
+    /// read "No change" for an applied change of one.
     private var moraleImpact: (label: String, value: String, icon: String, color: Color) {
         let before = moraleBumpPts(
             bestInfluence: [staffBestMoraleInfluence, currentCoach?.moraleInfluence].compactMap { $0 }.max(),
@@ -1987,15 +1995,12 @@ private struct CandidateDetailSheet: View {
             bestInfluence: [staffBestMoraleInfluence, candidate.moraleInfluence].compactMap { $0 }.max(),
             hcMotivation: candidate.role == .headCoach ? candidate.motivation : headCoach?.motivation
         )
-        let delta = after - before
-        let moves = abs(delta) >= 0.05
+        let delta = Int(after.rounded()) - Int(before.rounded())
         return (
             label: "Pre-game morale",
-            value: moves
-                ? "\(delta >= 0 ? "+" : "")\(String(format: "%.1f", delta)) pts"
-                : "No change",
+            value: delta != 0 ? "\(delta > 0 ? "+" : "")\(delta) pts" : "No change",
             icon: "heart.fill",
-            color: moves ? (delta > 0 ? .success : .danger) : .textTertiary
+            color: delta != 0 ? (delta > 0 ? .success : .danger) : .textTertiary
         )
     }
 
@@ -2029,9 +2034,16 @@ private struct CandidateDetailSheet: View {
     ///   0.08 (HC, off `motivation`), 0.04 (AHC), 0.10 (coordinator, and the
     ///   special-teams coordinator IS the coordinator for a kicker) and 0.15
     ///   (position coach) per 50 points above `developmentBonusPivot`.
-    /// * `MedicalEngine` and `WeekAdvancer.computeRecoveryRate` for the medical
-    ///   and strength seats, whose `playerDevelopment` is an injury and recovery
-    ///   lever and never a development one.
+    /// * `MedicalEngine` for the three medical seats, whose `playerDevelopment`
+    ///   is an injury and recovery lever and never a development one.
+    /// * `WeekAdvancer.computeRecoveryRate` and `PlayerDevelopmentEngine` for
+    ///   the strength coach, whose `playerDevelopment` is BOTH. It sets camp
+    ///   recovery, and it is also read as `strengthBonus` —
+    ///   `0.5 + pd/99 × 0.5` extra physical points added to every player's
+    ///   `physicalPoints` each offseason. He is a development coach twice over,
+    ///   in fact: `PlayerDevelopmentEngine.resolvePositionCoach` makes him the
+    ///   layer-4 position coach for K and P, the two positions no specialist
+    ///   role covers.
     ///
     /// The head-coach seat's older "Projected wins" line stays deleted for the
     /// same reason (#3087). It was `clamp((ovr·0.5 + mot·0.25 + disc·0.25 - 65)
@@ -2151,6 +2163,19 @@ private struct CandidateDetailSheet: View {
             items.append(moraleImpact)
 
         case .strengthCoach:
+            // His largest effect, and the one this branch used to drop:
+            // `PlayerDevelopmentEngine` adds `strengthBonus` — 0.5 at
+            // playerDevelopment 1, 1.0 at 99 — onto EVERY player's physical
+            // development points every offseason. It is quoted in points and
+            // not as a percentage because that is the unit the engine adds it
+            // in; the percentage it works out to depends on the player.
+            let strengthBonus = 0.5 + Double(candidate.playerDevelopment) / 99.0 * 0.5
+            items.append((
+                label: "Physical development",
+                value: "+\(String(format: "%.2f", strengthBonus)) pts / player / season",
+                icon: devIcon,
+                color: .success
+            ))
             // `WeekAdvancer.computeRecoveryRate` maps his `playerDevelopment`
             // onto a camp recovery rate of 0.40...0.75. A club with no strength
             // coach and no physio sits at 0.55, so that is the baseline this is
@@ -2247,10 +2272,21 @@ private struct CandidateDetailSheet: View {
 
             // The footnote used to say "attribute deltas vs. league average",
             // which was true of the invented percentages and is not true of
-            // these: every line is the sim's own coefficient, and the two the
-            // sim takes as a max over the staff are measured against the men
-            // already in the building — which is what "No change" means.
-            Text("Read off the sim's own coaching effects, against the staff you already have.")
+            // these. Its replacement — "against the staff you already have" —
+            // was not true either, and overstated the card in a way that gets
+            // the SIGN wrong: only "Game-plan edge" and "Pre-game morale" are
+            // deltas, because only those two mechanics are a max over the
+            // staff. Every other line is seat-replacing in the engine
+            // (`CoachingModifiers.ratings` takes the OC as
+            // `coaches.first { $0.role == .offensiveCoordinator }`;
+            // `hierarchicalDevelopmentBonus` takes one man per layer), so it is
+            // quoted as what the seat is worth from EMPTY — and a GM replacing
+            // an OC on grade 90 with one on grade 75 reads "+0.8 pts" in green
+            // while his club's figure falls from +3.0 to +0.8. The sentence has
+            // to say which half is which; it is the copy that was wrong here,
+            // not the arithmetic, because "what this man is worth in the seat"
+            // is a real engine quantity and the card is a hiring card.
+            Text("The sim's own coefficients. Game-plan and morale compare your staff after the hire with today's; the rest are what this seat is worth from empty.")
                 .font(.system(size: DSType.Size.caption, weight: .medium))
                 .foregroundStyle(Color.textTertiary)
         }
