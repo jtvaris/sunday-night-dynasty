@@ -167,6 +167,47 @@ struct StaffLedger {
 
     var allRequiredRolesFilled: Bool { missingRequiredRoles.isEmpty }
 
+    // MARK: - The first scout (the zero-scout gate)
+
+    /// The DEAREST asking price the hire sheet can roll for a scout seat, in
+    /// thousands — the top of the band `CoachingEngine.generateScoutCandidates`
+    /// draws its salaries from (chief 650-2000, everyone else 150-1000).
+    ///
+    /// The ceiling and not the floor, deliberately. Salaries are rolled per
+    /// pool, so "the pot covers the cheapest man the band allows" is a hope,
+    /// not a guarantee: a twenty-man pool can easily open at $190K. The pot
+    /// covering the DEAREST man the band allows is a guarantee — every
+    /// candidate the sheet can offer for that seat is then signable, and
+    /// `HireScoutView` refuses a hire above the remaining budget outright
+    /// (`guard candidate.salary <= remainingBudget`), which is the exact edge a
+    /// hard gate strands a career on.
+    static func dearestScoutAsk(for role: ScoutRole) -> Int {
+        role.isChief ? 2_000 : 1_000
+    }
+
+    /// The cheapest vacant scouting seat this club is CERTAIN to be able to
+    /// fill out of what is left in the scouting pot, or `nil` when no such
+    /// certainty exists.
+    ///
+    /// `remainingScouting` is the same figure the Staff screen hands
+    /// `HireScoutView` as its ceiling (`ledger.remainingScouting`), so a seat
+    /// named here can always be filled from that sheet — and filling it inside
+    /// the remaining pot cannot create an overage, so clearing this gate cannot
+    /// raise the one below it.
+    var guaranteedAffordableScoutSeat: ScoutRole? {
+        guard isResolved else { return nil }
+        return vacantScoutRoles
+            .filter { remainingScouting >= Self.dearestScoutAsk(for: $0) }
+            .min { Self.dearestScoutAsk(for: $0) < Self.dearestScoutAsk(for: $1) }
+    }
+
+    /// True when the club is about to walk into draft prep with nobody scouting
+    /// it AND can demonstrably do something about it. Both halves matter — see
+    /// `advanceBlocker`.
+    var isBlockedOnFirstScout: Bool {
+        filledScoutSlots == 0 && guaranteedAffordableScoutSeat != nil
+    }
+
     // MARK: - Money
 
     var remainingCoaching: Int { coachingBudget - committedCoaching }
@@ -213,6 +254,30 @@ struct StaffLedger {
                 title: "Resolve staff budget overage first",
                 detail: "You are \(StaffLedger.money(overage)) over the staff budget. "
                     + "Release staff or reduce salaries to advance."
+            )
+        }
+
+        // The draft-prep pipeline behind this phase — the Big Board, film
+        // study, pro days, the combine trip — is screen after screen that needs
+        // a scout, and a career could walk the whole way through it with an
+        // empty scouting department. It is asked LAST of the three because
+        // the remedy is a hire, and a club that is over its budget or short a
+        // coordinator has a cheaper thing to fix first.
+        //
+        // The condition is not "no scouts": it is "no scouts, and a seat this
+        // club can certainly fill". A gate with no clearing move is a stranded
+        // career, and this repo already paid for that lesson once — the
+        // combine-trip task had to be de-required because a club that had spent
+        // its scouting pot on salaries could not afford the flight, leaving a
+        // red Required chip no action in the app could clear. So when the pot
+        // cannot guarantee a signing, the calendar moves and the hub's
+        // zero-scout empty states are what say so.
+        if filledScoutSlots == 0, let seat = guaranteedAffordableScoutSeat {
+            return AdvanceBlocker(
+                title: "Hire your first scout",
+                detail: "Nobody is scouting the draft class. \(seat.displayName) can be signed out of the "
+                    + "\(StaffLedger.money(remainingScouting)) left in your scouting budget — "
+                    + "hire from the Staff screen to advance."
             )
         }
 

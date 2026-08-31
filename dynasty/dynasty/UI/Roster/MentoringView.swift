@@ -70,7 +70,10 @@ struct MentoringView: View {
         .navigationTitle("Mentoring")
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
-        .task { loadPlayers() }
+        .task {
+            let roster = loadPlayers()
+            loadPairs(roster: roster)
+        }
     }
 
     // MARK: - Instruction Banner
@@ -85,7 +88,10 @@ struct MentoringView: View {
                 Text("Assign Veteran Mentors")
                     .font(.headline)
                     .foregroundStyle(Color.textPrimary)
-                Text("Select a mentor to see compatible young players at the same position group. Active pairs apply +1-3 mental attribute bonuses during offseason development.")
+                Text("Camp already pairs mentors on its own: a trusted veteran works with every "
+                    + "first-year man at his exact position. Pairing him here narrows that to your "
+                    + "choice alone \u{2014} it never creates a bonus the staff would not have given, "
+                    + "so a pair the coaching staff would not make changes nothing.")
                     .font(.caption)
                     .foregroundStyle(Color.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -314,7 +320,7 @@ struct MentoringView: View {
                 HStack(spacing: 6) {
                     matchQualityBadge(matchQuality)
                     Spacer()
-                    expectedBenefitLabel(mentor: mentor)
+                    expectedBenefitLabel(mentor: mentor, mentee: mentee)
                     Image(systemName: "plus.circle.fill")
                         .foregroundStyle(Color.accentGold)
                         .font(.subheadline)
@@ -363,57 +369,81 @@ struct MentoringView: View {
         else { return AnyView(EmptyView()) }
 
         let matchQuality = positionMatchQuality(mentor.position, mentee.position)
+        let honoured = engineHonoursPair(mentor: mentor, mentee: mentee)
+        let givenUp = rookiesGivenUp(mentor: mentor, mentee: mentee)
 
         return AnyView(
-            HStack(spacing: 12) {
-                // Mentor
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        positionBadge(mentor.position)
-                        Text(mentor.fullName)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(Color.textPrimary)
-                            .lineLimit(1)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 12) {
+                    // Mentor
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            positionBadge(mentor.position)
+                            Text(mentor.fullName)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(Color.textPrimary)
+                                .lineLimit(1)
+                        }
+                        Text("Mentor · Ldr \(mentor.mental.leadership)")
+                            .font(.caption2)
+                            .foregroundStyle(Color.accentGold)
                     }
-                    Text("Mentor · Ldr \(mentor.mental.leadership)")
-                        .font(.caption2)
-                        .foregroundStyle(Color.accentGold)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                // Arrow
-                VStack(spacing: 2) {
-                    Image(systemName: "arrow.right")
-                        .foregroundStyle(Color.success)
-                        .font(.caption.weight(.semibold))
-                    matchQualityBadge(matchQuality)
-                }
-
-                // Mentee
-                VStack(alignment: .trailing, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Text(mentee.fullName)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(Color.textPrimary)
-                            .lineLimit(1)
-                        positionBadge(mentee.position)
+                    // Arrow
+                    VStack(spacing: 2) {
+                        Image(systemName: "arrow.right")
+                            .foregroundStyle(Color.success)
+                            .font(.caption.weight(.semibold))
+                        matchQualityBadge(matchQuality)
                     }
-                    Text("Mentee · \(mentee.yearsPro == 0 ? "Rookie" : "\(mentee.yearsPro) yr")")
-                        .font(.caption2)
-                        .foregroundStyle(Color.accentBlue)
-                }
-                .frame(maxWidth: .infinity, alignment: .trailing)
 
-                // Remove
-                Button(role: .destructive) {
-                    removePair(pair)
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(Color.danger.opacity(0.7))
-                        .font(.title3)
+                    // Mentee
+                    VStack(alignment: .trailing, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Text(mentee.fullName)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(Color.textPrimary)
+                                .lineLimit(1)
+                            positionBadge(mentee.position)
+                        }
+                        Text("Mentee · \(mentee.yearsPro == 0 ? "Rookie" : "\(mentee.yearsPro) yr")")
+                            .font(.caption2)
+                            .foregroundStyle(Color.accentBlue)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+
+                    // Remove
+                    Button(role: .destructive) {
+                        removePair(pair)
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(Color.danger.opacity(0.7))
+                            .font(.title3)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Remove mentoring pair")
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Remove mentoring pair")
+
+                // What camp will make of it — the one thing the screen never said.
+                HStack(spacing: 8) {
+                    Image(systemName: honoured ? "checkmark.seal.fill" : "moon.zzz.fill")
+                        .font(.caption2)
+                        .foregroundStyle(honoured ? Color.success : Color.textTertiary)
+                    Text(honoured
+                        ? (givenUp > 0
+                            ? "Camp honours this: \(mentor.lastName) works with "
+                                + "\(mentee.lastName) alone, and the other \(givenUp) first-year "
+                                + "\(mentor.position.rawValue) go without him."
+                            : "Camp honours this: \(mentor.lastName) works with \(mentee.lastName).")
+                        : "Camp would not make this pairing, so it changes nothing. "
+                            + "It needs a first-year man at \(mentor.position.rawValue) and a "
+                            + "veteran the staff already trusts.")
+                        .font(.caption2)
+                        .foregroundStyle(honoured ? Color.textSecondary : Color.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
             }
             .padding(12)
             .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 10))
@@ -470,39 +500,111 @@ struct MentoringView: View {
             .background(quality.color.opacity(0.15), in: Capsule())
     }
 
-    private func expectedBenefitLabel(mentor: Player) -> some View {
-        let baseMentorBonus = Double(mentor.mental.leadership - 1) / 98.0
-        let bonusPoints = max(1, min(3, Int((baseMentorBonus * 3.0).rounded())))
-        return Text("+\(bonusPoints) mental attr.")
-            .font(.caption2)
-            .foregroundStyle(Color.success)
+    /// What camp will actually do with this pair, in camp's own arithmetic.
+    ///
+    /// The label used to size the bonus off the mentor's LEADERSHIP;
+    /// `PlayerDevelopmentEngine.applyMentoring` sizes it off his COACHABILITY,
+    /// so a "+3" promised here could arrive as a +1. The figure is quoted from
+    /// the engine now, and only where the engine will act at all — everywhere
+    /// else the honest answer is that the pairing changes nothing.
+    @ViewBuilder
+    private func expectedBenefitLabel(mentor: Player, mentee: Player) -> some View {
+        if engineHonoursPair(mentor: mentor, mentee: mentee) {
+            let baseMentorBonus = Double(mentor.mental.coachability - 1) / 98.0
+            let bonusPoints = Int((baseMentorBonus * 3.0).rounded().clamped(to: 1...3))
+            Text("+\(bonusPoints) mental attr.")
+                .font(.caption2)
+                .foregroundStyle(Color.success)
+        } else {
+            Text("No camp effect")
+                .font(.caption2)
+                .foregroundStyle(Color.textTertiary)
+        }
     }
 
     // MARK: - Actions
 
     private func assignPair(mentor: Player, mentee: Player) {
-        // Remove any existing pairing for this mentee
-        pairs.removeAll { $0.menteeID == mentee.id }
+        // Remove any existing pairing for this mentee, and any other mentee
+        // this mentor was already given: one man's year goes to one rookie,
+        // which is the only shape `applyMentoring` can act on.
+        pairs.removeAll { $0.menteeID == mentee.id || $0.mentorID == mentor.id }
 
         let newPair = MentoringPair(mentorID: mentor.id, menteeID: mentee.id)
         withAnimation(.easeInOut(duration: 0.25)) {
             pairs.append(newPair)
             selectedMentor = nil
         }
+        savePairs()
     }
 
     private func removePair(_ pair: MentoringPair) {
         withAnimation(.easeInOut(duration: 0.2)) {
             pairs.removeAll { $0.id == pair.id }
         }
+        savePairs()
     }
 
     // MARK: - Helpers
 
-    private func loadPlayers() {
-        guard let teamID = career.teamID else { return }
+    /// Returns the roster it just loaded as well as storing it, so the pair
+    /// load below reads the fetch rather than the `@State` it was written to a
+    /// line earlier.
+    @discardableResult
+    private func loadPlayers() -> [Player] {
+        guard let teamID = career.teamID else { return [] }
         let descriptor = FetchDescriptor<Player>(predicate: #Predicate { $0.teamID == teamID })
-        players = (try? modelContext.fetch(descriptor)) ?? []
+        let roster = (try? modelContext.fetch(descriptor)) ?? []
+        players = roster
+        return roster
+    }
+
+    /// The pairs the save is carrying. Held in `@State` only for the animation
+    /// and the row identity — `Career.mentoringAssignments` is the record, and
+    /// it is what the offseason pass reads.
+    ///
+    /// Pairs naming a man no longer on the roster (traded, cut, retired) are
+    /// dropped on the way in rather than shown as an empty row.
+    private func loadPairs(roster rosterPlayers: [Player]) {
+        let roster = Set(rosterPlayers.map(\.id))
+        pairs = career.mentoringAssignments
+            .filter { roster.contains($0.key) && roster.contains($0.value) }
+            .map { MentoringPair(mentorID: $0.key, menteeID: $0.value) }
+            .sorted { ($0.mentorID.uuidString) < ($1.mentorID.uuidString) }
+    }
+
+    private func savePairs() {
+        career.mentoringAssignments = pairs.reduce(into: [UUID: UUID]()) { result, pair in
+            result[pair.mentorID] = pair.menteeID
+        }
+        try? modelContext.save()
+    }
+
+    /// Whether the next camp pass will actually act on this pair.
+    ///
+    /// `PlayerDevelopmentEngine.applyMentoring` runs at the END of
+    /// `processOffseason`, AFTER `applyAgeRegression` has put a year on every
+    /// man — so the years it tests are the ones on this screen plus one. Its
+    /// veterans are `yearsPro >= 4` and its rookies `yearsPro <= 1` there,
+    /// which is 3 and 0 here; the position must match EXACTLY, not by group;
+    /// and the mentor needs leadership above 75, not the 70 this screen lists
+    /// him at. A pair outside those rules is inert by design (the user's choice
+    /// only ever narrows what camp was already going to do), and saying so is
+    /// cheaper than letting the screen imply a bonus that never arrives.
+    private func engineHonoursPair(mentor: Player, mentee: Player) -> Bool {
+        mentor.yearsPro >= 3
+            && mentor.personality.isMentor
+            && mentor.mental.leadership > 75
+            && mentee.position == mentor.position
+            && mentee.yearsPro <= 0
+    }
+
+    /// First-year men at the mentor's position who lose his time to this pair —
+    /// camp would otherwise have given every one of them the same bonus.
+    private func rookiesGivenUp(mentor: Player, mentee: Player) -> Int {
+        players.filter {
+            $0.id != mentee.id && $0.position == mentor.position && $0.yearsPro <= 0
+        }.count
     }
 
     private func isMentorEligible(_ player: Player) -> Bool {

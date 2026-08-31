@@ -1572,7 +1572,31 @@ enum PlayerDevelopmentEngine {
     /// - Parameters:
     ///   - veterans: Veteran players on the team roster.
     ///   - rookies: Rookie players on the team roster.
-    static func applyMentoring(veterans: [Player], rookies: [Player]) {
+    ///   - assignedMentees: `[mentorID: menteeID]` — the pairs the user
+    ///     assigned on the Mentoring screen for HIS club
+    ///     (`Career.mentoringAssignments`). Empty for every AI club, and
+    ///     omitting it leaves this pass byte-identical to before.
+    ///
+    ///     These RESTRICT; they never qualify. The screen's own rules are
+    ///     looser than this pass's on every axis — leadership > 70 against
+    ///     > 75, the same position GROUP against the same exact position,
+    ///     two years pro against one — so honouring them as written would hand
+    ///     the user's team bonuses no AI club can earn. Instead: where a
+    ///     veteran this pass ALREADY qualifies has been given a mentee it would
+    ///     already have mentored, he spends his year on that man alone rather
+    ///     than on every rookie at his position. The user's choice can only
+    ///     narrow what the staff was going to do anyway, so the league-wide
+    ///     total of these bonuses can fall but never rise.
+    ///
+    ///     A pair naming a man this pass would not have paired is INERT, not
+    ///     destructive: the veteran's automatic rookies are left exactly as
+    ///     they were. Assigning an ineligible pair must not be a way to delete
+    ///     development the club had already earned.
+    static func applyMentoring(
+        veterans: [Player],
+        rookies: [Player],
+        assignedMentees: [UUID: UUID] = [:]
+    ) {
         for veteran in veterans {
             // Only mentors/team leaders with leadership > 75 can mentor positively.
             let isMentor = veteran.personality.isMentor && veteran.mental.leadership > 75
@@ -1591,8 +1615,15 @@ enum PlayerDevelopmentEngine {
             guard isMentor || isBadMentor else { continue }
 
             // Find rookies at the same position.
-            let eligibleRookies = rookies.filter { $0.position == veteran.position && $0.yearsPro <= 1 }
+            var eligibleRookies = rookies.filter { $0.position == veteran.position && $0.yearsPro <= 1 }
             guard !eligibleRookies.isEmpty else { continue }
+
+            // The user's pair, if he made one AND it names a man already on
+            // this veteran's list. Everything else about the pass is unchanged.
+            if let chosenID = assignedMentees[veteran.id],
+               let chosen = eligibleRookies.first(where: { $0.id == chosenID }) {
+                eligibleRookies = [chosen]
+            }
 
             for rookie in eligibleRookies {
                 if isBadMentor {
@@ -1941,6 +1972,9 @@ enum PlayerDevelopmentEngine {
     ///     this year — a weight room is not a second die roll. Defaults to the
     ///     neutral 1.0, so every caller that does not model facilities (the
     ///     balance harness, unit-style callers) is byte-identical to before.
+    ///   - assignedMentees: `[mentorID: menteeID]` for THIS club — the user's
+    ///     Mentoring screen pairs, empty for everybody else. They only ever
+    ///     narrow the mentoring pass; see ``applyMentoring(veterans:rookies:assignedMentees:)``.
     ///   - onOutcome: Optional per-player callback fired once the player has
     ///     been fully processed, carrying the realization verdict (motivation,
     ///     plateau, late-bloomer, OVR delta) for the §2.10 narrative surfaces.
@@ -1953,6 +1987,7 @@ enum PlayerDevelopmentEngine {
         inputs: [UUID: OffseasonInputs] = [:],
         environment: TeamEnvironment = TeamEnvironment(),
         facilityMultiplier: Double = 1.0,
+        assignedMentees: [UUID: UUID] = [:],
         onOutcome: ((OffseasonOutcome) -> Void)? = nil
     ) -> [String] {
         var events: [String] = []
@@ -2080,9 +2115,13 @@ enum PlayerDevelopmentEngine {
         }
 
         // --- Mentoring ---
+        // Both filters read the AGED roster: `applyAgeRegression` has already
+        // put a year on every man above, so a rookie drafted last spring is at
+        // `yearsPro == 1` here and the veteran the user paired him with was at
+        // 3 when the Mentoring screen drew him.
         let veterans = players.filter { $0.yearsPro >= 4 }
         let rookies = players.filter { $0.yearsPro <= 1 }
-        applyMentoring(veterans: veterans, rookies: rookies)
+        applyMentoring(veterans: veterans, rookies: rookies, assignedMentees: assignedMentees)
 
         return events
     }
